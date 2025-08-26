@@ -16,7 +16,7 @@ A load test defined by one or more [Scenarios](#scenario) with one or more [Tran
 A structure that defines all configuration options for a Goose load test, including user count, hatch rate, runtime, host, and various other parameters. Can be set via command line arguments, configuration files, or programmatically.
 
 ## GooseError
-A helper that defines all possible errors returned by Goose. A [Transaction](#transaction) returns a [TransactionResult](#transactionresult), which is either [`Ok(())`](https://doc.rust-lang.org/std/result/enum.Result.html#variant.Ok) or [`Err(GooseError)`](https://doc.rust-lang.org/std/result/enum.Result.html#variant.Err).
+A helper that defines all possible errors returned by Goose. A [Transaction](#transaction) returns a [TransactionResult](#transactionresult), which is either [`Ok(())`](https://doc.rust-lang.org/std/result/enum.Result.html#variant.Ok) or [`Err(TransactionError)`](https://doc.rust-lang.org/std/result/enum.Result.html#variant.Err).
 
 ## GooseUser
 A thread that repeatedly runs a single [**scenario**](./getting-started/metrics.html#scenarios) for the duration of the load test. For example, when Goose starts, you may use the [`--users`](./getting-started/common.html#how-many-users-to-simulate) command line option to configure how many GooseUser threads are started. This is not intended to be a 1:1 correlation between GooseUsers and real website users.
@@ -40,7 +40,7 @@ A mechanism to limit the request rate of individual [GooseUsers](#gooseuser), he
 A [**transaction**](./getting-started/metrics.html#transactions) is a collection of one or more [**requests**](./getting-started/metrics.html#request) and any desired validation. For example, this may include loading the front page and all contained static assets, logging into the website, or adding one or more items to a shopping chart. Transactions typically include assertions or expectation validation.
 
 ## TransactionResult
-A [`Result`](https://doc.rust-lang.org/std/result/enum.Result.html) returned by [Transaction](#transaction) functions. A transaction can return `Ok(())` on success, or `Err(`[GooseError](#gooseerror)`)` on failure.
+A [`Result`](https://doc.rust-lang.org/std/result/enum.Result.html) returned by [Transaction](#transaction) functions. A transaction can return `Ok(())` on success, or `Err(TransactionError)` on failure. The `TransactionError::Custom` variant allows returning custom error messages using string literals or formatted strings with `.into()`.
 
 ## Weight
 A value that controls the frequency with which a [Transaction](#transaction) or [Scenario](#scenario) runs, relative to the other transactions in the same scenario, or scenarios in the same load test. For example, if one transaction has a weight of 3 and another transaction in the same scenario has a weight of 1, the first transaction will run 3 times as often as the second.

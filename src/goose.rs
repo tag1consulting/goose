@@ -345,7 +345,38 @@ pub enum TransactionError {
     Reqwest(reqwest::Error),
     /// Wraps a [`url::ParseError`](https://docs.rs/url/*/url/enum.ParseError.html).
     Url(url::ParseError),
-    /// A generic, custom error in cases where the [`TransactionFunction`] cannot turn any of the others.
+    /// A generic, custom error in cases where the [`TransactionFunction`] cannot use any of the others.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use goose::prelude::*;
+    ///
+    /// async fn validate_response(user: &mut GooseUser) -> TransactionResult {
+    ///     let response = user.get("/api/data").await?;
+    ///     let text = response.text().await?;
+    ///
+    ///     if !text.contains("expected_content") {
+    ///         return Err("Missing expected content in response".into());
+    ///     }
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
+    /// ```rust
+    /// use goose::prelude::*;
+    ///
+    /// async fn business_logic_check(user: &mut GooseUser) -> TransactionResult {
+    ///     let response = user.post("/login").await?;
+    ///
+    ///     if !response.status().is_success() {
+    ///         return Err(format!("Login failed with status: {}", response.status()).into());
+    ///     }
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
     Custom(String),
     /// The request failed.
     RequestFailed {
@@ -490,10 +521,24 @@ impl From<String> for TransactionError {
     }
 }
 
+/// Auto-convert &str errors to Custom TransactionError.
+impl From<&str> for TransactionError {
+    fn from(err: &str) -> TransactionError {
+        TransactionError::Custom(err.to_string())
+    }
+}
+
 /// Auto-convert String errors to boxed TransactionError.
 impl From<String> for Box<TransactionError> {
     fn from(value: String) -> Self {
         Box::new(TransactionError::Custom(value))
+    }
+}
+
+/// Auto-convert &str errors to boxed TransactionError.
+impl From<&str> for Box<TransactionError> {
+    fn from(value: &str) -> Self {
+        Box::new(TransactionError::Custom(value.to_string()))
     }
 }
 
