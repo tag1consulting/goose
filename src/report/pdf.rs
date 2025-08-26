@@ -3,14 +3,13 @@
 //! This module provides PDF report generation by converting existing HTML reports
 //! to PDF format using headless Chrome. It leverages the HTML report generation
 //! from the print module and converts it to PDF with configurable options.
+//!
+//! **Note**: This entire module is only available when compiled with the `pdf-reports` feature flag.
 
-#[cfg(feature = "pdf-reports")]
+use crate::logger::ScopedLogLevel;
 use crate::GooseError;
-
-#[cfg(feature = "pdf-reports")]
 use headless_chrome::{Browser, LaunchOptions};
-
-#[cfg(feature = "pdf-reports")]
+use log::{debug, LevelFilter};
 use std::{
     ffi::OsStr,
     fs,
@@ -18,14 +17,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[cfg(feature = "pdf-reports")]
-use crate::logger::ScopedLogLevel;
-
-#[cfg(feature = "pdf-reports")]
-use log::{debug, LevelFilter};
-
 /// Centralized error message module for consistent PDF error handling
-#[cfg(feature = "pdf-reports")]
 mod pdf_errors {
     use crate::GooseError;
     use std::time::Duration;
@@ -103,14 +95,12 @@ mod pdf_errors {
 ///
 /// This struct provides RAII-based resource management for Chrome processes,
 /// ensuring proper cleanup even in error scenarios.
-#[cfg(feature = "pdf-reports")]
 struct ChromeSession {
     browser: Browser,
     process_id: Option<u32>,
     start_time: Instant,
 }
 
-#[cfg(feature = "pdf-reports")]
 impl ChromeSession {
     /// Creates a new Chrome session with proper resource tracking.
     ///
@@ -156,7 +146,6 @@ impl ChromeSession {
     }
 }
 
-#[cfg(feature = "pdf-reports")]
 impl Drop for ChromeSession {
     fn drop(&mut self) {
         let elapsed = self.start_time.elapsed();
@@ -173,7 +162,6 @@ impl Drop for ChromeSession {
 }
 
 /// Get Chrome launch arguments based on verbosity level
-#[cfg(feature = "pdf-reports")]
 fn get_chrome_launch_args(verbose: bool) -> Vec<&'static OsStr> {
     let mut args = vec![
         OsStr::new("--no-sandbox"),
@@ -220,7 +208,6 @@ fn get_chrome_launch_args(verbose: bool) -> Vec<&'static OsStr> {
 /// The function implements RAII-based resource management to ensure Chrome processes
 /// are properly cleaned up even in error scenarios, with timeout protection to prevent
 /// hanging operations.
-#[cfg(feature = "pdf-reports")]
 pub(crate) fn generate_pdf_from_html(
     html_content: &str,
     output_path: &Path,
