@@ -426,13 +426,14 @@ cargo run --features pdf-reports --example simple -- --report-file report.pdf
 # Generate both HTML and PDF reports
 cargo run --features pdf-reports --example simple -- --report-file report.html --report-file report.pdf
 
-# Generate PDF with custom scaling
-cargo run --features pdf-reports --example simple -- --report-file report.pdf --pdf-scale 1.2
+# Generate PDF with custom scaling and timeout
+cargo run --features pdf-reports --example simple -- --report-file report.pdf --pdf-scale 1.2 --pdf-timeout 120
 ```
 
 #### Configuration Options
 
 - `--pdf-scale <FACTOR>`: Scale factor for PDF content (0.1-2.0, default: 0.8). Higher values create larger text and elements.
+- `--pdf-timeout <SECONDS>`: Chrome timeout for PDF generation (10-300s, default: 60). Controls how long to wait for Chrome operations during PDF creation.
 
 #### PDF Optimizations
 

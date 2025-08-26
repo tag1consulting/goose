@@ -213,6 +213,7 @@ pub(crate) fn generate_pdf_from_html(
     output_path: &Path,
     scale: f64,
     verbose: bool,
+    timeout_seconds: u64,
 ) -> Result<(), GooseError> {
     // Get appropriate Chrome arguments based on verbosity
     let chrome_args = get_chrome_launch_args(verbose);
@@ -235,8 +236,8 @@ pub(crate) fn generate_pdf_from_html(
     // Create Chrome session with automatic resource management
     let chrome_session = ChromeSession::new(launch_options)?;
 
-    // Set timeout for Chrome operations (60 seconds)
-    let timeout = Duration::from_secs(60);
+    // Set timeout for Chrome operations (configurable)
+    let timeout = Duration::from_secs(timeout_seconds);
 
     // Create a new tab
     chrome_session.check_timeout(timeout)?;

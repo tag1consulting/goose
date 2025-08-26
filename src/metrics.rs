@@ -3484,12 +3484,13 @@ impl GooseAttack {
             );
         }
 
-        // Generate PDF from HTML using the simplified configuration (hardcoded defaults with configurable scale)
+        // Generate PDF from HTML using the configurable timeout and scale
         generate_pdf_from_html(
             &print_optimized_html,
             Path::new(path),
             self.configuration.pdf_scale,
             self.configuration.verbose > 0,
+            self.configuration.pdf_timeout,
         )?;
 
         info!("pdf report file written to: {path}");

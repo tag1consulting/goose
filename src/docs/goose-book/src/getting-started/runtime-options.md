@@ -36,6 +36,8 @@ Metrics:
   --report-file NAME          Create reports, can be used multiple times (supports .html, .htm, .md, .json, .pdf)
   --no-granular-report        Disable granular graphs in report file
   --pdf-print-html PATH       path to generate PDF-optimized HTML
+  --pdf-scale SCALE           Sets PDF scale factor (0.1-2.0)
+  --pdf-timeout SECONDS       Chrome timeout for PDF gen (10-300s)
   -R, --request-log NAME      Sets request log file name
   --request-format FORMAT     Sets request log format (csv, json, raw, pretty)
   --request-body              Include the request body in the request log

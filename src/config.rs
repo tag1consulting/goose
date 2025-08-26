@@ -110,9 +110,17 @@ pub struct GooseConfiguration {
     #[options(
         no_short,
         meta = "PATH",
-        help = "Generate printer-friendly HTML optimized for PDF conversion"
+        help = "Generate printer-friendly HTML for PDF conversion"
     )]
     pub pdf_print_html: String,
+    /// Sets PDF scale factor (0.1-2.0)
+    #[cfg(feature = "pdf-reports")]
+    #[options(no_short, meta = "SCALE", default = "0.8")]
+    pub pdf_scale: f64,
+    /// Chrome timeout for PDF gen (10-300s)
+    #[cfg(feature = "pdf-reports")]
+    #[options(no_short, meta = "SECONDS", default = "60")]
+    pub pdf_timeout: u64,
     /// Sets request log file name
     #[options(short = "R", meta = "NAME")]
     pub request_log: String,
@@ -205,10 +213,6 @@ pub struct GooseConfiguration {
     /// Disables validation of https certificates
     #[options(no_short)]
     pub accept_invalid_certs: bool,
-    /// Sets PDF scale factor (0.1-2.0)
-    #[cfg(feature = "pdf-reports")]
-    #[options(no_short, meta = "SCALE", default = "0.8")]
-    pub pdf_scale: f64,
 }
 
 /// Optionally defines a subset of active Scenarios to run during a load test.
@@ -450,6 +454,9 @@ pub enum GooseDefault {
     WebSocketPort,
     /// An optional default for not validating https certificates.
     AcceptInvalidCerts,
+    /// An optional default for Chrome timeout in PDF generation (seconds).
+    #[cfg(feature = "pdf-reports")]
+    PdfChromeTimeout,
 }
 
 /// Most run-time options can be programmatically configured with custom defaults.
@@ -659,6 +666,16 @@ impl GooseDefaultType<&str> for GooseAttack {
                     ),
                 });
             }
+            #[cfg(feature = "pdf-reports")]
+            GooseDefault::PdfChromeTimeout => {
+                return Err(GooseError::InvalidOption {
+                    option: format!("GooseDefault::{key:?}"),
+                    value: value.to_string(),
+                    detail: format!(
+                        "set_default(GooseDefault::{key:?}, {value}) expected usize value, received &str"
+                    ),
+                });
+            }
         }
         Ok(Box::new(self))
     }
@@ -678,6 +695,16 @@ impl GooseDefaultType<usize> for GooseAttack {
             GooseDefault::ThrottleRequests => self.defaults.throttle_requests = Some(value),
             GooseDefault::TelnetPort => self.defaults.telnet_port = Some(value as u16),
             GooseDefault::WebSocketPort => self.defaults.websocket_port = Some(value as u16),
+            #[cfg(feature = "pdf-reports")]
+            GooseDefault::PdfChromeTimeout => {
+                // Note: We'll need to add this field to GooseDefaults struct
+                // For now, we'll return an error indicating this needs implementation
+                return Err(GooseError::InvalidOption {
+                    option: format!("GooseDefault::{key:?}"),
+                    value: format!("{value}"),
+                    detail: "PdfChromeTimeout default support not yet implemented in GooseDefaults struct".to_string(),
+                });
+            }
             // Otherwise display a helpful and explicit error.
             GooseDefault::DebugLog
             | GooseDefault::ErrorLog
@@ -741,11 +768,11 @@ impl GooseDefaultType<usize> for GooseAttack {
             GooseDefault::CoordinatedOmissionMitigation => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
-                    value: value.to_string(),
+                    value: format!("{value:?}"),
                     detail: format!(
-                        "set_default(GooseDefault::{key:?}, {value}) expected GooseCoordinatedOmissionMitigation value, received usize"
+                        "set_default(GooseDefault::{key:?}, {value:?}) expected GooseCoordinatedOmissionMitigation value, received GooseCoordinatedOmissionMitigation"
                     ),
-                });
+                })
             }
         }
         Ok(Box::new(self))
@@ -834,6 +861,16 @@ impl GooseDefaultType<bool> for GooseAttack {
                     value: value.to_string(),
                     detail: format!(
                         "set_default(GooseDefault::{key:?}, {value}) expected GooseCoordinatedOmissionMitigation value, received bool"
+                    ),
+                });
+            }
+            #[cfg(feature = "pdf-reports")]
+            GooseDefault::PdfChromeTimeout => {
+                return Err(GooseError::InvalidOption {
+                    option: format!("GooseDefault::{key:?}"),
+                    value: value.to_string(),
+                    detail: format!(
+                        "set_default(GooseDefault::{key:?}, {value}) expected usize value, received bool"
                     ),
                 });
             }
@@ -931,6 +968,16 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
                     ),
                 })
             }
+            #[cfg(feature = "pdf-reports")]
+            GooseDefault::PdfChromeTimeout => {
+                return Err(GooseError::InvalidOption {
+                    option: format!("GooseDefault::{key:?}"),
+                    value: format!("{value:?}"),
+                    detail: format!(
+                        "set_default(GooseDefault::{key:?}, {value:?}) expected usize value, received GooseCoordinatedOmissionMitigation"
+                    ),
+                });
+            }
         }
         Ok(Box::new(self))
     }
@@ -1024,6 +1071,16 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
                         "set_default(GooseDefault::{key:?}, {value:?}) expected GooseCoordinatedOmissionMitigation value, received GooseLogFormat"
                     ),
                 })
+            }
+            #[cfg(feature = "pdf-reports")]
+            GooseDefault::PdfChromeTimeout => {
+                return Err(GooseError::InvalidOption {
+                    option: format!("GooseDefault::{key:?}"),
+                    value: format!("{value:?}"),
+                    detail: format!(
+                        "set_default(GooseDefault::{key:?}, {value:?}) expected usize value, received GooseLogFormat"
+                    ),
+                });
             }
         }
         Ok(Box::new(self))
@@ -2137,6 +2194,18 @@ impl GooseConfiguration {
                 value: self.pdf_scale.to_string(),
                 detail: "`configuration.pdf_scale` must be between 0.1 and 2.0 (inclusive)."
                     .to_string(),
+            });
+        }
+
+        // Chrome timeout validation when feature is available
+        #[cfg(feature = "pdf-reports")]
+        if has_pdf_reports && (self.pdf_timeout < 10 || self.pdf_timeout > 300) {
+            return Err(GooseError::InvalidOption {
+                option: "`configuration.pdf_timeout`".to_string(),
+                value: self.pdf_timeout.to_string(),
+                detail:
+                    "`configuration.pdf_timeout` must be between 10 and 300 seconds (inclusive)."
+                        .to_string(),
             });
         }
 
