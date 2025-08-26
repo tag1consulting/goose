@@ -3148,7 +3148,7 @@ impl GooseAttack {
     /// This functionality is always available regardless of feature flags.
     async fn write_print_html_if_configured(&self) -> Result<(), GooseError> {
         if !self.configuration.pdf_print_html.is_empty() {
-            use crate::report::pdf::generate_print_optimized_html_content;
+            use crate::report::print::generate_print_optimized_html_content;
             use tokio::fs as async_fs;
 
             // Generate HTML report content
@@ -3464,7 +3464,8 @@ impl GooseAttack {
         _report_file: File,
         path: &str,
     ) -> Result<(), GooseError> {
-        use crate::report::pdf::{generate_pdf_from_html, generate_print_optimized_html_content};
+        use crate::report::pdf::generate_pdf_from_html;
+        use crate::report::print::generate_print_optimized_html_content;
         use std::path::Path;
         use tokio::fs as async_fs;
 

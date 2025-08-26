@@ -1,6 +1,7 @@
 //! Optionally writes an html-formatted summary report after running a load test.
 mod common;
 mod markdown;
+pub mod print;
 
 pub mod pdf;
 
