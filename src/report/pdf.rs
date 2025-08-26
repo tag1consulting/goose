@@ -272,26 +272,27 @@ pub(crate) fn generate_pdf_from_html(
     tab.wait_until_navigated()
         .map_err(|e| pdf_errors::chrome_operation_error("page loading", e.to_string()))?;
 
-    // Always use unlimited page approach with hardcoded sensible defaults
+    // Optimized content height calculation using document.documentElement.scrollHeight
+    // This is significantly more performant than iterating through all DOM elements
+    // while still accurately capturing the full content height including overflow content
     let content_height_script = r#"
         (function() {
-            const elements = document.querySelectorAll('*');
-            let maxBottom = 0;
-            
-            for (let element of elements) {
-                const rect = element.getBoundingClientRect();
-                const bottom = rect.bottom + window.scrollY;
-                if (bottom > maxBottom) {
-                    maxBottom = bottom;
-                }
-            }
-            
-            // Use document.documentElement.scrollHeight as fallback for robustness
-            // This ensures we capture content that might not be in the normal document flow
+            // Primary method: Use scrollHeight which efficiently captures full content height
+            // This includes content that overflows the viewport and handles most edge cases
             const scrollHeight = document.documentElement.scrollHeight / 96; // Convert to inches
-            const calculatedHeight = (maxBottom + 5) / 96; // 5px buffer, convert to inches
             
-            return Math.max(calculatedHeight, scrollHeight);
+            // Fallback: Check document body height in case scrollHeight is unreliable
+            // Some edge cases with CSS positioning might make scrollHeight insufficient
+            const bodyHeight = Math.max(
+                document.body.scrollHeight,
+                document.body.offsetHeight
+            ) / 96; // Convert to inches
+            
+            // Use the maximum of both methods with a small buffer for safety
+            const calculatedHeight = Math.max(scrollHeight, bodyHeight);
+            const bufferedHeight = calculatedHeight + 0.05; // ~5px buffer in inches
+            
+            return Math.max(bufferedHeight, 1.0); // Minimum 1 inch for degenerate cases
         })();
     "#;
 
