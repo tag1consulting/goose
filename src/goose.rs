@@ -1616,9 +1616,38 @@ impl GooseUser {
     /// ```rust
     /// use goose::prelude::*;
     ///
+    /// let mut transaction = transaction!(test_404);
+    ///
+    /// async fn test_404(user: &mut GooseUser) -> TransactionResult {
+    ///     use std::time::Duration;
+    ///
+    ///     // Manually interact with the Reqwest RequestBuilder object.
+    ///     let request_builder = user.get_request_builder(&GooseMethod::Get, "no/such/path")?
+    ///         // Configure the request to timeout if it takes longer than 500 milliseconds.
+    ///         .timeout(Duration::from_millis(500));
+    ///
+    ///     // Manually build a GooseRequest.
+    ///     let goose_request = GooseRequest::builder()
+    ///         // Manually add our custom RequestBuilder object.
+    ///         .set_request_builder(request_builder)
+    ///         // Tell Goose to expect a 404 status code.
+    ///         .expect_status_code(404)
+    ///         // Turn the GooseRequestBuilder object into a GooseRequest.
+    ///         .build();
+    ///
+    ///     // Finally make the actual request with our custom GooseRequest object.
+    ///     let _goose = user.request(goose_request).await?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
+    /// ```rust
+    /// use goose::prelude::*;
+    ///
     /// async fn validate_response(user: &mut GooseUser) -> TransactionResult {
     ///     let response = user.get("/api/data").await?;
-    ///     let text = response.response?.text().await?;
+    ///     let text = response.text().await?;
     ///
     ///     if !text.contains("expected_content") {
     ///         return Err("Missing expected content in response".into());
@@ -1634,13 +1663,8 @@ impl GooseUser {
     /// async fn business_logic_check(user: &mut GooseUser) -> TransactionResult {
     ///     let response = user.post("/login", "").await?;
     ///
-    ///     match &response.response {
-    ///         Ok(resp) => {
-    ///             if !resp.status().is_success() {
-    ///                 return Err(format!("Login failed with status: {}", resp.status()).into());
-    ///             }
-    ///         }
-    ///         Err(e) => return Err(e.to_string().into()),
+    ///     if !response.status().is_success() {
+    ///         return Err(format!("Login failed with status: {}", response.status()).into());
     ///     }
     ///
     ///     Ok(())

@@ -48,7 +48,7 @@ For more dynamic error messages, you can use formatted strings:
 use goose::prelude::*;
 
 async fn business_logic_check(user: &mut GooseUser) -> TransactionResult {
-    let response = user.post("/login").await?;
+    let response = user.post("/login", "").await?;
 
     if !response.status().is_success() {
         return Err(format!("Login failed with status: {}", response.status()).into());
