@@ -30,7 +30,7 @@ use goose::prelude::*;
 
 async fn validate_response(user: &mut GooseUser) -> TransactionResult {
     let response = user.get("/api/data").await?;
-    let text = response.text().await?;
+    let text = response.response?.text().await?;
 
     if !text.contains("expected_content") {
         return Err("Missing expected content in response".into());
@@ -50,8 +50,8 @@ use goose::prelude::*;
 async fn business_logic_check(user: &mut GooseUser) -> TransactionResult {
     let response = user.post("/login", "").await?;
 
-    if !response.status().is_success() {
-        return Err(format!("Login failed with status: {}", response.status()).into());
+    if !response.response?.status().is_success() {
+        return Err(format!("Login failed with status: {}", response.response?.status()).into());
     }
 
     Ok(())
