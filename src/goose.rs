@@ -1647,7 +1647,8 @@ impl GooseUser {
     ///
     /// async fn validate_response(user: &mut GooseUser) -> TransactionResult {
     ///     let response = user.get("/api/data").await?;
-    ///     let text = response.response?.text().await?;
+    ///     let response_data = response.response?;
+    ///     let text = response_data.text().await?;
     ///
     ///     if !text.contains("expected_content") {
     ///         return Err("Missing expected content in response".into());
@@ -1662,10 +1663,10 @@ impl GooseUser {
     ///
     /// async fn business_logic_check(user: &mut GooseUser) -> TransactionResult {
     ///     let response = user.post("/login", "").await?;
+    ///     let response_data = response.response?;
     ///
-    ///     let resp = response.response?;
-    ///     if !resp.status().is_success() {
-    ///         return Err(format!("Login failed with status: {}", resp.status()).into());
+    ///     if !response_data.status().is_success() {
+    ///         return Err(format!("Login failed with status: {}", response_data.status()).into());
     ///     }
     ///
     ///     Ok(())
