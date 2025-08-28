@@ -3085,6 +3085,22 @@ impl GooseAttack {
                         self.write_markdown_report(file).await?;
                     }
                 }
+                #[cfg(feature = "pdf-reports")]
+                Some("pdf") => {
+                    let file = create(path).await?;
+                    if write {
+                        self.write_pdf_report(file, report).await?;
+                    }
+                }
+                #[cfg(not(feature = "pdf-reports"))]
+                Some("pdf") => {
+                    return Err(GooseError::InvalidOption {
+                        option: "--report-file".to_string(),
+                        value: report.clone(),
+                        detail: "PDF reports require compiling with the 'pdf-reports' feature flag"
+                            .to_string(),
+                    })
+                }
                 None => {
                     return Err(GooseError::InvalidOption {
                         option: "--report-file".to_string(),
@@ -3112,47 +3128,50 @@ impl GooseAttack {
 
     /// Write all requested reports.
     pub(crate) async fn write_reports(&self) -> Result<(), GooseError> {
-        self.process_reports(true).await
-    }
+        self.process_reports(true).await?;
 
-    /// Write a JSON report.
-    pub(crate) async fn write_json_report(&self, report_file: File) -> Result<(), GooseError> {
-        let data = common::prepare_data(
-            ReportOptions {
-                no_transaction_metrics: self.configuration.no_transaction_metrics,
-                no_scenario_metrics: self.configuration.no_scenario_metrics,
-                no_status_codes: self.configuration.no_status_codes,
-            },
-            &self.metrics,
-        );
-
-        serde_json::to_writer_pretty(BufWriter::new(report_file.into_std().await), &data)?;
+        // Write PDF-optimized HTML if configured (always available)
+        self.write_print_html_if_configured().await?;
 
         Ok(())
     }
 
-    /// Write a Markdown report.
-    pub(crate) async fn write_markdown_report(&self, report_file: File) -> Result<(), GooseError> {
-        let data = common::prepare_data(
-            ReportOptions {
-                no_transaction_metrics: self.configuration.no_transaction_metrics,
-                no_scenario_metrics: self.configuration.no_scenario_metrics,
-                no_status_codes: self.configuration.no_status_codes,
-            },
-            &self.metrics,
-        );
+    /// Write PDF-optimized HTML if the --pdf-print-html option is configured.
+    /// This functionality is always available regardless of feature flags.
+    async fn write_print_html_if_configured(&self) -> Result<(), GooseError> {
+        if !self.configuration.pdf_print_html.is_empty() {
+            use crate::report::print::generate_print_optimized_html_content;
+            use tokio::fs as async_fs;
 
-        report::write_markdown_report(&mut BufWriter::new(report_file.into_std().await), data)
+            // Generate HTML report content
+            let html_report = self.generate_html_report_content();
+
+            // Add print-optimized CSS using the shared function
+            let print_optimized_html = generate_print_optimized_html_content(&html_report);
+
+            // Write the PDF-optimized HTML to file
+            if let Err(e) =
+                async_fs::write(&self.configuration.pdf_print_html, &print_optimized_html).await
+            {
+                return Err(GooseError::InvalidOption {
+                    option: "--pdf-print-html".to_string(),
+                    value: self.configuration.pdf_print_html.clone(),
+                    detail: format!("Failed to write PDF-optimized HTML: {e}"),
+                });
+            }
+
+            info!(
+                "PDF-optimized HTML saved to: {}",
+                self.configuration.pdf_print_html
+            );
+        }
+
+        Ok(())
     }
 
-    // Write an HTML-formatted report.
-    pub(crate) async fn write_html_report(
-        &self,
-        mut report_file: File,
-        path: &str,
-    ) -> Result<(), GooseError> {
-        // Only write the report if enabled.
-
+    /// Generate HTML report content that can be used for both HTML and PDF reports.
+    /// Returns the complete HTML content as a string.
+    fn generate_html_report_content(&self) -> String {
         let test_start_time = self.metrics.history.first().unwrap().timestamp;
 
         // Prepare report summary variables.
@@ -3344,8 +3363,8 @@ impl GooseAttack {
             })
             .unwrap_or_default();
 
-        // Compile the report template.
-        let report = report::build_report(
+        // Compile and return the report template.
+        report::build_report(
             &users,
             &steps_overview,
             hosts,
@@ -3372,7 +3391,47 @@ impl GooseAttack {
                     .get_markup(&self.metrics.history, test_start_time),
                 co_metrics_template: &co_metrics_template,
             },
+        )
+    }
+
+    /// Write a JSON report.
+    pub(crate) async fn write_json_report(&self, report_file: File) -> Result<(), GooseError> {
+        let data = common::prepare_data(
+            ReportOptions {
+                no_transaction_metrics: self.configuration.no_transaction_metrics,
+                no_scenario_metrics: self.configuration.no_scenario_metrics,
+                no_status_codes: self.configuration.no_status_codes,
+            },
+            &self.metrics,
         );
+
+        serde_json::to_writer_pretty(BufWriter::new(report_file.into_std().await), &data)?;
+
+        Ok(())
+    }
+
+    /// Write a Markdown report.
+    pub(crate) async fn write_markdown_report(&self, report_file: File) -> Result<(), GooseError> {
+        let data = common::prepare_data(
+            ReportOptions {
+                no_transaction_metrics: self.configuration.no_transaction_metrics,
+                no_scenario_metrics: self.configuration.no_scenario_metrics,
+                no_status_codes: self.configuration.no_status_codes,
+            },
+            &self.metrics,
+        );
+
+        report::write_markdown_report(&mut BufWriter::new(report_file.into_std().await), data)
+    }
+
+    // Write an HTML-formatted report.
+    pub(crate) async fn write_html_report(
+        &self,
+        mut report_file: File,
+        path: &str,
+    ) -> Result<(), GooseError> {
+        // Generate HTML report content using the shared function
+        let report = self.generate_html_report_content();
 
         // Write the report to file.
         if let Err(e) = report_file.write_all(report.as_ref()).await {
@@ -3388,6 +3447,72 @@ impl GooseAttack {
         info!("html report file written to: {path}");
 
         Ok(())
+    }
+
+    /// Write a PDF report.
+    #[cfg(feature = "pdf-reports")]
+    pub(crate) async fn write_pdf_report(
+        &self,
+        _report_file: File,
+        path: &str,
+    ) -> Result<(), GooseError> {
+        use crate::report::pdf::generate_pdf_from_html;
+        use crate::report::print::generate_print_optimized_html_content;
+        use std::path::Path;
+        use tokio::fs as async_fs;
+
+        // Generate HTML report content using the shared function
+        let html_report = self.generate_html_report_content();
+
+        // Add print-optimized CSS for better PDF output using the shared function
+        let print_optimized_html = generate_print_optimized_html_content(&html_report);
+
+        // If pdf_print_html is configured, save the PDF-optimized HTML for debugging
+        if !self.configuration.pdf_print_html.is_empty() {
+            if let Err(e) =
+                async_fs::write(&self.configuration.pdf_print_html, &print_optimized_html).await
+            {
+                return Err(GooseError::InvalidOption {
+                    option: "--pdf-print-html".to_string(),
+                    value: self.configuration.pdf_print_html.clone(),
+                    detail: format!("Failed to write PDF-optimized HTML: {e}"),
+                });
+            }
+            info!(
+                "PDF-optimized HTML saved to: {}",
+                self.configuration.pdf_print_html
+            );
+        }
+
+        // Generate PDF from HTML using the configurable timeout and scale
+        generate_pdf_from_html(
+            &print_optimized_html,
+            Path::new(path),
+            self.configuration.pdf_scale,
+            self.configuration.verbose > 0,
+            self.configuration.pdf_timeout,
+        )?;
+
+        info!("pdf report file written to: {path}");
+
+        Ok(())
+    }
+
+    /// Write a PDF report (feature not enabled).
+    #[cfg(not(feature = "pdf-reports"))]
+    #[allow(dead_code)]
+    pub(crate) async fn write_pdf_report(
+        &self,
+        _report_file: File,
+        path: &str,
+    ) -> Result<(), GooseError> {
+        // This should never be called when pdf_reports_enabled is true, as the validation
+        // in process_reports should have already handled that case
+        Err(GooseError::InvalidOption {
+            option: "--report-file".to_string(),
+            value: path.to_string(),
+            detail: "PDF reports require compiling with the 'pdf-reports' feature flag".to_string(),
+        })
     }
 }
 

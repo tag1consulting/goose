@@ -183,11 +183,25 @@
 //! [`GooseDefault::NoDebugBody`](../config/enum.GooseDefault.html#variant.NoDebugBody) default
 //! configuration option. The debug logger will still record any custom messages, details
 //! about the request (when available), and all server response headers (when available).
+//!
+//! ## Thread Safety Considerations
+//!
+//! The `ScopedLogLevel` provides thread-safe temporary log level changes using a global mutex.
+//! This is necessary because Rust's `log::set_max_level()` modifies global state, and we need
+//! to temporarily suppress verbose Chromium logging during PDF generation.
+//!
+//! ### Mutex Poisoning
+//!
+//! If a thread panics while holding the log level mutex, the mutex becomes "poisoned".
+//! The current implementation fails fast when this occurs to expose potential threading
+//! issues rather than masking them.
 
+use log::LevelFilter;
 use regex::RegexSet;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::str::FromStr;
+use std::sync::Mutex;
 use tokio::fs::File;
 use tokio::io::{AsyncWriteExt, BufWriter};
 
@@ -195,6 +209,56 @@ use crate::config::{GooseConfigure, GooseValue};
 use crate::goose::GooseDebug;
 use crate::metrics::{GooseErrorMetric, GooseRequestMetric, ScenarioMetric, TransactionMetric};
 use crate::{GooseConfiguration, GooseDefaults, GooseError};
+
+/// A thread-safe scoped log level guard that changes the global log level for its lifetime
+/// and restores the previous level when dropped. Uses a mutex to prevent race conditions
+/// when multiple threads attempt to change log levels simultaneously.
+pub struct ScopedLogLevel {
+    previous_level: LevelFilter,
+    _guard: std::sync::MutexGuard<'static, ()>,
+}
+
+// Static mutex to synchronize access to global log level changes
+static LOG_LEVEL_MUTEX: Mutex<()> = Mutex::new(());
+
+impl ScopedLogLevel {
+    /// Create a new thread-safe scoped log level guard, changing the global log level
+    /// to the specified level and storing the previous level for restoration.
+    ///
+    /// This method acquires a mutex lock to ensure thread-safe access to the global
+    /// log level, preventing race conditions if multiple threads generate PDF reports
+    /// or perform other operations that require temporary log level changes.
+    ///
+    /// # Errors
+    ///
+    /// Returns `GooseError::InvalidOption` if the internal logging mutex is poisoned,
+    /// indicating a concurrency issue that should not be masked.
+    pub fn new(level: LevelFilter) -> Result<Self, GooseError> {
+        // Acquire the mutex lock to ensure exclusive access to global log level
+        let guard = LOG_LEVEL_MUTEX.lock().map_err(|_| GooseError::InvalidOption {
+            option: "--pdf (internal logging)".to_string(),
+            value: "mutex_poisoned".to_string(),
+            detail: "Thread safety violation in logging system: mutex poisoned due to concurrent thread panic. This indicates a serious concurrency bug that requires investigation.".to_string(),
+        })?;
+
+        let previous_level = log::max_level();
+        log::set_max_level(level);
+
+        Ok(Self {
+            previous_level,
+            _guard: guard,
+        })
+    }
+}
+
+impl Drop for ScopedLogLevel {
+    /// Restore the previous log level when the guard is dropped.
+    /// The mutex guard is automatically released when this struct is dropped.
+    fn drop(&mut self) {
+        log::set_max_level(self.previous_level);
+        // The mutex guard (_guard) is automatically dropped here, releasing the lock
+    }
+}
 
 /// Optional unbounded receiver for logger thread, if debug logger is enabled.
 pub(crate) type GooseLoggerJoinHandle =
