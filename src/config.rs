@@ -117,7 +117,7 @@ pub struct GooseConfiguration {
     #[cfg(feature = "pdf-reports")]
     #[options(no_short, meta = "SCALE", default = "0.8")]
     pub pdf_scale: f64,
-    /// Chrome timeout for PDF gen (10-300s)
+    /// PDF generation timeout (10-600s)  
     #[cfg(feature = "pdf-reports")]
     #[options(no_short, meta = "SECONDS", default = "60")]
     pub pdf_timeout: u64,
@@ -352,6 +352,9 @@ pub(crate) struct GooseDefaults {
     pub websocket_port: Option<u16>,
     /// An optional default for not validating https certificates.
     pub accept_invalid_certs: Option<bool>,
+    /// An optional default for PDF generation timeout (seconds).
+    #[cfg(feature = "pdf-reports")]
+    pub pdf_timeout: Option<u64>,
 }
 
 /// Defines all [`GooseConfiguration`] options that can be programmatically configured with
@@ -454,9 +457,9 @@ pub enum GooseDefault {
     WebSocketPort,
     /// An optional default for not validating https certificates.
     AcceptInvalidCerts,
-    /// An optional default for Chrome timeout in PDF generation (seconds).
+    /// An optional default for PDF generation timeout (seconds).
     #[cfg(feature = "pdf-reports")]
-    PdfChromeTimeout,
+    PdfTimeout,
 }
 
 /// Most run-time options can be programmatically configured with custom defaults.
@@ -667,7 +670,7 @@ impl GooseDefaultType<&str> for GooseAttack {
                 });
             }
             #[cfg(feature = "pdf-reports")]
-            GooseDefault::PdfChromeTimeout => {
+            GooseDefault::PdfTimeout => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: value.to_string(),
@@ -696,14 +699,8 @@ impl GooseDefaultType<usize> for GooseAttack {
             GooseDefault::TelnetPort => self.defaults.telnet_port = Some(value as u16),
             GooseDefault::WebSocketPort => self.defaults.websocket_port = Some(value as u16),
             #[cfg(feature = "pdf-reports")]
-            GooseDefault::PdfChromeTimeout => {
-                // Note: We'll need to add this field to GooseDefaults struct
-                // For now, we'll return an error indicating this needs implementation
-                return Err(GooseError::InvalidOption {
-                    option: format!("GooseDefault::{key:?}"),
-                    value: format!("{value}"),
-                    detail: "PdfChromeTimeout default support not yet implemented in GooseDefaults struct".to_string(),
-                });
+            GooseDefault::PdfTimeout => {
+                self.defaults.pdf_timeout = Some(value as u64)
             }
             // Otherwise display a helpful and explicit error.
             GooseDefault::DebugLog
@@ -770,7 +767,7 @@ impl GooseDefaultType<usize> for GooseAttack {
                     option: format!("GooseDefault::{key:?}"),
                     value: format!("{value:?}"),
                     detail: format!(
-                        "set_default(GooseDefault::{key:?}, {value:?}) expected GooseCoordinatedOmissionMitigation value, received GooseCoordinatedOmissionMitigation"
+                        "set_default(GooseDefault::{key:?}, {value:?}) expected GooseCoordinatedOmissionMitigation value, received usize"
                     ),
                 })
             }
@@ -865,7 +862,7 @@ impl GooseDefaultType<bool> for GooseAttack {
                 });
             }
             #[cfg(feature = "pdf-reports")]
-            GooseDefault::PdfChromeTimeout => {
+            GooseDefault::PdfTimeout => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: value.to_string(),
@@ -969,7 +966,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
                 })
             }
             #[cfg(feature = "pdf-reports")]
-            GooseDefault::PdfChromeTimeout => {
+            GooseDefault::PdfTimeout => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: format!("{value:?}"),
@@ -1073,7 +1070,7 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
                 })
             }
             #[cfg(feature = "pdf-reports")]
-            GooseDefault::PdfChromeTimeout => {
+            GooseDefault::PdfTimeout => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: format!("{value:?}"),
@@ -1106,6 +1103,24 @@ pub(crate) trait GooseConfigure<T> {
 impl GooseConfigure<usize> for GooseConfiguration {
     /// Use [`GooseValue`] to set a [`usize`] value.
     fn get_value(&self, values: Vec<GooseValue<usize>>) -> Option<usize> {
+        for value in values {
+            if let Some(v) = value.value {
+                if value.filter {
+                    continue;
+                } else {
+                    if !value.message.is_empty() {
+                        info!("{} = {}", value.message, v)
+                    }
+                    return Some(v);
+                }
+            }
+        }
+        None
+    }
+}
+impl GooseConfigure<u64> for GooseConfiguration {
+    /// Use [`GooseValue`] to set a [`u64`] value.
+    fn get_value(&self, values: Vec<GooseValue<u64>>) -> Option<u64> {
         for value in values {
             if let Some(v) = value.value {
                 if value.filter {
@@ -1884,6 +1899,27 @@ impl GooseConfiguration {
                 },
             ])
             .unwrap_or(false);
+
+        // Configure `pdf_timeout` when PDF reports feature is enabled.
+        #[cfg(feature = "pdf-reports")]
+        {
+            self.pdf_timeout = self
+                .get_value(vec![
+                    // Use --pdf-timeout if set.
+                    GooseValue {
+                        value: Some(self.pdf_timeout),
+                        filter: self.pdf_timeout == 60, // 60 is the default value from gumdrop
+                        message: "pdf_timeout",
+                    },
+                    // Otherwise use GooseDefault if set.
+                    GooseValue {
+                        value: defaults.pdf_timeout,
+                        filter: defaults.pdf_timeout.is_none(),
+                        message: "pdf_timeout",
+                    },
+                ])
+                .unwrap_or(60);
+        }
     }
 
     /// Validate configured [`GooseConfiguration`] values.
@@ -2197,14 +2233,14 @@ impl GooseConfiguration {
             });
         }
 
-        // Chrome timeout validation when feature is available
+        // PDF generation timeout validation when feature is available
         #[cfg(feature = "pdf-reports")]
-        if has_pdf_reports && (self.pdf_timeout < 10 || self.pdf_timeout > 300) {
+        if has_pdf_reports && (self.pdf_timeout < 10 || self.pdf_timeout > 600) {
             return Err(GooseError::InvalidOption {
                 option: "`configuration.pdf_timeout`".to_string(),
                 value: self.pdf_timeout.to_string(),
                 detail:
-                    "`configuration.pdf_timeout` must be between 10 and 300 seconds (inclusive)."
+                    "`configuration.pdf_timeout` must be between 10 and 600 seconds (inclusive)."
                         .to_string(),
             });
         }
