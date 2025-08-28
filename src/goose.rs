@@ -293,13 +293,12 @@
 use downcast_rs::{impl_downcast, Downcast};
 use regex::Regex;
 use reqwest::{header, Client, ClientBuilder, Method, RequestBuilder, Response};
-use serde::{Deserialize, Serialize};
-use std::borrow::Cow;
-use std::fmt::{Debug, Formatter};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::fmt::{self, Debug, Formatter};
 use std::hash::{Hash, Hasher};
+use std::str;
 use std::sync::Arc;
 use std::time::Duration;
-use std::{fmt, str};
 use std::{future::Future, pin::Pin, time::Instant};
 use url::Url;
 
@@ -481,7 +480,7 @@ impl From<flume::SendError<Option<GooseLog>>> for TransactionError {
 #[derive(Clone, Hash)]
 pub struct Scenario {
     /// The name of the scenario.
-    pub name: String,
+    pub name: Arc<str>,
     /// Auto-generated machine name of the scenario.
     pub machine_name: String,
     /// An integer reflecting where this scenario lives in the internal
@@ -524,7 +523,7 @@ impl Scenario {
     pub fn new(name: &str) -> Self {
         trace!("new scenario: name: {}", &name);
         Scenario {
-            name: name.to_string(),
+            name: Arc::from(name),
             machine_name: Scenario::get_machine_name(name),
             scenarios_index: usize::MAX,
             weight: 1,
@@ -2927,10 +2926,56 @@ pub type TransactionFunction = Arc<
         + Sync,
 >;
 
-#[derive(Clone, Deserialize, Serialize, Hash, PartialEq, Eq, Debug)]
+#[derive(Clone, Hash, PartialEq, Eq, Debug)]
 pub enum TransactionName {
-    InheritNameByRequests(Cow<'static, str>),
-    TransactionOnly(Cow<'static, str>),
+    InheritNameByRequests(Arc<str>),
+    TransactionOnly(Arc<str>),
+}
+
+impl Serialize for TransactionName {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            TransactionName::InheritNameByRequests(s) => serializer.serialize_newtype_variant(
+                "TransactionName",
+                0,
+                "InheritNameByRequests",
+                s.as_ref(),
+            ),
+            TransactionName::TransactionOnly(s) => serializer.serialize_newtype_variant(
+                "TransactionName",
+                1,
+                "TransactionOnly",
+                s.as_ref(),
+            ),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for TransactionName {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename = "TransactionName")]
+        enum TransactionNameHelper {
+            InheritNameByRequests(String),
+            TransactionOnly(String),
+        }
+
+        let helper = TransactionNameHelper::deserialize(deserializer)?;
+        Ok(match helper {
+            TransactionNameHelper::InheritNameByRequests(s) => {
+                TransactionName::InheritNameByRequests(Arc::from(s.as_str()))
+            }
+            TransactionNameHelper::TransactionOnly(s) => {
+                TransactionName::TransactionOnly(Arc::from(s.as_str()))
+            }
+        })
+    }
 }
 
 impl TransactionName {
@@ -2947,7 +2992,7 @@ impl TransactionName {
         }
     }
     pub fn default_value() -> Self {
-        Self::TransactionOnly(Cow::Borrowed(""))
+        Self::TransactionOnly(Arc::from(""))
     }
 }
 
@@ -3006,7 +3051,7 @@ impl Transaction {
     /// ```
     pub fn set_name(mut self, name: &str) -> Self {
         trace!("[{}] set_name: {}", self.transactions_index, name);
-        self.name = TransactionName::TransactionOnly(Cow::Owned(name.to_string()));
+        self.name = TransactionName::TransactionOnly(Arc::from(name));
         self
     }
 
@@ -3034,7 +3079,7 @@ impl Transaction {
             self.transactions_index,
             name
         );
-        self.name = TransactionName::InheritNameByRequests(Cow::Owned(name.to_string()));
+        self.name = TransactionName::InheritNameByRequests(Arc::from(name));
         self
     }
 
@@ -3274,7 +3319,7 @@ mod tests {
         }
 
         let mut scenario = scenario!("foo");
-        assert_eq!(scenario.name, "foo");
+        assert_eq!(scenario.name.as_ref(), "foo");
         assert_eq!(scenario.scenarios_index, usize::MAX);
         assert_eq!(scenario.weight, 1);
         assert_eq!(scenario.transaction_wait, None);
@@ -3523,7 +3568,7 @@ mod tests {
         let status = goose.response.unwrap().status();
         assert_eq!(status, 200);
         assert_eq!(goose.request.raw.method, GooseMethod::Get);
-        assert_eq!(goose.request.name, INDEX_PATH);
+        assert_eq!(goose.request.name, INDEX_PATH.into());
         assert!(goose.request.success);
         assert!(!goose.request.update);
         assert_eq!(goose.request.status_code, 200);
@@ -3545,7 +3590,7 @@ mod tests {
         let status = goose.response.unwrap().status();
         assert_eq!(status, 404);
         assert_eq!(goose.request.raw.method, GooseMethod::Get);
-        assert_eq!(goose.request.name, NO_SUCH_PATH);
+        assert_eq!(goose.request.name, NO_SUCH_PATH.into());
         assert!(!goose.request.success);
         assert!(!goose.request.update);
         assert_eq!(goose.request.status_code, 404,);
@@ -3662,7 +3707,7 @@ mod tests {
             GooseUser::single("http://localhost:8080".parse().unwrap(), &configuration).unwrap();
 
         // Test 1: TransactionOnly variant should NOT use transaction name for requests
-        user.transaction_name = Some(TransactionName::TransactionOnly(Cow::Borrowed(
+        user.transaction_name = Some(TransactionName::TransactionOnly(Arc::from(
             "my_transaction",
         )));
 
@@ -3677,7 +3722,7 @@ mod tests {
         );
 
         // Test 2: InheritNameByRequests variant SHOULD use transaction name for requests
-        user.transaction_name = Some(TransactionName::InheritNameByRequests(Cow::Borrowed(
+        user.transaction_name = Some(TransactionName::InheritNameByRequests(Arc::from(
             "inherited_name",
         )));
 
