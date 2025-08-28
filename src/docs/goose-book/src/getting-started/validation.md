@@ -1,5 +1,67 @@
 # Validating Requests
 
+## Error Handling
+
+Goose transactions can return various types of errors through the `TransactionError` enum. Understanding these error types helps with debugging and writing robust load tests.
+
+### Transaction Error Types
+
+Goose supports several built-in error types that are automatically handled:
+
+- **`TransactionError::Custom`** - User-defined errors for business logic validation
+- **`TransactionError::InvalidMethod`** - Unsupported HTTP methods
+- **`TransactionError::LoggerFailed`** - Errors sending log messages to the logger thread
+- **`TransactionError::MetricsFailed`** - Errors sending metrics to the parent thread
+- **`TransactionError::RequestCanceled`** - Requests canceled when throttling is enabled and the test ends
+- **`TransactionError::RequestFailed`** - Requests that fail validation or return unexpected status codes
+- **`TransactionError::Reqwest`** - Network and HTTP client errors (connection failures, timeouts, etc.)
+- **`TransactionError::Url`** - URL parsing errors when building requests
+
+### Custom Error Handling
+
+The `TransactionError::Custom` variant provides flexible error handling, allowing you to easily return custom errors from your transaction functions using string literals or `String` objects.
+
+#### Using String Literals
+
+You can return custom errors directly using string literals:
+
+```rust
+use goose::prelude::*;
+
+async fn validate_response(user: &mut GooseUser) -> TransactionResult {
+    let response = user.get("/api/data").await?;
+    let response_data = response.response?;
+    let text = response_data.text().await?;
+
+    if !text.contains("expected_content") {
+        return Err("Missing expected content in response".into());
+    }
+
+    Ok(())
+}
+```
+
+#### Using Formatted Strings
+
+For more dynamic error messages, you can use formatted strings:
+
+```rust
+use goose::prelude::*;
+
+async fn business_logic_check(user: &mut GooseUser) -> TransactionResult {
+    let response = user.post("/login", "").await?;
+    let response_data = response.response?;
+
+    if !response_data.status().is_success() {
+        return Err(format!("Login failed with status: {}", response_data.status()).into());
+    }
+
+    Ok(())
+}
+```
+
+Custom errors are tracked in Goose metrics and visible in error logs, making it easy to identify validation failures and other business logic issues in your load tests.
+
 ## Goose Eggs
 [Goose-eggs](https://github.com/tag1consulting/goose-eggs) are helpful in writing Goose load tests.
 

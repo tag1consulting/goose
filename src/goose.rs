@@ -345,6 +345,19 @@ pub enum TransactionError {
     Reqwest(reqwest::Error),
     /// Wraps a [`url::ParseError`](https://docs.rs/url/*/url/enum.ParseError.html).
     Url(url::ParseError),
+    /// A generic, custom error for cases where the [`TransactionFunction`] cannot use any of the standard error types.
+    ///
+    /// # Examples
+    /// ```rust
+    /// use goose::goose::TransactionError;
+    ///
+    /// // Direct creation
+    /// let error = TransactionError::Custom("User validation failed".to_string());
+    ///
+    /// // Using From<&str> (most convenient)
+    /// let error: TransactionError = "Database connection timeout".into();
+    /// ```
+    Custom(String),
     /// The request failed.
     RequestFailed {
         /// The [`GooseRequestMetric`](./struct.GooseRequestMetric.html) that failed.
@@ -381,6 +394,7 @@ impl TransactionError {
         match *self {
             TransactionError::Reqwest(_) => "reqwest::Error",
             TransactionError::Url(_) => "url::ParseError",
+            TransactionError::Custom(_) => "custom error",
             TransactionError::RequestFailed { .. } => "request failed",
             TransactionError::RequestCanceled { .. } => {
                 "request canceled because throttled load test ended"
@@ -411,6 +425,9 @@ impl fmt::Display for TransactionError {
             }
             TransactionError::LoggerFailed { ref source } => {
                 write!(f, "TransactionError: {} ({})", self.describe(), source)
+            }
+            TransactionError::Custom(ref message) => {
+                write!(f, "TransactionError: {} ({})", self.describe(), message)
             }
             _ => write!(f, "TransactionError: {}", self.describe()),
         }
@@ -474,6 +491,34 @@ impl From<flume::SendError<GooseMetric>> for TransactionError {
 impl From<flume::SendError<Option<GooseLog>>> for TransactionError {
     fn from(source: flume::SendError<Option<GooseLog>>) -> TransactionError {
         TransactionError::LoggerFailed { source }
+    }
+}
+
+/// Auto-convert String errors to Custom TransactionError.
+impl From<String> for TransactionError {
+    fn from(err: String) -> TransactionError {
+        TransactionError::Custom(err)
+    }
+}
+
+/// Auto-convert &str errors to Custom TransactionError.
+impl From<&str> for TransactionError {
+    fn from(err: &str) -> TransactionError {
+        TransactionError::Custom(err.to_string())
+    }
+}
+
+/// Auto-convert String errors to boxed TransactionError.
+impl From<String> for Box<TransactionError> {
+    fn from(value: String) -> Self {
+        Box::new(TransactionError::Custom(value))
+    }
+}
+
+/// Auto-convert &str errors to boxed TransactionError.
+impl From<&str> for Box<TransactionError> {
+    fn from(value: &str) -> Self {
+        Box::new(TransactionError::Custom(value.to_string()))
     }
 }
 
@@ -1592,6 +1637,37 @@ impl GooseUser {
     ///
     ///     // Finally make the actual request with our custom GooseRequest object.
     ///     let _goose = user.request(goose_request).await?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
+    /// ```rust
+    /// use goose::prelude::*;
+    ///
+    /// async fn validate_response(user: &mut GooseUser) -> TransactionResult {
+    ///     let response = user.get("/api/data").await?;
+    ///     let response_data = response.response?;
+    ///     let text = response_data.text().await?;
+    ///
+    ///     if !text.contains("expected_content") {
+    ///         return Err("Missing expected content in response".into());
+    ///     }
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
+    /// ```rust
+    /// use goose::prelude::*;
+    ///
+    /// async fn business_logic_check(user: &mut GooseUser) -> TransactionResult {
+    ///     let response = user.post("/login", "").await?;
+    ///     let response_data = response.response?;
+    ///
+    ///     if !response_data.status().is_success() {
+    ///         return Err(format!("Login failed with status: {}", response_data.status()).into());
+    ///     }
     ///
     ///     Ok(())
     /// }
