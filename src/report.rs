@@ -1,6 +1,10 @@
 //! Optionally writes an html-formatted summary report after running a load test.
 mod common;
 mod markdown;
+pub mod print;
+
+#[cfg(feature = "pdf-reports")]
+pub mod pdf;
 
 pub(crate) use markdown::write_markdown_report;
 

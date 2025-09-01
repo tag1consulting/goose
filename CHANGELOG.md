@@ -7,6 +7,7 @@
     o users requiring the old behavior must switch to `set_name_for_transaction_and_requests()`
     o introduces `TransactionName` enum with `TransactionOnly` and `InheritNameByRequests` variants
  - [#578](https://github.com/tag1consulting/goose/pull/578) add type-safe client builder for cookie configuration, optimize startup with shared clients
+ - [#629](https://github.com/tag1consulting/goose/pull/629) add `--pdf-print-html` option to generate printer-friendly HTML optimized for PDF conversion; provides two-step PDF workflow without requiring Chromium dependencies; add `--pdf-timeout` option for configurable Chrome timeout in direct PDF generation (10-300s, default: 60)
 
 ## 0.18.1 August 14, 2025
  - [#634](https://github.com/tag1consulting/goose/pull/634) add killswitch mechanism for programmatic test termination
@@ -25,6 +26,7 @@
  - [#574](https://github.com/tag1consulting/goose/pull/574) update [`http`](https://docs.rs/http), [`itertools`](https://docs.rs/itertools) [`nix`](https://docs.rs/nix), [`rustls`](https://docs.rs/rustls/), and [`serial_test`](https://docs.rs/serial_test)
  - [#575](https://github.com/tag1consulting/goose/pull/575) add test coverage for sessions and cookies, revert [#557](https://github.com/tag1consulting/goose/pull/557) to avoid sharing the CookieJar between all users
  - [#600](https://github.com/tag1consulting/goose/pull/600) Refactor reports/metrics, add JSON and markdown report
+ - [#629](https://github.com/tag1consulting/goose/pull/629) add optional PDF report generation with `pdf-reports` feature flag; supports configurable scale via `--pdf-scale` option
 
 ## 0.17.2 August 28, 2023
  - [#557](https://github.com/tag1consulting/goose/pull/557) speed up user initialization on Linux

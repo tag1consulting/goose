@@ -289,12 +289,26 @@ All 9 users hatched.
  ------------------------------------------------------------------------------
 ```
 
-## Metrics reports
-In addition to the above metrics displayed on the CLI, we've also told Goose to create reports on other formats, like Markdown, JSON, or HTML.
+## Report Formats
 
-It is possible to create one or more reports at the same time, using one or more `--report-file` arguments. The type of report is chosen by the file extension. An unsupported file extension will lead to an error.
+In addition to the metrics displayed on the CLI, Goose can generate detailed reports in multiple formats. Each format serves different use cases:
 
-The following subsections describe the reports on more detail.
+- **HTML** - Interactive reports with charts and detailed visualizations
+- **JSON** - Machine-readable data for automated analysis and integration
+- **Markdown** - Text-based reports suitable for documentation and version control
+- **PDF** - Portable reports optimized for printing and sharing (requires `pdf-reports` feature)
+
+You can generate multiple report formats simultaneously by using multiple `--report-file` arguments. The report type is determined by the file extension:
+
+```bash
+# Generate multiple report formats at once
+cargo run --example simple -- \
+  --report-file report.html \
+  --report-file metrics.json \
+  --report-file summary.md
+```
+
+The following subsections describe each report format in detail.
 
 ### HTML report
 
@@ -349,6 +363,101 @@ The Markdown report follows the structure of the [HTML report](#html-report). Ho
 ### JSON report
 
 The JSON report is a dump of the internal metrics collection. It is a JSON serialization of the `ReportData` structure. Mainly having a field named `raw_metrics`, carrying the content of [`GooseMetrics`](https://docs.rs/goose/latest/goose/metrics/struct.GooseMetrics.html).
+
+### PDF Reports
+
+Goose provides two approaches for creating PDF reports from your load test results:
+
+1. **Two-step process**: Generate printer-friendly HTML first, then convert to PDF manually
+2. **Integrated approach**: Generate PDF reports directly (requires additional dependencies)
+
+#### Printer-Friendly HTML (Two-Step Process)
+
+For users who want control over PDF generation or prefer to avoid additional dependencies, Goose can generate HTML reports optimized for printing and PDF conversion:
+
+```bash
+# Generate printer-friendly HTML
+cargo run --example simple -- --pdf-print-html print-ready.html
+
+# Then convert to PDF using your preferred tool:
+# - Browser: Open print-ready.html and use "Print to PDF"
+# - wkhtmltopdf: wkhtmltopdf print-ready.html report.pdf
+# - Puppeteer: Custom script to convert HTML to PDF
+# - Chrome headless: chrome --headless --print-to-pdf=report.pdf print-ready.html
+```
+
+The `--pdf-print-html` option creates HTML with specialized CSS optimizations:
+- Single-page layout optimized for printing
+- Print-specific styling for clean presentation
+- Proper page break handling for tables and sections
+- Enhanced typography for improved readability
+- All content consolidated on a single page
+
+This approach is always available and doesn't require any additional feature flags or dependencies.
+
+#### Direct PDF Generation (Integrated Approach)
+
+For automated PDF generation, Goose can create PDF reports directly using headless Chrome. This requires compilation with the `pdf-reports` feature flag:
+
+```bash
+# Build Goose with PDF support
+cargo build --features pdf-reports
+```
+
+#### System Requirements
+
+PDF generation uses headless Chrome to convert HTML reports to PDF format. The system requirements are:
+
+- Chrome or Chromium browser (automatically downloaded if not available)
+- Sufficient disk space for Chrome download (~120MB on first use)
+- Network connectivity for initial Chrome download
+- Write permissions for the output directory
+
+The first time you generate a PDF report, the system will automatically download and configure Chrome if it's not already available. This download may take a few minutes but only needs to happen once.
+
+#### Generating PDF Reports
+
+Once compiled with PDF support, generate PDF reports using the `--report-file` option with a `.pdf` extension:
+
+```bash
+# Generate only a PDF report
+cargo run --features pdf-reports --example simple -- --report-file report.pdf
+
+# Generate both HTML and PDF reports
+cargo run --features pdf-reports --example simple -- --report-file report.html --report-file report.pdf
+
+# Generate PDF with custom scaling and timeout
+cargo run --features pdf-reports --example simple -- --report-file report.pdf --pdf-scale 1.2 --pdf-timeout 120
+```
+
+#### Configuration Options
+
+- `--pdf-scale <FACTOR>`: Scale factor for PDF content (0.1-2.0, default: 0.8). Higher values create larger text and elements.
+- `--pdf-timeout <SECONDS>`: Chrome timeout for PDF generation (10-300s, default: 60). Controls how long to wait for Chrome operations during PDF creation.
+
+#### PDF Optimizations
+
+PDF reports include several enhancements for better print output:
+- Print-specific CSS styling for clean presentation
+- Optimized page layout preventing awkward content breaks
+- Automatically calculated page dimensions based on content
+- Enhanced typography for improved readability
+
+#### Troubleshooting PDF Generation
+
+If you encounter issues generating PDF reports:
+
+**Chrome-related problems:**
+- Ensure stable internet connection for Chrome download
+- Verify sufficient disk space (~120MB required)
+- Check network permissions (corporate firewalls may block downloads)
+- Try verbose logging: `cargo run --features pdf-reports -- --report-file report.pdf -v`
+
+**PDF generation failures:**
+- Confirm write permissions in the output directory
+- Use absolute paths if relative paths cause issues
+- Ensure sufficient system memory (Chrome requires additional RAM)
+- Check that no other Chrome processes are interfering
 
 ### Developer documentation
 Additional details about how metrics are collected, stored, and displayed can be found [in the developer documentation](https://docs.rs/goose/*/goose/metrics/index.html).

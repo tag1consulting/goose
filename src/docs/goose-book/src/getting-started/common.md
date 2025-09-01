@@ -105,3 +105,12 @@ _Write a Markdown and an HTML-formatted report when the load test finishes._
 ```bash
 cargo run --release -- --report-file report.md --report-file report.html
 ```
+
+### Printer-friendly HTML report example
+_Write a printer-friendly HTML report optimized for PDF conversion._
+
+```bash
+cargo run --release -- --pdf-print-html print-report.html
+```
+
+The `--pdf-print-html` option generates an HTML file with print-optimized CSS styling that displays all content on a single page without interactive elements. This is perfect for converting to PDF using your browser's "Print to PDF" function or for printing on paper. The print-optimized HTML contains the same comprehensive metrics data as the regular HTML report, but formatted for optimal readability when printed or converted to PDF.
