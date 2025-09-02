@@ -120,7 +120,7 @@ impl ChromeSession {
         let process_id = browser.get_process_id();
 
         if let Some(pid) = process_id {
-            debug!("Chrome browser launched with process ID: {}", pid);
+            debug!("Chrome browser launched with process ID: {pid}");
         } else {
             debug!("Chrome browser launched (process ID not available)");
         }
@@ -151,9 +151,9 @@ impl Drop for ChromeSession {
         let elapsed = self.start_time.elapsed();
 
         if let Some(pid) = self.process_id {
-            debug!("Cleaning up Chrome process {} (ran for {:?})", pid, elapsed);
+            debug!("Cleaning up Chrome process {pid} (ran for {elapsed:?})");
         } else {
-            debug!("Cleaning up Chrome browser session (ran for {:?})", elapsed);
+            debug!("Cleaning up Chrome browser session (ran for {elapsed:?})");
         }
 
         // The Browser's Drop trait handles the actual process termination
