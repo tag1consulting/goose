@@ -105,7 +105,7 @@ pub fn trigger_killswitch(reason: &str) {
     match CANCELED.write() {
         Ok(mut canceled) => {
             if !*canceled {
-                info!("Killswitch triggered: {}", reason);
+                info!("Killswitch triggered: {reason}");
             }
             *canceled = true;
         }
@@ -113,7 +113,7 @@ pub fn trigger_killswitch(reason: &str) {
             // If the lock is poisoned, we can still write to it
             let mut canceled = poisoned.into_inner();
             if !*canceled {
-                info!("Killswitch triggered: {}", reason);
+                info!("Killswitch triggered: {reason}");
             }
             *canceled = true;
         }
