@@ -2781,6 +2781,10 @@ impl GooseAttack {
                         &self.defaults,
                     )?;
 
+                    // Reset graph data while preserving user count to maintain continuity
+                    self.graph_data
+                        .reset_preserving_users(Some(goose_attack_run_state.active_users));
+
                     // Restart the timer now that all threads are launched.
                     self.started = Some(std::time::Instant::now());
                 } else if goose_attack_run_state.active_users < users {
