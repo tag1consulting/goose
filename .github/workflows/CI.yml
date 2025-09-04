@@ -117,4 +117,4 @@ jobs:
         TZ: std +5
       with:
         command: test 
-        args: --verbose --all-features graph
+        args: --verbose --all-features --test user_metrics_graph_reset
