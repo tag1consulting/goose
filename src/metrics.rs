@@ -3307,10 +3307,7 @@ impl GooseAttack {
 
         let errors_template = errors
             .map(|errors| {
-                let error_rows = errors
-                    .iter()
-                    .map(|error| report::error_row(error))
-                    .join("\n");
+                let error_rows = errors.iter().map(report::error_row).join("\n");
 
                 report::errors_template(
                     &error_rows,
@@ -3373,21 +3370,18 @@ impl GooseAttack {
     ) -> Result<(), GooseError> {
         // Convert Option<&ReportData<'_>> to &Option<ReportData<'_>>
         // Since prepare_data_with_baseline expects &Option<ReportData<'_>>
-        let baseline_option = match baseline {
-            Some(baseline_data) => Some(ReportData {
-                raw_metrics: baseline_data.raw_metrics.clone(),
-                raw_request_metrics: baseline_data.raw_request_metrics.clone(),
-                raw_response_metrics: baseline_data.raw_response_metrics.clone(),
-                co_request_metrics: baseline_data.co_request_metrics.clone(),
-                co_response_metrics: baseline_data.co_response_metrics.clone(),
-                scenario_metrics: baseline_data.scenario_metrics.clone(),
-                transaction_metrics: baseline_data.transaction_metrics.clone(),
-                status_code_metrics: baseline_data.status_code_metrics.clone(),
-                errors: baseline_data.errors.clone(),
-                coordinated_omission_metrics: baseline_data.coordinated_omission_metrics.clone(),
-            }),
-            None => None,
-        };
+        let baseline_option = baseline.map(|baseline_data| ReportData {
+            raw_metrics: baseline_data.raw_metrics.clone(),
+            raw_request_metrics: baseline_data.raw_request_metrics.clone(),
+            raw_response_metrics: baseline_data.raw_response_metrics.clone(),
+            co_request_metrics: baseline_data.co_request_metrics.clone(),
+            co_response_metrics: baseline_data.co_response_metrics.clone(),
+            scenario_metrics: baseline_data.scenario_metrics.clone(),
+            transaction_metrics: baseline_data.transaction_metrics.clone(),
+            status_code_metrics: baseline_data.status_code_metrics.clone(),
+            errors: baseline_data.errors.clone(),
+            coordinated_omission_metrics: baseline_data.coordinated_omission_metrics.clone(),
+        });
 
         let data = common::prepare_data_with_baseline(
             ReportOptions {
