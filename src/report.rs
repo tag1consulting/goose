@@ -159,7 +159,7 @@ impl DeltaTo for ScenarioMetric {
 }
 
 /// Defines the metrics reported about status codes.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct StatusCodeMetric {
     pub method: String,
     pub name: String,
