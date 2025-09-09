@@ -2,6 +2,9 @@ use crate::metrics::NullableFloat;
 use num_format::{Format, ToFormattedString};
 use std::fmt::{Debug, Display, Formatter, Write};
 
+/// The absolute value of isize::MIN as usize, used for overflow protection in delta calculations.
+const ISIZE_MIN_ABS: usize = (isize::MIN as i128).unsigned_abs() as usize;
+
 /// A value that can be used to provide a delta
 ///
 /// As the actual value can be an unsigned type, we require an associated type which defines the
@@ -26,9 +29,7 @@ impl DeltaValue for usize {
         } else {
             // the result will be negative, we will calculate the absolute value of that...
             let delta = value - self;
-            if delta > 9223372036854775808
-            /* the absolute value of isize::MIN as usize */
-            {
+            if delta > ISIZE_MIN_ABS {
                 // ... which is too big to fit into the negative space of isize, so we limit to isize::MIN
                 isize::MIN
             } else {
