@@ -471,5 +471,5 @@ To use this, you will need to:
 * Create a baseline report by running it at least once using `--report-file report.json`
 * Then start adding `--baseline-file report.json` to later runs
 
-It is possible to still keep generating a JSON report at the same time as using a baseline file. So that you can
+It is possible generate a new JSON report at the same time as using a baseline file, allowing you to
 create the next basefile in the same step.

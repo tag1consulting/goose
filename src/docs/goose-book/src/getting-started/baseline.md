@@ -8,7 +8,7 @@ The baseline feature enables you to:
 - Compare current test results against historical data
 - Generate delta reports showing performance differences
 - Validate baseline files for compatibility
-- Support multiple report formats (HTML, Markdown, JSON) with baseline comparisons
+- Support multiple report formats (HTML, Markdown, JSON, PDF) with baseline comparisons
 
 ## Basic Usage
 
@@ -32,14 +32,14 @@ Once you have a baseline file, you can compare subsequent test runs against it:
 cargo run --release -- --host http://example.com/ --baseline-file baseline.json --report-file comparison.html
 ```
 
-**Important**: You must specify `--report-file` when using `--baseline-file`. Baseline comparisons are only generated in report files (HTML, JSON, or Markdown) - they do not appear in console output.
+**Important**: You must specify `--report-file` when using `--baseline-file`. Baseline comparisons are only generated in report files (HTML, JSON, Markdown, or PDF) - they do not appear in console output.
 
 ## Command Line Options
 
 The following command-line options control baseline functionality:
 
 - `--baseline-file <FILENAME>`: Specifies the baseline report file to compare against
-- `--report-file <FILENAME>`: Generates report files (supports .html, .htm, .md, .json extensions)
+- `--report-file <FILENAME>`: Generates report files (supports .html, .htm, .md, .json, .pdf extensions)
 
 You can combine baseline comparison with any of Goose's standard reporting options:
 
@@ -69,6 +69,10 @@ When using baseline comparison, reports include delta information showing:
 - **Absolute changes**: Direct numeric differences between current and baseline values
 - **Percentage changes**: Relative changes as percentages
 - **Performance indicators**: Visual indicators (arrows, colors) showing improvements or regressions
+
+The following image shows what baseline comparison looks like in the Request Metrics section when running multiple Umami Example load tests:
+
+![Baseline Request Metrics](baseline-request-metrics.png)
 
 ### Interpreting Results
 

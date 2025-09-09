@@ -1,5 +1,3 @@
->>>>>>> 4d8c565a (formatting cleanup)
- - **baseline comparison functionality**: compare current load test results against previously saved JSON reports to identify performance regressions and track improvements over time using `--baseline-file`
 # Changelog
 
 ## 0.19.0-dev
@@ -11,8 +9,6 @@
  - [#578](https://github.com/tag1consulting/goose/pull/578) add type-safe client builder for cookie configuration, optimize startup with shared clients
  - [#629](https://github.com/tag1consulting/goose/pull/629) add `--pdf-print-html` option to generate printer-friendly HTML optimized for PDF conversion; provides two-step PDF workflow without requiring Chromium dependencies; add `--pdf-timeout` option for configurable Chrome timeout in direct PDF generation (10-300s, default: 60)
  - **baseline comparison functionality**: compare current load test results against previously saved JSON reports to identify performance regressions and track improvements over time using `--baseline-file`
-=======
->>>>>>> 4d8c565a (formatting cleanup)
  - **baseline comparison functionality**: compare current load test results against previously saved JSON reports to identify performance regressions and track improvements over time using `--baseline-file`
 
 ## 0.18.1 August 14, 2025
