@@ -94,10 +94,8 @@ impl GraphData {
     /// Reset graph data while preserving user count to maintain continuity.
     pub(crate) fn reset_preserving_users(&mut self, current_users: Option<usize>) {
         // Preserve the current user count before reset
-        let last_user_count = current_users.unwrap_or_else(|| {
-            // Get the last recorded user count from existing data
-            self.users_per_second.last()
-        });
+        let last_user_count =
+            current_users.unwrap_or_else(|| self.users_per_second.last().get_total_value());
 
         // Reset all graph data
         self.requests_per_second = ItemsPerSecond::new();
