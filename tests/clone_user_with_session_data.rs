@@ -10,10 +10,9 @@ struct Session {
     jwt_token: String,
 }
 
-#[tokio::test]
-async fn test_clone_user_with_session_data() {
-    // Create a GooseUser with session data
-    let configuration = GooseConfiguration::parse_args_default(&[
+/// Helper function to create a default GooseConfiguration for testing
+fn default_configuration() -> GooseConfiguration {
+    GooseConfiguration::parse_args_default(&[
         "--host",
         "http://localhost:8080",
         "--users",
@@ -24,7 +23,13 @@ async fn test_clone_user_with_session_data() {
         "1",
         "--quiet",
     ])
-    .unwrap();
+    .unwrap()
+}
+
+#[tokio::test]
+async fn test_clone_user_with_session_data() {
+    // Create a GooseUser with session data
+    let configuration = default_configuration();
     let mut user =
         GooseUser::single("http://localhost:8080".parse().unwrap(), &configuration).unwrap();
 
@@ -47,18 +52,7 @@ async fn test_clone_user_with_session_data() {
 #[tokio::test]
 async fn test_clone_user_without_session_data() {
     // Create a GooseUser without session data
-    let configuration = GooseConfiguration::parse_args_default(&[
-        "--host",
-        "http://localhost:8080",
-        "--users",
-        "1",
-        "--hatch-rate",
-        "1",
-        "--run-time",
-        "1",
-        "--quiet",
-    ])
-    .unwrap();
+    let configuration = default_configuration();
     let user = GooseUser::single("http://localhost:8080".parse().unwrap(), &configuration).unwrap();
 
     // This should work fine (and always has)
@@ -72,18 +66,7 @@ async fn test_clone_user_without_session_data() {
 #[tokio::test]
 async fn test_multiple_clones_with_session_data() {
     // Test multiple levels of cloning to ensure no issues
-    let configuration = GooseConfiguration::parse_args_default(&[
-        "--host",
-        "http://localhost:8080",
-        "--users",
-        "1",
-        "--hatch-rate",
-        "1",
-        "--run-time",
-        "1",
-        "--quiet",
-    ])
-    .unwrap();
+    let configuration = default_configuration();
     let mut user1 =
         GooseUser::single("http://localhost:8080".parse().unwrap(), &configuration).unwrap();
 
