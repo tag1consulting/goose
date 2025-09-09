@@ -23,6 +23,7 @@ mod pdf_errors {
     use std::time::Duration;
 
     /// Creates a consistent error for Chrome launch failures
+    #[allow(dead_code)]
     pub fn chrome_launch_error(inner_error: String) -> GooseError {
         GooseError::InvalidOption {
             option: "--pdf".to_string(),
@@ -32,6 +33,7 @@ mod pdf_errors {
     }
 
     /// Creates a consistent error for Chrome configuration failures
+    #[allow(dead_code)]
     pub fn chrome_config_error(inner_error: String) -> GooseError {
         GooseError::InvalidOption {
             option: "--pdf".to_string(),
@@ -41,6 +43,7 @@ mod pdf_errors {
     }
 
     /// Creates a consistent error for Chrome operation failures
+    #[allow(dead_code)]
     pub fn chrome_operation_error(operation: &str, inner_error: String) -> GooseError {
         GooseError::InvalidOption {
             option: "--pdf".to_string(),
@@ -50,6 +53,7 @@ mod pdf_errors {
     }
 
     /// Creates a consistent error for timeout scenarios
+    #[allow(dead_code)]
     pub fn timeout_error(duration: Duration) -> GooseError {
         GooseError::InvalidOption {
             option: "--pdf".to_string(),
@@ -59,6 +63,7 @@ mod pdf_errors {
     }
 
     /// Creates a consistent error for file write failures
+    #[allow(dead_code)]
     pub fn file_write_error(inner_error: String, output_path: &std::path::Path) -> GooseError {
         GooseError::InvalidOption {
             option: "--pdf".to_string(),
@@ -68,6 +73,7 @@ mod pdf_errors {
     }
 
     /// Creates a consistent error for content measurement failures
+    #[allow(dead_code)]
     pub fn content_measurement_error(inner_error: String) -> GooseError {
         GooseError::InvalidOption {
             option: "--pdf".to_string(),
@@ -77,6 +83,7 @@ mod pdf_errors {
     }
 
     /// Creates a consistent error for PDF generation failures with scale information
+    #[allow(dead_code)]
     pub fn pdf_generation_error(
         inner_error: String,
         scale: f64,
@@ -95,6 +102,7 @@ mod pdf_errors {
 ///
 /// This struct provides RAII-based resource management for Chrome processes,
 /// ensuring proper cleanup even in error scenarios.
+#[allow(dead_code)]
 struct ChromeSession {
     browser: Browser,
     process_id: Option<u32>,
@@ -109,6 +117,7 @@ impl ChromeSession {
     ///
     /// # Returns
     /// * `Result<ChromeSession, GooseError>` - The Chrome session or an error
+    #[allow(dead_code)]
     fn new(launch_options: LaunchOptions) -> Result<Self, GooseError> {
         let start_time = Instant::now();
 
@@ -133,11 +142,13 @@ impl ChromeSession {
     }
 
     /// Gets a reference to the browser instance.
+    #[allow(dead_code)]
     fn browser(&self) -> &Browser {
         &self.browser
     }
 
     /// Checks if the Chrome operation has exceeded the timeout.
+    #[allow(dead_code)]
     fn check_timeout(&self, timeout: Duration) -> Result<(), GooseError> {
         if self.start_time.elapsed() > timeout {
             return Err(pdf_errors::timeout_error(timeout));
@@ -162,6 +173,7 @@ impl Drop for ChromeSession {
 }
 
 /// Get Chrome launch arguments based on verbosity level
+#[allow(dead_code)]
 fn get_chrome_launch_args(verbose: bool) -> Vec<&'static OsStr> {
     let mut args = vec![
         OsStr::new("--no-sandbox"),
@@ -208,6 +220,7 @@ fn get_chrome_launch_args(verbose: bool) -> Vec<&'static OsStr> {
 /// The function implements RAII-based resource management to ensure Chrome processes
 /// are properly cleaned up even in error scenarios, with timeout protection to prevent
 /// hanging operations.
+#[allow(dead_code)]
 pub(crate) fn generate_pdf_from_html(
     html_content: &str,
     output_path: &Path,
