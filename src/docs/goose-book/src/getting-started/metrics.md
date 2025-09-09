@@ -473,3 +473,5 @@ To use this, you will need to:
 
 It is possible generate a new JSON report at the same time as using a baseline file, allowing you to
 create the next basefile in the same step.
+
+For comprehensive documentation on baseline comparison functionality, including advanced features, validation, troubleshooting, and visual examples, see the [Baseline Comparison](baseline.html) guide.
