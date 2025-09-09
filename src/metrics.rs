@@ -367,7 +367,7 @@ pub struct GooseRequestMetric {
     pub final_url: String,
     /// Whether or not the request was redirected.
     pub redirected: bool,
-    /// How many milliseconds the request took.
+    /// How many milliseconds the request took (Time to First Byte).
     pub response_time: u64,
     /// The HTTP response code (optional).
     pub status_code: u16,
