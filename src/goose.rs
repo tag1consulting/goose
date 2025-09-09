@@ -872,26 +872,23 @@ impl GooseRequestCadence {
 ///
 /// For an example, see
 /// [`examples/simple_with_session`](https://github.com/tag1consulting/goose/blob/main/examples/simple_with_session.rs).
-pub trait GooseUserData: Downcast + Send + Sync + 'static {}
-impl_downcast!(GooseUserData);
-impl<T: Send + Sync + 'static> GooseUserData for T {}
-
-trait CloneGooseUserData {
+pub trait GooseUserData: Downcast + Send + Sync + 'static {
     fn clone_goose_user_data(&self) -> Box<dyn GooseUserData>;
 }
+impl_downcast!(GooseUserData);
 
-impl<T> CloneGooseUserData for T
+impl<T> GooseUserData for T
 where
-    T: GooseUserData + Clone + 'static,
+    T: Clone + Send + Sync + 'static,
 {
     fn clone_goose_user_data(&self) -> Box<dyn GooseUserData> {
-        Box::new(self.clone())
+        Box::new(T::clone(self))
     }
 }
 
 impl Clone for Box<dyn GooseUserData> {
     fn clone(&self) -> Self {
-        self.clone_goose_user_data()
+        (**self).clone_goose_user_data()
     }
 }
 
@@ -966,11 +963,7 @@ impl Clone for GooseUser {
             load_test_hash: self.load_test_hash,
             request_cadence: self.request_cadence.clone(),
             slept: self.slept,
-            session_data: if self.session_data.is_some() {
-                Option::from(self.session_data.clone_goose_user_data())
-            } else {
-                None
-            },
+            session_data: self.session_data.clone(),
         }
     }
 }
@@ -1054,6 +1047,7 @@ impl GooseUser {
     /// ```rust
     /// use goose::prelude::*;
     ///
+    /// #[derive(Clone)]
     /// struct Foo(String);
     ///
     /// let mut transaction = transaction!(get_session_data_function);
@@ -1086,6 +1080,7 @@ impl GooseUser {
     /// ```rust
     /// use goose::prelude::*;
     ///
+    /// #[derive(Clone)]
     /// struct Foo(String);
     ///
     /// let mut transaction = transaction!(get_session_data_unchecked_function);
@@ -1117,6 +1112,7 @@ impl GooseUser {
     /// ```rust
     /// use goose::prelude::*;
     ///
+    /// #[derive(Clone)]
     /// struct Foo(String);
     ///
     /// let mut transaction = transaction!(get_session_data_mut_function);
@@ -1149,6 +1145,7 @@ impl GooseUser {
     /// ```rust
     /// use goose::prelude::*;
     ///
+    /// #[derive(Clone)]
     /// struct Foo(String);
     ///
     /// let mut transaction = transaction!(get_session_data_unchecked_mut_function);
@@ -1180,6 +1177,7 @@ impl GooseUser {
     /// ```rust
     /// use goose::prelude::*;
     ///
+    /// #[derive(Clone)]
     /// struct Foo(String);
     ///
     /// let mut transaction = transaction!(set_session_data_function);
