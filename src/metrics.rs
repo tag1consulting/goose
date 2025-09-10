@@ -10,10 +10,12 @@
 
 mod common;
 pub mod coordinated_omission;
+pub mod delta;
 pub mod nullable;
 
 pub(crate) use common::ReportData;
 pub use coordinated_omission::{CadenceCalculator, CoMetricsSummary, CoordinatedOmissionMetrics};
+pub use delta::{DeltaTo, DeltaValue, Value};
 pub use nullable::NullableFloat;
 
 use crate::config::GooseDefaults;
