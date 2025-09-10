@@ -1,7 +1,7 @@
 use crate::{
-    metrics::{format_number, GooseErrorMetricAggregate, ReportData},
+    metrics::{format_number, format_value, ReportData},
     report::{
-        common::OrEmpty, RequestMetric, ResponseMetric, ScenarioMetric, StatusCodeMetric,
+        common::OrEmpty, ErrorMetric, RequestMetric, ResponseMetric, ScenarioMetric, StatusCodeMetric,
         TransactionMetric,
     },
     test_plan::TestPlanStepAction,
@@ -162,14 +162,14 @@ impl<W: Write> Markdown<'_, '_, W> {
             writeln!(
                 self.w,
                 r#"| {method} | {name} | {percentile_50} | {percentile_60 } | {percentile_70 } | {percentile_80} | {percentile_90} | {percentile_95} | {percentile_99} | {percentile_100} |"#,
-                percentile_50 = format_number(*percentile_50),
-                percentile_60 = format_number(*percentile_60),
-                percentile_70 = format_number(*percentile_70),
-                percentile_80 = format_number(*percentile_80),
-                percentile_90 = format_number(*percentile_90),
-                percentile_95 = format_number(*percentile_95),
-                percentile_99 = format_number(*percentile_99),
-                percentile_100 = format_number(*percentile_100),
+                percentile_50 = format_value(percentile_50),
+                percentile_60 = format_value(percentile_60),
+                percentile_70 = format_value(percentile_70),
+                percentile_80 = format_value(percentile_80),
+                percentile_90 = format_value(percentile_90),
+                percentile_95 = format_value(percentile_95),
+                percentile_99 = format_value(percentile_99),
+                percentile_100 = format_value(percentile_100),
             )?;
         }
 
@@ -296,7 +296,7 @@ impl<W: Write> Markdown<'_, '_, W> {
 "#
         )?;
 
-        for GooseErrorMetricAggregate {
+        for ErrorMetric {
             method,
             name,
             error,

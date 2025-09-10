@@ -57,7 +57,7 @@ impl DeltaValue for f32 {
 }
 
 /// A value, being either a plain value of a value with delta to a baseline
-#[derive(Copy, Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq, PartialOrd)]
 #[serde(untagged)]
 pub enum Value<T: DeltaValue> {
     Plain(T),
