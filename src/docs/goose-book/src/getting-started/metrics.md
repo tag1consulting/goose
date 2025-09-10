@@ -325,7 +325,15 @@ Below the graph is a table that shows per-request details, only partially includ
 ![Request metrics](metrics-requests.jpg)
 
 #### Response times
-The next graph shows the response times measured for each request made. In the following graph, it's apparent that POST requests had the slowest responses, which is logical as they are not cached. As before, it's possible to click on the request names at the top of the graph to hide/show details about specific requests.
+The next graph shows the response times measured for each request made. Goose measures **Time to First Byte (TTFB)** - the time from when a request starts until the first byte of the response is received. This includes network latency and server processing time, but does not include the time to download the complete response body.
+
+**Why TTFB only?** Goose focuses on TTFB because:
+- **Server performance focus**: TTFB measures server processing time and network latency, which are the primary concerns for load testing
+- **Consistent measurement**: Load test scenarios may not consume complete response bodies, making total download time inconsistent and potentially misleading
+- **Resource efficiency**: Not downloading complete responses allows Goose to generate more load with fewer resources
+- **Real-world relevance**: Many applications stream responses or use chunked encoding where TTFB is the critical performance metric
+
+In the following graph, it's apparent that POST requests had the slowest responses, which is logical as they are not cached. As before, it's possible to click on the request names at the top of the graph to hide/show details about specific requests.
 
 Below the graph is a table that shows per-request details:
 ![Response time metrics](metrics-response-time.jpg)

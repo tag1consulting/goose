@@ -1825,6 +1825,8 @@ impl GooseUser {
 
         // Make the actual request.
         let response = self.client.execute(built_request).await;
+        // Record Time to First Byte (TTFB): client.execute() returns when response headers
+        // are received, not when the complete response body is downloaded.
         request_metric.set_response_time(started.elapsed().as_millis());
 
         // Determine if the request suceeded or failed.
