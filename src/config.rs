@@ -302,6 +302,7 @@ pub(crate) struct GooseDefaults {
     /// An optional default for the html-formatted report file name.
     pub report_file: Option<Vec<String>>,
     /// An optional baseline JSON report, for rendering the reports with deltas
+    #[allow(dead_code)]
     pub baseline_file: Option<String>,
     /// An optional default for the flag that disables granular data in HTML report graphs.
     pub no_granular_report: Option<bool>,
