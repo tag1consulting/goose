@@ -1,8 +1,8 @@
 use crate::{
     metrics::{format_number, format_value, ReportData},
     report::{
-        common::OrEmpty, ErrorMetric, RequestMetric, ResponseMetric, ScenarioMetric, StatusCodeMetric,
-        TransactionMetric,
+        common::OrEmpty, ErrorMetric, RequestMetric, ResponseMetric, ScenarioMetric,
+        StatusCodeMetric, TransactionMetric,
     },
     test_plan::TestPlanStepAction,
     GooseError,

@@ -209,9 +209,11 @@ impl<'m> Prepare<'m> {
 
         // Apply baseline deltas if available
         if let Some(baseline) = self.baseline {
-            correlate_deltas(&mut raw_request_metrics, &baseline.raw_request_metrics, |r| {
-                (r.method.clone(), r.name.clone())
-            });
+            correlate_deltas(
+                &mut raw_request_metrics,
+                &baseline.raw_request_metrics,
+                |r| (r.method.clone(), r.name.clone()),
+            );
         }
 
         (
@@ -225,7 +227,10 @@ impl<'m> Prepare<'m> {
         )
     }
 
-    fn build_co(&self, intermediate: &RawIntermediate) -> (Option<Vec<CORequestMetric>>, Option<Vec<ResponseMetric>>) {
+    fn build_co(
+        &self,
+        intermediate: &RawIntermediate,
+    ) -> (Option<Vec<CORequestMetric>>, Option<Vec<ResponseMetric>>) {
         if !self.co_data {
             return (None, None);
         }
@@ -258,7 +263,8 @@ impl<'m> Prepare<'m> {
                     response_time_standard_deviation: util::standard_deviation(
                         raw_average,
                         co_average,
-                    ).into(),
+                    )
+                    .into(),
                     response_time_maximum: coordinated_omission_data.maximum_time.into(),
                 });
 
@@ -294,8 +300,10 @@ impl<'m> Prepare<'m> {
             method: "".to_string(),
             name: "Aggregated".to_string(),
             response_time_average: (co_aggregate_response_time_counter as f32
-                / co_aggregate_total_count as f32).into(),
-            response_time_standard_deviation: util::standard_deviation(raw_average, co_average).into(),
+                / co_aggregate_total_count as f32)
+                .into(),
+            response_time_standard_deviation: util::standard_deviation(raw_average, co_average)
+                .into(),
             response_time_maximum: co_aggregate_response_time_maximum.into(),
         });
 
@@ -392,7 +400,9 @@ impl<'m> Prepare<'m> {
             number_of_requests: aggregate_total_count.into(),
             number_of_failures: aggregate_fail_count.into(),
             response_time_average: Some(
-                (intermediate.raw_aggregate_response_time_counter as f32 / aggregate_total_count as f32).into(),
+                (intermediate.raw_aggregate_response_time_counter as f32
+                    / aggregate_total_count as f32)
+                    .into(),
             ),
             response_time_minimum: aggregate_transaction_time_minimum.into(),
             response_time_maximum: aggregate_transaction_time_maximum.into(),
@@ -464,7 +474,8 @@ impl<'m> Prepare<'m> {
             name: "Aggregated".to_string(),
             users: aggregate_users.into(),
             count: aggregate_count.into(),
-            response_time_average: (aggregate_response_time_counter / aggregate_count as f32).into(),
+            response_time_average: (aggregate_response_time_counter / aggregate_count as f32)
+                .into(),
             response_time_minimum: aggregate_scenario_time_minimum.into(),
             response_time_maximum: aggregate_scenario_time_maximum.into(),
             count_per_second: aggregate_count_per_second.into(),
@@ -474,7 +485,9 @@ impl<'m> Prepare<'m> {
         // Apply baseline deltas if available
         if let Some(baseline) = self.baseline {
             if let Some(baseline_scenarios) = &baseline.scenario_metrics {
-                correlate_deltas(&mut scenario_metrics, baseline_scenarios, |s| s.name.clone());
+                correlate_deltas(&mut scenario_metrics, baseline_scenarios, |s| {
+                    s.name.clone()
+                });
             }
         }
 
@@ -711,9 +724,11 @@ impl<'m> PrepareOwned<'m> {
 
         // Apply baseline deltas if available
         if let Some(baseline) = &self.baseline {
-            correlate_deltas(&mut raw_request_metrics, &baseline.raw_request_metrics, |r| {
-                (r.method.clone(), r.name.clone())
-            });
+            correlate_deltas(
+                &mut raw_request_metrics,
+                &baseline.raw_request_metrics,
+                |r| (r.method.clone(), r.name.clone()),
+            );
         }
 
         (
@@ -727,7 +742,10 @@ impl<'m> PrepareOwned<'m> {
         )
     }
 
-    fn build_co(&self, intermediate: &RawIntermediate) -> (Option<Vec<CORequestMetric>>, Option<Vec<ResponseMetric>>) {
+    fn build_co(
+        &self,
+        intermediate: &RawIntermediate,
+    ) -> (Option<Vec<CORequestMetric>>, Option<Vec<ResponseMetric>>) {
         if !self.co_data {
             return (None, None);
         }
@@ -760,7 +778,8 @@ impl<'m> PrepareOwned<'m> {
                     response_time_standard_deviation: util::standard_deviation(
                         raw_average,
                         co_average,
-                    ).into(),
+                    )
+                    .into(),
                     response_time_maximum: coordinated_omission_data.maximum_time.into(),
                 });
 
@@ -796,8 +815,10 @@ impl<'m> PrepareOwned<'m> {
             method: "".to_string(),
             name: "Aggregated".to_string(),
             response_time_average: (co_aggregate_response_time_counter as f32
-                / co_aggregate_total_count as f32).into(),
-            response_time_standard_deviation: util::standard_deviation(raw_average, co_average).into(),
+                / co_aggregate_total_count as f32)
+                .into(),
+            response_time_standard_deviation: util::standard_deviation(raw_average, co_average)
+                .into(),
             response_time_maximum: co_aggregate_response_time_maximum.into(),
         });
 
@@ -894,7 +915,9 @@ impl<'m> PrepareOwned<'m> {
             number_of_requests: aggregate_total_count.into(),
             number_of_failures: aggregate_fail_count.into(),
             response_time_average: Some(
-                (intermediate.raw_aggregate_response_time_counter as f32 / aggregate_total_count as f32).into(),
+                (intermediate.raw_aggregate_response_time_counter as f32
+                    / aggregate_total_count as f32)
+                    .into(),
             ),
             response_time_minimum: aggregate_transaction_time_minimum.into(),
             response_time_maximum: aggregate_transaction_time_maximum.into(),
@@ -966,7 +989,8 @@ impl<'m> PrepareOwned<'m> {
             name: "Aggregated".to_string(),
             users: aggregate_users.into(),
             count: aggregate_count.into(),
-            response_time_average: (aggregate_response_time_counter / aggregate_count as f32).into(),
+            response_time_average: (aggregate_response_time_counter / aggregate_count as f32)
+                .into(),
             response_time_minimum: aggregate_scenario_time_minimum.into(),
             response_time_maximum: aggregate_scenario_time_maximum.into(),
             count_per_second: aggregate_count_per_second.into(),
@@ -976,7 +1000,9 @@ impl<'m> PrepareOwned<'m> {
         // Apply baseline deltas if available
         if let Some(baseline) = &self.baseline {
             if let Some(baseline_scenarios) = &baseline.scenario_metrics {
-                correlate_deltas(&mut scenario_metrics, baseline_scenarios, |s| s.name.clone());
+                correlate_deltas(&mut scenario_metrics, baseline_scenarios, |s| {
+                    s.name.clone()
+                });
             }
         }
 
@@ -1050,7 +1076,7 @@ impl<'m> PrepareOwned<'m> {
 /// Load baseline data from a JSON file.
 pub fn load_baseline_file<P: AsRef<Path>>(path: P) -> Result<ReportData<'static>, GooseError> {
     let path_str = path.as_ref().to_string_lossy();
-    
+
     // Open and read the baseline file
     let file = File::open(&path).map_err(|err| GooseError::InvalidOption {
         option: "--baseline-file".to_string(),
@@ -1059,13 +1085,12 @@ pub fn load_baseline_file<P: AsRef<Path>>(path: P) -> Result<ReportData<'static>
     })?;
 
     let reader = BufReader::new(file);
-    let mut baseline: ReportData<'static> = serde_json::from_reader(reader).map_err(|err| {
-        GooseError::InvalidOption {
+    let mut baseline: ReportData<'static> =
+        serde_json::from_reader(reader).map_err(|err| GooseError::InvalidOption {
             option: "--baseline-file".to_string(),
             value: path_str.to_string(),
             detail: format!("Failed to parse baseline file as JSON: {err}"),
-        }
-    })?;
+        })?;
 
     // Validate the loaded baseline data
     validate_baseline_data(&baseline, &path_str)?;
@@ -1079,31 +1104,31 @@ pub fn load_baseline_file<P: AsRef<Path>>(path: P) -> Result<ReportData<'static>
 /// Validate that baseline data is structurally sound and contains expected data.
 fn validate_baseline_data(baseline: &ReportData, path_str: &str) -> Result<(), GooseError> {
     // Validate raw metrics consistency
-    validate_raw_metrics_consistency(baseline, &path_str)?;
+    validate_raw_metrics_consistency(baseline, path_str)?;
 
     // Validate coordinated omission metrics if present
     if let Some(co_request_metrics) = &baseline.co_request_metrics {
-        validate_coordinated_omission_metrics(baseline, co_request_metrics, &path_str)?;
+        validate_coordinated_omission_metrics(baseline, co_request_metrics, path_str)?;
     }
 
     // Validate transaction metrics if present
     if let Some(transaction_metrics) = &baseline.transaction_metrics {
-        validate_transaction_metrics(transaction_metrics, &path_str)?;
+        validate_transaction_metrics(transaction_metrics, path_str)?;
     }
 
     // Validate scenario metrics if present
     if let Some(scenario_metrics) = &baseline.scenario_metrics {
-        validate_scenario_metrics(scenario_metrics, &path_str)?;
+        validate_scenario_metrics(scenario_metrics, path_str)?;
     }
 
     // Validate error metrics if present
     if let Some(errors) = &baseline.errors {
-        validate_error_metrics(errors, &path_str)?;
+        validate_error_metrics(errors, path_str)?;
     }
 
     // Validate status code metrics if present
     if let Some(status_codes) = &baseline.status_code_metrics {
-        validate_status_code_metrics(status_codes, &path_str)?;
+        validate_status_code_metrics(status_codes, path_str)?;
     }
 
     Ok(())

@@ -3141,7 +3141,7 @@ impl GooseAttack {
     }
 
     /// Load baseline data if configured and prepare report data with baseline comparison.
-    pub(crate) fn prepare_report_data(&self) -> Result<ReportData, GooseError> {
+    pub(crate) fn prepare_report_data(&self) -> Result<ReportData<'_>, GooseError> {
         let options = ReportOptions {
             no_transaction_metrics: self.configuration.no_transaction_metrics,
             no_scenario_metrics: self.configuration.no_scenario_metrics,
@@ -3157,13 +3157,11 @@ impl GooseAttack {
                     Some(baseline),
                 ))
             }
-            None => {
-                Ok(common::prepare_data_with_baseline_owned(
-                    options,
-                    &self.metrics,
-                    None,
-                ))
-            }
+            None => Ok(common::prepare_data_with_baseline_owned(
+                options,
+                &self.metrics,
+                None,
+            )),
         }
     }
 

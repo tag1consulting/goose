@@ -181,7 +181,6 @@ impl DeltaTo for ErrorMetric {
     }
 }
 
-
 /// Helper to generate a single response metric.
 pub(crate) fn get_response_metric(
     method: &str,

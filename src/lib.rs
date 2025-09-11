@@ -1968,7 +1968,6 @@ impl GooseAttack {
 
         Ok(self)
     }
-
 }
 
 /// Use the configured GooseScheduler to allocate all [`Transaction`](./goose/struct.Transaction.html)s
