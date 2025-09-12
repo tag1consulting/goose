@@ -8,8 +8,8 @@ const ISIZE_MIN_ABS: usize = (isize::MIN as i128).unsigned_abs() as usize;
 ///
 /// As the actual value can be an unsigned type, we require an associated type which defines the
 /// type of the delta.
-pub trait DeltaValue: Copy + Debug + Display {
-    type Delta: Copy + Display;
+pub trait DeltaValue: Clone + Debug + Display {
+    type Delta: Clone + Display;
 
     /// Generate the delta between this and the provided value
     fn delta(self, value: Self) -> Self::Delta;
@@ -55,12 +55,53 @@ impl DeltaValue for f32 {
     }
 }
 
+impl DeltaValue for String {
+    type Delta = String;
+
+    fn delta(self, _value: Self) -> Self::Delta {
+        // For strings, we don't calculate meaningful deltas
+        // Just return empty string as delta
+        String::new()
+    }
+
+    fn is_delta_positive(_value: Self::Delta) -> bool {
+        // String deltas are not meaningful, so always return false
+        false
+    }
+}
+
 /// A value, being either a plain value of a value with delta to a baseline
-#[derive(Copy, Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq, PartialOrd)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, PartialOrd)]
 #[serde(untagged)]
 pub enum Value<T: DeltaValue> {
     Plain(T),
     Delta { value: T, delta: T::Delta },
+}
+
+impl<T: DeltaValue + Eq> Eq for Value<T> where T::Delta: Eq {}
+
+impl<T: DeltaValue> Value<T> {
+    /// Check if the underlying value is empty (for types that support it)
+    pub fn is_empty(&self) -> bool
+    where
+        T: IsEmpty,
+    {
+        match self {
+            Value::Plain(value) => value.is_empty(),
+            Value::Delta { value, .. } => value.is_empty(),
+        }
+    }
+}
+
+/// Trait for types that can check if they are empty
+pub trait IsEmpty {
+    fn is_empty(&self) -> bool;
+}
+
+impl IsEmpty for String {
+    fn is_empty(&self) -> bool {
+        self.is_empty()
+    }
 }
 
 impl<T: DeltaValue> From<T> for Value<T> {
@@ -79,15 +120,17 @@ impl<T: DeltaValue> Value<T> {
     pub fn diff(&mut self, other: T) {
         match self {
             Self::Plain(value) => {
+                let current_value = value.clone();
                 *self = Self::Delta {
-                    value: *value,
-                    delta: value.delta(other),
+                    value: current_value.clone(),
+                    delta: current_value.delta(other),
                 };
             }
             Self::Delta { value, delta: _ } => {
+                let current_value = value.clone();
                 *self = Self::Delta {
-                    value: *value,
-                    delta: value.delta(other),
+                    value: current_value.clone(),
+                    delta: current_value.delta(other),
                 }
             }
         }
@@ -115,8 +158,8 @@ pub trait DeltaEval<T: DeltaValue> {
 impl<T: DeltaValue> Value<T> {
     pub fn value(&self) -> T {
         match self {
-            Self::Plain(value) => *value,
-            Self::Delta { value, delta: _ } => *value,
+            Self::Plain(value) => value.clone(),
+            Self::Delta { value, delta: _ } => value.clone(),
         }
     }
 }
@@ -133,7 +176,7 @@ impl<T: DeltaValue> Display for Value<T> {
                 f.write_str(" (")?;
 
                 // for the delta, we want a plus sign, in the case of a positive value, zero excluded
-                if T::is_delta_positive(*delta) {
+                if T::is_delta_positive(delta.clone()) {
                     f.write_char('+')?;
                     Display::fmt(delta, f)?;
                 } else {

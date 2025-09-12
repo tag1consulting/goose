@@ -1,6 +1,6 @@
 use super::{
     delta::*, merge_times, per_second_calculations, prepare_status_codes, update_max_time,
-    update_min_time, CoMetricsSummary, GooseMetrics,
+    update_min_time, CoMetricsSummary, GooseMetrics, NullableFloat,
 };
 use crate::{
     report::{
@@ -10,6 +10,7 @@ use crate::{
     util, GooseError,
 };
 use itertools::Itertools;
+use serde::Deserialize;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Debug;
@@ -214,6 +215,11 @@ impl<'m> Prepare<'m> {
                 &baseline.raw_request_metrics,
                 |r| (r.method.clone(), r.name.clone()),
             );
+            correlate_deltas(
+                &mut raw_response_metrics,
+                &baseline.raw_response_metrics,
+                |r| (r.method.clone(), r.name.clone()),
+            );
         }
 
         (
@@ -520,7 +526,7 @@ impl<'m> Prepare<'m> {
             status_code_metrics.push(StatusCodeMetric {
                 method,
                 name,
-                status_codes: codes,
+                status_codes: Value::Plain(codes),
             });
         }
 
@@ -531,18 +537,26 @@ impl<'m> Prepare<'m> {
         status_code_metrics.push(StatusCodeMetric {
             method: "".to_string(),
             name: "Aggregated".to_string(),
-            status_codes: aggregated_codes,
+            status_codes: Value::Plain(aggregated_codes),
         });
+
+        // Apply baseline deltas if available
+        if let Some(baseline) = self.baseline {
+            if let Some(baseline_status_codes) = &baseline.status_code_metrics {
+                correlate_deltas(&mut status_code_metrics, baseline_status_codes, |s| {
+                    (s.method.clone(), s.name.clone())
+                });
+            }
+        }
 
         Some(status_code_metrics)
     }
-
     fn build_errors(&self) -> Option<Vec<ErrorMetric>> {
         if self.metrics.errors.is_empty() {
             return None;
         }
 
-        let errors = self
+        let mut errors: Vec<ErrorMetric> = self
             .metrics
             .errors
             .values()
@@ -553,6 +567,15 @@ impl<'m> Prepare<'m> {
                 occurrences: error.occurrences.into(),
             })
             .collect();
+
+        // Apply baseline deltas if available
+        if let Some(baseline) = self.baseline {
+            if let Some(baseline_errors) = &baseline.errors {
+                correlate_deltas(&mut errors, baseline_errors, |e| {
+                    (e.method.clone(), e.name.clone(), e.error.clone())
+                });
+            }
+        }
 
         Some(errors)
     }
@@ -727,6 +750,11 @@ impl<'m> PrepareOwned<'m> {
             correlate_deltas(
                 &mut raw_request_metrics,
                 &baseline.raw_request_metrics,
+                |r| (r.method.clone(), r.name.clone()),
+            );
+            correlate_deltas(
+                &mut raw_response_metrics,
+                &baseline.raw_response_metrics,
                 |r| (r.method.clone(), r.name.clone()),
             );
         }
@@ -1035,7 +1063,7 @@ impl<'m> PrepareOwned<'m> {
             status_code_metrics.push(StatusCodeMetric {
                 method,
                 name,
-                status_codes: codes,
+                status_codes: Value::Plain(codes),
             });
         }
 
@@ -1046,8 +1074,17 @@ impl<'m> PrepareOwned<'m> {
         status_code_metrics.push(StatusCodeMetric {
             method: "".to_string(),
             name: "Aggregated".to_string(),
-            status_codes: aggregated_codes,
+            status_codes: Value::Plain(aggregated_codes),
         });
+
+        // Apply baseline deltas if available
+        if let Some(baseline) = &self.baseline {
+            if let Some(baseline_status_codes) = &baseline.status_code_metrics {
+                correlate_deltas(&mut status_code_metrics, baseline_status_codes, |s| {
+                    (s.method.clone(), s.name.clone())
+                });
+            }
+        }
 
         Some(status_code_metrics)
     }
@@ -1057,7 +1094,7 @@ impl<'m> PrepareOwned<'m> {
             return None;
         }
 
-        let errors = self
+        let mut errors: Vec<ErrorMetric> = self
             .metrics
             .errors
             .values()
@@ -1068,6 +1105,15 @@ impl<'m> PrepareOwned<'m> {
                 occurrences: error.occurrences.into(),
             })
             .collect();
+
+        // Apply baseline deltas if available
+        if let Some(baseline) = &self.baseline {
+            if let Some(baseline_errors) = &baseline.errors {
+                correlate_deltas(&mut errors, baseline_errors, |e| {
+                    (e.method.clone(), e.name.clone(), e.error.clone())
+                });
+            }
+        }
 
         Some(errors)
     }
@@ -1085,12 +1131,17 @@ pub fn load_baseline_file<P: AsRef<Path>>(path: P) -> Result<ReportData<'static>
     })?;
 
     let reader = BufReader::new(file);
-    let mut baseline: ReportData<'static> =
+
+    // First, deserialize as a BaselineReportData that can handle plain values
+    let baseline_data: BaselineReportData =
         serde_json::from_reader(reader).map_err(|err| GooseError::InvalidOption {
             option: "--baseline-file".to_string(),
             value: path_str.to_string(),
             detail: format!("Failed to parse baseline file as JSON: {err}"),
         })?;
+
+    // Convert BaselineReportData to ReportData with proper Value<T> wrapping
+    let mut baseline = baseline_data.into_report_data();
 
     // Validate the loaded baseline data
     validate_baseline_data(&baseline, &path_str)?;
@@ -1099,6 +1150,290 @@ pub fn load_baseline_file<P: AsRef<Path>>(path: P) -> Result<ReportData<'static>
     baseline.raw_metrics = Cow::Owned(baseline.raw_metrics.into_owned());
 
     Ok(baseline)
+}
+
+/// Intermediate structure for deserializing baseline data with plain values
+/// that need to be converted to Value<T> enum format
+#[derive(Debug, Deserialize)]
+struct BaselineReportData {
+    pub raw_metrics: BaselineGooseMetrics,
+    pub raw_request_metrics: Vec<BaselineRequestMetric>,
+    pub raw_response_metrics: Vec<BaselineResponseMetric>,
+    pub co_request_metrics: Option<Vec<BaselineCORequestMetric>>,
+    pub co_response_metrics: Option<Vec<BaselineResponseMetric>>,
+    pub scenario_metrics: Option<Vec<BaselineScenarioMetric>>,
+    pub transaction_metrics: Option<Vec<BaselineTransactionMetric>>,
+    pub status_code_metrics: Option<Vec<StatusCodeMetric>>,
+    pub errors: Option<Vec<BaselineErrorMetric>>,
+    pub coordinated_omission_metrics: Option<CoMetricsSummary>,
+}
+
+/// Baseline GooseMetrics structure that handles missing history field
+#[derive(Debug, Deserialize)]
+struct BaselineGooseMetrics {
+    pub hash: u64,
+    #[serde(default)]
+    pub history: Vec<crate::test_plan::TestPlanHistory>,
+    pub duration: usize,
+    pub maximum_users: usize,
+    pub total_users: usize,
+    pub requests: super::GooseRequestMetrics,
+    pub transactions: super::TransactionMetrics,
+    #[serde(default)]
+    pub scenarios: super::ScenarioMetrics,
+    pub errors: super::GooseErrorMetrics,
+    #[serde(default)]
+    pub hosts: std::collections::HashSet<String>,
+    pub coordinated_omission_metrics: Option<super::CoordinatedOmissionMetrics>,
+    #[serde(default)]
+    pub final_metrics: bool,
+    #[serde(default)]
+    pub display_status_codes: bool,
+    #[serde(default)]
+    pub display_metrics: bool,
+}
+
+impl From<BaselineGooseMetrics> for GooseMetrics {
+    fn from(baseline: BaselineGooseMetrics) -> Self {
+        GooseMetrics {
+            hash: baseline.hash,
+            history: baseline.history,
+            duration: baseline.duration,
+            maximum_users: baseline.maximum_users,
+            total_users: baseline.total_users,
+            requests: baseline.requests,
+            transactions: baseline.transactions,
+            scenarios: baseline.scenarios,
+            errors: baseline.errors,
+            hosts: baseline.hosts,
+            coordinated_omission_metrics: baseline.coordinated_omission_metrics,
+            final_metrics: baseline.final_metrics,
+            display_status_codes: baseline.display_status_codes,
+            display_metrics: baseline.display_metrics,
+        }
+    }
+}
+
+impl BaselineReportData {
+    fn into_report_data(self) -> ReportData<'static> {
+        ReportData {
+            raw_metrics: Cow::Owned(self.raw_metrics.into()),
+            raw_request_metrics: self
+                .raw_request_metrics
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+            raw_response_metrics: self
+                .raw_response_metrics
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+            co_request_metrics: self
+                .co_request_metrics
+                .map(|metrics| metrics.into_iter().map(Into::into).collect()),
+            co_response_metrics: self
+                .co_response_metrics
+                .map(|metrics| metrics.into_iter().map(Into::into).collect()),
+            scenario_metrics: self
+                .scenario_metrics
+                .map(|metrics| metrics.into_iter().map(Into::into).collect()),
+            transaction_metrics: self
+                .transaction_metrics
+                .map(|metrics| metrics.into_iter().map(Into::into).collect()),
+            status_code_metrics: self.status_code_metrics,
+            errors: self
+                .errors
+                .map(|errors| errors.into_iter().map(Into::into).collect()),
+            coordinated_omission_metrics: self.coordinated_omission_metrics,
+        }
+    }
+}
+
+/// Baseline request metric with plain values
+#[derive(Debug, Deserialize)]
+struct BaselineRequestMetric {
+    pub method: String,
+    pub name: String,
+    pub number_of_requests: usize,
+    pub number_of_failures: usize,
+    pub response_time_average: f32,
+    pub response_time_minimum: usize,
+    pub response_time_maximum: usize,
+    pub requests_per_second: f32,
+    pub failures_per_second: f32,
+}
+
+impl From<BaselineRequestMetric> for RequestMetric {
+    fn from(baseline: BaselineRequestMetric) -> Self {
+        RequestMetric {
+            method: baseline.method,
+            name: baseline.name,
+            number_of_requests: Value::Plain(baseline.number_of_requests),
+            number_of_failures: Value::Plain(baseline.number_of_failures),
+            response_time_average: Value::Plain(NullableFloat(baseline.response_time_average)),
+            response_time_minimum: Value::Plain(baseline.response_time_minimum),
+            response_time_maximum: Value::Plain(baseline.response_time_maximum),
+            requests_per_second: Value::Plain(NullableFloat(baseline.requests_per_second)),
+            failures_per_second: Value::Plain(NullableFloat(baseline.failures_per_second)),
+        }
+    }
+}
+
+/// Baseline response metric with plain values
+#[derive(Debug, Deserialize)]
+struct BaselineResponseMetric {
+    pub method: String,
+    pub name: String,
+    pub percentile_50: usize,
+    pub percentile_60: usize,
+    pub percentile_70: usize,
+    pub percentile_80: usize,
+    pub percentile_90: usize,
+    pub percentile_95: usize,
+    pub percentile_99: usize,
+    pub percentile_100: usize,
+}
+
+impl From<BaselineResponseMetric> for ResponseMetric {
+    fn from(baseline: BaselineResponseMetric) -> Self {
+        ResponseMetric {
+            method: baseline.method,
+            name: baseline.name,
+            percentile_50: Value::Plain(baseline.percentile_50),
+            percentile_60: Value::Plain(baseline.percentile_60),
+            percentile_70: Value::Plain(baseline.percentile_70),
+            percentile_80: Value::Plain(baseline.percentile_80),
+            percentile_90: Value::Plain(baseline.percentile_90),
+            percentile_95: Value::Plain(baseline.percentile_95),
+            percentile_99: Value::Plain(baseline.percentile_99),
+            percentile_100: Value::Plain(baseline.percentile_100),
+        }
+    }
+}
+
+/// Baseline coordinated omission request metric with plain values
+#[derive(Debug, Deserialize)]
+struct BaselineCORequestMetric {
+    pub method: String,
+    pub name: String,
+    pub response_time_average: f32,
+    pub response_time_standard_deviation: f32,
+    pub response_time_maximum: usize,
+}
+
+impl From<BaselineCORequestMetric> for CORequestMetric {
+    fn from(baseline: BaselineCORequestMetric) -> Self {
+        CORequestMetric {
+            method: baseline.method,
+            name: baseline.name,
+            response_time_average: Value::Plain(NullableFloat(baseline.response_time_average)),
+            response_time_standard_deviation: Value::Plain(NullableFloat(
+                baseline.response_time_standard_deviation,
+            )),
+            response_time_maximum: Value::Plain(baseline.response_time_maximum),
+        }
+    }
+}
+
+/// Baseline transaction metric with plain values
+#[derive(Debug, Deserialize)]
+struct BaselineTransactionMetric {
+    pub is_scenario: bool,
+    pub transaction: String,
+    pub name: String,
+    pub number_of_requests: usize,
+    pub number_of_failures: usize,
+    pub response_time_average: Option<f32>,
+    pub response_time_minimum: usize,
+    pub response_time_maximum: usize,
+    pub requests_per_second: Option<f32>,
+    pub failures_per_second: Option<f32>,
+}
+
+impl From<BaselineTransactionMetric> for TransactionMetric {
+    fn from(baseline: BaselineTransactionMetric) -> Self {
+        TransactionMetric {
+            is_scenario: baseline.is_scenario,
+            transaction: baseline.transaction,
+            name: baseline.name,
+            number_of_requests: Value::Plain(baseline.number_of_requests),
+            number_of_failures: Value::Plain(baseline.number_of_failures),
+            response_time_average: baseline
+                .response_time_average
+                .map(|v| Value::Plain(NullableFloat(v))),
+            response_time_minimum: Value::Plain(baseline.response_time_minimum),
+            response_time_maximum: Value::Plain(baseline.response_time_maximum),
+            requests_per_second: baseline
+                .requests_per_second
+                .map(|v| Value::Plain(NullableFloat(v))),
+            failures_per_second: baseline
+                .failures_per_second
+                .map(|v| Value::Plain(NullableFloat(v))),
+        }
+    }
+}
+
+/// Baseline scenario metric with plain values
+#[derive(Debug, Deserialize)]
+struct BaselineScenarioMetric {
+    pub name: String,
+    pub users: usize,
+    pub count: usize,
+    pub response_time_average: Option<f32>,
+    pub response_time_minimum: usize,
+    pub response_time_maximum: usize,
+    pub count_per_second: f32,
+    pub iterations: Option<f32>,
+}
+
+impl From<BaselineScenarioMetric> for ScenarioMetric {
+    fn from(baseline: BaselineScenarioMetric) -> Self {
+        ScenarioMetric {
+            name: baseline.name,
+            users: Value::Plain(baseline.users),
+            count: Value::Plain(baseline.count),
+            response_time_average: Value::Plain(NullableFloat(
+                baseline.response_time_average.unwrap_or(f32::NAN),
+            )),
+            response_time_minimum: Value::Plain(baseline.response_time_minimum),
+            response_time_maximum: Value::Plain(baseline.response_time_maximum),
+            count_per_second: Value::Plain(NullableFloat(baseline.count_per_second)),
+            iterations: Value::Plain(NullableFloat(baseline.iterations.unwrap_or(f32::NAN))),
+        }
+    }
+}
+
+/// Baseline error metric with plain values
+#[derive(Debug, Deserialize)]
+struct BaselineErrorMetric {
+    pub method: String,
+    pub name: String,
+    pub error: String,
+    pub occurrences: usize,
+}
+
+impl From<BaselineErrorMetric> for ErrorMetric {
+    fn from(baseline: BaselineErrorMetric) -> Self {
+        use crate::goose::GooseMethod;
+
+        // Parse method string back to GooseMethod enum
+        let method = match baseline.method.as_str() {
+            "Get" => GooseMethod::Get,
+            "Post" => GooseMethod::Post,
+            "Head" => GooseMethod::Head,
+            "Put" => GooseMethod::Put,
+            "Delete" => GooseMethod::Delete,
+            "Patch" => GooseMethod::Patch,
+            _ => GooseMethod::Get, // fallback to Get for unknown methods
+        };
+
+        ErrorMetric {
+            method,
+            name: baseline.name,
+            error: baseline.error,
+            occurrences: Value::Plain(baseline.occurrences),
+        }
+    }
 }
 
 /// Validate that baseline data is structurally sound and contains expected data.

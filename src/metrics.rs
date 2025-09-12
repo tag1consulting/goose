@@ -3148,7 +3148,7 @@ impl GooseAttack {
             no_status_codes: self.configuration.no_status_codes,
         };
 
-        match &self.defaults.baseline_file {
+        match &self.configuration.baseline_file {
             Some(baseline_file) => {
                 let baseline = common::load_baseline_file(baseline_file)?;
                 Ok(common::prepare_data_with_baseline_owned(
@@ -3283,14 +3283,17 @@ impl GooseAttack {
             errors,
             status_code_metrics,
             coordinated_omission_metrics: _,
-        } = common::prepare_data(
-            ReportOptions {
-                no_transaction_metrics: self.configuration.no_transaction_metrics,
-                no_scenario_metrics: self.configuration.no_scenario_metrics,
-                no_status_codes: self.configuration.no_status_codes,
-            },
-            &self.metrics,
-        );
+        } = self.prepare_report_data().unwrap_or_else(|_| {
+            // Fallback to non-baseline data if baseline loading fails
+            common::prepare_data(
+                ReportOptions {
+                    no_transaction_metrics: self.configuration.no_transaction_metrics,
+                    no_scenario_metrics: self.configuration.no_scenario_metrics,
+                    no_status_codes: self.configuration.no_status_codes,
+                },
+                &self.metrics,
+            )
+        });
 
         // Compile the request metrics template.
         let mut raw_requests_rows = Vec::new();
@@ -3563,7 +3566,7 @@ pub(crate) fn format_value<T: DeltaValue>(value: &Value<T>) -> String {
     match value {
         Value::Plain(v) => format!("{}", v),
         Value::Delta { value: v, delta } => {
-            if T::is_delta_positive(*delta) {
+            if T::is_delta_positive(delta.clone()) {
                 format!("{} (+{})", v, delta)
             } else {
                 format!("{} ({})", v, delta)

@@ -49,13 +49,20 @@ pub(crate) struct RequestMetric {
 
 impl DeltaTo for RequestMetric {
     fn delta_to(&mut self, other: &Self) {
-        self.number_of_requests.eval(other.number_of_requests);
-        self.number_of_failures.eval(other.number_of_failures);
-        self.response_time_average.eval(other.response_time_average);
-        self.response_time_minimum.eval(other.response_time_minimum);
-        self.response_time_maximum.eval(other.response_time_maximum);
-        self.requests_per_second.eval(other.requests_per_second);
-        self.failures_per_second.eval(other.failures_per_second);
+        self.number_of_requests
+            .eval(other.number_of_requests.clone());
+        self.number_of_failures
+            .eval(other.number_of_failures.clone());
+        self.response_time_average
+            .eval(other.response_time_average.clone());
+        self.response_time_minimum
+            .eval(other.response_time_minimum.clone());
+        self.response_time_maximum
+            .eval(other.response_time_maximum.clone());
+        self.requests_per_second
+            .eval(other.requests_per_second.clone());
+        self.failures_per_second
+            .eval(other.failures_per_second.clone());
     }
 }
 
@@ -71,10 +78,12 @@ pub(crate) struct CORequestMetric {
 
 impl DeltaTo for CORequestMetric {
     fn delta_to(&mut self, other: &Self) {
-        self.response_time_average.eval(other.response_time_average);
+        self.response_time_average
+            .eval(other.response_time_average.clone());
         self.response_time_standard_deviation
-            .eval(other.response_time_standard_deviation);
-        self.response_time_maximum.eval(other.response_time_maximum);
+            .eval(other.response_time_standard_deviation.clone());
+        self.response_time_maximum
+            .eval(other.response_time_maximum.clone());
     }
 }
 
@@ -95,14 +104,14 @@ pub(crate) struct ResponseMetric {
 
 impl DeltaTo for ResponseMetric {
     fn delta_to(&mut self, other: &Self) {
-        self.percentile_50.eval(other.percentile_50);
-        self.percentile_60.eval(other.percentile_60);
-        self.percentile_70.eval(other.percentile_70);
-        self.percentile_80.eval(other.percentile_80);
-        self.percentile_90.eval(other.percentile_90);
-        self.percentile_95.eval(other.percentile_95);
-        self.percentile_99.eval(other.percentile_99);
-        self.percentile_100.eval(other.percentile_100);
+        self.percentile_50.eval(other.percentile_50.clone());
+        self.percentile_60.eval(other.percentile_60.clone());
+        self.percentile_70.eval(other.percentile_70.clone());
+        self.percentile_80.eval(other.percentile_80.clone());
+        self.percentile_90.eval(other.percentile_90.clone());
+        self.percentile_95.eval(other.percentile_95.clone());
+        self.percentile_99.eval(other.percentile_99.clone());
+        self.percentile_100.eval(other.percentile_100.clone());
     }
 }
 
@@ -123,13 +132,20 @@ pub(crate) struct TransactionMetric {
 
 impl DeltaTo for TransactionMetric {
     fn delta_to(&mut self, other: &Self) {
-        self.number_of_requests.eval(other.number_of_requests);
-        self.number_of_failures.eval(other.number_of_failures);
-        self.response_time_average.eval(other.response_time_average);
-        self.response_time_minimum.eval(other.response_time_minimum);
-        self.response_time_maximum.eval(other.response_time_maximum);
-        self.requests_per_second.eval(other.requests_per_second);
-        self.failures_per_second.eval(other.failures_per_second);
+        self.number_of_requests
+            .eval(other.number_of_requests.clone());
+        self.number_of_failures
+            .eval(other.number_of_failures.clone());
+        self.response_time_average
+            .eval(other.response_time_average.clone());
+        self.response_time_minimum
+            .eval(other.response_time_minimum.clone());
+        self.response_time_maximum
+            .eval(other.response_time_maximum.clone());
+        self.requests_per_second
+            .eval(other.requests_per_second.clone());
+        self.failures_per_second
+            .eval(other.failures_per_second.clone());
     }
 }
 
@@ -148,13 +164,16 @@ pub(crate) struct ScenarioMetric {
 
 impl DeltaTo for ScenarioMetric {
     fn delta_to(&mut self, other: &Self) {
-        self.users.eval(other.users);
-        self.count.eval(other.count);
-        self.response_time_average.eval(other.response_time_average);
-        self.response_time_minimum.eval(other.response_time_minimum);
-        self.response_time_maximum.eval(other.response_time_maximum);
-        self.count_per_second.eval(other.count_per_second);
-        self.iterations.eval(other.iterations);
+        self.users.eval(other.users.clone());
+        self.count.eval(other.count.clone());
+        self.response_time_average
+            .eval(other.response_time_average.clone());
+        self.response_time_minimum
+            .eval(other.response_time_minimum.clone());
+        self.response_time_maximum
+            .eval(other.response_time_maximum.clone());
+        self.count_per_second.eval(other.count_per_second.clone());
+        self.iterations.eval(other.iterations.clone());
     }
 }
 
@@ -163,7 +182,13 @@ impl DeltaTo for ScenarioMetric {
 pub(crate) struct StatusCodeMetric {
     pub method: String,
     pub name: String,
-    pub status_codes: String,
+    pub status_codes: Value<String>,
+}
+
+impl DeltaTo for StatusCodeMetric {
+    fn delta_to(&mut self, other: &Self) {
+        self.status_codes.eval(other.status_codes.clone());
+    }
 }
 
 /// Defines the metrics reported about errors.
@@ -177,7 +202,7 @@ pub struct ErrorMetric {
 
 impl DeltaTo for ErrorMetric {
     fn delta_to(&mut self, other: &Self) {
-        self.occurrences.eval(other.occurrences);
+        self.occurrences.eval(other.occurrences.clone());
     }
 }
 

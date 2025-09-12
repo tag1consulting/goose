@@ -236,9 +236,9 @@ impl<W: Write> Markdown<'_, '_, W> {
                 false => writeln!(
                     self.w,
                     r#"| {transaction} {name} | {number_of_requests} | {number_of_failures} | {response_time_average:.2} | {response_time_minimum} | {response_time_maximum} | {requests_per_second:.2} | {failures_per_second:.2} |"#,
-                    response_time_average = OrEmpty(*response_time_average),
-                    requests_per_second = OrEmpty(*requests_per_second),
-                    failures_per_second = OrEmpty(*failures_per_second),
+                    response_time_average = OrEmpty(response_time_average.clone()),
+                    requests_per_second = OrEmpty(requests_per_second.clone()),
+                    failures_per_second = OrEmpty(failures_per_second.clone()),
                 )?,
             }
         }
