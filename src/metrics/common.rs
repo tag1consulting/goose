@@ -1107,7 +1107,7 @@ fn validate_transaction_metrics(
     transaction_metrics: &[TransactionMetric],
     path_str: &str,
 ) -> Result<(), GooseError> {
-    for (_index, transaction) in transaction_metrics.iter().enumerate() {
+    for transaction in transaction_metrics.iter() {
         // Validate that failures don't exceed total requests
         if transaction.number_of_failures > transaction.number_of_requests {
             return Err(GooseError::InvalidOption {
