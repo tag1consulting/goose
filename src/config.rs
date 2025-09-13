@@ -6,6 +6,7 @@
 //! Goose can be configured programmatically with [`GooseDefaultType::set_default`].
 
 use gumdrop::Options;
+use log::info;
 use serde::{Deserialize, Serialize};
 use simplelog::*;
 use std::path::PathBuf;
@@ -2226,6 +2227,9 @@ impl GooseConfiguration {
         // Unified PDF configuration validation
         self.validate_pdf_configuration()?;
 
+        // Validate baseline file early if specified
+        self.validate_baseline_file()?;
+
         Ok(())
     }
 
@@ -2278,6 +2282,29 @@ impl GooseConfiguration {
             });
         }
 
+        Ok(())
+    }
+
+    /// Validate baseline file early if specified.
+    ///
+    /// This performs early validation of the baseline file to catch issues before
+    /// running a potentially lengthy load test. It validates file existence, JSON format,
+    /// and basic structure without loading the full baseline data.
+    fn validate_baseline_file(&self) -> Result<(), GooseError> {
+        if let Some(baseline_file) = &self.baseline_file {
+            // Use the existing load_baseline_file function to validate the file
+            // This will catch file not found, invalid JSON, and structural issues early
+            match crate::load_baseline_file(baseline_file) {
+                Ok(_) => {
+                    // File is valid, we can proceed
+                    info!("Baseline file '{}' validated successfully", baseline_file);
+                }
+                Err(e) => {
+                    // Return the error from load_baseline_file which already has proper formatting
+                    return Err(e);
+                }
+            }
+        }
         Ok(())
     }
 

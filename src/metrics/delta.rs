@@ -80,6 +80,25 @@ pub enum Value<T: DeltaValue> {
 
 impl<T: DeltaValue + Eq> Eq for Value<T> where T::Delta: Eq {}
 
+impl<T: DeltaValue + std::hash::Hash> std::hash::Hash for Value<T>
+where
+    T::Delta: std::hash::Hash,
+{
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            Value::Plain(value) => {
+                0u8.hash(state); // Discriminant for Plain variant
+                value.hash(state);
+            }
+            Value::Delta { value, delta } => {
+                1u8.hash(state); // Discriminant for Delta variant
+                value.hash(state);
+                delta.hash(state);
+            }
+        }
+    }
+}
+
 impl<T: DeltaValue> Value<T> {
     /// Check if the underlying value is empty (for types that support it)
     pub fn is_empty(&self) -> bool
