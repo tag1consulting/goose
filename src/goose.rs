@@ -882,7 +882,7 @@ where
     T: Clone + Send + Sync + 'static,
 {
     fn clone_goose_user_data(&self) -> Box<dyn GooseUserData> {
-        Box::new(T::clone(self))
+        Box::new(self.clone())
     }
 }
 
