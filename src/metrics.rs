@@ -10,9 +10,11 @@
 
 mod common;
 pub mod coordinated_omission;
+pub mod nullable;
 
 pub(crate) use common::ReportData;
 pub use coordinated_omission::{CadenceCalculator, CoMetricsSummary, CoordinatedOmissionMetrics};
+pub use nullable::NullableFloat;
 
 use crate::config::GooseDefaults;
 use crate::goose::{get_base_url, GooseMethod, Scenario, TransactionName};
