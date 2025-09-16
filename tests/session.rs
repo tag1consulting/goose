@@ -7,6 +7,7 @@ use goose::config::GooseConfiguration;
 use goose::prelude::*;
 
 // In this test the SessionData is a simple String.
+#[derive(Clone)]
 struct SessionData(String);
 
 // The actual session data that is set and later validated.
