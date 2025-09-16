@@ -141,13 +141,13 @@ where
     }
 }
 
-impl<T: DeltaValue> DeltaEval<T> for Value<T> {
+impl<T: DeltaValue> ApplyBaseline<T> for Value<T> {
     fn eval(&mut self, other: Self) {
         self.diff(other.value())
     }
 }
 
-impl<T: DeltaValue> DeltaEval<T> for Option<Value<T>> {
+impl<T: DeltaValue> ApplyBaseline<T> for Option<Value<T>> {
     fn eval(&mut self, other: Self) {
         if let (Some(value), Some(other)) = (self, other) {
             value.eval(other);
@@ -155,7 +155,7 @@ impl<T: DeltaValue> DeltaEval<T> for Option<Value<T>> {
     }
 }
 
-pub trait DeltaEval<T: DeltaValue> {
+pub trait ApplyBaseline<T: DeltaValue> {
     fn eval(&mut self, other: Self);
 }
 
