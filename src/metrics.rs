@@ -2890,14 +2890,13 @@ impl GooseAttack {
                                 / request_metric.user_cadence as i64;
 
                             if synthetic_count > 0 {
-                                let user_id = request_metric.user;
                                 co_metrics.record_co_event(
                                     std::time::Duration::from_millis(request_metric.user_cadence),
                                     std::time::Duration::from_millis(
                                         request_metric.coordinated_omission_elapsed,
                                     ),
                                     synthetic_count as u32,
-                                    user_id,
+                                    request_metric.user,
                                     request_metric.scenario_name.clone(),
                                 );
                             }
