@@ -2,9 +2,6 @@ use crate::metrics::NullableFloat;
 use num_format::{Format, ToFormattedString};
 use std::fmt::{Debug, Display, Formatter, Write};
 
-/// The absolute value of isize::MIN as usize, used for overflow protection in delta calculations.
-const ISIZE_MIN_ABS: usize = (isize::MIN as i128).unsigned_abs() as usize;
-
 /// A value that can be used to provide a delta
 ///
 /// As the actual value can be an unsigned type, we require an associated type which defines the
@@ -23,20 +20,8 @@ impl DeltaValue for usize {
     type Delta = isize;
 
     fn delta(self, value: Self) -> Self::Delta {
-        if self >= value {
-            // the result will be positive, so just limit to isize::MAX
-            (self - value).min(isize::MAX as usize) as isize
-        } else {
-            // the result will be negative, we will calculate the absolute value of that...
-            let delta = value - self;
-            if delta > ISIZE_MIN_ABS {
-                // ... which is too big to fit into the negative space of isize, so we limit to isize::MIN
-                isize::MIN
-            } else {
-                // ... which fits, so we return the negative value
-                -(delta as isize)
-            }
-        }
+        let delta = (self as i128) - (value as i128);
+        delta.clamp(isize::MIN as i128, isize::MAX as i128) as isize
     }
 
     fn is_delta_positive(value: Self::Delta) -> bool {
@@ -52,7 +37,44 @@ impl DeltaValue for f32 {
     }
 
     fn is_delta_positive(value: Self::Delta) -> bool {
-        !value.is_sign_negative()
+        value > 0.0
+    }
+}
+
+impl DeltaValue for u64 {
+    type Delta = i64;
+
+    fn delta(self, value: Self) -> Self::Delta {
+        let delta = (self as i128) - (value as i128);
+        delta.clamp(i64::MIN as i128, i64::MAX as i128) as i64
+    }
+
+    fn is_delta_positive(value: Self::Delta) -> bool {
+        value.is_positive()
+    }
+}
+
+impl DeltaValue for u16 {
+    type Delta = i16;
+
+    fn delta(self, value: Self) -> Self::Delta {
+        (self as i32 - value as i32) as i16 // No overflow possible
+    }
+
+    fn is_delta_positive(value: Self::Delta) -> bool {
+        value.is_positive()
+    }
+}
+
+impl DeltaValue for f64 {
+    type Delta = f64;
+
+    fn delta(self, value: Self) -> Self::Delta {
+        self - value
+    }
+
+    fn is_delta_positive(value: Self::Delta) -> bool {
+        value > 0.0
     }
 }
 
@@ -174,11 +196,6 @@ impl<T: DeltaValue> Display for Value<T> {
     }
 }
 
-/// Build a delta to a baseline
-pub trait DeltaTo {
-    fn delta_to(&mut self, other: &Self);
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
@@ -189,20 +206,20 @@ mod test {
     fn eval_optional() {
         assert_eq!(
             {
-                let mut value = Some(Value::Plain(10));
-                value.eval(Some(Value::Plain(5)));
+                let mut value = Some(Value::Plain(10usize));
+                value.eval(Some(Value::Plain(5usize)));
                 value
             },
             Some(Value::Delta {
-                value: 10,
-                delta: 5
+                value: 10usize,
+                delta: 5isize
             })
         );
 
         assert_eq!(
             {
-                let mut value = None;
-                value.eval(Some(Value::Plain(5)));
+                let mut value: Option<Value<usize>> = None;
+                value.eval(Some(Value::Plain(5usize)));
                 value
             },
             None
@@ -211,9 +228,9 @@ mod test {
 
     #[test]
     fn delta_to_string() {
-        assert_eq!(format!("{}", 0.delta(10)), "-10");
-        assert_eq!(format!("{}", 10.delta(10)), "0");
-        assert_eq!(format!("{}", 10.delta(0)), "10");
+        assert_eq!(format!("{}", 0usize.delta(10usize)), "-10");
+        assert_eq!(format!("{}", 10usize.delta(10usize)), "0");
+        assert_eq!(format!("{}", 10usize.delta(0usize)), "10");
     }
 
     #[test]
@@ -224,9 +241,9 @@ mod test {
             result
         }
 
-        assert_eq!(format!("{}", value(0, 1000)), "0 (-1000)");
-        assert_eq!(format!("{}", value(1000, 1000)), "1000 (0)");
-        assert_eq!(format!("{}", value(1000, 0)), "1000 (+1000)");
+        assert_eq!(format!("{}", value(0usize, 1000usize)), "0 (-1000)");
+        assert_eq!(format!("{}", value(1000usize, 1000usize)), "1000 (0)");
+        assert_eq!(format!("{}", value(1000usize, 0usize)), "1000 (+1000)");
     }
 
     #[test]
@@ -238,15 +255,18 @@ mod test {
         }
 
         assert_eq!(
-            format!("{}", value(0, 1000).formatted_number(&Locale::en)),
+            format!("{}", value(0usize, 1000usize).formatted_number(&Locale::en)),
             "0 (-1,000)"
         );
         assert_eq!(
-            format!("{}", value(1000, 1000).formatted_number(&Locale::en)),
+            format!(
+                "{}",
+                value(1000usize, 1000usize).formatted_number(&Locale::en)
+            ),
             "1,000 (0)"
         );
         assert_eq!(
-            format!("{}", value(1000, 0).formatted_number(&Locale::en)),
+            format!("{}", value(1000usize, 0usize).formatted_number(&Locale::en)),
             "1,000 (+1,000)"
         );
     }
@@ -254,7 +274,7 @@ mod test {
     #[test]
     fn value_to_string_num() {
         assert_eq!(
-            format!("{}", Value::from(1000).formatted_number(&Locale::en)),
+            format!("{}", Value::from(1000usize).formatted_number(&Locale::en)),
             "1,000"
         );
     }
