@@ -52,6 +52,6 @@ impl crate::metrics::delta::DeltaValue for NullableFloat {
     }
 
     fn is_delta_positive(value: Self::Delta) -> bool {
-        !value.is_sign_negative()
+        value > 0.0
     }
 }
