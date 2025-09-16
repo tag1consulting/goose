@@ -145,7 +145,7 @@ impl FromStr for TestPlan {
 }
 
 /// A test plan is a series of steps performing one of the following actions.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum TestPlanStepAction {
     /// A test plan step that is increasing the number of GooseUser threads.
     Increasing,
@@ -160,7 +160,7 @@ pub enum TestPlanStepAction {
 }
 
 /// A historical record of a single test plan step, used to generate reports from the metrics.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TestPlanHistory {
     /// What action happend in this step.
     pub action: TestPlanStepAction,
