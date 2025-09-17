@@ -53,8 +53,8 @@ cargo run --example simple -- --host https://example.com
 
 ### SOCKS5 vs SOCKS5h
 
-- **`socks5://`** - DNS resolution happens locally, only HTTP traffic goes through proxy
-- **`socks5h://`** - Both DNS resolution and HTTP traffic go through the proxy (recommended)
+- **`socks5://`** - DNS resolution happens locally, only network traffic goes through proxy
+- **`socks5h://`** - Both DNS resolution and network traffic go through the proxy (recommended)
 
 Use `socks5h://` when you need DNS queries to be resolved through the SOCKS proxy, which is typically the case for accessing internal networks or when you want all traffic routed through the proxy.
 
@@ -196,6 +196,13 @@ For proxies requiring authentication:
 If you get compilation errors about SOCKS features:
 - Verify `reqwest = { version = "0.12", features = ["socks"] }` is in your Cargo.toml
 - Run `cargo clean` and rebuild your project
+
+## Additional Resources
+
+For more detailed proxy configuration options, see the official reqwest documentation:
+- **[Reqwest Proxy Documentation](https://docs.rs/reqwest/latest/reqwest/#proxies)** - Complete guide to proxy configuration in reqwest
+- **Environment Variables**: `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY` (and lowercase variants)
+- **Programmatic Configuration**: Using `reqwest::Proxy` for advanced proxy setups
 
 ## Notes
 
