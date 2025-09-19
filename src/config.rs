@@ -235,14 +235,23 @@ impl FromStr for Scenarios {
         for line in lines {
             // Ignore white space an case.
             let scenario = line.trim().to_lowercase();
-            // Valid scenario names are alphanumeric only.
-            if scenario.chars().all(char::is_alphanumeric) {
+            // Valid scenario names are alphanumeric or contain wildcards (*, ?, []).
+            if scenario.chars().all(|c| {
+                char::is_alphanumeric(c)
+                    || c == '*'
+                    || c == '?'
+                    || c == '['
+                    || c == ']'
+                    || c == '-'
+                    || c == '!'
+                    || c == '_'
+            }) {
                 active.push(scenario);
             } else {
                 // Logger isn't initialized yet, provide helpful debug output.
                 eprintln!("ERROR: invalid `configuration.scenarios` value: '{line}'");
                 eprintln!("  Expected format: --scenarios \"{{one}},{{two}},{{three}}\"");
-                eprintln!("    {{one}}, {{two}}, {{three}}, etc must be alphanumeric");
+                eprintln!("    {{one}}, {{two}}, {{three}}, etc must be alphanumeric or contain wildcards (*, ?, [abc], [a-z])");
                 eprintln!("    To view valid scenario names invoke `--scenarios-list`");
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.scenarios".to_string(),

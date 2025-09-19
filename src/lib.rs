@@ -38,6 +38,7 @@
 
 #[macro_use]
 extern crate log;
+extern crate wildcard;
 
 pub mod client;
 pub mod config;
@@ -742,19 +743,27 @@ impl GooseAttack {
 
     /// Internal helper to determine if the scenario is currently active.
     fn scenario_is_active(&self, scenario: &Scenario) -> bool {
-        // All scenarios are enabled by default.
+        // If no scenarios are configured, all are active.
         if self.configuration.scenarios.active.is_empty() {
-            true
-        // Returns true or false depending on if the machine name is included in the
+            return true;
+        }
+        // Otherwise, check to see if this scenario is active, matching against
         // configured `--scenarios`.
-        } else {
-            for active in &self.configuration.scenarios.active {
-                if scenario.machine_name.contains(active) {
-                    return true;
-                }
+        self.configuration.scenarios.active.iter().any(|active| {
+            if active.contains('*') {
+                self.wildcard_match(active, &scenario.machine_name)
+            } else {
+                scenario.machine_name == *active
             }
-            // No matches found, this scenario is not active.
-            false
+        })
+    }
+
+    /// Helper function to perform wildcard matching using the wildcard crate.
+    fn wildcard_match(&self, pattern: &str, text: &str) -> bool {
+        // Convert strings to bytes for the wildcard crate
+        match wildcard::Wildcard::new(pattern.as_bytes()) {
+            Ok(wildcard) => wildcard.is_match(text.as_bytes()),
+            Err(_) => false, // If pattern is invalid, fall back to no match
         }
     }
 
