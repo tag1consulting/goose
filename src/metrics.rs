@@ -30,7 +30,7 @@ use num_format::{Locale, ToFormattedString};
 use regex::RegexSet;
 use reqwest::StatusCode;
 use serde::ser::SerializeStruct;
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::OsStr;
@@ -38,6 +38,7 @@ use std::fmt::Write;
 use std::io::BufWriter;
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::{f32, fmt};
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
@@ -348,23 +349,23 @@ pub struct TransactionDetail<'a> {
 /// [`set_success`](../goose/struct.GooseUser.html#method.set_success) or
 /// [`set_failure`](../goose/struct.GooseUser.html#method.set_failure) so Goose
 /// knows which request is being updated.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct GooseRequestMetric {
     /// How many milliseconds the load test has been running.
     pub elapsed: u64,
     /// An index into [`GooseAttack`]`.scenarios`, indicating which scenario this is.
     pub scenario_index: usize,
     /// The scenario name.
-    pub scenario_name: String,
+    pub scenario_name: Arc<str>,
     /// An optional index into [`Scenario`]`.transaction`, indicating which transaction this is.
-    /// Stored as string, `""` is no transaction, while `0` is the first `Scenario.transaction`.
-    pub transaction_index: String,
+    /// Stored as usize, `usize::MAX` indicates no transaction, while `0` is the first `Scenario.transaction`.
+    pub transaction_index: usize,
     /// The optional transaction name.
     pub transaction_name: TransactionName,
     /// The raw request that the GooseClient made.
     pub raw: GooseRawRequest,
     /// The optional name of the request.
-    pub name: String,
+    pub name: Arc<str>,
     /// The final full URL that was requested, after redirects.
     pub final_url: String,
     /// Whether or not the request was redirected.
@@ -389,6 +390,87 @@ pub struct GooseRequestMetric {
     /// [`GooseUser`](../goose/struct.GooseUser.html) thread.
     pub user_cadence: u64,
 }
+
+impl Serialize for GooseRequestMetric {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("GooseRequestMetric", 18)?;
+        state.serialize_field("elapsed", &self.elapsed)?;
+        state.serialize_field("scenario_index", &self.scenario_index)?;
+        state.serialize_field("scenario_name", self.scenario_name.as_ref())?;
+        state.serialize_field("transaction_index", &self.transaction_index)?;
+        state.serialize_field("transaction_name", &self.transaction_name)?;
+        state.serialize_field("raw", &self.raw)?;
+        state.serialize_field("name", self.name.as_ref())?;
+        state.serialize_field("final_url", &self.final_url)?;
+        state.serialize_field("redirected", &self.redirected)?;
+        state.serialize_field("response_time", &self.response_time)?;
+        state.serialize_field("status_code", &self.status_code)?;
+        state.serialize_field("success", &self.success)?;
+        state.serialize_field("update", &self.update)?;
+        state.serialize_field("user", &self.user)?;
+        state.serialize_field("error", &self.error)?;
+        state.serialize_field(
+            "coordinated_omission_elapsed",
+            &self.coordinated_omission_elapsed,
+        )?;
+        state.serialize_field("user_cadence", &self.user_cadence)?;
+        state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for GooseRequestMetric {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename = "GooseRequestMetric")]
+        struct GooseRequestMetricHelper {
+            elapsed: u64,
+            scenario_index: usize,
+            scenario_name: String,
+            transaction_index: usize,
+            transaction_name: TransactionName,
+            raw: GooseRawRequest,
+            name: String,
+            final_url: String,
+            redirected: bool,
+            response_time: u64,
+            status_code: u16,
+            success: bool,
+            update: bool,
+            user: usize,
+            error: String,
+            coordinated_omission_elapsed: u64,
+            user_cadence: u64,
+        }
+
+        let helper = GooseRequestMetricHelper::deserialize(deserializer)?;
+        Ok(GooseRequestMetric {
+            elapsed: helper.elapsed,
+            scenario_index: helper.scenario_index,
+            scenario_name: Arc::from(helper.scenario_name.as_str()),
+            transaction_index: helper.transaction_index,
+            transaction_name: helper.transaction_name,
+            raw: helper.raw,
+            name: Arc::from(helper.name.as_str()),
+            final_url: helper.final_url,
+            redirected: helper.redirected,
+            response_time: helper.response_time,
+            status_code: helper.status_code,
+            success: helper.success,
+            update: helper.update,
+            user: helper.user,
+            error: helper.error,
+            coordinated_omission_elapsed: helper.coordinated_omission_elapsed,
+            user_cadence: helper.user_cadence,
+        })
+    }
+}
 impl GooseRequestMetric {
     pub(crate) fn new(
         raw: GooseRawRequest,
@@ -400,11 +482,14 @@ impl GooseRequestMetric {
         GooseRequestMetric {
             elapsed: elapsed as u64,
             scenario_index: transaction_detail.scenario_index,
-            scenario_name: transaction_detail.scenario_name.to_string(),
-            transaction_index: transaction_detail.transaction_index.to_string(),
+            scenario_name: Arc::from(transaction_detail.scenario_name),
+            transaction_index: transaction_detail
+                .transaction_index
+                .parse()
+                .unwrap_or(usize::MAX),
             transaction_name: transaction_detail.transaction_name,
             raw,
-            name: name.to_string(),
+            name: Arc::from(name),
             final_url: "".to_string(),
             redirected: false,
             response_time: 0,
@@ -2895,7 +2980,7 @@ impl GooseAttack {
                                     ),
                                     synthetic_count as u32,
                                     request_metric.user,
-                                    request_metric.scenario_name.clone(),
+                                    request_metric.scenario_name.to_string(),
                                 );
                             }
                         }
@@ -2999,7 +3084,7 @@ impl GooseAttack {
                 if let Err(e) = logger.send(Some(GooseLog::Error(GooseErrorMetric {
                     elapsed: raw_request.elapsed,
                     raw: raw_request.raw.clone(),
-                    name: raw_request.name.clone(),
+                    name: raw_request.name.to_string(),
                     final_url: raw_request.final_url.clone(),
                     redirected: raw_request.redirected,
                     response_time: raw_request.response_time,
@@ -3648,7 +3733,7 @@ pub(crate) fn prepare_status_codes(
 
 #[cfg(test)]
 mod test {
-    use std::borrow::Cow;
+    use std::sync::Arc;
 
     use super::*;
 
@@ -3785,9 +3870,7 @@ mod test {
                 scenario_index: 0,
                 scenario_name: "LoadTestUser",
                 transaction_index: 5.to_string().as_str(),
-                transaction_name: TransactionName::InheritNameByRequests(Cow::Borrowed(
-                    "front page",
-                )),
+                transaction_name: TransactionName::InheritNameByRequests(Arc::from("front page")),
             },
             "/",
             0,
@@ -3795,14 +3878,14 @@ mod test {
         );
         assert_eq!(request_metric.raw.method, GooseMethod::Get);
         assert_eq!(request_metric.scenario_index, 0);
-        assert_eq!(request_metric.scenario_name, "LoadTestUser");
-        assert_eq!(request_metric.transaction_index, "5");
+        assert_eq!(request_metric.scenario_name.as_ref(), "LoadTestUser");
+        assert_eq!(request_metric.transaction_index, 5);
         assert_eq!(
             request_metric.transaction_name.name_for_transaction(),
             "front page"
         );
         assert_eq!(request_metric.raw.url, PATH.to_string());
-        assert_eq!(request_metric.name, "/".to_string());
+        assert_eq!(request_metric.name.as_ref(), "/");
         assert_eq!(request_metric.response_time, 0);
         assert_eq!(request_metric.status_code, 0);
         assert!(request_metric.success);
@@ -3811,7 +3894,7 @@ mod test {
         let response_time = 123;
         request_metric.set_response_time(response_time);
         assert_eq!(request_metric.raw.method, GooseMethod::Get);
-        assert_eq!(request_metric.name, "/".to_string());
+        assert_eq!(request_metric.name.as_ref(), "/");
         assert_eq!(request_metric.raw.url, PATH.to_string());
         assert_eq!(request_metric.response_time, response_time as u64);
         assert_eq!(request_metric.status_code, 0);
@@ -3821,7 +3904,7 @@ mod test {
         let status_code = reqwest::StatusCode::OK;
         request_metric.set_status_code(Some(status_code));
         assert_eq!(request_metric.raw.method, GooseMethod::Get);
-        assert_eq!(request_metric.name, "/".to_string());
+        assert_eq!(request_metric.name.as_ref(), "/");
         assert_eq!(request_metric.raw.url, PATH.to_string());
         assert_eq!(request_metric.response_time, response_time as u64);
         assert_eq!(request_metric.status_code, 200);
