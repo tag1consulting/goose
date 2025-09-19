@@ -157,6 +157,7 @@ impl<W: Write> Markdown<'_, '_, W> {
             percentile_95,
             percentile_99,
             percentile_100,
+            is_breakdown: _,
         } in &self.data.raw_response_metrics
         {
             writeln!(

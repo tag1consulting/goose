@@ -204,6 +204,14 @@ All 9 users hatched.
  -------------------------+-------------+------------+-------------+-----------
  Aggregated               |       11.41 |          2 |         304 |          5
  ------------------------------------------------------------------------------
+ Name                     |    Avg (ms) |        Min |         Max |     Median
+ ------------------------------------------------------------------------------
+ GET static asset         |        5.11 |          2 |          38 |          5
+   └─ 200 (94.2%)         |        4.98 |          2 |          35 |          5
+   └─ 404 (5.8%)          |        7.24 |          5 |          38 |          7
+ -------------------------+-------------+------------+-------------+-----------
+ Aggregated               |       11.41 |          2 |         304 |          5
+ ------------------------------------------------------------------------------
  Slowest page load within specified percentile of requests (in ms):
  ------------------------------------------------------------------------------
  Name                     |    50% |    75% |    98% |    99% |  99.9% | 99.99%
@@ -337,6 +345,16 @@ In the following graph, it's apparent that POST requests had the slowest respons
 
 Below the graph is a table that shows per-request details:
 ![Response time metrics](metrics-response-time.jpg)
+
+**Status Code Response Time Breakdowns:** When a request returns multiple different HTTP status codes during a load test, Goose automatically provides response time breakdowns grouped by status code. In the CLI output above, you can see this feature demonstrated with the `GET static asset` request, which received both `200` (successful) and `404` (not found) responses:
+
+```
+GET static asset         |        5.11 |          2 |          38 |          5
+  └─ 200 (94.2%)         |        4.98 |          2 |          35 |          5
+  └─ 404 (5.8%)          |        7.24 |          5 |          38 |          7
+```
+
+This breakdown reveals important performance insights - in this example, the `404` responses took longer on average (7.24ms) than successful `200` responses (4.98ms), helping identify performance patterns related to error handling. The percentages show the distribution of each status code, and the tree-like formatting with `└─` clearly indicates these are sub-metrics of the main request. This feature helps identify performance differences between successful and failed requests, enabling more targeted optimization efforts.
 
 #### Status codes
 All status codes returned by the server are displayed in a table, per-request and in aggregate. In our simple test, we received only `200 OK` responses.

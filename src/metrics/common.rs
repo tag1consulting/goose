@@ -95,6 +95,38 @@ pub fn prepare_data(options: ReportOptions, metrics: &GooseMetrics) -> ReportDat
             request.raw_data.maximum_time,
         ));
 
+        // Add status code response time breakdowns if multiple status codes exist
+        if request.status_code_response_times.len() > 1 {
+            let mut status_codes: Vec<_> = request.status_code_response_times.keys().collect();
+            status_codes.sort();
+
+            for &status_code in status_codes {
+                if let Some(timing_data) = request.status_code_response_times.get(&status_code) {
+                    // Calculate percentage of requests with this status code
+                    let status_count = request
+                        .status_code_counts
+                        .get(&status_code)
+                        .copied()
+                        .unwrap_or(0);
+                    let total_count = request.success_count + request.fail_count;
+                    let percentage = if total_count > 0 {
+                        (status_count as f32 / total_count as f32) * 100.0
+                    } else {
+                        0.0
+                    };
+
+                    raw_response_metrics.push(report::get_response_metric(
+                        &format!("└─ {} ({:.1}%)", status_code, percentage),
+                        &name,
+                        &timing_data.times,
+                        timing_data.counter,
+                        timing_data.minimum_time,
+                        timing_data.maximum_time,
+                    ));
+                }
+            }
+        }
+
         // Collect aggregated request and response metrics.
         raw_aggregate_total_count += total_request_count;
         raw_aggregate_fail_count += request.fail_count;
