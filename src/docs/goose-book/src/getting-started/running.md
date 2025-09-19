@@ -88,7 +88,9 @@ If our load test made multiple requests, the Aggregated line at the bottom of th
 
 ![HTML report response times metrics section](report-responses.png)
 
-The second section displays the average time required to load a page. The table in this section is showing the slowest page load time for a range of percentiles. In our example, in the 50% fastest page loads, the slowest page loaded in 37 ms. In the 70% fastest page loads, the slowest page loaded in 42 ms, etc. The graph, on the other hand, is displaying the average response time aggregated across all requests. 
+The second section displays the average time required to load a page. The table in this section is showing the slowest page load time for a range of percentiles. In our example, in the 50% fastest page loads, the slowest page loaded in 37 ms. In the 70% fastest page loads, the slowest page loaded in 42 ms, etc. The graph, on the other hand, is displaying the average response time (TTFB - Time To First Byte) aggregated across all requests.
+
+**Note:** Response time measurements in all Goose reports refer to Time To First Byte (TTFB), not complete download time.
 
 ## Status code metrics
 
