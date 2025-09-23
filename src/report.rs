@@ -177,8 +177,8 @@ pub(crate) fn response_metrics_row(metric: ResponseMetric) -> String {
     if metric.is_breakdown {
         // Status code breakdown row - merge first two columns and use increased indentation
         format!(
-            r#"<tr style="background-color: #f8f9fa;">
-            <td colspan="2" style="padding-left: 50px; font-style: italic; text-align: left;">{method}</td>
+            r#"<tr class="status-breakdown">
+            <td colspan="2">{method}</td>
             <td>{percentile_50}</td>
             <td>{percentile_60}</td>
             <td>{percentile_70}</td>
@@ -651,6 +651,13 @@ pub(crate) fn build_report(
 
         .download a {{
             color: #00ca5a;
+        }}
+
+        .status-breakdown {{
+            background-color: #f8f9fa;
+            padding-left: 50px;
+            font-style: italic;
+            text-align: left;
         }}
 
         .graph {{

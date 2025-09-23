@@ -47,7 +47,7 @@ pub async fn get_error(user: &mut GooseUser) -> TransactionResult {
 
 // Set up mock server with different endpoints that return different status codes.
 fn setup_mock_server_endpoints(server: &MockServer) -> Vec<Mock<'_>> {
-    let mut mocks = vec![
+    let mocks = vec![
         // SUCCESS_PATH always returns 200
         server.mock(|when, then| {
             when.method(GET).path(SUCCESS_PATH);
@@ -64,15 +64,6 @@ fn setup_mock_server_endpoints(server: &MockServer) -> Vec<Mock<'_>> {
             then.status(400);
         }),
     ];
-
-    // Add a separate mock for MIXED_PATH that returns 400 occasionally
-    // This will be handled randomly by httpmock
-    for _ in 0..2 {
-        mocks.push(server.mock(|when, then| {
-            when.method(GET).path(MIXED_PATH);
-            then.status(400);
-        }));
-    }
 
     mocks
 }
@@ -95,7 +86,7 @@ fn validate_status_code_response_times(goose_metrics: &GooseMetrics, mock_endpoi
     // Test the /success endpoint - should only have 200 status codes
     let success_request = goose_metrics
         .requests
-        .get(&format!("GET {}", SUCCESS_PATH))
+        .get(&format!("GET {SUCCESS_PATH}"))
         .expect("Success request should exist");
 
     // Should have status code counts
@@ -129,7 +120,7 @@ fn validate_status_code_response_times(goose_metrics: &GooseMetrics, mock_endpoi
     // Test the /mixed endpoint - should have both 200 and 400 status codes
     let mixed_request = goose_metrics
         .requests
-        .get(&format!("GET {}", MIXED_PATH))
+        .get(&format!("GET {MIXED_PATH}"))
         .expect("Mixed request should exist");
 
     // Should have status code counts for both 200 and 400
@@ -151,7 +142,7 @@ fn validate_status_code_response_times(goose_metrics: &GooseMetrics, mock_endpoi
     // Test the /error endpoint - should only have 400 status codes
     let error_request = goose_metrics
         .requests
-        .get(&format!("GET {}", ERROR_PATH))
+        .get(&format!("GET {ERROR_PATH}"))
         .expect("Error request should exist");
 
     // Should have status code counts
