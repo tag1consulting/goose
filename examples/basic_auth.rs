@@ -56,6 +56,7 @@ fn main() {
 mod basic_auth_example {
     use goose::goose::GooseResponse;
     use goose::prelude::*;
+    use log::{info, warn};
     use reqwest::{header, Client};
     use std::{env, time::Duration};
 
@@ -140,6 +141,11 @@ mod basic_auth_example {
     /// All subsequent requests will automatically include the authentication headers,
     /// including requests for static assets (CSS, JS, images) when using
     /// `validate_and_load_static_assets`.
+    ///
+    /// By setting up authentication at the client level, we solve the static asset
+    /// authentication problem. When Goose loads a page with CSS, JS, or image files,
+    /// those secondary requests will automatically inherit the Basic Auth headers from the
+    /// custom client configuration, unlike manual per-request authentication approaches.
     async fn setup_basic_auth_client(user: &mut GooseUser) -> TransactionResult {
         // Get credentials from environment variables
         let (username, password) = get_basic_auth_credentials()?;
@@ -180,7 +186,7 @@ mod basic_auth_example {
         if let Ok(response) = &goose_metrics.response {
             if response.status() == 200 {
                 // Success! The Basic Auth worked
-                println!("Basic Auth successful!");
+                info!("Basic Auth successful!");
             }
         }
 
@@ -278,7 +284,7 @@ mod basic_auth_example {
         // This is the problem that the custom client approach solves.
         if let Ok(response) = &goose_metrics.response {
             if response.status() == 200 {
-                println!("Manual Basic Auth successful, but static assets would fail!");
+                warn!("Manual Basic Auth successful, but static assets would fail!");
             }
         }
 
@@ -301,7 +307,12 @@ mod basic_auth_example {
 
         // Try the combined format
         if let Ok(basic_auth) = env::var("BASIC_AUTH") {
-            let parts: Vec<&str> = basic_auth.split(':').collect();
+            // Use splitn(2, ':') instead of split(':') to handle passwords containing colons
+            // splitn(2, ':') splits into at most 2 parts: username and everything after the first colon
+            // This prevents passwords like "my:complex:password" from being incorrectly split
+            // Example: "user:pass:word" -> ["user", "pass:word"] (correct)
+            // vs split(':') -> ["user", "pass", "word"] (incorrect - would truncate password)
+            let parts: Vec<&str> = basic_auth.splitn(2, ':').collect();
             if parts.len() == 2 {
                 return Ok((parts[0].to_string(), parts[1].to_string()));
             } else {
@@ -313,9 +324,9 @@ mod basic_auth_example {
         }
 
         // Default credentials for testing with httpbin.org
-        eprintln!("Warning: No Basic Auth credentials found in environment variables.");
-        eprintln!("Using default credentials 'user:passwd' for httpbin.org testing.");
-        eprintln!("Set BASIC_AUTH_USERNAME/BASIC_AUTH_PASSWORD or BASIC_AUTH environment variables for real usage.");
+        warn!("No Basic Auth credentials found in environment variables.");
+        warn!("Using default credentials 'user:passwd' for httpbin.org testing.");
+        warn!("Set BASIC_AUTH_USERNAME/BASIC_AUTH_PASSWORD or BASIC_AUTH environment variables for real usage.");
 
         Ok(("user".to_string(), "passwd".to_string()))
     }
