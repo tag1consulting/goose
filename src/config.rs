@@ -103,6 +103,9 @@ pub struct GooseConfiguration {
     /// Create reports, can be used multiple times (supports .html, .htm, .md, .json, .pdf)
     #[options(no_short, meta = "NAME")]
     pub report_file: Vec<String>,
+    /// An optional baseline JSON report, for rendering the reports with deltas
+    #[options(no_short, meta = "NAME")]
+    pub baseline_file: Option<String>,
     /// Disable granular graphs in report file
     #[options(no_short)]
     pub no_granular_report: bool,
@@ -298,6 +301,9 @@ pub(crate) struct GooseDefaults {
     pub no_error_summary: Option<bool>,
     /// An optional default for the html-formatted report file name.
     pub report_file: Option<Vec<String>>,
+    /// An optional baseline JSON report, for rendering the reports with deltas
+    #[allow(dead_code)]
+    pub baseline_file: Option<String>,
     /// An optional default for the flag that disables granular data in HTML report graphs.
     pub no_granular_report: Option<bool>,
     /// An optional default for the requests log file name.
