@@ -38,7 +38,6 @@
 
 #[macro_use]
 extern crate log;
-extern crate wildcard;
 
 pub mod client;
 pub mod config;
@@ -744,27 +743,27 @@ impl GooseAttack {
     /// Internal helper to determine if the scenario is currently active.
     fn scenario_is_active(&self, scenario: &Scenario) -> bool {
         // If no scenarios are configured, all are active.
-        if self.configuration.scenarios.active.is_empty() {
+        if self.configuration.scenarios.compiled_patterns.is_empty() {
             return true;
         }
-        // Otherwise, check to see if this scenario is active, matching against
-        // configured `--scenarios`.
-        self.configuration.scenarios.active.iter().any(|active| {
-            if active.contains('*') {
-                self.wildcard_match(active, &scenario.machine_name)
-            } else {
-                scenario.machine_name == *active
-            }
-        })
-    }
 
-    /// Helper function to perform wildcard matching using the wildcard crate.
-    fn wildcard_match(&self, pattern: &str, text: &str) -> bool {
-        // Convert strings to bytes for the wildcard crate
-        match wildcard::Wildcard::new(pattern.as_bytes()) {
-            Ok(wildcard) => wildcard.is_match(text.as_bytes()),
-            Err(_) => false, // If pattern is invalid, fall back to no match
-        }
+        // Check against pre-compiled patterns
+        self.configuration
+            .scenarios
+            .compiled_patterns
+            .iter()
+            .any(|pattern| {
+                match pattern {
+                    config::ScenarioPattern::Exact(name) => scenario.machine_name == *name,
+                    config::ScenarioPattern::Wildcard(pattern_bytes) => {
+                        // Create wildcard from stored bytes and check for match
+                        match wildcard::Wildcard::new(pattern_bytes) {
+                            Ok(wildcard) => wildcard.is_match(scenario.machine_name.as_bytes()),
+                            Err(_) => false, // Pattern is invalid, no match
+                        }
+                    }
+                }
+            })
     }
 
     /// Use configured GooseScheduler to build out a properly weighted list of

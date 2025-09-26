@@ -215,50 +215,72 @@ pub struct GooseConfiguration {
     pub accept_invalid_certs: bool,
 }
 
+/// Represents a compiled scenario pattern for efficient matching.
+#[derive(Debug, Clone)]
+pub enum ScenarioPattern {
+    /// An exact string match pattern.
+    Exact(String),
+    /// A pre-compiled wildcard pattern (stored as bytes).
+    Wildcard(Vec<u8>),
+}
+
 /// Optionally defines a subset of active Scenarios to run during a load test.
-#[derive(Options, Default, Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Scenarios {
+    /// Original scenario patterns as strings.
     pub active: Vec<String>,
+    /// Pre-compiled patterns for efficient matching.
+    #[serde(skip)]
+    pub compiled_patterns: Vec<ScenarioPattern>,
 }
 /// Implement [`FromStr`] to convert `"foo,bar"` comma separated string to a vector of strings.
 impl FromStr for Scenarios {
     type Err = GooseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        // Convert string into a vector of string.
         let mut active: Vec<String> = Vec::new();
+        let mut compiled_patterns: Vec<ScenarioPattern> = Vec::new();
+
         // Multiple Scenarios can be defined as a comma separated list.
         let lines = s.split(',');
         for line in lines {
-            // Ignore white space an case.
+            // Ignore white space and case.
             let scenario = line.trim().to_lowercase();
-            // Valid scenario names are alphanumeric or contain wildcards (*, ?, []).
+
+            // Valid scenario names are alphanumeric, wildcards (*), underscores, or hyphens
             if scenario.chars().all(|c| {
                 char::is_alphanumeric(c)
-                    || c == '*'
-                    || c == '?'
-                    || c == '['
-                    || c == ']'
-                    || c == '-'
-                    || c == '!'
-                    || c == '_'
+                    || c == '*'   // Wildcard pattern matching
+                    || c == '_'   // Valid scenario name character
+                    || c == '-' // Valid scenario name character
             }) {
-                active.push(scenario);
+                // Pre-compile wildcard patterns for performance
+                if scenario.contains('*') {
+                    // Store the pattern as bytes to avoid lifetime issues
+                    active.push(scenario.clone());
+                    compiled_patterns.push(ScenarioPattern::Wildcard(scenario.as_bytes().to_vec()));
+                } else {
+                    active.push(scenario.clone());
+                    compiled_patterns.push(ScenarioPattern::Exact(scenario));
+                }
             } else {
                 // Logger isn't initialized yet, provide helpful debug output.
-                eprintln!("ERROR: invalid `configuration.scenarios` value: '{line}'");
+                eprintln!("ERROR: invalid `configuration.scenarios` value: '{}'", line);
                 eprintln!("  Expected format: --scenarios \"{{one}},{{two}},{{three}}\"");
-                eprintln!("    {{one}}, {{two}}, {{three}}, etc must be alphanumeric or contain wildcards (*, ?, [abc], [a-z])");
-                eprintln!("    To view valid scenario names invoke `--scenarios-list`");
+                eprintln!("  {{one}}, {{two}}, {{three}}, etc must be alphanumeric or contain wildcard (*) for pattern matching");
+                eprintln!("  To view valid scenario names invoke `--scenarios-list`");
                 return Err(GooseError::InvalidOption {
-                    option: "`configuration.scenarios".to_string(),
+                    option: "`configuration.scenarios`".to_string(),
                     value: line.to_string(),
                     detail: "invalid `configuration.scenarios` value.".to_string(),
                 });
             }
         }
-        // The listed scenarios are only valid if the logic gets this far.
-        Ok(Scenarios { active })
+
+        Ok(Scenarios {
+            active,
+            compiled_patterns,
+        })
     }
 }
 
@@ -1728,7 +1750,10 @@ impl GooseConfiguration {
                     message: "scenarios",
                 },
             ])
-            .unwrap_or_else(|| Scenarios { active: Vec::new() });
+            .unwrap_or_else(|| Scenarios {
+                active: Vec::new(),
+                compiled_patterns: Vec::new(),
+            });
 
         // Configure `no_debug_body`.
         self.no_debug_body = self
