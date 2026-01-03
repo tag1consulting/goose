@@ -3593,7 +3593,7 @@ mod tests {
         });
 
         // Make a GET request to the mock http server and confirm we get a 200 response.
-        assert_eq!(index.hits(), 0);
+        assert_eq!(index.calls(), 0);
         let goose = user
             .get(INDEX_PATH)
             .await
@@ -3605,7 +3605,7 @@ mod tests {
         assert!(goose.request.success);
         assert!(!goose.request.update);
         assert_eq!(goose.request.status_code, 200);
-        assert_eq!(index.hits(), 1);
+        assert_eq!(index.calls(), 1);
 
         const NO_SUCH_PATH: &str = "/no/such/path";
         // Set up a mock http server endpoint.
@@ -3615,7 +3615,7 @@ mod tests {
         });
 
         // Make an invalid GET request to the mock http server and confirm we get a 404 response.
-        assert_eq!(not_found.hits(), 0);
+        assert_eq!(not_found.calls(), 0);
         let goose = user
             .get(NO_SUCH_PATH)
             .await
@@ -3627,7 +3627,7 @@ mod tests {
         assert!(!goose.request.success);
         assert!(!goose.request.update);
         assert_eq!(goose.request.status_code, 404,);
-        not_found.assert_hits(1);
+        not_found.assert_calls(1);
 
         // Set up a mock http server endpoint.
         const COMMENT_PATH: &str = "/comment";
@@ -3637,7 +3637,7 @@ mod tests {
         });
 
         // Make a POST request to the mock http server and confirm we get a 200 OK response.
-        assert_eq!(comment.hits(), 0);
+        assert_eq!(comment.calls(), 0);
         let goose = user
             .post(COMMENT_PATH, "foo")
             .await
@@ -3651,7 +3651,7 @@ mod tests {
         assert!(goose.request.success);
         assert!(!goose.request.update);
         assert_eq!(goose.request.status_code, 200);
-        comment.assert_hits(1);
+        comment.assert_calls(1);
     }
 
     #[test]

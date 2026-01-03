@@ -343,22 +343,22 @@ fn validate_requests(test_type: TestType, goose_metrics: &GooseMetrics, mock_end
     match test_type {
         TestType::Session => {
             // Confirm that each user set a session one and only one time.
-            assert!(mock_endpoints[POST_SESSION_KEY].hits() == users);
+            assert!(mock_endpoints[POST_SESSION_KEY].calls() == users);
             // Confirm that each user validated their session multiple times.
-            assert!(mock_endpoints[GET_SESSION_KEY].hits() > users);
+            assert!(mock_endpoints[GET_SESSION_KEY].calls() > users);
         }
         #[cfg(feature = "cookies")]
         TestType::Cookie => {
             // Confirm that each user set a cookie one and only one time.
-            assert!(mock_endpoints[POST_COOKIE_KEY_0].hits() == 1);
-            assert!(mock_endpoints[POST_COOKIE_KEY_1].hits() == 1);
-            assert!(mock_endpoints[POST_COOKIE_KEY_2].hits() == 1);
-            assert!(mock_endpoints[POST_COOKIE_KEY_3].hits() == 1);
+            assert!(mock_endpoints[POST_COOKIE_KEY_0].calls() == 1);
+            assert!(mock_endpoints[POST_COOKIE_KEY_1].calls() == 1);
+            assert!(mock_endpoints[POST_COOKIE_KEY_2].calls() == 1);
+            assert!(mock_endpoints[POST_COOKIE_KEY_3].calls() == 1);
             // Confirm that each user validated their cookie multiple times.
-            assert!(mock_endpoints[GET_COOKIE_KEY_0].hits() > 1);
-            assert!(mock_endpoints[GET_COOKIE_KEY_1].hits() > 1);
-            assert!(mock_endpoints[GET_COOKIE_KEY_2].hits() > 1);
-            assert!(mock_endpoints[GET_COOKIE_KEY_3].hits() > 1);
+            assert!(mock_endpoints[GET_COOKIE_KEY_0].calls() > 1);
+            assert!(mock_endpoints[GET_COOKIE_KEY_1].calls() > 1);
+            assert!(mock_endpoints[GET_COOKIE_KEY_2].calls() > 1);
+            assert!(mock_endpoints[GET_COOKIE_KEY_3].calls() > 1);
         }
     }
 

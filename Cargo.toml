@@ -64,7 +64,7 @@ cookies = ["reqwest/cookies"]
 pdf-reports = ["headless_chrome", "urlencoding"]
 
 [dev-dependencies]
-httpmock = "0.7"
+httpmock = "0.8"
 native-tls = "0.2"
 nix = { version = "0.30", features = ["signal"] }
 rustls = "0.23"

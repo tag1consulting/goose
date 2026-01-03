@@ -62,7 +62,7 @@ async fn test_pdf_generation_with_feature() {
     let goose_metrics = common::run_load_test(goose_attack, None).await;
 
     // Confirm that we loaded the mock endpoints
-    assert!(mock_endpoints[0].hits() > 0);
+    assert!(mock_endpoints[0].calls() > 0);
 
     // Confirm that the test duration was correct
     assert!(goose_metrics.duration == 1);
@@ -110,7 +110,7 @@ async fn test_pdf_print_html_without_feature_works() {
     let goose_metrics = common::run_load_test(goose_attack, None).await;
 
     // Verify the test ran successfully
-    assert!(mock_endpoints[0].hits() > 0);
+    assert!(mock_endpoints[0].calls() > 0);
     assert!(goose_metrics.duration == 1);
 
     // The HTML file should be created even when the pdf-reports feature is not compiled
@@ -177,7 +177,7 @@ async fn test_pdf_print_html_generation() {
     let goose_metrics = common::run_load_test(goose_attack, None).await;
 
     // Verify the test ran successfully
-    assert!(mock_endpoints[0].hits() > 0);
+    assert!(mock_endpoints[0].calls() > 0);
     assert!(goose_metrics.duration == 1);
 
     // Verify both PDF and HTML files were created
@@ -253,7 +253,7 @@ async fn test_pdf_resource_management() {
         let goose_metrics = common::run_load_test(goose_attack, None).await;
 
         // Confirm basic functionality
-        assert!(mock_endpoints[0].hits() > 0);
+        assert!(mock_endpoints[0].calls() > 0);
         assert!(goose_metrics.duration == 1);
 
         // Verify PDF file was created

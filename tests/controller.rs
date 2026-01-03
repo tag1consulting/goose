@@ -121,8 +121,8 @@ fn validate_one_scenario(
     //println!("configuration: {:#?}", configuration);
 
     // Confirm that we loaded the mock endpoints.
-    assert!(mock_endpoints[INDEX_KEY].hits() > 0);
-    assert!(mock_endpoints[ABOUT_KEY].hits() > 0);
+    assert!(mock_endpoints[INDEX_KEY].calls() > 0);
+    assert!(mock_endpoints[ABOUT_KEY].calls() > 0);
 
     // Get index and about out of goose metrics.
     let index_metrics = goose_metrics

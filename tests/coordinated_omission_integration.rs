@@ -55,7 +55,7 @@ mod load_test_integration {
 
         // When CO is disabled, no CO metrics should be collected
         assert!(goose_metrics.coordinated_omission_metrics.is_none());
-        assert!(mock.hits() > 0);
+        assert!(mock.calls() > 0);
 
         // Regular metrics should still be present
         assert!(!goose_metrics.requests.is_empty());
@@ -107,7 +107,7 @@ mod load_test_integration {
 
         // With consistent 50ms delays, minimal CO events expected
         // (This test may not trigger CO events due to consistent timing)
-        assert!(mock.hits() > 0);
+        assert!(mock.calls() > 0);
     }
 
     #[tokio::test]
@@ -167,8 +167,8 @@ mod load_test_integration {
             co_metrics.synthetic_percentage
         );
 
-        assert!(mock_fast.hits() > 0);
-        assert!(mock_slow.hits() > 0);
+        assert!(mock_fast.calls() > 0);
+        assert!(mock_slow.calls() > 0);
     }
 
     #[tokio::test]

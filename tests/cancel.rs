@@ -147,11 +147,11 @@ fn validate_one_scenario(
 ) {
     // The throttle limits how many hits are registered.
     if is_gaggle {
-        assert!(mock_endpoints[INDEX_KEY].hits() <= 40);
+        assert!(mock_endpoints[INDEX_KEY].calls() <= 40);
     } else {
-        assert!(mock_endpoints[INDEX_KEY].hits() <= 20);
+        assert!(mock_endpoints[INDEX_KEY].calls() <= 20);
     }
-    assert!(mock_endpoints[INDEX_KEY].hits() > 10);
+    assert!(mock_endpoints[INDEX_KEY].calls() > 10);
 
     // Get index and about out of goose metrics.
     let index_metrics = goose_metrics

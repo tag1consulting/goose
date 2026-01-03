@@ -104,27 +104,27 @@ fn common_build_configuration(
 // Helper to confirm all variations generate appropriate results.
 fn validate_test(test_type: &TestType, mock_endpoints: &[Mock]) {
     // Confirm the load test ran.
-    assert!(mock_endpoints[INDEX_KEY].hits() > 0);
+    assert!(mock_endpoints[INDEX_KEY].calls() > 0);
 
     // Now confirm TestType-specific counters.
     match test_type {
         TestType::Start => {
             // Confirm setup ran one time.
-            mock_endpoints[SETUP_KEY].assert_hits(1);
+            mock_endpoints[SETUP_KEY].assert_calls(1);
             // Confirm teardown did not run.
-            mock_endpoints[TEARDOWN_KEY].assert_hits(0);
+            mock_endpoints[TEARDOWN_KEY].assert_calls(0);
         }
         TestType::Stop => {
             // Confirm setup did not run.
-            mock_endpoints[SETUP_KEY].assert_hits(0);
+            mock_endpoints[SETUP_KEY].assert_calls(0);
             // Confirm teardown ran one time.
-            mock_endpoints[TEARDOWN_KEY].assert_hits(1);
+            mock_endpoints[TEARDOWN_KEY].assert_calls(1);
         }
         TestType::StartAndStop => {
             // Confirm setup ran one time.
-            mock_endpoints[SETUP_KEY].assert_hits(1);
+            mock_endpoints[SETUP_KEY].assert_calls(1);
             // Confirm teardown ran one time.
-            mock_endpoints[TEARDOWN_KEY].assert_hits(1);
+            mock_endpoints[TEARDOWN_KEY].assert_calls(1);
         }
     }
 }

@@ -75,12 +75,12 @@ fn validate_one_scenario(
     test_type: TestType,
 ) {
     // Confirm that we loaded the mock endpoints.
-    assert!(mock_endpoints[INDEX_KEY].hits() > 0);
-    assert!(mock_endpoints[ABOUT_KEY].hits() > 0);
+    assert!(mock_endpoints[INDEX_KEY].calls() > 0);
+    assert!(mock_endpoints[ABOUT_KEY].calls() > 0);
 
     // Confirm that we loaded the index roughly three times as much as the about page.
-    let one_third_index = mock_endpoints[INDEX_KEY].hits() / 3;
-    let difference = mock_endpoints[ABOUT_KEY].hits() as i32 - one_third_index as i32;
+    let one_third_index = mock_endpoints[INDEX_KEY].calls() / 3;
+    let difference = mock_endpoints[ABOUT_KEY].calls() as i32 - one_third_index as i32;
     assert!((-2..=2).contains(&difference));
 
     // Get index and about out of goose metrics.
@@ -107,29 +107,29 @@ fn validate_one_scenario(
             println!(
                 "raw_data.counter: {}, mock_endpoint_called: {}",
                 index_metrics.raw_data.counter,
-                mock_endpoints[INDEX_KEY].hits()
+                mock_endpoints[INDEX_KEY].calls()
             );
 
-            assert!(index_metrics.raw_data.counter < mock_endpoints[INDEX_KEY].hits());
+            assert!(index_metrics.raw_data.counter < mock_endpoints[INDEX_KEY].calls());
             assert!(
-                index_metrics.status_code_counts[&status_code] < mock_endpoints[INDEX_KEY].hits()
+                index_metrics.status_code_counts[&status_code] < mock_endpoints[INDEX_KEY].calls()
             );
-            assert!(index_metrics.success_count < mock_endpoints[INDEX_KEY].hits());
-            assert!(about_metrics.raw_data.counter < mock_endpoints[ABOUT_KEY].hits());
+            assert!(index_metrics.success_count < mock_endpoints[INDEX_KEY].calls());
+            assert!(about_metrics.raw_data.counter < mock_endpoints[ABOUT_KEY].calls());
             assert!(
-                about_metrics.status_code_counts[&status_code] < mock_endpoints[ABOUT_KEY].hits()
+                about_metrics.status_code_counts[&status_code] < mock_endpoints[ABOUT_KEY].calls()
             );
-            assert!(about_metrics.success_count < mock_endpoints[ABOUT_KEY].hits());
+            assert!(about_metrics.success_count < mock_endpoints[ABOUT_KEY].calls());
         }
         TestType::NoResetMetrics => {
             // Statistics were not reset, so Goose should report the same number of page
             // loads as the server actually saw.
-            mock_endpoints[INDEX_KEY].assert_hits(index_metrics.raw_data.counter);
-            mock_endpoints[INDEX_KEY].assert_hits(index_metrics.status_code_counts[&status_code]);
-            mock_endpoints[INDEX_KEY].assert_hits(index_metrics.success_count);
-            mock_endpoints[ABOUT_KEY].assert_hits(about_metrics.raw_data.counter);
-            mock_endpoints[ABOUT_KEY].assert_hits(about_metrics.status_code_counts[&status_code]);
-            mock_endpoints[ABOUT_KEY].assert_hits(about_metrics.success_count);
+            mock_endpoints[INDEX_KEY].assert_calls(index_metrics.raw_data.counter);
+            mock_endpoints[INDEX_KEY].assert_calls(index_metrics.status_code_counts[&status_code]);
+            mock_endpoints[INDEX_KEY].assert_calls(index_metrics.success_count);
+            mock_endpoints[ABOUT_KEY].assert_calls(about_metrics.raw_data.counter);
+            mock_endpoints[ABOUT_KEY].assert_calls(about_metrics.status_code_counts[&status_code]);
+            mock_endpoints[ABOUT_KEY].assert_calls(about_metrics.success_count);
         }
     }
 
