@@ -115,8 +115,8 @@ fn validate_test(
     // Confirm that we loaded the mock endpoints. This confirms that we started
     // both users, which also verifies that hatch_rate was properly set.
     // Confirm that we loaded the mock endpoints.
-    assert!(mock_endpoints[INDEX_KEY].hits() > 0);
-    assert!(mock_endpoints[ERROR_KEY].hits() > 0);
+    assert!(mock_endpoints[INDEX_KEY].calls() > 0);
+    assert!(mock_endpoints[ERROR_KEY].calls() > 0);
 
     // Confirm that the test duration was correct.
     assert!(goose_metrics.duration == 2);

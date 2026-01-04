@@ -155,7 +155,7 @@ fn validate_closer_test(
 
         // Confirm that we loaded the mock endpoint.
         assert!(
-            mock_endpoint.hits() > 0,
+            mock_endpoint.calls() > 0,
             "Endpoint was not called > 0 for item: {:#?}",
             &item
         );
@@ -178,17 +178,17 @@ fn validate_closer_test(
         let status_code: u16 = item.status_code;
 
         assert!(
-            endpoint_metrics.raw_data.counter == mock_endpoint.hits(),
+            endpoint_metrics.raw_data.counter == mock_endpoint.calls(),
             "response_time_counter != hits() for item: {:#?}",
             &item
         );
         assert!(
-            endpoint_metrics.status_code_counts[&status_code] == mock_endpoint.hits(),
+            endpoint_metrics.status_code_counts[&status_code] == mock_endpoint.calls(),
             "status_code_counts != hits() for item: {:#?}",
             &item
         );
         assert!(
-            endpoint_metrics.success_count == mock_endpoint.hits(),
+            endpoint_metrics.success_count == mock_endpoint.calls(),
             "success_count != hits() for item: {:#?}",
             &item
         );
@@ -204,8 +204,8 @@ fn validate_closer_test(
     let about = &mock_endpoints[1];
 
     // Confirm that we loaded the index roughly three times as much as the about page.
-    let one_third_index = index.hits() / 3;
-    let difference = about.hits() as i32 - one_third_index as i32;
+    let one_third_index = index.calls() / 3;
+    let difference = about.calls() as i32 - one_third_index as i32;
     assert!((-2..=2).contains(&difference));
 
     // Verify that Goose started the correct number of users.

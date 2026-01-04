@@ -151,39 +151,39 @@ fn common_build_configuration(
 // Helper to confirm all variations generate appropriate results.
 fn validate_test(test_type: &TestType, mock_endpoints: &[Mock]) {
     // START_ONE_PATH is loaded one and only one time on all variations.
-    mock_endpoints[START_ONE_KEY].assert_hits(1);
+    mock_endpoints[START_ONE_KEY].assert_calls(1);
 
     // Now confirm TestType-specific counters.
     match test_type {
         TestType::NotSequenced => {
             // All transactions run one time, as they are launched RoundRobin in the order
             // defined (and importantly three is defined before two in this test).
-            mock_endpoints[ONE_KEY].assert_hits(USERS);
-            mock_endpoints[THREE_KEY].assert_hits(USERS);
-            mock_endpoints[TWO_KEY].assert_hits(USERS);
+            mock_endpoints[ONE_KEY].assert_calls(USERS);
+            mock_endpoints[THREE_KEY].assert_calls(USERS);
+            mock_endpoints[TWO_KEY].assert_calls(USERS);
         }
         TestType::SequencedRoundRobin => {
             // Transaction ONE runs twice as it's scheduled first with a weight of 2. It then
             // runs one more time in the next scheduling as it then round robins between
             // ONE and TWO. When TWO runs it runs out the clock.
-            mock_endpoints[ONE_KEY].assert_hits(USERS * 3);
+            mock_endpoints[ONE_KEY].assert_calls(USERS * 3);
             // Two runs out the clock, so three never runs.
-            mock_endpoints[TWO_KEY].assert_hits(USERS);
-            mock_endpoints[THREE_KEY].assert_hits(0);
+            mock_endpoints[TWO_KEY].assert_calls(USERS);
+            mock_endpoints[THREE_KEY].assert_calls(0);
         }
         TestType::SequencedSerial => {
             // Transaction ONE runs twice as it's scheduled first with a weight of 2. It then
             // runs two more times in the next scheduling as runs transaction serially as
             // defined.
-            mock_endpoints[ONE_KEY].assert_hits(USERS * 4);
+            mock_endpoints[ONE_KEY].assert_calls(USERS * 4);
             // Two runs out the clock, so three never runs.
-            mock_endpoints[TWO_KEY].assert_hits(USERS);
-            mock_endpoints[THREE_KEY].assert_hits(0);
+            mock_endpoints[TWO_KEY].assert_calls(USERS);
+            mock_endpoints[THREE_KEY].assert_calls(0);
         }
     }
 
     // STOP_ONE_PATH is loaded one and only one time on all variations.
-    mock_endpoints[STOP_ONE_KEY].assert_hits(1);
+    mock_endpoints[STOP_ONE_KEY].assert_calls(1);
 }
 
 // Returns the appropriate scenario, start_transaction and stop_transaction needed to build these tests.

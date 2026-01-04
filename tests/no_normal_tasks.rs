@@ -93,8 +93,8 @@ fn common_build_configuration(
 // Helper to confirm all variations generate appropriate results.
 fn validate_test(mock_endpoints: &[Mock]) {
     // Confirm that the on_start and on_exit transactions actually ran once per GooseUser.
-    mock_endpoints[LOGIN_KEY].assert_hits(USERS);
-    mock_endpoints[LOGOUT_KEY].assert_hits(USERS);
+    mock_endpoints[LOGIN_KEY].assert_calls(USERS);
+    mock_endpoints[LOGOUT_KEY].assert_calls(USERS);
 }
 
 // Returns the appropriate scenario needed to build these tests.

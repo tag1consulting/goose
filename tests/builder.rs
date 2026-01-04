@@ -219,15 +219,15 @@ fn common_build_configuration(
 // Helper to confirm all variations generate appropriate results.
 fn validate_test(is_builder: bool, mock_endpoints: &[Mock], goose_metrics: GooseMetrics) {
     // Confirm that the on_start and on_exit transactions actually ran once per GooseUser.
-    assert!(mock_endpoints[GET_KEY].hits() > 0);
-    assert!(mock_endpoints[POST_KEY].hits() > 0);
-    assert!(mock_endpoints[HEAD_KEY].hits() > 0);
-    assert!(mock_endpoints[DELETE_KEY].hits() > 0);
+    assert!(mock_endpoints[GET_KEY].calls() > 0);
+    assert!(mock_endpoints[POST_KEY].calls() > 0);
+    assert!(mock_endpoints[HEAD_KEY].calls() > 0);
+    assert!(mock_endpoints[DELETE_KEY].calls() > 0);
 
     // PATCH and PUT are only possible when using builder.
     if is_builder {
-        assert!(mock_endpoints[PATCH_KEY].hits() > 0);
-        assert!(mock_endpoints[PUT_KEY].hits() > 0);
+        assert!(mock_endpoints[PATCH_KEY].calls() > 0);
+        assert!(mock_endpoints[PUT_KEY].calls() > 0);
     }
 
     // Validate GET requests.

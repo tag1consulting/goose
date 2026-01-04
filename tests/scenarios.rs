@@ -142,7 +142,7 @@ fn validate_loadtest(
             // There should not have been any failures during this test.
             assert!(scenarioa1_metrics.fail_count == 0);
             // Confirm Goose and the mock endpoint agree on the number of requests made.
-            assert!(mock_endpoints[SCENARIOA1_KEY].hits() <= scenarioa1_metrics.success_count);
+            assert!(mock_endpoints[SCENARIOA1_KEY].calls() <= scenarioa1_metrics.success_count);
 
             // Get scenarioa2 metrics.
             let scenarioa2_metrics = goose_metrics
@@ -155,18 +155,18 @@ fn validate_loadtest(
             // There should not have been any failures during this test.
             assert!(scenarioa2_metrics.fail_count == 0);
             // Confirm Goose and the mock endpoint agree on the number of requests made.
-            assert!(mock_endpoints[SCENARIOA2_KEY].hits() <= scenarioa2_metrics.success_count);
+            assert!(mock_endpoints[SCENARIOA2_KEY].calls() <= scenarioa2_metrics.success_count);
 
             // scenariob1 and scenariob2 should not have been loaded due to `--scenarios scenarioa`.
-            assert!(mock_endpoints[SCENARIOB1_KEY].hits() == 0);
-            assert!(mock_endpoints[SCENARIOB2_KEY].hits() == 0);
+            assert!(mock_endpoints[SCENARIOB1_KEY].calls() == 0);
+            assert!(mock_endpoints[SCENARIOB2_KEY].calls() == 0);
         }
         TestType::ScenariosDefault => {
             // scenarioa1 and scenarioa2 should not have been loaded due to `GooseDefault::Scenarios`.
-            assert!(mock_endpoints[SCENARIOA1_KEY].hits() == 0);
-            assert!(mock_endpoints[SCENARIOA2_KEY].hits() == 0);
-            assert!(mock_endpoints[SCENARIOB1_KEY].hits() > 0);
-            assert!(mock_endpoints[SCENARIOB2_KEY].hits() > 0);
+            assert!(mock_endpoints[SCENARIOA1_KEY].calls() == 0);
+            assert!(mock_endpoints[SCENARIOA2_KEY].calls() == 0);
+            assert!(mock_endpoints[SCENARIOB1_KEY].calls() > 0);
+            assert!(mock_endpoints[SCENARIOB2_KEY].calls() > 0);
         }
     }
 }

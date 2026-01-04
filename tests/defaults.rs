@@ -89,8 +89,8 @@ fn validate_test(
 ) {
     // Confirm that we loaded the mock endpoints. This confirms that we started
     // both users, which also verifies that hatch_rate was properly set.
-    assert!(mock_endpoints[INDEX_KEY].hits() > 0);
-    assert!(mock_endpoints[ABOUT_KEY].hits() > 0);
+    assert!(mock_endpoints[INDEX_KEY].calls() > 0);
+    assert!(mock_endpoints[ABOUT_KEY].calls() > 0);
 
     let index_metrics = goose_metrics
         .requests
@@ -102,10 +102,10 @@ fn validate_test(
         .unwrap();
 
     // Confirm that Goose and the server saw the same number of page loads.
-    mock_endpoints[INDEX_KEY].assert_hits(index_metrics.raw_data.counter);
-    mock_endpoints[INDEX_KEY].assert_hits(index_metrics.success_count);
-    mock_endpoints[ABOUT_KEY].assert_hits(about_metrics.raw_data.counter);
-    mock_endpoints[ABOUT_KEY].assert_hits(about_metrics.success_count);
+    mock_endpoints[INDEX_KEY].assert_calls(index_metrics.raw_data.counter);
+    mock_endpoints[INDEX_KEY].assert_calls(index_metrics.success_count);
+    mock_endpoints[ABOUT_KEY].assert_calls(about_metrics.raw_data.counter);
+    mock_endpoints[ABOUT_KEY].assert_calls(about_metrics.success_count);
     assert!(index_metrics.fail_count == 0);
     assert!(about_metrics.fail_count == 0);
 
@@ -122,7 +122,7 @@ fn validate_test(
         assert!(std::path::Path::new(requests_file).exists());
         metrics_lines += common::file_length(requests_file);
     }
-    assert!(metrics_lines == mock_endpoints[INDEX_KEY].hits() + mock_endpoints[ABOUT_KEY].hits());
+    assert!(metrics_lines == mock_endpoints[INDEX_KEY].calls() + mock_endpoints[ABOUT_KEY].calls());
 
     // Verify that the debug file was created and is empty.
     for debug_file in debug_files {
@@ -700,8 +700,8 @@ async fn test_defaults_no_metrics() {
         .unwrap();
 
     // Confirm that we loaded the mock endpoints.
-    assert!(mock_endpoints[INDEX_KEY].hits() > 0);
-    assert!(mock_endpoints[ABOUT_KEY].hits() > 0);
+    assert!(mock_endpoints[INDEX_KEY].calls() > 0);
+    assert!(mock_endpoints[ABOUT_KEY].calls() > 0);
 
     // Confirm that we did not track metrics.
     assert!(goose_metrics.requests.is_empty());

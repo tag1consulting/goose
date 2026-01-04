@@ -238,55 +238,55 @@ fn validate_redirect(test_type: &TestType, mock_endpoints: &[Mock]) {
         TestType::Chain => {
             // Confirm that all pages are loaded, even those not requested directly but
             // that are only loaded due to redirects.
-            assert!(mock_endpoints[INDEX_KEY].hits() > 0);
-            assert!(mock_endpoints[REDIRECT_KEY].hits() > 0);
-            assert!(mock_endpoints[REDIRECT_KEY2].hits() > 0);
-            assert!(mock_endpoints[REDIRECT_KEY3].hits() > 0);
-            assert!(mock_endpoints[ABOUT_KEY].hits() > 0);
+            assert!(mock_endpoints[INDEX_KEY].calls() > 0);
+            assert!(mock_endpoints[REDIRECT_KEY].calls() > 0);
+            assert!(mock_endpoints[REDIRECT_KEY2].calls() > 0);
+            assert!(mock_endpoints[REDIRECT_KEY3].calls() > 0);
+            assert!(mock_endpoints[ABOUT_KEY].calls() > 0);
 
             // Confirm the entire redirect chain is loaded the same number of times.
-            mock_endpoints[REDIRECT_KEY].assert_hits(mock_endpoints[REDIRECT_KEY2].hits());
-            mock_endpoints[REDIRECT_KEY].assert_hits(mock_endpoints[REDIRECT_KEY3].hits());
-            mock_endpoints[REDIRECT_KEY].assert_hits(mock_endpoints[ABOUT_KEY].hits());
+            mock_endpoints[REDIRECT_KEY].assert_calls(mock_endpoints[REDIRECT_KEY2].calls());
+            mock_endpoints[REDIRECT_KEY].assert_calls(mock_endpoints[REDIRECT_KEY3].calls());
+            mock_endpoints[REDIRECT_KEY].assert_calls(mock_endpoints[ABOUT_KEY].calls());
         }
         TestType::Domain => {
             // All pages on Server1 are loaded.
-            assert!(mock_endpoints[SERVER1_INDEX_KEY].hits() > 0);
-            assert!(mock_endpoints[SERVER1_REDIRECT_KEY].hits() > 0);
-            assert!(mock_endpoints[SERVER1_ABOUT_KEY].hits() > 0);
+            assert!(mock_endpoints[SERVER1_INDEX_KEY].calls() > 0);
+            assert!(mock_endpoints[SERVER1_REDIRECT_KEY].calls() > 0);
+            assert!(mock_endpoints[SERVER1_ABOUT_KEY].calls() > 0);
 
             // GooseUsers are redirected to Server2 correctly.
-            assert!(mock_endpoints[SERVER2_INDEX_KEY].hits() > 0);
+            assert!(mock_endpoints[SERVER2_INDEX_KEY].calls() > 0);
 
             // GooseUsers do not stick to Server2 and load the other page.
-            mock_endpoints[SERVER2_ABOUT_KEY].assert_hits(0);
+            mock_endpoints[SERVER2_ABOUT_KEY].assert_calls(0);
         }
         TestType::Sticky => {
             // Each GooseUser loads the redirect on Server1 one time.
             println!(
                 "SERVER1_REDIRECT: {}, USERS: {}",
-                mock_endpoints[SERVER1_REDIRECT_KEY].hits(),
+                mock_endpoints[SERVER1_REDIRECT_KEY].calls(),
                 USERS,
             );
             println!(
                 "SERVER1_INDEX: {}, SERVER1_ABOUT: {}",
-                mock_endpoints[SERVER1_INDEX_KEY].hits(),
-                mock_endpoints[SERVER1_ABOUT_KEY].hits(),
+                mock_endpoints[SERVER1_INDEX_KEY].calls(),
+                mock_endpoints[SERVER1_ABOUT_KEY].calls(),
             );
             println!(
                 "SERVER2_INDEX: {}, SERVER2_ABOUT: {}",
-                mock_endpoints[SERVER2_INDEX_KEY].hits(),
-                mock_endpoints[SERVER2_ABOUT_KEY].hits(),
+                mock_endpoints[SERVER2_INDEX_KEY].calls(),
+                mock_endpoints[SERVER2_ABOUT_KEY].calls(),
             );
-            mock_endpoints[SERVER1_REDIRECT_KEY].assert_hits(USERS);
+            mock_endpoints[SERVER1_REDIRECT_KEY].assert_calls(USERS);
 
             // Redirected to Server2, no user load anything else on Server1.
-            mock_endpoints[SERVER1_INDEX_KEY].assert_hits(0);
-            mock_endpoints[SERVER1_ABOUT_KEY].assert_hits(0);
+            mock_endpoints[SERVER1_INDEX_KEY].assert_calls(0);
+            mock_endpoints[SERVER1_ABOUT_KEY].assert_calls(0);
 
             // All GooseUsers go on to load pages on Server2.
-            assert!(mock_endpoints[SERVER2_INDEX_KEY].hits() > 0);
-            assert!(mock_endpoints[SERVER2_ABOUT_KEY].hits() > 0);
+            assert!(mock_endpoints[SERVER2_INDEX_KEY].calls() > 0);
+            assert!(mock_endpoints[SERVER2_ABOUT_KEY].calls() > 0);
         }
     }
 }

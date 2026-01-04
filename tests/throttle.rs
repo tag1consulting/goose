@@ -125,8 +125,8 @@ fn validate_test(
     }
 
     // Confirm that we loaded the mock endpoints.
-    assert!(mock_endpoints[INDEX_KEY].hits() > 0);
-    assert!(mock_endpoints[ABOUT_KEY].hits() > 0);
+    assert!(mock_endpoints[INDEX_KEY].calls() > 0);
+    assert!(mock_endpoints[ABOUT_KEY].calls() > 0);
 
     // Requests are made while GooseUsers are hatched, and then for RUN_TIME seconds.
     assert!(current_requests_file_lines <= (RUN_TIME + 1) * throttle_value);

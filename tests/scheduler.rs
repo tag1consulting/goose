@@ -158,7 +158,7 @@ fn common_build_configuration(
 // Helper to confirm all variations generate appropriate results.
 fn validate_test(test_type: &TestType, scheduler: &GooseScheduler, mock_endpoints: &[Mock]) {
     // START_ONE_PATH is loaded one and only one time on all variations.
-    mock_endpoints[START_ONE_KEY].assert_hits(1);
+    mock_endpoints[START_ONE_KEY].assert_calls(1);
 
     match test_type {
         TestType::ScenariosLimitIterations => {
@@ -167,21 +167,21 @@ fn validate_test(test_type: &TestType, scheduler: &GooseScheduler, mock_endpoint
                 GooseScheduler::RoundRobin => {
                     // We launch an equal number of each scenario, so we call both endpoints
                     // an equal number of times.
-                    mock_endpoints[TWO_KEY].assert_hits(mock_endpoints[ONE_KEY].hits());
-                    mock_endpoints[ONE_KEY].assert_hits(USERS);
+                    mock_endpoints[TWO_KEY].assert_calls(mock_endpoints[ONE_KEY].calls());
+                    mock_endpoints[ONE_KEY].assert_calls(USERS);
                 }
                 GooseScheduler::Serial => {
                     // As we only launch as many users as the weight of the first scenario, we only
                     // call the first endpoint, never the second endpoint.
-                    mock_endpoints[ONE_KEY].assert_hits(USERS * 2);
-                    mock_endpoints[TWO_KEY].assert_hits(0);
+                    mock_endpoints[ONE_KEY].assert_calls(USERS * 2);
+                    mock_endpoints[TWO_KEY].assert_calls(0);
                 }
                 GooseScheduler::Random => {
                     // When scheduling scenarios randomly, we don't know how many of each will get
                     // launched, but we do now that added together they will equal the total number
                     // of users.
                     assert!(
-                        mock_endpoints[ONE_KEY].hits() + mock_endpoints[TWO_KEY].hits()
+                        mock_endpoints[ONE_KEY].calls() + mock_endpoints[TWO_KEY].calls()
                             == USERS * 2
                     );
                 }
@@ -193,21 +193,21 @@ fn validate_test(test_type: &TestType, scheduler: &GooseScheduler, mock_endpoint
                 GooseScheduler::RoundRobin => {
                     // We launch an equal number of each scenario, so we call both endpoints
                     // an equal number of times.
-                    mock_endpoints[TWO_KEY].assert_hits(mock_endpoints[ONE_KEY].hits());
-                    mock_endpoints[ONE_KEY].assert_hits(USERS / 2);
+                    mock_endpoints[TWO_KEY].assert_calls(mock_endpoints[ONE_KEY].calls());
+                    mock_endpoints[ONE_KEY].assert_calls(USERS / 2);
                 }
                 GooseScheduler::Serial => {
                     // As we only launch as many users as the weight of the first scenario, we only
                     // call the first endpoint, never the second endpoint.
-                    mock_endpoints[ONE_KEY].assert_hits(USERS);
-                    mock_endpoints[TWO_KEY].assert_hits(0);
+                    mock_endpoints[ONE_KEY].assert_calls(USERS);
+                    mock_endpoints[TWO_KEY].assert_calls(0);
                 }
                 GooseScheduler::Random => {
                     // When scheduling scenarios randomly, we don't know how many of each will get
                     // launched, but we do now that added together they will equal the total number
                     // of users.
                     assert!(
-                        mock_endpoints[ONE_KEY].hits() + mock_endpoints[TWO_KEY].hits() == USERS
+                        mock_endpoints[ONE_KEY].calls() + mock_endpoints[TWO_KEY].calls() == USERS
                     );
                 }
             }
@@ -219,24 +219,24 @@ fn validate_test(test_type: &TestType, scheduler: &GooseScheduler, mock_endpoint
                     // Tests are allocated round robin THREE, TWO, ONE. There's no delay
                     // in THREE, so the test runs THREE and TWO which then times things out
                     // and prevents ONE from running.
-                    mock_endpoints[ONE_KEY].assert_hits(0);
-                    mock_endpoints[TWO_KEY].assert_hits(USERS);
-                    mock_endpoints[THREE_KEY].assert_hits(USERS);
+                    mock_endpoints[ONE_KEY].assert_calls(0);
+                    mock_endpoints[TWO_KEY].assert_calls(USERS);
+                    mock_endpoints[THREE_KEY].assert_calls(USERS);
                 }
                 GooseScheduler::Serial => {
                     // Tests are allocated sequentally THREE, TWO, ONE. There's no delay
                     // in THREE and it has a weight of 2, so the test runs THREE twice and
                     // TWO which then times things out and prevents ONE from running.
-                    mock_endpoints[ONE_KEY].assert_hits(0);
-                    mock_endpoints[TWO_KEY].assert_hits(USERS);
-                    mock_endpoints[THREE_KEY].assert_hits(USERS * 2);
+                    mock_endpoints[ONE_KEY].assert_calls(0);
+                    mock_endpoints[TWO_KEY].assert_calls(USERS);
+                    mock_endpoints[THREE_KEY].assert_calls(USERS * 2);
                 }
                 GooseScheduler::Random => {
                     // When scheduling scenarios randomly, we don't know how many of each will get
                     // launched, but we do now that added together they will equal the total number
                     // of users (THREE_KEY isn't counted as there's no delay).
                     assert!(
-                        mock_endpoints[ONE_KEY].hits() + mock_endpoints[TWO_KEY].hits() == USERS
+                        mock_endpoints[ONE_KEY].calls() + mock_endpoints[TWO_KEY].calls() == USERS
                     );
                 }
             }
@@ -244,7 +244,7 @@ fn validate_test(test_type: &TestType, scheduler: &GooseScheduler, mock_endpoint
     }
 
     // STOP_ONE_PATH is loaded one and only one time on all variations.
-    mock_endpoints[STOP_ONE_KEY].assert_hits(1);
+    mock_endpoints[STOP_ONE_KEY].assert_calls(1);
 }
 
 // Returns the appropriate scenario, start_transaction and stop_transaction needed to build these tests.
