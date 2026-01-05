@@ -290,9 +290,9 @@
 //! See the License for the specific language governing permissions and
 //! limitations under the License.
 
-use downcast_rs::{impl_downcast, Downcast};
+use downcast_rs::{Downcast, impl_downcast};
 use regex::Regex;
-use reqwest::{header, Client, ClientBuilder, Method, RequestBuilder, Response};
+use reqwest::{Client, ClientBuilder, Method, RequestBuilder, Response, header};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::fmt::{Debug, Formatter};
@@ -691,9 +691,7 @@ impl Scenario {
     ) -> Result<Self, GooseError> {
         trace!(
             "{} set_wait time: min: {:?} max: {:?}",
-            self.name,
-            min_wait,
-            max_wait
+            self.name, min_wait, max_wait
         );
         if min_wait.as_millis() > max_wait.as_millis() {
             return Err(GooseError::InvalidWaitTime {
@@ -2578,26 +2576,13 @@ pub(crate) fn create_reqwest_client(
         GOOSE_REQUEST_TIMEOUT
     };
 
-    #[cfg(feature = "rustls-tls")]
-    let mut client_builder = Client::builder()
-        .user_agent(APP_USER_AGENT)
-        .timeout(Duration::from_millis(timeout))
-        // Enable gzip unless `--no-gzip` flag is enabled.
-        .gzip(!configuration.no_gzip);
-
-    #[cfg(not(feature = "rustls-tls"))]
     let client_builder = Client::builder()
         .user_agent(APP_USER_AGENT)
         .timeout(Duration::from_millis(timeout))
         // Enable gzip unless `--no-gzip` flag is enabled.
-        .gzip(!configuration.no_gzip);
-
-    #[cfg(feature = "rustls-tls")]
-    {
+        .gzip(!configuration.no_gzip)
         // Validate https certificates unless `--accept-invalid-certs` is enabled.
-        client_builder =
-            client_builder.danger_accept_invalid_certs(configuration.accept_invalid_certs);
-    }
+        .danger_accept_invalid_certs(configuration.accept_invalid_certs);
 
     #[cfg(feature = "cookies")]
     let client_builder = client_builder.cookie_store(true);
@@ -3109,8 +3094,7 @@ impl Transaction {
     pub fn set_name_for_transaction_and_requests(mut self, name: &str) -> Self {
         trace!(
             "[{}] set_name (for transaction only): {}",
-            self.transactions_index,
-            name
+            self.transactions_index, name
         );
         self.name = TransactionName::InheritNameByRequests(Cow::Owned(name.to_string()));
         self

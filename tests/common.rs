@@ -3,10 +3,10 @@ use gumdrop::Options;
 use httpmock::MockServer;
 use std::io::{self, BufRead};
 
+use goose::GooseAttack;
 use goose::config::GooseConfiguration;
 use goose::goose::{Scenario, Transaction};
 use goose::metrics::GooseMetrics;
-use goose::GooseAttack;
 
 type WorkerHandles = Vec<tokio::task::JoinHandle<GooseMetrics>>;
 

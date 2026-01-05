@@ -2,8 +2,8 @@ use std::str::FromStr;
 
 mod common;
 
-use goose::test_plan::TestPlan;
 use goose::GooseError;
+use goose::test_plan::TestPlan;
 
 // Test valid test plan parsing with various formats
 #[test]

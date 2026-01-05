@@ -6,10 +6,10 @@
 //!
 //! **Note**: This entire module is only available when compiled with the `pdf-reports` feature flag.
 
-use crate::logger::ScopedLogLevel;
 use crate::GooseError;
+use crate::logger::ScopedLogLevel;
 use headless_chrome::{Browser, LaunchOptions};
-use log::{debug, LevelFilter};
+use log::{LevelFilter, debug};
 use std::{
     ffi::OsStr,
     fs,
@@ -45,7 +45,9 @@ mod pdf_errors {
         GooseError::InvalidOption {
             option: "--pdf".to_string(),
             value: format!("{operation} failed: {inner_error}"),
-            detail: format!("Chrome {operation} operation failed. This may indicate Chrome instability or insufficient system resources."),
+            detail: format!(
+                "Chrome {operation} operation failed. This may indicate Chrome instability or insufficient system resources."
+            ),
         }
     }
 
@@ -54,7 +56,9 @@ mod pdf_errors {
         GooseError::InvalidOption {
             option: "--pdf".to_string(),
             value: "timeout".to_string(),
-            detail: format!("Chrome operation timed out after {duration:?}. This may indicate Chrome is unresponsive or the system is under heavy load."),
+            detail: format!(
+                "Chrome operation timed out after {duration:?}. This may indicate Chrome is unresponsive or the system is under heavy load."
+            ),
         }
     }
 
@@ -86,7 +90,9 @@ mod pdf_errors {
         GooseError::InvalidOption {
             option: "--pdf".to_string(),
             value: format!("PDF generation failed: {inner_error}"),
-            detail: format!("Chrome's print-to-PDF operation failed. Scale: {scale}, Paper size: {width:.1}\" x {height:.1}\". Try adjusting --pdf-scale or reducing report complexity."),
+            detail: format!(
+                "Chrome's print-to-PDF operation failed. Scale: {scale}, Paper size: {width:.1}\" x {height:.1}\". Try adjusting --pdf-scale or reducing report complexity."
+            ),
         }
     }
 }

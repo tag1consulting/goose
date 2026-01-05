@@ -56,9 +56,9 @@ pub mod util;
 use gumdrop::Options;
 use lazy_static::lazy_static;
 use rand::prelude::*;
-use std::collections::{hash_map::DefaultHasher, BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashSet, hash_map::DefaultHasher};
 use std::hash::{Hash, Hasher};
-use std::sync::{atomic::AtomicUsize, Arc, RwLock};
+use std::sync::{Arc, RwLock, atomic::AtomicUsize};
 use std::time::{self, Duration};
 use std::{fmt, io};
 
@@ -790,10 +790,7 @@ impl GooseAttack {
                 let weight = scenario.weight / u;
                 trace!(
                     "{}: {} has weight of {} (reduced with gcd to {})",
-                    index,
-                    scenario.name,
-                    scenario.weight,
-                    weight
+                    index, scenario.name, scenario.weight, weight
                 );
                 let weighted_sets = vec![index; weight];
                 total_scenarios += weight;
@@ -1089,7 +1086,10 @@ impl GooseAttack {
                             return Err(GooseError::InvalidOption {
                                 option: "--host".to_string(),
                                 value: "".to_string(),
-                                detail: format!("A host must be defined via the --host option, the GooseAttack.set_default() function, or the Scenario.set_host() function (no host defined for {}).", scenario.name)
+                                detail: format!(
+                                    "A host must be defined via the --host option, the GooseAttack.set_default() function, or the Scenario.set_host() function (no host defined for {}).",
+                                    scenario.name
+                                ),
                             });
                         }
                     },
