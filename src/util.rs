@@ -7,7 +7,7 @@ use std::str::FromStr;
 use std::time;
 use url::Url;
 
-use crate::{is_killswitch_triggered, trigger_killswitch, GooseError, CANCELED};
+use crate::{CANCELED, GooseError, is_killswitch_triggered, trigger_killswitch};
 
 /// Parse a string representing a time span and return the number of seconds.
 ///

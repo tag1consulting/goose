@@ -1,6 +1,6 @@
 use httpmock::{Method::GET, Mock, MockServer};
 use serial_test::serial;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 
 mod common;
 

@@ -1,6 +1,6 @@
 use super::{
-    merge_times, per_second_calculations, prepare_status_codes, report, update_max_time,
-    update_min_time, CoMetricsSummary, GooseErrorMetricAggregate, GooseMetrics,
+    CoMetricsSummary, GooseErrorMetricAggregate, GooseMetrics, merge_times,
+    per_second_calculations, prepare_status_codes, report, update_max_time, update_min_time,
 };
 use crate::{
     report::{

@@ -1,11 +1,11 @@
 use crate::{
-    metrics::{format_number, GooseErrorMetricAggregate, ReportData},
+    GooseError,
+    metrics::{GooseErrorMetricAggregate, ReportData, format_number},
     report::{
-        common::OrEmpty, RequestMetric, ResponseMetric, ScenarioMetric, StatusCodeMetric,
-        TransactionMetric,
+        RequestMetric, ResponseMetric, ScenarioMetric, StatusCodeMetric, TransactionMetric,
+        common::OrEmpty,
     },
     test_plan::TestPlanStepAction,
-    GooseError,
 };
 use chrono::{Local, TimeZone};
 use std::io::Write;

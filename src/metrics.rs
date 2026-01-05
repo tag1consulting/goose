@@ -17,7 +17,7 @@ pub use coordinated_omission::{CadenceCalculator, CoMetricsSummary, CoordinatedO
 pub use nullable::NullableFloat;
 
 use crate::config::GooseDefaults;
-use crate::goose::{get_base_url, GooseMethod, Scenario, TransactionName};
+use crate::goose::{GooseMethod, Scenario, TransactionName, get_base_url};
 use crate::logger::GooseLog;
 use crate::metrics::common::ReportOptions;
 use crate::report;
@@ -2765,7 +2765,8 @@ impl GooseAttack {
                         // Users is required here so unwrap() is safe.
                         if goose_attack_run_state.active_users < users {
                             println!(
-                                "{} of {} users hatched, timer expired, resetting metrics (disable with --no-reset-metrics).\n", goose_attack_run_state.active_users, users
+                                "{} of {} users hatched, timer expired, resetting metrics (disable with --no-reset-metrics).\n",
+                                goose_attack_run_state.active_users, users
                             );
                         } else {
                             println!(
@@ -3008,7 +3009,9 @@ impl GooseAttack {
                     error: raw_request.error.clone(),
                 }))) {
                     if let flume::SendError(Some(ref message)) = e {
-                        info!("Failed to write to error log (receiver dropped?): flume::SendError({message:?})");
+                        info!(
+                            "Failed to write to error log (receiver dropped?): flume::SendError({message:?})"
+                        );
                     } else {
                         info!("Failed to write to error log: (receiver dropped?) {e:?}");
                     }
@@ -3101,21 +3104,21 @@ impl GooseAttack {
                         value: report.clone(),
                         detail: "PDF reports require compiling with the 'pdf-reports' feature flag"
                             .to_string(),
-                    })
+                    });
                 }
                 None => {
                     return Err(GooseError::InvalidOption {
                         option: "--report-file".to_string(),
                         value: report.clone(),
                         detail: "Missing file extension for report".to_string(),
-                    })
+                    });
                 }
                 Some(ext) => {
                     return Err(GooseError::InvalidOption {
                         option: "--report-file".to_string(),
                         value: report.clone(),
                         detail: format!("Unknown report file type: {ext}"),
-                    })
+                    });
                 }
             }
         }
@@ -3197,44 +3200,41 @@ impl GooseAttack {
             match &step[0].action {
                 // For maintaining just show the current number of users.
                 TestPlanStepAction::Maintaining => {
-                    let _ = write!(steps_overview,
-                            "<tr><td>{:?}</td><td>{}</td><td>{}</td><td>{:02}:{:02}:{:02}</td><td>{}</td></tr>",
-                            step[0].action,
-                            started,
-                            stopped,
-                            hours,
-                            minutes,
-                            seconds,
-                            step[0].users,
-                        );
+                    let _ = write!(
+                        steps_overview,
+                        "<tr><td>{:?}</td><td>{}</td><td>{}</td><td>{:02}:{:02}:{:02}</td><td>{}</td></tr>",
+                        step[0].action, started, stopped, hours, minutes, seconds, step[0].users,
+                    );
                 }
                 // For increasing show the current number of users to the new number of users.
                 TestPlanStepAction::Increasing => {
-                    let _ = write!(steps_overview,
-                            "<tr><td>{:?}</td><td>{}</td><td>{}</td><td>{:02}:{:02}:{:02}</td><td>{} &rarr; {}</td></tr>",
-                            step[0].action,
-                            started,
-                            stopped,
-                            hours,
-                            minutes,
-                            seconds,
-                            step[0].users,
-                            step[1].users,
-                        );
+                    let _ = write!(
+                        steps_overview,
+                        "<tr><td>{:?}</td><td>{}</td><td>{}</td><td>{:02}:{:02}:{:02}</td><td>{} &rarr; {}</td></tr>",
+                        step[0].action,
+                        started,
+                        stopped,
+                        hours,
+                        minutes,
+                        seconds,
+                        step[0].users,
+                        step[1].users,
+                    );
                 }
                 // For decreasing show the new number of users from the current number of users.
                 TestPlanStepAction::Decreasing | TestPlanStepAction::Canceling => {
-                    let _ = write!(steps_overview,
-                            "<tr><td>{:?}</td><td>{}</td><td>{}</td><td>{:02}:{:02}:{:02}</td><td>{} &larr; {}</td></tr>",
-                            step[0].action,
-                            started,
-                            stopped,
-                            hours,
-                            minutes,
-                            seconds,
-                            step[1].users,
-                            step[0].users,
-                        );
+                    let _ = write!(
+                        steps_overview,
+                        "<tr><td>{:?}</td><td>{}</td><td>{}</td><td>{:02}:{:02}:{:02}</td><td>{} &larr; {}</td></tr>",
+                        step[0].action,
+                        started,
+                        stopped,
+                        hours,
+                        minutes,
+                        seconds,
+                        step[1].users,
+                        step[0].users,
+                    );
                 }
                 TestPlanStepAction::Finished => {
                     unreachable!("there shouldn't be a step after finished");
@@ -3533,11 +3533,7 @@ pub(crate) fn per_second_calculations(duration: usize, total: usize, fail: usize
 }
 
 fn determine_precision(value: f32) -> usize {
-    if value < 1000.0 {
-        2
-    } else {
-        0
-    }
+    if value < 1000.0 { 2 } else { 0 }
 }
 
 /// Format large number in locale appropriate style.

@@ -705,9 +705,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             GooseDefault::TelnetPort => self.defaults.telnet_port = Some(value as u16),
             GooseDefault::WebSocketPort => self.defaults.websocket_port = Some(value as u16),
             #[cfg(feature = "pdf-reports")]
-            GooseDefault::PdfTimeout => {
-                self.defaults.pdf_timeout = Some(value as u64)
-            }
+            GooseDefault::PdfTimeout => self.defaults.pdf_timeout = Some(value as u64),
             // Otherwise display a helpful and explicit error.
             GooseDefault::DebugLog
             | GooseDefault::ErrorLog
@@ -722,15 +720,14 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::TestPlan
             | GooseDefault::Timeout
             | GooseDefault::TransactionLog
-            | GooseDefault::WebSocketHost
-            => {
+            | GooseDefault::WebSocketHost => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: format!("{value}"),
                     detail: format!(
                         "set_default(GooseDefault::{key:?}, {value}) expected &str value, received usize"
                     ),
-                })
+                });
             }
             GooseDefault::NoResetMetrics
             | GooseDefault::NoMetrics
@@ -754,7 +751,7 @@ impl GooseDefaultType<usize> for GooseAttack {
                     detail: format!(
                         "set_default(GooseDefault::{key:?}, {value}) expected bool value, received usize"
                     ),
-                })
+                });
             }
             GooseDefault::RequestFormat
             | GooseDefault::DebugFormat
@@ -776,7 +773,7 @@ impl GooseDefaultType<usize> for GooseAttack {
                     detail: format!(
                         "set_default(GooseDefault::{key:?}, {value:?}) expected GooseCoordinatedOmissionMitigation value, received usize"
                     ),
-                })
+                });
             }
         }
         Ok(Box::new(self))
@@ -818,15 +815,14 @@ impl GooseDefaultType<bool> for GooseAttack {
             | GooseDefault::TestPlan
             | GooseDefault::Timeout
             | GooseDefault::TransactionLog
-            | GooseDefault::WebSocketHost
-            => {
+            | GooseDefault::WebSocketHost => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: format!("{value}"),
                     detail: format!(
                         "set_default(GooseDefault::{key:?}, {value}) expected &str value, received bool"
                     ),
-                })
+                });
             }
             GooseDefault::Users
             | GooseDefault::StartupTime
@@ -845,7 +841,7 @@ impl GooseDefaultType<bool> for GooseAttack {
                     detail: format!(
                         "set_default(GooseDefault::{key:?}, {value}) expected usize value, received bool"
                     ),
-                })
+                });
             }
             GooseDefault::RequestFormat
             | GooseDefault::DebugFormat
@@ -891,7 +887,9 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
         value: GooseCoordinatedOmissionMitigation,
     ) -> Result<Box<Self>, GooseError> {
         match key {
-            GooseDefault::CoordinatedOmissionMitigation => self.defaults.co_mitigation = Some(value),
+            GooseDefault::CoordinatedOmissionMitigation => {
+                self.defaults.co_mitigation = Some(value)
+            }
             // Otherwise display a helpful and explicit error.
             GooseDefault::NoResetMetrics
             | GooseDefault::NoMetrics
@@ -908,15 +906,14 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::NoStatusCodes
             | GooseDefault::StickyFollow
             | GooseDefault::NoGranularData
-            | GooseDefault::AcceptInvalidCerts
-            => {
+            | GooseDefault::AcceptInvalidCerts => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: format!("{value:?}"),
                     detail: format!(
                         "set_default(GooseDefault::{key:?}, {value:?}) expected bool value, received GooseCoordinatedOmissionMitigation"
                     ),
-                })
+                });
             }
             // Otherwise display a helpful and explicit error.
             GooseDefault::DebugLog
@@ -932,15 +929,14 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::TestPlan
             | GooseDefault::Timeout
             | GooseDefault::TransactionLog
-            | GooseDefault::WebSocketHost
-            => {
+            | GooseDefault::WebSocketHost => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: format!("{value:?}"),
                     detail: format!(
                         "set_default(GooseDefault::{key:?}, {value:?}) expected &str value, received GooseCoordinatedOmissionMitigation"
                     ),
-                })
+                });
             }
             GooseDefault::Users
             | GooseDefault::StartupTime
@@ -959,7 +955,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
                     detail: format!(
                         "set_default(GooseDefault::{key:?}, {value:?}) expected usize value, received GooseCoordinatedOmissionMitigation"
                     ),
-                })
+                });
             }
             GooseDefault::RequestFormat
             | GooseDefault::DebugFormat
@@ -972,7 +968,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
                     detail: format!(
                         "set_default(GooseDefault::{key:?}, {value:?}) expected GooseLogFormat value, received GooseCoordinatedOmissionMitigation"
                     ),
-                })
+                });
             }
             #[cfg(feature = "pdf-reports")]
             GooseDefault::PdfTimeout => {
@@ -1017,15 +1013,14 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::NoStatusCodes
             | GooseDefault::StickyFollow
             | GooseDefault::NoGranularData
-            | GooseDefault::AcceptInvalidCerts
-            => {
+            | GooseDefault::AcceptInvalidCerts => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: format!("{value:?}"),
                     detail: format!(
                         "set_default(GooseDefault::{key:?}, {value:?}) expected bool value, received GooseCoordinatedOmissionMitigation"
                     ),
-                })
+                });
             }
             // Otherwise display a helpful and explicit error.
             GooseDefault::DebugLog
@@ -1041,15 +1036,14 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::TestPlan
             | GooseDefault::Timeout
             | GooseDefault::TransactionLog
-            | GooseDefault::WebSocketHost
-            => {
+            | GooseDefault::WebSocketHost => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: format!("{value:?}"),
                     detail: format!(
                         "set_default(GooseDefault::{key:?}, {value:?}) expected &str value, received GooseCoordinatedOmissionMitigation"
                     ),
-                })
+                });
             }
             GooseDefault::Users
             | GooseDefault::StartupTime
@@ -1068,7 +1062,7 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
                     detail: format!(
                         "set_default(GooseDefault::{key:?}, {value:?}) expected usize value, received GooseCoordinatedOmissionMitigation"
                     ),
-                })
+                });
             }
             GooseDefault::CoordinatedOmissionMitigation => {
                 return Err(GooseError::InvalidOption {
@@ -1077,7 +1071,7 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
                     detail: format!(
                         "set_default(GooseDefault::{key:?}, {value:?}) expected GooseCoordinatedOmissionMitigation value, received GooseLogFormat"
                     ),
-                })
+                });
             }
             #[cfg(feature = "pdf-reports")]
             GooseDefault::PdfTimeout => {
