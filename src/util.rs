@@ -206,6 +206,11 @@ pub fn median(
     min: usize,
     max: usize,
 ) -> usize {
+    // Guard against empty data structures
+    if total_elements == 0 || btree.is_empty() {
+        return 0;
+    }
+
     let mut total_count: usize = 0;
     let half_elements: usize = (total_elements as f64 / 2.0).round() as usize;
     for (value, counter) in btree {

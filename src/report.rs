@@ -69,6 +69,7 @@ pub(crate) struct ResponseMetric {
     pub percentile_95: usize,
     pub percentile_99: usize,
     pub percentile_100: usize,
+    pub is_breakdown: bool,
 }
 
 /// Defines the metrics reported about transactions.
@@ -140,6 +141,7 @@ pub(crate) fn get_response_metric(
         percentile_95: percentiles[5],
         percentile_99: percentiles[6],
         percentile_100: percentiles[7],
+        is_breakdown: method.starts_with("└─"),
     }
 }
 
@@ -171,8 +173,35 @@ pub(crate) fn raw_request_metrics_row(metric: RequestMetric) -> String {
 
 /// Build an individual row of response metrics in the html report.
 pub(crate) fn response_metrics_row(metric: ResponseMetric) -> String {
-    format!(
-        r#"<tr>
+    // Check if this is a status code breakdown
+    if metric.is_breakdown {
+        // Status code breakdown row - merge first two columns and use increased indentation
+        format!(
+            r#"<tr class="status-breakdown">
+            <td colspan="2">{method}</td>
+            <td>{percentile_50}</td>
+            <td>{percentile_60}</td>
+            <td>{percentile_70}</td>
+            <td>{percentile_80}</td>
+            <td>{percentile_90}</td>
+            <td>{percentile_95}</td>
+            <td>{percentile_99}</td>
+            <td>{percentile_100}</td>
+        </tr>"#,
+            method = metric.method,
+            percentile_50 = format_number(metric.percentile_50),
+            percentile_60 = format_number(metric.percentile_60),
+            percentile_70 = format_number(metric.percentile_70),
+            percentile_80 = format_number(metric.percentile_80),
+            percentile_90 = format_number(metric.percentile_90),
+            percentile_95 = format_number(metric.percentile_95),
+            percentile_99 = format_number(metric.percentile_99),
+            percentile_100 = format_number(metric.percentile_100),
+        )
+    } else {
+        // Regular response metrics row
+        format!(
+            r#"<tr>
             <td>{method}</td>
             <td>{name}</td>
             <td>{percentile_50}</td>
@@ -184,17 +213,18 @@ pub(crate) fn response_metrics_row(metric: ResponseMetric) -> String {
             <td>{percentile_99}</td>
             <td>{percentile_100}</td>
         </tr>"#,
-        method = metric.method,
-        name = metric.name,
-        percentile_50 = format_number(metric.percentile_50),
-        percentile_60 = format_number(metric.percentile_60),
-        percentile_70 = format_number(metric.percentile_70),
-        percentile_80 = format_number(metric.percentile_80),
-        percentile_90 = format_number(metric.percentile_90),
-        percentile_95 = format_number(metric.percentile_95),
-        percentile_99 = format_number(metric.percentile_99),
-        percentile_100 = format_number(metric.percentile_100),
-    )
+            method = metric.method,
+            name = metric.name,
+            percentile_50 = format_number(metric.percentile_50),
+            percentile_60 = format_number(metric.percentile_60),
+            percentile_70 = format_number(metric.percentile_70),
+            percentile_80 = format_number(metric.percentile_80),
+            percentile_90 = format_number(metric.percentile_90),
+            percentile_95 = format_number(metric.percentile_95),
+            percentile_99 = format_number(metric.percentile_99),
+            percentile_100 = format_number(metric.percentile_100),
+        )
+    }
 }
 
 /// If Coordinated Omission Mitigation is triggered, add a relevant request table to the
@@ -621,6 +651,13 @@ pub(crate) fn build_report(
 
         .download a {{
             color: #00ca5a;
+        }}
+
+        .status-breakdown {{
+            background-color: #f8f9fa;
+            padding-left: 50px;
+            font-style: italic;
+            text-align: left;
         }}
 
         .graph {{
