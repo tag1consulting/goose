@@ -43,3 +43,15 @@ impl Display for NullableFloat {
         self.0.fmt(f)
     }
 }
+
+impl crate::metrics::delta::DeltaValue for NullableFloat {
+    type Delta = f32;
+
+    fn delta(self, value: Self) -> Self::Delta {
+        self.0 - value.0
+    }
+
+    fn is_delta_positive(value: Self::Delta) -> bool {
+        !value.is_sign_negative()
+    }
+}

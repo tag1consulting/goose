@@ -1,8 +1,8 @@
 use crate::{
-    metrics::{format_number, GooseErrorMetricAggregate, ReportData},
+    metrics::{format_number, format_value, ReportData},
     report::{
-        common::OrEmpty, RequestMetric, ResponseMetric, ScenarioMetric, StatusCodeMetric,
-        TransactionMetric,
+        common::OrEmpty, ErrorMetric, RequestMetric, ResponseMetric, ScenarioMetric,
+        StatusCodeMetric, TransactionMetric,
     },
     test_plan::TestPlanStepAction,
     GooseError,
@@ -162,14 +162,14 @@ impl<W: Write> Markdown<'_, '_, W> {
             writeln!(
                 self.w,
                 r#"| {method} | {name} | {percentile_50} | {percentile_60 } | {percentile_70 } | {percentile_80} | {percentile_90} | {percentile_95} | {percentile_99} | {percentile_100} |"#,
-                percentile_50 = format_number(*percentile_50),
-                percentile_60 = format_number(*percentile_60),
-                percentile_70 = format_number(*percentile_70),
-                percentile_80 = format_number(*percentile_80),
-                percentile_90 = format_number(*percentile_90),
-                percentile_95 = format_number(*percentile_95),
-                percentile_99 = format_number(*percentile_99),
-                percentile_100 = format_number(*percentile_100),
+                percentile_50 = format_value(percentile_50),
+                percentile_60 = format_value(percentile_60),
+                percentile_70 = format_value(percentile_70),
+                percentile_80 = format_value(percentile_80),
+                percentile_90 = format_value(percentile_90),
+                percentile_95 = format_value(percentile_95),
+                percentile_99 = format_value(percentile_99),
+                percentile_100 = format_value(percentile_100),
             )?;
         }
 
@@ -236,9 +236,9 @@ impl<W: Write> Markdown<'_, '_, W> {
                 false => writeln!(
                     self.w,
                     r#"| {transaction} {name} | {number_of_requests} | {number_of_failures} | {response_time_average:.2} | {response_time_minimum} | {response_time_maximum} | {requests_per_second:.2} | {failures_per_second:.2} |"#,
-                    response_time_average = OrEmpty(*response_time_average),
-                    requests_per_second = OrEmpty(*requests_per_second),
-                    failures_per_second = OrEmpty(*failures_per_second),
+                    response_time_average = OrEmpty(response_time_average.clone()),
+                    requests_per_second = OrEmpty(requests_per_second.clone()),
+                    failures_per_second = OrEmpty(failures_per_second.clone()),
                 )?,
             }
         }
@@ -296,7 +296,7 @@ impl<W: Write> Markdown<'_, '_, W> {
 "#
         )?;
 
-        for GooseErrorMetricAggregate {
+        for ErrorMetric {
             method,
             name,
             error,

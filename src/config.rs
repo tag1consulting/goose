@@ -6,6 +6,7 @@
 //! Goose can be configured programmatically with [`GooseDefaultType::set_default`].
 
 use gumdrop::Options;
+use log::info;
 use serde::{Deserialize, Serialize};
 use simplelog::*;
 use std::path::PathBuf;
@@ -409,6 +410,8 @@ pub enum GooseDefault {
     NoErrorSummary,
     /// An optional default for the report file name.
     ReportFile,
+    /// An optional default for the baseline file name.
+    BaselineFile,
     /// An optional default for the flag that disables granular data in HTML report graphs.
     NoGranularData,
     /// An optional default for the request log file name.
@@ -597,6 +600,7 @@ impl GooseDefaultType<&str> for GooseAttack {
                 }
             }
             GooseDefault::ReportFile => self.defaults.report_file = Some(vec![value.to_string()]),
+            GooseDefault::BaselineFile => self.defaults.baseline_file = Some(value.to_string()),
             GooseDefault::RequestLog => self.defaults.request_log = Some(value.to_string()),
             GooseDefault::ScenarioLog => self.defaults.scenario_log = Some(value.to_string()),
             GooseDefault::Scenarios => {
@@ -715,6 +719,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::HatchRate
             | GooseDefault::Host
             | GooseDefault::ReportFile
+            | GooseDefault::BaselineFile
             | GooseDefault::RequestLog
             | GooseDefault::ScenarioLog
             | GooseDefault::Scenarios
@@ -811,6 +816,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             | GooseDefault::HatchRate
             | GooseDefault::Host
             | GooseDefault::ReportFile
+            | GooseDefault::BaselineFile
             | GooseDefault::RequestLog
             | GooseDefault::ScenarioLog
             | GooseDefault::Scenarios
@@ -925,6 +931,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::HatchRate
             | GooseDefault::Host
             | GooseDefault::ReportFile
+            | GooseDefault::BaselineFile
             | GooseDefault::RequestLog
             | GooseDefault::ScenarioLog
             | GooseDefault::Scenarios
@@ -1034,6 +1041,7 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::HatchRate
             | GooseDefault::Host
             | GooseDefault::ReportFile
+            | GooseDefault::BaselineFile
             | GooseDefault::RequestLog
             | GooseDefault::ScenarioLog
             | GooseDefault::Scenarios
@@ -1673,6 +1681,22 @@ impl GooseConfiguration {
             ])
             .unwrap_or_default();
 
+        // Configure `baseline_file`.
+        self.baseline_file = self.get_value(vec![
+            // Use --baseline-file if set.
+            GooseValue {
+                value: self.baseline_file.clone(),
+                filter: self.baseline_file.is_none(),
+                message: "baseline_file",
+            },
+            // Otherwise use GooseDefault if set.
+            GooseValue {
+                value: defaults.baseline_file.clone(),
+                filter: defaults.baseline_file.is_none(),
+                message: "baseline_file",
+            },
+        ]);
+
         // Configure `no_granular_report`.
         self.no_debug_body = self
             .get_value(vec![
@@ -2045,7 +2069,7 @@ impl GooseConfiguration {
             // The --no-reset-metrics option isn't compatible with --test-plan.
             if self.no_reset_metrics {
                 return Err(GooseError::InvalidOption {
-                    option: "`configuration.no_reset_metrics".to_string(),
+                    option: "`configuration.no_reset_metrics`".to_string(),
                     value: self.no_reset_metrics.to_string(),
                     detail: "`configuration.no_reset_metrics` can not be set with `configuration.test_plan` (metrics are not reset)."
                         .to_string(),
@@ -2078,7 +2102,7 @@ impl GooseConfiguration {
             // The --no-reset-metrics option isn't compatible with --iterations.
             if self.no_reset_metrics {
                 return Err(GooseError::InvalidOption {
-                    option: "`configuration.no_reset_metrics".to_string(),
+                    option: "`configuration.no_reset_metrics`".to_string(),
                     value: self.no_reset_metrics.to_string(),
                     detail: "`configuration.no_reset_metrics` can not be set with `configuration.iterations` (metrics are not reset)."
                         .to_string(),
@@ -2203,6 +2227,9 @@ impl GooseConfiguration {
         // Unified PDF configuration validation
         self.validate_pdf_configuration()?;
 
+        // Validate baseline file early if specified
+        self.validate_baseline_file()?;
+
         Ok(())
     }
 
@@ -2255,6 +2282,29 @@ impl GooseConfiguration {
             });
         }
 
+        Ok(())
+    }
+
+    /// Validate baseline file early if specified.
+    ///
+    /// This performs early validation of the baseline file to catch issues before
+    /// running a potentially lengthy load test. It validates file existence, JSON format,
+    /// and basic structure without loading the full baseline data.
+    fn validate_baseline_file(&self) -> Result<(), GooseError> {
+        if let Some(baseline_file) = &self.baseline_file {
+            // Use the existing load_baseline_file function to validate the file
+            // This will catch file not found, invalid JSON, and structural issues early
+            match crate::load_baseline_file(baseline_file) {
+                Ok(_) => {
+                    // File is valid, we can proceed
+                    info!("Baseline file '{}' validated successfully", baseline_file);
+                }
+                Err(e) => {
+                    // Return the error from load_baseline_file which already has proper formatting
+                    return Err(e);
+                }
+            }
+        }
         Ok(())
     }
 

@@ -10,11 +10,13 @@
 
 mod common;
 pub mod coordinated_omission;
-pub mod nullable;
+mod delta;
+mod nullable;
 
-pub(crate) use common::ReportData;
+pub(crate) use common::{load_baseline_file, ReportData};
 pub use coordinated_omission::{CadenceCalculator, CoMetricsSummary, CoordinatedOmissionMetrics};
-pub use nullable::NullableFloat;
+pub(crate) use delta::*;
+pub(crate) use nullable::NullableFloat;
 
 use crate::config::GooseDefaults;
 use crate::goose::{get_base_url, GooseMethod, Scenario, TransactionName};
@@ -1030,7 +1032,7 @@ impl ScenarioMetricAggregate {
 ///     Ok(())
 /// }
 /// ```
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Deserialize)]
 pub struct GooseMetrics {
     /// A hash of the load test, primarily used to validate all Workers in a Gaggle
     /// are running the same load test.
@@ -3138,6 +3140,31 @@ impl GooseAttack {
         Ok(())
     }
 
+    /// Load baseline data if configured and prepare report data with baseline comparison.
+    pub(crate) fn prepare_report_data(&self) -> Result<ReportData<'_>, GooseError> {
+        let options = ReportOptions {
+            no_transaction_metrics: self.configuration.no_transaction_metrics,
+            no_scenario_metrics: self.configuration.no_scenario_metrics,
+            no_status_codes: self.configuration.no_status_codes,
+        };
+
+        match &self.configuration.baseline_file {
+            Some(baseline_file) => {
+                let baseline = common::load_baseline_file(baseline_file)?;
+                Ok(common::prepare_data_with_baseline_owned(
+                    options,
+                    &self.metrics,
+                    Some(baseline),
+                ))
+            }
+            None => Ok(common::prepare_data_with_baseline_owned(
+                options,
+                &self.metrics,
+                None,
+            )),
+        }
+    }
+
     /// Write PDF-optimized HTML if the --pdf-print-html option is configured.
     /// This functionality is always available regardless of feature flags.
     async fn write_print_html_if_configured(&self) -> Result<(), GooseError> {
@@ -3256,14 +3283,17 @@ impl GooseAttack {
             errors,
             status_code_metrics,
             coordinated_omission_metrics: _,
-        } = common::prepare_data(
-            ReportOptions {
-                no_transaction_metrics: self.configuration.no_transaction_metrics,
-                no_scenario_metrics: self.configuration.no_scenario_metrics,
-                no_status_codes: self.configuration.no_status_codes,
-            },
-            &self.metrics,
-        );
+        } = self.prepare_report_data().unwrap_or_else(|_| {
+            // Fallback to non-baseline data if baseline loading fails
+            common::prepare_data(
+                ReportOptions {
+                    no_transaction_metrics: self.configuration.no_transaction_metrics,
+                    no_scenario_metrics: self.configuration.no_scenario_metrics,
+                    no_status_codes: self.configuration.no_status_codes,
+                },
+                &self.metrics,
+            )
+        });
 
         // Compile the request metrics template.
         let mut raw_requests_rows = Vec::new();
@@ -3398,14 +3428,7 @@ impl GooseAttack {
 
     /// Write a JSON report.
     pub(crate) async fn write_json_report(&self, report_file: File) -> Result<(), GooseError> {
-        let data = common::prepare_data(
-            ReportOptions {
-                no_transaction_metrics: self.configuration.no_transaction_metrics,
-                no_scenario_metrics: self.configuration.no_scenario_metrics,
-                no_status_codes: self.configuration.no_status_codes,
-            },
-            &self.metrics,
-        );
+        let data = self.prepare_report_data()?;
 
         serde_json::to_writer_pretty(BufWriter::new(report_file.into_std().await), &data)?;
 
@@ -3414,14 +3437,7 @@ impl GooseAttack {
 
     /// Write a Markdown report.
     pub(crate) async fn write_markdown_report(&self, report_file: File) -> Result<(), GooseError> {
-        let data = common::prepare_data(
-            ReportOptions {
-                no_transaction_metrics: self.configuration.no_transaction_metrics,
-                no_scenario_metrics: self.configuration.no_scenario_metrics,
-                no_status_codes: self.configuration.no_status_codes,
-            },
-            &self.metrics,
-        );
+        let data = self.prepare_report_data()?;
 
         report::write_markdown_report(&mut BufWriter::new(report_file.into_std().await), data)
     }
@@ -3543,6 +3559,20 @@ fn determine_precision(value: f32) -> usize {
 /// Format large number in locale appropriate style.
 pub(crate) fn format_number(number: usize) -> String {
     (number).to_formatted_string(&Locale::en)
+}
+
+/// Format a Value<T> for display, showing both the value and delta if present.
+pub(crate) fn format_value<T: DeltaValue>(value: &Value<T>) -> String {
+    match value {
+        Value::Plain(v) => format!("{}", v),
+        Value::Delta { value: v, delta } => {
+            if T::is_delta_positive(delta.clone()) {
+                format!("{} (+{})", v, delta)
+            } else {
+                format!("{} ({})", v, delta)
+            }
+        }
+    }
 }
 
 /// A helper function that merges together times.
