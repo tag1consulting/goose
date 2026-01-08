@@ -49,6 +49,7 @@
     - [Simple](example/simple.md)
     - [Closure](example/closure.md)
     - [Session](example/session.md)
+    - [Basic Authentication](example/basic-auth.md)
     - [GraphQL](example/graphql.md)
     - [Drupal Memcache](example/drupal-memcache.md)
     - [Umami](example/umami.md)
