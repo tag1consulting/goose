@@ -742,20 +742,28 @@ impl GooseAttack {
 
     /// Internal helper to determine if the scenario is currently active.
     fn scenario_is_active(&self, scenario: &Scenario) -> bool {
-        // All scenarios are enabled by default.
-        if self.configuration.scenarios.active.is_empty() {
-            true
-        // Returns true or false depending on if the machine name is included in the
-        // configured `--scenarios`.
-        } else {
-            for active in &self.configuration.scenarios.active {
-                if scenario.machine_name.contains(active) {
-                    return true;
-                }
-            }
-            // No matches found, this scenario is not active.
-            false
+        // If no scenarios are configured, all are active.
+        if self.configuration.scenarios.compiled_patterns.is_empty() {
+            return true;
         }
+
+        // Check against pre-compiled patterns
+        self.configuration
+            .scenarios
+            .compiled_patterns
+            .iter()
+            .any(|pattern| {
+                match pattern {
+                    config::ScenarioPattern::Exact(name) => scenario.machine_name == *name,
+                    config::ScenarioPattern::Wildcard(pattern_bytes) => {
+                        // Create wildcard from stored bytes and check for match
+                        match wildcard::Wildcard::new(pattern_bytes) {
+                            Ok(wildcard) => wildcard.is_match(scenario.machine_name.as_bytes()),
+                            Err(_) => false, // Pattern is invalid, no match
+                        }
+                    }
+                }
+            })
     }
 
     /// Use configured GooseScheduler to build out a properly weighted list of

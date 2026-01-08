@@ -33,18 +33,18 @@ Scenarios:
 
 ## Running Scenarios By Machine Name
 
-It is now possible to run any subset of the above scenarios by passing a comma separated list of machine names with the `--scenarios` run time option. Goose will match what you have typed against any machine name containing all or some of the typed text, so you do not have to type the full name. For example, to run only the two anonymous Scenarios, you could add `--scenarios anon`:
+It is now possible to run any subset of the above scenarios by passing a comma separated list of machine names with the `--scenarios` run time option. Goose uses exact matching by default, but supports wildcard pattern matching using the `*` character. For example, to run only the two anonymous Scenarios using a wildcard pattern, you could add `--scenarios anon*`:
 
 ```bash,ignore
-% cargo run --release --example umami -- --hatch-rate 10 --scenarios anon
+% cargo run --release --example umami -- --hatch-rate 10 --scenarios "anon*"
     Finished release [optimized] target(s) in 0.15s
-     Running `target/release/examples/umami --hatch-rate 10 --scenarios anon`
+     Running `target/release/examples/umami --hatch-rate 10 --scenarios anon*`
 05:50:17 [INFO] Output verbosity level: INFO
 05:50:17 [INFO] Logfile verbosity level: WARN
 05:50:17 [INFO] users defaulted to number of CPUs = 10
 05:50:17 [INFO] hatch_rate = 10
 05:50:17 [INFO] iterations = 0
-05:50:17 [INFO] scenarios = Scenarios { active: ["anon"] }
+05:50:17 [INFO] scenarios = Scenarios { active: ["anon*"] }
 05:50:17 [INFO] host for Anonymous English user configured: https://drupal-9.ddev.site/
 05:50:17 [INFO] host for Anonymous Spanish user configured: https://drupal-9.ddev.site/
 05:50:17 [INFO] host for Admin user configured: https://drupal-9.ddev.site/
@@ -63,19 +63,26 @@ It is now possible to run any subset of the above scenarios by passing a comma s
 ^C05:50:18 [WARN] caught ctrl-c, stopping...
 ```
 
-Or, to run only the "Anonymous Spanish user" and "Admin user" Scenarios, you could add `--senarios "spanish,admin"`:
+### Exact vs Wildcard Matching
+
+Goose supports two types of scenario matching:
+
+- **Exact matching**: `--scenarios adminuser` matches only the scenario with machine name `adminuser`
+- **Wildcard matching**: `--scenarios admin*` matches all scenarios whose machine names start with `admin`
+
+For example, to run only the "Anonymous Spanish user" scenario exactly, you could use `--scenarios anonymousspanishuser`. Or to run multiple specific scenarios, you could use `--scenarios "anonymousspanishuser,adminuser"`:
 
 ```bash,ignore
-% cargo run --release --example umami -- --hatch-rate 10 --scenarios "spanish,admin"
+% cargo run --release --example umami -- --hatch-rate 10 --scenarios "anonymousspanishuser,adminuser"
    Compiling goose v0.18.1 (/Users/jandrews/devel/goose)
     Finished release [optimized] target(s) in 11.79s
-     Running `target/release/examples/umami --hatch-rate 10 --scenarios spanish,admin`
+     Running `target/release/examples/umami --hatch-rate 10 --scenarios anonymousspanishuser,adminuser`
 05:53:45 [INFO] Output verbosity level: INFO
 05:53:45 [INFO] Logfile verbosity level: WARN
 05:53:45 [INFO] users defaulted to number of CPUs = 10
 05:53:45 [INFO] hatch_rate = 10
 05:53:45 [INFO] iterations = 0
-05:53:45 [INFO] scenarios = Scenarios { active: ["spanish", "admin"] }
+05:53:45 [INFO] scenarios = Scenarios { active: ["anonymousspanishuser", "adminuser"] }
 05:53:45 [INFO] host for Anonymous English user configured: https://drupal-9.ddev.site/
 05:53:45 [INFO] host for Anonymous Spanish user configured: https://drupal-9.ddev.site/
 05:53:45 [INFO] host for Admin user configured: https://drupal-9.ddev.site/
@@ -96,5 +103,7 @@ Or, to run only the "Anonymous Spanish user" and "Admin user" Scenarios, you cou
 05:53:46 [INFO] launching user 10 from Anonymous Spanish user...
 ^C05:53:46 [WARN] caught ctrl-c, stopping...
 ```
+
+You can also mix exact and wildcard matching in the same command: `--scenarios "adminuser,anon*"` would run the exact `adminuser` scenario plus all scenarios starting with `anon`.
 
 When the load test completes, you can refer to the [Scenario metrics](./metrics.html#scenarios) to confirm which Scenarios were enabled, and which were not.

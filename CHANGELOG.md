@@ -8,6 +8,7 @@
     o introduces `TransactionName` enum with `TransactionOnly` and `InheritNameByRequests` variants
  - [#578](https://github.com/tag1consulting/goose/pull/578) add type-safe client builder for cookie configuration, optimize startup with shared clients
  - [#629](https://github.com/tag1consulting/goose/pull/629) add `--pdf-print-html` option to generate printer-friendly HTML optimized for PDF conversion; provides two-step PDF workflow without requiring Chromium dependencies; add `--pdf-timeout` option for configurable Chrome timeout in direct PDF generation (10-300s, default: 60)
+ - [#655](https://github.com/tag1consulting/goose/pull/655) fix scenario filtering to use exact matching instead of substring matching; introduce wildcard support with `*` character for pattern matching; update documentation with examples of both exact (`--scenarios scenarioname`) and wildcard (`--scenarios pattern*`) usage
 
 ## 0.18.1 August 14, 2025
  - [#634](https://github.com/tag1consulting/goose/pull/634) add killswitch mechanism for programmatic test termination
