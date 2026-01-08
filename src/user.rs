@@ -206,7 +206,7 @@ async fn record_scenario(
     if !thread_user.config.no_scenario_metrics && !thread_user.config.no_metrics {
         let raw_scenario = ScenarioMetric::new(
             thread_user.started.elapsed().as_millis(),
-            &thread_scenario.name,
+            thread_scenario.name.as_ref(),
             thread_user.scenarios_index,
             run_time,
             thread_user.weighted_users_index,
