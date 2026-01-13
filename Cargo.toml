@@ -2,7 +2,7 @@
 name = "goose"
 version = "0.19.0-dev"
 authors = ["Jeremy Andrews <jeremy@tag1consulting.com>"]
-edition = "2018"
+edition = "2024"
 description = "A load testing framework inspired by Locust."
 homepage = "https://tag1.com/goose"
 documentation = "https://book.goose.rs"
@@ -16,7 +16,7 @@ async-trait = "0.1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 ctrlc = "3"
 downcast-rs = "2.0"
-flume = "0.11"
+flume = "0.12"
 futures = "0.3"
 gumdrop = "0.8"
 http = "1.1"
@@ -26,7 +26,9 @@ log = "0.4"
 num-format = "0.4"
 rand = "0.9"
 regex = "1"
-reqwest = { version = "0.12", default-features = false, features = [
+reqwest = { version = "0.13", default-features = false, features = [
+    "default-tls",
+    "form",
     "gzip",
     "json",
 ] }
@@ -46,26 +48,22 @@ tokio = { version = "1", features = [
     "time",
     "sync",
 ] }
-tokio-tungstenite = "0.27"
-tungstenite = "0.27"
+tokio-tungstenite = "0.28"
 url = "2"
 headless_chrome = { version = "1.0", features = ["fetch"], optional = true }
 urlencoding = { version = "2.1", optional = true }
 
 [features]
 # Include cookies by default for backward compatibility and expected behavior in web load testing
-default = ["reqwest/default-tls", "cookies"]
-# Include cookies with rustls-tls to maintain consistent behavior regardless of TLS backend choice.
-# This ensures users don't lose cookie functionality when switching from native-tls to rustls-tls
-# for performance or dependency reasons. Cookie handling is logically independent of TLS implementation.
-rustls-tls = ["reqwest/rustls-tls", "tokio-tungstenite/rustls", "cookies"]
+default = ["cookies"]
+# reqwest >==0.13 already defaults to rustls
+rustls-tls = ["tokio-tungstenite/rustls"]
 # Cookie support - can be completely disabled by compiling with --no-default-features for maximum performance
 cookies = ["reqwest/cookies"]
 pdf-reports = ["headless_chrome", "urlencoding"]
 
 [dev-dependencies]
 httpmock = "0.8"
-native-tls = "0.2"
 nix = { version = "0.30", features = ["signal"] }
 rustls = "0.23"
 serial_test = "3.2"

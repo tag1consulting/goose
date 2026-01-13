@@ -1,7 +1,7 @@
 //! Tests for Coordinated Omission metrics functionality introduced in PR #630.
 
-use goose::metrics::coordinated_omission::*;
 use goose::metrics::GooseCoordinatedOmissionMitigation;
+use goose::metrics::coordinated_omission::*;
 use std::thread::sleep;
 use std::time::Duration;
 
@@ -120,7 +120,7 @@ mod coordinated_omission_metrics_tests {
 
         // Test case: add more to get 50/50 split
         metrics.record_synthetic_requests(40); // Total: 50 synthetic
-                                               // 50/(100+50) = 33.33%
+        // 50/(100+50) = 33.33%
         assert!((metrics.synthetic_percentage - 33.333333).abs() < 0.001);
 
         // Add more synthetic to get exactly 50%: 100/(100+100) = 50%
@@ -333,8 +333,12 @@ mod cadence_calculator_tests {
         assert!(
             !calc.should_inject_synthetic(Duration::from_millis(100), Duration::from_millis(50))
         ); // 100 == 50*2, not >
-        assert!(!calc.should_inject_synthetic(Duration::from_millis(99), Duration::from_millis(50))); // <2x
-        assert!(calc.should_inject_synthetic(Duration::from_millis(101), Duration::from_millis(50)));
+        assert!(
+            !calc.should_inject_synthetic(Duration::from_millis(99), Duration::from_millis(50))
+        ); // <2x
+        assert!(
+            calc.should_inject_synthetic(Duration::from_millis(101), Duration::from_millis(50))
+        );
         // >2x
     }
 
@@ -675,7 +679,7 @@ mod co_summary_tests {
         metrics.record_actual_request(); // 1 actual
         metrics.record_actual_request(); // 2 actual
         metrics.record_synthetic_requests(1); // 1 synthetic = 1/(2+1) = 33.33%
-                                              // Wait, let's make it actually 0.5%: need 199 actual, 1 synthetic = 0.5%
+        // Wait, let's make it actually 0.5%: need 199 actual, 1 synthetic = 0.5%
         for _ in 0..197 {
             metrics.record_actual_request(); // Total 199 actual
         }

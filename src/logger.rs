@@ -890,11 +890,11 @@ impl GooseConfiguration {
             )
             .await;
         // If the debug_log is a CSV, write the header.
-        if self.debug_format == Some(GooseLogFormat::Csv) {
-            if let Some(log_file) = debug_log.as_mut() {
-                // This will generate a warning if it fails to write to log file.
-                self.write_to_log_file(log_file, debug_csv_header()).await;
-            }
+        if self.debug_format == Some(GooseLogFormat::Csv)
+            && let Some(log_file) = debug_log.as_mut()
+        {
+            // This will generate a warning if it fails to write to log file.
+            self.write_to_log_file(log_file, debug_csv_header()).await;
         }
 
         // If the error_log is enabled, allocate a buffer and open the file.
@@ -902,11 +902,11 @@ impl GooseConfiguration {
             .open_log_file(&self.error_log, "error log", 64 * 1024)
             .await;
         // If the request_log is a CSV, write the header.
-        if self.error_format == Some(GooseLogFormat::Csv) {
-            if let Some(log_file) = error_log.as_mut() {
-                // This will generate a warning if it fails to write to log file.
-                self.write_to_log_file(log_file, error_csv_header()).await;
-            }
+        if self.error_format == Some(GooseLogFormat::Csv)
+            && let Some(log_file) = error_log.as_mut()
+        {
+            // This will generate a warning if it fails to write to log file.
+            self.write_to_log_file(log_file, error_csv_header()).await;
         }
 
         // If the request_log is enabled, allocate a buffer and open the file.
@@ -924,12 +924,12 @@ impl GooseConfiguration {
             )
             .await;
         // If the request_log is a CSV, write the header.
-        if self.request_format == Some(GooseLogFormat::Csv) {
-            if let Some(log_file) = request_log.as_mut() {
-                // This will generate a warning if it fails to write to log file.
-                self.write_to_log_file(log_file, requests_csv_header())
-                    .await;
-            }
+        if self.request_format == Some(GooseLogFormat::Csv)
+            && let Some(log_file) = request_log.as_mut()
+        {
+            // This will generate a warning if it fails to write to log file.
+            self.write_to_log_file(log_file, requests_csv_header())
+                .await;
         }
 
         // If the transaction_log is enabled, allocate a buffer and open the file.
@@ -937,12 +937,12 @@ impl GooseConfiguration {
             .open_log_file(&self.transaction_log, "transaction log", 64 * 1024)
             .await;
         // If the transaction_log is a CSV, write the header.
-        if self.transaction_format == Some(GooseLogFormat::Csv) {
-            if let Some(log_file) = transaction_log.as_mut() {
-                // This will generate a warning if it fails to write to log file.
-                self.write_to_log_file(log_file, transactions_csv_header())
-                    .await;
-            }
+        if self.transaction_format == Some(GooseLogFormat::Csv)
+            && let Some(log_file) = transaction_log.as_mut()
+        {
+            // This will generate a warning if it fails to write to log file.
+            self.write_to_log_file(log_file, transactions_csv_header())
+                .await;
         }
 
         // If the scenario_log is enabled, allocate a buffer and open the file.
@@ -950,12 +950,12 @@ impl GooseConfiguration {
             .open_log_file(&self.scenario_log, "scenario log", 64 * 1024)
             .await;
         // If the scenario_log is a CSV, write the header.
-        if self.scenario_format == Some(GooseLogFormat::Csv) {
-            if let Some(log_file) = scenario_log.as_mut() {
-                // This will generate a warning if it fails to write to log file.
-                self.write_to_log_file(log_file, scenarios_csv_header())
-                    .await;
-            }
+        if self.scenario_format == Some(GooseLogFormat::Csv)
+            && let Some(log_file) = scenario_log.as_mut()
+        {
+            // This will generate a warning if it fails to write to log file.
+            self.write_to_log_file(log_file, scenarios_csv_header())
+                .await;
         }
 
         // Loop waiting for and writing error logs from GooseUser threads.

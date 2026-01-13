@@ -300,12 +300,8 @@ pub(crate) fn create_reqwest_client_without_cookies(
 ) -> Result<Client, reqwest::Error> {
     let mut client_builder = Client::builder()
         .user_agent(&config.user_agent)
-        .gzip(config.gzip);
-
-    #[cfg(feature = "rustls-tls")]
-    {
-        client_builder = client_builder.danger_accept_invalid_certs(config.accept_invalid_certs);
-    }
+        .gzip(config.gzip)
+        .danger_accept_invalid_certs(config.accept_invalid_certs);
 
     if let Some(timeout) = config.timeout {
         client_builder = client_builder.timeout(timeout);
@@ -322,12 +318,8 @@ pub(crate) fn create_reqwest_client_with_cookies(
 ) -> Result<Client, reqwest::Error> {
     let mut client_builder = Client::builder()
         .user_agent(&config.user_agent)
-        .gzip(config.gzip);
-
-    #[cfg(feature = "rustls-tls")]
-    {
-        client_builder = client_builder.danger_accept_invalid_certs(config.accept_invalid_certs);
-    }
+        .gzip(config.gzip)
+        .danger_accept_invalid_certs(config.accept_invalid_certs);
 
     if let Some(timeout) = config.timeout {
         client_builder = client_builder.timeout(timeout);

@@ -1,9 +1,9 @@
 /// Validate that Goose properly shuts down when it receives SIGINT (control-c).
 use httpmock::{Method::GET, Mock, MockServer};
-use nix::sys::signal::{kill, SIGINT};
+use nix::sys::signal::{SIGINT, kill};
 use nix::unistd::getpid;
 use serial_test::serial;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 
 mod common;
 

@@ -13,4 +13,4 @@ pub use crate::goose::{
     TransactionFunction, TransactionResult,
 };
 pub use crate::metrics::{GooseCoordinatedOmissionMitigation, GooseMetrics};
-pub use crate::{scenario, transaction, GooseAttack, GooseError, GooseScheduler};
+pub use crate::{GooseAttack, GooseError, GooseScheduler, scenario, transaction};

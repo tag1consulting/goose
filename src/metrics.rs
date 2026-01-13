@@ -17,7 +17,7 @@ pub use coordinated_omission::{CadenceCalculator, CoMetricsSummary, CoordinatedO
 pub use nullable::NullableFloat;
 
 use crate::config::GooseDefaults;
-use crate::goose::{get_base_url, GooseMethod, Scenario, TransactionName};
+use crate::goose::{GooseMethod, Scenario, TransactionName, get_base_url};
 use crate::logger::GooseLog;
 use crate::metrics::common::ReportOptions;
 use crate::report;
@@ -2715,14 +2715,14 @@ impl GooseAttack {
     ) -> Result<(), GooseError> {
         if !self.configuration.no_metrics {
             // Update timers if displaying running metrics.
-            if let Some(running_metrics) = self.configuration.running_metrics {
-                if util::timer_expired(
+            if let Some(running_metrics) = self.configuration.running_metrics
+                && util::timer_expired(
                     goose_attack_run_state.running_metrics_timer,
                     running_metrics,
-                ) {
-                    goose_attack_run_state.running_metrics_timer = std::time::Instant::now();
-                    goose_attack_run_state.display_running_metrics = true;
-                }
+                )
+            {
+                goose_attack_run_state.running_metrics_timer = std::time::Instant::now();
+                goose_attack_run_state.display_running_metrics = true;
             };
             // Load messages from user threads until the receiver queue is empty.
             self.receive_metrics(goose_attack_run_state, flush).await?;
@@ -2765,7 +2765,8 @@ impl GooseAttack {
                         // Users is required here so unwrap() is safe.
                         if goose_attack_run_state.active_users < users {
                             println!(
-                                "{} of {} users hatched, timer expired, resetting metrics (disable with --no-reset-metrics).\n", goose_attack_run_state.active_users, users
+                                "{} of {} users hatched, timer expired, resetting metrics (disable with --no-reset-metrics).\n",
+                                goose_attack_run_state.active_users, users
                             );
                         } else {
                             println!(
@@ -2992,26 +2993,28 @@ impl GooseAttack {
     ) {
         // If error-log is enabled, convert the raw request to a GooseErrorMetric and send it
         // to the logger thread.
-        if !self.configuration.error_log.is_empty() {
-            if let Some(logger) = goose_attack_run_state.all_threads_logger_tx.as_ref() {
-                // This is a best effort logger attempt, if the logger has alrady shut down it
-                // will fail which we ignore.
-                if let Err(e) = logger.send(Some(GooseLog::Error(GooseErrorMetric {
-                    elapsed: raw_request.elapsed,
-                    raw: raw_request.raw.clone(),
-                    name: raw_request.name.clone(),
-                    final_url: raw_request.final_url.clone(),
-                    redirected: raw_request.redirected,
-                    response_time: raw_request.response_time,
-                    status_code: raw_request.status_code,
-                    user: raw_request.user,
-                    error: raw_request.error.clone(),
-                }))) {
-                    if let flume::SendError(Some(ref message)) = e {
-                        info!("Failed to write to error log (receiver dropped?): flume::SendError({message:?})");
-                    } else {
-                        info!("Failed to write to error log: (receiver dropped?) {e:?}");
-                    }
+        if !self.configuration.error_log.is_empty()
+            && let Some(logger) = goose_attack_run_state.all_threads_logger_tx.as_ref()
+        {
+            // This is a best effort logger attempt, if the logger has alrady shut down it
+            // will fail which we ignore.
+            if let Err(e) = logger.send(Some(GooseLog::Error(GooseErrorMetric {
+                elapsed: raw_request.elapsed,
+                raw: raw_request.raw.clone(),
+                name: raw_request.name.clone(),
+                final_url: raw_request.final_url.clone(),
+                redirected: raw_request.redirected,
+                response_time: raw_request.response_time,
+                status_code: raw_request.status_code,
+                user: raw_request.user,
+                error: raw_request.error.clone(),
+            }))) {
+                if let flume::SendError(Some(ref message)) = e {
+                    info!(
+                        "Failed to write to error log (receiver dropped?): flume::SendError({message:?})"
+                    );
+                } else {
+                    info!("Failed to write to error log: (receiver dropped?) {e:?}");
                 }
             }
         }
@@ -3101,21 +3104,21 @@ impl GooseAttack {
                         value: report.clone(),
                         detail: "PDF reports require compiling with the 'pdf-reports' feature flag"
                             .to_string(),
-                    })
+                    });
                 }
                 None => {
                     return Err(GooseError::InvalidOption {
                         option: "--report-file".to_string(),
                         value: report.clone(),
                         detail: "Missing file extension for report".to_string(),
-                    })
+                    });
                 }
                 Some(ext) => {
                     return Err(GooseError::InvalidOption {
                         option: "--report-file".to_string(),
                         value: report.clone(),
                         detail: format!("Unknown report file type: {ext}"),
-                    })
+                    });
                 }
             }
         }
@@ -3197,44 +3200,41 @@ impl GooseAttack {
             match &step[0].action {
                 // For maintaining just show the current number of users.
                 TestPlanStepAction::Maintaining => {
-                    let _ = write!(steps_overview,
-                            "<tr><td>{:?}</td><td>{}</td><td>{}</td><td>{:02}:{:02}:{:02}</td><td>{}</td></tr>",
-                            step[0].action,
-                            started,
-                            stopped,
-                            hours,
-                            minutes,
-                            seconds,
-                            step[0].users,
-                        );
+                    let _ = write!(
+                        steps_overview,
+                        "<tr><td>{:?}</td><td>{}</td><td>{}</td><td>{:02}:{:02}:{:02}</td><td>{}</td></tr>",
+                        step[0].action, started, stopped, hours, minutes, seconds, step[0].users,
+                    );
                 }
                 // For increasing show the current number of users to the new number of users.
                 TestPlanStepAction::Increasing => {
-                    let _ = write!(steps_overview,
-                            "<tr><td>{:?}</td><td>{}</td><td>{}</td><td>{:02}:{:02}:{:02}</td><td>{} &rarr; {}</td></tr>",
-                            step[0].action,
-                            started,
-                            stopped,
-                            hours,
-                            minutes,
-                            seconds,
-                            step[0].users,
-                            step[1].users,
-                        );
+                    let _ = write!(
+                        steps_overview,
+                        "<tr><td>{:?}</td><td>{}</td><td>{}</td><td>{:02}:{:02}:{:02}</td><td>{} &rarr; {}</td></tr>",
+                        step[0].action,
+                        started,
+                        stopped,
+                        hours,
+                        minutes,
+                        seconds,
+                        step[0].users,
+                        step[1].users,
+                    );
                 }
                 // For decreasing show the new number of users from the current number of users.
                 TestPlanStepAction::Decreasing | TestPlanStepAction::Canceling => {
-                    let _ = write!(steps_overview,
-                            "<tr><td>{:?}</td><td>{}</td><td>{}</td><td>{:02}:{:02}:{:02}</td><td>{} &larr; {}</td></tr>",
-                            step[0].action,
-                            started,
-                            stopped,
-                            hours,
-                            minutes,
-                            seconds,
-                            step[1].users,
-                            step[0].users,
-                        );
+                    let _ = write!(
+                        steps_overview,
+                        "<tr><td>{:?}</td><td>{}</td><td>{}</td><td>{:02}:{:02}:{:02}</td><td>{} &larr; {}</td></tr>",
+                        step[0].action,
+                        started,
+                        stopped,
+                        hours,
+                        minutes,
+                        seconds,
+                        step[1].users,
+                        step[0].users,
+                    );
                 }
                 TestPlanStepAction::Finished => {
                     unreachable!("there shouldn't be a step after finished");
@@ -3533,11 +3533,7 @@ pub(crate) fn per_second_calculations(duration: usize, total: usize, fail: usize
 }
 
 fn determine_precision(value: f32) -> usize {
-    if value < 1000.0 {
-        2
-    } else {
-        0
-    }
+    if value < 1000.0 { 2 } else { 0 }
 }
 
 /// Format large number in locale appropriate style.

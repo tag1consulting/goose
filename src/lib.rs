@@ -56,9 +56,9 @@ pub mod util;
 use gumdrop::Options;
 use lazy_static::lazy_static;
 use rand::prelude::*;
-use std::collections::{hash_map::DefaultHasher, BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashSet, hash_map::DefaultHasher};
 use std::hash::{Hash, Hasher};
-use std::sync::{atomic::AtomicUsize, Arc, RwLock};
+use std::sync::{Arc, RwLock, atomic::AtomicUsize};
 use std::time::{self, Duration};
 use std::{fmt, io};
 
@@ -790,10 +790,7 @@ impl GooseAttack {
                 let weight = scenario.weight / u;
                 trace!(
                     "{}: {} has weight of {} (reduced with gcd to {})",
-                    index,
-                    scenario.name,
-                    scenario.weight,
-                    weight
+                    index, scenario.name, scenario.weight, weight
                 );
                 let weighted_sets = vec![index; weight];
                 total_scenarios += weight;
@@ -1089,7 +1086,10 @@ impl GooseAttack {
                             return Err(GooseError::InvalidOption {
                                 option: "--host".to_string(),
                                 value: "".to_string(),
-                                detail: format!("A host must be defined via the --host option, the GooseAttack.set_default() function, or the Scenario.set_host() function (no host defined for {}).", scenario.name)
+                                detail: format!(
+                                    "A host must be defined via the --host option, the GooseAttack.set_default() function, or the Scenario.set_host() function (no host defined for {}).",
+                                    scenario.name
+                                ),
                             });
                         }
                     },
@@ -1512,14 +1512,14 @@ impl GooseAttack {
                     self.metrics.maximum_users = goose_attack_run_state.active_users;
                 }
 
-                if let Some(running_metrics) = self.configuration.running_metrics {
-                    if util::ms_timer_expired(
+                if let Some(running_metrics) = self.configuration.running_metrics
+                    && util::ms_timer_expired(
                         goose_attack_run_state.running_metrics_timer,
                         running_metrics,
-                    ) {
-                        goose_attack_run_state.running_metrics_timer = time::Instant::now();
-                        self.metrics.print_running();
-                    }
+                    )
+                {
+                    goose_attack_run_state.running_metrics_timer = time::Instant::now();
+                    self.metrics.print_running();
                 }
             } else {
                 // Wake up twice a second to handle messages and allow for a quick shutdown if the
@@ -1799,12 +1799,12 @@ impl GooseAttack {
             self.metrics.display_status_codes = !self.configuration.no_status_codes;
 
             // Initialize CO tracker if mitigation is enabled
-            if let Some(co_mitigation) = &self.configuration.co_mitigation {
-                if co_mitigation != &metrics::GooseCoordinatedOmissionMitigation::Disabled {
-                    self.metrics.coordinated_omission_metrics = Some(
-                        metrics::CoordinatedOmissionMetrics::new(co_mitigation.clone()),
-                    );
-                }
+            if let Some(co_mitigation) = &self.configuration.co_mitigation
+                && co_mitigation != &metrics::GooseCoordinatedOmissionMitigation::Disabled
+            {
+                self.metrics.coordinated_omission_metrics = Some(
+                    metrics::CoordinatedOmissionMetrics::new(co_mitigation.clone()),
+                );
             }
         }
 

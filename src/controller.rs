@@ -917,16 +917,15 @@ impl GooseAttack {
         request: ControllerRequest,
         response: ControllerResponseMessage,
     ) {
-        if let Some(oneshot_tx) = request.response_channel {
-            if oneshot_tx
+        if let Some(oneshot_tx) = request.response_channel
+            && oneshot_tx
                 .send(ControllerResponse {
                     _client_id: request.client_id,
                     response,
                 })
                 .is_err()
-            {
-                warn!("failed to send response to controller via one-shot channel")
-            }
+        {
+            warn!("failed to send response to controller via one-shot channel")
         }
     }
 }

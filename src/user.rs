@@ -216,10 +216,10 @@ async fn record_scenario(
             let _ = metrics_channel.send(GooseMetric::Scenario(raw_scenario.clone()));
         }
         // If transaction-log is enabled, send a copy of the raw transaction metric to the logger thread.
-        if !thread_user.config.scenario_log.is_empty() {
-            if let Some(logger) = thread_user.logger.as_ref() {
-                logger.send(Some(GooseLog::Scenario(raw_scenario)))?;
-            }
+        if !thread_user.config.scenario_log.is_empty()
+            && let Some(logger) = thread_user.logger.as_ref()
+        {
+            logger.send(Some(GooseLog::Scenario(raw_scenario)))?;
         }
     }
     Ok(())
@@ -256,10 +256,10 @@ async fn invoke_transaction_function(
     }
 
     // If transaction-log is enabled, send a copy of the raw transaction metric to the logger thread.
-    if !thread_user.config.transaction_log.is_empty() {
-        if let Some(logger) = thread_user.logger.as_ref() {
-            logger.send(Some(GooseLog::Transaction(raw_transaction.clone())))?;
-        }
+    if !thread_user.config.transaction_log.is_empty()
+        && let Some(logger) = thread_user.logger.as_ref()
+    {
+        logger.send(Some(GooseLog::Transaction(raw_transaction.clone())))?;
     }
 
     // Otherwise send metrics to parent.
