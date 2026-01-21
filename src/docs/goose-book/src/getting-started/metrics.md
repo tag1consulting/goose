@@ -325,13 +325,31 @@ Below the graph is a table that shows per-request details, only partially includ
 ![Request metrics](metrics-requests.jpg)
 
 #### Response times
-The next graph shows the response times measured for each request made. Goose measures **Time to First Byte (TTFB)** - the time from when a request starts until the first byte of the response is received. This includes network latency and server processing time, but does not include the time to download the complete response body.
+The next graph shows the response times measured for each request made. Goose measures **Time to First Byte (TTFB)** - specifically when `reqwest::Client::execute()` returns after receiving response headers, not the complete response body download time.
 
-**Why TTFB only?** Goose focuses on TTFB because:
+**Technical Precision:** Goose measures the time from when a request starts until response headers are received (as measured by reqwest). This is TTFB in the traditional sense, though technically it's when response headers arrive rather than the literal first byte of response content.
+
+**What TTFB Includes:**
+- Network latency to establish connection
+- Server processing time to generate response
+- Time to receive response headers and status code
+- Redirect handling time (when following redirects)
+
+**What Is NOT Measured:**
+- Time to download complete response body
+- Time to process response content  
+- Client-side rendering or parsing time
+
+**Why TTFB Focus?** Goose focuses on TTFB because:
 - **Server performance focus**: TTFB measures server processing time and network latency, which are the primary concerns for load testing
 - **Consistent measurement**: Load test scenarios may not consume complete response bodies, making total download time inconsistent and potentially misleading
 - **Resource efficiency**: Not downloading complete responses allows Goose to generate more load with fewer resources
 - **Real-world relevance**: Many applications stream responses or use chunked encoding where TTFB is the critical performance metric
+
+**Edge Cases:**
+- **Streaming/Chunked responses**: TTFB reflects when headers arrive, not when streaming completes
+- **Large response bodies**: TTFB may not represent complete user experience; consider response size when interpreting results
+- **Custom download measurement**: If you need total download time, see the custom metrics example below
 
 In the following graph, it's apparent that POST requests had the slowest responses, which is logical as they are not cached. As before, it's possible to click on the request names at the top of the graph to hide/show details about specific requests.
 
@@ -466,6 +484,44 @@ If you encounter issues generating PDF reports:
 - Use absolute paths if relative paths cause issues
 - Ensure sufficient system memory (Chrome requires additional RAM)
 - Check that no other Chrome processes are interfering
+
+## Measuring Complete Download Time
+
+If your load test needs to measure total download time including response body, you can implement custom timing and logging:
+
+```rust
+use goose::prelude::*;
+use std::time::Instant;
+
+async fn measure_full_download(user: &mut GooseUser) -> TransactionResult {
+    let start = Instant::now();
+    let response = user.get("/large-file").await?;
+    
+    // Read the entire response body to measure complete download
+    let _body = response.response?.text().await?;
+    let total_time = start.elapsed();
+    
+    // Log the complete download time for manual analysis
+    println!("Full download time: {}ms", total_time.as_millis());
+    
+    Ok(())
+}
+```
+
+Currently, Goose doesn't have built-in support for custom metrics aggregation, so you would need to collect and analyze these measurements manually (e.g., through logs, external metrics systems, or custom data collection).
+
+**Note:** This approach will consume more resources and may affect the load generation capacity of your test.
+
+## UI/Report Label Consistency
+
+**Important:** While Goose documentation emphasizes TTFB measurement, reports and console output may show "Response time" in column headers and labels. These labels always refer to TTFB (Time To First Byte) as described above, not complete download time.
+
+This labeling is maintained for:
+- Backward compatibility with existing tooling
+- Consistency with industry-standard load testing terminology
+- Brevity in tables and charts
+
+When interpreting results, remember that "Response time" = "TTFB" in all Goose outputs.
 
 ### Developer documentation
 Additional details about how metrics are collected, stored, and displayed can be found [in the developer documentation](https://docs.rs/goose/*/goose/metrics/index.html).
