@@ -97,7 +97,7 @@ fn common_build_configuration(server: &MockServer, test_type: &TestType) -> Goos
                 "--no-reset-metrics",
                 // Only run Scenario A1 and Scenario A2
                 "--scenarios",
-                "scenarioa",
+                "scenarioa*",
             ]
         }
         TestType::ScenariosDefault => {
@@ -157,7 +157,7 @@ fn validate_loadtest(
             // Confirm Goose and the mock endpoint agree on the number of requests made.
             assert!(mock_endpoints[SCENARIOA2_KEY].calls() <= scenarioa2_metrics.success_count);
 
-            // scenariob1 and scenariob2 should not have been loaded due to `--scenarios scenarioa`.
+            // scenariob1 and scenariob2 should not have been loaded due to `--scenarios scenarioa*`.
             assert!(mock_endpoints[SCENARIOB1_KEY].calls() == 0);
             assert!(mock_endpoints[SCENARIOB2_KEY].calls() == 0);
         }
@@ -196,7 +196,7 @@ async fn run_standalone_test(test_type: TestType) {
 
     // By default, only run scenarios starting with `scenariob`.
     goose = *goose
-        .set_default(GooseDefault::Scenarios, "scenariob")
+        .set_default(GooseDefault::Scenarios, "scenariob*")
         .unwrap();
 
     // Run the Goose Attack.
@@ -238,7 +238,7 @@ async fn run_gaggle_test(test_type: TestType) {
                 "--run-time",
                 "1",
                 "--scenarios",
-                "scenarioa",
+                "scenarioa*",
             ],
         ),
         TestType::ScenariosDefault => common::build_configuration(
@@ -264,7 +264,7 @@ async fn run_gaggle_test(test_type: TestType) {
 
     // By default, only run scenarios starting with `scenariob`.
     manager_goose_attack = *manager_goose_attack
-        .set_default(GooseDefault::Scenarios, "scenariob")
+        .set_default(GooseDefault::Scenarios, "scenariob*")
         .unwrap();
 
     // Run the Goose Attack.
@@ -309,4 +309,47 @@ async fn test_scenarios_default() {
 // Run only half the configured scenarios, in Gaggle mode.
 async fn test_scenarios_default_gaggle() {
     run_gaggle_test(TestType::ScenariosDefault).await;
+}
+
+/* Issue #612: exact matching should not match substrings */
+
+#[tokio::test]
+async fn test_exact_scenario_match_no_substring() {
+    let server = MockServer::start();
+    let mock_endpoints = setup_mock_server_endpoints(&server);
+
+    // Scenario machine names will be "scenarioa1", "scenarioa1extended",
+    // "scenariob1", "scenariob2". Filtering with exact "scenarioa1" should
+    // only run the first one, NOT "scenarioa1extended".
+    let scenarios = vec![
+        scenario!("Scenario A1").register_transaction(transaction!(get_scenarioa1)),
+        scenario!("Scenario A1 Extended").register_transaction(transaction!(get_scenarioa2)),
+        scenario!("Scenario B1").register_transaction(transaction!(get_scenariob1)),
+        scenario!("Scenario B2").register_transaction(transaction!(get_scenariob2)),
+    ];
+
+    let configuration = common::build_configuration(
+        &server,
+        vec![
+            "--users",
+            "5",
+            "--hatch-rate",
+            "5",
+            "--run-time",
+            "1",
+            "--no-reset-metrics",
+            "--scenarios",
+            "scenarioa1",
+        ],
+    );
+
+    let goose = common::build_load_test(configuration, scenarios, None, None);
+    let _goose_metrics = common::run_load_test(goose, None).await;
+
+    // Only scenarioa1 should have been hit.
+    assert!(mock_endpoints[SCENARIOA1_KEY].calls() > 0);
+    // scenarioa1extended contains "scenarioa1" as substring — must NOT match.
+    assert!(mock_endpoints[SCENARIOA2_KEY].calls() == 0);
+    assert!(mock_endpoints[SCENARIOB1_KEY].calls() == 0);
+    assert!(mock_endpoints[SCENARIOB2_KEY].calls() == 0);
 }
