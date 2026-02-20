@@ -1089,7 +1089,10 @@ impl GooseAttack {
                             return Err(GooseError::InvalidOption {
                                 option: "--host".to_string(),
                                 value: "".to_string(),
-                                detail: format!("A host must be defined via the --host option, the GooseAttack.set_default() function, or the Scenario.set_host() function (no host defined for {}).", scenario.name)
+                                detail: format!(
+                                    "A host must be defined via the --host option, the GooseAttack.set_default() function, or the Scenario.set_host() function (no host defined for {}).",
+                                    scenario.name
+                                ),
                             });
                         }
                     },

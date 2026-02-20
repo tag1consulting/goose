@@ -21,7 +21,7 @@
 - **Tungstenite**: WebSocket protocol implementation
 
 ### Optional Features
-- **rustls-tls**: Alternative TLS implementation (feature flag)
+- **rustls-tls**: backwards-compatible feature for enabling rustls (feature flag)
 - **gaggle**: Distributed load testing capability (feature flag)
 
 ## Development Setup
@@ -29,14 +29,14 @@
 ### Build System
 - **Cargo**: Rust's package manager and build tool
 - **Feature Flags**: Optional functionality through conditional compilation
-  - `default`: Uses native-tls for HTTPS
-  - `rustls-tls`: Uses rustls for HTTPS instead of native-tls
+  - `default`: Uses rustls for HTTPS
+  - `rustls-tls`: additionally enables rustls for websockets
   - `gaggle`: Enables distributed load testing
 
 ### Testing
 - **HTTPMock**: For mocking HTTP responses in tests
 - **Serial_test**: For tests that cannot run in parallel
-- **Native-tls/Rustls**: For testing TLS functionality
+- **Rustls**: For testing TLS functionality
 - **Nix**: For signal handling in tests
 
 ## Technical Constraints

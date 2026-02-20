@@ -2578,26 +2578,13 @@ pub(crate) fn create_reqwest_client(
         GOOSE_REQUEST_TIMEOUT
     };
 
-    #[cfg(feature = "rustls-tls")]
-    let mut client_builder = Client::builder()
-        .user_agent(APP_USER_AGENT)
-        .timeout(Duration::from_millis(timeout))
-        // Enable gzip unless `--no-gzip` flag is enabled.
-        .gzip(!configuration.no_gzip);
-
-    #[cfg(not(feature = "rustls-tls"))]
     let client_builder = Client::builder()
         .user_agent(APP_USER_AGENT)
         .timeout(Duration::from_millis(timeout))
         // Enable gzip unless `--no-gzip` flag is enabled.
-        .gzip(!configuration.no_gzip);
-
-    #[cfg(feature = "rustls-tls")]
-    {
+        .gzip(!configuration.no_gzip)
         // Validate https certificates unless `--accept-invalid-certs` is enabled.
-        client_builder =
-            client_builder.danger_accept_invalid_certs(configuration.accept_invalid_certs);
-    }
+        .danger_accept_invalid_certs(configuration.accept_invalid_certs);
 
     #[cfg(feature = "cookies")]
     let client_builder = client_builder.cookie_store(true);

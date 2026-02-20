@@ -8,6 +8,8 @@
     o introduces `TransactionName` enum with `TransactionOnly` and `InheritNameByRequests` variants
  - [#578](https://github.com/tag1consulting/goose/pull/578) add type-safe client builder for cookie configuration, optimize startup with shared clients
  - [#629](https://github.com/tag1consulting/goose/pull/629) add `--pdf-print-html` option to generate printer-friendly HTML optimized for PDF conversion; provides two-step PDF workflow without requiring Chromium dependencies; add `--pdf-timeout` option for configurable Chrome timeout in direct PDF generation (10-300s, default: 60)
+ - [#669](https://github.com/tag1consulting/goose/pull/669) updates reqwest to 0.13. This **changes the default TLS implementation to rustls** with HTTP/2 + post-quantum cryptography support advertised to the server by default.
+   **Behavioral change**: `native-tls` features like certificate validation against a custom system CA store will be disabled and `--accept-invalid-certs` available. It also might increase the connection handshake overhead compared to goose 0.18 when a newly available computationally expensive cipher suite is negotiated.
 
 ## 0.18.1 August 14, 2025
  - [#634](https://github.com/tag1consulting/goose/pull/634) add killswitch mechanism for programmatic test termination
