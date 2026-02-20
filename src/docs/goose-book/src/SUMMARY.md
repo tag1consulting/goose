@@ -43,7 +43,6 @@
     - [Defaults](config/defaults.md)
     - [Scheduling Scenarios And Transactions](config/scheduler.md)
     - [Proxy](config/proxy.md)
-    - [RustLS](config/rustls.md)
 
 - [Examples](example/overview.md)
     - [Simple](example/simple.md)

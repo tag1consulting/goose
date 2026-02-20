@@ -33,7 +33,7 @@ Add reqwest with the `socks` feature to your `Cargo.toml`:
 [dependencies]
 goose = "^0.19"
 tokio = "^1"
-reqwest = { version = "0.12", features = ["socks"] }
+reqwest = { version = "0.13", features = ["socks"] }
 ```
 
 **Note**: Cargo automatically unifies features across all dependencies. Since Goose already requires `gzip` and `json` features from reqwest, adding just `socks` will result in reqwest being compiled with `["gzip", "json", "socks"]`.
@@ -146,7 +146,7 @@ edition = "2021"
 goose = "^0.19"
 tokio = { version = "^1", features = ["macros", "rt-multi-thread"] }
 # Add socks feature - Cargo will unify with Goose's gzip+json features
-reqwest = { version = "0.12", features = ["socks"] }
+reqwest = { version = "0.13", features = ["socks"] }
 ```
 
 **src/main.rs (same as above):**
@@ -194,7 +194,7 @@ For proxies requiring authentication:
 
 ### Feature Not Available
 If you get compilation errors about SOCKS features:
-- Verify `reqwest = { version = "0.12", features = ["socks"] }` is in your Cargo.toml
+- Verify `reqwest = { version = "0.13", features = ["socks"] }` is in your Cargo.toml
 - Run `cargo clean` and rebuild your project
 
 ## Additional Resources
