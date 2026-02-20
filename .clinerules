@@ -116,7 +116,6 @@ When implementing new features:
 ### Version Requirements
 **Maintain compatibility**:
 - Rust edition 2021
-- Support both native-tls and rustls
 - Optional dependencies via feature flags
 - Document minimum supported Rust version (MSRV)
 
