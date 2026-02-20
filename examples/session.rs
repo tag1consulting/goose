@@ -21,6 +21,7 @@ use goose::prelude::*;
 use serde::Deserialize;
 use std::time::Duration;
 
+#[derive(Clone)]
 struct Session {
     jwt_token: String,
 }
