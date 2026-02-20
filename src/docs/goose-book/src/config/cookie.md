@@ -123,10 +123,10 @@ For ultra-high-scale testing where even the shared client approach isn't suffici
 
 ```bash
 # Compile without any cookies dependency
-cargo build --no-default-features --features "rustls-tls"
+cargo build --no-default-features
 
 # Run tests without cookies
-cargo run --no-default-features --features "rustls-tls" -- --host https://example.com
+cargo run --no-default-features -- --host https://example.com
 ```
 
 **Important**: This removes cookie functionality completely - you cannot use `.set_client_builder_with_cookies()` or any cookie-related methods when compiled this way. This is only for specialized use cases where maximum performance and minimal binary size are critical.

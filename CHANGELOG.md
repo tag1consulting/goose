@@ -13,6 +13,8 @@
  - [#629](https://github.com/tag1consulting/goose/pull/629) add `--pdf-print-html` option to generate printer-friendly HTML optimized for PDF conversion; provides two-step PDF workflow without requiring Chromium dependencies; add `--pdf-timeout` option for configurable Chrome timeout in direct PDF generation (10-300s, default: 60)
  - [#663](https://github.com/tag1consulting/goose/pull/663) add response time breakdowns grouped by HTTP status code in CLI and HTML/markdown reports; breakdowns only appear when a request returns multiple different status codes
  - [#657](https://github.com/tag1consulting/goose/pull/657) add comprehensive Basic Authentication example demonstrating three approaches: custom client with default headers (recommended), helper function per-request, and manual per-request; includes flexible credential configuration and complete documentation
+ - [#669](https://github.com/tag1consulting/goose/pull/669) update reqwest to 0.13, switching the default TLS backend from native-tls to rustls. HTTP/2 and post-quantum cryptography are now advertised by default, which may increase connection handshake overhead when a computationally expensive cipher suite is negotiated.
+   **Breaking changes**: Certificate validation now uses bundled rustls/webpki roots instead of the OS-native certificate store, which may affect environments with custom system CAs. `--accept-invalid-certs` now works unconditionally (previously it was silently ignored unless the `rustls-tls` feature was enabled).
 
 ## 0.18.1 August 14, 2025
  - [#634](https://github.com/tag1consulting/goose/pull/634) add killswitch mechanism for programmatic test termination

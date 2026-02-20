@@ -31,7 +31,6 @@
     "PDF report generation coming soon (see issue #628)",
     "Includes WebSocket and Telnet controllers for runtime control",
     "Features flexible test plans with complex load patterns",
-    "Supports both native-tls and rustls for HTTPS requests"
   ],
   "previousVersions": []
 }
