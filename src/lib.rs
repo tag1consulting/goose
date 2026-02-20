@@ -429,6 +429,39 @@ pub struct GooseAttack {
     graph_data: GraphData,
 }
 
+/// Match a pattern containing `*` wildcards against text.
+/// Each `*` matches zero or more characters.
+fn wildcard_match(pattern: &str, text: &str) -> bool {
+    let p = pattern.as_bytes();
+    let t = text.as_bytes();
+    let (mut pi, mut ti) = (0, 0);
+    let (mut star_pi, mut star_ti) = (None::<usize>, 0);
+
+    while ti < t.len() {
+        if pi < p.len() && p[pi] == t[ti] {
+            pi += 1;
+            ti += 1;
+        } else if pi < p.len() && p[pi] == b'*' {
+            star_pi = Some(pi);
+            star_ti = ti;
+            pi += 1;
+        } else if let Some(s) = star_pi {
+            pi = s + 1;
+            star_ti += 1;
+            ti = star_ti;
+        } else {
+            return false;
+        }
+    }
+
+    // Consume trailing stars.
+    while pi < p.len() && p[pi] == b'*' {
+        pi += 1;
+    }
+
+    pi == p.len()
+}
+
 /// Goose's internal global state.
 impl GooseAttack {
     /// Load configuration and initialize a [`GooseAttack`](./struct.GooseAttack.html).
@@ -742,20 +775,16 @@ impl GooseAttack {
 
     /// Internal helper to determine if the scenario is currently active.
     fn scenario_is_active(&self, scenario: &Scenario) -> bool {
-        // All scenarios are enabled by default.
         if self.configuration.scenarios.active.is_empty() {
-            true
-        // Returns true or false depending on if the machine name is included in the
-        // configured `--scenarios`.
-        } else {
-            for active in &self.configuration.scenarios.active {
-                if scenario.machine_name.contains(active) {
-                    return true;
-                }
-            }
-            // No matches found, this scenario is not active.
-            false
+            return true;
         }
+        self.configuration.scenarios.active.iter().any(|pattern| {
+            if pattern.contains('*') {
+                wildcard_match(pattern, &scenario.machine_name)
+            } else {
+                scenario.machine_name == *pattern
+            }
+        })
     }
 
     /// Use configured GooseScheduler to build out a properly weighted list of
@@ -2290,5 +2319,45 @@ mod tests {
             !is_killswitch_triggered(),
             "Killswitch should be false after reset"
         );
+    }
+
+    #[test]
+    fn test_wildcard_match_exact() {
+        assert!(wildcard_match("scenarioa1", "scenarioa1"));
+        assert!(!wildcard_match("scenarioa1", "scenarioa1extended"));
+        assert!(!wildcard_match("scenarioa1", "prescenarioa1"));
+        assert!(!wildcard_match("scenarioa1", "scenarioa2"));
+    }
+
+    #[test]
+    fn test_wildcard_match_star() {
+        // Prefix match.
+        assert!(wildcard_match("scenario*", "scenarioa1"));
+        assert!(wildcard_match("scenario*", "scenariob2"));
+        assert!(!wildcard_match("scenario*", "other"));
+
+        // Suffix match.
+        assert!(wildcard_match("*a1", "scenarioa1"));
+        assert!(!wildcard_match("*a1", "scenarioa2"));
+
+        // Contains match.
+        assert!(wildcard_match("*nario*", "scenarioa1"));
+        assert!(!wildcard_match("*nario*", "other"));
+
+        // Match all.
+        assert!(wildcard_match("*", "anything"));
+        assert!(wildcard_match("*", ""));
+
+        // Multiple wildcards.
+        assert!(wildcard_match("*a*b*", "xaxbx"));
+        assert!(!wildcard_match("*a*b*", "xbxa"));
+    }
+
+    #[test]
+    fn test_wildcard_match_issue_612() {
+        // The exact bug: "put1024bytes" should NOT match "getput1024bytes".
+        assert!(wildcard_match("put1024bytes", "put1024bytes"));
+        assert!(!wildcard_match("put1024bytes", "getput1024bytes"));
+        assert!(!wildcard_match("put1024bytes", "put1024bytesextra"));
     }
 }
