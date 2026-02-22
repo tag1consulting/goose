@@ -60,44 +60,6 @@ mod basic_auth_example {
     use reqwest::{header, Client};
     use std::{env, time::Duration};
 
-    /// Simple base64 encoding function to avoid external dependencies
-    ///
-    /// Note: In production code, you could use the `base64` crate for this functionality:
-    /// ```toml
-    /// [dependencies]
-    /// base64 = "0.21"
-    /// ```
-    /// We implement it manually here to keep the example self-contained without
-    /// adding extra dependencies just for demonstration purposes.
-    fn base64_encode(input: &[u8]) -> String {
-        const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        let mut result = String::new();
-
-        for chunk in input.chunks(3) {
-            let mut buf = [0u8; 3];
-            for (i, &byte) in chunk.iter().enumerate() {
-                buf[i] = byte;
-            }
-
-            let b = ((buf[0] as u32) << 16) | ((buf[1] as u32) << 8) | (buf[2] as u32);
-
-            result.push(CHARS[((b >> 18) & 63) as usize] as char);
-            result.push(CHARS[((b >> 12) & 63) as usize] as char);
-            result.push(if chunk.len() > 1 {
-                CHARS[((b >> 6) & 63) as usize] as char
-            } else {
-                '='
-            });
-            result.push(if chunk.len() > 2 {
-                CHARS[(b & 63) as usize] as char
-            } else {
-                '='
-            });
-        }
-
-        result
-    }
-
     #[tokio::main]
     pub async fn main() -> Result<(), GooseError> {
         GooseAttack::initialize()?
@@ -150,17 +112,18 @@ mod basic_auth_example {
         // Get credentials from environment variables
         let (username, password) = get_basic_auth_credentials()?;
 
-        // Generate the Basic Auth header directly using base64 encoding
-        let mut headers = header::HeaderMap::new();
-        let credentials = format!("{}:{}", username, password);
-        let encoded = base64_encode(credentials.as_bytes());
-        let auth_header_value = format!("Basic {}", encoded);
+        // Use reqwest's built-in basic_auth() to generate a properly encoded
+        // Authorization header, then extract it for use as a default header.
+        let temp_request = reqwest::Client::new()
+            .get("http://localhost")
+            .basic_auth(&username, Some(&password))
+            .build()
+            .map_err(TransactionError::Reqwest)?;
 
-        headers.insert(
-            header::AUTHORIZATION,
-            header::HeaderValue::from_str(&auth_header_value)
-                .map_err(|e| TransactionError::Custom(e.to_string()))?,
-        );
+        let mut headers = header::HeaderMap::new();
+        if let Some(auth_header) = temp_request.headers().get(header::AUTHORIZATION) {
+            headers.insert(header::AUTHORIZATION, auth_header.clone());
+        }
 
         // Set up the client builder with default headers and other common settings
         // Enable cookie store for maintaining session state with Basic Auth

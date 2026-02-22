@@ -21,31 +21,30 @@ This approach sets up the HTTP client once per user with default Basic Auth head
 ```rust
 async fn setup_basic_auth_client(user: &mut GooseUser) -> TransactionResult {
     let (username, password) = get_basic_auth_credentials()?;
-    
-    // Create a temporary client to generate the Basic Auth header
-    let temp_client = reqwest::Client::new();
-    let temp_request = temp_client
-        .get("http://example.com")
+
+    // Use reqwest's built-in basic_auth() to generate a properly encoded
+    // Authorization header, then extract it for use as a default header.
+    let temp_request = reqwest::Client::new()
+        .get("http://localhost")
         .basic_auth(&username, Some(&password))
         .build()
-        .map_err(|e| TransactionError::Reqwest(e))?;
-    
-    // Extract the Authorization header
+        .map_err(TransactionError::Reqwest)?;
+
     let mut headers = header::HeaderMap::new();
     if let Some(auth_header) = temp_request.headers().get(header::AUTHORIZATION) {
         headers.insert(header::AUTHORIZATION, auth_header.clone());
     }
-    
+
     // Set up the client builder with default headers
     let builder = Client::builder()
         .user_agent("Goose/1.0 BasicAuth Example")
         .default_headers(headers)
         .cookie_store(true)
         .timeout(Duration::from_secs(30));
-    
+
     // Apply the custom client to this user
     user.set_client_builder(builder).await?;
-    
+
     Ok(())
 }
 ```
