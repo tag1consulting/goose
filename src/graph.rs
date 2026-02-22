@@ -91,6 +91,14 @@ impl GraphData {
         }
     }
 
+    /// Reset graph data while preserving user count to maintain continuity.
+    pub(crate) fn reset_preserving_users(&mut self, active_users: usize) {
+        *self = GraphData::new();
+        if active_users > 0 {
+            self.users_per_second.set_and_maintain_last(0, active_users);
+        }
+    }
+
     /// Record requests per second metric.
     pub(crate) fn record_requests_per_second(&mut self, key: &str, second: usize) {
         let value = self
