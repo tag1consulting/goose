@@ -1934,7 +1934,10 @@ impl GooseMetrics {
                     writeln!(
                         fmt,
                         " {:<24} | {:>11.precision$} | {:>10} | {:>11} | {:>10}",
-                        format!("  \u{2514}\u{2500} {} ({:.1}%)", b.status_code, b.percentage),
+                        format!(
+                            "  \u{2514}\u{2500} {} ({:.1}%)",
+                            b.status_code, b.percentage
+                        ),
                         b.average,
                         format_number(b.min_time),
                         format_number(b.max_time),
@@ -4201,7 +4204,9 @@ mod test {
         request.record_status_code_time(200, 20);
         request.record_status_code_time(200, 30);
 
-        let breakdowns = request.status_code_breakdowns().expect("should have breakdowns");
+        let breakdowns = request
+            .status_code_breakdowns()
+            .expect("should have breakdowns");
         assert_eq!(breakdowns.len(), 2);
 
         // Sorted by status code.
