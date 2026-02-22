@@ -44,6 +44,9 @@ pub(crate) struct RequestMetric {
     pub response_time_maximum: usize,
     pub requests_per_second: f32,
     pub failures_per_second: f32,
+    /// True for per-status-code breakdown rows, which render differently in reports.
+    #[serde(skip_serializing)]
+    pub is_breakdown: bool,
 }
 
 /// Defines the metrics reported about Coordinated Omission requests.
@@ -145,8 +148,27 @@ pub(crate) fn get_response_metric(
 
 /// Build an individual row of raw request metrics in the html report.
 pub(crate) fn raw_request_metrics_row(metric: RequestMetric) -> String {
-    format!(
-        r#"<tr>
+    if metric.is_breakdown {
+        format!(
+            r#"<tr class="status-breakdown">
+        <td colspan="2">&nbsp;&nbsp;└─ {method}</td>
+        <td>{number_of_requests}</td>
+        <td></td>
+        <td>{response_time_average:.2}</td>
+        <td>{response_time_minimum}</td>
+        <td>{response_time_maximum}</td>
+        <td></td>
+        <td></td>
+    </tr>"#,
+            method = metric.method,
+            number_of_requests = metric.number_of_requests,
+            response_time_average = metric.response_time_average,
+            response_time_minimum = metric.response_time_minimum,
+            response_time_maximum = metric.response_time_maximum,
+        )
+    } else {
+        format!(
+            r#"<tr>
         <td>{method}</td>
         <td>{name}</td>
         <td>{number_of_requests}</td>
@@ -157,16 +179,17 @@ pub(crate) fn raw_request_metrics_row(metric: RequestMetric) -> String {
         <td>{requests_per_second:.2}</td>
         <td>{failures_per_second:.2}</td>
     </tr>"#,
-        method = metric.method,
-        name = metric.name,
-        number_of_requests = metric.number_of_requests,
-        number_of_failures = metric.number_of_failures,
-        response_time_average = metric.response_time_average,
-        response_time_minimum = metric.response_time_minimum,
-        response_time_maximum = metric.response_time_maximum,
-        requests_per_second = metric.requests_per_second,
-        failures_per_second = metric.failures_per_second,
-    )
+            method = metric.method,
+            name = metric.name,
+            number_of_requests = metric.number_of_requests,
+            number_of_failures = metric.number_of_failures,
+            response_time_average = metric.response_time_average,
+            response_time_minimum = metric.response_time_minimum,
+            response_time_maximum = metric.response_time_maximum,
+            requests_per_second = metric.requests_per_second,
+            failures_per_second = metric.failures_per_second,
+        )
+    }
 }
 
 /// Build an individual row of response metrics in the html report.
@@ -621,6 +644,11 @@ pub(crate) fn build_report(
 
         .download a {{
             color: #00ca5a;
+        }}
+
+        .status-breakdown td {{
+            font-style: italic;
+            color: #888;
         }}
 
         .graph {{

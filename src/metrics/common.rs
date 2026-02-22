@@ -83,7 +83,26 @@ pub fn prepare_data(options: ReportOptions, metrics: &GooseMetrics) -> ReportDat
             response_time_maximum: request.raw_data.maximum_time,
             requests_per_second,
             failures_per_second,
+            is_breakdown: false,
         });
+
+        // Add per-status-code breakdown rows when multiple status codes exist.
+        if let Some(breakdowns) = request.status_code_breakdowns() {
+            for b in breakdowns {
+                raw_request_metrics.push(report::RequestMetric {
+                    method: format!("{} ({:.1}%)", b.status_code, b.percentage),
+                    name: String::new(),
+                    number_of_requests: b.count,
+                    number_of_failures: 0,
+                    response_time_average: b.average,
+                    response_time_minimum: b.min_time,
+                    response_time_maximum: b.max_time,
+                    requests_per_second: 0.0,
+                    failures_per_second: 0.0,
+                    is_breakdown: true,
+                });
+            }
+        }
 
         // Prepare per-response metrics.
         raw_response_metrics.push(report::get_response_metric(
@@ -129,6 +148,7 @@ pub fn prepare_data(options: ReportOptions, metrics: &GooseMetrics) -> ReportDat
         response_time_maximum: raw_aggregate_response_time_maximum,
         requests_per_second: raw_aggregate_requests_per_second,
         failures_per_second: raw_aggregate_failures_per_second,
+        is_breakdown: false,
     });
 
     // Prepare aggregate per-response metrics.

@@ -1,7 +1,7 @@
 use crate::{
     metrics::{format_number, GooseErrorMetricAggregate, ReportData},
     report::{
-        common::OrEmpty, RequestMetric, ResponseMetric, ScenarioMetric, StatusCodeMetric,
+        common::OrEmpty, ResponseMetric, ScenarioMetric, StatusCodeMetric,
         TransactionMetric,
     },
     test_plan::TestPlanStepAction,
@@ -114,22 +114,32 @@ impl<W: Write> Markdown<'_, '_, W> {
 "#
         )?;
 
-        for RequestMetric {
-            method,
-            name,
-            number_of_requests,
-            number_of_failures,
-            response_time_average,
-            response_time_minimum,
-            response_time_maximum,
-            requests_per_second,
-            failures_per_second,
-        } in &self.data.raw_request_metrics
-        {
-            writeln!(
-                self.w,
-                r#"| {method} | {name} | {number_of_requests} | {number_of_failures } | {response_time_average:.2 } | {response_time_minimum} | {response_time_maximum} | {requests_per_second:.2} | {failures_per_second:.2} |"#,
-            )?;
+        for metric in &self.data.raw_request_metrics {
+            if metric.is_breakdown {
+                writeln!(
+                    self.w,
+                    r#"| | └─ {method} | {count} | | {avg:.2} | {min} | {max} | | |"#,
+                    method = metric.method,
+                    count = metric.number_of_requests,
+                    avg = metric.response_time_average,
+                    min = metric.response_time_minimum,
+                    max = metric.response_time_maximum,
+                )?;
+            } else {
+                writeln!(
+                    self.w,
+                    r#"| {method} | {name} | {number_of_requests} | {number_of_failures} | {response_time_average:.2} | {response_time_minimum} | {response_time_maximum} | {requests_per_second:.2} | {failures_per_second:.2} |"#,
+                    method = metric.method,
+                    name = metric.name,
+                    number_of_requests = metric.number_of_requests,
+                    number_of_failures = metric.number_of_failures,
+                    response_time_average = metric.response_time_average,
+                    response_time_minimum = metric.response_time_minimum,
+                    response_time_maximum = metric.response_time_maximum,
+                    requests_per_second = metric.requests_per_second,
+                    failures_per_second = metric.failures_per_second,
+                )?;
+            }
         }
 
         Ok(())

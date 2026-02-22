@@ -461,6 +461,13 @@ pub struct GooseRequestMetricAggregate {
     pub coordinated_omission_data: Option<GooseRequestMetricTimingData>,
     /// Per-status-code counters, tracking how often each response code was returned for this request.
     pub status_code_counts: HashMap<u16, usize>,
+    /// Per-status-code timing summaries for response time breakdowns.
+    ///
+    /// Only tracks aggregate statistics (count, total, min, max) rather than full
+    /// distributions, keeping memory overhead minimal. Only populated for non-CO-mitigated
+    /// requests when status code tracking is enabled.
+    #[serde(skip)]
+    pub status_code_timings: HashMap<u16, StatusCodeTimingSummary>,
     /// Total number of times this path-method request resulted in a successful (2xx) status code.
     ///
     /// A count of how many requests resulted in a 2xx status code.
@@ -485,6 +492,7 @@ impl GooseRequestMetricAggregate {
             raw_data: GooseRequestMetricTimingData::new(None),
             coordinated_omission_data: None,
             status_code_counts: HashMap::new(),
+            status_code_timings: HashMap::new(),
             success_count: 0,
             fail_count: 0,
             load_test_hash,
@@ -529,6 +537,79 @@ impl GooseRequestMetricAggregate {
         self.status_code_counts.insert(status_code, counter);
         debug!("[metrics]: incremented {status_code} counter: {counter}");
     }
+
+    /// Record response time for a specific status code.
+    ///
+    /// Only tracks aggregate statistics (count, total, min, max) to keep memory
+    /// overhead minimal compared to the full [`GooseRequestMetricTimingData`].
+    pub fn record_status_code_time(&mut self, status_code: u16, time_elapsed: u64) {
+        let time = time_elapsed as usize;
+        let summary = self.status_code_timings.entry(status_code).or_default();
+        summary.count += 1;
+        summary.total_time += time;
+        if time > 0 && (summary.min_time == 0 || time < summary.min_time) {
+            summary.min_time = time;
+        }
+        if time > summary.max_time {
+            summary.max_time = time;
+        }
+    }
+
+    /// Returns per-status-code breakdown data if multiple status codes were recorded.
+    ///
+    /// Returns `None` if only one (or zero) status codes were seen, since a breakdown
+    /// would not provide additional insight beyond the aggregate row.
+    pub fn status_code_breakdowns(&self) -> Option<Vec<StatusCodeBreakdown>> {
+        if self.status_code_timings.len() <= 1 {
+            return None;
+        }
+        let total: usize = self.status_code_timings.values().map(|s| s.count).sum();
+        let mut breakdowns: Vec<StatusCodeBreakdown> = self
+            .status_code_timings
+            .iter()
+            .map(|(&code, summary)| StatusCodeBreakdown {
+                status_code: code,
+                percentage: if total > 0 {
+                    summary.count as f32 / total as f32 * 100.0
+                } else {
+                    0.0
+                },
+                average: if summary.count > 0 {
+                    summary.total_time as f32 / summary.count as f32
+                } else {
+                    0.0
+                },
+                min_time: summary.min_time,
+                max_time: summary.max_time,
+                count: summary.count,
+            })
+            .collect();
+        breakdowns.sort_by_key(|b| b.status_code);
+        Some(breakdowns)
+    }
+}
+
+/// Lightweight per-status-code timing summary for response time breakdowns.
+///
+/// Unlike [`GooseRequestMetricTimingData`] which stores the full response time distribution
+/// (a `BTreeMap` of all observed times) needed for percentile calculations, this only tracks
+/// aggregate statistics to minimize memory overhead.
+#[derive(Debug, Clone, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct StatusCodeTimingSummary {
+    pub count: usize,
+    pub total_time: usize,
+    pub min_time: usize,
+    pub max_time: usize,
+}
+
+/// Computed breakdown data for a single status code, used for display.
+pub struct StatusCodeBreakdown {
+    pub status_code: u16,
+    pub percentage: f32,
+    pub average: f32,
+    pub min_time: usize,
+    pub max_time: usize,
+    pub count: usize,
 }
 
 /// Implement equality for GooseRequestMetricAggregate. We can't simply derive since
@@ -1845,6 +1926,22 @@ impl GooseMetrics {
                 )),
                 raw_avg_precision = raw_average_precision,
             )?;
+
+            // Display per-status-code breakdown when multiple status codes exist.
+            if let Some(breakdowns) = request.status_code_breakdowns() {
+                for b in breakdowns {
+                    let precision = determine_precision(b.average);
+                    writeln!(
+                        fmt,
+                        " {:<24} | {:>11.precision$} | {:>10} | {:>11} | {:>10}",
+                        format!("  \u{2514}\u{2500} {} ({:.1}%)", b.status_code, b.percentage),
+                        b.average,
+                        format_number(b.min_time),
+                        format_number(b.max_time),
+                        "-",
+                    )?;
+                }
+            }
         }
 
         let raw_average = match aggregate_raw_counter {
@@ -2836,6 +2933,13 @@ impl GooseAttack {
             );
             if !self.configuration.no_status_codes {
                 merge_request.set_status_code(request_metric.status_code);
+                // Record per-status-code timing (raw data only, exclude CO-mitigated times).
+                if request_metric.coordinated_omission_elapsed == 0 {
+                    merge_request.record_status_code_time(
+                        request_metric.status_code,
+                        request_metric.response_time,
+                    );
+                }
             }
             if request_metric.success {
                 merge_request.success_count += 1;
@@ -4033,5 +4137,96 @@ mod test {
         assert_eq!(request.raw_data.maximum_time, 987654321);
         assert_eq!(request.raw_data.total_time, 987657045);
         assert_eq!(request.raw_data.counter, 8);
+    }
+
+    #[test]
+    fn record_status_code_time() {
+        let mut request = GooseRequestMetricAggregate::new("/", GooseMethod::Get, 0);
+        assert!(request.status_code_timings.is_empty());
+
+        // First recording for status 200.
+        request.record_status_code_time(200, 50);
+        assert_eq!(request.status_code_timings.len(), 1);
+        let s = &request.status_code_timings[&200];
+        assert_eq!(s.count, 1);
+        assert_eq!(s.total_time, 50);
+        assert_eq!(s.min_time, 50);
+        assert_eq!(s.max_time, 50);
+
+        // Second recording for 200 with a lower time updates min.
+        request.record_status_code_time(200, 10);
+        let s = &request.status_code_timings[&200];
+        assert_eq!(s.count, 2);
+        assert_eq!(s.total_time, 60);
+        assert_eq!(s.min_time, 10);
+        assert_eq!(s.max_time, 50);
+
+        // Third recording for 200 with a higher time updates max.
+        request.record_status_code_time(200, 100);
+        let s = &request.status_code_timings[&200];
+        assert_eq!(s.count, 3);
+        assert_eq!(s.total_time, 160);
+        assert_eq!(s.min_time, 10);
+        assert_eq!(s.max_time, 100);
+
+        // Recording for a different status code is tracked separately.
+        request.record_status_code_time(404, 75);
+        assert_eq!(request.status_code_timings.len(), 2);
+        let s = &request.status_code_timings[&404];
+        assert_eq!(s.count, 1);
+        assert_eq!(s.total_time, 75);
+        assert_eq!(s.min_time, 75);
+        assert_eq!(s.max_time, 75);
+        // 200 entry is unchanged.
+        assert_eq!(request.status_code_timings[&200].count, 3);
+    }
+
+    #[test]
+    fn status_code_breakdowns_none_when_single() {
+        let mut request = GooseRequestMetricAggregate::new("/", GooseMethod::Get, 0);
+        // Empty timings returns None.
+        assert!(request.status_code_breakdowns().is_none());
+
+        // Single status code returns None.
+        request.record_status_code_time(200, 50);
+        assert!(request.status_code_breakdowns().is_none());
+    }
+
+    #[test]
+    fn status_code_breakdowns_sorted_with_percentages() {
+        let mut request = GooseRequestMetricAggregate::new("/", GooseMethod::Get, 0);
+        // 3 requests at 200, 1 request at 500.
+        request.record_status_code_time(500, 200);
+        request.record_status_code_time(200, 10);
+        request.record_status_code_time(200, 20);
+        request.record_status_code_time(200, 30);
+
+        let breakdowns = request.status_code_breakdowns().expect("should have breakdowns");
+        assert_eq!(breakdowns.len(), 2);
+
+        // Sorted by status code.
+        assert_eq!(breakdowns[0].status_code, 200);
+        assert_eq!(breakdowns[1].status_code, 500);
+
+        // Counts.
+        assert_eq!(breakdowns[0].count, 3);
+        assert_eq!(breakdowns[1].count, 1);
+
+        // Percentages: 3/4 = 75%, 1/4 = 25%.
+        assert!((breakdowns[0].percentage - 75.0).abs() < 0.1);
+        assert!((breakdowns[1].percentage - 25.0).abs() < 0.1);
+
+        // Average for 200: (10+20+30)/3 = 20.
+        assert!((breakdowns[0].average - 20.0).abs() < 0.1);
+        // Average for 500: 200/1 = 200.
+        assert!((breakdowns[1].average - 200.0).abs() < 0.1);
+
+        // Min/max for 200.
+        assert_eq!(breakdowns[0].min_time, 10);
+        assert_eq!(breakdowns[0].max_time, 30);
+
+        // Min/max for 500.
+        assert_eq!(breakdowns[1].min_time, 200);
+        assert_eq!(breakdowns[1].max_time, 200);
     }
 }
