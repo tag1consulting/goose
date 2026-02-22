@@ -338,6 +338,26 @@ In the following graph, it's apparent that POST requests had the slowest respons
 Below the graph is a table that shows per-request details:
 ![Response time metrics](metrics-response-time.jpg)
 
+#### Response time breakdowns by status code
+
+When a request returns multiple different HTTP status codes during a load test, Goose automatically shows per-status-code response time breakdowns in the request metrics table. These breakdown rows appear beneath the aggregate row for the affected request, using a tree-style `└─` prefix:
+
+```text
+ Name                     |    Avg (ms) |        Min |         Max |     Median
+ ------------------------------------------------------------------------------
+ GET static asset         |        5.11 |          2 |          38 |          5
+   └─ 200 (94.2%)         |        4.98 |          2 |          35 |          -
+   └─ 404 (5.8%)          |        7.24 |          5 |          38 |          -
+```
+
+In this example, the `GET static asset` request returned both `200` and `404` responses. The breakdown reveals that 404 responses took longer on average (7.24ms vs 4.98ms), suggesting the server spends more time processing requests for missing assets than serving cached ones.
+
+Each breakdown row shows the status code, the percentage of total requests with that code, and the average, minimum, and maximum response times for that status code. The median column shows `-` because per-status-code breakdowns track aggregate statistics (count, total, min, max) rather than full response time distributions, so percentile calculations are not available at this level. Full percentile data remains available on the aggregate row.
+
+Breakdowns only appear when a request returns two or more distinct status codes. If all requests for an endpoint return the same status code, no breakdown row is shown since it would be identical to the aggregate. This keeps the output clean for the common case while providing additional detail where it matters.
+
+This feature is available in CLI output, HTML reports, and Markdown reports.
+
 #### Status codes
 All status codes returned by the server are displayed in a table, per-request and in aggregate. In our simple test, we received only `200 OK` responses.
 ![Status code metrics](metrics-status-codes.jpg)
