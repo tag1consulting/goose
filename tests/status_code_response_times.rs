@@ -142,3 +142,83 @@ async fn test_status_code_response_time_tracking() {
         "single status code endpoint should not have breakdowns"
     );
 }
+
+/// Verify that breakdown rows appear in HTML and Markdown reports.
+#[tokio::test]
+async fn test_status_code_breakdowns_in_reports() {
+    let html_file = "status-code-report-test.html";
+    let md_file = "status-code-report-test.md";
+    common::cleanup_files(vec![html_file, md_file]);
+
+    let server = MockServer::start();
+
+    server.mock(|when, then| {
+        when.method(GET).path(OK_PATH);
+        then.status(200);
+    });
+    server.mock(|when, then| {
+        when.method(GET).path(ERROR_PATH);
+        then.status(404);
+    });
+
+    let config = common::build_configuration(
+        &server,
+        vec![
+            "--users",
+            "2",
+            "--hatch-rate",
+            "2",
+            "--run-time",
+            "2",
+            "--report-file",
+            html_file,
+            "--report-file",
+            md_file,
+        ],
+    );
+
+    let _metrics = common::run_load_test(
+        common::build_load_test(
+            config,
+            vec![scenario!("Mixed")
+                .register_transaction(transaction!(get_mixed).set_weight(3).unwrap())],
+            None,
+            None,
+        ),
+        None,
+    )
+    .await;
+
+    // --- Verify HTML report contains breakdown rows ---
+    assert!(
+        std::path::Path::new(html_file).exists(),
+        "HTML report should be generated"
+    );
+    let html = std::fs::read_to_string(html_file).unwrap();
+    assert!(
+        html.contains("status-breakdown"),
+        "HTML report should contain status-breakdown CSS class"
+    );
+    assert!(
+        html.contains("└─"),
+        "HTML report should contain tree-style breakdown prefix"
+    );
+
+    // --- Verify Markdown report contains breakdown rows ---
+    assert!(
+        std::path::Path::new(md_file).exists(),
+        "Markdown report should be generated"
+    );
+    let md = std::fs::read_to_string(md_file).unwrap();
+    assert!(
+        md.contains("└─"),
+        "Markdown report should contain tree-style breakdown prefix"
+    );
+    // Breakdown rows should contain status code and percentage.
+    assert!(
+        md.contains("200") && md.contains("404"),
+        "Markdown report should contain both status codes"
+    );
+
+    common::cleanup_files(vec![html_file, md_file]);
+}
