@@ -325,13 +325,30 @@ Below the graph is a table that shows per-request details, only partially includ
 ![Request metrics](metrics-requests.jpg)
 
 #### Response times
-The next graph shows the response times measured for each request made. Goose measures **Time to First Byte (TTFB)** - the time from when a request starts until the first byte of the response is received. This includes network latency and server processing time, but does not include the time to download the complete response body.
+The next graph shows the response times measured for each request made. Goose measures **Time to First Byte (TTFB)** — the time from when a request is sent until response headers are received, as measured by `reqwest::Client::execute()`. This includes network latency, server processing time, and redirect handling, but does not include downloading the response body or any client-side processing.
 
-**Why TTFB only?** Goose focuses on TTFB because:
+Note that all "Response time" labels in Goose reports and console output refer to TTFB.
+
+**What TTFB includes:**
+
+- Network latency to establish connection
+- Server processing time to generate response
+- Time to receive response headers and status code
+- Redirect handling time (when following redirects)
+
+**What is NOT measured:**
+
+- Time to download complete response body
+- Time to process response content
+- Client-side rendering or parsing time
+
+**Why TTFB?** Goose focuses on TTFB because:
 - **Server performance focus**: TTFB measures server processing time and network latency, which are the primary concerns for load testing
 - **Consistent measurement**: Load test scenarios may not consume complete response bodies, making total download time inconsistent and potentially misleading
 - **Resource efficiency**: Not downloading complete responses allows Goose to generate more load with fewer resources
 - **Real-world relevance**: Many applications stream responses or use chunked encoding where TTFB is the critical performance metric
+
+If your load test needs to measure total download time including the response body, see [Measuring Complete Download Time](#measuring-complete-download-time) below.
 
 In the following graph, it's apparent that POST requests had the slowest responses, which is logical as they are not cached. As before, it's possible to click on the request names at the top of the graph to hide/show details about specific requests.
 
@@ -466,6 +483,33 @@ If you encounter issues generating PDF reports:
 - Use absolute paths if relative paths cause issues
 - Ensure sufficient system memory (Chrome requires additional RAM)
 - Check that no other Chrome processes are interfering
+
+### Measuring Complete Download Time
+
+If your load test needs to measure total download time including the response body, you can implement custom timing:
+
+```rust
+use goose::prelude::*;
+use std::time::Instant;
+
+async fn measure_full_download(user: &mut GooseUser) -> TransactionResult {
+    let start = Instant::now();
+    let response = user.get("/large-file").await?;
+
+    // Read the entire response body to measure complete download
+    let _body = response.response?.text().await?;
+    let total_time = start.elapsed();
+
+    // Log the complete download time for analysis
+    println!("Full download time: {}ms", total_time.as_millis());
+
+    Ok(())
+}
+```
+
+Goose doesn't currently have built-in support for custom metrics aggregation, so you would need to collect and analyze these measurements externally (e.g., through log parsing or an external metrics system).
+
+**Note:** Reading complete response bodies will consume more memory and may reduce the load generation capacity of your test.
 
 ### Developer documentation
 Additional details about how metrics are collected, stored, and displayed can be found [in the developer documentation](https://docs.rs/goose/*/goose/metrics/index.html).
