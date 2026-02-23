@@ -525,7 +525,7 @@ impl From<&str> for Box<TransactionError> {
 #[derive(Clone, Hash)]
 pub struct Scenario {
     /// The name of the scenario.
-    pub name: Arc<str>,
+    pub name: String,
     /// Auto-generated machine name of the scenario.
     pub machine_name: String,
     /// An integer reflecting where this scenario lives in the internal
@@ -568,7 +568,7 @@ impl Scenario {
     pub fn new(name: &str) -> Self {
         trace!("new scenario: name: {}", &name);
         Scenario {
-            name: Arc::from(name),
+            name: name.to_string(),
             machine_name: Scenario::get_machine_name(name),
             scenarios_index: usize::MAX,
             weight: 1,
@@ -3392,7 +3392,7 @@ mod tests {
         }
 
         let mut scenario = scenario!("foo");
-        assert_eq!(scenario.name.as_ref(), "foo");
+        assert_eq!(scenario.name, "foo");
         assert_eq!(scenario.scenarios_index, usize::MAX);
         assert_eq!(scenario.weight, 1);
         assert_eq!(scenario.transaction_wait, None);
