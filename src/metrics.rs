@@ -30,7 +30,22 @@ use num_format::{Locale, ToFormattedString};
 use regex::RegexSet;
 use reqwest::StatusCode;
 use serde::ser::SerializeStruct;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize, Serializer};
+
+/// Serde helper for `Arc<str>` fields, enabling `#[serde(with = "arc_str_serde")]`.
+pub(crate) mod arc_str_serde {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::sync::Arc;
+
+    pub fn serialize<S: Serializer>(value: &Arc<str>, serializer: S) -> Result<S::Ok, S::Error> {
+        value.as_ref().serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Arc<str>, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Arc::from(s.as_str()))
+    }
+}
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::OsStr;
@@ -330,13 +345,15 @@ impl GooseRawRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TransactionDetail<'a> {
+pub struct TransactionDetail {
     /// An index into [`GooseAttack`]`.scenarios`, indicating which scenario this is.
     pub scenario_index: usize,
     /// The scenario name.
-    pub scenario_name: &'a str,
+    #[serde(with = "arc_str_serde")]
+    pub scenario_name: Arc<str>,
     /// An optional index into [`Scenario`]`.transaction`, indicating which transaction this is.
-    pub transaction_index: &'a str,
+    /// `None` indicates no transaction, `Some(0)` is the first transaction.
+    pub transaction_index: Option<usize>,
     /// An optional name for the transaction.
     pub transaction_name: TransactionName,
 }
@@ -349,13 +366,14 @@ pub struct TransactionDetail<'a> {
 /// [`set_success`](../goose/struct.GooseUser.html#method.set_success) or
 /// [`set_failure`](../goose/struct.GooseUser.html#method.set_failure) so Goose
 /// knows which request is being updated.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GooseRequestMetric {
     /// How many milliseconds the load test has been running.
     pub elapsed: u64,
     /// An index into [`GooseAttack`]`.scenarios`, indicating which scenario this is.
     pub scenario_index: usize,
     /// The scenario name.
+    #[serde(with = "arc_str_serde")]
     pub scenario_name: Arc<str>,
     /// An optional index into [`Scenario`]`.transaction`, indicating which transaction this is.
     /// Stored as usize, `usize::MAX` indicates no transaction, while `0` is the first `Scenario.transaction`.
@@ -365,6 +383,7 @@ pub struct GooseRequestMetric {
     /// The raw request that the GooseClient made.
     pub raw: GooseRawRequest,
     /// The optional name of the request.
+    #[serde(with = "arc_str_serde")]
     pub name: Arc<str>,
     /// The final full URL that was requested, after redirects.
     pub final_url: String,
@@ -391,86 +410,6 @@ pub struct GooseRequestMetric {
     pub user_cadence: u64,
 }
 
-impl Serialize for GooseRequestMetric {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("GooseRequestMetric", 18)?;
-        state.serialize_field("elapsed", &self.elapsed)?;
-        state.serialize_field("scenario_index", &self.scenario_index)?;
-        state.serialize_field("scenario_name", self.scenario_name.as_ref())?;
-        state.serialize_field("transaction_index", &self.transaction_index)?;
-        state.serialize_field("transaction_name", &self.transaction_name)?;
-        state.serialize_field("raw", &self.raw)?;
-        state.serialize_field("name", self.name.as_ref())?;
-        state.serialize_field("final_url", &self.final_url)?;
-        state.serialize_field("redirected", &self.redirected)?;
-        state.serialize_field("response_time", &self.response_time)?;
-        state.serialize_field("status_code", &self.status_code)?;
-        state.serialize_field("success", &self.success)?;
-        state.serialize_field("update", &self.update)?;
-        state.serialize_field("user", &self.user)?;
-        state.serialize_field("error", &self.error)?;
-        state.serialize_field(
-            "coordinated_omission_elapsed",
-            &self.coordinated_omission_elapsed,
-        )?;
-        state.serialize_field("user_cadence", &self.user_cadence)?;
-        state.end()
-    }
-}
-
-impl<'de> Deserialize<'de> for GooseRequestMetric {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(rename = "GooseRequestMetric")]
-        struct GooseRequestMetricHelper {
-            elapsed: u64,
-            scenario_index: usize,
-            scenario_name: String,
-            transaction_index: usize,
-            transaction_name: TransactionName,
-            raw: GooseRawRequest,
-            name: String,
-            final_url: String,
-            redirected: bool,
-            response_time: u64,
-            status_code: u16,
-            success: bool,
-            update: bool,
-            user: usize,
-            error: String,
-            coordinated_omission_elapsed: u64,
-            user_cadence: u64,
-        }
-
-        let helper = GooseRequestMetricHelper::deserialize(deserializer)?;
-        Ok(GooseRequestMetric {
-            elapsed: helper.elapsed,
-            scenario_index: helper.scenario_index,
-            scenario_name: Arc::from(helper.scenario_name.as_str()),
-            transaction_index: helper.transaction_index,
-            transaction_name: helper.transaction_name,
-            raw: helper.raw,
-            name: Arc::from(helper.name.as_str()),
-            final_url: helper.final_url,
-            redirected: helper.redirected,
-            response_time: helper.response_time,
-            status_code: helper.status_code,
-            success: helper.success,
-            update: helper.update,
-            user: helper.user,
-            error: helper.error,
-            coordinated_omission_elapsed: helper.coordinated_omission_elapsed,
-            user_cadence: helper.user_cadence,
-        })
-    }
-}
 impl GooseRequestMetric {
     pub(crate) fn new(
         raw: GooseRawRequest,
@@ -482,11 +421,8 @@ impl GooseRequestMetric {
         GooseRequestMetric {
             elapsed: elapsed as u64,
             scenario_index: transaction_detail.scenario_index,
-            scenario_name: Arc::from(transaction_detail.scenario_name),
-            transaction_index: transaction_detail
-                .transaction_index
-                .parse()
-                .unwrap_or(usize::MAX),
+            scenario_name: transaction_detail.scenario_name,
+            transaction_index: transaction_detail.transaction_index.unwrap_or(usize::MAX),
             transaction_name: transaction_detail.transaction_name,
             raw,
             name: Arc::from(name),
@@ -3979,8 +3915,8 @@ mod test {
             raw_request,
             TransactionDetail {
                 scenario_index: 0,
-                scenario_name: "LoadTestUser",
-                transaction_index: 5.to_string().as_str(),
+                scenario_name: Arc::from("LoadTestUser"),
+                transaction_index: Some(5),
                 transaction_name: TransactionName::InheritNameByRequests(Arc::from("front page")),
             },
             "/",

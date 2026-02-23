@@ -903,9 +903,9 @@ pub struct GooseUser {
     /// vector, indicating which [`Scenario`](./struct.Scenario.html) is running.
     pub(crate) scenarios_index: usize,
     /// The Scenario this GooseUser is running.
-    pub(crate) scenario_name: String,
+    pub(crate) scenario_name: Arc<str>,
     /// An optional index into [`Scenario`]`.transaction`, indicating which transaction this is.
-    pub(crate) transaction_index: Option<String>,
+    pub(crate) transaction_index: Option<usize>,
     /// Current transaction name, if set.
     pub(crate) transaction_name: Option<TransactionName>,
     /// Client used to make requests, managing sessions and cookies.
@@ -948,7 +948,7 @@ impl Clone for GooseUser {
             iterations: self.iterations,
             scenarios_index: self.scenarios_index,
             scenario_name: self.scenario_name.clone(),
-            transaction_index: self.transaction_index.clone(),
+            transaction_index: self.transaction_index,
             transaction_name: self.transaction_name.clone(),
             client: self.client.clone(),
             base_url: self.base_url.clone(),
@@ -977,7 +977,7 @@ impl GooseUser {
     /// Create a new user state.
     pub fn new(
         scenarios_index: usize,
-        scenario_name: String,
+        scenario_name: Arc<str>,
         base_url: Url,
         configuration: &GooseConfiguration,
         load_test_hash: u64,
@@ -1020,7 +1020,7 @@ impl GooseUser {
 
     /// Create a new single-use user.
     pub fn single(base_url: Url, configuration: &GooseConfiguration) -> Result<Self, GooseError> {
-        let mut single_user = GooseUser::new(0, "".to_string(), base_url, configuration, 0, None)?;
+        let mut single_user = GooseUser::new(0, Arc::from(""), base_url, configuration, 0, None)?;
         // Only one user, so index is 0.
         single_user.weighted_users_index = 0;
         // Do not throttle [`test_start`](../struct.GooseAttack.html#method.test_start) (setup) and
@@ -1800,11 +1800,8 @@ impl GooseUser {
         // Provide details about the current transaction for logging.
         let transaction_detail = TransactionDetail {
             scenario_index: self.scenarios_index,
-            scenario_name: self.scenario_name.as_str(),
-            transaction_index: self
-                .transaction_index
-                .as_ref()
-                .map_or_else(|| "", |v| v.as_ref()),
+            scenario_name: self.scenario_name.clone(),
+            transaction_index: self.transaction_index,
             transaction_name: self
                 .transaction_name
                 .clone()
@@ -3567,7 +3564,7 @@ mod tests {
         const HOST: &str = "http://example.com/";
         let configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
         let base_url = get_base_url(Some(HOST.to_string()), None, None).unwrap();
-        let user = GooseUser::new(0, "".to_string(), base_url, &configuration, 0, None).unwrap();
+        let user = GooseUser::new(0, Arc::from(""), base_url, &configuration, 0, None).unwrap();
         assert_eq!(user.scenarios_index, 0);
         assert_eq!(user.weighted_users_index, usize::MAX);
 
@@ -3594,7 +3591,7 @@ mod tests {
             Some("http://www.example.com/".to_string()),
         )
         .unwrap();
-        let user2 = GooseUser::new(0, "".to_string(), base_url, &configuration, 0, None).unwrap();
+        let user2 = GooseUser::new(0, Arc::from(""), base_url, &configuration, 0, None).unwrap();
 
         // Confirm the URLs are correctly built using the scenario_host.
         let url = user2.build_url("/foo").unwrap();
@@ -3607,7 +3604,7 @@ mod tests {
         // Confirm Goose can build a base_url that includes a path.
         const HOST_WITH_PATH: &str = "http://example.com/with/path/";
         let base_url = get_base_url(Some(HOST_WITH_PATH.to_string()), None, None).unwrap();
-        let user = GooseUser::new(0, "".to_string(), base_url, &configuration, 0, None).unwrap();
+        let user = GooseUser::new(0, Arc::from(""), base_url, &configuration, 0, None).unwrap();
 
         // Confirm the URLs are correctly built using the default_host that includes a path.
         let url = user.build_url("foo").unwrap();
