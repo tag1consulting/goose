@@ -244,8 +244,8 @@ async fn invoke_transaction_function(
     thread_user
         .transaction_name
         .replace(thread_transaction_name.clone());
-    // As the index is optional, `""` is none, whereas `"0"` is the first index.
-    thread_user.transaction_index = Some(thread_transaction_index.to_string());
+    // The index is optional: `None` means no transaction, `Some(0)` is the first.
+    thread_user.transaction_index = Some(thread_transaction_index);
 
     let success = function(thread_user).await.is_ok();
     raw_transaction.set_time(started.elapsed().as_millis(), success);
