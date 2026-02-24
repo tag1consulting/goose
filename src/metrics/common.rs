@@ -57,10 +57,14 @@ pub struct ReportOptions {
 pub fn prepare_data_with_baseline<'a>(
     options: ReportOptions,
     metrics: &'a GooseMetrics,
-    baseline: Option<&'a ReportData<'a>>,
+    baseline: Option<&ReportData>,
 ) -> ReportData<'a> {
-    let prepare = Prepare::new(options, metrics, baseline);
-    prepare.build()
+    let prepare = Prepare::new(options, metrics);
+    let mut result = prepare.build();
+    if let Some(baseline) = baseline {
+        apply_baseline_deltas(&mut result, baseline);
+    }
+    result
 }
 
 struct RawIntermediate {
@@ -72,20 +76,14 @@ struct RawIntermediate {
 struct Prepare<'m> {
     options: ReportOptions,
     metrics: &'m GooseMetrics,
-    baseline: Option<&'m ReportData<'m>>,
     co_data: bool,
 }
 
 impl<'m> Prepare<'m> {
-    fn new(
-        options: ReportOptions,
-        metrics: &'m GooseMetrics,
-        baseline: Option<&'m ReportData<'m>>,
-    ) -> Self {
+    fn new(options: ReportOptions, metrics: &'m GooseMetrics) -> Self {
         Self {
             options,
             metrics,
-            baseline,
             co_data: false,
         }
     }
@@ -235,20 +233,6 @@ impl<'m> Prepare<'m> {
             raw_aggregate_response_time_minimum,
             raw_aggregate_response_time_maximum,
         ));
-
-        // Apply baseline deltas if available
-        if let Some(baseline) = &self.baseline {
-            correlate_deltas(
-                &mut raw_request_metrics,
-                &baseline.raw_request_metrics,
-                |r| (r.method.clone(), r.name.clone()),
-            );
-            correlate_deltas(
-                &mut raw_response_metrics,
-                &baseline.raw_response_metrics,
-                |r| (r.method.clone(), r.name.clone()),
-            );
-        }
 
         (
             raw_request_metrics,
@@ -444,15 +428,6 @@ impl<'m> Prepare<'m> {
             failures_per_second: Some(aggregate_failures_per_second.into()),
         });
 
-        // Apply baseline deltas if available
-        if let Some(baseline) = &self.baseline {
-            if let Some(baseline_transactions) = &baseline.transaction_metrics {
-                correlate_deltas(&mut transaction_metrics, baseline_transactions, |t| {
-                    (t.transaction.clone(), t.name.clone())
-                });
-            }
-        }
-
         Some(transaction_metrics)
     }
 
@@ -516,15 +491,6 @@ impl<'m> Prepare<'m> {
             iterations: aggregate_iterations.into(),
         });
 
-        // Apply baseline deltas if available
-        if let Some(baseline) = &self.baseline {
-            if let Some(baseline_scenarios) = &baseline.scenario_metrics {
-                correlate_deltas(&mut scenario_metrics, baseline_scenarios, |s| {
-                    s.name.clone()
-                });
-            }
-        }
-
         Some(scenario_metrics)
     }
 
@@ -576,7 +542,7 @@ impl<'m> Prepare<'m> {
             return None;
         }
 
-        let mut errors: Vec<ErrorMetric> = self
+        let errors: Vec<ErrorMetric> = self
             .metrics
             .errors
             .values()
@@ -587,15 +553,6 @@ impl<'m> Prepare<'m> {
                 occurrences: error.occurrences.into(),
             })
             .collect();
-
-        // Apply baseline deltas if available
-        if let Some(baseline) = &self.baseline {
-            if let Some(baseline_errors) = &baseline.errors {
-                correlate_deltas(&mut errors, baseline_errors, |e| {
-                    (format!("{:?}", e.method), e.name.clone(), e.error.clone())
-                });
-            }
-        }
 
         Some(errors)
     }
@@ -610,16 +567,7 @@ pub fn prepare_data_with_baseline_owned<'a>(
     metrics: &'a GooseMetrics,
     baseline: Option<ReportData<'static>>,
 ) -> ReportData<'a> {
-    // For now, we'll store the baseline and process it separately
-    let prepare = Prepare::new(options, metrics, None);
-    let mut result = prepare.build();
-
-    // If we have a baseline, apply the deltas manually
-    if let Some(baseline) = baseline {
-        apply_baseline_deltas(&mut result, &baseline);
-    }
-
-    result
+    prepare_data_with_baseline(options, metrics, baseline.as_ref())
 }
 
 /// Apply baseline deltas to the current report data
@@ -637,6 +585,26 @@ fn apply_baseline_deltas(current: &mut ReportData, baseline: &ReportData) {
         &baseline.raw_response_metrics,
         |r| (r.method.clone(), r.name.clone()),
     );
+
+    // Apply deltas to CO request metrics if present
+    if let (Some(current_co), Some(baseline_co)) = (
+        &mut current.co_request_metrics,
+        &baseline.co_request_metrics,
+    ) {
+        correlate_deltas(current_co, baseline_co, |r| {
+            (r.method.clone(), r.name.clone())
+        });
+    }
+
+    // Apply deltas to CO response metrics if present
+    if let (Some(current_co), Some(baseline_co)) = (
+        &mut current.co_response_metrics,
+        &baseline.co_response_metrics,
+    ) {
+        correlate_deltas(current_co, baseline_co, |r| {
+            (r.method.clone(), r.name.clone())
+        });
+    }
 
     // Apply deltas to transaction metrics if present
     if let (Some(current_transactions), Some(baseline_transactions)) = (
