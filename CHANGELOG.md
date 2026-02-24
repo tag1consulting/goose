@@ -15,6 +15,8 @@
  - [#657](https://github.com/tag1consulting/goose/pull/657) add comprehensive Basic Authentication example demonstrating three approaches: custom client with default headers (recommended), helper function per-request, and manual per-request; includes flexible credential configuration and complete documentation
  - [#669](https://github.com/tag1consulting/goose/pull/669) update reqwest to 0.13, switching the default TLS backend from native-tls to rustls. HTTP/2 and post-quantum cryptography are now advertised by default, which may increase connection handshake overhead when a computationally expensive cipher suite is negotiated.
    **Breaking changes**: Certificate validation now uses bundled rustls/webpki roots instead of the OS-native certificate store, which may affect environments with custom system CAs. `--accept-invalid-certs` now works unconditionally (previously it was silently ignored unless the `rustls-tls` feature was enabled).
+ - [#660](https://github.com/tag1consulting/goose/pull/660), [#661](https://github.com/tag1consulting/goose/pull/661) add `--baseline-file` option to compare load test results against a previous JSON report; all report formats (HTML, Markdown, JSON) show deltas for requests, response times, transactions, scenarios, errors, and coordinated omission metrics
+    o `GooseMethod` now derives `Copy` and `Hash`
 
 ## 0.18.1 August 14, 2025
  - [#634](https://github.com/tag1consulting/goose/pull/634) add killswitch mechanism for programmatic test termination
