@@ -1109,10 +1109,11 @@ mod test {
             Err(GooseError::InvalidOption { detail, .. }) => {
                 assert!(
                     detail.contains("no request metrics"),
-                    "unexpected detail: {detail}"
+                    "unexpected detail: {}",
+                    detail
                 );
             }
-            other => panic!("expected InvalidOption error, got: {other:?}"),
+            other => panic!("expected InvalidOption error, got: {:?}", other),
         }
     }
 }
