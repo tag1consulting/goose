@@ -185,6 +185,14 @@ impl<T: DeltaValue> Display for Value<T> {
     }
 }
 
+/// A trait for types that can have baseline deltas applied to them.
+///
+/// This is implemented by metric structs (e.g. `RequestMetric`, `ResponseMetric`)
+/// to allow correlating current metrics with baseline metrics and computing deltas.
+pub trait DeltaTo {
+    fn delta_to(&mut self, other: &Self);
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
