@@ -1068,6 +1068,350 @@ mod test {
         assert!(matches!(current[1].number_of_requests, Value::Plain(_)));
     }
 
+    /// Helper: build a minimal valid baseline JSON string.
+    fn minimal_baseline_json(
+        requests: usize,
+        failures: usize,
+        avg_response: f32,
+        min_response: usize,
+        max_response: usize,
+    ) -> String {
+        format!(
+            r#"{{
+                "raw_metrics": {{
+                    "hash": 0,
+                    "duration": 60,
+                    "maximum_users": 10,
+                    "total_users": 10,
+                    "requests": {{}},
+                    "transactions": [],
+                    "errors": {{}}
+                }},
+                "raw_request_metrics": [
+                    {{
+                        "method": "GET",
+                        "name": "/",
+                        "number_of_requests": {requests},
+                        "number_of_failures": {failures},
+                        "response_time_average": {avg_response},
+                        "response_time_minimum": {min_response},
+                        "response_time_maximum": {max_response},
+                        "requests_per_second": 10.0,
+                        "failures_per_second": 0.5
+                    }}
+                ],
+                "raw_response_metrics": [
+                    {{
+                        "method": "GET",
+                        "name": "/",
+                        "percentile_50": 50,
+                        "percentile_60": 60,
+                        "percentile_70": 70,
+                        "percentile_80": 80,
+                        "percentile_90": 90,
+                        "percentile_95": 95,
+                        "percentile_99": 99,
+                        "percentile_100": 100
+                    }}
+                ]
+            }}"#,
+        )
+    }
+
+    #[test]
+    fn load_baseline_file_valid() {
+        let path = std::env::temp_dir().join("goose_test_valid_baseline.json");
+        std::fs::write(&path, minimal_baseline_json(500, 10, 45.5, 5, 200)).unwrap();
+        let result = load_baseline_file(&path);
+        std::fs::remove_file(&path).ok();
+
+        let data = result.expect("should load valid baseline");
+        assert_eq!(data.raw_request_metrics.len(), 1);
+        assert_eq!(data.raw_response_metrics.len(), 1);
+        assert_eq!(data.raw_request_metrics[0].number_of_requests.value(), 500);
+        assert_eq!(data.raw_request_metrics[0].number_of_failures.value(), 10);
+        assert_eq!(data.raw_response_metrics[0].percentile_50.value(), 50);
+        assert_eq!(data.raw_response_metrics[0].percentile_100.value(), 100);
+        // All values should be Plain (no deltas yet)
+        assert!(matches!(
+            data.raw_request_metrics[0].number_of_requests,
+            Value::Plain(500)
+        ));
+    }
+
+    #[test]
+    fn apply_baseline_deltas_all_metric_types() {
+        use crate::report::{
+            CORequestMetric, ErrorMetric, ResponseMetric, ScenarioMetric, TransactionMetric,
+        };
+
+        let mut current = ReportData {
+            raw_metrics: Cow::Owned(GooseMetrics::default()),
+            raw_request_metrics: vec![RequestMetric {
+                method: "GET".into(),
+                name: "/".into(),
+                number_of_requests: 200usize.into(),
+                number_of_failures: 5usize.into(),
+                response_time_average: 50.0f32.into(),
+                response_time_minimum: 10usize.into(),
+                response_time_maximum: 500usize.into(),
+                requests_per_second: 20.0f32.into(),
+                failures_per_second: 0.5f32.into(),
+                is_breakdown: false,
+            }],
+            raw_response_metrics: vec![ResponseMetric {
+                method: "GET".into(),
+                name: "/".into(),
+                percentile_50: 50usize.into(),
+                percentile_60: 60usize.into(),
+                percentile_70: 70usize.into(),
+                percentile_80: 80usize.into(),
+                percentile_90: 90usize.into(),
+                percentile_95: 95usize.into(),
+                percentile_99: 99usize.into(),
+                percentile_100: 100usize.into(),
+            }],
+            co_request_metrics: Some(vec![CORequestMetric {
+                method: "GET".into(),
+                name: "/".into(),
+                response_time_average: 55.0f32.into(),
+                response_time_standard_deviation: 5.0f32.into(),
+                response_time_maximum: 600usize.into(),
+            }]),
+            co_response_metrics: Some(vec![ResponseMetric {
+                method: "GET".into(),
+                name: "/".into(),
+                percentile_50: 55usize.into(),
+                percentile_60: 65usize.into(),
+                percentile_70: 75usize.into(),
+                percentile_80: 85usize.into(),
+                percentile_90: 95usize.into(),
+                percentile_95: 100usize.into(),
+                percentile_99: 110usize.into(),
+                percentile_100: 120usize.into(),
+            }]),
+            transaction_metrics: Some(vec![TransactionMetric {
+                is_scenario: false,
+                transaction: "LoadTest".into(),
+                name: "front page".into(),
+                number_of_requests: 200usize.into(),
+                number_of_failures: 5usize.into(),
+                response_time_average: Some(50.0f32.into()),
+                response_time_minimum: 10usize.into(),
+                response_time_maximum: 500usize.into(),
+                requests_per_second: Some(20.0f32.into()),
+                failures_per_second: Some(0.5f32.into()),
+            }]),
+            scenario_metrics: Some(vec![ScenarioMetric {
+                name: "LoadTest".into(),
+                users: 10usize.into(),
+                count: 200usize.into(),
+                response_time_average: 50.0f32.into(),
+                response_time_minimum: 10usize.into(),
+                response_time_maximum: 500usize.into(),
+                count_per_second: 20.0f32.into(),
+                iterations: 5.0f32.into(),
+            }]),
+            status_code_metrics: None,
+            errors: Some(vec![ErrorMetric {
+                method: crate::goose::GooseMethod::Get,
+                name: "/".into(),
+                error: "503 Service Unavailable".into(),
+                occurrences: 5usize.into(),
+            }]),
+            coordinated_omission_metrics: None,
+        };
+
+        // Build a baseline with different values
+        let baseline = ReportData {
+            raw_metrics: Cow::Owned(GooseMetrics::default()),
+            raw_request_metrics: vec![RequestMetric {
+                method: "GET".into(),
+                name: "/".into(),
+                number_of_requests: 150usize.into(),
+                number_of_failures: 3usize.into(),
+                response_time_average: 40.0f32.into(),
+                response_time_minimum: 8usize.into(),
+                response_time_maximum: 400usize.into(),
+                requests_per_second: 15.0f32.into(),
+                failures_per_second: 0.3f32.into(),
+                is_breakdown: false,
+            }],
+            raw_response_metrics: vec![ResponseMetric {
+                method: "GET".into(),
+                name: "/".into(),
+                percentile_50: 40usize.into(),
+                percentile_60: 50usize.into(),
+                percentile_70: 60usize.into(),
+                percentile_80: 70usize.into(),
+                percentile_90: 80usize.into(),
+                percentile_95: 85usize.into(),
+                percentile_99: 90usize.into(),
+                percentile_100: 95usize.into(),
+            }],
+            co_request_metrics: Some(vec![CORequestMetric {
+                method: "GET".into(),
+                name: "/".into(),
+                response_time_average: 45.0f32.into(),
+                response_time_standard_deviation: 4.0f32.into(),
+                response_time_maximum: 500usize.into(),
+            }]),
+            co_response_metrics: Some(vec![ResponseMetric {
+                method: "GET".into(),
+                name: "/".into(),
+                percentile_50: 45usize.into(),
+                percentile_60: 55usize.into(),
+                percentile_70: 65usize.into(),
+                percentile_80: 75usize.into(),
+                percentile_90: 85usize.into(),
+                percentile_95: 90usize.into(),
+                percentile_99: 100usize.into(),
+                percentile_100: 110usize.into(),
+            }]),
+            transaction_metrics: Some(vec![TransactionMetric {
+                is_scenario: false,
+                transaction: "LoadTest".into(),
+                name: "front page".into(),
+                number_of_requests: 150usize.into(),
+                number_of_failures: 3usize.into(),
+                response_time_average: Some(40.0f32.into()),
+                response_time_minimum: 8usize.into(),
+                response_time_maximum: 400usize.into(),
+                requests_per_second: Some(15.0f32.into()),
+                failures_per_second: Some(0.3f32.into()),
+            }]),
+            scenario_metrics: Some(vec![ScenarioMetric {
+                name: "LoadTest".into(),
+                users: 8usize.into(),
+                count: 150usize.into(),
+                response_time_average: 40.0f32.into(),
+                response_time_minimum: 8usize.into(),
+                response_time_maximum: 400usize.into(),
+                count_per_second: 15.0f32.into(),
+                iterations: 4.0f32.into(),
+            }]),
+            status_code_metrics: None,
+            errors: Some(vec![ErrorMetric {
+                method: crate::goose::GooseMethod::Get,
+                name: "/".into(),
+                error: "503 Service Unavailable".into(),
+                occurrences: 3usize.into(),
+            }]),
+            coordinated_omission_metrics: None,
+        };
+
+        apply_baseline_deltas(&mut current, &baseline);
+
+        // Request metrics: 200 - 150 = +50
+        assert!(matches!(
+            current.raw_request_metrics[0].number_of_requests,
+            Value::Delta {
+                value: 200,
+                delta: 50
+            }
+        ));
+        // Response percentile: 50 - 40 = +10
+        assert!(matches!(
+            current.raw_response_metrics[0].percentile_50,
+            Value::Delta {
+                value: 50,
+                delta: 10
+            }
+        ));
+        // CO request: 600 - 500 = +100
+        assert!(matches!(
+            current.co_request_metrics.as_ref().unwrap()[0].response_time_maximum,
+            Value::Delta {
+                value: 600,
+                delta: 100
+            }
+        ));
+        // CO response percentile: 55 - 45 = +10
+        assert!(matches!(
+            current.co_response_metrics.as_ref().unwrap()[0].percentile_50,
+            Value::Delta {
+                value: 55,
+                delta: 10
+            }
+        ));
+        // Transaction: 200 - 150 = +50
+        assert!(matches!(
+            current.transaction_metrics.as_ref().unwrap()[0].number_of_requests,
+            Value::Delta {
+                value: 200,
+                delta: 50
+            }
+        ));
+        // Scenario: 10 - 8 = +2
+        assert!(matches!(
+            current.scenario_metrics.as_ref().unwrap()[0].users,
+            Value::Delta {
+                value: 10,
+                delta: 2
+            }
+        ));
+        // Error: 5 - 3 = +2
+        assert!(matches!(
+            current.errors.as_ref().unwrap()[0].occurrences,
+            Value::Delta { value: 5, delta: 2 }
+        ));
+    }
+
+    #[test]
+    fn round_trip_serialize_then_load_as_baseline() {
+        use crate::report::ResponseMetric;
+
+        // Build a ReportData, serialize to JSON, load as baseline
+        let original = ReportData {
+            raw_metrics: Cow::Owned(GooseMetrics::default()),
+            raw_request_metrics: vec![RequestMetric {
+                method: "POST".into(),
+                name: "/api/submit".into(),
+                number_of_requests: 1000usize.into(),
+                number_of_failures: 25usize.into(),
+                response_time_average: 120.5f32.into(),
+                response_time_minimum: 15usize.into(),
+                response_time_maximum: 3000usize.into(),
+                requests_per_second: 16.7f32.into(),
+                failures_per_second: 0.42f32.into(),
+                is_breakdown: false,
+            }],
+            raw_response_metrics: vec![ResponseMetric {
+                method: "POST".into(),
+                name: "/api/submit".into(),
+                percentile_50: 100usize.into(),
+                percentile_60: 110usize.into(),
+                percentile_70: 130usize.into(),
+                percentile_80: 150usize.into(),
+                percentile_90: 200usize.into(),
+                percentile_95: 500usize.into(),
+                percentile_99: 1500usize.into(),
+                percentile_100: 3000usize.into(),
+            }],
+            co_request_metrics: None,
+            co_response_metrics: None,
+            scenario_metrics: None,
+            transaction_metrics: None,
+            status_code_metrics: None,
+            errors: None,
+            coordinated_omission_metrics: None,
+        };
+
+        let json = serde_json::to_string_pretty(&original).unwrap();
+
+        let path = std::env::temp_dir().join("goose_test_roundtrip.json");
+        std::fs::write(&path, &json).unwrap();
+        let loaded = load_baseline_file(&path);
+        std::fs::remove_file(&path).ok();
+
+        let data = loaded.expect("round-trip should succeed");
+        assert_eq!(data.raw_request_metrics.len(), 1);
+        assert_eq!(data.raw_request_metrics[0].method, "POST");
+        assert_eq!(data.raw_request_metrics[0].name, "/api/submit");
+        assert_eq!(data.raw_request_metrics[0].number_of_requests.value(), 1000);
+        assert_eq!(data.raw_response_metrics[0].percentile_99.value(), 1500);
+    }
+
     #[test]
     fn load_baseline_file_invalid_path() {
         let result = load_baseline_file("/nonexistent/path.json");

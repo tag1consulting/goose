@@ -215,4 +215,66 @@ mod test {
         assert_eq!(format!("{}", value(1000usize, 1000usize)), "1000 (0)");
         assert_eq!(format!("{}", value(1000usize, 0usize)), "1000 (+1000)");
     }
+
+    #[test]
+    fn delta_value_f32() {
+        assert_eq!(100.0f32.delta(50.0f32), 50.0f32);
+        assert_eq!(50.0f32.delta(100.0f32), -50.0f32);
+        assert_eq!(0.0f32.delta(0.0f32), 0.0f32);
+        assert!(f32::is_delta_positive(1.0));
+        assert!(!f32::is_delta_positive(0.0));
+        assert!(!f32::is_delta_positive(-1.0));
+    }
+
+    #[test]
+    fn delta_value_f64() {
+        assert_eq!(100.0f64.delta(50.0f64), 50.0f64);
+        assert_eq!(50.0f64.delta(100.0f64), -50.0f64);
+    }
+
+    #[test]
+    fn delta_value_u64() {
+        assert_eq!(100u64.delta(50u64), 50i64);
+        assert_eq!(50u64.delta(100u64), -50i64);
+        assert_eq!(u64::MAX.delta(0u64), i64::MAX); // clamps
+        assert_eq!(0u64.delta(u64::MAX), i64::MIN); // clamps
+    }
+
+    #[test]
+    fn delta_value_u16() {
+        assert_eq!(100u16.delta(50u16), 50i16);
+        assert_eq!(50u16.delta(100u16), -50i16);
+        assert_eq!(u16::MAX.delta(0u16), i16::MAX); // clamps, not overflow
+        assert_eq!(0u16.delta(u16::MAX), i16::MIN); // clamps, not overflow
+    }
+
+    #[test]
+    fn delta_value_nullable_float() {
+        use crate::metrics::NullableFloat;
+        let a = NullableFloat(100.0);
+        let b = NullableFloat(60.0);
+        assert_eq!(a.delta(b), 40.0f32);
+        assert_eq!(b.delta(a), -40.0f32);
+    }
+
+    #[test]
+    fn value_serde_round_trip() {
+        // Plain value
+        let plain = Value::Plain(42usize);
+        let json = serde_json::to_string(&plain).unwrap();
+        assert_eq!(json, "42");
+        let deserialized: Value<usize> = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, plain);
+
+        // Delta value
+        let delta = Value::Delta {
+            value: 100usize,
+            delta: 50isize,
+        };
+        let json = serde_json::to_string(&delta).unwrap();
+        assert!(json.contains("\"value\":100"));
+        assert!(json.contains("\"delta\":50"));
+        let deserialized: Value<usize> = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, delta);
+    }
 }

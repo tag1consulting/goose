@@ -4260,4 +4260,37 @@ mod test {
         assert_eq!(breakdowns[1].min_time, 200);
         assert_eq!(breakdowns[1].max_time, 200);
     }
+
+    #[test]
+    fn format_value_output() {
+        // Plain value
+        assert_eq!(format_value(&Value::Plain(1000usize)), "1000");
+
+        // Positive delta
+        assert_eq!(
+            format_value(&Value::Delta {
+                value: 1000usize,
+                delta: 200isize
+            }),
+            "1000 (+200)"
+        );
+
+        // Negative delta
+        assert_eq!(
+            format_value(&Value::Delta {
+                value: 800usize,
+                delta: -200isize
+            }),
+            "800 (-200)"
+        );
+
+        // Zero delta
+        assert_eq!(
+            format_value(&Value::Delta {
+                value: 500usize,
+                delta: 0isize
+            }),
+            "500 (0)"
+        );
+    }
 }
