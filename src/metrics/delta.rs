@@ -1,5 +1,4 @@
 use crate::metrics::NullableFloat;
-use num_format::{Format, ToFormattedString};
 use std::fmt::{Debug, Display, Formatter, Write};
 
 /// A value that can be used to provide a delta
@@ -115,30 +114,6 @@ impl<T: DeltaValue> Value<T> {
     }
 }
 
-impl<T> Value<T>
-where
-    T: DeltaValue + ToFormattedString,
-    <T as DeltaValue>::Delta: ToFormattedString,
-{
-    pub fn formatted_number(&self, format: &impl Format) -> String {
-        match self {
-            Self::Plain(value) => value.to_formatted_string(format),
-            Self::Delta { value, delta } => {
-                let s = if T::is_delta_positive(*delta) {
-                    "+"
-                } else {
-                    ""
-                };
-                format!(
-                    "{} ({s}{})",
-                    value.to_formatted_string(format),
-                    delta.to_formatted_string(format)
-                )
-            }
-        }
-    }
-}
-
 pub trait ApplyBaseline<T: DeltaValue> {
     fn eval(&mut self, other: Self);
 }
@@ -197,8 +172,6 @@ pub trait DeltaTo {
 mod test {
     use super::*;
     use crate::metrics::Value;
-    use num_format::Locale;
-
     #[test]
     fn eval_optional() {
         assert_eq!(
@@ -241,38 +214,5 @@ mod test {
         assert_eq!(format!("{}", value(0usize, 1000usize)), "0 (-1000)");
         assert_eq!(format!("{}", value(1000usize, 1000usize)), "1000 (0)");
         assert_eq!(format!("{}", value(1000usize, 0usize)), "1000 (+1000)");
-    }
-
-    #[test]
-    fn value_with_delta_to_string_num() {
-        fn value<T: DeltaValue>(value: T, baseline: T) -> Value<T> {
-            let mut result = Value::from(value);
-            result.diff(baseline);
-            result
-        }
-
-        assert_eq!(
-            format!("{}", value(0usize, 1000usize).formatted_number(&Locale::en)),
-            "0 (-1,000)"
-        );
-        assert_eq!(
-            format!(
-                "{}",
-                value(1000usize, 1000usize).formatted_number(&Locale::en)
-            ),
-            "1,000 (0)"
-        );
-        assert_eq!(
-            format!("{}", value(1000usize, 0usize).formatted_number(&Locale::en)),
-            "1,000 (+1,000)"
-        );
-    }
-
-    #[test]
-    fn value_to_string_num() {
-        assert_eq!(
-            format!("{}", Value::from(1000usize).formatted_number(&Locale::en)),
-            "1,000"
-        );
     }
 }
