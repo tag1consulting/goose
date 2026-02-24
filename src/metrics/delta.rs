@@ -58,7 +58,8 @@ impl DeltaValue for u16 {
     type Delta = i16;
 
     fn delta(self, value: Self) -> Self::Delta {
-        (self as i32 - value as i32) as i16 // No overflow possible
+        let delta = self as i32 - value as i32;
+        delta.clamp(i16::MIN as i32, i16::MAX as i32) as i16
     }
 
     fn is_delta_positive(value: Self::Delta) -> bool {
@@ -99,21 +100,18 @@ impl From<f32> for Value<NullableFloat> {
 }
 
 impl<T: DeltaValue> Value<T> {
-    pub fn diff(&mut self, other: T) {
+    pub fn value(&self) -> T {
         match self {
-            Self::Plain(value) => {
-                *self = Self::Delta {
-                    value: *value,
-                    delta: value.delta(other),
-                };
-            }
-            Self::Delta { value, delta: _ } => {
-                *self = Self::Delta {
-                    value: *value,
-                    delta: value.delta(other),
-                }
-            }
+            Self::Plain(value) | Self::Delta { value, .. } => *value,
         }
+    }
+
+    pub fn diff(&mut self, other: T) {
+        let value = self.value();
+        *self = Self::Delta {
+            value,
+            delta: value.delta(other),
+        };
     }
 }
 
@@ -141,6 +139,10 @@ where
     }
 }
 
+pub trait ApplyBaseline<T: DeltaValue> {
+    fn eval(&mut self, other: Self);
+}
+
 impl<T: DeltaValue> ApplyBaseline<T> for Value<T> {
     fn eval(&mut self, other: Self) {
         self.diff(other.value())
@@ -151,19 +153,6 @@ impl<T: DeltaValue> ApplyBaseline<T> for Option<Value<T>> {
     fn eval(&mut self, other: Self) {
         if let (Some(value), Some(other)) = (self, other) {
             value.eval(other);
-        }
-    }
-}
-
-pub trait ApplyBaseline<T: DeltaValue> {
-    fn eval(&mut self, other: Self);
-}
-
-impl<T: DeltaValue> Value<T> {
-    pub fn value(&self) -> T {
-        match self {
-            Self::Plain(value) => *value,
-            Self::Delta { value, delta: _ } => *value,
         }
     }
 }
