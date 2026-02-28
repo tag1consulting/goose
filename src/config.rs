@@ -2223,6 +2223,11 @@ impl GooseConfiguration {
             }
         }
 
+        // Validate baseline file exists and is parseable before running the load test.
+        if let Some(ref baseline_file) = self.baseline_file {
+            crate::metrics::load_baseline_file(baseline_file)?;
+        }
+
         // Unified PDF configuration validation
         self.validate_pdf_configuration()?;
 
