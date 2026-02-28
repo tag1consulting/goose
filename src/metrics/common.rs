@@ -558,10 +558,6 @@ impl<'m> Prepare<'m> {
     }
 }
 
-pub fn prepare_data(options: ReportOptions, metrics: &GooseMetrics) -> ReportData<'_> {
-    prepare_data_with_baseline(options, metrics, None)
-}
-
 pub fn prepare_data_with_baseline_owned<'a>(
     options: ReportOptions,
     metrics: &'a GooseMetrics,

@@ -13,7 +13,7 @@ pub mod coordinated_omission;
 mod delta;
 mod nullable;
 
-pub(crate) use common::ReportData;
+pub(crate) use common::{load_baseline_file, ReportData};
 pub use coordinated_omission::{CadenceCalculator, CoMetricsSummary, CoordinatedOmissionMetrics};
 pub(crate) use delta::*;
 pub(crate) use nullable::NullableFloat;
@@ -3253,7 +3253,7 @@ impl GooseAttack {
             use tokio::fs as async_fs;
 
             // Generate HTML report content
-            let html_report = self.generate_html_report_content();
+            let html_report = self.generate_html_report_content()?;
 
             // Add print-optimized CSS using the shared function
             let print_optimized_html = generate_print_optimized_html_content(&html_report);
@@ -3280,7 +3280,7 @@ impl GooseAttack {
 
     /// Generate HTML report content that can be used for both HTML and PDF reports.
     /// Returns the complete HTML content as a string.
-    fn generate_html_report_content(&self) -> String {
+    fn generate_html_report_content(&self) -> Result<String, GooseError> {
         let test_start_time = self.metrics.history.first().unwrap().timestamp;
 
         // Prepare report summary variables.
@@ -3363,17 +3363,7 @@ impl GooseAttack {
             errors,
             status_code_metrics,
             coordinated_omission_metrics: _,
-        } = self.prepare_report_data().unwrap_or_else(|_| {
-            // Fallback to non-baseline data if baseline loading fails
-            common::prepare_data(
-                ReportOptions {
-                    no_transaction_metrics: self.configuration.no_transaction_metrics,
-                    no_scenario_metrics: self.configuration.no_scenario_metrics,
-                    no_status_codes: self.configuration.no_status_codes,
-                },
-                &self.metrics,
-            )
-        });
+        } = self.prepare_report_data()?;
 
         // Compile the request metrics template.
         let mut raw_requests_rows = Vec::new();
@@ -3476,7 +3466,7 @@ impl GooseAttack {
             .unwrap_or_default();
 
         // Compile and return the report template.
-        report::build_report(
+        Ok(report::build_report(
             &users,
             &steps_overview,
             hosts,
@@ -3503,7 +3493,7 @@ impl GooseAttack {
                     .get_markup(&self.metrics.history, test_start_time),
                 co_metrics_template: &co_metrics_template,
             },
-        )
+        ))
     }
 
     /// Load baseline data if configured and prepare report data with baseline comparison.
@@ -3554,7 +3544,7 @@ impl GooseAttack {
         path: &str,
     ) -> Result<(), GooseError> {
         // Generate HTML report content using the shared function
-        let report = self.generate_html_report_content();
+        let report = self.generate_html_report_content()?;
 
         // Write the report to file.
         if let Err(e) = report_file.write_all(report.as_ref()).await {
@@ -3585,7 +3575,7 @@ impl GooseAttack {
         use tokio::fs as async_fs;
 
         // Generate HTML report content using the shared function
-        let html_report = self.generate_html_report_content();
+        let html_report = self.generate_html_report_content()?;
 
         // Add print-optimized CSS for better PDF output using the shared function
         let print_optimized_html = generate_print_optimized_html_content(&html_report);
@@ -3666,15 +3656,18 @@ pub(crate) fn format_number(number: usize) -> String {
     (number).to_formatted_string(&Locale::en)
 }
 
-/// Format a Value<T> for display, showing both the value and delta if present.
-pub(crate) fn format_value<T: DeltaValue>(value: &Value<T>) -> String {
+/// Format a `Value<usize>` for display with locale-formatted numbers (e.g. `1,234`),
+/// showing both the value and delta if present.
+pub(crate) fn format_value(value: &Value<usize>) -> String {
     match value {
-        Value::Plain(v) => format!("{}", v),
+        Value::Plain(v) => v.to_formatted_string(&Locale::en),
         Value::Delta { value: v, delta } => {
-            if T::is_delta_positive(*delta) {
-                format!("{} (+{})", v, delta)
+            let formatted_value = v.to_formatted_string(&Locale::en);
+            let formatted_delta = delta.to_formatted_string(&Locale::en);
+            if usize::is_delta_positive(*delta) {
+                format!("{formatted_value} (+{formatted_delta})")
             } else {
-                format!("{} ({})", v, delta)
+                format!("{formatted_value} ({formatted_delta})")
             }
         }
     }
@@ -4263,16 +4256,26 @@ mod test {
 
     #[test]
     fn format_value_output() {
-        // Plain value
-        assert_eq!(format_value(&Value::Plain(1000usize)), "1000");
+        // Plain value with locale formatting
+        assert_eq!(format_value(&Value::Plain(1000usize)), "1,000");
+        assert_eq!(format_value(&Value::Plain(42usize)), "42");
 
-        // Positive delta
+        // Positive delta with locale formatting
         assert_eq!(
             format_value(&Value::Delta {
                 value: 1000usize,
                 delta: 200isize
             }),
-            "1000 (+200)"
+            "1,000 (+200)"
+        );
+
+        // Large positive delta
+        assert_eq!(
+            format_value(&Value::Delta {
+                value: 10000usize,
+                delta: 5000isize
+            }),
+            "10,000 (+5,000)"
         );
 
         // Negative delta
@@ -4282,6 +4285,15 @@ mod test {
                 delta: -200isize
             }),
             "800 (-200)"
+        );
+
+        // Large negative delta
+        assert_eq!(
+            format_value(&Value::Delta {
+                value: 1000usize,
+                delta: -5000isize
+            }),
+            "1,000 (-5,000)"
         );
 
         // Zero delta
