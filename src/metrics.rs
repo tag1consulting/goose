@@ -3458,7 +3458,7 @@ impl GooseAttack {
 
         let errors_template = errors
             .map(|errors| {
-                let error_rows = errors.into_iter().map(report::error_row).join("\n");
+                let error_rows = errors.iter().map(report::error_row).join("\n");
 
                 report::errors_template(
                     &error_rows,

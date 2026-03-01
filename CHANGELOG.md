@@ -18,6 +18,7 @@
  - [#660](https://github.com/tag1consulting/goose/pull/660), [#661](https://github.com/tag1consulting/goose/pull/661) add `--baseline-file` option to compare load test results against a previous JSON report; all report formats (HTML, Markdown, JSON) show deltas for requests, response times, transactions, scenarios, errors, and coordinated omission metrics
     o `GooseMethod` now derives `Copy` and `Hash`
     o JSON reports now include `scenarios` and `hosts` fields in `raw_metrics` (previously omitted by manual serialization)
+    o **breaking**: `metrics::delta` and `metrics::nullable` modules are now crate-private; `DeltaValue`, `Value`, `ApplyBaseline`, and `NullableFloat` are no longer part of the public API
 
 ## 0.18.1 August 14, 2025
  - [#634](https://github.com/tag1consulting/goose/pull/634) add killswitch mechanism for programmatic test termination

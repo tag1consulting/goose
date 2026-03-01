@@ -1696,7 +1696,7 @@ impl GooseConfiguration {
             },
         ]);
 
-        // Configure `no_granular_report`.
+        // Configure `no_debug_body` (set by --no-granular-report).
         self.no_debug_body = self
             .get_value(vec![
                 // Use --no-granular-report if set.
