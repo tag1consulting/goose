@@ -558,14 +558,6 @@ impl<'m> Prepare<'m> {
     }
 }
 
-pub fn prepare_data_with_baseline_owned<'a>(
-    options: ReportOptions,
-    metrics: &'a GooseMetrics,
-    baseline: Option<ReportData<'static>>,
-) -> ReportData<'a> {
-    prepare_data_with_baseline(options, metrics, baseline.as_ref())
-}
-
 /// Apply baseline deltas to the current report data
 fn apply_baseline_deltas(current: &mut ReportData, baseline: &ReportData) {
     // Apply deltas to raw request metrics
@@ -622,7 +614,7 @@ fn apply_baseline_deltas(current: &mut ReportData, baseline: &ReportData) {
     // Apply deltas to error metrics if present
     if let (Some(current_errors), Some(baseline_errors)) = (&mut current.errors, &baseline.errors) {
         correlate_deltas(current_errors, baseline_errors, |e| {
-            (format!("{:?}", e.method), e.name.clone(), e.error.clone())
+            (e.method, e.name.clone(), e.error.clone())
         });
     }
 }
