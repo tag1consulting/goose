@@ -578,7 +578,7 @@ pub(crate) fn errors_template(error_rows: &str, graph: String) -> String {
 }
 
 /// Build an individual error row in the html report.
-pub fn error_row(error: ErrorMetric) -> String {
+pub fn error_row(error: &ErrorMetric) -> String {
     format!(
         r#"<tr>
         <td>{occurrences}</td>

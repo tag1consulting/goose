@@ -11,8 +11,8 @@ pub trait DeltaValue: Copy + Debug + Display {
     /// Generate the delta between this and the provided value
     fn delta(self, value: Self) -> Self::Delta;
 
-    /// It's positive if it's not negative or zero
-    fn is_delta_positive(value: Self::Delta) -> bool;
+    /// True if the delta is zero or positive (used for formatting with a `+` prefix)
+    fn is_delta_non_negative(value: Self::Delta) -> bool;
 }
 
 impl DeltaValue for usize {
@@ -23,8 +23,8 @@ impl DeltaValue for usize {
         delta.clamp(isize::MIN as i128, isize::MAX as i128) as isize
     }
 
-    fn is_delta_positive(value: Self::Delta) -> bool {
-        value.is_positive()
+    fn is_delta_non_negative(value: Self::Delta) -> bool {
+        !value.is_negative()
     }
 }
 
@@ -35,8 +35,8 @@ impl DeltaValue for f32 {
         self - value
     }
 
-    fn is_delta_positive(value: Self::Delta) -> bool {
-        value > 0.0
+    fn is_delta_non_negative(value: Self::Delta) -> bool {
+        value >= 0.0
     }
 }
 
@@ -48,8 +48,8 @@ impl DeltaValue for u64 {
         delta.clamp(i64::MIN as i128, i64::MAX as i128) as i64
     }
 
-    fn is_delta_positive(value: Self::Delta) -> bool {
-        value.is_positive()
+    fn is_delta_non_negative(value: Self::Delta) -> bool {
+        !value.is_negative()
     }
 }
 
@@ -61,8 +61,8 @@ impl DeltaValue for u16 {
         delta.clamp(i16::MIN as i32, i16::MAX as i32) as i16
     }
 
-    fn is_delta_positive(value: Self::Delta) -> bool {
-        value.is_positive()
+    fn is_delta_non_negative(value: Self::Delta) -> bool {
+        !value.is_negative()
     }
 }
 
@@ -73,8 +73,8 @@ impl DeltaValue for f64 {
         self - value
     }
 
-    fn is_delta_positive(value: Self::Delta) -> bool {
-        value > 0.0
+    fn is_delta_non_negative(value: Self::Delta) -> bool {
+        value >= 0.0
     }
 }
 
@@ -153,13 +153,11 @@ impl<T: DeltaValue> Display for Value<T> {
                 // format delta as `({delta:+})`, keeping the actual format options
                 f.write_str(" (")?;
 
-                // for the delta, we want a plus sign, in the case of a positive value, zero excluded
-                if T::is_delta_positive(*delta) {
+                // for the delta, we want a plus sign for non-negative values (including zero)
+                if T::is_delta_non_negative(*delta) {
                     f.write_char('+')?;
-                    Display::fmt(delta, f)?;
-                } else {
-                    Display::fmt(delta, f)?;
                 }
+                Display::fmt(delta, f)?;
 
                 f.write_char(')')?;
 
@@ -222,7 +220,7 @@ mod test {
         }
 
         assert_eq!(format!("{}", value(0usize, 1000usize)), "0 (-1000)");
-        assert_eq!(format!("{}", value(1000usize, 1000usize)), "1000 (0)");
+        assert_eq!(format!("{}", value(1000usize, 1000usize)), "1000 (+0)");
         assert_eq!(format!("{}", value(1000usize, 0usize)), "1000 (+1000)");
     }
 
@@ -231,9 +229,9 @@ mod test {
         assert_eq!(100.0f32.delta(50.0f32), 50.0f32);
         assert_eq!(50.0f32.delta(100.0f32), -50.0f32);
         assert_eq!(0.0f32.delta(0.0f32), 0.0f32);
-        assert!(f32::is_delta_positive(1.0));
-        assert!(!f32::is_delta_positive(0.0));
-        assert!(!f32::is_delta_positive(-1.0));
+        assert!(f32::is_delta_non_negative(1.0));
+        assert!(f32::is_delta_non_negative(0.0));
+        assert!(!f32::is_delta_non_negative(-1.0));
     }
 
     #[test]
