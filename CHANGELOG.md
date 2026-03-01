@@ -17,6 +17,7 @@
    **Breaking changes**: Certificate validation now uses bundled rustls/webpki roots instead of the OS-native certificate store, which may affect environments with custom system CAs. `--accept-invalid-certs` now works unconditionally (previously it was silently ignored unless the `rustls-tls` feature was enabled).
  - [#660](https://github.com/tag1consulting/goose/pull/660), [#661](https://github.com/tag1consulting/goose/pull/661) add `--baseline-file` option to compare load test results against a previous JSON report; all report formats (HTML, Markdown, JSON) show deltas for requests, response times, transactions, scenarios, errors, and coordinated omission metrics
     o `GooseMethod` now derives `Copy` and `Hash`
+    o JSON reports now include `scenarios` and `hosts` fields in `raw_metrics` (previously omitted by manual serialization)
 
 ## 0.18.1 August 14, 2025
  - [#634](https://github.com/tag1consulting/goose/pull/634) add killswitch mechanism for programmatic test termination

@@ -3162,7 +3162,11 @@ impl GooseAttack {
     ///
     /// If `write` is true, then also write the data. Otherwise just create the files to ensure
     /// we have access.
-    async fn process_reports(&self, write: bool) -> Result<(), GooseError> {
+    async fn process_reports(
+        &self,
+        write: bool,
+        baseline: Option<&ReportData<'static>>,
+    ) -> Result<(), GooseError> {
         let create = |path: PathBuf| async move {
             File::create(&path)
                 .await
@@ -3179,26 +3183,26 @@ impl GooseAttack {
                 Some("html" | "htm") => {
                     let file = create(path).await?;
                     if write {
-                        self.write_html_report(file, report).await?;
+                        self.write_html_report(file, report, baseline).await?;
                     }
                 }
                 Some("json") => {
                     let file = create(path).await?;
                     if write {
-                        self.write_json_report(file).await?;
+                        self.write_json_report(file, baseline).await?;
                     }
                 }
                 Some("md") => {
                     let file = create(path).await?;
                     if write {
-                        self.write_markdown_report(file).await?;
+                        self.write_markdown_report(file, baseline).await?;
                     }
                 }
                 #[cfg(feature = "pdf-reports")]
                 Some("pdf") => {
                     let file = create(path).await?;
                     if write {
-                        self.write_pdf_report(file, report).await?;
+                        self.write_pdf_report(file, report, baseline).await?;
                     }
                 }
                 #[cfg(not(feature = "pdf-reports"))]
@@ -3232,28 +3236,38 @@ impl GooseAttack {
 
     /// Create all requested reports, to ensure we have access.
     pub(crate) async fn create_reports(&self) -> Result<(), GooseError> {
-        self.process_reports(false).await
+        self.process_reports(false, None).await
     }
 
     /// Write all requested reports.
     pub(crate) async fn write_reports(&self) -> Result<(), GooseError> {
-        self.process_reports(true).await?;
+        // Load baseline once for all report writers.
+        let baseline = match &self.configuration.baseline_file {
+            Some(baseline_file) => Some(common::load_baseline_file(baseline_file)?),
+            None => None,
+        };
+
+        self.process_reports(true, baseline.as_ref()).await?;
 
         // Write PDF-optimized HTML if configured (always available)
-        self.write_print_html_if_configured().await?;
+        self.write_print_html_if_configured(baseline.as_ref())
+            .await?;
 
         Ok(())
     }
 
     /// Write PDF-optimized HTML if the --pdf-print-html option is configured.
     /// This functionality is always available regardless of feature flags.
-    async fn write_print_html_if_configured(&self) -> Result<(), GooseError> {
+    async fn write_print_html_if_configured(
+        &self,
+        baseline: Option<&ReportData<'static>>,
+    ) -> Result<(), GooseError> {
         if !self.configuration.pdf_print_html.is_empty() {
             use crate::report::print::generate_print_optimized_html_content;
             use tokio::fs as async_fs;
 
             // Generate HTML report content
-            let html_report = self.generate_html_report_content()?;
+            let html_report = self.generate_html_report_content(baseline)?;
 
             // Add print-optimized CSS using the shared function
             let print_optimized_html = generate_print_optimized_html_content(&html_report);
@@ -3280,7 +3294,10 @@ impl GooseAttack {
 
     /// Generate HTML report content that can be used for both HTML and PDF reports.
     /// Returns the complete HTML content as a string.
-    fn generate_html_report_content(&self) -> Result<String, GooseError> {
+    fn generate_html_report_content(
+        &self,
+        baseline: Option<&ReportData<'static>>,
+    ) -> Result<String, GooseError> {
         let test_start_time = self.metrics.history.first().unwrap().timestamp;
 
         // Prepare report summary variables.
@@ -3363,7 +3380,7 @@ impl GooseAttack {
             errors,
             status_code_metrics,
             coordinated_omission_metrics: _,
-        } = self.prepare_report_data()?;
+        } = self.prepare_report_data(baseline)?;
 
         // Compile the request metrics template.
         let mut raw_requests_rows = Vec::new();
@@ -3496,34 +3513,31 @@ impl GooseAttack {
         ))
     }
 
-    /// Load baseline data if configured and prepare report data with baseline comparison.
-    pub(crate) fn prepare_report_data(&self) -> Result<ReportData<'_>, GooseError> {
+    /// Prepare report data with optional baseline comparison.
+    pub(crate) fn prepare_report_data(
+        &self,
+        baseline: Option<&ReportData<'static>>,
+    ) -> Result<ReportData<'_>, GooseError> {
         let options = ReportOptions {
             no_transaction_metrics: self.configuration.no_transaction_metrics,
             no_scenario_metrics: self.configuration.no_scenario_metrics,
             no_status_codes: self.configuration.no_status_codes,
         };
 
-        match &self.configuration.baseline_file {
-            Some(baseline_file) => {
-                let baseline = common::load_baseline_file(baseline_file)?;
-                Ok(common::prepare_data_with_baseline_owned(
-                    options,
-                    &self.metrics,
-                    Some(baseline),
-                ))
-            }
-            None => Ok(common::prepare_data_with_baseline_owned(
-                options,
-                &self.metrics,
-                None,
-            )),
-        }
+        Ok(common::prepare_data_with_baseline(
+            options,
+            &self.metrics,
+            baseline,
+        ))
     }
 
     /// Write a JSON report.
-    pub(crate) async fn write_json_report(&self, report_file: File) -> Result<(), GooseError> {
-        let data = self.prepare_report_data()?;
+    pub(crate) async fn write_json_report(
+        &self,
+        report_file: File,
+        baseline: Option<&ReportData<'static>>,
+    ) -> Result<(), GooseError> {
+        let data = self.prepare_report_data(baseline)?;
 
         serde_json::to_writer_pretty(BufWriter::new(report_file.into_std().await), &data)?;
 
@@ -3531,8 +3545,12 @@ impl GooseAttack {
     }
 
     /// Write a Markdown report.
-    pub(crate) async fn write_markdown_report(&self, report_file: File) -> Result<(), GooseError> {
-        let data = self.prepare_report_data()?;
+    pub(crate) async fn write_markdown_report(
+        &self,
+        report_file: File,
+        baseline: Option<&ReportData<'static>>,
+    ) -> Result<(), GooseError> {
+        let data = self.prepare_report_data(baseline)?;
 
         report::write_markdown_report(&mut BufWriter::new(report_file.into_std().await), data)
     }
@@ -3542,9 +3560,10 @@ impl GooseAttack {
         &self,
         mut report_file: File,
         path: &str,
+        baseline: Option<&ReportData<'static>>,
     ) -> Result<(), GooseError> {
         // Generate HTML report content using the shared function
-        let report = self.generate_html_report_content()?;
+        let report = self.generate_html_report_content(baseline)?;
 
         // Write the report to file.
         if let Err(e) = report_file.write_all(report.as_ref()).await {
@@ -3568,6 +3587,7 @@ impl GooseAttack {
         &self,
         _report_file: File,
         path: &str,
+        baseline: Option<&ReportData<'static>>,
     ) -> Result<(), GooseError> {
         use crate::report::pdf::generate_pdf_from_html;
         use crate::report::print::generate_print_optimized_html_content;
@@ -3575,7 +3595,7 @@ impl GooseAttack {
         use tokio::fs as async_fs;
 
         // Generate HTML report content using the shared function
-        let html_report = self.generate_html_report_content()?;
+        let html_report = self.generate_html_report_content(baseline)?;
 
         // Add print-optimized CSS for better PDF output using the shared function
         let print_optimized_html = generate_print_optimized_html_content(&html_report);
@@ -3618,6 +3638,7 @@ impl GooseAttack {
         &self,
         _report_file: File,
         path: &str,
+        _baseline: Option<&ReportData<'static>>,
     ) -> Result<(), GooseError> {
         // This should never be called when pdf_reports_enabled is true, as the validation
         // in process_reports should have already handled that case
@@ -3664,7 +3685,7 @@ pub(crate) fn format_value(value: &Value<usize>) -> String {
         Value::Delta { value: v, delta } => {
             let formatted_value = v.to_formatted_string(&Locale::en);
             let formatted_delta = delta.to_formatted_string(&Locale::en);
-            if usize::is_delta_positive(*delta) {
+            if *delta >= 0 {
                 format!("{formatted_value} (+{formatted_delta})")
             } else {
                 format!("{formatted_value} ({formatted_delta})")
@@ -4302,7 +4323,7 @@ mod test {
                 value: 500usize,
                 delta: 0isize
             }),
-            "500 (0)"
+            "500 (+0)"
         );
     }
 }

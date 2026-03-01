@@ -178,7 +178,7 @@ pub(crate) struct StatusCodeMetric {
 
 /// Defines the metrics reported about errors.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ErrorMetric {
+pub(crate) struct ErrorMetric {
     pub method: GooseMethod,
     pub name: String,
     pub error: String,
@@ -242,10 +242,10 @@ pub(crate) fn raw_request_metrics_row(metric: RequestMetric) -> String {
         <td></td>
     </tr>"#,
             method = metric.method,
-            number_of_requests = metric.number_of_requests,
+            number_of_requests = format_value(&metric.number_of_requests),
             response_time_average = metric.response_time_average,
-            response_time_minimum = metric.response_time_minimum,
-            response_time_maximum = metric.response_time_maximum,
+            response_time_minimum = format_value(&metric.response_time_minimum),
+            response_time_maximum = format_value(&metric.response_time_maximum),
         )
     } else {
         format!(
@@ -262,11 +262,11 @@ pub(crate) fn raw_request_metrics_row(metric: RequestMetric) -> String {
     </tr>"#,
             method = metric.method,
             name = metric.name,
-            number_of_requests = metric.number_of_requests,
-            number_of_failures = metric.number_of_failures,
+            number_of_requests = format_value(&metric.number_of_requests),
+            number_of_failures = format_value(&metric.number_of_failures),
             response_time_average = metric.response_time_average,
-            response_time_minimum = metric.response_time_minimum,
-            response_time_maximum = metric.response_time_maximum,
+            response_time_minimum = format_value(&metric.response_time_minimum),
+            response_time_maximum = format_value(&metric.response_time_maximum),
             requests_per_second = metric.requests_per_second,
             failures_per_second = metric.failures_per_second,
         )
@@ -332,7 +332,7 @@ pub(crate) fn coordinated_omission_request_metrics_row(metric: CORequestMetric) 
         r#"<tr>
             <td>{method}</td>
             <td>{name}</td>
-            <td>{average:.2})</td>
+            <td>{average:.2}</td>
             <td>{standard_deviation:.2}</td>
             <td>{maximum}</td>
         </tr>"#,
@@ -340,7 +340,7 @@ pub(crate) fn coordinated_omission_request_metrics_row(metric: CORequestMetric) 
         name = metric.name,
         average = metric.response_time_average,
         standard_deviation = metric.response_time_standard_deviation,
-        maximum = metric.response_time_maximum,
+        maximum = format_value(&metric.response_time_maximum),
     )
 }
 
@@ -493,8 +493,8 @@ pub(crate) fn transaction_metrics_row(metric: TransactionMetric) -> String {
             number_of_requests = format_value(&metric.number_of_requests),
             number_of_failures = format_value(&metric.number_of_failures),
             response_time_average = OrEmpty(metric.response_time_average),
-            response_time_minimum = metric.response_time_minimum,
-            response_time_maximum = metric.response_time_maximum,
+            response_time_minimum = format_value(&metric.response_time_minimum),
+            response_time_maximum = format_value(&metric.response_time_maximum),
             requests_per_second = OrEmpty(metric.requests_per_second),
             failures_per_second = OrEmpty(metric.failures_per_second),
         )
@@ -547,8 +547,8 @@ pub(crate) fn scenario_metrics_row(metric: ScenarioMetric) -> String {
         users = format_value(&metric.users),
         count = format_value(&metric.count),
         response_time_average = metric.response_time_average,
-        response_time_minimum = metric.response_time_minimum,
-        response_time_maximum = metric.response_time_maximum,
+        response_time_minimum = format_value(&metric.response_time_minimum),
+        response_time_maximum = format_value(&metric.response_time_maximum),
         count_per_second = metric.count_per_second,
         iterations = metric.iterations,
     )

@@ -78,12 +78,22 @@ impl DeltaValue for f64 {
     }
 }
 
-/// A value, being either a plain value of a value with delta to a baseline
-#[derive(Copy, Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+/// A value, being either a plain value or a value with delta to a baseline.
+///
+/// Serialization always writes just the inner value (stripping deltas), so JSON
+/// reports have the same format regardless of whether `--baseline-file` was used.
+/// This ensures reports can always be loaded as baselines for future runs.
+#[derive(Copy, Clone, Debug, serde::Deserialize, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum Value<T: DeltaValue> {
     Plain(T),
     Delta { value: T, delta: T::Delta },
+}
+
+impl<T: DeltaValue + serde::Serialize> serde::Serialize for Value<T> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.value().serialize(serializer)
+    }
 }
 
 impl<T: DeltaValue> From<T> for Value<T> {
@@ -259,22 +269,22 @@ mod test {
 
     #[test]
     fn value_serde_round_trip() {
-        // Plain value
+        // Plain value round-trips as itself
         let plain = Value::Plain(42usize);
         let json = serde_json::to_string(&plain).unwrap();
         assert_eq!(json, "42");
         let deserialized: Value<usize> = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized, plain);
 
-        // Delta value
+        // Delta value serializes as just the inner value (deltas are stripped)
         let delta = Value::Delta {
             value: 100usize,
             delta: 50isize,
         };
         let json = serde_json::to_string(&delta).unwrap();
-        assert!(json.contains("\"value\":100"));
-        assert!(json.contains("\"delta\":50"));
+        assert_eq!(json, "100");
+        // Deserializes back as Plain since the delta was stripped
         let deserialized: Value<usize> = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized, delta);
+        assert_eq!(deserialized, Value::Plain(100usize));
     }
 }
