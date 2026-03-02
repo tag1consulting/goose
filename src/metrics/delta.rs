@@ -83,7 +83,7 @@ impl DeltaValue for f64 {
 /// Serialization always writes just the inner value (stripping deltas), so JSON
 /// reports have the same format regardless of whether `--baseline-file` was used.
 /// This ensures reports can always be loaded as baselines for future runs.
-#[derive(Copy, Clone, Debug, serde::Deserialize, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, serde::Deserialize, PartialEq)]
 #[serde(untagged)]
 pub enum Value<T: DeltaValue> {
     Plain(T),

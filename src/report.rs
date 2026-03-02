@@ -584,7 +584,7 @@ pub fn error_row(error: &ErrorMetric) -> String {
         <td>{occurrences}</td>
         <td colspan="4">{error}</strong></td>
     </tr>"#,
-        occurrences = error.occurrences,
+        occurrences = format_value(&error.occurrences),
         error = error.error,
     )
 }
