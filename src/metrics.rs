@@ -15,7 +15,7 @@ mod nullable;
 
 pub(crate) use common::{load_baseline_file, ReportData};
 pub use coordinated_omission::{CadenceCalculator, CoMetricsSummary, CoordinatedOmissionMetrics};
-pub(crate) use delta::*;
+pub(crate) use delta::{ApplyBaseline, DeltaTo, Value};
 pub(crate) use nullable::NullableFloat;
 
 use crate::config::GooseDefaults;

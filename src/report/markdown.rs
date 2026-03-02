@@ -313,6 +313,7 @@ impl<W: Write> Markdown<'_, '_, W> {
             occurrences,
         } in errors
         {
+            let occurrences = format_value(occurrences);
             writeln!(self.w, r#"| {method} | {name} | {occurrences} | {error} |"#)?;
         }
 
