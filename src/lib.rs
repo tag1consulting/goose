@@ -946,9 +946,7 @@ impl GooseAttack {
                 let base = chunk_idx * chunk_size;
                 handles.push(s.spawn(move || {
                     let mut users = Vec::with_capacity(chunk.len());
-                    for (i, (scenarios_index, machine_name, base_url)) in
-                        chunk.iter().enumerate()
-                    {
+                    for (i, (scenarios_index, machine_name, base_url)) in chunk.iter().enumerate() {
                         debug!("creating user state: {} ({})", base + i, scenarios_index);
                         users.push(GooseUser::new(
                             *scenarios_index,
