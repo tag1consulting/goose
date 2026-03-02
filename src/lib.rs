@@ -1064,9 +1064,15 @@ impl GooseAttack {
         // With a validated GooseConfiguration, enter a run mode.
         self.attack_mode = AttackMode::StandAlone;
 
-        // Confirm there's either a global host, or each scenario has a host defined.
-        if self.configuration.no_autostart && self.validate_host().is_err() {
-            info!("host must be configured via Controller before starting load test");
+        // When --no-autostart is set, defer prepare_load_test() until the Controller
+        // sends a Start command. Otherwise user states are initialized here and then
+        // redundantly re-initialized when the Start command calls prepare_load_test().
+        if self.configuration.no_autostart {
+            if self.validate_host().is_err() {
+                info!("host must be configured via Controller before starting load test");
+            } else if !self.configuration.host.is_empty() {
+                info!("global host configured: {}", self.configuration.host);
+            }
         } else {
             // If configuration.host is empty, then it will fall back to per-scenario
             // defaults if set.
