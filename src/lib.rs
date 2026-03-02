@@ -901,35 +901,77 @@ impl GooseAttack {
             self.test_plan.total_users()
         );
 
-        let mut weighted_users = Vec::new();
+        // Gather the parameters needed for each user. This is cheap and must be
+        // sequential to preserve the round-robin scenario assignment order (users
+        // are later .pop()'d so ordering matters).
+        let config_host = self.get_configuration_host();
+        let defaults_host = self.defaults.host.clone();
+        let mut user_params = Vec::with_capacity(total_users);
         let mut user_count = 0;
         loop {
             for scenarios_index in &weighted_scenarios {
-                debug!(
-                    "creating user state: {} ({})",
-                    weighted_users.len(),
-                    scenarios_index
-                );
                 let base_url = goose::get_base_url(
-                    self.get_configuration_host(),
+                    config_host.clone(),
                     self.scenarios[*scenarios_index].host.clone(),
-                    self.defaults.host.clone(),
+                    defaults_host.clone(),
                 )?;
-                weighted_users.push(GooseUser::new(
+                user_params.push((
                     self.scenarios[*scenarios_index].scenarios_index,
                     Arc::from(self.scenarios[*scenarios_index].machine_name.as_str()),
                     base_url,
-                    &self.configuration,
-                    self.metrics.hash,
-                    Some(goose::create_reqwest_client(&self.configuration)?),
-                )?);
+                ));
                 user_count += 1;
                 if user_count == total_users {
-                    debug!("[scheduler]: created {user_count} weighted_users");
-                    return Ok(weighted_users);
+                    break;
                 }
             }
+            if user_count == total_users {
+                break;
+            }
         }
+
+        // Create GooseUser objects in parallel across available CPUs. Each user
+        // gets its own reqwest client, which is the expensive part. Chunks are
+        // collected back in order to preserve the scenario assignment sequence.
+        let configuration = &self.configuration;
+        let metrics_hash = self.metrics.hash;
+        let num_cpus = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
+        let chunk_size = total_users.div_ceil(num_cpus);
+
+        let results: Vec<Result<Vec<GooseUser>, GooseError>> = std::thread::scope(|s| {
+            let handles: Vec<_> = user_params
+                .chunks(chunk_size)
+                .map(|chunk: &[(usize, Arc<str>, url::Url)]| {
+                    s.spawn(move || {
+                        let mut users = Vec::with_capacity(chunk.len());
+                        for (scenarios_index, machine_name, base_url) in chunk {
+                            users.push(GooseUser::new(
+                                *scenarios_index,
+                                machine_name.clone(),
+                                base_url.clone(),
+                                configuration,
+                                metrics_hash,
+                                Some(goose::create_reqwest_client(configuration)?),
+                            )?);
+                        }
+                        Ok::<Vec<GooseUser>, GooseError>(users)
+                    })
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+
+        let mut weighted_users = Vec::with_capacity(total_users);
+        for result in results {
+            weighted_users.extend(result?);
+        }
+        debug!(
+            "[scheduler]: created {} weighted_users",
+            weighted_users.len()
+        );
+        Ok(weighted_users)
     }
 
     // Change from one attack_phase to another.
