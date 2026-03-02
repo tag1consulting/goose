@@ -325,9 +325,7 @@ Below the graph is a table that shows per-request details, only partially includ
 ![Request metrics](metrics-requests.jpg)
 
 #### Response times
-The next graph shows the response times measured for each request made. Goose measures **Time to First Byte (TTFB)** — the time from when a request is sent until response headers are received, as measured by `reqwest::Client::execute()`. This includes network latency, server processing time, and redirect handling, but does not include downloading the response body or any client-side processing.
-
-Note that all "Response time" labels in Goose reports and console output refer to TTFB.
+The next graph shows the response times measured for each request made. Goose measures **Time to First Byte (TTFB)** — the time from when a request is sent until response headers are received, as measured by `reqwest::Client::execute()`. All "Response time" labels in Goose reports and console output refer to this measurement.
 
 **What TTFB includes:**
 
