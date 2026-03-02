@@ -906,7 +906,7 @@ impl GooseAttack {
         // are later .pop()'d so ordering matters).
         let config_host = self.get_configuration_host();
         let defaults_host = self.defaults.host.clone();
-        let mut user_params = Vec::with_capacity(total_users);
+        let mut user_params: Vec<(usize, Arc<str>, url::Url)> = Vec::with_capacity(total_users);
         let mut user_count = 0;
         loop {
             for scenarios_index in &weighted_scenarios {
@@ -941,38 +941,32 @@ impl GooseAttack {
         let chunk_size = total_users.div_ceil(num_cpus);
 
         let results: Vec<Result<Vec<GooseUser>, GooseError>> = std::thread::scope(|s| {
-            let handles: Vec<_> = user_params
-                .chunks(chunk_size)
-                .enumerate()
-                .map(
-                    |(chunk_idx, chunk): (usize, &[(usize, Arc<str>, url::Url)])| {
-                        let base = chunk_idx * chunk_size;
-                        s.spawn(move || {
-                            let mut users = Vec::with_capacity(chunk.len());
-                            for (i, (scenarios_index, machine_name, base_url)) in
-                                chunk.iter().enumerate()
-                            {
-                                debug!("creating user state: {} ({})", base + i, scenarios_index);
-                                users.push(GooseUser::new(
-                                    *scenarios_index,
-                                    machine_name.clone(),
-                                    base_url.clone(),
-                                    configuration,
-                                    metrics_hash,
-                                    Some(goose::create_reqwest_client(configuration)?),
-                                )?);
-                            }
-                            Ok::<Vec<GooseUser>, GooseError>(users)
-                        })
-                    },
-                )
-                .collect();
+            let mut handles = Vec::with_capacity(num_cpus);
+            for (chunk_idx, chunk) in user_params.chunks(chunk_size).enumerate() {
+                let base = chunk_idx * chunk_size;
+                handles.push(s.spawn(move || {
+                    let mut users = Vec::with_capacity(chunk.len());
+                    for (i, (scenarios_index, machine_name, base_url)) in
+                        chunk.iter().enumerate()
+                    {
+                        debug!("creating user state: {} ({})", base + i, scenarios_index);
+                        users.push(GooseUser::new(
+                            *scenarios_index,
+                            machine_name.clone(),
+                            base_url.clone(),
+                            configuration,
+                            metrics_hash,
+                            Some(goose::create_reqwest_client(configuration)?),
+                        )?);
+                    }
+                    Ok::<Vec<GooseUser>, GooseError>(users)
+                }));
+            }
             handles
                 .into_iter()
                 .map(|h| {
                     h.join().unwrap_or_else(|_| {
-                        Err(GooseError::Io(io::Error::new(
-                            io::ErrorKind::Other,
+                        Err(GooseError::Io(io::Error::other(
                             "user initialization thread panicked",
                         )))
                     })
