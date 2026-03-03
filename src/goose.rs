@@ -2279,11 +2279,15 @@ impl GooseUser {
     ///   Displayed in the method column of all metrics output. Must not contain whitespace.
     /// - `name`: An arbitrary string identifying the operation (used as the request name
     ///   in metrics output, e.g. `"send_file"` or `"tcp_echo"`).
-    /// - `response_time`: How long the operation took, in milliseconds.
+    /// - `response_time`: How long the operation took, **in milliseconds**. Use
+    ///   `started.elapsed().as_millis() as u64`. Note that `as_millis()` truncates to whole
+    ///   milliseconds — sub-millisecond operations will be recorded as `0 ms`, matching the
+    ///   resolution of HTTP request timing in Goose.
     /// - `success`: Whether the operation succeeded. Unlike HTTP requests where Goose
     ///   infers success from the status code, for custom protocols you control this directly.
-    /// - `status_code`: A protocol-specific status or result code. Use `0` when the protocol
-    ///   has no concept of status codes. Recorded in status code metrics alongside HTTP codes.
+    /// - `status_code`: A protocol-specific status or result code. Pass `None` when the
+    ///   protocol has no concept of status codes; pass `Some(code)` to record a meaningful
+    ///   code (e.g. a gRPC status code). Recorded in status code metrics alongside HTTP codes.
     /// - `error`: An optional error tag describing why the operation failed. Ignored if
     ///   `success` is `true`.
     ///
@@ -2314,7 +2318,7 @@ impl GooseUser {
     ///         "tcp_upload",
     ///         started.elapsed().as_millis() as u64,
     ///         success,
-    ///         0,
+    ///         None, // TCP has no status codes
     ///         None,
     ///     ).await?;
     ///
@@ -2327,7 +2331,7 @@ impl GooseUser {
         name: &str,
         response_time: u64,
         success: bool,
-        status_code: u16,
+        status_code: Option<u16>,
         error: Option<&str>,
     ) -> TransactionResult {
         // The aggregation key uses "{method} {name}", so the method label must be
@@ -2362,7 +2366,7 @@ impl GooseUser {
         // For custom protocol requests there is no redirect URL; reuse `name` so that
         // per-request log entries and report displays have something meaningful to show.
         request_metric.final_url = name.to_string();
-        request_metric.status_code = status_code;
+        request_metric.status_code = status_code.unwrap_or(0);
         request_metric.success = success;
         if !success {
             request_metric.error = error
@@ -4140,7 +4144,7 @@ mod tests {
     async fn record_custom_request_success_metric_fields() {
         let (mut user, rx) = setup_user_with_channel();
 
-        user.record_custom_request("TCP", "my_op", 42, true, 0, None)
+        user.record_custom_request("TCP", "my_op", 42, true, None, None)
             .await
             .expect("record_custom_request should return Ok on success");
 
@@ -4165,7 +4169,7 @@ mod tests {
         let (mut user, rx) = setup_user_with_channel();
 
         // Explicit error message is preserved verbatim.
-        user.record_custom_request("TCP", "my_op", 500, false, 0, Some("connection refused"))
+        user.record_custom_request("TCP", "my_op", 500, false, None, Some("connection refused"))
             .await
             .expect("record_custom_request should return Ok even when recording a failure");
 
@@ -4182,7 +4186,7 @@ mod tests {
         let (mut user, rx) = setup_user_with_channel();
 
         // When error is None, the fallback message must be used (not an empty string).
-        user.record_custom_request("TCP", "my_op", 500, false, 0, None)
+        user.record_custom_request("TCP", "my_op", 500, false, None, None)
             .await
             .expect("record_custom_request should return Ok with None error");
 
@@ -4197,7 +4201,7 @@ mod tests {
     async fn record_custom_request_status_code() {
         let (mut user, rx) = setup_user_with_channel();
 
-        user.record_custom_request("GRPC", "rpc_call", 100, true, 200, None)
+        user.record_custom_request("GRPC", "rpc_call", 100, true, Some(200), None)
             .await
             .expect("record_custom_request should accept a status_code");
 
@@ -4214,7 +4218,7 @@ mod tests {
         let (mut user, _rx) = setup_user_with_channel();
 
         let result = user
-            .record_custom_request("MY METHOD", "my_op", 42, true, 0, None)
+            .record_custom_request("MY METHOD", "my_op", 42, true, None, None)
             .await;
         assert!(
             result.is_err(),
@@ -4227,7 +4231,7 @@ mod tests {
         let (mut user, _rx) = setup_user_with_channel();
 
         let result = user
-            .record_custom_request("", "my_op", 42, true, 0, None)
+            .record_custom_request("", "my_op", 42, true, None, None)
             .await;
         assert!(result.is_err(), "empty method label must return Err");
     }
@@ -4242,7 +4246,7 @@ mod tests {
         let (tx, rx) = flume::unbounded();
         user.metrics_channel = Some(tx);
 
-        user.record_custom_request("TCP", "my_op", 42, true, 0, None)
+        user.record_custom_request("TCP", "my_op", 42, true, None, None)
             .await
             .expect("record_custom_request should return Ok when no_metrics is true");
 

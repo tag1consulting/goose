@@ -10,11 +10,11 @@ Some services communicate over raw TCP, UDP, WebSocket, gRPC, or other protocols
 
 ```rust
 user.record_custom_request(
-    method,        // &str  — protocol label shown in metrics (e.g. "TCP", "GRPC", "WS")
-    name,          // &str  — identifies this operation in metrics output
-    response_time, // u64   — how long the operation took, in milliseconds
-    success,       // bool  — whether the operation succeeded
-    status_code,   // u16   — protocol-specific status code (0 = not applicable)
+    method,        // &str         — protocol label shown in metrics (e.g. "TCP", "GRPC", "WS")
+    name,          // &str         — identifies this operation in metrics output
+    response_time, // u64          — how long the operation took, in milliseconds
+    success,       // bool         — whether the operation succeeded
+    status_code,   // Option<u16>  — protocol-specific status code, or None if not applicable
     error,         // Option<&str> — failure reason; ignored when success is true
 ).await?;
 ```
@@ -31,9 +31,9 @@ Recorded metrics appear in all Goose reports under the method label you provide:
 
 - **`method`** — A short label for the protocol (e.g. `"TCP"`, `"GRPC"`, `"WS"`, `"MQTT"`). Must not contain whitespace. Displayed in the method column of all metrics output.
 - **`name`** — Identifies the specific operation within that protocol. Combined with `method` to form the metrics key (`"TCP tcp_echo"`).
-- **`response_time`** — The measured duration in milliseconds.
+- **`response_time`** — The measured duration in milliseconds. `as_millis()` truncates to whole milliseconds; sub-millisecond operations are recorded as `0 ms`, matching the resolution of HTTP timing in Goose.
 - **`success`** — Whether the operation succeeded. Unlike HTTP requests where Goose infers success from the status code, for custom protocols you control this directly.
-- **`status_code`** — A protocol-specific status or result code. Use `0` when the protocol has no concept of status codes. Defaults to `0`.
+- **`status_code`** — `None` when the protocol has no concept of status codes (e.g. raw TCP); `Some(code)` to record a protocol-specific code (e.g. a gRPC status code).
 - **`error`** — An optional error description for failed operations.
 
 Coordinated Omission Mitigation applies to custom requests the same way it does to HTTP requests.
@@ -71,7 +71,7 @@ async fn my_custom_operation(user: &mut GooseUser) -> TransactionResult {
 
     match result {
         Ok(_) => {
-            user.record_custom_request("GRPC", "operation_name", response_time, true, 0, None)
+            user.record_custom_request("GRPC", "operation_name", response_time, true, None, None)
                 .await?;
         }
         Err(e) => {
@@ -80,7 +80,7 @@ async fn my_custom_operation(user: &mut GooseUser) -> TransactionResult {
                 "operation_name",
                 response_time,
                 false,
-                0,
+                None,
                 Some(&e.to_string()),
             )
             .await?;

@@ -104,11 +104,14 @@ async fn tcp_echo(user: &mut GooseUser) -> TransactionResult {
     }
     .await;
 
+    // as_millis() truncates to whole milliseconds; sub-millisecond round-trips will
+    // be recorded as 0 ms. This matches the resolution of HTTP timing in Goose.
     let response_time = started.elapsed().as_millis() as u64;
 
     match result {
         Ok(_response) => {
-            user.record_custom_request("TCP", "tcp_echo", response_time, true, 0, None)
+            // Pass None for status_code — TCP has no HTTP-style status codes.
+            user.record_custom_request("TCP", "tcp_echo", response_time, true, None, None)
                 .await?;
         }
         Err(e) => {
@@ -118,7 +121,7 @@ async fn tcp_echo(user: &mut GooseUser) -> TransactionResult {
                 "tcp_echo",
                 response_time,
                 false,
-                0,
+                None, // TCP has no status codes
                 Some(&error_msg),
             )
             .await?;

@@ -344,6 +344,24 @@ pub struct GooseRawRequest {
     #[serde(default)]
     pub custom_method: String,
 }
+/// Maps a standard HTTP [`GooseMethod`] variant to its canonical uppercase string.
+///
+/// Centralises the variant-to-string mapping that [`GooseRawRequest::method_label`],
+/// [`GooseRequestMetricAggregate::method_label`], and
+/// [`GooseErrorMetricAggregate::method_label`] all need. Adding a new `GooseMethod`
+/// variant only requires updating this one function.
+fn http_method_str(method: GooseMethod) -> &'static str {
+    match method {
+        GooseMethod::Delete => "DELETE",
+        GooseMethod::Get => "GET",
+        GooseMethod::Head => "HEAD",
+        GooseMethod::Patch => "PATCH",
+        GooseMethod::Post => "POST",
+        GooseMethod::Put => "PUT",
+        GooseMethod::Custom => "CUSTOM",
+    }
+}
+
 impl GooseRawRequest {
     pub(crate) fn new(
         method: GooseMethod,
@@ -383,15 +401,7 @@ impl GooseRawRequest {
         if !self.custom_method.is_empty() {
             &self.custom_method
         } else {
-            match self.method {
-                GooseMethod::Delete => "DELETE",
-                GooseMethod::Get => "GET",
-                GooseMethod::Head => "HEAD",
-                GooseMethod::Patch => "PATCH",
-                GooseMethod::Post => "POST",
-                GooseMethod::Put => "PUT",
-                GooseMethod::Custom => "CUSTOM",
-            }
+            http_method_str(self.method)
         }
     }
 }
@@ -589,15 +599,7 @@ impl GooseRequestMetricAggregate {
         if !self.custom_method.is_empty() {
             &self.custom_method
         } else {
-            match self.method {
-                GooseMethod::Delete => "DELETE",
-                GooseMethod::Get => "GET",
-                GooseMethod::Head => "HEAD",
-                GooseMethod::Patch => "PATCH",
-                GooseMethod::Post => "POST",
-                GooseMethod::Put => "PUT",
-                GooseMethod::Custom => "CUSTOM",
-            }
+            http_method_str(self.method)
         }
     }
 
@@ -2894,15 +2896,7 @@ impl GooseErrorMetricAggregate {
         if !self.custom_method.is_empty() {
             &self.custom_method
         } else {
-            match self.method {
-                GooseMethod::Delete => "DELETE",
-                GooseMethod::Get => "GET",
-                GooseMethod::Head => "HEAD",
-                GooseMethod::Patch => "PATCH",
-                GooseMethod::Post => "POST",
-                GooseMethod::Put => "PUT",
-                GooseMethod::Custom => "CUSTOM",
-            }
+            http_method_str(self.method)
         }
     }
 }
