@@ -177,7 +177,7 @@ impl<'m> Prepare<'m> {
 
             // Prepare per-response metrics.
             raw_response_metrics.push(get_response_metric(
-                &method,
+                method,
                 &name,
                 &request.raw_data.times,
                 request.raw_data.counter,
@@ -287,7 +287,7 @@ impl<'m> Prepare<'m> {
 
                 // Prepare per-response metrics.
                 co_response_metrics.push(get_response_metric(
-                    &method,
+                    method,
                     &name,
                     &coordinated_omission_data.times,
                     coordinated_omission_data.counter,
