@@ -2330,11 +2330,11 @@ impl GooseUser {
         status_code: u16,
         error: Option<&str>,
     ) -> TransactionResult {
-        // The aggregation key uses "{method} {name}", so whitespace in the method
-        // label would break key parsing.
-        if method.contains(char::is_whitespace) {
+        // The aggregation key uses "{method} {name}", so the method label must be
+        // a non-empty token without whitespace.
+        if method.is_empty() || method.contains(char::is_whitespace) {
             return Err(Box::new(TransactionError::Custom(
-                "method label must not contain whitespace".to_string(),
+                "method label must not be empty and must not contain whitespace".to_string(),
             )));
         }
 
@@ -2359,6 +2359,8 @@ impl GooseUser {
         );
 
         request_metric.response_time = response_time;
+        // For custom protocol requests there is no redirect URL; reuse `name` so that
+        // per-request log entries and report displays have something meaningful to show.
         request_metric.final_url = name.to_string();
         request_metric.status_code = status_code;
         request_metric.success = success;
@@ -4218,6 +4220,16 @@ mod tests {
             result.is_err(),
             "method label with whitespace must return Err"
         );
+    }
+
+    #[tokio::test]
+    async fn record_custom_request_empty_method_rejected() {
+        let (mut user, _rx) = setup_user_with_channel();
+
+        let result = user
+            .record_custom_request("", "my_op", 42, true, 0, None)
+            .await;
+        assert!(result.is_err(), "empty method label must return Err");
     }
 
     #[tokio::test]

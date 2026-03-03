@@ -379,11 +379,19 @@ impl GooseRawRequest {
     /// For standard HTTP requests this returns the uppercase HTTP method name
     /// (e.g. "GET", "POST"). For custom protocol requests with a non-empty
     /// `custom_method`, returns that label instead.
-    pub fn method_label(&self) -> String {
+    pub fn method_label(&self) -> &str {
         if !self.custom_method.is_empty() {
-            self.custom_method.clone()
+            &self.custom_method
         } else {
-            self.method.to_string()
+            match self.method {
+                GooseMethod::Delete => "DELETE",
+                GooseMethod::Get => "GET",
+                GooseMethod::Head => "HEAD",
+                GooseMethod::Patch => "PATCH",
+                GooseMethod::Post => "POST",
+                GooseMethod::Put => "PUT",
+                GooseMethod::Custom => "CUSTOM",
+            }
         }
     }
 }
@@ -577,11 +585,19 @@ impl GooseRequestMetricAggregate {
     }
 
     /// Returns the display label for this aggregate's method.
-    pub fn method_label(&self) -> String {
+    pub fn method_label(&self) -> &str {
         if !self.custom_method.is_empty() {
-            self.custom_method.clone()
+            &self.custom_method
         } else {
-            self.method.to_string()
+            match self.method {
+                GooseMethod::Delete => "DELETE",
+                GooseMethod::Get => "GET",
+                GooseMethod::Head => "HEAD",
+                GooseMethod::Patch => "PATCH",
+                GooseMethod::Post => "POST",
+                GooseMethod::Put => "PUT",
+                GooseMethod::Custom => "CUSTOM",
+            }
         }
     }
 
@@ -2874,11 +2890,19 @@ impl GooseErrorMetricAggregate {
     }
 
     /// Returns the display label for this error's method.
-    pub fn method_label(&self) -> String {
+    pub fn method_label(&self) -> &str {
         if !self.custom_method.is_empty() {
-            self.custom_method.clone()
+            &self.custom_method
         } else {
-            self.method.to_string()
+            match self.method {
+                GooseMethod::Delete => "DELETE",
+                GooseMethod::Get => "GET",
+                GooseMethod::Head => "HEAD",
+                GooseMethod::Patch => "PATCH",
+                GooseMethod::Post => "POST",
+                GooseMethod::Put => "PUT",
+                GooseMethod::Custom => "CUSTOM",
+            }
         }
     }
 }

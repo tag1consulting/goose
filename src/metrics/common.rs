@@ -517,7 +517,7 @@ impl<'m> Prepare<'m> {
 
             // Add a row of data for the status code table.
             status_code_metrics.push(StatusCodeMetric {
-                method,
+                method: method.to_string(),
                 name,
                 status_codes: codes,
             });
@@ -546,7 +546,7 @@ impl<'m> Prepare<'m> {
             .errors
             .values()
             .map(|error| ErrorMetric {
-                method: error.method_label(),
+                method: error.method_label().to_string(),
                 name: error.name.clone(),
                 error: error.error.clone(),
                 occurrences: error.occurrences.into(),
