@@ -305,7 +305,7 @@ use url::Url;
 use crate::logger::GooseLog;
 use crate::metrics::{
     GooseCoordinatedOmissionMitigation, GooseMetric, GooseRawRequest, GooseRequestMetric,
-    TransactionDetail,
+    TransactionDetail, TransactionMetric,
 };
 use crate::{GooseConfiguration, GooseError, WeightedTransactions};
 
@@ -936,6 +936,12 @@ pub struct GooseUser {
     request_cadence: GooseRequestCadence,
     /// Tracks how much time is spent sleeping during a loop through all transactions.
     pub(crate) slept: u64,
+    /// Buffered request metric awaiting combination with transaction/scenario metrics.
+    /// When a scenario iteration completes with exactly one pending request and one
+    /// pending transaction, all three are sent as a single [`GooseMetric::All`] message.
+    pub(crate) pending_request: Option<GooseRequestMetric>,
+    /// Buffered transaction metric awaiting combination with scenario metric.
+    pub(crate) pending_transaction: Option<TransactionMetric>,
     /// Optional per-user session data of a generic type implementing the
     /// [`GooseUserData`] trait.
     session_data: Option<Box<dyn GooseUserData>>,
@@ -962,6 +968,8 @@ impl Clone for GooseUser {
             load_test_hash: self.load_test_hash,
             request_cadence: self.request_cadence.clone(),
             slept: self.slept,
+            pending_request: self.pending_request.clone(),
+            pending_transaction: self.pending_transaction.clone(),
             session_data: self.session_data.clone(),
         }
     }
@@ -1014,6 +1022,8 @@ impl GooseUser {
             load_test_hash,
             request_cadence: GooseRequestCadence::new(),
             slept: 0,
+            pending_request: None,
+            pending_transaction: None,
             session_data: None,
         })
     }
@@ -1987,7 +1997,7 @@ impl GooseUser {
     /// able to detect stalls on the upstream server being load tested, backfilling requests based
     /// on what statistically should have happened. Can be disabled with `--co-mitigation disabled`.
     async fn coordinated_omission_mitigation(
-        &self,
+        &mut self,
         request_metric: &GooseRequestMetric,
     ) -> Result<u64, Box<TransactionError>> {
         if let Some(co_mitigation) = self.config.co_mitigation.as_ref() {
@@ -2042,8 +2052,42 @@ impl GooseUser {
         }
     }
 
+    /// Send a request metric immediately on the metrics channel (not buffered).
+    fn send_request_metric_now(&self, request_metric: GooseRequestMetric) -> TransactionResult {
+        if let Some(metrics_channel) = self.metrics_channel.clone() {
+            if let Err(e) = metrics_channel.send(GooseMetric::Request(Box::new(request_metric))) {
+                return Err(Box::new(e.into()));
+            }
+        }
+        Ok(())
+    }
+
+    /// Send any pending request metric immediately on the metrics channel.
+    pub(crate) fn flush_pending_request(&mut self) -> TransactionResult {
+        if let Some(request) = self.pending_request.take() {
+            self.send_request_metric_now(request)?;
+        }
+        Ok(())
+    }
+
+    /// Send any pending transaction metric immediately on the metrics channel.
+    pub(crate) fn flush_pending_transaction(&mut self) {
+        if let Some(transaction) = self.pending_transaction.take() {
+            if let Some(metrics_channel) = self.metrics_channel.clone() {
+                let _ = metrics_channel.send(GooseMetric::Transaction(transaction));
+            }
+        }
+    }
+
+    /// Flush all pending metrics (request and transaction) individually.
+    pub(crate) fn flush_pending_metrics(&mut self) -> TransactionResult {
+        self.flush_pending_request()?;
+        self.flush_pending_transaction();
+        Ok(())
+    }
+
     fn send_request_metric_to_parent(
-        &self,
+        &mut self,
         request_metric: GooseRequestMetric,
     ) -> TransactionResult {
         // If requests-file is enabled, send a copy of the raw request to the logger thread.
@@ -2055,13 +2099,14 @@ impl GooseUser {
             }
         }
 
-        // Parent is not defined when running
-        // [`test_start`](../struct.GooseAttack.html#method.test_start),
-        // [`test_stop`](../struct.GooseAttack.html#method.test_stop), and during testing.
-        if let Some(metrics_channel) = self.metrics_channel.clone() {
-            if let Err(e) = metrics_channel.send(GooseMetric::Request(Box::new(request_metric))) {
-                return Err(Box::new(e.into()));
-            }
+        // If there's already a pending request, flush it before buffering the new one.
+        self.flush_pending_request()?;
+
+        // Buffer this request metric instead of sending immediately. It will be
+        // combined with the transaction and scenario metrics into a single
+        // GooseMetric::All message when the scenario iteration completes.
+        if self.metrics_channel.is_some() {
+            self.pending_request = Some(request_metric);
         }
 
         Ok(())
@@ -2118,12 +2163,14 @@ impl GooseUser {
     ///     }))
     /// }
     /// ````
-    pub fn set_success(&self, request: &mut GooseRequestMetric) -> TransactionResult {
+    pub fn set_success(&mut self, request: &mut GooseRequestMetric) -> TransactionResult {
         // Only send update if this was previously not a success.
         if !request.success {
             request.success = true;
             request.update = true;
-            self.send_request_metric_to_parent(request.clone())?;
+            // Flush any pending request metric to maintain ordering before the update.
+            self.flush_pending_request()?;
+            self.send_request_metric_now(request.clone())?;
         }
 
         Ok(())
@@ -2184,7 +2231,7 @@ impl GooseUser {
     /// }
     /// ````
     pub fn set_failure(
-        &self,
+        &mut self,
         tag: &str,
         request: &mut GooseRequestMetric,
         headers: Option<&header::HeaderMap>,
@@ -2195,7 +2242,9 @@ impl GooseUser {
             request.success = false;
             request.update = true;
             request.error = tag.to_string();
-            self.send_request_metric_to_parent(request.clone())?;
+            // Flush any pending request metric to maintain ordering before the update.
+            self.flush_pending_request()?;
+            self.send_request_metric_now(request.clone())?;
         }
         // Write failure to log, converting `&mut request` to `&request` as needed by `log_debug()`.
         self.log_debug(tag, Some(&*request), headers, body)?;
@@ -3812,5 +3861,105 @@ mod tests {
             request_name, "/test/path",
             "Without transaction name, should use path"
         );
+    }
+
+    /// Build a minimal GooseRequestMetric for buffering tests.
+    fn make_test_request_metric(name: &str) -> GooseRequestMetric {
+        use crate::metrics::{GooseRawRequest, TransactionDetail};
+        use std::sync::Arc;
+
+        let raw = GooseRawRequest::new(GooseMethod::Get, "http://localhost/", vec![], "");
+        GooseRequestMetric::new(
+            raw,
+            TransactionDetail {
+                scenario_index: 0,
+                scenario_name: Arc::from("TestScenario"),
+                transaction_index: Some(0),
+                transaction_name: TransactionName::InheritNameByRequests(Arc::from("tx")),
+            },
+            name,
+            0,
+            0,
+        )
+    }
+
+    #[test]
+    fn pending_request_buffers_and_flushes() {
+        let server = MockServer::start();
+        let mut user = setup_user(&server).unwrap();
+
+        // Wire up a metrics channel so buffering is active.
+        let (tx, rx) = flume::unbounded();
+        user.metrics_channel = Some(tx);
+
+        let metric = make_test_request_metric("/a");
+
+        // send_request_metric_to_parent should buffer, not send.
+        user.send_request_metric_to_parent(metric).unwrap();
+        assert!(user.pending_request.is_some());
+        assert!(rx.try_recv().is_err(), "should not be on channel yet");
+
+        // flush_pending_request should send and clear.
+        user.flush_pending_request().unwrap();
+        assert!(user.pending_request.is_none());
+        let msg = rx.try_recv().unwrap();
+        assert!(matches!(msg, GooseMetric::Request(_)));
+    }
+
+    #[test]
+    fn buffering_second_request_flushes_first() {
+        let server = MockServer::start();
+        let mut user = setup_user(&server).unwrap();
+
+        let (tx, rx) = flume::unbounded();
+        user.metrics_channel = Some(tx);
+
+        let first = make_test_request_metric("/first");
+        let second = make_test_request_metric("/second");
+
+        // Buffer the first request.
+        user.send_request_metric_to_parent(first).unwrap();
+        assert!(rx.try_recv().is_err());
+
+        // Buffering the second should flush the first onto the channel.
+        user.send_request_metric_to_parent(second).unwrap();
+        let msg = rx.try_recv().unwrap();
+        match msg {
+            GooseMetric::Request(r) => assert_eq!(r.name.as_ref(), "/first"),
+            _ => panic!("expected Request"),
+        }
+
+        // The second is still pending.
+        assert!(user.pending_request.is_some());
+    }
+
+    #[test]
+    fn flush_pending_metrics_sends_both() {
+        let server = MockServer::start();
+        let mut user = setup_user(&server).unwrap();
+
+        let (tx, rx) = flume::unbounded();
+        user.metrics_channel = Some(tx);
+
+        // Buffer a request and a transaction.
+        user.pending_request = Some(make_test_request_metric("/x"));
+        user.pending_transaction = Some(crate::metrics::TransactionMetric::new(
+            0,
+            0,
+            0,
+            "tx".into(),
+            0,
+        ));
+
+        user.flush_pending_metrics().unwrap();
+        assert!(user.pending_request.is_none());
+        assert!(user.pending_transaction.is_none());
+
+        // Two messages on the channel.
+        let m1 = rx.try_recv().unwrap();
+        let m2 = rx.try_recv().unwrap();
+        assert!(matches!(m1, GooseMetric::Request(_)));
+        assert!(matches!(m2, GooseMetric::Transaction(_)));
+        assert!(rx.try_recv().is_err());
     }
 }

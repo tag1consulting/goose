@@ -77,6 +77,15 @@ pub enum GooseMetric {
     Request(Box<GooseRequestMetric>),
     Transaction(TransactionMetric),
     Scenario(ScenarioMetric),
+    /// Combined metric carrying all three payloads in a single channel message.
+    ///
+    /// Emitted when a scenario iteration completes with exactly one pending request
+    /// metric and one pending transaction metric, avoiding three separate channel sends.
+    All {
+        request: Box<GooseRequestMetric>,
+        transaction: TransactionMetric,
+        scenario: ScenarioMetric,
+    },
 }
 
 /// THIS IS AN EXPERIMENTAL FEATURE, DISABLED BY DEFAULT. Optionally mitigate the loss of data
@@ -2958,6 +2967,115 @@ impl GooseAttack {
     // is true all metrics will be received regardless of how long it takes. If flush is
     // false, metrics will only be received for up to 400 ms before exiting to continue on
     // the next call to this function.
+    // Process a single request metric: record errors, handle CO backfill, update aggregates
+    // and graph data.
+    async fn process_request_metric(
+        &mut self,
+        request_metric: &GooseRequestMetric,
+        goose_attack_run_state: &mut GooseAttackRunState,
+    ) {
+        // If there was an error, store it.
+        if !request_metric.error.is_empty() {
+            self.record_error(request_metric, goose_attack_run_state);
+        }
+
+        // If coordinated_omission_elapsed is non-zero, this was a statistically
+        // generated "request" to mitigate coordinated omission, loop to backfill
+        // with statistically generated metrics.
+        if request_metric.coordinated_omission_elapsed > 0 && request_metric.user_cadence > 0 {
+            // Track the CO event if CO metrics tracking is enabled
+            if let Some(co_metrics) = &mut self.metrics.coordinated_omission_metrics {
+                // Calculate how many synthetic requests will be injected
+                let synthetic_count = (request_metric.coordinated_omission_elapsed as i64
+                    - request_metric.user_cadence as i64
+                    - request_metric.response_time as i64)
+                    / request_metric.user_cadence as i64;
+
+                if synthetic_count > 0 {
+                    co_metrics.record_co_event(
+                        std::time::Duration::from_millis(request_metric.user_cadence),
+                        std::time::Duration::from_millis(
+                            request_metric.coordinated_omission_elapsed,
+                        ),
+                        synthetic_count as u32,
+                        request_metric.user,
+                        request_metric.scenario_name.to_string(),
+                    );
+                }
+            }
+
+            // Build a statistically generated coordinated_omissiom metric starting
+            // with the metric that was sent by the affected GooseUser.
+            let mut co_metric = request_metric.clone();
+
+            // Use a signed integer as this value can drop below zero.
+            let mut response_time = request_metric.coordinated_omission_elapsed as i64
+                - request_metric.user_cadence as i64
+                - request_metric.response_time as i64;
+
+            loop {
+                // Backfill until reaching the expected request cadence.
+                if response_time > request_metric.response_time as i64 {
+                    co_metric.response_time = response_time as u64;
+                    self.record_request_metric(&co_metric).await;
+                    response_time -= request_metric.user_cadence as i64;
+                } else {
+                    break;
+                }
+            }
+        // Otherwise this is an actual request, record it normally.
+        } else {
+            // Track the actual request in CO metrics if enabled
+            if let Some(co_metrics) = &mut self.metrics.coordinated_omission_metrics {
+                co_metrics.record_actual_request();
+            }
+
+            // Merge the `GooseRequestMetric` into a `GooseRequestMetricAggregate` in
+            // `GooseMetrics.requests`, and write to the requests log if enabled.
+            self.record_request_metric(request_metric).await;
+
+            if !self.configuration.report_file.is_empty() {
+                let seconds_since_start = (request_metric.elapsed / 1000) as usize;
+
+                let key = format!("{} {}", request_metric.raw.method, request_metric.name);
+                self.graph_data
+                    .record_requests_per_second(&key, seconds_since_start);
+                self.graph_data.record_average_response_time_per_second(
+                    key.clone(),
+                    seconds_since_start,
+                    request_metric.response_time,
+                );
+
+                if !request_metric.success {
+                    self.graph_data
+                        .record_errors_per_second(&key, seconds_since_start);
+                }
+            }
+        }
+    }
+
+    // Process a single transaction metric: update aggregate and graph data.
+    fn process_transaction_metric(&mut self, raw_transaction: &TransactionMetric) {
+        self.metrics.transactions[raw_transaction.scenario_index]
+            [raw_transaction.transaction_index]
+            .set_time(raw_transaction.run_time, raw_transaction.success);
+
+        if !self.configuration.report_file.is_empty() {
+            self.graph_data
+                .record_transactions_per_second((raw_transaction.elapsed / 1000) as usize);
+        }
+    }
+
+    // Process a single scenario metric: update aggregate and graph data.
+    fn process_scenario_metric(&mut self, raw_scenario: &ScenarioMetric) {
+        self.metrics.scenarios[raw_scenario.index].update(raw_scenario.run_time, raw_scenario.user);
+
+        if !self.configuration.report_file.is_empty() {
+            self.graph_data
+                .record_scenarios_per_second((raw_scenario.elapsed / 1000) as usize);
+        }
+    }
+
     pub(crate) async fn receive_metrics(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
@@ -2974,110 +3092,24 @@ impl GooseAttack {
             received_message = true;
             match message.unwrap() {
                 GooseMetric::Request(request_metric) => {
-                    // If there was an error, store it.
-                    if !request_metric.error.is_empty() {
-                        self.record_error(&request_metric, goose_attack_run_state);
-                    }
-
-                    // If coordinated_omission_elapsed is non-zero, this was a statistically
-                    // generated "request" to mitigate coordinated omission, loop to backfill
-                    // with statistically generated metrics.
-                    if request_metric.coordinated_omission_elapsed > 0
-                        && request_metric.user_cadence > 0
-                    {
-                        // Track the CO event if CO metrics tracking is enabled
-                        if let Some(co_metrics) = &mut self.metrics.coordinated_omission_metrics {
-                            // Calculate how many synthetic requests will be injected
-                            let synthetic_count = (request_metric.coordinated_omission_elapsed
-                                as i64
-                                - request_metric.user_cadence as i64
-                                - request_metric.response_time as i64)
-                                / request_metric.user_cadence as i64;
-
-                            if synthetic_count > 0 {
-                                co_metrics.record_co_event(
-                                    std::time::Duration::from_millis(request_metric.user_cadence),
-                                    std::time::Duration::from_millis(
-                                        request_metric.coordinated_omission_elapsed,
-                                    ),
-                                    synthetic_count as u32,
-                                    request_metric.user,
-                                    request_metric.scenario_name.to_string(),
-                                );
-                            }
-                        }
-
-                        // Build a statistically generated coordinated_omissiom metric starting
-                        // with the metric that was sent by the affected GooseUser.
-                        let mut co_metric = request_metric.clone();
-
-                        // Use a signed integer as this value can drop below zero.
-                        let mut response_time = request_metric.coordinated_omission_elapsed as i64
-                            - request_metric.user_cadence as i64
-                            - request_metric.response_time as i64;
-
-                        loop {
-                            // Backfill until reaching the expected request cadence.
-                            if response_time > request_metric.response_time as i64 {
-                                co_metric.response_time = response_time as u64;
-                                self.record_request_metric(&co_metric).await;
-                                response_time -= request_metric.user_cadence as i64;
-                            } else {
-                                break;
-                            }
-                        }
-                    // Otherwise this is an actual request, record it normally.
-                    } else {
-                        // Track the actual request in CO metrics if enabled
-                        if let Some(co_metrics) = &mut self.metrics.coordinated_omission_metrics {
-                            co_metrics.record_actual_request();
-                        }
-
-                        // Merge the `GooseRequestMetric` into a `GooseRequestMetricAggregate` in
-                        // `GooseMetrics.requests`, and write to the requests log if enabled.
-                        self.record_request_metric(&request_metric).await;
-
-                        if !self.configuration.report_file.is_empty() {
-                            let seconds_since_start = (request_metric.elapsed / 1000) as usize;
-
-                            let key =
-                                format!("{} {}", request_metric.raw.method, request_metric.name);
-                            self.graph_data
-                                .record_requests_per_second(&key, seconds_since_start);
-                            self.graph_data.record_average_response_time_per_second(
-                                key.clone(),
-                                seconds_since_start,
-                                request_metric.response_time,
-                            );
-
-                            if !request_metric.success {
-                                self.graph_data
-                                    .record_errors_per_second(&key, seconds_since_start);
-                            }
-                        }
-                    }
+                    self.process_request_metric(&request_metric, goose_attack_run_state)
+                        .await;
                 }
                 GooseMetric::Transaction(raw_transaction) => {
-                    // Store a new metric.
-                    self.metrics.transactions[raw_transaction.scenario_index]
-                        [raw_transaction.transaction_index]
-                        .set_time(raw_transaction.run_time, raw_transaction.success);
-
-                    if !self.configuration.report_file.is_empty() {
-                        self.graph_data.record_transactions_per_second(
-                            (raw_transaction.elapsed / 1000) as usize,
-                        );
-                    }
+                    self.process_transaction_metric(&raw_transaction);
                 }
                 GooseMetric::Scenario(raw_scenario) => {
-                    // Store a new metric.
-                    self.metrics.scenarios[raw_scenario.index]
-                        .update(raw_scenario.run_time, raw_scenario.user);
-
-                    if !self.configuration.report_file.is_empty() {
-                        self.graph_data
-                            .record_scenarios_per_second((raw_scenario.elapsed / 1000) as usize);
-                    }
+                    self.process_scenario_metric(&raw_scenario);
+                }
+                GooseMetric::All {
+                    request,
+                    transaction,
+                    scenario,
+                } => {
+                    self.process_request_metric(&request, goose_attack_run_state)
+                        .await;
+                    self.process_transaction_metric(&transaction);
+                    self.process_scenario_metric(&scenario);
                 }
             }
             // Unless flushing all metrics, break out of receive loop after timeout.
@@ -4325,5 +4357,93 @@ mod test {
             }),
             "500 (+0)"
         );
+    }
+
+    /// Build a minimal GooseRequestMetric for testing.
+    fn make_test_request_metric() -> GooseRequestMetric {
+        let raw = GooseRawRequest::new(GooseMethod::Get, "http://localhost/", vec![], "");
+        GooseRequestMetric::new(
+            raw,
+            TransactionDetail {
+                scenario_index: 0,
+                scenario_name: Arc::from("TestScenario"),
+                transaction_index: Some(0),
+                transaction_name: TransactionName::InheritNameByRequests(Arc::from("tx")),
+            },
+            "/",
+            0,
+            0,
+        )
+    }
+
+    #[test]
+    fn goose_metric_all_variant_round_trips() {
+        let request = make_test_request_metric();
+        let transaction = TransactionMetric::new(0, 0, 0, "tx".to_string(), 0);
+        let scenario = ScenarioMetric::new(0, "TestScenario", 0, 100, 0);
+
+        let metric = GooseMetric::All {
+            request: Box::new(request.clone()),
+            transaction: transaction.clone(),
+            scenario: scenario.clone(),
+        };
+
+        // Pattern-match to extract all three payloads.
+        match metric {
+            GooseMetric::All {
+                request: r,
+                transaction: t,
+                scenario: s,
+            } => {
+                assert_eq!(r.name.as_ref(), "/");
+                assert_eq!(t.name, "tx");
+                assert_eq!(s.name, "TestScenario");
+                assert_eq!(s.run_time, 100);
+            }
+            _ => panic!("expected GooseMetric::All"),
+        }
+    }
+
+    #[test]
+    fn goose_metric_all_sent_on_channel() {
+        // Verify that GooseMetric::All can be sent and received on a flume channel
+        // just like the individual variants.
+        let (tx, rx) = flume::unbounded::<GooseMetric>();
+
+        let request = make_test_request_metric();
+        let transaction = TransactionMetric::new(0, 0, 0, "tx".to_string(), 0);
+        let scenario = ScenarioMetric::new(0, "TestScenario", 0, 100, 0);
+
+        // Send one All message (replaces what would have been 3 individual sends).
+        tx.send(GooseMetric::All {
+            request: Box::new(request),
+            transaction,
+            scenario,
+        })
+        .unwrap();
+
+        // Only one message on the channel.
+        let msg = rx.try_recv().unwrap();
+        assert!(matches!(msg, GooseMetric::All { .. }));
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn goose_metric_all_serialization() {
+        // Verify GooseMetric::All round-trips through serde (metrics are serialized
+        // for logging and Gaggle communication).
+        let request = make_test_request_metric();
+        let transaction = TransactionMetric::new(0, 0, 0, "tx".to_string(), 0);
+        let scenario = ScenarioMetric::new(0, "TestScenario", 0, 100, 0);
+
+        let metric = GooseMetric::All {
+            request: Box::new(request),
+            transaction,
+            scenario,
+        };
+
+        let json = serde_json::to_string(&metric).expect("serialize");
+        let deserialized: GooseMetric = serde_json::from_str(&json).expect("deserialize");
+        assert!(matches!(deserialized, GooseMetric::All { .. }));
     }
 }
