@@ -3,7 +3,6 @@ use super::{
     update_min_time, CoMetricsSummary, GooseMetrics, NullableFloat,
 };
 use crate::{
-    goose::GooseMethod,
     report::{
         get_response_metric, CORequestMetric, ErrorMetric, RequestMetric, ResponseMetric,
         ScenarioMetric, StatusCodeMetric, TransactionMetric,
@@ -129,11 +128,11 @@ impl<'m> Prepare<'m> {
         let mut raw_aggregate_response_times: BTreeMap<usize, usize> = BTreeMap::new();
 
         for (request_key, request) in self.metrics.requests.iter().sorted() {
-            let method = format!("{}", request.method);
+            let method = request.method_label();
             // The request_key is "{method} {name}", so by stripping the "{method} "
             // prefix we get the name.
             let name = request_key
-                .strip_prefix(&format!("{} ", request.method))
+                .strip_prefix(&format!("{} ", method))
                 .unwrap()
                 .to_string();
             let total_request_count = request.success_count + request.fail_count;
@@ -262,11 +261,11 @@ impl<'m> Prepare<'m> {
 
         for (request_key, request) in self.metrics.requests.iter().sorted() {
             if let Some(coordinated_omission_data) = request.coordinated_omission_data.as_ref() {
-                let method = format!("{}", request.method);
+                let method = request.method_label();
                 // The request_key is "{method} {name}", so by stripping the "{method} "
                 // prefix we get the name.
                 let name = request_key
-                    .strip_prefix(&format!("{} ", request.method))
+                    .strip_prefix(&format!("{} ", method))
                     .unwrap()
                     .to_string();
                 let raw_average =
@@ -502,11 +501,11 @@ impl<'m> Prepare<'m> {
         let mut status_code_metrics = Vec::new();
         let mut aggregated_status_code_counts: HashMap<u16, usize> = HashMap::new();
         for (request_key, request) in self.metrics.requests.iter().sorted() {
-            let method = format!("{}", request.method);
+            let method = request.method_label();
             // The request_key is "{method} {name}", so by stripping the "{method} "
             // prefix we get the name.
             let name = request_key
-                .strip_prefix(&format!("{} ", request.method))
+                .strip_prefix(&format!("{} ", method))
                 .unwrap()
                 .to_string();
 
@@ -547,7 +546,7 @@ impl<'m> Prepare<'m> {
             .errors
             .values()
             .map(|error| ErrorMetric {
-                method: error.method,
+                method: error.method_label(),
                 name: error.name.clone(),
                 error: error.error.clone(),
                 occurrences: error.occurrences.into(),
@@ -614,7 +613,7 @@ fn apply_baseline_deltas(current: &mut ReportData, baseline: &ReportData) {
     // Apply deltas to error metrics if present
     if let (Some(current_errors), Some(baseline_errors)) = (&mut current.errors, &baseline.errors) {
         correlate_deltas(current_errors, baseline_errors, |e| {
-            (e.method, e.name.clone(), e.error.clone())
+            (e.method.clone(), e.name.clone(), e.error.clone())
         });
     }
 }
@@ -912,7 +911,7 @@ impl From<BaselineScenarioMetric> for ScenarioMetric {
 /// Baseline error metric with plain values
 #[derive(Debug, Deserialize)]
 struct BaselineErrorMetric {
-    pub method: GooseMethod,
+    pub method: String,
     pub name: String,
     pub error: String,
     pub occurrences: usize,
@@ -1202,7 +1201,7 @@ mod test {
             }]),
             status_code_metrics: None,
             errors: Some(vec![ErrorMetric {
-                method: crate::goose::GooseMethod::Get,
+                method: "GET".into(),
                 name: "/".into(),
                 error: "503 Service Unavailable".into(),
                 occurrences: 5usize.into(),
@@ -1280,7 +1279,7 @@ mod test {
             }]),
             status_code_metrics: None,
             errors: Some(vec![ErrorMetric {
-                method: crate::goose::GooseMethod::Get,
+                method: "GET".into(),
                 name: "/".into(),
                 error: "503 Service Unavailable".into(),
                 occurrences: 3usize.into(),

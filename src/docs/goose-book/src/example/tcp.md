@@ -1,0 +1,98 @@
+# TCP Load Test
+
+The [`examples/tcp_loadtest.rs`](https://github.com/tag1consulting/goose/blob/main/examples/tcp_loadtest.rs) example demonstrates how to use Goose to load test a raw TCP server. While Goose is primarily an HTTP load testing framework, its metrics pipeline supports any protocol through [`GooseUser::record_custom_request`].
+
+## Why non-HTTP load testing?
+
+Some services communicate over raw TCP, UDP, WebSocket, gRPC, or other protocols rather than HTTP. Previously, the only way to record metrics for these operations was to construct fake HTTP `GooseRequest` objects, which produced misleading results (spurious 404 errors). `record_custom_request` provides a clean, first-class path: manually time the operation yourself and hand the result to Goose.
+
+## The API
+
+```rust
+user.record_custom_request(
+    method,        // &str  — protocol label shown in metrics (e.g. "TCP", "GRPC", "WS")
+    name,          // &str  — identifies this operation in metrics output
+    response_time, // u64   — how long the operation took, in milliseconds
+    success,       // bool  — whether the operation succeeded
+    status_code,   // u16   — protocol-specific status code (0 = not applicable)
+    error,         // Option<&str> — failure reason; ignored when success is true
+).await?;
+```
+
+Recorded metrics appear in all Goose reports under the method label you provide:
+
+```
+ === PER REQUEST METRICS ===
+ Name                     |  # reqs |  # fails |  req/s |  fail/s
+ TCP tcp_echo             |    1000 |    0 (0%)|  100.0 |    0.00
+```
+
+### Parameters
+
+- **`method`** — A short label for the protocol (e.g. `"TCP"`, `"GRPC"`, `"WS"`, `"MQTT"`). Must not contain whitespace. Displayed in the method column of all metrics output.
+- **`name`** — Identifies the specific operation within that protocol. Combined with `method` to form the metrics key (`"TCP tcp_echo"`).
+- **`response_time`** — The measured duration in milliseconds.
+- **`success`** — Whether the operation succeeded. Unlike HTTP requests where Goose infers success from the status code, for custom protocols you control this directly.
+- **`status_code`** — A protocol-specific status or result code. Use `0` when the protocol has no concept of status codes. Defaults to `0`.
+- **`error`** — An optional error description for failed operations.
+
+Coordinated Omission Mitigation applies to custom requests the same way it does to HTTP requests.
+
+## Running the example
+
+Start a local TCP echo server:
+
+```bash
+ncat -l 9000 -k -e /bin/cat
+```
+
+Then run the load test, pointing `--host` at the server. The `http://` scheme prefix is required for Goose URL validation; the host and port are extracted from it and used for the TCP connection:
+
+```bash
+cargo run --example tcp_loadtest -- \
+  --host http://localhost:9000 \
+  --users 10 \
+  --run-time 30s \
+  --no-reset-metrics
+```
+
+## Adapting to other protocols
+
+The same pattern works for any protocol — replace the `TcpStream` logic with UDP sockets, a WebSocket client, a gRPC stub, or any other I/O:
+
+```rust
+async fn my_custom_operation(user: &mut GooseUser) -> TransactionResult {
+    let started = std::time::Instant::now();
+
+    // Perform the actual operation here (TCP, UDP, gRPC, etc.)
+    let result: Result<_, _> = do_my_protocol_operation().await;
+
+    let response_time = started.elapsed().as_millis() as u64;
+
+    match result {
+        Ok(_) => {
+            user.record_custom_request("GRPC", "operation_name", response_time, true, 0, None)
+                .await?;
+        }
+        Err(e) => {
+            user.record_custom_request(
+                "GRPC",
+                "operation_name",
+                response_time,
+                false,
+                0,
+                Some(&e.to_string()),
+            )
+            .await?;
+        }
+    }
+
+    Ok(())
+}
+```
+
+## Complete Source Code
+
+```rust,ignore
+{{#include ../../../../../examples/tcp_loadtest.rs}}
+```
