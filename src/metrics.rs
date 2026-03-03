@@ -337,6 +337,12 @@ pub struct GooseRawRequest {
     pub headers: Vec<String>,
     /// The body of the request made, if `--request-body` is enabled.
     pub body: String,
+    /// User-defined method label for non-HTTP protocols (e.g. "TCP", "GRPC", "WS").
+    ///
+    /// When non-empty this label is used in metrics output instead of the
+    /// [`GooseMethod`] display. Empty for standard HTTP requests.
+    #[serde(default)]
+    pub custom_method: String,
 }
 impl GooseRawRequest {
     pub(crate) fn new(
@@ -350,6 +356,34 @@ impl GooseRawRequest {
             url: url.to_string(),
             headers,
             body: body.to_string(),
+            custom_method: String::new(),
+        }
+    }
+
+    /// Create a `GooseRawRequest` for a non-HTTP custom-protocol operation.
+    ///
+    /// Unlike [`GooseRawRequest::new`], this constructor does not require headers or a
+    /// body — neither concept applies to custom protocols.
+    pub(crate) fn new_custom(name: &str, custom_method: &str) -> GooseRawRequest {
+        GooseRawRequest {
+            method: GooseMethod::Custom,
+            url: name.to_string(),
+            headers: vec![],
+            body: String::new(),
+            custom_method: custom_method.to_string(),
+        }
+    }
+
+    /// Returns the display label for this request's method.
+    ///
+    /// For standard HTTP requests this returns the uppercase HTTP method name
+    /// (e.g. "GET", "POST"). For custom protocol requests with a non-empty
+    /// `custom_method`, returns that label instead.
+    pub fn method_label(&self) -> String {
+        if !self.custom_method.is_empty() {
+            self.custom_method.clone()
+        } else {
+            self.method.to_string()
         }
     }
 }
@@ -512,10 +546,21 @@ pub struct GooseRequestMetricAggregate {
     /// The hash is primarily used when running a distributed Gaggle, allowing the Manager to confirm
     /// that all Workers are running the same load test plan.
     pub load_test_hash: u64,
+    /// User-defined method label for non-HTTP protocols (e.g. "TCP", "GRPC").
+    ///
+    /// Empty for standard HTTP requests. When non-empty, used in metrics output
+    /// instead of the [`GooseMethod`] display.
+    #[serde(default)]
+    pub custom_method: String,
 }
 impl GooseRequestMetricAggregate {
     /// Create a new GooseRequestMetricAggregate object.
-    pub(crate) fn new(path: &str, method: GooseMethod, load_test_hash: u64) -> Self {
+    pub(crate) fn new(
+        path: &str,
+        method: GooseMethod,
+        load_test_hash: u64,
+        custom_method: &str,
+    ) -> Self {
         trace!("[metrics]: new request");
         GooseRequestMetricAggregate {
             path: path.to_string(),
@@ -527,6 +572,16 @@ impl GooseRequestMetricAggregate {
             success_count: 0,
             fail_count: 0,
             load_test_hash,
+            custom_method: custom_method.to_string(),
+        }
+    }
+
+    /// Returns the display label for this aggregate's method.
+    pub fn method_label(&self) -> String {
+        if !self.custom_method.is_empty() {
+            self.custom_method.clone()
+        } else {
+            self.method.to_string()
         }
     }
 
@@ -2541,7 +2596,7 @@ impl GooseMetrics {
         for error in self.errors.values() {
             errors.push((
                 error.occurrences,
-                format!("{} {}: {}", error.method, error.name, error.error),
+                format!("{} {}: {}", error.method_label(), error.name, error.error),
             ));
         }
 
@@ -2798,14 +2853,32 @@ pub struct GooseErrorMetricAggregate {
     pub error: String,
     /// A counter reflecting how many times this error occurred.
     pub occurrences: usize,
+    /// User-defined method label for non-HTTP protocols.
+    #[serde(default)]
+    pub custom_method: String,
 }
 impl GooseErrorMetricAggregate {
-    pub(crate) fn new(method: GooseMethod, name: String, error: String) -> Self {
+    pub(crate) fn new(
+        method: GooseMethod,
+        name: String,
+        error: String,
+        custom_method: &str,
+    ) -> Self {
         GooseErrorMetricAggregate {
             method,
             name,
             error,
             occurrences: 0,
+            custom_method: custom_method.to_string(),
+        }
+    }
+
+    /// Returns the display label for this error's method.
+    pub fn method_label(&self) -> String {
+        if !self.custom_method.is_empty() {
+            self.custom_method.clone()
+        } else {
+            self.method.to_string()
         }
     }
 }
@@ -2919,12 +2992,16 @@ impl GooseAttack {
     // `GooseMetrics.requests` `HashMap`, merging if already existing, or creating new.
     // Also writes it to the request_file if enabled.
     async fn record_request_metric(&mut self, request_metric: &GooseRequestMetric) {
-        let key = format!("{} {}", request_metric.raw.method, request_metric.name);
+        let method_label = request_metric.raw.method_label();
+        let key = format!("{} {}", method_label, request_metric.name);
         let mut merge_request = match self.metrics.requests.get(&key) {
             Some(m) => m.clone(),
-            None => {
-                GooseRequestMetricAggregate::new(&request_metric.name, request_metric.raw.method, 0)
-            }
+            None => GooseRequestMetricAggregate::new(
+                &request_metric.name,
+                request_metric.raw.method,
+                0,
+                &request_metric.raw.custom_method,
+            ),
         };
 
         // Handle a metrics update.
@@ -3037,7 +3114,11 @@ impl GooseAttack {
             if !self.configuration.report_file.is_empty() {
                 let seconds_since_start = (request_metric.elapsed / 1000) as usize;
 
-                let key = format!("{} {}", request_metric.raw.method, request_metric.name);
+                let key = format!(
+                    "{} {}",
+                    request_metric.raw.method_label(),
+                    request_metric.name
+                );
                 self.graph_data
                     .record_requests_per_second(&key, seconds_since_start);
                 self.graph_data.record_average_response_time_per_second(
@@ -3161,9 +3242,10 @@ impl GooseAttack {
         }
 
         // Create a string to uniquely identify errors for tracking metrics.
+        let method_label = raw_request.raw.method_label();
         let error_string = format!(
             "{}.{}.{}",
-            raw_request.error, raw_request.raw.method, raw_request.name
+            raw_request.error, method_label, raw_request.name
         );
 
         let mut error_metrics = match self.metrics.errors.get(&error_string) {
@@ -3174,6 +3256,7 @@ impl GooseAttack {
                 raw_request.raw.method,
                 raw_request.name.to_string(),
                 raw_request.error.to_string(),
+                &raw_request.raw.custom_method,
             ),
         };
         error_metrics.occurrences += 1;
@@ -4010,7 +4093,7 @@ mod test {
 
     #[test]
     fn goose_request() {
-        let mut request = GooseRequestMetricAggregate::new("/", GooseMethod::Get, 0);
+        let mut request = GooseRequestMetricAggregate::new("/", GooseMethod::Get, 0, "");
         assert_eq!(request.path, "/".to_string());
         assert_eq!(request.method, GooseMethod::Get);
         assert_eq!(request.raw_data.times.len(), 0);
@@ -4216,7 +4299,7 @@ mod test {
 
     #[test]
     fn record_status_code_time() {
-        let mut request = GooseRequestMetricAggregate::new("/", GooseMethod::Get, 0);
+        let mut request = GooseRequestMetricAggregate::new("/", GooseMethod::Get, 0, "");
         assert!(request.status_code_timings.is_empty());
 
         // First recording for status 200.
@@ -4258,7 +4341,7 @@ mod test {
 
     #[test]
     fn status_code_breakdowns_none_when_single() {
-        let mut request = GooseRequestMetricAggregate::new("/", GooseMethod::Get, 0);
+        let mut request = GooseRequestMetricAggregate::new("/", GooseMethod::Get, 0, "");
         // Empty timings returns None.
         assert!(request.status_code_breakdowns().is_none());
 
@@ -4269,7 +4352,7 @@ mod test {
 
     #[test]
     fn status_code_breakdowns_sorted_with_percentages() {
-        let mut request = GooseRequestMetricAggregate::new("/", GooseMethod::Get, 0);
+        let mut request = GooseRequestMetricAggregate::new("/", GooseMethod::Get, 0, "");
         // 3 requests at 200, 1 request at 500.
         request.record_status_code_time(500, 200);
         request.record_status_code_time(200, 10);

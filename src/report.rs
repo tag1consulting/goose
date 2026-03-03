@@ -9,7 +9,6 @@ pub mod pdf;
 pub(crate) use markdown::write_markdown_report;
 
 use crate::{
-    goose::GooseMethod,
     metrics::{self, format_number, format_value, ApplyBaseline, DeltaTo, NullableFloat, Value},
     report::common::OrEmpty,
 };
@@ -179,7 +178,7 @@ pub(crate) struct StatusCodeMetric {
 /// Defines the metrics reported about errors.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct ErrorMetric {
-    pub method: GooseMethod,
+    pub method: String,
     pub name: String,
     pub error: String,
     pub occurrences: Value<usize>,

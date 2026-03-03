@@ -19,6 +19,11 @@
    **Breaking changes**: Certificate validation now uses bundled rustls/webpki roots instead of the OS-native certificate store, which may affect environments with custom system CAs. `--accept-invalid-certs` now works unconditionally (previously it was silently ignored unless the `rustls-tls` feature was enabled).
  - [#672](https://github.com/tag1consulting/goose/pull/672) fix `--no-autostart` initializing user states twice when a host is configured (once at startup, again on controller Start command)
  - [#673](https://github.com/tag1consulting/goose/pull/673) parallelize user state initialization across available CPUs; significantly reduces startup time with large user counts (1000+)
+ - [#678](https://github.com/tag1consulting/goose/pull/678) add support for non-HTTP protocol load testing (TCP, UDP, WebSocket, etc.)
+    o new `GooseMethod::Custom` variant for non-HTTP requests
+    o new `GooseUser::record_custom_request(method, name, response_time_ms, success, status_code, error)` method records arbitrary request metrics that appear in all Goose reports under a user-defined method label (e.g. `TCP`, `GRPC`, `WS`)
+    o `status_code` parameter allows recording protocol-specific status codes (defaults to `0` for protocols without status codes)
+    o add `examples/tcp_loadtest.rs` demonstrating how to load test a raw TCP echo server
  - [#660](https://github.com/tag1consulting/goose/pull/660), [#661](https://github.com/tag1consulting/goose/pull/661) add `--baseline-file` option to compare load test results against a previous JSON report; all report formats (HTML, Markdown, JSON) show deltas for requests, response times, transactions, scenarios, errors, and coordinated omission metrics
     o `GooseMethod` now derives `Copy` and `Hash`
     o JSON reports now include `scenarios` and `hosts` fields in `raw_metrics` (previously omitted by manual serialization)

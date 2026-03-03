@@ -721,7 +721,7 @@ pub enum GooseUserCommand {
     Exit,
 }
 
-/// Supported HTTP methods.
+/// Supported request methods, including HTTP methods and [`GooseMethod::Custom`] for non-HTTP protocols.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, Ord, PartialOrd, Hash)]
 pub enum GooseMethod {
     Delete,
@@ -730,6 +730,9 @@ pub enum GooseMethod {
     Patch,
     Post,
     Put,
+    /// Used for non-HTTP protocols (TCP, UDP, WebSocket, etc.) when recording
+    /// custom request metrics via [`GooseUser::record_custom_request`].
+    Custom,
 }
 /// Display method in upper case.
 impl fmt::Display for GooseMethod {
@@ -742,6 +745,7 @@ impl fmt::Display for GooseMethod {
             GooseMethod::Patch => write!(f, "PATCH"),
             GooseMethod::Post => write!(f, "POST"),
             GooseMethod::Put => write!(f, "PUT"),
+            GooseMethod::Custom => write!(f, "CUSTOM"),
         }
     }
 }
@@ -1696,6 +1700,12 @@ impl GooseUser {
             GooseMethod::Patch => self.client.patch(&url),
             GooseMethod::Post => self.client.post(&url),
             GooseMethod::Put => self.client.put(&url),
+            GooseMethod::Custom => {
+                return Err(Box::new(TransactionError::InvalidMethod {
+                    method: Method::from_bytes(b"CUSTOM")
+                        .expect("CUSTOM is a valid HTTP method token"),
+                }))
+            }
         })
     }
 
@@ -2255,6 +2265,119 @@ impl GooseUser {
         Err(Box::new(TransactionError::RequestFailed {
             raw_request: request.clone(),
         }))
+    }
+
+    /// Record a metric for a custom (non-HTTP) request.
+    ///
+    /// Goose is primarily designed for HTTP load testing, but this method allows you to
+    /// record request metrics for any protocol — TCP, UDP, WebSocket, gRPC, etc. The
+    /// recorded metrics are aggregated alongside HTTP request metrics and appear in all
+    /// Goose reports under the method label you provide.
+    ///
+    /// # Parameters
+    /// - `method`: A short label identifying the protocol (e.g. `"TCP"`, `"GRPC"`, `"WS"`).
+    ///   Displayed in the method column of all metrics output. Must not contain whitespace.
+    /// - `name`: An arbitrary string identifying the operation (used as the request name
+    ///   in metrics output, e.g. `"send_file"` or `"tcp_echo"`).
+    /// - `response_time`: How long the operation took, in milliseconds.
+    /// - `success`: Whether the operation succeeded. Unlike HTTP requests where Goose
+    ///   infers success from the status code, for custom protocols you control this directly.
+    /// - `status_code`: A protocol-specific status or result code. Use `0` when the protocol
+    ///   has no concept of status codes. Recorded in status code metrics alongside HTTP codes.
+    /// - `error`: An optional error tag describing why the operation failed. Ignored if
+    ///   `success` is `true`.
+    ///
+    /// # Return value
+    ///
+    /// This method always returns `Ok(())`, even when `success` is `false`. Recording a
+    /// failure and propagating a failure as a [`TransactionError`] are independent: if you
+    /// want the enclosing transaction to fail, return a `TransactionError` after calling
+    /// this method.
+    ///
+    /// # Example
+    /// ```rust
+    /// use goose::prelude::*;
+    /// use std::time::Instant;
+    ///
+    /// let mut transaction = transaction!(tcp_upload);
+    ///
+    /// /// Simulate sending a file over TCP and record the result as a Goose metric.
+    /// async fn tcp_upload(user: &mut GooseUser) -> TransactionResult {
+    ///     let started = Instant::now();
+    ///
+    ///     // Perform the actual TCP operation here.
+    ///     // let result = send_file_over_tcp(...);
+    ///     let success = true;
+    ///
+    ///     user.record_custom_request(
+    ///         "TCP",
+    ///         "tcp_upload",
+    ///         started.elapsed().as_millis() as u64,
+    ///         success,
+    ///         0,
+    ///         None,
+    ///     ).await?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn record_custom_request(
+        &mut self,
+        method: &str,
+        name: &str,
+        response_time: u64,
+        success: bool,
+        status_code: u16,
+        error: Option<&str>,
+    ) -> TransactionResult {
+        // The aggregation key uses "{method} {name}", so whitespace in the method
+        // label would break key parsing.
+        if method.contains(char::is_whitespace) {
+            return Err(Box::new(TransactionError::Custom(
+                "method label must not contain whitespace".to_string(),
+            )));
+        }
+
+        let raw_request = GooseRawRequest::new_custom(name, method);
+
+        let transaction_detail = TransactionDetail {
+            scenario_index: self.scenarios_index,
+            scenario_name: self.scenario_name.clone(),
+            transaction_index: self.transaction_index,
+            transaction_name: self
+                .transaction_name
+                .clone()
+                .unwrap_or(TransactionName::default_value()),
+        };
+
+        let mut request_metric = GooseRequestMetric::new(
+            raw_request,
+            transaction_detail,
+            name,
+            self.started.elapsed().as_millis(),
+            self.weighted_users_index,
+        );
+
+        request_metric.response_time = response_time;
+        request_metric.final_url = name.to_string();
+        request_metric.status_code = status_code;
+        request_metric.success = success;
+        if !success {
+            request_metric.error = error
+                .map(|e| e.to_string())
+                .unwrap_or_else(|| format!("{method} {name}: request failed"));
+        }
+
+        // Track cadence for Coordinated Omission Mitigation, mirroring the HTTP request path.
+        request_metric.user_cadence = self
+            .coordinated_omission_mitigation(&request_metric)
+            .await?;
+
+        if !self.config.no_metrics {
+            self.send_request_metric_to_parent(request_metric)?;
+        }
+
+        Ok(())
     }
 
     /// Write to [`debug_file`](../struct.GooseConfiguration.html#structfield.debug_file)
@@ -3961,5 +4084,159 @@ mod tests {
         assert!(matches!(m1, GooseMetric::Request(_)));
         assert!(matches!(m2, GooseMetric::Transaction(_)));
         assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn custom_method_display() {
+        assert_eq!(GooseMethod::Custom.to_string(), "CUSTOM");
+    }
+
+    #[test]
+    fn custom_get_request_builder_returns_error() {
+        let server = MockServer::start();
+        let user = setup_user(&server).unwrap();
+        let result = user.get_request_builder(&GooseMethod::Custom, "/any/path");
+        assert!(
+            result.is_err(),
+            "get_request_builder with GooseMethod::Custom must return Err"
+        );
+        assert!(matches!(
+            result.unwrap_err().as_ref(),
+            TransactionError::InvalidMethod { .. }
+        ));
+    }
+
+    // Creates a GooseUser with a live flume channel attached, returning both the user
+    // and the receiving end of the channel so tests can inspect emitted metrics.
+    fn setup_user_with_channel() -> (GooseUser, flume::Receiver<GooseMetric>) {
+        let mut configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
+        configuration.co_mitigation = Some(GooseCoordinatedOmissionMitigation::Average);
+        let mut user =
+            GooseUser::single("http://localhost:8080".parse().unwrap(), &configuration).unwrap();
+        let (tx, rx) = flume::unbounded();
+        user.metrics_channel = Some(tx);
+        (user, rx)
+    }
+
+    // Helper to extract a GooseRequestMetric from the channel, asserting a single
+    // Request variant was sent.
+    fn recv_request_metric(rx: &flume::Receiver<GooseMetric>) -> GooseRequestMetric {
+        let metric = rx
+            .try_recv()
+            .expect("expected exactly one metric on the channel");
+        assert!(
+            rx.try_recv().is_err(),
+            "expected no further metrics on the channel"
+        );
+        match metric {
+            GooseMetric::Request(boxed) => *boxed,
+            other => panic!("expected GooseMetric::Request, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn record_custom_request_success_metric_fields() {
+        let (mut user, rx) = setup_user_with_channel();
+
+        user.record_custom_request("TCP", "my_op", 42, true, 0, None)
+            .await
+            .expect("record_custom_request should return Ok on success");
+
+        // Flush the pending buffer to the channel before inspecting.
+        user.flush_pending_request().unwrap();
+
+        let m = recv_request_metric(&rx);
+        assert_eq!(m.raw.method, GooseMethod::Custom);
+        assert_eq!(m.raw.custom_method, "TCP");
+        assert_eq!(m.raw.method_label(), "TCP");
+        assert_eq!(m.raw.url, "my_op");
+        assert_eq!(m.name.as_ref(), "my_op");
+        assert_eq!(m.final_url, "my_op");
+        assert_eq!(m.response_time, 42);
+        assert_eq!(m.status_code, 0);
+        assert!(m.success, "success flag should be true");
+        assert!(m.error.is_empty(), "error should be empty on success");
+    }
+
+    #[tokio::test]
+    async fn record_custom_request_failure_metric_fields() {
+        let (mut user, rx) = setup_user_with_channel();
+
+        // Explicit error message is preserved verbatim.
+        user.record_custom_request("TCP", "my_op", 500, false, 0, Some("connection refused"))
+            .await
+            .expect("record_custom_request should return Ok even when recording a failure");
+
+        user.flush_pending_request().unwrap();
+
+        let m = recv_request_metric(&rx);
+        assert!(!m.success, "success flag should be false");
+        assert_eq!(m.error, "connection refused");
+        assert_eq!(m.response_time, 500);
+    }
+
+    #[tokio::test]
+    async fn record_custom_request_failure_default_error() {
+        let (mut user, rx) = setup_user_with_channel();
+
+        // When error is None, the fallback message must be used (not an empty string).
+        user.record_custom_request("TCP", "my_op", 500, false, 0, None)
+            .await
+            .expect("record_custom_request should return Ok with None error");
+
+        user.flush_pending_request().unwrap();
+
+        let m = recv_request_metric(&rx);
+        assert!(!m.success);
+        assert_eq!(m.error, "TCP my_op: request failed");
+    }
+
+    #[tokio::test]
+    async fn record_custom_request_status_code() {
+        let (mut user, rx) = setup_user_with_channel();
+
+        user.record_custom_request("GRPC", "rpc_call", 100, true, 200, None)
+            .await
+            .expect("record_custom_request should accept a status_code");
+
+        user.flush_pending_request().unwrap();
+
+        let m = recv_request_metric(&rx);
+        assert_eq!(m.status_code, 200);
+        assert_eq!(m.raw.custom_method, "GRPC");
+        assert_eq!(m.raw.method_label(), "GRPC");
+    }
+
+    #[tokio::test]
+    async fn record_custom_request_whitespace_method_rejected() {
+        let (mut user, _rx) = setup_user_with_channel();
+
+        let result = user
+            .record_custom_request("MY METHOD", "my_op", 42, true, 0, None)
+            .await;
+        assert!(
+            result.is_err(),
+            "method label with whitespace must return Err"
+        );
+    }
+
+    #[tokio::test]
+    async fn record_custom_request_no_metrics_skips_channel() {
+        let mut configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
+        configuration.co_mitigation = Some(GooseCoordinatedOmissionMitigation::Average);
+        configuration.no_metrics = true;
+        let mut user =
+            GooseUser::single("http://localhost:8080".parse().unwrap(), &configuration).unwrap();
+        let (tx, rx) = flume::unbounded();
+        user.metrics_channel = Some(tx);
+
+        user.record_custom_request("TCP", "my_op", 42, true, 0, None)
+            .await
+            .expect("record_custom_request should return Ok when no_metrics is true");
+
+        assert!(
+            rx.try_recv().is_err(),
+            "no metric should be sent to the channel when no_metrics is true"
+        );
     }
 }
