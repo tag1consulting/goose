@@ -1701,10 +1701,11 @@ impl GooseUser {
             GooseMethod::Post => self.client.post(&url),
             GooseMethod::Put => self.client.put(&url),
             GooseMethod::Custom => {
-                return Err(Box::new(TransactionError::InvalidMethod {
-                    method: Method::from_bytes(b"CUSTOM")
-                        .expect("CUSTOM is a valid HTTP method token"),
-                }))
+                return Err(Box::new(TransactionError::Custom(
+                    "GooseMethod::Custom cannot be used with HTTP request builders; \
+                     use record_custom_request() instead"
+                        .to_string(),
+                )))
             }
         })
     }
@@ -4113,7 +4114,7 @@ mod tests {
         );
         assert!(matches!(
             result.unwrap_err().as_ref(),
-            TransactionError::InvalidMethod { .. }
+            TransactionError::Custom(_)
         ));
     }
 

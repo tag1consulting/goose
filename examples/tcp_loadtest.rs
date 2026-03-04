@@ -6,7 +6,7 @@
 //!
 //! # How it works
 //!
-//! 1. The target host and port are read from `--host` (e.g. `http://localhost:9000`).
+//! 1. The target host and port are read from `--host` (e.g. `tcp://localhost:9000`).
 //! 2. Each simulated user opens a TCP connection, sends a payload, and reads the echo.
 //! 3. Timing is measured manually with [`std::time::Instant`].
 //! 4. [`GooseUser::record_custom_request`] records the result — it will appear
@@ -17,12 +17,12 @@
 //! Start a local TCP echo server (e.g. `ncat -l 9000 -k -e /bin/cat`), then:
 //!
 //! ```text
-//! cargo run --example tcp_loadtest -- --host http://localhost:9000 --users 10 --run-time 30s --no-reset-metrics
+//! cargo run --example tcp_loadtest -- --host tcp://localhost:9000 --users 10 --run-time 30s --no-reset-metrics
 //! ```
 //!
-//! The `--host` flag controls which server is targeted. The scheme (`http://`) is
-//! required by Goose for URL validation; the host and port are extracted and used
-//! directly for the TCP connection.
+//! The `--host` flag controls which server is targeted. Goose requires a URL with a
+//! scheme for validation — any scheme works (e.g. `tcp://`, `grpc://`, `ws://`). The
+//! host and port are extracted and used directly for the TCP connection.
 //!
 //! ## License
 //!
@@ -83,7 +83,7 @@ async fn tcp_echo(user: &mut GooseUser) -> TransactionResult {
     let host = user.base_url.host_str().unwrap_or("127.0.0.1");
     let port = user.base_url.port().ok_or_else(|| {
         Box::new(TransactionError::Custom(
-            "--host must include a port number (e.g. --host http://127.0.0.1:9000)".to_string(),
+            "--host must include a port number (e.g. --host tcp://127.0.0.1:9000)".to_string(),
         ))
     })?;
     let addr = format!("{}:{}", host, port);
