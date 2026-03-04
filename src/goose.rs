@@ -2033,7 +2033,7 @@ impl GooseUser {
                 info!(
                     "{:.3}s into goose attack: \"{} {}\" [{}] took abnormally long ({} ms){}",
                     request_metric.elapsed as f64 / 1_000.0,
-                    request_metric.raw.method,
+                    request_metric.raw.method_label(),
                     request_metric.raw.url,
                     request_metric.status_code,
                     request_metric.response_time,
@@ -2334,11 +2334,16 @@ impl GooseUser {
         status_code: Option<u16>,
         error: Option<&str>,
     ) -> TransactionResult {
-        // The aggregation key uses "{method} {name}", so the method label must be
-        // a non-empty token without whitespace.
+        // The aggregation key uses "{method} {name}", so both must be non-empty
+        // and the method label must not contain whitespace.
         if method.is_empty() || method.contains(char::is_whitespace) {
             return Err(Box::new(TransactionError::Custom(
                 "method label must not be empty and must not contain whitespace".to_string(),
+            )));
+        }
+        if name.is_empty() {
+            return Err(Box::new(TransactionError::Custom(
+                "name must not be empty".to_string(),
             )));
         }
 
@@ -4234,6 +4239,16 @@ mod tests {
             .record_custom_request("", "my_op", 42, true, None, None)
             .await;
         assert!(result.is_err(), "empty method label must return Err");
+    }
+
+    #[tokio::test]
+    async fn record_custom_request_empty_name_rejected() {
+        let (mut user, _rx) = setup_user_with_channel();
+
+        let result = user
+            .record_custom_request("TCP", "", 42, true, None, None)
+            .await;
+        assert!(result.is_err(), "empty name must return Err");
     }
 
     #[tokio::test]

@@ -728,7 +728,8 @@ impl Eq for GooseRequestMetricAggregate {}
 /// Implement ordering for GooseRequestMetricAggregate.
 impl Ord for GooseRequestMetricAggregate {
     fn cmp(&self, other: &Self) -> Ordering {
-        (&self.method, &self.path).cmp(&(&other.method, &other.path))
+        (&self.method, &self.custom_method, &self.path)
+            .cmp(&(&other.method, &other.custom_method, &other.path))
     }
 }
 /// Implement partial-ordering for GooseRequestMetricAggregate.
