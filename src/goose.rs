@@ -2288,7 +2288,8 @@ impl GooseUser {
     ///   infers success from the status code, for custom protocols you control this directly.
     /// - `status_code`: A protocol-specific status or result code. Pass `None` when the
     ///   protocol has no concept of status codes; pass `Some(code)` to record a meaningful
-    ///   code (e.g. a gRPC status code). Recorded in status code metrics alongside HTTP codes.
+    ///   code (e.g. a gRPC status code). Internally, `None` is stored as `0`. If status code
+    ///   reporting is enabled, `0` will appear in status code tables for these requests.
     /// - `error`: An optional error tag describing why the operation failed. Ignored if
     ///   `success` is `true`.
     ///
@@ -2342,9 +2343,9 @@ impl GooseUser {
                 "method label must not be empty and must not contain whitespace".to_string(),
             )));
         }
-        if name.is_empty() {
+        if name.is_empty() || name.trim().is_empty() {
             return Err(Box::new(TransactionError::Custom(
-                "name must not be empty".to_string(),
+                "name must not be empty or whitespace-only".to_string(),
             )));
         }
 
@@ -4112,10 +4113,16 @@ mod tests {
             result.is_err(),
             "get_request_builder with GooseMethod::Custom must return Err"
         );
-        assert!(matches!(
-            result.unwrap_err().as_ref(),
-            TransactionError::Custom(_)
-        ));
+        match result.unwrap_err().as_ref() {
+            TransactionError::Custom(msg) => {
+                assert!(
+                    msg.contains("record_custom_request"),
+                    "error message should mention record_custom_request(), got: {}",
+                    msg
+                );
+            }
+            other => panic!("expected TransactionError::Custom, got: {:?}", other),
+        }
     }
 
     // Creates a GooseUser with a live flume channel attached, returning both the user
@@ -4250,6 +4257,16 @@ mod tests {
             .record_custom_request("TCP", "", 42, true, None, None)
             .await;
         assert!(result.is_err(), "empty name must return Err");
+    }
+
+    #[tokio::test]
+    async fn record_custom_request_whitespace_only_name_rejected() {
+        let (mut user, _rx) = setup_user_with_channel();
+
+        let result = user
+            .record_custom_request("TCP", "   ", 42, true, None, None)
+            .await;
+        assert!(result.is_err(), "whitespace-only name must return Err");
     }
 
     #[tokio::test]
