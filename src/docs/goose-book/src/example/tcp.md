@@ -46,11 +46,11 @@ Start a local TCP echo server:
 ncat -l 9000 -k -e /bin/cat
 ```
 
-Then run the load test, pointing `--host` at the server. The `http://` scheme prefix is required for Goose URL validation; the host and port are extracted from it and used for the TCP connection:
+Then run the load test, pointing `--host` at the server. Goose requires a URL with a scheme for validation — any scheme works (e.g. `tcp://`, `grpc://`, `ws://`). The host and port are extracted and used for the TCP connection:
 
 ```bash
 cargo run --example tcp_loadtest -- \
-  --host http://localhost:9000 \
+  --host tcp://localhost:9000 \
   --users 10 \
   --run-time 30s \
   --no-reset-metrics
