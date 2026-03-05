@@ -2992,16 +2992,19 @@ impl GooseAttack {
         key: &str,
         success: bool,
     ) {
-        let mut map = registry
-            .lock()
-            .expect("request_counter_registry mutex poisoned");
-        // Fast path: look up existing counter without allocating (only allocate on first use).
-        let counter = match map.get(key) {
-            Some(c) => c.clone(),
-            None => map
-                .entry(key.to_string())
-                .or_insert_with(|| Arc::new(GooseRequestCounters::new()))
-                .clone(),
+        // Clone the Arc under the lock, then release the lock before doing the
+        // atomic increment — no need to hold the mutex for a lock-free operation.
+        let counter = {
+            let mut map = registry
+                .lock()
+                .expect("request_counter_registry mutex poisoned");
+            match map.get(key) {
+                Some(c) => c.clone(),
+                None => map
+                    .entry(key.to_string())
+                    .or_insert_with(|| Arc::new(GooseRequestCounters::new()))
+                    .clone(),
+            }
         };
         if success {
             counter.success.fetch_add(1, AtomicOrdering::Relaxed);

@@ -40,6 +40,12 @@ async fn get_success_then_set_failure(user: &mut GooseUser) -> TransactionResult
     Ok(())
 }
 
+// Transaction that hits the error path without any override (records as failure).
+async fn get_error(user: &mut GooseUser) -> TransactionResult {
+    let _goose = user.get(ERROR_PATH).await?;
+    Ok(())
+}
+
 /// Verify that atomic counters produce correct success_count and fail_count
 /// values in the final metrics, matching the expected request outcomes.
 #[tokio::test]
@@ -416,10 +422,4 @@ async fn test_atomic_counters_isolation() {
         error.raw_data.counter,
         "error counter invariant"
     );
-}
-
-// Transaction that hits the error path without any override (records as failure).
-async fn get_error(user: &mut GooseUser) -> TransactionResult {
-    let _goose = user.get(ERROR_PATH).await?;
-    Ok(())
 }

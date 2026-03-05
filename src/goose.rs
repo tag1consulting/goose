@@ -2175,13 +2175,14 @@ impl GooseUser {
     ///
     /// Takes `&self` (no cache mutation) so it can be called from the non-mut
     /// `set_success()` / `set_failure()` methods. These update calls are rare,
-    /// so the extra mutex lookup is acceptable.
-    fn update_request_counter(&self, key: &str, success: bool) {
+    /// so the extra mutex lookup and key allocation are acceptable.
+    fn update_request_counter(&self, method: &GooseMethod, name: &str, success: bool) {
         if let Some(registry) = &self.request_counters {
+            let key = format!("{} {}", method, name);
             let map = registry
                 .lock()
                 .expect("request_counter_registry mutex poisoned");
-            if let Some(counter) = map.get(key) {
+            if let Some(counter) = map.get(&key) {
                 if success {
                     // Was failure, now success: increment success, saturating-decrement failure.
                     counter.success.fetch_add(1, AtomicOrdering::Relaxed);
@@ -2266,8 +2267,7 @@ impl GooseUser {
             self.send_request_metric_now(request.clone())?;
             // Atomically correct the shared counters (success +1, failure -1).
             // Done after the channel send so counts stay consistent if the send fails.
-            let counter_key = format!("{} {}", request.raw.method, request.name);
-            self.update_request_counter(&counter_key, true);
+            self.update_request_counter(&request.raw.method, &request.name, true);
         }
 
         Ok(())
@@ -2344,8 +2344,7 @@ impl GooseUser {
             self.send_request_metric_now(request.clone())?;
             // Atomically correct the shared counters (success -1, failure +1).
             // Done after the channel send so counts stay consistent if the send fails.
-            let counter_key = format!("{} {}", request.raw.method, request.name);
-            self.update_request_counter(&counter_key, false);
+            self.update_request_counter(&request.raw.method, &request.name, false);
         }
         // Write failure to log, converting `&mut request` to `&request` as needed by `log_debug()`.
         self.log_debug(tag, Some(&*request), headers, body)?;
