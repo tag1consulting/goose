@@ -93,8 +93,15 @@ pub enum GooseMetric {
 ///
 /// Incremented directly by [`GooseUser`](../goose/struct.GooseUser.html) threads using
 /// atomic operations, and read by the parent process when computing running metrics or
-/// building the final report. This eliminates channel traffic for the two most frequently
-/// updated fields (`success_count` and `fail_count`).
+/// building the final report. This moves counter bookkeeping off the parent's
+/// per-message processing path for the two most frequently updated fields
+/// (`success_count` and `fail_count`). The full `GooseRequestMetric` is still sent
+/// via channel for timing, status-code, and error aggregation.
+///
+/// The primary benefit is **timeliness**: counters are visible to the parent immediately
+/// (not delayed by channel buffering under heavy load), which improves running-metrics
+/// accuracy. It also establishes the atomic-sharing pattern for potential future
+/// optimizations that move additional data off the channel.
 ///
 /// `Ordering::Relaxed` is sufficient because these counters are only read at display/report
 /// time, not used for synchronization between threads.
