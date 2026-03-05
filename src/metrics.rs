@@ -54,7 +54,8 @@ use std::fmt::Write;
 use std::io::BufWriter;
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+use std::sync::{Arc, Mutex};
 use std::{f32, fmt};
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
@@ -87,6 +88,52 @@ pub enum GooseMetric {
         scenario: ScenarioMetric,
     },
 }
+
+/// Lock-free shared counters for request success/failure counts.
+///
+/// Incremented directly by [`GooseUser`](../goose/struct.GooseUser.html) threads using
+/// atomic operations, and read by the parent process when computing running metrics or
+/// building the final report. This eliminates channel traffic for the two most frequently
+/// updated fields (`success_count` and `fail_count`).
+///
+/// `Ordering::Relaxed` is sufficient because these counters are only read at display/report
+/// time, not used for synchronization between threads.
+#[derive(Debug)]
+pub struct GooseRequestCounters {
+    /// Number of successful requests.
+    pub success: AtomicU64,
+    /// Number of failed requests.
+    pub failure: AtomicU64,
+}
+
+impl GooseRequestCounters {
+    /// Create a new zeroed counter pair.
+    pub fn new() -> Self {
+        GooseRequestCounters {
+            success: AtomicU64::new(0),
+            failure: AtomicU64::new(0),
+        }
+    }
+
+    /// Reset both counters to zero.
+    pub fn reset(&self) {
+        self.success.store(0, AtomicOrdering::Relaxed);
+        self.failure.store(0, AtomicOrdering::Relaxed);
+    }
+}
+
+impl Default for GooseRequestCounters {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Type alias for the shared registry of atomic request counters.
+///
+/// Keyed the same way as [`GooseMetrics::requests`]: `"METHOD path"` (e.g., `"GET /api/users"`).
+/// User threads lazily insert entries on first use of each request key, then cache the `Arc`
+/// locally to avoid repeated mutex lookups.
+pub type GooseRequestCounterRegistry = Arc<Mutex<HashMap<String, Arc<GooseRequestCounters>>>>;
 
 /// THIS IS AN EXPERIMENTAL FEATURE, DISABLED BY DEFAULT. Optionally mitigate the loss of data
 /// (coordinated omission) due to stalls on the upstream server.
@@ -2934,6 +2981,8 @@ impl GooseAttack {
         if goose_attack_run_state.display_running_metrics {
             goose_attack_run_state.display_running_metrics = false;
             self.update_duration();
+            // Sync atomic counters into aggregate structs before displaying.
+            self.sync_atomic_counters(goose_attack_run_state);
             self.metrics.print_running();
         }
 
@@ -2959,6 +3008,7 @@ impl GooseAttack {
                 if !self.configuration.no_reset_metrics {
                     // Display the running metrics collected so far, before resetting them.
                     self.update_duration();
+                    self.sync_atomic_counters(goose_attack_run_state);
                     self.metrics.print_running();
                     // Reset running_metrics_timer.
                     goose_attack_run_state.running_metrics_timer = std::time::Instant::now();
@@ -2985,6 +3035,17 @@ impl GooseAttack {
                         &self.defaults,
                     )?;
 
+                    // Reset atomic request counters to match the cleared aggregates.
+                    {
+                        let registry = goose_attack_run_state
+                            .request_counter_registry
+                            .lock()
+                            .unwrap();
+                        for counters in registry.values() {
+                            counters.reset();
+                        }
+                    }
+
                     // Reset graph data while preserving user count to maintain continuity
                     self.graph_data
                         .reset_preserving_users(goose_attack_run_state.active_users);
@@ -3010,6 +3071,50 @@ impl GooseAttack {
         Ok(())
     }
 
+    /// Increment the atomic counters in the shared registry from the parent thread.
+    ///
+    /// Used for Coordinated Omission synthetic metrics which are generated on the parent
+    /// side and therefore not counted by user threads.
+    fn increment_registry_counter(
+        registry: &GooseRequestCounterRegistry,
+        key: &str,
+        success: bool,
+    ) {
+        let mut map = registry.lock().unwrap();
+        let counter = map
+            .entry(key.to_string())
+            .or_insert_with(|| Arc::new(GooseRequestCounters::new()));
+        if success {
+            counter.success.fetch_add(1, AtomicOrdering::Relaxed);
+        } else {
+            counter.failure.fetch_add(1, AtomicOrdering::Relaxed);
+        }
+    }
+
+    /// Copy the atomic counter values from the shared registry into the
+    /// `GooseRequestMetricAggregate` structs in `self.metrics.requests`.
+    ///
+    /// Called before displaying running metrics or generating final reports, so that
+    /// all existing display/report code can continue reading `success_count`/`fail_count`
+    /// from the aggregate structs without modification.
+    pub(crate) fn sync_atomic_counters(&mut self, goose_attack_run_state: &GooseAttackRunState) {
+        let registry = goose_attack_run_state
+            .request_counter_registry
+            .lock()
+            .unwrap();
+        for (key, counters) in registry.iter() {
+            if let Some(aggregate) = self.metrics.requests.get_mut(key) {
+                aggregate.success_count = counters.success.load(AtomicOrdering::Relaxed) as usize;
+                aggregate.fail_count = counters.failure.load(AtomicOrdering::Relaxed) as usize;
+            } else {
+                // The aggregate may not exist yet if no timing data has arrived,
+                // but counters have been incremented. This shouldn't normally happen
+                // since the channel message creates the aggregate, but handle it
+                // defensively.
+            }
+        }
+    }
+
     // Store `GooseRequestMetric` in a `GooseRequestMetricAggregate` within the
     // `GooseMetrics.requests` `HashMap`, merging if already existing, or creating new.
     // Also writes it to the request_file if enabled.
@@ -3026,15 +3131,11 @@ impl GooseAttack {
             ),
         };
 
-        // Handle a metrics update.
+        // Handle a metrics update: success/failure counters are managed atomically
+        // by user threads (via GooseRequestCounters), so only process timing data here.
         if request_metric.update {
-            if request_metric.success {
-                merge_request.success_count += 1;
-                merge_request.fail_count -= 1;
-            } else {
-                merge_request.success_count -= 1;
-                merge_request.fail_count += 1;
-            }
+            // Counter corrections (success <-> failure) are handled atomically by the
+            // user thread in set_success() / set_failure(). Nothing to do here.
         }
         // Store a new metric.
         else {
@@ -3052,11 +3153,9 @@ impl GooseAttack {
                     );
                 }
             }
-            if request_metric.success {
-                merge_request.success_count += 1;
-            } else {
-                merge_request.fail_count += 1;
-            }
+            // success_count/fail_count increments are handled atomically by user threads
+            // for regular requests. Coordinated omission synthetic requests are counted
+            // by the parent in receive_metrics().
         }
 
         self.metrics.requests.insert(key, merge_request);
@@ -3117,6 +3216,14 @@ impl GooseAttack {
                 if response_time > request_metric.response_time as i64 {
                     co_metric.response_time = response_time as u64;
                     self.record_request_metric(&co_metric).await;
+                    // Increment atomic counters for CO synthetic requests
+                    // (user threads only count actual requests).
+                    let co_key = format!("{} {}", co_metric.raw.method, co_metric.name);
+                    Self::increment_registry_counter(
+                        &goose_attack_run_state.request_counter_registry,
+                        &co_key,
+                        co_metric.success,
+                    );
                     response_time -= request_metric.user_cadence as i64;
                 } else {
                     break;

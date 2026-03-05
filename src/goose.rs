@@ -294,9 +294,11 @@ use downcast_rs::{impl_downcast, Downcast};
 use regex::Regex;
 use reqwest::{header, Client, ClientBuilder, Method, RequestBuilder, Response};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::collections::HashMap;
 use std::fmt::{self, Debug, Formatter};
 use std::hash::{Hash, Hasher};
 use std::str;
+use std::sync::atomic::Ordering as AtomicOrdering;
 use std::sync::Arc;
 use std::time::Duration;
 use std::{future::Future, pin::Pin, time::Instant};
@@ -304,8 +306,8 @@ use url::Url;
 
 use crate::logger::GooseLog;
 use crate::metrics::{
-    GooseCoordinatedOmissionMitigation, GooseMetric, GooseRawRequest, GooseRequestMetric,
-    TransactionDetail, TransactionMetric,
+    GooseCoordinatedOmissionMitigation, GooseMetric, GooseRawRequest, GooseRequestCounterRegistry,
+    GooseRequestCounters, GooseRequestMetric, TransactionDetail, TransactionMetric,
 };
 use crate::{GooseConfiguration, GooseError, WeightedTransactions};
 
@@ -949,6 +951,11 @@ pub struct GooseUser {
     /// Optional per-user session data of a generic type implementing the
     /// [`GooseUserData`] trait.
     session_data: Option<Box<dyn GooseUserData>>,
+    /// Shared registry of atomic request counters, keyed by `"METHOD path"`.
+    /// User threads lazily insert counters on first use and then increment atomically.
+    pub(crate) request_counters: Option<GooseRequestCounterRegistry>,
+    /// Local cache of `Arc<GooseRequestCounters>` handles to avoid repeated mutex lookups.
+    request_counter_cache: HashMap<String, Arc<GooseRequestCounters>>,
 }
 
 impl Clone for GooseUser {
@@ -975,6 +982,8 @@ impl Clone for GooseUser {
             pending_request: self.pending_request.clone(),
             pending_transaction: self.pending_transaction.clone(),
             session_data: self.session_data.clone(),
+            request_counters: self.request_counters.clone(),
+            request_counter_cache: HashMap::new(),
         }
     }
 }
@@ -1029,6 +1038,8 @@ impl GooseUser {
             pending_request: None,
             pending_transaction: None,
             session_data: None,
+            request_counters: None,
+            request_counter_cache: HashMap::new(),
         })
     }
 
@@ -1908,6 +1919,10 @@ impl GooseUser {
         // Send a copy of the raw request object to the parent process if
         // we're tracking metrics.
         if !self.config.no_metrics {
+            // Atomically increment the shared success/failure counter (avoids channel
+            // overhead for these hot-path fields).
+            let counter_key = format!("{} {}", request_metric.raw.method, request_metric.name);
+            self.increment_request_counter(&counter_key, request_metric.success);
             self.send_request_metric_to_parent(request_metric.clone())?;
         }
 
@@ -2123,6 +2138,51 @@ impl GooseUser {
         Ok(())
     }
 
+    /// Atomically increment the shared request counter for the given key.
+    ///
+    /// Uses the per-user cache to avoid repeated mutex lookups on the shared registry.
+    fn increment_request_counter(&mut self, key: &str, success: bool) {
+        if let Some(registry) = &self.request_counters {
+            let counter = self
+                .request_counter_cache
+                .entry(key.to_string())
+                .or_insert_with(|| {
+                    let mut map = registry.lock().unwrap();
+                    map.entry(key.to_string())
+                        .or_insert_with(|| Arc::new(GooseRequestCounters::new()))
+                        .clone()
+                });
+            if success {
+                counter.success.fetch_add(1, AtomicOrdering::Relaxed);
+            } else {
+                counter.failure.fetch_add(1, AtomicOrdering::Relaxed);
+            }
+        }
+    }
+
+    /// Atomically update the shared request counter for a retroactive correction
+    /// from `set_success()` or `set_failure()`.
+    ///
+    /// Takes `&self` (no cache mutation) so it can be called from the non-mut
+    /// `set_success()` / `set_failure()` methods. These update calls are rare,
+    /// so the extra mutex lookup is acceptable.
+    fn update_request_counter(&self, key: &str, success: bool) {
+        if let Some(registry) = &self.request_counters {
+            let map = registry.lock().unwrap();
+            if let Some(counter) = map.get(key) {
+                if success {
+                    // Was failure, now success: increment success, decrement failure.
+                    counter.success.fetch_add(1, AtomicOrdering::Relaxed);
+                    counter.failure.fetch_sub(1, AtomicOrdering::Relaxed);
+                } else {
+                    // Was success, now failure: decrement success, increment failure.
+                    counter.success.fetch_sub(1, AtomicOrdering::Relaxed);
+                    counter.failure.fetch_add(1, AtomicOrdering::Relaxed);
+                }
+            }
+        }
+    }
+
     /// If `request_name` is set, unwrap and use this. Otherwise, if the Transaction has a name
     /// set use it. Otherwise use the path.
     fn get_request_name<'a>(&'a self, request: &'a GooseRequest) -> &'a str {
@@ -2182,6 +2242,10 @@ impl GooseUser {
             // Flush any pending request metric to maintain ordering before the update.
             self.flush_pending_request()?;
             self.send_request_metric_now(request.clone())?;
+            // Atomically correct the shared counters (success +1, failure -1).
+            // Done after the channel send so counts stay consistent if the send fails.
+            let counter_key = format!("{} {}", request.raw.method, request.name);
+            self.update_request_counter(&counter_key, true);
         }
 
         Ok(())
@@ -2256,6 +2320,10 @@ impl GooseUser {
             // Flush any pending request metric to maintain ordering before the update.
             self.flush_pending_request()?;
             self.send_request_metric_now(request.clone())?;
+            // Atomically correct the shared counters (success -1, failure +1).
+            // Done after the channel send so counts stay consistent if the send fails.
+            let counter_key = format!("{} {}", request.raw.method, request.name);
+            self.update_request_counter(&counter_key, false);
         }
         // Write failure to log, converting `&mut request` to `&request` as needed by `log_debug()`.
         self.log_debug(tag, Some(&*request), headers, body)?;
