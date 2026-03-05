@@ -3040,7 +3040,7 @@ impl GooseAttack {
                         let registry = goose_attack_run_state
                             .request_counter_registry
                             .lock()
-                            .unwrap();
+                            .expect("request_counter_registry mutex poisoned");
                         for counters in registry.values() {
                             counters.reset();
                         }
@@ -3080,7 +3080,9 @@ impl GooseAttack {
         key: &str,
         success: bool,
     ) {
-        let mut map = registry.lock().unwrap();
+        let mut map = registry
+            .lock()
+            .expect("request_counter_registry mutex poisoned");
         let counter = map
             .entry(key.to_string())
             .or_insert_with(|| Arc::new(GooseRequestCounters::new()));
@@ -3101,17 +3103,18 @@ impl GooseAttack {
         let registry = goose_attack_run_state
             .request_counter_registry
             .lock()
-            .unwrap();
+            .expect("request_counter_registry mutex poisoned");
         for (key, counters) in registry.iter() {
             if let Some(aggregate) = self.metrics.requests.get_mut(key) {
                 aggregate.success_count = counters.success.load(AtomicOrdering::Relaxed) as usize;
                 aggregate.fail_count = counters.failure.load(AtomicOrdering::Relaxed) as usize;
-            } else {
-                // The aggregate may not exist yet if no timing data has arrived,
-                // but counters have been incremented. This shouldn't normally happen
-                // since the channel message creates the aggregate, but handle it
-                // defensively.
             }
+            // The aggregate may not exist yet if a user thread incremented an atomic
+            // counter but the corresponding channel message hasn't been processed by
+            // record_request_metric() yet. This is benign: atomic values are cumulative
+            // and will be picked up on the next sync once the aggregate is created.
+            // The final sync (in lib.rs) always runs after sync_metrics() flushes all
+            // channel messages, so the final report is always accurate.
         }
     }
 
@@ -3131,14 +3134,10 @@ impl GooseAttack {
             ),
         };
 
-        // Handle a metrics update: success/failure counters are managed atomically
-        // by user threads (via GooseRequestCounters), so only process timing data here.
-        if request_metric.update {
-            // Counter corrections (success <-> failure) are handled atomically by the
-            // user thread in set_success() / set_failure(). Nothing to do here.
-        }
-        // Store a new metric.
-        else {
+        // Counter corrections (success <-> failure) from set_success() / set_failure() are
+        // handled atomically by user threads. Update messages only need to reach the parent
+        // for error tracking — no timing or counter processing needed here.
+        if !request_metric.update {
             merge_request.record_time(
                 request_metric.response_time,
                 request_metric.coordinated_omission_elapsed > 0,

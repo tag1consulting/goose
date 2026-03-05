@@ -2147,7 +2147,9 @@ impl GooseUser {
                 .request_counter_cache
                 .entry(key.to_string())
                 .or_insert_with(|| {
-                    let mut map = registry.lock().unwrap();
+                    let mut map = registry
+                        .lock()
+                        .expect("request_counter_registry mutex poisoned");
                     map.entry(key.to_string())
                         .or_insert_with(|| Arc::new(GooseRequestCounters::new()))
                         .clone()
@@ -2168,15 +2170,27 @@ impl GooseUser {
     /// so the extra mutex lookup is acceptable.
     fn update_request_counter(&self, key: &str, success: bool) {
         if let Some(registry) = &self.request_counters {
-            let map = registry.lock().unwrap();
+            let map = registry
+                .lock()
+                .expect("request_counter_registry mutex poisoned");
             if let Some(counter) = map.get(key) {
                 if success {
-                    // Was failure, now success: increment success, decrement failure.
+                    // Was failure, now success: increment success, saturating-decrement failure.
                     counter.success.fetch_add(1, AtomicOrdering::Relaxed);
-                    counter.failure.fetch_sub(1, AtomicOrdering::Relaxed);
+                    counter
+                        .failure
+                        .fetch_update(AtomicOrdering::Relaxed, AtomicOrdering::Relaxed, |v| {
+                            Some(v.saturating_sub(1))
+                        })
+                        .ok();
                 } else {
-                    // Was success, now failure: decrement success, increment failure.
-                    counter.success.fetch_sub(1, AtomicOrdering::Relaxed);
+                    // Was success, now failure: saturating-decrement success, increment failure.
+                    counter
+                        .success
+                        .fetch_update(AtomicOrdering::Relaxed, AtomicOrdering::Relaxed, |v| {
+                            Some(v.saturating_sub(1))
+                        })
+                        .ok();
                     counter.failure.fetch_add(1, AtomicOrdering::Relaxed);
                 }
             }
