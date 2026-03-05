@@ -295,7 +295,7 @@ use regex::Regex;
 use reqwest::{header, Client, ClientBuilder, Method, RequestBuilder, Response};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
-use std::fmt::{self, Debug, Formatter};
+use std::fmt::{self, Debug, Formatter, Write as _};
 use std::hash::{Hash, Hasher};
 use std::str;
 use std::sync::atomic::Ordering as AtomicOrdering;
@@ -956,6 +956,8 @@ pub struct GooseUser {
     pub(crate) request_counters: Option<GooseRequestCounterRegistry>,
     /// Local cache of `Arc<GooseRequestCounters>` handles to avoid repeated mutex lookups.
     request_counter_cache: HashMap<String, Arc<GooseRequestCounters>>,
+    /// Reusable buffer for formatting counter keys, avoiding per-request heap allocation.
+    counter_key_buf: String,
 }
 
 impl Clone for GooseUser {
@@ -984,6 +986,7 @@ impl Clone for GooseUser {
             session_data: self.session_data.clone(),
             request_counters: self.request_counters.clone(),
             request_counter_cache: HashMap::new(),
+            counter_key_buf: String::new(),
         }
     }
 }
@@ -1040,6 +1043,7 @@ impl GooseUser {
             session_data: None,
             request_counters: None,
             request_counter_cache: HashMap::new(),
+            counter_key_buf: String::new(),
         })
     }
 
@@ -1919,11 +1923,15 @@ impl GooseUser {
         // Send a copy of the raw request object to the parent process if
         // we're tracking metrics.
         if !self.config.no_metrics {
+            self.send_request_metric_to_parent(request_metric.clone())?;
             // Atomically increment the shared success/failure counter so the parent
             // can read up-to-date counts without waiting for channel processing.
-            let counter_key = format!("{} {}", request_metric.raw.method, request_metric.name);
-            self.increment_request_counter(&counter_key, request_metric.success);
-            self.send_request_metric_to_parent(request_metric.clone())?;
+            // Done after the channel send so counts stay consistent if the send fails.
+            self.increment_request_counter(
+                &request_metric.raw.method,
+                &request_metric.name,
+                request_metric.success,
+            );
         }
 
         if request.error_on_fail && !request_metric.success {
@@ -2138,23 +2146,33 @@ impl GooseUser {
         Ok(())
     }
 
-    /// Atomically increment the shared request counter for the given key.
+    /// Atomically increment the shared request counter for the given method/name.
     ///
     /// Uses the per-user cache to avoid repeated mutex lookups on the shared registry.
-    fn increment_request_counter(&mut self, key: &str, success: bool) {
+    /// Formats the key into a reusable buffer to avoid per-request heap allocation.
+    fn increment_request_counter(&mut self, method: &GooseMethod, name: &str, success: bool) {
         if let Some(registry) = &self.request_counters {
+            self.counter_key_buf.clear();
+            let _ = write!(self.counter_key_buf, "{} {}", method, name);
             // Fast path: check the local cache with a borrowed key (no allocation).
-            if !self.request_counter_cache.contains_key(key) {
+            if !self
+                .request_counter_cache
+                .contains_key(self.counter_key_buf.as_str())
+            {
                 let mut map = registry
                     .lock()
                     .expect("request_counter_registry mutex poisoned");
                 let arc = map
-                    .entry(key.to_string())
+                    .entry(self.counter_key_buf.clone())
                     .or_insert_with(|| Arc::new(GooseRequestCounters::new()))
                     .clone();
-                self.request_counter_cache.insert(key.to_string(), arc);
+                self.request_counter_cache
+                    .insert(self.counter_key_buf.clone(), arc);
             }
-            let counter = self.request_counter_cache.get(key).unwrap();
+            let counter = self
+                .request_counter_cache
+                .get(self.counter_key_buf.as_str())
+                .unwrap();
             if success {
                 counter.success.fetch_add(1, AtomicOrdering::Relaxed);
             } else {
