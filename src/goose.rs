@@ -1919,8 +1919,8 @@ impl GooseUser {
         // Send a copy of the raw request object to the parent process if
         // we're tracking metrics.
         if !self.config.no_metrics {
-            // Atomically increment the shared success/failure counter (avoids channel
-            // overhead for these hot-path fields).
+            // Atomically increment the shared success/failure counter so the parent
+            // can read up-to-date counts without waiting for channel processing.
             let counter_key = format!("{} {}", request_metric.raw.method, request_metric.name);
             self.increment_request_counter(&counter_key, request_metric.success);
             self.send_request_metric_to_parent(request_metric.clone())?;
@@ -2143,17 +2143,18 @@ impl GooseUser {
     /// Uses the per-user cache to avoid repeated mutex lookups on the shared registry.
     fn increment_request_counter(&mut self, key: &str, success: bool) {
         if let Some(registry) = &self.request_counters {
-            let counter = self
-                .request_counter_cache
-                .entry(key.to_string())
-                .or_insert_with(|| {
-                    let mut map = registry
-                        .lock()
-                        .expect("request_counter_registry mutex poisoned");
-                    map.entry(key.to_string())
-                        .or_insert_with(|| Arc::new(GooseRequestCounters::new()))
-                        .clone()
-                });
+            // Fast path: check the local cache with a borrowed key (no allocation).
+            if !self.request_counter_cache.contains_key(key) {
+                let mut map = registry
+                    .lock()
+                    .expect("request_counter_registry mutex poisoned");
+                let arc = map
+                    .entry(key.to_string())
+                    .or_insert_with(|| Arc::new(GooseRequestCounters::new()))
+                    .clone();
+                self.request_counter_cache.insert(key.to_string(), arc);
+            }
+            let counter = self.request_counter_cache.get(key).unwrap();
             if success {
                 counter.success.fetch_add(1, AtomicOrdering::Relaxed);
             } else {
