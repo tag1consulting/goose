@@ -56,9 +56,9 @@ pub mod util;
 use gumdrop::Options;
 use lazy_static::lazy_static;
 use rand::prelude::*;
-use std::collections::{hash_map::DefaultHasher, BTreeMap, HashSet};
+use std::collections::{hash_map::DefaultHasher, BTreeMap, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
-use std::sync::{atomic::AtomicUsize, Arc, RwLock};
+use std::sync::{atomic::AtomicUsize, Arc, Mutex, RwLock};
 use std::time::{self, Duration};
 use std::{fmt, io};
 
@@ -67,7 +67,7 @@ use crate::controller::{ControllerProtocol, ControllerRequest};
 use crate::goose::{GooseUser, GooseUserCommand, Scenario, Transaction, TransactionName};
 use crate::graph::GraphData;
 use crate::logger::{GooseLoggerJoinHandle, GooseLoggerTx};
-use crate::metrics::{GooseMetric, GooseMetrics};
+use crate::metrics::{GooseMetric, GooseMetrics, GooseRequestCounterRegistry};
 use crate::test_plan::{TestPlan, TestPlanHistory, TestPlanStepAction};
 
 /// Constant defining Goose's default telnet Controller port.
@@ -392,6 +392,9 @@ struct GooseAttackRunState {
     shutdown_after_stop: bool,
     /// Whether or not the load test is currently canceling.
     canceling: bool,
+    /// Shared registry of atomic request counters, keyed by `"METHOD path"`.
+    /// User threads increment these directly; the parent reads them at report time.
+    request_counter_registry: GooseRequestCounterRegistry,
 }
 
 /// Global internal state for the load test.
@@ -1449,6 +1452,7 @@ impl GooseAttack {
             all_users_spawned: false,
             shutdown_after_stop: !self.configuration.no_autostart,
             canceling: false,
+            request_counter_registry: Arc::new(Mutex::new(HashMap::new())),
         };
 
         // Catch ctrl-c to allow clean shutdown to display metrics.
@@ -1576,6 +1580,10 @@ impl GooseAttack {
                 thread_user.metrics_channel =
                     Some(goose_attack_run_state.all_threads_metrics_tx.clone());
 
+                // Share the atomic request counter registry with this user thread.
+                thread_user.request_counters =
+                    Some(goose_attack_run_state.request_counter_registry.clone());
+
                 // Copy the GooseUser-shutdown sender channel, used by all threads.
                 thread_user.shutdown_channel =
                     Some(goose_attack_run_state.all_threads_shutdown_tx.clone());
@@ -1607,6 +1615,8 @@ impl GooseAttack {
                         running_metrics,
                     ) {
                         goose_attack_run_state.running_metrics_timer = time::Instant::now();
+                        // Sync atomic counters into aggregate structs before displaying.
+                        self.sync_atomic_counters(goose_attack_run_state);
                         self.metrics.print_running();
                     }
                 }
@@ -1710,6 +1720,8 @@ impl GooseAttack {
             self.stop_attack().await?;
             // Collect all metrics sent by GooseUser threads.
             self.sync_metrics(goose_attack_run_state, true).await?;
+            // Final sync of atomic counters into aggregate structs for reporting.
+            self.sync_atomic_counters(goose_attack_run_state);
             // Record last users for users per second graph in HTML report.
             if let Some(started) = self.started {
                 self.graph_data.record_users_per_second(

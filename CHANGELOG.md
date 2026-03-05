@@ -3,6 +3,7 @@
 ## 0.19.0-dev
  - [#674](https://github.com/tag1consulting/goose/issues/674) collapse per-request channel sends: add `GooseMetric::All` variant that bundles request, transaction, and scenario metrics into a single channel message; reduces channel message volume by up to 3× in the common one-request-per-transaction-per-scenario case
     o `GooseUser::set_success()` and `GooseUser::set_failure()` now take `&mut self` instead of `&self`; this is source-compatible since transaction functions always receive `&mut GooseUser`
+ - [#680](https://github.com/tag1consulting/goose/pull/680) use atomic counters for hot-path success/failure request counts ([#677](https://github.com/tag1consulting/goose/issues/677))
  - **API change**: `Transaction::set_name()` now only affects transaction names, not request names (more intuitive default behavior)
     o existing `set_name()` calls will only name the transaction for metrics organization
     o request names remain descriptive (path-based or explicitly set)
