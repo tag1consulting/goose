@@ -2995,9 +2995,14 @@ impl GooseAttack {
         let mut map = registry
             .lock()
             .expect("request_counter_registry mutex poisoned");
-        let counter = map
-            .entry(key.to_string())
-            .or_insert_with(|| Arc::new(GooseRequestCounters::new()));
+        // Fast path: look up existing counter without allocating (only allocate on first use).
+        let counter = match map.get(key) {
+            Some(c) => c.clone(),
+            None => map
+                .entry(key.to_string())
+                .or_insert_with(|| Arc::new(GooseRequestCounters::new()))
+                .clone(),
+        };
         if success {
             counter.success.fetch_add(1, AtomicOrdering::Relaxed);
         } else {
