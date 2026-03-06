@@ -227,19 +227,18 @@ async fn record_scenario(
                 thread_user.pending_request.take(),
                 thread_user.pending_transaction.take(),
             ) {
-                // Increment atomic counter at actual send time (not at buffer time)
-                // so that metrics reset can't zero counters before the parent processes
-                // the message.
-                thread_user.increment_request_counter(
-                    &request.raw.method,
-                    &request.name,
-                    request.success,
-                );
+                // Save fields needed for atomic counter before moving request.
+                let method = request.raw.method;
+                let name = request.name.clone();
+                let success = request.success;
                 let _ = metrics_channel.send(GooseMetric::All {
                     request: Box::new(request),
                     transaction,
                     scenario: raw_scenario.clone(),
                 });
+                // Increment at actual send time so metrics reset can't zero the counter
+                // before the parent processes this request.
+                thread_user.increment_request_counter(&method, &name, success);
             } else {
                 // Fall back to individual sends when the pending metrics don't align.
                 let _ = thread_user.flush_pending_metrics();
