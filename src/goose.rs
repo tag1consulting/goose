@@ -1924,14 +1924,10 @@ impl GooseUser {
         // we're tracking metrics.
         if !self.config.no_metrics {
             self.send_request_metric_to_parent(request_metric.clone())?;
-            // Atomically increment the shared success/failure counter so the parent
-            // can read up-to-date counts without waiting for channel processing.
-            // Done after the channel send so counts stay consistent if the send fails.
-            self.increment_request_counter(
-                &request_metric.raw.method,
-                &request_metric.name,
-                request_metric.success,
-            );
+            // Atomic counter increment happens at actual send time (in
+            // flush_pending_request or record_scenario's GooseMetric::All path),
+            // not here at buffer time, so that metrics reset can't zero the counter
+            // before the parent processes the buffered request.
         }
 
         if request.error_on_fail && !request_metric.success {
@@ -2099,7 +2095,14 @@ impl GooseUser {
     /// Send any pending request metric immediately on the metrics channel.
     pub(crate) fn flush_pending_request(&mut self) -> TransactionResult {
         if let Some(request) = self.pending_request.take() {
+            // Save fields needed for atomic counter before moving request.
+            let method = request.raw.method;
+            let name = request.name.clone();
+            let success = request.success;
             self.send_request_metric_now(request)?;
+            // Increment at actual send time so metrics reset can't zero the counter
+            // before the parent processes this request.
+            self.increment_request_counter(&method, &name, success);
         }
         Ok(())
     }
@@ -2150,7 +2153,7 @@ impl GooseUser {
     ///
     /// Uses the per-user cache to avoid repeated mutex lookups on the shared registry.
     /// Formats the key into a reusable buffer to avoid per-request heap allocation.
-    fn increment_request_counter(&mut self, method: &GooseMethod, name: &str, success: bool) {
+    pub(crate) fn increment_request_counter(&mut self, method: &GooseMethod, name: &str, success: bool) {
         if let Some(registry) = &self.request_counters {
             self.counter_key_buf.clear();
             let _ = write!(self.counter_key_buf, "{} {}", method, name);
