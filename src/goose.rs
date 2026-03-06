@@ -2142,7 +2142,12 @@ impl GooseUser {
     ///
     /// Uses the per-user cache to avoid repeated mutex lookups on the shared registry.
     /// Formats the key into a reusable buffer to avoid per-request heap allocation.
-    pub(crate) fn increment_request_counter(&mut self, method: &GooseMethod, name: &str, success: bool) {
+    pub(crate) fn increment_request_counter(
+        &mut self,
+        method: &GooseMethod,
+        name: &str,
+        success: bool,
+    ) {
         if let Some(registry) = &self.request_counters {
             self.counter_key_buf.clear();
             let _ = write!(self.counter_key_buf, "{} {}", method, name);
