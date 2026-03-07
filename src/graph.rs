@@ -176,6 +176,32 @@ impl GraphData {
             .initialize_or_increment(key, second, count);
     }
 
+    /// Record pre-aggregated average response time for batch merging.
+    ///
+    /// Performs a proper weighted merge of the batch's total response time and
+    /// count into the per-second moving average, avoiding the precision loss
+    /// that would result from truncating the average to an integer.
+    pub(crate) fn record_average_response_time_per_second_batch(
+        &mut self,
+        key: &str,
+        second: usize,
+        total_time: f64,
+        count: u32,
+    ) {
+        if !self.average_response_time_per_second.contains_key(key) {
+            self.average_response_time_per_second
+                .insert(key.to_string(), TimeSeries::new());
+        }
+        let data = self.average_response_time_per_second.get_mut(key).unwrap();
+        data.expand(second, MovingAverage::new());
+        let batch_avg = MovingAverage {
+            count,
+            average: total_time as f32 / count as f32,
+        };
+        data.data[second].merge(&batch_avg);
+        data.total.merge(&batch_avg);
+    }
+
     /// Record multiple transactions per second for batch merging.
     pub(crate) fn record_transactions_per_second_batch(&mut self, second: usize, count: usize) {
         self.transactions_per_second.increase_value(second, count);
@@ -1418,6 +1444,54 @@ mod test {
                 .total(),
             4.8125005
         );
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)]
+    fn test_record_average_response_time_per_second_batch() {
+        let mut graph = GraphData::new();
+
+        // Batch merge: 3 requests with total_time 60.0 → avg 20.0
+        graph.record_average_response_time_per_second_batch("GET /", 0, 60.0, 3);
+        let avg = graph
+            .average_response_time_per_second
+            .get("GET /")
+            .unwrap()
+            .get(0);
+        assert_eq!(avg.average, 20.0);
+        assert_eq!(avg.count, 3);
+
+        // Add a single individual request with response time 40.
+        graph.record_average_response_time_per_second("GET /".to_string(), 0, 40);
+        let avg = graph
+            .average_response_time_per_second
+            .get("GET /")
+            .unwrap()
+            .get(0);
+        // Weighted merge: (3 * 20 + 1 * 40) / 4 = 25.0
+        assert_eq!(avg.average, 25.0);
+        assert_eq!(avg.count, 4);
+
+        // Another batch at a different second.
+        graph.record_average_response_time_per_second_batch("GET /", 5, 100.0, 2);
+        let avg = graph
+            .average_response_time_per_second
+            .get("GET /")
+            .unwrap()
+            .get(5);
+        assert_eq!(avg.average, 50.0);
+        assert_eq!(avg.count, 2);
+
+        // Merge a second batch into the same second.
+        graph.record_average_response_time_per_second_batch("GET /", 5, 200.0, 2);
+        let avg = graph
+            .average_response_time_per_second
+            .get("GET /")
+            .unwrap()
+            .get(5);
+        // Weighted: (2 * 50 + 2 * 100) / 4 = 75.0
+        assert_eq!(avg.average, 75.0);
+        assert_eq!(avg.count, 4);
     }
 
     #[test]

@@ -306,8 +306,8 @@ use url::Url;
 
 use crate::logger::GooseLog;
 use crate::metrics::{
-    ErrorBatchEntry, GooseCoordinatedOmissionMitigation, GooseMetric, GooseMetricBatch,
-    GooseRawRequest, GooseRequestCounterRegistry, GooseRequestCounters, GooseRequestMetric,
+    GooseCoordinatedOmissionMitigation, GooseMetric, GooseMetricBatch, GooseRawRequest,
+    GooseRequestCounterRegistry, GooseRequestCounters, GooseRequestMetric,
     GooseRequestMetricTimingData, MetricsEpoch, RequestBatchEntry, ScenarioBatchEntry,
     ScenarioMetric, StatusCodeTimingSummary, TransactionBatchEntry, TransactionDetail,
     TransactionMetric, METRICS_BATCH_MAX_AGE, METRICS_BATCH_SIZE,
@@ -2285,7 +2285,23 @@ impl GooseUser {
     /// Pre-aggregates timing data, status codes, and status-code timings into
     /// compact batch entries. Failed and CO-affected requests are handled by
     /// [`accumulate_individual_request`] instead.
+    ///
+    /// # Invariants
+    ///
+    /// This method is only called for requests with an empty error and no CO
+    /// elapsed time (`flush_pending_request` routes all other requests to
+    /// `accumulate_individual_request`). Consequently, `request_metric.success`
+    /// is always `true` and `request_metric.error` is always empty here.
     fn accumulate_request(&mut self, request_metric: &GooseRequestMetric) {
+        debug_assert!(
+            request_metric.success,
+            "accumulate_request called with unsuccessful request"
+        );
+        debug_assert!(
+            request_metric.error.is_empty(),
+            "accumulate_request called with non-empty error"
+        );
+
         let batch = match self.metrics_batch.as_mut() {
             Some(b) => b,
             None => return,
@@ -2345,37 +2361,9 @@ impl GooseUser {
             let key = self.counter_key_buf.clone();
             *batch.graph_rps.entry((key.clone(), second)).or_insert(0) += 1;
 
-            let avg_entry = batch
-                .graph_avg_rt
-                .entry((key.clone(), second))
-                .or_insert((0.0, 0));
+            let avg_entry = batch.graph_avg_rt.entry((key, second)).or_insert((0.0, 0));
             avg_entry.0 += request_metric.response_time as f64;
             avg_entry.1 += 1;
-
-            if !request_metric.success {
-                *batch.graph_eps.entry((key, second)).or_insert(0) += 1;
-            }
-        }
-
-        // Track pre-aggregated error counts (the individual error logging goes
-        // through individual_requests for failed requests, but successful requests
-        // with errors still need error counting).
-        if !request_metric.error.is_empty() {
-            let error_key = format!(
-                "{}.{}.{}",
-                request_metric.error, method_label, request_metric.name
-            );
-            let error_entry = batch
-                .errors
-                .entry(error_key)
-                .or_insert_with(|| ErrorBatchEntry {
-                    method: request_metric.raw.method,
-                    name: request_metric.name.to_string(),
-                    error: request_metric.error.clone(),
-                    custom_method: request_metric.raw.custom_method.clone(),
-                    occurrences: 0,
-                });
-            error_entry.occurrences += 1;
         }
 
         self.batch_request_count += 1;
