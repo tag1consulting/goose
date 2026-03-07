@@ -20,7 +20,8 @@ pub(crate) use nullable::NullableFloat;
 
 use crate::config::GooseDefaults;
 use crate::goose::{get_base_url, GooseMethod, Scenario, TransactionName};
-use crate::logger::GooseLog;
+use crate::graph::GraphData;
+use crate::logger::{GooseLog, GooseLoggerTx};
 use crate::metrics::common::ReportOptions;
 use crate::report;
 use crate::test_plan::{TestPlanHistory, TestPlanStepAction};
@@ -141,6 +142,75 @@ impl Default for GooseRequestCounters {
 /// User threads lazily insert entries on first use of each request key, then cache the `Arc`
 /// locally to avoid repeated mutex lookups.
 pub type GooseRequestCounterRegistry = Arc<Mutex<HashMap<String, Arc<GooseRequestCounters>>>>;
+
+/// Commands sent from the main control loop to the dedicated metrics processor task.
+pub(crate) enum MetricsCommand {
+    /// Display running metrics (fire-and-forget).
+    ///
+    /// The processor drains pending metrics, syncs atomic counters, and prints.
+    DisplayRunning {
+        duration: usize,
+        total_users: usize,
+        maximum_users: usize,
+    },
+    /// Record the current user count for the users-per-second graph.
+    RecordUsers {
+        active_users: usize,
+        elapsed_secs: usize,
+    },
+    /// Flush all pending metrics, print running metrics, then reset all state.
+    ///
+    /// Sends an ack when complete so the main loop can safely continue.
+    Reset {
+        duration: usize,
+        total_users: usize,
+        maximum_users: usize,
+        active_users: usize,
+        ack: tokio::sync::oneshot::Sender<()>,
+    },
+    /// Return a snapshot of the current metrics for the controller.
+    GetMetrics {
+        duration: usize,
+        total_users: usize,
+        maximum_users: usize,
+        history: Vec<TestPlanHistory>,
+        respond: tokio::sync::oneshot::Sender<GooseMetrics>,
+    },
+    /// Flush all pending metrics and return the final state for reporting.
+    Shutdown {
+        duration: usize,
+        total_users: usize,
+        maximum_users: usize,
+        respond: tokio::sync::oneshot::Sender<(GooseMetrics, GraphData)>,
+    },
+}
+
+/// A dedicated task that processes metrics from user threads independently of
+/// the main control loop.
+///
+/// This decouples metric volume from control-loop responsiveness: the main loop
+/// stays fast regardless of RPS, while the processor gets a full Tokio worker
+/// thread for metric aggregation.
+pub(crate) struct MetricsProcessor {
+    /// Channel receiver for raw metrics from user threads.
+    metrics_rx: flume::Receiver<GooseMetric>,
+    /// Channel receiver for commands from the main loop.
+    cmd_rx: flume::Receiver<MetricsCommand>,
+    /// Aggregated metrics state.
+    metrics: GooseMetrics,
+    /// Graph data for HTML reports.
+    graph_data: GraphData,
+    /// Read-only configuration.
+    configuration: GooseConfiguration,
+    /// Scenario definitions, needed for re-initialization on reset.
+    scenarios: Vec<Scenario>,
+    /// Defaults, needed for re-initialization on reset.
+    defaults: GooseDefaults,
+    /// Shared atomic request counter registry.
+    request_counter_registry: GooseRequestCounterRegistry,
+    /// Logger channel for error logging.
+    logger_tx: GooseLoggerTx,
+}
 
 /// THIS IS AN EXPERIMENTAL FEATURE, DISABLED BY DEFAULT. Optionally mitigate the loss of data
 /// (coordinated omission) due to stalls on the upstream server.
@@ -2959,136 +3029,223 @@ impl GooseErrorMetricAggregate {
     }
 }
 
-impl GooseAttack {
-    // If metrics are enabled, synchronize metrics from child threads to the parent. If
-    // flush is true all metrics will be received regardless of how long it takes. If
-    // flush is false, metrics will only be received for up to 400 ms before exiting to
-    // continue on the next call to this function.
-    pub(crate) async fn sync_metrics(
-        &mut self,
-        goose_attack_run_state: &mut GooseAttackRunState,
-        flush: bool,
-    ) -> Result<(), GooseError> {
-        if !self.configuration.no_metrics {
-            // Update timers if displaying running metrics.
-            if let Some(running_metrics) = self.configuration.running_metrics {
-                if util::timer_expired(
-                    goose_attack_run_state.running_metrics_timer,
-                    running_metrics,
-                ) {
-                    goose_attack_run_state.running_metrics_timer = std::time::Instant::now();
-                    goose_attack_run_state.display_running_metrics = true;
-                }
-            };
-            // Load messages from user threads until the receiver queue is empty.
-            self.receive_metrics(goose_attack_run_state, flush).await?;
+impl MetricsProcessor {
+    /// Create a new MetricsProcessor.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        metrics_rx: flume::Receiver<GooseMetric>,
+        cmd_rx: flume::Receiver<MetricsCommand>,
+        metrics: GooseMetrics,
+        graph_data: GraphData,
+        configuration: GooseConfiguration,
+        scenarios: Vec<Scenario>,
+        defaults: GooseDefaults,
+        request_counter_registry: GooseRequestCounterRegistry,
+        logger_tx: GooseLoggerTx,
+    ) -> Self {
+        MetricsProcessor {
+            metrics_rx,
+            cmd_rx,
+            metrics,
+            graph_data,
+            configuration,
+            scenarios,
+            defaults,
+            request_counter_registry,
+            logger_tx,
         }
-
-        // If enabled, display running metrics after sync
-        if goose_attack_run_state.display_running_metrics {
-            goose_attack_run_state.display_running_metrics = false;
-            self.update_duration();
-            // Sync atomic counters into aggregate structs before displaying.
-            self.sync_atomic_counters(goose_attack_run_state);
-            self.metrics.print_running();
-        }
-
-        Ok(())
     }
 
-    // When the [`GooseAttack`](./struct.GooseAttack.html) goes from the `Increasing`
-    // phase to the `Maintaining` phase, optionally flush metrics.
-    pub(crate) async fn reset_metrics(
-        &mut self,
-        goose_attack_run_state: &mut GooseAttackRunState,
-    ) -> Result<(), GooseError> {
-        // Flush metrics collected prior to all user threads running
-        if !goose_attack_run_state.all_users_spawned {
-            // Receive metrics before resetting them.
-            self.sync_metrics(goose_attack_run_state, true).await?;
+    /// Main task loop. Processes metrics from user threads and handles commands
+    /// from the main loop using `tokio::select!`.
+    pub(crate) async fn run(mut self) {
+        let mut metrics_open = true;
 
-            goose_attack_run_state.all_users_spawned = true;
-            // Only reset metrics on startup if not using `--test-plan` or `--iterations`.
-            if self.configuration.test_plan.is_none() && self.configuration.iterations == 0 {
-                let users = self.configuration.users.unwrap();
-                // Only reset metrics on startup if not using `--no-reset-metrics`.
-                if !self.configuration.no_reset_metrics {
-                    // Display the running metrics collected so far, before resetting them.
-                    self.update_duration();
-                    self.sync_atomic_counters(goose_attack_run_state);
-                    self.metrics.print_running();
-                    // Reset running_metrics_timer.
-                    goose_attack_run_state.running_metrics_timer = std::time::Instant::now();
-
-                    if self.metrics.display_metrics {
-                        // Users is required here so unwrap() is safe.
-                        if goose_attack_run_state.active_users < users {
-                            println!(
-                                "{} of {} users hatched, timer expired, resetting metrics (disable with --no-reset-metrics).\n", goose_attack_run_state.active_users, users
-                            );
-                        } else {
-                            println!(
-                                "All {users} users hatched, resetting metrics (disable with --no-reset-metrics).\n"
-                            );
+        loop {
+            if !metrics_open {
+                // Metrics channel closed; only wait for commands (e.g. Shutdown).
+                match self.cmd_rx.recv_async().await {
+                    Ok(cmd) => {
+                        if self.handle_command(cmd) {
+                            return;
                         }
                     }
-
-                    self.metrics.requests = HashMap::new();
-                    self.metrics
-                        .initialize_scenario_metrics(&self.scenarios, &self.configuration);
-                    self.metrics.initialize_transaction_metrics(
-                        &self.scenarios,
-                        &self.configuration,
-                        &self.defaults,
-                    )?;
-
-                    // Reset atomic request counters to match the cleared aggregates.
-                    {
-                        let registry = goose_attack_run_state
-                            .request_counter_registry
-                            .lock()
-                            .expect("request_counter_registry mutex poisoned");
-                        for counters in registry.values() {
-                            counters.reset();
-                        }
-                    }
-
-                    // Reset graph data while preserving user count to maintain continuity
-                    self.graph_data
-                        .reset_preserving_users(goose_attack_run_state.active_users);
-
-                    // Restart the timer now that all threads are launched.
-                    self.started = Some(std::time::Instant::now());
-                } else if goose_attack_run_state.active_users < users {
-                    println!(
-                        "{} of {} users hatched, timer expired.\n",
-                        goose_attack_run_state.active_users, users
-                    );
-                } else {
-                    println!(
-                        "All {} users hatched.\n",
-                        goose_attack_run_state.active_users
-                    );
+                    Err(_) => return,
                 }
-            } else {
-                println!("{} users hatched.", goose_attack_run_state.active_users);
+                continue;
+            }
+
+            tokio::select! {
+                msg = self.metrics_rx.recv_async() => {
+                    match msg {
+                        Ok(metric) => {
+                            self.process_metric(metric);
+                            // Batch-drain all pending metrics for throughput.
+                            while let Ok(m) = self.metrics_rx.try_recv() {
+                                self.process_metric(m);
+                            }
+                        }
+                        Err(_) => {
+                            metrics_open = false;
+                        }
+                    }
+                }
+                cmd = self.cmd_rx.recv_async() => {
+                    match cmd {
+                        Ok(cmd) => {
+                            if self.handle_command(cmd) {
+                                return;
+                            }
+                        }
+                        Err(_) => return,
+                    }
+                }
             }
         }
-
-        Ok(())
     }
 
-    /// Increment the atomic counters in the shared registry from the parent thread.
+    /// Dispatch a single GooseMetric to the appropriate processing method.
+    fn process_metric(&mut self, metric: GooseMetric) {
+        match metric {
+            GooseMetric::Request(request_metric) => {
+                self.process_request_metric(&request_metric);
+            }
+            GooseMetric::Transaction(raw_transaction) => {
+                self.process_transaction_metric(&raw_transaction);
+            }
+            GooseMetric::Scenario(raw_scenario) => {
+                self.process_scenario_metric(&raw_scenario);
+            }
+            GooseMetric::All {
+                request,
+                transaction,
+                scenario,
+            } => {
+                self.process_request_metric(&request);
+                self.process_transaction_metric(&transaction);
+                self.process_scenario_metric(&scenario);
+            }
+        }
+    }
+
+    /// Drain all pending metrics from the channel without blocking.
+    fn drain_pending(&mut self) {
+        while let Ok(metric) = self.metrics_rx.try_recv() {
+            self.process_metric(metric);
+        }
+    }
+
+    /// Handle a command from the main loop. Returns `true` if shutdown was processed.
+    fn handle_command(&mut self, cmd: MetricsCommand) -> bool {
+        match cmd {
+            MetricsCommand::DisplayRunning {
+                duration,
+                total_users,
+                maximum_users,
+            } => {
+                self.drain_pending();
+                self.sync_atomic_counters();
+                self.metrics.duration = duration;
+                self.metrics.total_users = total_users;
+                self.metrics.maximum_users = maximum_users;
+                self.metrics.print_running();
+                false
+            }
+            MetricsCommand::RecordUsers {
+                active_users,
+                elapsed_secs,
+            } => {
+                self.graph_data
+                    .record_users_per_second(active_users, elapsed_secs);
+                false
+            }
+            MetricsCommand::Reset {
+                duration,
+                total_users,
+                maximum_users,
+                active_users,
+                ack,
+            } => {
+                // Drain all pending metrics before reset.
+                self.drain_pending();
+                self.sync_atomic_counters();
+                // Display pre-reset running metrics.
+                self.metrics.duration = duration;
+                self.metrics.total_users = total_users;
+                self.metrics.maximum_users = maximum_users;
+                self.metrics.print_running();
+                // Reset all metrics state.
+                self.metrics.requests = HashMap::new();
+                self.metrics
+                    .initialize_scenario_metrics(&self.scenarios, &self.configuration);
+                // initialize_transaction_metrics can only fail for invalid defaults,
+                // which would have been caught at startup.
+                let _ = self.metrics.initialize_transaction_metrics(
+                    &self.scenarios,
+                    &self.configuration,
+                    &self.defaults,
+                );
+                // Reset atomic counters.
+                {
+                    let registry = self
+                        .request_counter_registry
+                        .lock()
+                        .expect("request_counter_registry mutex poisoned");
+                    for counters in registry.values() {
+                        counters.reset();
+                    }
+                }
+                // Reset graph data while preserving user count.
+                self.graph_data.reset_preserving_users(active_users);
+                let _ = ack.send(());
+                false
+            }
+            MetricsCommand::GetMetrics {
+                duration,
+                total_users,
+                maximum_users,
+                history,
+                respond,
+            } => {
+                self.drain_pending();
+                self.sync_atomic_counters();
+                let mut snapshot = self.metrics.clone();
+                snapshot.duration = duration;
+                snapshot.total_users = total_users;
+                snapshot.maximum_users = maximum_users;
+                snapshot.history = history;
+                let _ = respond.send(snapshot);
+                false
+            }
+            MetricsCommand::Shutdown {
+                duration,
+                total_users,
+                maximum_users,
+                respond,
+            } => {
+                // Drain all remaining metrics from the channel.
+                self.drain_pending();
+                self.sync_atomic_counters();
+                self.metrics.duration = duration;
+                self.metrics.total_users = total_users;
+                self.metrics.maximum_users = maximum_users;
+                let metrics = std::mem::take(&mut self.metrics);
+                let graph_data = std::mem::replace(&mut self.graph_data, GraphData::new());
+                let _ = respond.send((metrics, graph_data));
+                true
+            }
+        }
+    }
+
+    /// Increment the atomic counters in the shared registry.
     ///
-    /// Used for Coordinated Omission synthetic metrics which are generated on the parent
-    /// side and therefore not counted by user threads.
+    /// Used for Coordinated Omission synthetic metrics which are generated on the
+    /// processor side and therefore not counted by user threads.
     fn increment_registry_counter(
         registry: &GooseRequestCounterRegistry,
         key: &str,
         success: bool,
     ) {
-        // Clone the Arc under the lock, then release the lock before doing the
-        // atomic increment — no need to hold the mutex for a lock-free operation.
         let counter = {
             let mut map = registry
                 .lock()
@@ -3105,13 +3262,9 @@ impl GooseAttack {
     }
 
     /// Copy the atomic counter values from the shared registry into the
-    /// `GooseRequestMetricAggregate` structs in `self.metrics.requests`.
-    ///
-    /// Called before displaying running metrics or generating final reports, so that
-    /// all existing display/report code can continue reading `success_count`/`fail_count`
-    /// from the aggregate structs without modification.
-    pub(crate) fn sync_atomic_counters(&mut self, goose_attack_run_state: &GooseAttackRunState) {
-        let registry = goose_attack_run_state
+    /// `GooseRequestMetricAggregate` structs.
+    fn sync_atomic_counters(&mut self) {
+        let registry = self
             .request_counter_registry
             .lock()
             .expect("request_counter_registry mutex poisoned");
@@ -3120,19 +3273,12 @@ impl GooseAttack {
                 aggregate.success_count = counters.success.load(AtomicOrdering::Relaxed) as usize;
                 aggregate.fail_count = counters.failure.load(AtomicOrdering::Relaxed) as usize;
             }
-            // The aggregate may not exist yet if a user thread incremented an atomic
-            // counter but the corresponding channel message hasn't been processed by
-            // record_request_metric() yet. This is benign: atomic values are cumulative
-            // and will be picked up on the next sync once the aggregate is created.
-            // The final sync (in lib.rs) always runs after sync_metrics() flushes all
-            // channel messages, so the final report is always accurate.
         }
     }
 
-    // Store `GooseRequestMetric` in a `GooseRequestMetricAggregate` within the
-    // `GooseMetrics.requests` `HashMap`, merging if already existing, or creating new.
-    // Also writes it to the request_file if enabled.
-    async fn record_request_metric(&mut self, request_metric: &GooseRequestMetric) {
+    /// Store `GooseRequestMetric` in a `GooseRequestMetricAggregate`, merging if
+    /// already existing, or creating new.
+    fn record_request_metric(&mut self, request_metric: &GooseRequestMetric) {
         let method_label = request_metric.raw.method_label();
         let key = format!("{} {}", method_label, request_metric.name);
         let mut merge_request = match self.metrics.requests.get(&key) {
@@ -3145,9 +3291,6 @@ impl GooseAttack {
             ),
         };
 
-        // Counter corrections (success <-> failure) from set_success() / set_failure() are
-        // handled atomically by user threads. Update messages only need to reach the parent
-        // for error tracking — no timing or counter processing needed here.
         if !request_metric.update {
             merge_request.record_time(
                 request_metric.response_time,
@@ -3155,7 +3298,6 @@ impl GooseAttack {
             );
             if !self.configuration.no_status_codes {
                 merge_request.set_status_code(request_metric.status_code);
-                // Record per-status-code timing (raw data only, exclude CO-mitigated times).
                 if request_metric.coordinated_omission_elapsed == 0 {
                     merge_request.record_status_code_time(
                         request_metric.status_code,
@@ -3163,37 +3305,20 @@ impl GooseAttack {
                     );
                 }
             }
-            // success_count/fail_count increments are handled atomically by user threads
-            // for regular requests. Coordinated omission synthetic requests are counted
-            // by the parent in receive_metrics().
         }
 
         self.metrics.requests.insert(key, merge_request);
     }
 
-    // Receive metrics from [`GooseUser`](./goose/struct.GooseUser.html) threads. If flush
-    // is true all metrics will be received regardless of how long it takes. If flush is
-    // false, metrics will only be received for up to 400 ms before exiting to continue on
-    // the next call to this function.
-    // Process a single request metric: record errors, handle CO backfill, update aggregates
-    // and graph data.
-    async fn process_request_metric(
-        &mut self,
-        request_metric: &GooseRequestMetric,
-        goose_attack_run_state: &mut GooseAttackRunState,
-    ) {
-        // If there was an error, store it.
+    /// Process a single request metric: record errors, handle CO backfill, update
+    /// aggregates and graph data.
+    fn process_request_metric(&mut self, request_metric: &GooseRequestMetric) {
         if !request_metric.error.is_empty() {
-            self.record_error(request_metric, goose_attack_run_state);
+            self.record_error(request_metric);
         }
 
-        // If coordinated_omission_elapsed is non-zero, this was a statistically
-        // generated "request" to mitigate coordinated omission, loop to backfill
-        // with statistically generated metrics.
         if request_metric.coordinated_omission_elapsed > 0 && request_metric.user_cadence > 0 {
-            // Track the CO event if CO metrics tracking is enabled
             if let Some(co_metrics) = &mut self.metrics.coordinated_omission_metrics {
-                // Calculate how many synthetic requests will be injected
                 let synthetic_count = (request_metric.coordinated_omission_elapsed as i64
                     - request_metric.user_cadence as i64
                     - request_metric.response_time as i64)
@@ -3212,25 +3337,18 @@ impl GooseAttack {
                 }
             }
 
-            // Build a statistically generated coordinated_omissiom metric starting
-            // with the metric that was sent by the affected GooseUser.
             let mut co_metric = request_metric.clone();
-
-            // Use a signed integer as this value can drop below zero.
             let mut response_time = request_metric.coordinated_omission_elapsed as i64
                 - request_metric.user_cadence as i64
                 - request_metric.response_time as i64;
 
             loop {
-                // Backfill until reaching the expected request cadence.
                 if response_time > request_metric.response_time as i64 {
                     co_metric.response_time = response_time as u64;
-                    self.record_request_metric(&co_metric).await;
-                    // Increment atomic counters for CO synthetic requests
-                    // (user threads only count actual requests).
+                    self.record_request_metric(&co_metric);
                     let co_key = format!("{} {}", co_metric.raw.method, co_metric.name);
                     Self::increment_registry_counter(
-                        &goose_attack_run_state.request_counter_registry,
+                        &self.request_counter_registry,
                         &co_key,
                         co_metric.success,
                     );
@@ -3239,16 +3357,12 @@ impl GooseAttack {
                     break;
                 }
             }
-        // Otherwise this is an actual request, record it normally.
         } else {
-            // Track the actual request in CO metrics if enabled
             if let Some(co_metrics) = &mut self.metrics.coordinated_omission_metrics {
                 co_metrics.record_actual_request();
             }
 
-            // Merge the `GooseRequestMetric` into a `GooseRequestMetricAggregate` in
-            // `GooseMetrics.requests`, and write to the requests log if enabled.
-            self.record_request_metric(request_metric).await;
+            self.record_request_metric(request_metric);
 
             if !self.configuration.report_file.is_empty() {
                 let seconds_since_start = (request_metric.elapsed / 1000) as usize;
@@ -3274,7 +3388,7 @@ impl GooseAttack {
         }
     }
 
-    // Process a single transaction metric: update aggregate and graph data.
+    /// Process a single transaction metric: update aggregate and graph data.
     fn process_transaction_metric(&mut self, raw_transaction: &TransactionMetric) {
         self.metrics.transactions[raw_transaction.scenario_index]
             [raw_transaction.transaction_index]
@@ -3286,7 +3400,7 @@ impl GooseAttack {
         }
     }
 
-    // Process a single scenario metric: update aggregate and graph data.
+    /// Process a single scenario metric: update aggregate and graph data.
     fn process_scenario_metric(&mut self, raw_scenario: &ScenarioMetric) {
         self.metrics.scenarios[raw_scenario.index].update(raw_scenario.run_time, raw_scenario.user);
 
@@ -3296,65 +3410,10 @@ impl GooseAttack {
         }
     }
 
-    pub(crate) async fn receive_metrics(
-        &mut self,
-        goose_attack_run_state: &mut GooseAttackRunState,
-        flush: bool,
-    ) -> Result<bool, GooseError> {
-        let mut received_message = false;
-        let mut message = goose_attack_run_state.metrics_rx.try_recv();
-
-        // Main loop wakes up every 500ms, so don't spend more than 400ms receiving metrics.
-        let receive_timeout = 400;
-        let receive_started = std::time::Instant::now();
-
-        while message.is_ok() {
-            received_message = true;
-            match message.unwrap() {
-                GooseMetric::Request(request_metric) => {
-                    self.process_request_metric(&request_metric, goose_attack_run_state)
-                        .await;
-                }
-                GooseMetric::Transaction(raw_transaction) => {
-                    self.process_transaction_metric(&raw_transaction);
-                }
-                GooseMetric::Scenario(raw_scenario) => {
-                    self.process_scenario_metric(&raw_scenario);
-                }
-                GooseMetric::All {
-                    request,
-                    transaction,
-                    scenario,
-                } => {
-                    self.process_request_metric(&request, goose_attack_run_state)
-                        .await;
-                    self.process_transaction_metric(&transaction);
-                    self.process_scenario_metric(&scenario);
-                }
-            }
-            // Unless flushing all metrics, break out of receive loop after timeout.
-            if !flush && util::ms_timer_expired(receive_started, receive_timeout) {
-                break;
-            }
-            // Load and process another message.
-            message = goose_attack_run_state.metrics_rx.try_recv();
-        }
-
-        Ok(received_message)
-    }
-
-    /// Update error metrics.
-    pub(crate) fn record_error(
-        &mut self,
-        raw_request: &GooseRequestMetric,
-        goose_attack_run_state: &mut GooseAttackRunState,
-    ) {
-        // If error-log is enabled, convert the raw request to a GooseErrorMetric and send it
-        // to the logger thread.
+    /// Update error metrics and optionally send to the error logger.
+    fn record_error(&mut self, raw_request: &GooseRequestMetric) {
         if !self.configuration.error_log.is_empty() {
-            if let Some(logger) = goose_attack_run_state.all_threads_logger_tx.as_ref() {
-                // This is a best effort logger attempt, if the logger has alrady shut down it
-                // will fail which we ignore.
+            if let Some(logger) = self.logger_tx.as_ref() {
                 if let Err(e) = logger.send(Some(GooseLog::Error(GooseErrorMetric {
                     elapsed: raw_request.elapsed,
                     raw: raw_request.raw.clone(),
@@ -3375,12 +3434,10 @@ impl GooseAttack {
             }
         }
 
-        // If the error summary is disabled, return without collecting errors.
         if self.configuration.no_error_summary {
             return;
         }
 
-        // Create a string to uniquely identify errors for tracking metrics.
         let method_label = raw_request.raw.method_label();
         let error_string = format!(
             "{}.{}.{}",
@@ -3388,9 +3445,7 @@ impl GooseAttack {
         );
 
         let mut error_metrics = match self.metrics.errors.get(&error_string) {
-            // We've seen this error before.
             Some(m) => m.clone(),
-            // First time we've seen this error.
             None => GooseErrorMetricAggregate::new(
                 raw_request.raw.method,
                 raw_request.name.to_string(),
@@ -3400,6 +3455,96 @@ impl GooseAttack {
         };
         error_metrics.occurrences += 1;
         self.metrics.errors.insert(error_string, error_metrics);
+    }
+}
+
+impl GooseAttack {
+    /// Check if it's time to display running metrics, and if so, send a
+    /// DisplayRunning command to the metrics processor (fire-and-forget).
+    pub(crate) fn sync_metrics(&mut self, goose_attack_run_state: &mut GooseAttackRunState) {
+        if !self.configuration.no_metrics {
+            if let Some(running_metrics) = self.configuration.running_metrics {
+                if util::timer_expired(
+                    goose_attack_run_state.running_metrics_timer,
+                    running_metrics,
+                ) {
+                    goose_attack_run_state.running_metrics_timer = std::time::Instant::now();
+                    self.update_duration();
+                    let _ = goose_attack_run_state.metrics_cmd_tx.send(
+                        MetricsCommand::DisplayRunning {
+                            duration: self.metrics.duration,
+                            total_users: self.metrics.total_users,
+                            maximum_users: self.metrics.maximum_users,
+                        },
+                    );
+                }
+            }
+        }
+    }
+
+    /// When going from the Increasing phase to the Maintaining phase, optionally
+    /// flush and reset metrics via the dedicated processor task.
+    pub(crate) async fn reset_metrics(
+        &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+    ) -> Result<(), GooseError> {
+        if !goose_attack_run_state.all_users_spawned {
+            goose_attack_run_state.all_users_spawned = true;
+            // Only reset metrics on startup if not using `--test-plan` or `--iterations`.
+            if self.configuration.test_plan.is_none() && self.configuration.iterations == 0 {
+                let users = self.configuration.users.unwrap();
+                if !self.configuration.no_reset_metrics {
+                    self.update_duration();
+
+                    // Send Reset command to the processor: it will drain pending metrics,
+                    // sync atomic counters, display running metrics, and reset all state.
+                    let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
+                    goose_attack_run_state
+                        .metrics_cmd_tx
+                        .send(MetricsCommand::Reset {
+                            duration: self.metrics.duration,
+                            total_users: self.metrics.total_users,
+                            maximum_users: self.metrics.maximum_users,
+                            active_users: goose_attack_run_state.active_users,
+                            ack: ack_tx,
+                        })
+                        .expect("metrics processor channel closed unexpectedly");
+                    ack_rx.await.expect("metrics processor dropped ack sender");
+
+                    // Reset running_metrics_timer.
+                    goose_attack_run_state.running_metrics_timer = std::time::Instant::now();
+
+                    if self.metrics.display_metrics {
+                        if goose_attack_run_state.active_users < users {
+                            println!(
+                                "{} of {} users hatched, timer expired, resetting metrics (disable with --no-reset-metrics).\n", goose_attack_run_state.active_users, users
+                            );
+                        } else {
+                            println!(
+                                "All {users} users hatched, resetting metrics (disable with --no-reset-metrics).\n"
+                            );
+                        }
+                    }
+
+                    // Restart the timer now that all threads are launched.
+                    self.started = Some(std::time::Instant::now());
+                } else if goose_attack_run_state.active_users < users {
+                    println!(
+                        "{} of {} users hatched, timer expired.\n",
+                        goose_attack_run_state.active_users, users
+                    );
+                } else {
+                    println!(
+                        "All {} users hatched.\n",
+                        goose_attack_run_state.active_users
+                    );
+                }
+            } else {
+                println!("{} users hatched.", goose_attack_run_state.active_users);
+            }
+        }
+
+        Ok(())
     }
 
     // Update metrics showing how long the load test has been running.
