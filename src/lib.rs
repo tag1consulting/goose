@@ -396,6 +396,8 @@ struct GooseAttackRunState {
     /// Shared registry of atomic request counters, keyed by `"METHOD path"`.
     /// User threads increment these directly; the parent reads them at report time.
     request_counter_registry: GooseRequestCounterRegistry,
+    /// Shared epoch counter for coordinating batch validity across metrics resets.
+    metrics_epoch: crate::metrics::MetricsEpoch,
 }
 
 /// Global internal state for the load test.
@@ -1439,6 +1441,10 @@ impl GooseAttack {
         let request_counter_registry: crate::metrics::GooseRequestCounterRegistry =
             Arc::new(Mutex::new(HashMap::new()));
 
+        // Create the shared batch epoch counter (starts at 0).
+        let metrics_epoch: crate::metrics::MetricsEpoch =
+            Arc::new(std::sync::atomic::AtomicU64::new(0));
+
         // Spawn the dedicated metrics processor task. It receives raw metrics
         // from user threads and commands from the main loop.
         let processor = MetricsProcessor::new(
@@ -1455,6 +1461,7 @@ impl GooseAttack {
             // phase. It will be replaced by reset_run_state() (which initializes
             // the logger) before any user threads are spawned.
             None,
+            metrics_epoch.clone(),
         );
         let metrics_processor_handle = Some(tokio::spawn(processor.run()));
 
@@ -1484,6 +1491,7 @@ impl GooseAttack {
             shutdown_after_stop: !self.configuration.no_autostart,
             canceling: false,
             request_counter_registry,
+            metrics_epoch,
         };
 
         // Catch ctrl-c to allow clean shutdown to display metrics.
@@ -1610,6 +1618,13 @@ impl GooseAttack {
                 // Copy the GooseUser-metrics sender channel, used by all threads.
                 thread_user.metrics_channel =
                     Some(goose_attack_run_state.all_threads_metrics_tx.clone());
+
+                // Initialize the per-user metrics batch accumulator.
+                let epoch = goose_attack_run_state
+                    .metrics_epoch
+                    .load(std::sync::atomic::Ordering::Relaxed);
+                thread_user.metrics_batch = Some(crate::metrics::GooseMetricBatch::new(epoch));
+                thread_user.metrics_epoch = Some(goose_attack_run_state.metrics_epoch.clone());
 
                 // Share the atomic request counter registry with this user thread.
                 thread_user.request_counters =
@@ -2018,6 +2033,7 @@ impl GooseAttack {
             self.defaults.clone(),
             goose_attack_run_state.request_counter_registry.clone(),
             goose_attack_run_state.all_threads_logger_tx.clone(),
+            goose_attack_run_state.metrics_epoch.clone(),
         );
         goose_attack_run_state.metrics_cmd_tx = metrics_cmd_tx;
         if let Some(handle) = goose_attack_run_state.metrics_processor_handle.take() {
