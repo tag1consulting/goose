@@ -129,8 +129,6 @@ pub struct GooseMetricBatch {
     /// Pre-aggregated request timing and status-code data for successful,
     /// non-CO-mitigated requests, keyed by `"METHOD path"`.
     pub(crate) requests: HashMap<String, RequestBatchEntry>,
-    /// Pre-aggregated error occurrence counts, keyed by `"error.METHOD.path"`.
-    pub(crate) errors: HashMap<String, ErrorBatchEntry>,
     /// Individual request metrics that need per-request processing:
     /// failed requests (for error logging) and CO-affected requests (for backfill).
     pub(crate) individual_requests: Vec<GooseRequestMetric>,
@@ -144,9 +142,6 @@ pub struct GooseMetricBatch {
     /// Per-second average response time data: `(request_key, second) -> (total_time, count)`.
     /// Only populated when `--report-file` is configured.
     pub(crate) graph_avg_rt: HashMap<(String, usize), (f64, u32)>,
-    /// Per-second error graph counters: `(request_key, second) -> count`.
-    /// Only populated when `--report-file` is configured.
-    pub(crate) graph_eps: HashMap<(String, usize), u32>,
     /// Per-second transaction counters for graph data.
     /// Only populated when `--report-file` is configured.
     pub(crate) graph_tps: HashMap<usize, u32>,
@@ -161,13 +156,11 @@ impl GooseMetricBatch {
         GooseMetricBatch {
             epoch,
             requests: HashMap::new(),
-            errors: HashMap::new(),
             individual_requests: Vec::new(),
             transactions: HashMap::new(),
             scenarios: HashMap::new(),
             graph_rps: HashMap::new(),
             graph_avg_rt: HashMap::new(),
-            graph_eps: HashMap::new(),
             graph_tps: HashMap::new(),
             graph_sps: HashMap::new(),
         }
@@ -190,21 +183,6 @@ pub(crate) struct RequestBatchEntry {
     pub(crate) status_code_counts: HashMap<u16, usize>,
     /// Per-status-code timing summaries (count, total, min, max).
     pub(crate) status_code_timings: HashMap<u16, StatusCodeTimingSummary>,
-}
-
-/// Pre-aggregated error occurrence count for a single error key.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct ErrorBatchEntry {
-    /// The HTTP method that triggered the error.
-    pub(crate) method: GooseMethod,
-    /// The request name/path.
-    pub(crate) name: String,
-    /// The error message.
-    pub(crate) error: String,
-    /// Custom method label for non-HTTP protocols.
-    pub(crate) custom_method: String,
-    /// How many times this error occurred in the batch.
-    pub(crate) occurrences: usize,
 }
 
 /// Pre-aggregated transaction timing data for a single
@@ -3700,22 +3678,7 @@ impl MetricsProcessor {
             }
         }
 
-        // 3. Merge pre-aggregated error counts.
-        if !self.configuration.no_error_summary {
-            for (error_key, entry) in batch.errors {
-                let error_agg = self.metrics.errors.entry(error_key).or_insert_with(|| {
-                    GooseErrorMetricAggregate::new(
-                        entry.method,
-                        entry.name.clone(),
-                        entry.error.clone(),
-                        &entry.custom_method,
-                    )
-                });
-                error_agg.occurrences += entry.occurrences;
-            }
-        }
-
-        // 4. Merge pre-aggregated transaction timing data.
+        // 3. Merge pre-aggregated transaction timing data.
         for ((si, ti), entry) in batch.transactions {
             let agg = &mut self.metrics.transactions[si][ti];
             for (time_bucket, count) in &entry.times {
@@ -3733,7 +3696,7 @@ impl MetricsProcessor {
             }
         }
 
-        // 5. Merge pre-aggregated scenario timing data.
+        // 4. Merge pre-aggregated scenario timing data.
         for (index, entry) in batch.scenarios {
             let agg = &mut self.metrics.scenarios[index];
             agg.users.insert(entry.user);
@@ -3750,7 +3713,7 @@ impl MetricsProcessor {
             }
         }
 
-        // 6. Apply graph data if report file is configured.
+        // 5. Apply graph data if report file is configured.
         if !self.configuration.report_file.is_empty() {
             for ((key, second), count) in batch.graph_rps {
                 self.graph_data
@@ -3763,10 +3726,6 @@ impl MetricsProcessor {
                             &key, second, total_time, count,
                         );
                 }
-            }
-            for ((key, second), count) in batch.graph_eps {
-                self.graph_data
-                    .record_errors_per_second_batch(&key, second, count);
             }
             for (second, count) in batch.graph_tps {
                 self.graph_data
@@ -5204,13 +5163,11 @@ mod test {
         let batch = GooseMetricBatch::new(42);
         assert_eq!(batch.epoch, 42);
         assert!(batch.requests.is_empty());
-        assert!(batch.errors.is_empty());
         assert!(batch.individual_requests.is_empty());
         assert!(batch.transactions.is_empty());
         assert!(batch.scenarios.is_empty());
         assert!(batch.graph_rps.is_empty());
         assert!(batch.graph_avg_rt.is_empty());
-        assert!(batch.graph_eps.is_empty());
         assert!(batch.graph_tps.is_empty());
         assert!(batch.graph_sps.is_empty());
     }
@@ -5361,30 +5318,6 @@ mod test {
         assert_eq!(agg.raw_data.total_time, 100);
         // Error should be recorded.
         assert!(!processor.metrics.errors.is_empty());
-    }
-
-    #[test]
-    fn process_batch_merges_error_counts() {
-        let mut processor = make_test_processor(0);
-
-        let mut batch = GooseMetricBatch::new(0);
-        batch.errors.insert(
-            "timeout.GET./api".to_string(),
-            ErrorBatchEntry {
-                method: GooseMethod::Get,
-                name: "/api".to_string(),
-                error: "timeout".to_string(),
-                custom_method: String::new(),
-                occurrences: 5,
-            },
-        );
-
-        processor.process_batch(batch);
-
-        let err = &processor.metrics.errors["timeout.GET./api"];
-        assert_eq!(err.occurrences, 5);
-        assert_eq!(err.error, "timeout");
-        assert_eq!(err.name, "/api");
     }
 
     #[test]
