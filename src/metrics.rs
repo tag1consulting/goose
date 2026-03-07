@@ -3178,13 +3178,13 @@ impl MetricsProcessor {
                 self.metrics.requests = HashMap::new();
                 self.metrics
                     .initialize_scenario_metrics(&self.scenarios, &self.configuration);
-                // initialize_transaction_metrics can only fail for invalid defaults,
-                // which would have been caught at startup.
-                let _ = self.metrics.initialize_transaction_metrics(
-                    &self.scenarios,
-                    &self.configuration,
-                    &self.defaults,
-                );
+                self.metrics
+                    .initialize_transaction_metrics(
+                        &self.scenarios,
+                        &self.configuration,
+                        &self.defaults,
+                    )
+                    .expect("initialize_transaction_metrics failed during reset; defaults were validated at startup so this should not happen");
                 // Reset atomic counters.
                 {
                     let registry = self
@@ -3273,6 +3273,12 @@ impl MetricsProcessor {
                 aggregate.success_count = counters.success.load(AtomicOrdering::Relaxed) as usize;
                 aggregate.fail_count = counters.failure.load(AtomicOrdering::Relaxed) as usize;
             }
+            // The aggregate may not exist yet if a user thread incremented an atomic
+            // counter but the corresponding channel message hasn't been processed by
+            // record_request_metric() yet. This is benign: atomic values are cumulative
+            // and will be picked up on the next sync once the aggregate is created.
+            // The Shutdown handler always calls drain_pending() before sync_atomic_counters(),
+            // so the final report is always accurate.
         }
     }
 

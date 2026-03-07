@@ -1450,7 +1450,11 @@ impl GooseAttack {
             self.scenarios.clone(),
             self.defaults.clone(),
             request_counter_registry.clone(),
-            None, // logger_tx will be set later if logging is enabled
+            // Logger not yet initialized; this processor is a short-lived
+            // placeholder needed to service controller commands during the Idle
+            // phase. It will be replaced by reset_run_state() (which initializes
+            // the logger) before any user threads are spawned.
+            None,
         );
         let metrics_processor_handle = Some(tokio::spawn(processor.run()));
 
