@@ -159,6 +159,33 @@ impl GraphData {
         );
     }
 
+    /// Record multiple requests per second for batch merging.
+    pub(crate) fn record_requests_per_second_batch(
+        &mut self,
+        key: &str,
+        second: usize,
+        count: u32,
+    ) {
+        self.requests_per_second
+            .initialize_or_increment(key, second, count);
+    }
+
+    /// Record multiple errors per second for batch merging.
+    pub(crate) fn record_errors_per_second_batch(&mut self, key: &str, second: usize, count: u32) {
+        self.errors_per_second
+            .initialize_or_increment(key, second, count);
+    }
+
+    /// Record multiple transactions per second for batch merging.
+    pub(crate) fn record_transactions_per_second_batch(&mut self, second: usize, count: usize) {
+        self.transactions_per_second.increase_value(second, count);
+    }
+
+    /// Record multiple scenarios per second for batch merging.
+    pub(crate) fn record_scenarios_per_second_batch(&mut self, second: usize, count: usize) {
+        self.scenarios_per_second.increase_value(second, count);
+    }
+
     /// Records number of users for a current second.
     pub(crate) fn record_users_per_second(&mut self, users: usize, second: usize) {
         self.users_per_second.set_and_maintain_last(second, users);
