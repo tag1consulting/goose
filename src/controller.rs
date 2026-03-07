@@ -525,7 +525,10 @@ impl GooseAttack {
                             } else {
                                 None
                             };
-                            let metrics = snapshot.unwrap_or_else(|| self.metrics.clone());
+                            let metrics = snapshot.unwrap_or_else(|| {
+                                warn!("metrics processor unavailable, returning stale metrics to controller");
+                                self.metrics.clone()
+                            });
                             self.reply_to_controller(
                                 message,
                                 ControllerResponseMessage::Metrics(Box::new(metrics)),
