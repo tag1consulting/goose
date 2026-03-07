@@ -954,8 +954,11 @@ pub struct GooseUser {
     /// Pre-aggregated metrics accumulator for batch sending. Reduces channel pressure
     /// from `O(RPS)` to `O(RPS / batch_size)`. `None` when metrics are disabled.
     pub(crate) metrics_batch: Option<GooseMetricBatch>,
-    /// Number of request metrics accumulated in the current batch.
-    pub(crate) batch_request_count: usize,
+    /// Number of request metrics accumulated in the current batch (both
+    /// pre-aggregated and individual). Used as the size-based flush trigger;
+    /// transactions and scenarios are not counted here because they are
+    /// low-frequency and do not drive batch sizing.
+    pub(crate) batch_item_count: usize,
     /// When the current batch started accumulating (`None` if batch is empty).
     pub(crate) batch_start: Option<std::time::Instant>,
     /// Whether `--report-file` is configured (cached to avoid repeated string checks).
@@ -1004,7 +1007,7 @@ impl Clone for GooseUser {
                     .map_or(0, |e| e.load(std::sync::atomic::Ordering::Relaxed));
                 GooseMetricBatch::new(epoch)
             }),
-            batch_request_count: 0,
+            batch_item_count: 0,
             batch_start: None,
             has_report_file: self.has_report_file,
             metrics_epoch: self.metrics_epoch.clone(),
@@ -1068,7 +1071,7 @@ impl GooseUser {
             pending_request: None,
             pending_transaction: None,
             metrics_batch: None,
-            batch_request_count: 0,
+            batch_item_count: 0,
             batch_start: None,
             has_report_file,
             metrics_epoch: None,
@@ -2359,14 +2362,15 @@ impl GooseUser {
         if self.has_report_file {
             let second = (request_metric.elapsed / 1000) as usize;
             let key = self.counter_key_buf.clone();
-            *batch.graph_rps.entry((key.clone(), second)).or_insert(0) += 1;
+            *batch.graph_rps.entry((key, second)).or_insert(0) += 1;
 
+            let key = self.counter_key_buf.clone();
             let avg_entry = batch.graph_avg_rt.entry((key, second)).or_insert((0.0, 0));
             avg_entry.0 += request_metric.response_time as f64;
             avg_entry.1 += 1;
         }
 
-        self.batch_request_count += 1;
+        self.batch_item_count += 1;
     }
 
     /// Buffer an individual request metric in the batch without pre-aggregating.
@@ -2376,7 +2380,7 @@ impl GooseUser {
     fn accumulate_individual_request(&mut self, request_metric: GooseRequestMetric) {
         if let Some(batch) = self.metrics_batch.as_mut() {
             batch.individual_requests.push(request_metric);
-            self.batch_request_count += 1;
+            self.batch_item_count += 1;
         }
     }
 
@@ -2493,7 +2497,7 @@ impl GooseUser {
                 // The atomic counters for these metrics were already reset to 0,
                 // so discarding the batch data maintains consistency.
                 self.metrics_batch = Some(GooseMetricBatch::new(current_epoch));
-                self.batch_request_count = 0;
+                self.batch_item_count = 0;
                 self.batch_start = None;
             }
         }
@@ -2505,7 +2509,7 @@ impl GooseUser {
     /// - The number of accumulated requests reaches [`METRICS_BATCH_SIZE`]
     /// - The batch has been accumulating for longer than [`METRICS_BATCH_MAX_AGE`]
     pub(crate) fn maybe_flush_batch(&mut self) -> TransactionResult {
-        if self.batch_request_count >= METRICS_BATCH_SIZE {
+        if self.batch_item_count >= METRICS_BATCH_SIZE {
             return self.flush_batch();
         }
         if let Some(start) = self.batch_start {
@@ -2521,7 +2525,7 @@ impl GooseUser {
     /// Sends the accumulated batch as a single [`GooseMetric::Batch`] message
     /// and resets the accumulator for the next batch.
     pub(crate) fn flush_batch(&mut self) -> TransactionResult {
-        if self.batch_request_count == 0 {
+        if self.batch_item_count == 0 {
             // Also check if there are transactions/scenarios without requests.
             let has_data = self.metrics_batch.as_ref().map_or(false, |b| {
                 !b.transactions.is_empty() || !b.scenarios.is_empty()
@@ -2538,14 +2542,14 @@ impl GooseUser {
             if let Some(metrics_channel) = self.metrics_channel.as_ref() {
                 if let Err(e) = metrics_channel.send(GooseMetric::Batch(Box::new(batch))) {
                     self.metrics_batch = Some(GooseMetricBatch::new(current_epoch));
-                    self.batch_request_count = 0;
+                    self.batch_item_count = 0;
                     self.batch_start = None;
                     return Err(Box::new(e.into()));
                 }
             }
             // Replace with a fresh batch stamped with the current epoch.
             self.metrics_batch = Some(GooseMetricBatch::new(current_epoch));
-            self.batch_request_count = 0;
+            self.batch_item_count = 0;
             self.batch_start = None;
         }
         Ok(())

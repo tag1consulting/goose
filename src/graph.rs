@@ -170,12 +170,6 @@ impl GraphData {
             .initialize_or_increment(key, second, count);
     }
 
-    /// Record multiple errors per second for batch merging.
-    pub(crate) fn record_errors_per_second_batch(&mut self, key: &str, second: usize, count: u32) {
-        self.errors_per_second
-            .initialize_or_increment(key, second, count);
-    }
-
     /// Record pre-aggregated average response time for batch merging.
     ///
     /// Performs a proper weighted merge of the batch's total response time and
