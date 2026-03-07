@@ -67,7 +67,9 @@ use crate::controller::{ControllerProtocol, ControllerRequest};
 use crate::goose::{GooseUser, GooseUserCommand, Scenario, Transaction, TransactionName};
 use crate::graph::GraphData;
 use crate::logger::{GooseLoggerJoinHandle, GooseLoggerTx};
-use crate::metrics::{GooseMetric, GooseMetrics, GooseRequestCounterRegistry};
+use crate::metrics::{
+    GooseMetric, GooseMetrics, GooseRequestCounterRegistry, MetricsCommand, MetricsProcessor,
+};
 use crate::test_plan::{TestPlan, TestPlanHistory, TestPlanStepAction};
 
 /// Constant defining Goose's default telnet Controller port.
@@ -347,9 +349,10 @@ struct GooseAttackRunState {
     /// Unbounded sender used by all [`GooseUser`](./goose/struct.GooseUser.html)
     /// threads to send metrics to parent.
     all_threads_metrics_tx: flume::Sender<GooseMetric>,
-    /// Unbounded receiver used by Goose parent to receive metrics from
-    /// [`GooseUser`](./goose/struct.GooseUser.html)s.
-    metrics_rx: flume::Receiver<GooseMetric>,
+    /// Sender for commands to the dedicated metrics processor task.
+    metrics_cmd_tx: flume::Sender<MetricsCommand>,
+    /// Handle for the dedicated metrics processor task.
+    metrics_processor_handle: Option<tokio::task::JoinHandle<()>>,
     /// Unbounded sender used by all [`GooseUser`](./goose/struct.GooseUser.html)
     /// threads to alert the parent when they shutdown.
     all_threads_shutdown_tx: flume::Sender<usize>,
@@ -381,8 +384,6 @@ struct GooseAttackRunState {
     user_channels: Vec<flume::Sender<GooseUserCommand>>,
     /// Timer tracking when to display running metrics, if enabled.
     running_metrics_timer: std::time::Instant,
-    /// Boolean flag indicating if running metrics should be displayed.
-    display_running_metrics: bool,
     /// Boolean flag indicating if all [`GooseUser`](./goose/struct.GooseUser.html)s
     /// have been spawned.
     all_users_spawned: bool,
@@ -1409,10 +1410,17 @@ impl GooseAttack {
         trace!("initialize_attack");
 
         // Create a single channel used to send metrics from GooseUser threads
-        // to parent thread.
+        // to the dedicated metrics processor task.
         let (all_threads_metrics_tx, metrics_rx): (
             flume::Sender<GooseMetric>,
             flume::Receiver<GooseMetric>,
+        ) = flume::unbounded();
+
+        // Create a channel for sending commands from the main loop to the
+        // metrics processor task.
+        let (metrics_cmd_tx, metrics_cmd_rx): (
+            flume::Sender<MetricsCommand>,
+            flume::Receiver<MetricsCommand>,
         ) = flume::unbounded();
 
         // Create a single channel to allow GooseUser threads to notify the
@@ -1427,6 +1435,25 @@ impl GooseAttack {
         // the run state.
         let std_now = std::time::Instant::now();
 
+        // Create the shared atomic request counter registry.
+        let request_counter_registry: crate::metrics::GooseRequestCounterRegistry =
+            Arc::new(Mutex::new(HashMap::new()));
+
+        // Spawn the dedicated metrics processor task. It receives raw metrics
+        // from user threads and commands from the main loop.
+        let processor = MetricsProcessor::new(
+            metrics_rx,
+            metrics_cmd_rx,
+            self.metrics.clone(),
+            GraphData::new(),
+            self.configuration.clone(),
+            self.scenarios.clone(),
+            self.defaults.clone(),
+            request_counter_registry.clone(),
+            None, // logger_tx will be set later if logging is enabled
+        );
+        let metrics_processor_handle = Some(tokio::spawn(processor.run()));
+
         let goose_attack_run_state = GooseAttackRunState {
             adjust_user_timer: std_now,
             adjust_user_in_ms: 0,
@@ -1435,7 +1462,8 @@ impl GooseAttack {
             drift_timer: tokio::time::Instant::now(),
             all_threads_metrics_tx,
             all_threads_shutdown_tx,
-            metrics_rx,
+            metrics_cmd_tx,
+            metrics_processor_handle,
             shutdown_rx,
             logger_handle: None,
             all_threads_logger_tx: None,
@@ -1447,12 +1475,11 @@ impl GooseAttack {
             users: Vec::new(),
             user_channels: Vec::new(),
             running_metrics_timer: std_now,
-            display_running_metrics: false,
             users_shutdown: HashSet::new(),
             all_users_spawned: false,
             shutdown_after_stop: !self.configuration.no_autostart,
             canceling: false,
-            request_counter_registry: Arc::new(Mutex::new(HashMap::new())),
+            request_counter_registry,
         };
 
         // Catch ctrl-c to allow clean shutdown to display metrics.
@@ -1615,9 +1642,15 @@ impl GooseAttack {
                         running_metrics,
                     ) {
                         goose_attack_run_state.running_metrics_timer = time::Instant::now();
-                        // Sync atomic counters into aggregate structs before displaying.
-                        self.sync_atomic_counters(goose_attack_run_state);
-                        self.metrics.print_running();
+                        self.update_duration();
+                        // Send display command to the metrics processor task.
+                        let _ = goose_attack_run_state.metrics_cmd_tx.send(
+                            MetricsCommand::DisplayRunning {
+                                duration: self.metrics.duration,
+                                total_users: self.metrics.total_users,
+                                maximum_users: self.metrics.maximum_users,
+                            },
+                        );
                     }
                 }
             } else {
@@ -1709,26 +1742,55 @@ impl GooseAttack {
                 let _ = tokio::join!(logger.unwrap());
             }
 
-            // If we're printing metrics, collect the final metrics received from users.
-            if !self.configuration.no_metrics {
-                // Set the second parameter to true, ensuring that Goose waits until all metrics
-                // are received.
-                let _received_message = self.receive_metrics(goose_attack_run_state, true).await?;
-            }
-
             // Stop any running GooseUser threads.
             self.stop_attack().await?;
-            // Collect all metrics sent by GooseUser threads.
-            self.sync_metrics(goose_attack_run_state, true).await?;
-            // Final sync of atomic counters into aggregate structs for reporting.
-            self.sync_atomic_counters(goose_attack_run_state);
-            // Record last users for users per second graph in HTML report.
+
+            // Record final users for the users-per-second graph before shutting
+            // down the metrics processor.
             if let Some(started) = self.started {
-                self.graph_data.record_users_per_second(
-                    goose_attack_run_state.active_users,
-                    started.elapsed().as_secs() as usize,
-                );
-            };
+                let _ = goose_attack_run_state
+                    .metrics_cmd_tx
+                    .send(MetricsCommand::RecordUsers {
+                        active_users: goose_attack_run_state.active_users,
+                        elapsed_secs: started.elapsed().as_secs() as usize,
+                    });
+            }
+
+            // Tell the metrics processor to flush all remaining metrics and
+            // return the final state for reporting. The processor may have
+            // already been shut down (e.g., controller Stop followed by
+            // Shutdown), so handle the send failure gracefully.
+            // Note: do NOT call update_duration() here — the duration was already
+            // set by the main loop iteration, and the shutdown work above (waiting
+            // for users, flushing logger, stop_attack) adds extra time that would
+            // inflate the duration past the expected value.
+            let (respond_tx, respond_rx) = tokio::sync::oneshot::channel();
+            if goose_attack_run_state
+                .metrics_cmd_tx
+                .send(MetricsCommand::Shutdown {
+                    duration: self.metrics.duration,
+                    total_users: self.metrics.total_users,
+                    maximum_users: self.metrics.maximum_users,
+                    respond: respond_tx,
+                })
+                .is_ok()
+            {
+                if let Ok((mut final_metrics, final_graph_data)) = respond_rx.await {
+                    // Await the processor task to ensure clean shutdown.
+                    if let Some(handle) = goose_attack_run_state.metrics_processor_handle.take() {
+                        let _ = handle.await;
+                    }
+
+                    // Merge main-loop-only fields into the processor's metrics.
+                    final_metrics.history = std::mem::take(&mut self.metrics.history);
+                    final_metrics.hosts.clone_from(&self.metrics.hosts);
+                    final_metrics.hash = self.metrics.hash;
+                    final_metrics.display_metrics = self.metrics.display_metrics;
+                    final_metrics.display_status_codes = self.metrics.display_status_codes;
+                    self.metrics = final_metrics;
+                    self.graph_data = final_graph_data;
+                }
+            }
             // The load test is fully stopped at this point.
             self.metrics
                 .history
@@ -1920,7 +1982,6 @@ impl GooseAttack {
         goose_attack_run_state.users = Vec::new();
         goose_attack_run_state.user_channels = Vec::new();
         goose_attack_run_state.running_metrics_timer = std_now;
-        goose_attack_run_state.display_running_metrics = false;
         goose_attack_run_state.shutdown_after_stop = !self.configuration.no_autostart;
         goose_attack_run_state.all_users_spawned = false;
 
@@ -1934,6 +1995,31 @@ impl GooseAttack {
         let (throttle_threads_tx, parent_to_throttle_tx) = self.setup_throttle().await;
         goose_attack_run_state.throttle_threads_tx = throttle_threads_tx;
         goose_attack_run_state.parent_to_throttle_tx = parent_to_throttle_tx;
+
+        // Re-create the metrics channel and spawn a fresh processor.
+        // The old processor exits when its command channel closes.
+        let (all_threads_metrics_tx, metrics_rx): (
+            flume::Sender<GooseMetric>,
+            flume::Receiver<GooseMetric>,
+        ) = flume::unbounded();
+        goose_attack_run_state.all_threads_metrics_tx = all_threads_metrics_tx;
+        let (metrics_cmd_tx, metrics_cmd_rx) = flume::unbounded();
+        let processor = MetricsProcessor::new(
+            metrics_rx,
+            metrics_cmd_rx,
+            self.metrics.clone(),
+            GraphData::new(),
+            self.configuration.clone(),
+            self.scenarios.clone(),
+            self.defaults.clone(),
+            goose_attack_run_state.request_counter_registry.clone(),
+            goose_attack_run_state.all_threads_logger_tx.clone(),
+        );
+        goose_attack_run_state.metrics_cmd_tx = metrics_cmd_tx;
+        if let Some(handle) = goose_attack_run_state.metrics_processor_handle.take() {
+            let _ = handle.await;
+        }
+        goose_attack_run_state.metrics_processor_handle = Some(tokio::spawn(processor.run()));
 
         // Try to create the requested report files, to confirm access.
         self.create_reports().await?;
@@ -2009,15 +2095,17 @@ impl GooseAttack {
 
             // Record current users for users per second graph in HTML report.
             if let Some(started) = self.started {
-                self.graph_data.record_users_per_second(
-                    goose_attack_run_state.active_users,
-                    started.elapsed().as_secs() as usize,
-                );
+                let _ = goose_attack_run_state
+                    .metrics_cmd_tx
+                    .send(MetricsCommand::RecordUsers {
+                        active_users: goose_attack_run_state.active_users,
+                        elapsed_secs: started.elapsed().as_secs() as usize,
+                    });
             };
 
-            // Regularly synchronize metrics.
-            self.sync_metrics(&mut goose_attack_run_state, false)
-                .await?;
+            // Check if it's time to display running metrics, sending a command
+            // to the dedicated metrics processor task if so.
+            self.sync_metrics(&mut goose_attack_run_state);
 
             // Check if a Controller has made a request.
             self.handle_controller_requests(&mut goose_attack_run_state)

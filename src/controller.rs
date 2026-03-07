@@ -4,7 +4,7 @@
 //! real-time control of the running load test.
 
 use crate::config::GooseConfiguration;
-use crate::metrics::GooseMetrics;
+use crate::metrics::{GooseMetrics, MetricsCommand};
 use crate::test_plan::{TestPlan, TestPlanHistory, TestPlanStepAction};
 use crate::util;
 use crate::{AttackPhase, GooseAttack, GooseAttackRunState, GooseError};
@@ -506,11 +506,29 @@ impl GooseAttack {
                                 )),
                             );
                         }
-                        // Send back a copy of the running metrics.
+                        // Send back a copy of the running metrics from the
+                        // dedicated processor task.
                         ControllerCommand::Metrics | ControllerCommand::MetricsJson => {
+                            self.update_duration();
+                            let (respond_tx, respond_rx) = tokio::sync::oneshot::channel();
+                            let sent = goose_attack_run_state.metrics_cmd_tx.send(
+                                MetricsCommand::GetMetrics {
+                                    duration: self.metrics.duration,
+                                    total_users: self.metrics.total_users,
+                                    maximum_users: self.metrics.maximum_users,
+                                    history: self.metrics.history.clone(),
+                                    respond: respond_tx,
+                                },
+                            );
+                            let snapshot = if sent.is_ok() {
+                                respond_rx.await.ok()
+                            } else {
+                                None
+                            };
+                            let metrics = snapshot.unwrap_or_else(|| self.metrics.clone());
                             self.reply_to_controller(
                                 message,
-                                ControllerResponseMessage::Metrics(Box::new(self.metrics.clone())),
+                                ControllerResponseMessage::Metrics(Box::new(metrics)),
                             );
                         }
                         // Start the load test, and acknowledge command.
