@@ -2513,9 +2513,10 @@ impl GooseUser {
     pub(crate) fn flush_batch(&mut self) -> TransactionResult {
         if self.batch_item_count == 0 {
             // Also check if there are transactions/scenarios without requests.
-            let has_data = self.metrics_batch.as_ref().map_or(false, |b| {
-                !b.transactions.is_empty() || !b.scenarios.is_empty()
-            });
+            let has_data = self
+                .metrics_batch
+                .as_ref()
+                .is_some_and(|b| !b.transactions.is_empty() || !b.scenarios.is_empty());
             if !has_data {
                 return Ok(());
             }

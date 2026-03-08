@@ -4465,6 +4465,7 @@ pub(crate) fn prepare_status_codes(
 }
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod test {
     use std::sync::Arc;
 
@@ -5608,9 +5609,9 @@ mod test {
 
     #[test]
     fn batch_constants_are_sensible() {
-        assert!(METRICS_BATCH_SIZE > 0);
-        assert!(METRICS_BATCH_SIZE <= 1000);
-        assert!(METRICS_BATCH_MAX_AGE.as_millis() > 0);
-        assert!(METRICS_BATCH_MAX_AGE.as_millis() <= 1000);
+        const { assert!(METRICS_BATCH_SIZE > 0) };
+        const { assert!(METRICS_BATCH_SIZE <= 1000) };
+        const { assert!(METRICS_BATCH_MAX_AGE.as_millis() > 0) };
+        const { assert!(METRICS_BATCH_MAX_AGE.as_millis() <= 1000) };
     }
 }
