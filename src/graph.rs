@@ -33,7 +33,6 @@ impl ItemsPerSecond {
         data.get(second)
     }
 
-
     #[cfg(test)]
     #[inline(always)]
     fn insert(&mut self, key: &str, time_series: TimeSeries<u32, u32>) {

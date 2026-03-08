@@ -3709,7 +3709,10 @@ impl MetricsProcessor {
                 if entry.count > 0 {
                     self.graph_data
                         .record_average_response_time_per_second_batch(
-                            &key, second, entry.total_time, entry.count,
+                            &key,
+                            second,
+                            entry.total_time,
+                            entry.count,
                         );
                 }
             }
