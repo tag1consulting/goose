@@ -527,9 +527,9 @@ impl From<&str> for Box<TransactionError> {
 #[derive(Clone, Hash)]
 pub struct Scenario {
     /// The name of the scenario.
-    pub name: String,
+    pub name: Arc<str>,
     /// Auto-generated machine name of the scenario.
-    pub machine_name: String,
+    pub machine_name: Arc<str>,
     /// An integer reflecting where this scenario lives in the internal
     /// [`GooseAttack`](../struct.GooseAttack.html)`.scenarios` vector.
     pub scenarios_index: usize,
@@ -570,8 +570,8 @@ impl Scenario {
     pub fn new(name: &str) -> Self {
         trace!("new scenario: name: {}", &name);
         Scenario {
-            name: name.to_string(),
-            machine_name: Scenario::get_machine_name(name),
+            name: Arc::from(name),
+            machine_name: Arc::from(Scenario::get_machine_name(name)),
             scenarios_index: usize::MAX,
             weight: 1,
             transaction_wait: None,
@@ -3338,6 +3338,13 @@ impl TransactionName {
             TransactionName::TransactionOnly(v) => v.as_ref(),
         }
     }
+    pub fn name_for_transaction_arc(&self) -> Arc<str> {
+        match self {
+            TransactionName::InheritNameByRequests(v) | TransactionName::TransactionOnly(v) => {
+                v.clone()
+            }
+        }
+    }
     pub fn name_for_request(&self) -> &str {
         match self {
             TransactionName::InheritNameByRequests(v) => v.as_ref(),
@@ -3672,7 +3679,7 @@ mod tests {
         }
 
         let mut scenario = scenario!("foo");
-        assert_eq!(scenario.name, "foo");
+        assert_eq!(&*scenario.name, "foo");
         assert_eq!(scenario.scenarios_index, usize::MAX);
         assert_eq!(scenario.weight, 1);
         assert_eq!(scenario.transaction_wait, None);

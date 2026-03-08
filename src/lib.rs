@@ -644,7 +644,7 @@ impl GooseAttack {
         }
         // If there was a conflict, also update the scenario itself.
         if conflicts > 0 {
-            scenario.machine_name = format!("{}_{}", scenario.machine_name, conflicts);
+            scenario.machine_name = Arc::from(format!("{}_{}", scenario.machine_name, conflicts));
         }
         // Finally, register the scenario.
         self.scenarios.push(scenario);
@@ -786,7 +786,7 @@ impl GooseAttack {
             if pattern.contains('*') {
                 wildcard_match(pattern, &scenario.machine_name)
             } else {
-                scenario.machine_name == *pattern
+                &*scenario.machine_name == pattern.as_str()
             }
         })
     }
@@ -921,7 +921,7 @@ impl GooseAttack {
                 )?;
                 user_params.push((
                     self.scenarios[*scenarios_index].scenarios_index,
-                    Arc::from(self.scenarios[*scenarios_index].machine_name.as_str()),
+                    self.scenarios[*scenarios_index].machine_name.clone(),
                     base_url,
                 ));
                 user_count += 1;

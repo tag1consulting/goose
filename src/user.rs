@@ -214,7 +214,7 @@ async fn record_scenario(
     if !thread_user.config.no_scenario_metrics && !thread_user.config.no_metrics {
         let raw_scenario = ScenarioMetric::new(
             thread_user.started.elapsed().as_millis(),
-            thread_scenario.name.as_ref(),
+            thread_scenario.name.clone(),
             thread_user.scenarios_index,
             run_time,
             thread_user.weighted_users_index,
@@ -275,7 +275,7 @@ async fn invoke_transaction_function(
         thread_user.started.elapsed().as_millis(),
         thread_user.scenarios_index,
         thread_transaction_index,
-        thread_transaction_name.name_for_transaction().to_string(),
+        thread_transaction_name.name_for_transaction_arc(),
         thread_user.weighted_users_index,
     );
     // Store details about the currently running transaction for logging purposes.
