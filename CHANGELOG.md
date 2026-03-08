@@ -29,6 +29,10 @@
     o `GooseMethod` now derives `Copy` and `Hash`
     o JSON reports now include `scenarios` and `hosts` fields in `raw_metrics` (previously omitted by manual serialization)
     o **breaking**: `metrics::delta` and `metrics::nullable` modules are now crate-private; `DeltaValue`, `Value`, `ApplyBaseline`, and `NullableFloat` are no longer part of the public API
+ - [#683](https://github.com/tag1consulting/goose/pull/683) use `Arc<str>` consistently for scenario/transaction names in metrics structs, eliminating per-invocation `String` allocations on the hot path ([#647](https://github.com/tag1consulting/goose/issues/647))
+    o **breaking**: `Scenario.name`, `Scenario.machine_name`, `ScenarioMetric.name`, `TransactionMetric.name`, `ScenarioMetricAggregate.name`, and `TransactionMetricAggregate.scenario_name` change from `String` to `Arc<str>`
+    o `Arc<str>` derefs to `&str`, so most read-only usage (formatting, logging, comparisons) works unchanged
+    o fix flaky `test_status_code_response_time_tracking` integration test that assumed localhost responses always take ≥1ms
 
 ## 0.18.1 August 14, 2025
  - [#634](https://github.com/tag1consulting/goose/pull/634) add killswitch mechanism for programmatic test termination
