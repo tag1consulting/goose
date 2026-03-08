@@ -7,6 +7,8 @@
 // Each test validates the core behavioral difference: metrics accumulate without reset,
 // but are reset (with user graph continuity maintained) when reset is enabled.
 
+mod common;
+
 use gumdrop::Options;
 use httpmock::{Method::GET, MockServer};
 use serial_test::serial;
@@ -99,6 +101,8 @@ async fn test_reset_vs_no_reset_behavioral_differences() {
         "test_with_reset.html",
         "test_without_reset.html",
     );
+
+    common::cleanup_files(vec!["test_with_reset.html", "test_without_reset.html"]);
 }
 
 // Test 2: Validate reset vs no-reset behavior with different user counts
@@ -165,6 +169,13 @@ async fn test_reset_vs_no_reset_different_user_counts() {
         "test_100users_with_reset.html",
         "test_100users_without_reset.html",
     );
+
+    common::cleanup_files(vec![
+        "test_2users_with_reset.html",
+        "test_2users_without_reset.html",
+        "test_100users_with_reset.html",
+        "test_100users_without_reset.html",
+    ]);
 }
 
 /// Verify test results and validate expected behavior differences  

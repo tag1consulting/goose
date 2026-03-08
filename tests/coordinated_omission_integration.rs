@@ -376,7 +376,11 @@ mod metrics_integration {
         // Events should have proper structure if any were recorded
         for event in &co_metrics.co_events {
             assert!(event.timestamp_secs > 0);
-            assert!(event.user_id > 0);
+            // user_id is 0-indexed, so any value is valid for a usize
+            assert!(
+                event.user_id < 2,
+                "user_id should be within range of spawned users"
+            );
             assert!(!event.scenario_name.is_empty());
             assert!(event.expected_cadence > Duration::from_millis(0));
             assert!(event.actual_duration > Duration::from_millis(0));

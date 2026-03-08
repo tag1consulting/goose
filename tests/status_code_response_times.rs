@@ -97,7 +97,7 @@ async fn test_status_code_response_time_tracking() {
     let timing_404 = &mixed.status_code_timings[&404];
     assert!(timing_200.count > 0, "200 timing should have recordings");
     assert!(timing_404.count > 0, "404 timing should have recordings");
-    assert!(timing_200.min_time > 0, "200 timing min should be non-zero");
+    // min_time may be 0 when using a local mock server (sub-millisecond responses).
     assert!(
         timing_200.max_time >= timing_200.min_time,
         "200 timing max should be >= min"

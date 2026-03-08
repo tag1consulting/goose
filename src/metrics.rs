@@ -88,6 +88,138 @@ pub enum GooseMetric {
         transaction: TransactionMetric,
         scenario: ScenarioMetric,
     },
+    /// A batch of pre-aggregated metrics from a single GooseUser thread.
+    ///
+    /// Reduces channel pressure from `O(RPS)` to `O(RPS / batch_size)` by
+    /// accumulating metrics locally in each user thread and flushing them as a
+    /// single channel message. The [`MetricsProcessor`] merges batch entries
+    /// into global aggregates using the same logic as individual metrics.
+    Batch(Box<GooseMetricBatch>),
+}
+
+/// Maximum number of request metrics to accumulate before flushing a batch.
+pub(crate) const METRICS_BATCH_SIZE: usize = 100;
+/// Maximum age of a batch before it is flushed, regardless of size.
+pub(crate) const METRICS_BATCH_MAX_AGE: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// Shared epoch counter for coordinating batch validity across metrics resets.
+///
+/// When a metrics reset occurs, the processor increments the epoch. Batches
+/// stamped with a previous epoch are discarded, preventing stale pre-reset
+/// data from leaking into post-reset metrics.
+pub type MetricsEpoch = Arc<AtomicU64>;
+
+/// A batch of pre-aggregated metrics from a single [`GooseUser`] thread.
+///
+/// Instead of sending one channel message per request, each user thread
+/// accumulates metrics locally into this struct and flushes it when the batch
+/// reaches [`METRICS_BATCH_SIZE`] requests or [`METRICS_BATCH_MAX_AGE`] has
+/// elapsed. The [`MetricsProcessor`] merges pre-aggregated entries into the
+/// global [`GooseMetrics`] using the same aggregation logic.
+///
+/// Successful, non-CO requests are pre-aggregated (timing data, status codes).
+/// Failed requests and CO-affected requests are buffered individually since
+/// they require per-request processing (error logging, CO backfill).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GooseMetricBatch {
+    /// The metrics epoch when this batch was created. Batches with an epoch
+    /// older than the processor's current epoch are discarded during
+    /// metrics resets.
+    pub(crate) epoch: u64,
+    /// Pre-aggregated request timing and status-code data for successful,
+    /// non-CO-mitigated requests, keyed by `"METHOD path"`.
+    pub(crate) requests: HashMap<String, RequestBatchEntry>,
+    /// Individual request metrics that need per-request processing:
+    /// failed requests (for error logging) and CO-affected requests (for backfill).
+    pub(crate) individual_requests: Vec<GooseRequestMetric>,
+    /// Pre-aggregated transaction timing data, keyed by `(scenario_index, transaction_index)`.
+    pub(crate) transactions: HashMap<(usize, usize), TransactionBatchEntry>,
+    /// Pre-aggregated scenario timing data, keyed by `scenario_index`.
+    pub(crate) scenarios: HashMap<usize, ScenarioBatchEntry>,
+    /// Per-second request graph counters: `(request_key, second) -> count`.
+    /// Only populated when `--report-file` is configured.
+    pub(crate) graph_rps: HashMap<(String, usize), u32>,
+    /// Per-second average response time data: `(request_key, second) -> (total_time, count)`.
+    /// Only populated when `--report-file` is configured.
+    pub(crate) graph_avg_rt: HashMap<(String, usize), (f64, u32)>,
+    /// Per-second transaction counters for graph data.
+    /// Only populated when `--report-file` is configured.
+    pub(crate) graph_tps: HashMap<usize, u32>,
+    /// Per-second scenario counters for graph data.
+    /// Only populated when `--report-file` is configured.
+    pub(crate) graph_sps: HashMap<usize, u32>,
+}
+
+impl GooseMetricBatch {
+    /// Create a new empty batch stamped with the given epoch.
+    pub(crate) fn new(epoch: u64) -> Self {
+        GooseMetricBatch {
+            epoch,
+            requests: HashMap::new(),
+            individual_requests: Vec::new(),
+            transactions: HashMap::new(),
+            scenarios: HashMap::new(),
+            graph_rps: HashMap::new(),
+            graph_avg_rt: HashMap::new(),
+            graph_tps: HashMap::new(),
+            graph_sps: HashMap::new(),
+        }
+    }
+}
+
+/// Pre-aggregated request timing and status-code data for a single
+/// `"METHOD path"` key within a [`GooseMetricBatch`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct RequestBatchEntry {
+    /// The request path (e.g., `"/api/users"`).
+    pub(crate) path: String,
+    /// The HTTP method.
+    pub(crate) method: GooseMethod,
+    /// Custom method label for non-HTTP protocols (empty for standard HTTP).
+    pub(crate) custom_method: String,
+    /// Pre-aggregated timing data (bucketed response times, min, max, total, count).
+    pub(crate) raw_data: GooseRequestMetricTimingData,
+    /// Per-status-code occurrence counts.
+    pub(crate) status_code_counts: HashMap<u16, usize>,
+    /// Per-status-code timing summaries (count, total, min, max).
+    pub(crate) status_code_timings: HashMap<u16, StatusCodeTimingSummary>,
+}
+
+/// Pre-aggregated transaction timing data for a single
+/// `(scenario_index, transaction_index)` pair within a batch.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct TransactionBatchEntry {
+    /// Bucketed run-time distribution (rounded_time -> count).
+    pub(crate) times: BTreeMap<usize, usize>,
+    /// Shortest run-time in this batch.
+    pub(crate) min_time: usize,
+    /// Longest run-time in this batch.
+    pub(crate) max_time: usize,
+    /// Total combined run-times in this batch.
+    pub(crate) total_time: usize,
+    /// Number of transactions in this batch entry.
+    pub(crate) counter: usize,
+    /// Successful transaction count.
+    pub(crate) success_count: usize,
+    /// Failed transaction count.
+    pub(crate) fail_count: usize,
+}
+
+/// Pre-aggregated scenario timing data for a single scenario index.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct ScenarioBatchEntry {
+    /// Bucketed run-time distribution (rounded_time -> count).
+    pub(crate) times: BTreeMap<usize, usize>,
+    /// Shortest run-time in this batch.
+    pub(crate) min_time: usize,
+    /// Longest run-time in this batch.
+    pub(crate) max_time: usize,
+    /// Total combined run-times in this batch.
+    pub(crate) total_time: usize,
+    /// Number of scenario iterations in this batch entry.
+    pub(crate) counter: usize,
+    /// The user index (single user per batch, since each GooseUser has its own batch).
+    pub(crate) user: usize,
 }
 
 /// Lock-free shared counters for request success/failure counts.
@@ -210,6 +342,8 @@ pub(crate) struct MetricsProcessor {
     request_counter_registry: GooseRequestCounterRegistry,
     /// Logger channel for error logging.
     logger_tx: GooseLoggerTx,
+    /// Shared epoch counter for batch validity across metrics resets.
+    metrics_epoch: MetricsEpoch,
 }
 
 /// THIS IS AN EXPERIMENTAL FEATURE, DISABLED BY DEFAULT. Optionally mitigate the loss of data
@@ -866,6 +1000,22 @@ impl PartialOrd for GooseRequestMetricAggregate {
     }
 }
 
+/// Round a millisecond timing value into a histogram bucket.
+///
+/// Reduces memory usage by combining similar times:
+/// - 0–100ms: no rounding (stored exactly)
+/// - 101–500ms: rounded to nearest 10ms
+/// - 501–1000ms: rounded to nearest 100ms
+/// - >1000ms: rounded to nearest 1000ms
+pub(crate) fn round_metric_time(time: u64) -> usize {
+    match time {
+        0..=100 => time as usize,
+        101..=500 => ((time as f64 / 10.0).round() * 10.0) as usize,
+        501..=1000 => ((time as f64 / 100.0).round() * 100.0) as usize,
+        _ => ((time as f64 / 1000.0).round() * 1000.0) as usize,
+    }
+}
+
 /// Collects per-request timing metrics.
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct GooseRequestMetricTimingData {
@@ -935,24 +1085,7 @@ impl GooseRequestMetricTimingData {
         // Each time we store a new time, increment counter by one.
         self.counter += 1;
 
-        // Round the time so we can combine similar times together and
-        // minimize required memory to store and push upstream to the parent.
-        // No rounding for 1-100ms times.
-        let rounded_time = if time_elapsed < 100 {
-            time
-        }
-        // Round to nearest 10 for 100-500ms times.
-        else if time_elapsed < 500 {
-            ((time_elapsed as f64 / 10.0).round() * 10.0) as usize
-        }
-        // Round to nearest 100 for 500-1000ms times.
-        else if time_elapsed < 1000 {
-            ((time_elapsed as f64 / 100.0).round() * 100.0) as usize
-        }
-        // Round to nearest 1000 for all larger times.
-        else {
-            ((time_elapsed as f64 / 1000.0).round() * 1000.0) as usize
-        };
+        let rounded_time = round_metric_time(time_elapsed);
 
         let counter = match self.times.get(&rounded_time) {
             // We've seen this elapsed time before, increment counter.
@@ -1130,18 +1263,7 @@ impl TransactionMetricAggregate {
             self.fail_count += 1;
         }
 
-        // Round the time so we can combine similar times together and
-        // minimize required memory to store and push upstream to the parent.
-        let rounded_time = match time {
-            // No rounding for times 0-100 ms.
-            0..=100 => time_usize,
-            // Round to nearest 10 for times 100-500 ms.
-            101..=500 => ((time as f64 / 10.0).round() * 10.0) as usize,
-            // Round to nearest 100 for times 500-1000 ms.
-            501..=1000 => ((time as f64 / 100.0).round() * 10.0) as usize,
-            // Round to nearest 1000 for larger times.
-            _ => ((time as f64 / 1000.0).round() * 10.0) as usize,
-        };
+        let rounded_time = round_metric_time(time);
 
         let counter = match self.times.get(&rounded_time) {
             // We've seen this time before, increment counter.
@@ -1217,18 +1339,7 @@ impl ScenarioMetricAggregate {
         // Each time we store a new time, increment counter by one.
         self.counter += 1;
 
-        // Round the time so we can combine similar times together and
-        // minimize required memory to store and push upstream to the parent.
-        let rounded_time = match time {
-            // No rounding for times 0-100 ms.
-            0..=100 => time_usize,
-            // Round to nearest 10 for times 100-500 ms.
-            101..=500 => ((time as f64 / 10.0).round() * 10.0) as usize,
-            // Round to nearest 100 for times 500-1000 ms.
-            501..=1000 => ((time as f64 / 100.0).round() * 10.0) as usize,
-            // Round to nearest 1000 for larger times.
-            _ => ((time as f64 / 1000.0).round() * 10.0) as usize,
-        };
+        let rounded_time = round_metric_time(time);
 
         let counter = match self.times.get(&rounded_time) {
             // We've seen this time before, increment counter.
@@ -3042,6 +3153,7 @@ impl MetricsProcessor {
         defaults: GooseDefaults,
         request_counter_registry: GooseRequestCounterRegistry,
         logger_tx: GooseLoggerTx,
+        metrics_epoch: MetricsEpoch,
     ) -> Self {
         MetricsProcessor {
             metrics_rx,
@@ -3053,6 +3165,7 @@ impl MetricsProcessor {
             defaults,
             request_counter_registry,
             logger_tx,
+            metrics_epoch,
         }
     }
 
@@ -3125,6 +3238,9 @@ impl MetricsProcessor {
                 self.process_transaction_metric(&transaction);
                 self.process_scenario_metric(&scenario);
             }
+            GooseMetric::Batch(batch) => {
+                self.process_batch(*batch);
+            }
         }
     }
 
@@ -3195,6 +3311,9 @@ impl MetricsProcessor {
                         counters.reset();
                     }
                 }
+                // Increment the batch epoch so user-side batches accumulated
+                // before the reset are discarded when they arrive.
+                self.metrics_epoch.fetch_add(1, AtomicOrdering::Relaxed);
                 // Reset graph data while preserving user count.
                 self.graph_data.reset_preserving_users(active_users);
                 let _ = ack.send(());
@@ -3461,6 +3580,139 @@ impl MetricsProcessor {
         };
         error_metrics.occurrences += 1;
         self.metrics.errors.insert(error_string, error_metrics);
+    }
+
+    /// Process a pre-aggregated batch of metrics from a single GooseUser thread.
+    ///
+    /// Individual request metrics (failed / CO-affected) are processed one by one
+    /// using the normal per-request path. Pre-aggregated entries are merged directly
+    /// into the global aggregates, avoiding the per-request overhead.
+    fn process_batch(&mut self, batch: GooseMetricBatch) {
+        // Discard stale batches from before a metrics reset.
+        let current_epoch = self.metrics_epoch.load(AtomicOrdering::Relaxed);
+        if batch.epoch < current_epoch {
+            return;
+        }
+
+        // 1. Process individual request metrics (errors, CO) normally.
+        for request_metric in &batch.individual_requests {
+            self.process_request_metric(request_metric);
+        }
+
+        // 2. Merge pre-aggregated request timing and status-code data.
+        //    Pre-aggregated requests are all non-CO successful requests, so they
+        //    count as actual requests for coordinated omission tracking.
+        if let Some(co_metrics) = &mut self.metrics.coordinated_omission_metrics {
+            let total_actual: u64 = batch
+                .requests
+                .values()
+                .map(|e| e.raw_data.counter as u64)
+                .sum();
+            co_metrics.actual_requests += total_actual;
+            co_metrics.update_synthetic_percentage();
+        }
+        for (key, entry) in batch.requests {
+            let aggregate = self.metrics.requests.entry(key).or_insert_with(|| {
+                GooseRequestMetricAggregate::new(&entry.path, entry.method, 0, &entry.custom_method)
+            });
+
+            // Merge timing data: combine BTreeMaps, update min/max/total/counter.
+            for (time_bucket, count) in &entry.raw_data.times {
+                *aggregate.raw_data.times.entry(*time_bucket).or_insert(0) += count;
+            }
+            aggregate.raw_data.counter += entry.raw_data.counter;
+            aggregate.raw_data.total_time += entry.raw_data.total_time;
+            if entry.raw_data.minimum_time > 0
+                && (aggregate.raw_data.minimum_time == 0
+                    || entry.raw_data.minimum_time < aggregate.raw_data.minimum_time)
+            {
+                aggregate.raw_data.minimum_time = entry.raw_data.minimum_time;
+            }
+            if entry.raw_data.maximum_time > aggregate.raw_data.maximum_time {
+                aggregate.raw_data.maximum_time = entry.raw_data.maximum_time;
+            }
+
+            // Merge status-code counts.
+            if !self.configuration.no_status_codes {
+                for (code, count) in &entry.status_code_counts {
+                    *aggregate.status_code_counts.entry(*code).or_insert(0) += count;
+                }
+
+                // Merge status-code timing summaries.
+                for (code, summary) in &entry.status_code_timings {
+                    let agg_summary = aggregate.status_code_timings.entry(*code).or_default();
+                    agg_summary.count += summary.count;
+                    agg_summary.total_time += summary.total_time;
+                    if summary.min_time > 0
+                        && (agg_summary.min_time == 0 || summary.min_time < agg_summary.min_time)
+                    {
+                        agg_summary.min_time = summary.min_time;
+                    }
+                    if summary.max_time > agg_summary.max_time {
+                        agg_summary.max_time = summary.max_time;
+                    }
+                }
+            }
+        }
+
+        // 3. Merge pre-aggregated transaction timing data.
+        for ((si, ti), entry) in batch.transactions {
+            let agg = &mut self.metrics.transactions[si][ti];
+            for (time_bucket, count) in &entry.times {
+                *agg.times.entry(*time_bucket).or_insert(0) += count;
+            }
+            agg.counter += entry.counter;
+            agg.total_time += entry.total_time;
+            agg.success_count += entry.success_count;
+            agg.fail_count += entry.fail_count;
+            if entry.min_time > 0 && (agg.min_time == 0 || entry.min_time < agg.min_time) {
+                agg.min_time = entry.min_time;
+            }
+            if entry.max_time > agg.max_time {
+                agg.max_time = entry.max_time;
+            }
+        }
+
+        // 4. Merge pre-aggregated scenario timing data.
+        for (index, entry) in batch.scenarios {
+            let agg = &mut self.metrics.scenarios[index];
+            agg.users.insert(entry.user);
+            for (time_bucket, count) in &entry.times {
+                *agg.times.entry(*time_bucket).or_insert(0) += count;
+            }
+            agg.counter += entry.counter;
+            agg.total_time += entry.total_time;
+            if entry.min_time > 0 && (agg.min_time == 0 || entry.min_time < agg.min_time) {
+                agg.min_time = entry.min_time;
+            }
+            if entry.max_time > agg.max_time {
+                agg.max_time = entry.max_time;
+            }
+        }
+
+        // 5. Apply graph data if report file is configured.
+        if !self.configuration.report_file.is_empty() {
+            for ((key, second), count) in batch.graph_rps {
+                self.graph_data
+                    .record_requests_per_second_batch(&key, second, count);
+            }
+            for ((key, second), (total_time, count)) in batch.graph_avg_rt {
+                if count > 0 {
+                    self.graph_data
+                        .record_average_response_time_per_second_batch(
+                            &key, second, total_time, count,
+                        );
+                }
+            }
+            for (second, count) in batch.graph_tps {
+                self.graph_data
+                    .record_transactions_per_second_batch(second, count as usize);
+            }
+            for (second, count) in batch.graph_sps {
+                self.graph_data
+                    .record_scenarios_per_second_batch(second, count as usize);
+            }
+        }
     }
 }
 
@@ -4818,5 +5070,535 @@ mod test {
         let json = serde_json::to_string(&metric).expect("serialize");
         let deserialized: GooseMetric = serde_json::from_str(&json).expect("deserialize");
         assert!(matches!(deserialized, GooseMetric::All { .. }));
+    }
+
+    // --- Batch metrics tests ---
+
+    /// Build a minimal GooseRequestMetric with the given response time and status code.
+    fn make_request_metric(
+        path: &str,
+        response_time: u64,
+        status_code: u16,
+        elapsed: u64,
+    ) -> GooseRequestMetric {
+        let raw = GooseRawRequest::new(GooseMethod::Get, "http://localhost/", vec![], "");
+        let mut metric = GooseRequestMetric::new(
+            raw,
+            TransactionDetail {
+                scenario_index: 0,
+                scenario_name: Arc::from("TestScenario"),
+                transaction_index: Some(0),
+                transaction_name: TransactionName::InheritNameByRequests(Arc::from("tx")),
+            },
+            path,
+            0,
+            0,
+        );
+        metric.response_time = response_time;
+        metric.status_code = status_code;
+        metric.elapsed = elapsed;
+        metric.success = true;
+        metric
+    }
+
+    /// Build a MetricsProcessor suitable for unit tests.
+    ///
+    /// Sets up the minimum required state: one scenario with one transaction,
+    /// empty configuration, and the provided epoch.
+    fn make_test_processor(epoch: u64) -> MetricsProcessor {
+        let (_metrics_tx, metrics_rx) = flume::unbounded::<GooseMetric>();
+        let (_cmd_tx, cmd_rx) = flume::unbounded::<MetricsCommand>();
+
+        let mut metrics = GooseMetrics::default();
+        // Set up one scenario with one transaction so batch indexing works.
+        metrics.transactions = vec![vec![TransactionMetricAggregate::new(
+            0,
+            "TestScenario",
+            0,
+            TransactionName::InheritNameByRequests(Arc::from("tx")),
+        )]];
+        metrics.scenarios = vec![ScenarioMetricAggregate::new(0, "TestScenario")];
+
+        let metrics_epoch: MetricsEpoch = Arc::new(std::sync::atomic::AtomicU64::new(epoch));
+
+        MetricsProcessor::new(
+            metrics_rx,
+            cmd_rx,
+            metrics,
+            crate::graph::GraphData::new(),
+            GooseConfiguration::default(),
+            vec![],
+            GooseDefaults::default(),
+            Arc::new(Mutex::new(HashMap::new())),
+            None,
+            metrics_epoch,
+        )
+    }
+
+    #[test]
+    fn batch_new_has_correct_epoch() {
+        let batch = GooseMetricBatch::new(42);
+        assert_eq!(batch.epoch, 42);
+        assert!(batch.requests.is_empty());
+        assert!(batch.individual_requests.is_empty());
+        assert!(batch.transactions.is_empty());
+        assert!(batch.scenarios.is_empty());
+        assert!(batch.graph_rps.is_empty());
+        assert!(batch.graph_avg_rt.is_empty());
+        assert!(batch.graph_tps.is_empty());
+        assert!(batch.graph_sps.is_empty());
+    }
+
+    #[test]
+    fn batch_serialization_round_trip() {
+        let mut batch = GooseMetricBatch::new(1);
+        batch.requests.insert(
+            "GET /".to_string(),
+            RequestBatchEntry {
+                path: "/".to_string(),
+                method: GooseMethod::Get,
+                custom_method: String::new(),
+                raw_data: GooseRequestMetricTimingData::new(None),
+                status_code_counts: HashMap::new(),
+                status_code_timings: HashMap::new(),
+            },
+        );
+        batch
+            .individual_requests
+            .push(make_request_metric("/err", 50, 500, 1000));
+
+        let json = serde_json::to_string(&GooseMetric::Batch(Box::new(batch))).expect("serialize");
+        let deserialized: GooseMetric = serde_json::from_str(&json).expect("deserialize");
+        assert!(matches!(deserialized, GooseMetric::Batch(_)));
+    }
+
+    #[test]
+    fn batch_sent_on_channel() {
+        let (tx, rx) = flume::unbounded::<GooseMetric>();
+        let batch = GooseMetricBatch::new(0);
+        tx.send(GooseMetric::Batch(Box::new(batch))).unwrap();
+
+        let msg = rx.try_recv().unwrap();
+        assert!(matches!(msg, GooseMetric::Batch(_)));
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn process_batch_merges_request_timing() {
+        let mut processor = make_test_processor(0);
+
+        // Build a batch with pre-aggregated request data.
+        let mut batch = GooseMetricBatch::new(0);
+        let mut raw_data = GooseRequestMetricTimingData::new(None);
+        raw_data.record_time(5);
+        raw_data.record_time(10);
+        raw_data.record_time(15);
+
+        batch.requests.insert(
+            "GET /".to_string(),
+            RequestBatchEntry {
+                path: "/".to_string(),
+                method: GooseMethod::Get,
+                custom_method: String::new(),
+                raw_data,
+                status_code_counts: HashMap::from([(200, 3)]),
+                status_code_timings: HashMap::from([(
+                    200,
+                    StatusCodeTimingSummary {
+                        count: 3,
+                        total_time: 30,
+                        min_time: 5,
+                        max_time: 15,
+                    },
+                )]),
+            },
+        );
+
+        processor.process_batch(batch);
+
+        let agg = &processor.metrics.requests["GET /"];
+        assert_eq!(agg.raw_data.counter, 3);
+        assert_eq!(agg.raw_data.total_time, 30);
+        assert_eq!(agg.raw_data.minimum_time, 5);
+        assert_eq!(agg.raw_data.maximum_time, 15);
+        assert_eq!(agg.status_code_counts[&200], 3);
+        assert_eq!(agg.status_code_timings[&200].count, 3);
+        assert_eq!(agg.status_code_timings[&200].total_time, 30);
+        assert_eq!(agg.status_code_timings[&200].min_time, 5);
+        assert_eq!(agg.status_code_timings[&200].max_time, 15);
+    }
+
+    #[test]
+    fn process_batch_merges_multiple_batches() {
+        let mut processor = make_test_processor(0);
+
+        // First batch: 2 requests at 10ms and 20ms.
+        let mut batch1 = GooseMetricBatch::new(0);
+        let mut raw1 = GooseRequestMetricTimingData::new(None);
+        raw1.record_time(10);
+        raw1.record_time(20);
+        batch1.requests.insert(
+            "GET /api".to_string(),
+            RequestBatchEntry {
+                path: "/api".to_string(),
+                method: GooseMethod::Get,
+                custom_method: String::new(),
+                raw_data: raw1,
+                status_code_counts: HashMap::from([(200, 2)]),
+                status_code_timings: HashMap::new(),
+            },
+        );
+        processor.process_batch(batch1);
+
+        // Second batch: 1 request at 5ms (new minimum).
+        let mut batch2 = GooseMetricBatch::new(0);
+        let mut raw2 = GooseRequestMetricTimingData::new(None);
+        raw2.record_time(5);
+        batch2.requests.insert(
+            "GET /api".to_string(),
+            RequestBatchEntry {
+                path: "/api".to_string(),
+                method: GooseMethod::Get,
+                custom_method: String::new(),
+                raw_data: raw2,
+                status_code_counts: HashMap::from([(200, 1)]),
+                status_code_timings: HashMap::new(),
+            },
+        );
+        processor.process_batch(batch2);
+
+        let agg = &processor.metrics.requests["GET /api"];
+        assert_eq!(agg.raw_data.counter, 3);
+        assert_eq!(agg.raw_data.total_time, 35);
+        assert_eq!(agg.raw_data.minimum_time, 5);
+        assert_eq!(agg.raw_data.maximum_time, 20);
+        assert_eq!(agg.status_code_counts[&200], 3);
+    }
+
+    #[test]
+    fn process_batch_handles_individual_requests() {
+        let mut processor = make_test_processor(0);
+
+        let mut batch = GooseMetricBatch::new(0);
+        let mut req = make_request_metric("/fail", 100, 500, 5000);
+        req.error = "server error".to_string();
+        req.success = false;
+        batch.individual_requests.push(req);
+
+        processor.process_batch(batch);
+
+        // Individual requests go through process_request_metric, which records
+        // them into the aggregate just like non-batched metrics.
+        assert!(processor.metrics.requests.contains_key("GET /fail"));
+        let agg = &processor.metrics.requests["GET /fail"];
+        assert_eq!(agg.raw_data.counter, 1);
+        assert_eq!(agg.raw_data.total_time, 100);
+        // Error should be recorded.
+        assert!(!processor.metrics.errors.is_empty());
+    }
+
+    #[test]
+    fn process_batch_merges_transaction_timing() {
+        let mut processor = make_test_processor(0);
+
+        let mut batch = GooseMetricBatch::new(0);
+        batch.transactions.insert(
+            (0, 0),
+            TransactionBatchEntry {
+                times: BTreeMap::from([(10, 2), (20, 1)]),
+                min_time: 10,
+                max_time: 20,
+                total_time: 40,
+                counter: 3,
+                success_count: 2,
+                fail_count: 1,
+            },
+        );
+
+        processor.process_batch(batch);
+
+        let agg = &processor.metrics.transactions[0][0];
+        assert_eq!(agg.counter, 3);
+        assert_eq!(agg.total_time, 40);
+        assert_eq!(agg.min_time, 10);
+        assert_eq!(agg.max_time, 20);
+        assert_eq!(agg.success_count, 2);
+        assert_eq!(agg.fail_count, 1);
+        assert_eq!(agg.times[&10], 2);
+        assert_eq!(agg.times[&20], 1);
+    }
+
+    #[test]
+    fn process_batch_merges_scenario_timing() {
+        let mut processor = make_test_processor(0);
+
+        let mut batch = GooseMetricBatch::new(0);
+        batch.scenarios.insert(
+            0,
+            ScenarioBatchEntry {
+                times: BTreeMap::from([(50, 1), (75, 2)]),
+                min_time: 50,
+                max_time: 75,
+                total_time: 200,
+                counter: 3,
+                user: 0,
+            },
+        );
+
+        processor.process_batch(batch);
+
+        let agg = &processor.metrics.scenarios[0];
+        assert_eq!(agg.counter, 3);
+        assert_eq!(agg.total_time, 200);
+        assert_eq!(agg.min_time, 50);
+        assert_eq!(agg.max_time, 75);
+        assert_eq!(agg.times[&50], 1);
+        assert_eq!(agg.times[&75], 2);
+        assert!(agg.users.contains(&0));
+    }
+
+    #[test]
+    fn process_batch_discards_stale_epoch() {
+        // Processor at epoch 2; batch stamped with epoch 1 should be discarded.
+        let mut processor = make_test_processor(2);
+
+        let mut batch = GooseMetricBatch::new(1); // stale epoch
+        let mut raw_data = GooseRequestMetricTimingData::new(None);
+        raw_data.record_time(99);
+        batch.requests.insert(
+            "GET /stale".to_string(),
+            RequestBatchEntry {
+                path: "/stale".to_string(),
+                method: GooseMethod::Get,
+                custom_method: String::new(),
+                raw_data,
+                status_code_counts: HashMap::new(),
+                status_code_timings: HashMap::new(),
+            },
+        );
+
+        processor.process_batch(batch);
+
+        // Nothing should be recorded because the batch was stale.
+        assert!(
+            !processor.metrics.requests.contains_key("GET /stale"),
+            "stale batch data should be discarded"
+        );
+    }
+
+    #[test]
+    fn process_batch_accepts_current_epoch() {
+        let mut processor = make_test_processor(3);
+
+        let mut batch = GooseMetricBatch::new(3); // matches current epoch
+        let mut raw_data = GooseRequestMetricTimingData::new(None);
+        raw_data.record_time(42);
+        batch.requests.insert(
+            "GET /current".to_string(),
+            RequestBatchEntry {
+                path: "/current".to_string(),
+                method: GooseMethod::Get,
+                custom_method: String::new(),
+                raw_data,
+                status_code_counts: HashMap::new(),
+                status_code_timings: HashMap::new(),
+            },
+        );
+
+        processor.process_batch(batch);
+
+        assert!(processor.metrics.requests.contains_key("GET /current"));
+        assert_eq!(
+            processor.metrics.requests["GET /current"].raw_data.counter,
+            1
+        );
+    }
+
+    #[test]
+    fn process_batch_produces_same_result_as_individual() {
+        // Process 3 request metrics individually, then process the same 3 as a
+        // pre-aggregated batch. The resulting aggregates should be identical.
+        let requests = vec![
+            make_request_metric("/", 5, 200, 1000),
+            make_request_metric("/", 15, 200, 2000),
+            make_request_metric("/", 10, 200, 3000),
+        ];
+
+        // --- Individual path ---
+        let mut proc_individual = make_test_processor(0);
+        for req in &requests {
+            proc_individual.process_request_metric(req);
+        }
+
+        // --- Batch path ---
+        let mut proc_batch = make_test_processor(0);
+        let mut batch = GooseMetricBatch::new(0);
+        let mut raw_data = GooseRequestMetricTimingData::new(None);
+        for req in &requests {
+            raw_data.record_time(req.response_time);
+        }
+        let mut status_code_counts = HashMap::new();
+        let mut status_code_timings = HashMap::new();
+        for req in &requests {
+            *status_code_counts.entry(req.status_code).or_insert(0) += 1;
+            let summary = status_code_timings
+                .entry(req.status_code)
+                .or_insert_with(StatusCodeTimingSummary::default);
+            let time = req.response_time as usize;
+            summary.count += 1;
+            summary.total_time += time;
+            if time > 0 && (summary.min_time == 0 || time < summary.min_time) {
+                summary.min_time = time;
+            }
+            if time > summary.max_time {
+                summary.max_time = time;
+            }
+        }
+        batch.requests.insert(
+            "GET /".to_string(),
+            RequestBatchEntry {
+                path: "/".to_string(),
+                method: GooseMethod::Get,
+                custom_method: String::new(),
+                raw_data,
+                status_code_counts,
+                status_code_timings,
+            },
+        );
+        proc_batch.process_batch(batch);
+
+        // Compare aggregates.
+        let ind = &proc_individual.metrics.requests["GET /"];
+        let bat = &proc_batch.metrics.requests["GET /"];
+        assert_eq!(ind.raw_data.counter, bat.raw_data.counter);
+        assert_eq!(ind.raw_data.total_time, bat.raw_data.total_time);
+        assert_eq!(ind.raw_data.minimum_time, bat.raw_data.minimum_time);
+        assert_eq!(ind.raw_data.maximum_time, bat.raw_data.maximum_time);
+        assert_eq!(ind.raw_data.times, bat.raw_data.times);
+        assert_eq!(ind.status_code_counts, bat.status_code_counts);
+        assert_eq!(
+            ind.status_code_timings[&200].count,
+            bat.status_code_timings[&200].count
+        );
+        assert_eq!(
+            ind.status_code_timings[&200].total_time,
+            bat.status_code_timings[&200].total_time
+        );
+        assert_eq!(
+            ind.status_code_timings[&200].min_time,
+            bat.status_code_timings[&200].min_time
+        );
+        assert_eq!(
+            ind.status_code_timings[&200].max_time,
+            bat.status_code_timings[&200].max_time
+        );
+    }
+
+    #[test]
+    fn process_batch_graph_data_with_report_file() {
+        // Enable report file so graph data is recorded.
+        // Compare the batch path to individual processing to verify they produce
+        // the same graph data.
+        let response_times: Vec<u64> = vec![10, 20, 30];
+
+        // --- Individual path: feed each request one-by-one ---
+        let (_metrics_tx1, metrics_rx1) = flume::unbounded::<GooseMetric>();
+        let (_cmd_tx1, cmd_rx1) = flume::unbounded::<MetricsCommand>();
+        let mut config1 = GooseConfiguration::default();
+        config1.report_file = vec!["test.html".to_string()];
+        let mut metrics1 = GooseMetrics::default();
+        metrics1.transactions = vec![vec![TransactionMetricAggregate::new(
+            0,
+            "TestScenario",
+            0,
+            TransactionName::InheritNameByRequests(Arc::from("tx")),
+        )]];
+        metrics1.scenarios = vec![ScenarioMetricAggregate::new(0, "TestScenario")];
+        let mut proc_individual = MetricsProcessor::new(
+            metrics_rx1,
+            cmd_rx1,
+            metrics1,
+            crate::graph::GraphData::new(),
+            config1,
+            vec![],
+            GooseDefaults::default(),
+            Arc::new(Mutex::new(HashMap::new())),
+            None,
+            Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        );
+        for &rt in &response_times {
+            let req = make_request_metric("/", rt, 200, 5000);
+            proc_individual.process_request_metric(&req);
+        }
+
+        // --- Batch path: same data in a single batch ---
+        let (_metrics_tx2, metrics_rx2) = flume::unbounded::<GooseMetric>();
+        let (_cmd_tx2, cmd_rx2) = flume::unbounded::<MetricsCommand>();
+        let mut config2 = GooseConfiguration::default();
+        config2.report_file = vec!["test.html".to_string()];
+        let mut metrics2 = GooseMetrics::default();
+        metrics2.transactions = vec![vec![TransactionMetricAggregate::new(
+            0,
+            "TestScenario",
+            0,
+            TransactionName::InheritNameByRequests(Arc::from("tx")),
+        )]];
+        metrics2.scenarios = vec![ScenarioMetricAggregate::new(0, "TestScenario")];
+        let mut proc_batch = MetricsProcessor::new(
+            metrics_rx2,
+            cmd_rx2,
+            metrics2,
+            crate::graph::GraphData::new(),
+            config2,
+            vec![],
+            GooseDefaults::default(),
+            Arc::new(Mutex::new(HashMap::new())),
+            None,
+            Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        );
+        let mut batch = GooseMetricBatch::new(0);
+        let total_time: f64 = response_times.iter().map(|&rt| rt as f64).sum();
+        batch
+            .graph_rps
+            .insert(("GET /".to_string(), 5), response_times.len() as u32);
+        batch.graph_avg_rt.insert(
+            ("GET /".to_string(), 5),
+            (total_time, response_times.len() as u32),
+        );
+        // Pre-aggregate request timing data too, so both paths match.
+        let mut raw_data = GooseRequestMetricTimingData::new(None);
+        for &rt in &response_times {
+            raw_data.record_time(rt);
+        }
+        let mut sc_counts = HashMap::new();
+        *sc_counts.entry(200u16).or_insert(0usize) += response_times.len();
+        batch.requests.insert(
+            "GET /".to_string(),
+            RequestBatchEntry {
+                path: "/".to_string(),
+                method: GooseMethod::Get,
+                custom_method: String::new(),
+                raw_data,
+                status_code_counts: sc_counts,
+                status_code_timings: HashMap::new(),
+            },
+        );
+        proc_batch.process_batch(batch);
+
+        // Compare request aggregates (timing data should match exactly).
+        let ind_agg = &proc_individual.metrics.requests["GET /"];
+        let bat_agg = &proc_batch.metrics.requests["GET /"];
+        assert_eq!(ind_agg.raw_data.counter, bat_agg.raw_data.counter);
+        assert_eq!(ind_agg.raw_data.total_time, bat_agg.raw_data.total_time);
+        assert_eq!(ind_agg.raw_data.minimum_time, bat_agg.raw_data.minimum_time);
+        assert_eq!(ind_agg.raw_data.maximum_time, bat_agg.raw_data.maximum_time);
+    }
+
+    #[test]
+    fn batch_constants_are_sensible() {
+        assert!(METRICS_BATCH_SIZE > 0);
+        assert!(METRICS_BATCH_SIZE <= 1000);
+        assert!(METRICS_BATCH_MAX_AGE.as_millis() > 0);
+        assert!(METRICS_BATCH_MAX_AGE.as_millis() <= 1000);
     }
 }
