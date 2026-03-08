@@ -2361,13 +2361,12 @@ impl GooseUser {
         // Track graph data if report file is configured.
         if self.has_report_file {
             let second = (request_metric.elapsed / 1000) as usize;
-            let key = self.counter_key_buf.clone();
-            *batch.graph_rps.entry((key, second)).or_insert(0) += 1;
-
-            let key = self.counter_key_buf.clone();
-            let avg_entry = batch.graph_avg_rt.entry((key, second)).or_insert((0.0, 0));
-            avg_entry.0 += request_metric.response_time as f64;
-            avg_entry.1 += 1;
+            let graph_entry = batch
+                .graph_request_data
+                .entry((self.counter_key_buf.clone(), second))
+                .or_default();
+            graph_entry.count += 1;
+            graph_entry.total_time += request_metric.response_time as f64;
         }
 
         self.batch_item_count += 1;

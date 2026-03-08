@@ -136,12 +136,10 @@ pub struct GooseMetricBatch {
     pub(crate) transactions: HashMap<(usize, usize), TransactionBatchEntry>,
     /// Pre-aggregated scenario timing data, keyed by `scenario_index`.
     pub(crate) scenarios: HashMap<usize, ScenarioBatchEntry>,
-    /// Per-second request graph counters: `(request_key, second) -> count`.
-    /// Only populated when `--report-file` is configured.
-    pub(crate) graph_rps: HashMap<(String, usize), u32>,
-    /// Per-second average response time data: `(request_key, second) -> (total_time, count)`.
-    /// Only populated when `--report-file` is configured.
-    pub(crate) graph_avg_rt: HashMap<(String, usize), (f64, u32)>,
+    /// Per-second request graph data (RPS count and average response time),
+    /// keyed by `(request_key, second)`. Only populated when `--report-file`
+    /// is configured.
+    pub(crate) graph_request_data: HashMap<(String, usize), RequestGraphBatchData>,
     /// Per-second transaction counters for graph data.
     /// Only populated when `--report-file` is configured.
     pub(crate) graph_tps: HashMap<usize, u32>,
@@ -159,12 +157,21 @@ impl GooseMetricBatch {
             individual_requests: Vec::new(),
             transactions: HashMap::new(),
             scenarios: HashMap::new(),
-            graph_rps: HashMap::new(),
-            graph_avg_rt: HashMap::new(),
+            graph_request_data: HashMap::new(),
             graph_tps: HashMap::new(),
             graph_sps: HashMap::new(),
         }
     }
+}
+
+/// Per-second graph data for a single request endpoint within a batch,
+/// combining RPS count and average response time accumulator.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub(crate) struct RequestGraphBatchData {
+    /// Number of requests in this second.
+    pub(crate) count: u32,
+    /// Sum of response times in this second (for computing weighted average).
+    pub(crate) total_time: f64,
 }
 
 /// Pre-aggregated request timing and status-code data for a single
@@ -3696,15 +3703,13 @@ impl MetricsProcessor {
 
         // 5. Apply graph data if report file is configured.
         if !self.configuration.report_file.is_empty() {
-            for ((key, second), count) in batch.graph_rps {
+            for ((key, second), entry) in batch.graph_request_data {
                 self.graph_data
-                    .record_requests_per_second_batch(&key, second, count);
-            }
-            for ((key, second), (total_time, count)) in batch.graph_avg_rt {
-                if count > 0 {
+                    .record_requests_per_second_batch(&key, second, entry.count);
+                if entry.count > 0 {
                     self.graph_data
                         .record_average_response_time_per_second_batch(
-                            &key, second, total_time, count,
+                            &key, second, entry.total_time, entry.count,
                         );
                 }
             }
@@ -5156,8 +5161,7 @@ mod test {
         assert!(batch.individual_requests.is_empty());
         assert!(batch.transactions.is_empty());
         assert!(batch.scenarios.is_empty());
-        assert!(batch.graph_rps.is_empty());
-        assert!(batch.graph_avg_rt.is_empty());
+        assert!(batch.graph_request_data.is_empty());
         assert!(batch.graph_tps.is_empty());
         assert!(batch.graph_sps.is_empty());
     }
@@ -5571,12 +5575,12 @@ mod test {
         );
         let mut batch = GooseMetricBatch::new(0);
         let total_time: f64 = response_times.iter().map(|&rt| rt as f64).sum();
-        batch
-            .graph_rps
-            .insert(("GET /".to_string(), 5), response_times.len() as u32);
-        batch.graph_avg_rt.insert(
+        batch.graph_request_data.insert(
             ("GET /".to_string(), 5),
-            (total_time, response_times.len() as u32),
+            RequestGraphBatchData {
+                count: response_times.len() as u32,
+                total_time,
+            },
         );
         // Pre-aggregate request timing data too, so both paths match.
         let mut raw_data = GooseRequestMetricTimingData::new(None);

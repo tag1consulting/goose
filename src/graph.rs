@@ -25,19 +25,16 @@ impl ItemsPerSecond {
 
     #[inline(always)]
     fn initialize_or_increment(&mut self, key: &str, second: usize, value: u32) -> u32 {
-        if !self.contains_key(key) {
-            self.insert(key, TimeSeries::new());
-        }
-        let data = self.0.get_mut(key).unwrap();
+        let data = self
+            .0
+            .entry(key.to_string())
+            .or_insert_with(TimeSeries::new);
         data.increase_value(second, value);
         data.get(second)
     }
 
-    #[inline(always)]
-    fn contains_key(&mut self, key: &str) -> bool {
-        self.0.contains_key(key)
-    }
 
+    #[cfg(test)]
     #[inline(always)]
     fn insert(&mut self, key: &str, time_series: TimeSeries<u32, u32>) {
         self.0.insert(key.to_string(), time_series);
@@ -123,11 +120,10 @@ impl GraphData {
         second: usize,
         response_time: u64,
     ) {
-        if !self.average_response_time_per_second.contains_key(&key) {
-            self.average_response_time_per_second
-                .insert(key.clone(), TimeSeries::new());
-        }
-        let data = self.average_response_time_per_second.get_mut(&key).unwrap();
+        let data = self
+            .average_response_time_per_second
+            .entry(key)
+            .or_insert_with(TimeSeries::new);
         data.increase_value(second, response_time as f32);
 
         debug!(
@@ -182,11 +178,13 @@ impl GraphData {
         total_time: f64,
         count: u32,
     ) {
-        if !self.average_response_time_per_second.contains_key(key) {
-            self.average_response_time_per_second
-                .insert(key.to_string(), TimeSeries::new());
+        if count == 0 {
+            return;
         }
-        let data = self.average_response_time_per_second.get_mut(key).unwrap();
+        let data = self
+            .average_response_time_per_second
+            .entry(key.to_string())
+            .or_insert_with(TimeSeries::new);
         data.expand(second, MovingAverage::new());
         let batch_avg = MovingAverage {
             count,
