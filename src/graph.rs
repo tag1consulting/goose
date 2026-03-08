@@ -43,14 +43,14 @@ impl ItemsPerSecond {
         self.0.insert(key.to_string(), time_series);
     }
 
+    #[cfg(test)]
     #[inline(always)]
-    #[allow(dead_code)]
     fn len(&self) -> usize {
         self.0.len()
     }
 
+    #[cfg(test)]
     #[inline(always)]
-    #[allow(dead_code)]
     fn get(&self, key: &str) -> Option<TimeSeries<u32, u32>> {
         self.0.get(key).cloned()
     }

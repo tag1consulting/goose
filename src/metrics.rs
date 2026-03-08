@@ -1000,6 +1000,22 @@ impl PartialOrd for GooseRequestMetricAggregate {
     }
 }
 
+/// Round a millisecond timing value into a histogram bucket.
+///
+/// Reduces memory usage by combining similar times:
+/// - 0–100ms: no rounding (stored exactly)
+/// - 101–500ms: rounded to nearest 10ms
+/// - 501–1000ms: rounded to nearest 100ms
+/// - >1000ms: rounded to nearest 1000ms
+pub(crate) fn round_metric_time(time: u64) -> usize {
+    match time {
+        0..=100 => time as usize,
+        101..=500 => ((time as f64 / 10.0).round() * 10.0) as usize,
+        501..=1000 => ((time as f64 / 100.0).round() * 100.0) as usize,
+        _ => ((time as f64 / 1000.0).round() * 1000.0) as usize,
+    }
+}
+
 /// Collects per-request timing metrics.
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct GooseRequestMetricTimingData {
@@ -1069,24 +1085,7 @@ impl GooseRequestMetricTimingData {
         // Each time we store a new time, increment counter by one.
         self.counter += 1;
 
-        // Round the time so we can combine similar times together and
-        // minimize required memory to store and push upstream to the parent.
-        // No rounding for 1-100ms times.
-        let rounded_time = if time_elapsed < 100 {
-            time
-        }
-        // Round to nearest 10 for 100-500ms times.
-        else if time_elapsed < 500 {
-            ((time_elapsed as f64 / 10.0).round() * 10.0) as usize
-        }
-        // Round to nearest 100 for 500-1000ms times.
-        else if time_elapsed < 1000 {
-            ((time_elapsed as f64 / 100.0).round() * 100.0) as usize
-        }
-        // Round to nearest 1000 for all larger times.
-        else {
-            ((time_elapsed as f64 / 1000.0).round() * 1000.0) as usize
-        };
+        let rounded_time = round_metric_time(time_elapsed);
 
         let counter = match self.times.get(&rounded_time) {
             // We've seen this elapsed time before, increment counter.
@@ -1264,18 +1263,7 @@ impl TransactionMetricAggregate {
             self.fail_count += 1;
         }
 
-        // Round the time so we can combine similar times together and
-        // minimize required memory to store and push upstream to the parent.
-        let rounded_time = match time {
-            // No rounding for times 0-100 ms.
-            0..=100 => time_usize,
-            // Round to nearest 10 for times 100-500 ms.
-            101..=500 => ((time as f64 / 10.0).round() * 10.0) as usize,
-            // Round to nearest 100 for times 500-1000 ms.
-            501..=1000 => ((time as f64 / 100.0).round() * 10.0) as usize,
-            // Round to nearest 1000 for larger times.
-            _ => ((time as f64 / 1000.0).round() * 10.0) as usize,
-        };
+        let rounded_time = round_metric_time(time);
 
         let counter = match self.times.get(&rounded_time) {
             // We've seen this time before, increment counter.
@@ -1351,18 +1339,7 @@ impl ScenarioMetricAggregate {
         // Each time we store a new time, increment counter by one.
         self.counter += 1;
 
-        // Round the time so we can combine similar times together and
-        // minimize required memory to store and push upstream to the parent.
-        let rounded_time = match time {
-            // No rounding for times 0-100 ms.
-            0..=100 => time_usize,
-            // Round to nearest 10 for times 100-500 ms.
-            101..=500 => ((time as f64 / 10.0).round() * 10.0) as usize,
-            // Round to nearest 100 for times 500-1000 ms.
-            501..=1000 => ((time as f64 / 100.0).round() * 10.0) as usize,
-            // Round to nearest 1000 for larger times.
-            _ => ((time as f64 / 1000.0).round() * 10.0) as usize,
-        };
+        let rounded_time = round_metric_time(time);
 
         let counter = match self.times.get(&rounded_time) {
             // We've seen this time before, increment counter.

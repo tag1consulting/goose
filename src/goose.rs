@@ -306,8 +306,8 @@ use url::Url;
 
 use crate::logger::GooseLog;
 use crate::metrics::{
-    GooseCoordinatedOmissionMitigation, GooseMetric, GooseMetricBatch, GooseRawRequest,
-    GooseRequestCounterRegistry, GooseRequestCounters, GooseRequestMetric,
+    round_metric_time, GooseCoordinatedOmissionMitigation, GooseMetric, GooseMetricBatch,
+    GooseRawRequest, GooseRequestCounterRegistry, GooseRequestCounters, GooseRequestMetric,
     GooseRequestMetricTimingData, MetricsEpoch, RequestBatchEntry, ScenarioBatchEntry,
     ScenarioMetric, StatusCodeTimingSummary, TransactionBatchEntry, TransactionDetail,
     TransactionMetric, METRICS_BATCH_MAX_AGE, METRICS_BATCH_SIZE,
@@ -2406,14 +2406,7 @@ impl GooseUser {
             });
 
         let time = transaction.run_time as usize;
-
-        // Use the same rounding logic as TransactionMetricAggregate::set_time.
-        let rounded_time = match transaction.run_time {
-            0..=100 => time,
-            101..=500 => ((transaction.run_time as f64 / 10.0).round() * 10.0) as usize,
-            501..=1000 => ((transaction.run_time as f64 / 100.0).round() * 10.0) as usize,
-            _ => ((transaction.run_time as f64 / 1000.0).round() * 10.0) as usize,
-        };
+        let rounded_time = round_metric_time(transaction.run_time);
 
         *entry.times.entry(rounded_time).or_insert(0) += 1;
         entry.counter += 1;
@@ -2457,14 +2450,7 @@ impl GooseUser {
             });
 
         let time = scenario.run_time as usize;
-
-        // Use the same rounding logic as ScenarioMetricAggregate::update.
-        let rounded_time = match scenario.run_time {
-            0..=100 => time,
-            101..=500 => ((scenario.run_time as f64 / 10.0).round() * 10.0) as usize,
-            501..=1000 => ((scenario.run_time as f64 / 100.0).round() * 10.0) as usize,
-            _ => ((scenario.run_time as f64 / 1000.0).round() * 10.0) as usize,
-        };
+        let rounded_time = round_metric_time(scenario.run_time);
 
         *entry.times.entry(rounded_time).or_insert(0) += 1;
         entry.counter += 1;
