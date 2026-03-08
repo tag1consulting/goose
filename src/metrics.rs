@@ -976,7 +976,8 @@ pub struct ScenarioMetric {
     /// How many milliseconds the load test has been running.
     pub elapsed: u64,
     /// The name of the scenario.
-    pub name: String,
+    #[serde(with = "arc_str_serde")]
+    pub name: Arc<str>,
     /// An index into [`GooseAttack`]`.scenarios`, indicating which scenario this is.
     pub index: usize,
     /// How long scenario ran.
@@ -988,14 +989,14 @@ impl ScenarioMetric {
     /// Create a new Scenario metric.
     pub(crate) fn new(
         elapsed: u128,
-        scenario_name: &str,
+        scenario_name: Arc<str>,
         index: usize,
         run_time: u128,
         user: usize,
     ) -> Self {
         ScenarioMetric {
             elapsed: elapsed as u64,
-            name: scenario_name.to_string(),
+            name: scenario_name,
             index,
             run_time: run_time as u64,
             user,
@@ -1013,7 +1014,8 @@ pub struct TransactionMetric {
     /// An index into [`Scenario`]`.transaction`, indicating which transaction this is.
     pub transaction_index: usize,
     /// The optional name of the transaction.
-    pub name: String,
+    #[serde(with = "arc_str_serde")]
+    pub name: Arc<str>,
     /// How long transaction ran.
     pub run_time: u64,
     /// Whether or not the request was successful.
@@ -1027,7 +1029,7 @@ impl TransactionMetric {
         elapsed: u128,
         scenario_index: usize,
         transaction_index: usize,
-        name: String,
+        name: Arc<str>,
         user: usize,
     ) -> Self {
         TransactionMetric {
@@ -1059,7 +1061,8 @@ pub struct TransactionMetricAggregate {
     /// indicating which scenario this is.
     pub scenario_index: usize,
     /// The scenario name.
-    pub scenario_name: String,
+    #[serde(with = "arc_str_serde")]
+    pub scenario_name: Arc<str>,
     /// An index into [`Scenario`](../goose/struct.Scenario.html)`.transaction`,
     /// indicating which transaction this is.
     pub transaction_index: usize,
@@ -1084,13 +1087,13 @@ impl TransactionMetricAggregate {
     /// Create a new TransactionMetricAggregate.
     pub(crate) fn new(
         scenario_index: usize,
-        scenario_name: &str,
+        scenario_name: Arc<str>,
         transaction_index: usize,
         transaction_name: TransactionName,
     ) -> Self {
         TransactionMetricAggregate {
             scenario_index,
-            scenario_name: scenario_name.to_string(),
+            scenario_name,
             transaction_index,
             transaction_name,
             times: BTreeMap::new(),
@@ -1164,7 +1167,8 @@ pub struct ScenarioMetricAggregate {
     /// indicating which scenario this is.
     pub index: usize,
     /// The scenario name.
-    pub name: String,
+    #[serde(with = "arc_str_serde")]
+    pub name: Arc<str>,
     /// List of users running this scenario.
     pub users: HashSet<usize>,
     /// Per-run-time counters, tracking how often scenario takes a given time to complete.
@@ -1180,10 +1184,10 @@ pub struct ScenarioMetricAggregate {
 }
 impl ScenarioMetricAggregate {
     /// Create a new ScenarioMetricAggregate.
-    pub(crate) fn new(index: usize, name: &str) -> Self {
+    pub(crate) fn new(index: usize, name: Arc<str>) -> Self {
         ScenarioMetricAggregate {
             index,
-            name: name.to_string(),
+            name,
             users: HashSet::new(),
             times: BTreeMap::new(),
             min_time: 0,
@@ -1420,7 +1424,7 @@ impl GooseMetrics {
                     for transaction in &scenario.transactions {
                         transaction_vector.push(TransactionMetricAggregate::new(
                             scenario.scenarios_index,
-                            &scenario.name,
+                            scenario.name.clone(),
                             transaction.transactions_index,
                             transaction.name.clone(),
                         ));
@@ -1462,7 +1466,7 @@ impl GooseMetrics {
             for scenario in scenarios {
                 self.scenarios.push(ScenarioMetricAggregate::new(
                     scenario.scenarios_index,
-                    &scenario.name,
+                    scenario.name.clone(),
                 ));
             }
         }
@@ -4752,8 +4756,8 @@ mod test {
     #[test]
     fn goose_metric_all_variant_round_trips() {
         let request = make_test_request_metric();
-        let transaction = TransactionMetric::new(0, 0, 0, "tx".to_string(), 0);
-        let scenario = ScenarioMetric::new(0, "TestScenario", 0, 100, 0);
+        let transaction = TransactionMetric::new(0, 0, 0, Arc::from("tx"), 0);
+        let scenario = ScenarioMetric::new(0, Arc::from("TestScenario"), 0, 100, 0);
 
         let metric = GooseMetric::All {
             request: Box::new(request.clone()),
@@ -4769,8 +4773,8 @@ mod test {
                 scenario: s,
             } => {
                 assert_eq!(r.name.as_ref(), "/");
-                assert_eq!(t.name, "tx");
-                assert_eq!(s.name, "TestScenario");
+                assert_eq!(&*t.name, "tx");
+                assert_eq!(&*s.name, "TestScenario");
                 assert_eq!(s.run_time, 100);
             }
             _ => panic!("expected GooseMetric::All"),
@@ -4784,8 +4788,8 @@ mod test {
         let (tx, rx) = flume::unbounded::<GooseMetric>();
 
         let request = make_test_request_metric();
-        let transaction = TransactionMetric::new(0, 0, 0, "tx".to_string(), 0);
-        let scenario = ScenarioMetric::new(0, "TestScenario", 0, 100, 0);
+        let transaction = TransactionMetric::new(0, 0, 0, Arc::from("tx"), 0);
+        let scenario = ScenarioMetric::new(0, Arc::from("TestScenario"), 0, 100, 0);
 
         // Send one All message (replaces what would have been 3 individual sends).
         tx.send(GooseMetric::All {
@@ -4806,8 +4810,8 @@ mod test {
         // Verify GooseMetric::All round-trips through serde (metrics are serialized
         // for logging and Gaggle communication).
         let request = make_test_request_metric();
-        let transaction = TransactionMetric::new(0, 0, 0, "tx".to_string(), 0);
-        let scenario = ScenarioMetric::new(0, "TestScenario", 0, 100, 0);
+        let transaction = TransactionMetric::new(0, 0, 0, Arc::from("tx"), 0);
+        let scenario = ScenarioMetric::new(0, Arc::from("TestScenario"), 0, 100, 0);
 
         let metric = GooseMetric::All {
             request: Box::new(request),
