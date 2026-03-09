@@ -3598,13 +3598,13 @@ impl GooseAttack {
                 Some("json") => {
                     let file = create(path).await?;
                     if write {
-                        self.write_json_report(file, baseline).await?;
+                        self.write_json_report(file, report, baseline).await?;
                     }
                 }
                 Some("md") => {
                     let file = create(path).await?;
                     if write {
-                        self.write_markdown_report(file, baseline).await?;
+                        self.write_markdown_report(file, report, baseline).await?;
                     }
                 }
                 #[cfg(feature = "pdf-reports")]
@@ -3944,11 +3944,14 @@ impl GooseAttack {
     pub(crate) async fn write_json_report(
         &self,
         report_file: File,
+        path: &str,
         baseline: Option<&ReportData<'static>>,
     ) -> Result<(), GooseError> {
         let data = self.prepare_report_data(baseline)?;
 
         serde_json::to_writer_pretty(BufWriter::new(report_file.into_std().await), &data)?;
+
+        info!("json report file written to: {path}");
 
         Ok(())
     }
@@ -3957,11 +3960,16 @@ impl GooseAttack {
     pub(crate) async fn write_markdown_report(
         &self,
         report_file: File,
+        path: &str,
         baseline: Option<&ReportData<'static>>,
     ) -> Result<(), GooseError> {
         let data = self.prepare_report_data(baseline)?;
 
-        report::write_markdown_report(&mut BufWriter::new(report_file.into_std().await), data)
+        report::write_markdown_report(&mut BufWriter::new(report_file.into_std().await), data)?;
+
+        info!("markdown report file written to: {path}");
+
+        Ok(())
     }
 
     // Write an HTML-formatted report.
