@@ -33,6 +33,7 @@
     o **breaking**: `Scenario.name`, `Scenario.machine_name`, `ScenarioMetric.name`, `TransactionMetric.name`, `ScenarioMetricAggregate.name`, and `TransactionMetricAggregate.scenario_name` change from `String` to `Arc<str>`
     o `Arc<str>` derefs to `&str`, so most read-only usage (formatting, logging, comparisons) works unchanged
     o fix flaky `test_status_code_response_time_tracking` integration test that assumed localhost responses always take ≥1ms
+ - [#685](https://github.com/tag1consulting/goose/pull/685) log info message when writing JSON and Markdown report files, matching existing HTML and PDF report behavior ([#604](https://github.com/tag1consulting/goose/issues/604))
 
 ## 0.18.1 August 14, 2025
  - [#634](https://github.com/tag1consulting/goose/pull/634) add killswitch mechanism for programmatic test termination
