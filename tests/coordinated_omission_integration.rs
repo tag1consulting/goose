@@ -377,7 +377,11 @@ mod metrics_integration {
         // Note: user IDs are 0-indexed, so valid range is 0..num_users
         for event in &co_metrics.co_events {
             assert!(event.timestamp_secs > 0);
-            assert!(event.user_id < 2, "user_id {} should be less than the number of users (2)", event.user_id);
+            assert!(
+                event.user_id < 2,
+                "user_id {} should be less than the number of users (2)",
+                event.user_id
+            );
             assert!(!event.scenario_name.is_empty());
             assert!(event.expected_cadence > Duration::from_millis(0));
             assert!(event.actual_duration > Duration::from_millis(0));
