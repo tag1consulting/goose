@@ -1551,13 +1551,13 @@ impl GooseConfiguration {
             .get_value(vec![
                 // Use --increase-rate if set.
                 GooseValue {
-                    value: Some(util::get_increase_rate(self.increase_rate.clone())),
+                    value: Some(util::parse_rate(self.increase_rate.clone())),
                     filter: self.increase_rate.is_none(),
                     message: "increase_rate",
                 },
                 // Otherwise use GooseDefault if set and not on Worker.
                 GooseValue {
-                    value: Some(util::get_increase_rate(defaults.increase_rate.clone())),
+                    value: Some(util::parse_rate(defaults.increase_rate.clone())),
                     filter: defaults.increase_rate.is_none(),
                     message: "increase_rate",
                 },
@@ -1569,13 +1569,13 @@ impl GooseConfiguration {
             .get_value(vec![
                 // Use --decrease-rate if set.
                 GooseValue {
-                    value: Some(util::get_increase_rate(self.decrease_rate.clone())),
+                    value: Some(util::parse_rate(self.decrease_rate.clone())),
                     filter: self.decrease_rate.is_none(),
                     message: "decrease_rate",
                 },
                 // Otherwise use GooseDefault if set and not on Worker.
                 GooseValue {
-                    value: Some(util::get_increase_rate(defaults.decrease_rate.clone())),
+                    value: Some(util::parse_rate(defaults.decrease_rate.clone())),
                     filter: defaults.decrease_rate.is_none(),
                     message: "decrease_rate",
                 },
@@ -2035,7 +2035,7 @@ impl GooseConfiguration {
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.increase_rate`".to_string(),
                     value: increase_rate.to_string(),
-                    detail: "`configuration.increase_rate` must be set to at least 1.".to_string(),
+                    detail: "`configuration.increase_rate` must be non-zero.".to_string(),
                 });
             }
         }
@@ -2046,7 +2046,7 @@ impl GooseConfiguration {
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.decrease_rate`".to_string(),
                     value: decrease_rate.to_string(),
-                    detail: "`configuration.decrease_rate` must be set to at least 1.".to_string(),
+                    detail: "`configuration.decrease_rate` must be non-zero.".to_string(),
                 });
             }
         }

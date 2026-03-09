@@ -62,9 +62,9 @@ impl TestPlan {
                     // Load test is configured with --increase-rate.
                     let increase_rate =
                         if let Some(increase_rate) = configuration.increase_rate.as_ref() {
-                            util::get_increase_rate(Some(increase_rate.to_string()))
+                            util::parse_rate(Some(increase_rate.to_string()))
                         } else {
-                            util::get_increase_rate(None)
+                            util::parse_rate(None)
                         };
                     // Convert increase_rate to milliseconds.
                     let ms_increase_rate = 1.0 / increase_rate * 1_000.0;
@@ -73,28 +73,30 @@ impl TestPlan {
                     steps.push((users, total_time as usize));
                 }
 
-                // A run-time is set, configure the load plan to run for the specified time then shut down.
+                // If a run-time is set, maintain users for the configured duration.
                 if configuration.run_time != "0" {
-                    // Maintain the configured number of users for the configured run-time.
                     steps.push((users, util::parse_timespan(&configuration.run_time) * 1_000));
+                }
 
-                    // Ramp down using --decrease-time or --decrease-rate if configured.
-                    if configuration.decrease_time != "0" {
-                        // Decrease users over the configured decrease-time.
-                        steps.push((
-                            0,
-                            util::parse_timespan(&configuration.decrease_time) * 1_000,
-                        ));
-                    } else if let Some(decrease_rate) = configuration.decrease_rate.as_ref() {
-                        // Calculate decrease time from rate.
-                        let rate = util::get_increase_rate(Some(decrease_rate.to_string()));
-                        let ms_decrease_rate = 1.0 / rate * 1_000.0;
-                        let total_time = ms_decrease_rate * users as f32;
-                        steps.push((0, total_time as usize));
-                    } else {
-                        // Then shut down the load test as quickly as possible.
-                        steps.push((0, 0));
-                    }
+                // Ramp down using --decrease-time or --decrease-rate if configured.
+                // This applies whether or not --run-time is set (e.g. ramp up then
+                // immediately ramp down).
+                if configuration.decrease_time != "0" {
+                    // Decrease users over the configured decrease-time.
+                    steps.push((
+                        0,
+                        util::parse_timespan(&configuration.decrease_time) * 1_000,
+                    ));
+                } else if let Some(decrease_rate) = configuration.decrease_rate.as_ref() {
+                    // Calculate decrease time from rate.
+                    let rate = util::parse_rate(Some(decrease_rate.to_string()));
+                    let ms_decrease_rate = 1.0 / rate * 1_000.0;
+                    let total_time = ms_decrease_rate * users as f32;
+                    steps.push((0, total_time as usize));
+                } else if configuration.run_time != "0" {
+                    // No decrease option set but run-time is configured: shut down
+                    // as quickly as possible once run-time elapses.
+                    steps.push((0, 0));
                 }
             }
 

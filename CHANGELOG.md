@@ -13,7 +13,7 @@
     o **breaking**: `GooseDefault::StartupTime` renamed to `GooseDefault::IncreaseTime`
     o new `GooseDefault::DecreaseRate` and `GooseDefault::DecreaseTime` defaults
     o **breaking**: `GooseConfiguration` fields `hatch_rate` → `increase_rate`, `startup_time` → `increase_time`; new `decrease_rate` and `decrease_time` fields added
-    o **breaking**: `goose::util::get_hatch_rate()` renamed to `goose::util::get_increase_rate()`
+    o **breaking**: `goose::util::get_hatch_rate()` renamed to `goose::util::parse_rate()`
  - [#674](https://github.com/tag1consulting/goose/issues/674) collapse per-request channel sends: add `GooseMetric::All` variant that bundles request, transaction, and scenario metrics into a single channel message; reduces channel message volume by up to 3× in the common one-request-per-transaction-per-scenario case
     o `GooseUser::set_success()` and `GooseUser::set_failure()` now take `&mut self` instead of `&self`; this is source-compatible since transaction functions always receive `&mut GooseUser`
  - [#680](https://github.com/tag1consulting/goose/pull/680) use atomic counters for hot-path success/failure request counts ([#677](https://github.com/tag1consulting/goose/issues/677))
