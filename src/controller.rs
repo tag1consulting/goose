@@ -828,7 +828,7 @@ impl GooseAttack {
                             // validation.
                             if let Some(increase_rate) = &message.request.value {
                                 // If increase_time was already set, unset it first.
-                                if !self.configuration.increase_time.is_empty() {
+                                if self.configuration.increase_time != "0" {
                                     info!(
                                         "resetting increase_time from {} to 0",
                                         self.configuration.increase_time
@@ -904,7 +904,7 @@ impl GooseAttack {
                             // validation.
                             if let Some(decrease_rate) = &message.request.value {
                                 // If decrease_time was already set, unset it first.
-                                if !self.configuration.decrease_time.is_empty() {
+                                if self.configuration.decrease_time != "0" {
                                     info!(
                                         "resetting decrease_time from {} to 0",
                                         self.configuration.decrease_time
