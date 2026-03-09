@@ -752,9 +752,7 @@ impl GooseAttack {
                                             if let Some(increase_rate) =
                                                 self.configuration.increase_rate.as_ref()
                                             {
-                                                util::parse_rate(Some(
-                                                    increase_rate.to_string(),
-                                                ))
+                                                util::parse_rate(Some(increase_rate.to_string()))
                                             } else {
                                                 util::parse_rate(None)
                                             }
