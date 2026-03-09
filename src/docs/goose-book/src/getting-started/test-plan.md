@@ -1,6 +1,6 @@
 # Test Plan
 
-A load test that ramps up to full strength and then runs for a set amount of time can be configured by combining the `--startup-time` or `--hatch-rate` options together with the `--users` and `--run-time` options. For more complex load patterns you must instead use the `--test-plan` option.
+A load test that ramps up to full strength and then runs for a set amount of time can be configured by combining the `--increase-time` or `--increase-rate` options together with the `--users` and `--run-time` options. To also configure a ramp-down, use `--decrease-time` or `--decrease-rate`. For more complex load patterns you must instead use the `--test-plan` option.
 
 A test plan is defined as a series of numerical pairs that each defines a number of users, and the amount of time to ramp to this number of users. For example, `10,60s` means "launch 10 users over 60 seconds". By stringing together multiple pairs separated by a semicolon you can define more complex test plans. For example, `10,1m;10,5m;0,0s` means "launch 10 users over 1 minute, continue with 10 users for 5 minutes, then shut down the load test as quickly as possible".
 
@@ -11,7 +11,7 @@ The amount of time can be defined in seconds (e.g. `10,5s`), minutes (e.g. `10,1
 The following command tells Goose to start 10 users over 60 seconds and then to run for 5 minutes before shutting down:
 
 ```bash
-$ cargo run --release -- -H http://local.dev/ --startup-time 1m --users 10 --run-time 5m --no-reset-metrics
+$ cargo run --release -- -H http://local.dev/ --increase-time 1m --users 10 --run-time 5m --no-reset-metrics
 ```
 
 The exact same behaviour can be defined with the following test plan:

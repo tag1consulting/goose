@@ -65,7 +65,7 @@ fn common_build_configuration(
                 &expect_workers.to_string(),
                 "--users",
                 &USERS.to_string(),
-                "--hatch-rate",
+                "--increase-rate",
                 &USERS.to_string(),
                 "--run-time",
                 &RUN_TIME.to_string(),
@@ -80,7 +80,7 @@ fn common_build_configuration(
             vec![
                 "--users",
                 &USERS.to_string(),
-                "--hatch-rate",
+                "--increase-rate",
                 &USERS.to_string(),
                 "--run-time",
                 &RUN_TIME.to_string(),

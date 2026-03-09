@@ -58,13 +58,13 @@ fn common_build_configuration(server: &MockServer, test_type: &TestType) -> Goos
     // In all cases throttle requests to allow asserting metrics precisely.
     let configuration = match test_type {
         TestType::RunTime => {
-            // Hatch 3 users a second for 2 seconds, then run for 2 more seconds.
+            // Launch 3 users a second for 2 seconds, then run for 2 more seconds.
             vec![
                 "--throttle-requests",
                 "5",
                 "--users",
                 "10",
-                "--hatch-rate",
+                "--increase-rate",
                 "5",
                 "--run-time",
                 "10",
@@ -72,13 +72,13 @@ fn common_build_configuration(server: &MockServer, test_type: &TestType) -> Goos
             ]
         }
         TestType::NoRunTime => {
-            // Hatch 3 users a second for 2 seconds, then run until canceled.
+            // Launch 3 users a second for 2 seconds, then run until canceled.
             vec![
                 "--throttle-requests",
                 "5",
                 "--users",
                 "10",
-                "--hatch-rate",
+                "--increase-rate",
                 "5",
                 "--no-reset-metrics",
             ]
@@ -97,13 +97,13 @@ fn common_build_configuration(server: &MockServer, test_type: &TestType) -> Goos
             vec!["--throttle-requests", "5", "--test-plan", "10,1s"]
         }
         TestType::Iterations => {
-            // Hatch 3 users a second for 2 seconds, runing each for 5 iterations complete iterations then cancel.
+            // Launch 3 users a second for 2 seconds, running each for 5 iterations then cancel.
             vec![
                 "--throttle-requests",
                 "5",
                 "--users",
                 "10",
-                "--hatch-rate",
+                "--increase-rate",
                 "5",
                 "--iterations",
                 "5",
@@ -124,8 +124,8 @@ fn common_build_configuration(server: &MockServer, test_type: &TestType) -> Goos
         TestType::TestPlanIncrease | TestType::TestPlanDecrease | TestType::TestPlanMaintain => {
             // Do not set --run-time with --test-plan.
             configuration.run_time = "".to_string();
-            // Do not set --hatch-rate with --test-plan.
-            configuration.hatch_rate = None;
+            // Do not set --increase-rate with --test-plan.
+            configuration.increase_rate = None;
             // Do not set --users with --test-plan.
             configuration.users = None;
         }
@@ -289,7 +289,7 @@ async fn run_gaggle_test(test_type: TestType) {
                 "--no-reset-metrics",
                 "--users",
                 "10",
-                "--hatch-rate",
+                "--increase-rate",
                 "5",
                 "--run-time",
                 "10",
@@ -304,7 +304,7 @@ async fn run_gaggle_test(test_type: TestType) {
                 "--no-reset-metrics",
                 "--users",
                 "10",
-                "--hatch-rate",
+                "--increase-rate",
                 "5",
             ],
         ),
@@ -316,7 +316,7 @@ async fn run_gaggle_test(test_type: TestType) {
                 &EXPECT_WORKERS.to_string(),
                 "--users",
                 "10",
-                "--hatch-rate",
+                "--increase-rate",
                 "5",
             ],
         ),

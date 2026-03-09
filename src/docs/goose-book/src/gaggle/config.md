@@ -15,6 +15,6 @@ The `--no-metrics`, `--no-reset-metrics`, `--no-status-codes`, and `--no-hash-ch
 * `--manager-host <manager-host>`: configures the host that the Worker will talk to the Manager on. By default, a Goose Worker will connect to the localhost, or `127.0.0.1`. In a distributed load test, this must be set to the IP of the Goose Manager.
 * `--manager-port <manager-port>`: configures the port that a Worker will talk to the Manager on. By default, a Goose Worker will connect to port `5115`.
 
-The `--users`, `--startup-time`, `--hatch-rate`, `--host`, and `--run-time` options must be set on the Manager. Workers inherit these options from the Manager.
+The `--users`, `--increase-time`, `--increase-rate`, `--host`, and `--run-time` options must be set on the Manager. Workers inherit these options from the Manager.
 
 The `--throttle-requests` option must be configured on each Worker, and can be set to a different value on each Worker if desired.

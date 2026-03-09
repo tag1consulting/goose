@@ -1,6 +1,19 @@
 # Changelog
 
 ## 0.19.0-dev
+ - [#468](https://github.com/tag1consulting/goose/issues/468) replace `--hatch-rate` and `--startup-time` with `--increase-rate`, `--increase-time`, `--decrease-rate`, and `--decrease-time`
+    o **breaking**: `--hatch-rate` / `-r` is now `--increase-rate` / `-r` (sets per-second rate users are added)
+    o **breaking**: `--startup-time` / `-s` is now `--increase-time` / `-s` (sets total time to launch all users)
+    o new `--decrease-rate` option sets the per-second rate users are stopped during ramp-down
+    o new `--decrease-time` option sets the total time for the ramp-down phase
+    o `--decrease-rate` and `--decrease-time` are mutually exclusive (same as `--increase-rate` and `--increase-time`)
+    o if neither decrease option is set, Goose shuts down all users as quickly as possible (previous behavior)
+    o controller commands renamed: `hatchrate` → `increaserate`, `startup-time` → `increase-time`; new `decreaserate` and `decrease-time` commands added
+    o **breaking**: `GooseDefault::HatchRate` renamed to `GooseDefault::IncreaseRate`
+    o **breaking**: `GooseDefault::StartupTime` renamed to `GooseDefault::IncreaseTime`
+    o new `GooseDefault::DecreaseRate` and `GooseDefault::DecreaseTime` defaults
+    o **breaking**: `GooseConfiguration` fields `hatch_rate` → `increase_rate`, `startup_time` → `increase_time`; new `decrease_rate` and `decrease_time` fields added
+    o **breaking**: `goose::util::get_hatch_rate()` renamed to `goose::util::get_increase_rate()`
  - [#674](https://github.com/tag1consulting/goose/issues/674) collapse per-request channel sends: add `GooseMetric::All` variant that bundles request, transaction, and scenario metrics into a single channel message; reduces channel message volume by up to 3× in the common one-request-per-transaction-per-scenario case
     o `GooseUser::set_success()` and `GooseUser::set_failure()` now take `&mut self` instead of `&self`; this is source-compatible since transaction functions always receive `&mut GooseUser`
  - [#680](https://github.com/tag1consulting/goose/pull/680) use atomic counters for hot-path success/failure request counts ([#677](https://github.com/tag1consulting/goose/issues/677))

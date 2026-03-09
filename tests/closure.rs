@@ -90,7 +90,7 @@ fn common_build_configuration(
                 "--no-transaction-metrics",
                 "--users",
                 &users.to_string(),
-                "--hatch-rate",
+                "--increase-rate",
                 &(users * 2).to_string(),
             ],
         )
@@ -104,7 +104,7 @@ fn common_build_configuration(
                 "--no-transaction-metrics",
                 "--users",
                 &users.to_string(),
-                "--hatch-rate",
+                "--increase-rate",
                 &(users * 2).to_string(),
             ],
         )

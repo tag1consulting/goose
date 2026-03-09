@@ -2,7 +2,7 @@
 
 Here's sample output generated when running a loadtest, in this case the [Umami example](../example/umami.html) that comes with Goose.
 
-In this case, the [Drupal Umami demo](https://www.drupal.org/docs/umami-drupal-demonstration-installation-profile) was installed in a local container. The following command was used to configure Goose and run the load test. The `-u9` tells Goose to spin up 9 users. The `-r3` option tells Goose to hatch 3 users per second. The `-t1m` option tells Goose to run the load test for 1 minute, or 60 seconds. The `--no-reset-metrics` flag tells Goose to include all metrics, instead of the default which is to flush all metrics collected during start up. And finally, the `--report-file report.html` tells Goose to generate an HTML-formatted report named `report.html` once the load test finishes.
+In this case, the [Drupal Umami demo](https://www.drupal.org/docs/umami-drupal-demonstration-installation-profile) was installed in a local container. The following command was used to configure Goose and run the load test. The `-u9` tells Goose to spin up 9 users. The `-r3` option tells Goose to launch 3 users per second. The `-t1m` option tells Goose to run the load test for 1 minute, or 60 seconds. The `--no-reset-metrics` flag tells Goose to include all metrics, instead of the default which is to flush all metrics collected during start up. And finally, the `--report-file report.html` tells Goose to generate an HTML-formatted report named `report.html` once the load test finishes.
 
 ## ASCII metrics
 ```bash
@@ -14,7 +14,7 @@ In this case, the [Drupal Umami demo](https://www.drupal.org/docs/umami-drupal-d
 05:09:05 [INFO] Logfile verbosity level: WARN
 05:09:05 [INFO] users = 9
 05:09:05 [INFO] run_time = 60
-05:09:05 [INFO] hatch_rate = 3
+05:09:05 [INFO] increase_rate = 3
 05:09:05 [INFO] no_reset_metrics = true
 05:09:05 [INFO] report_file = report.html
 05:09:05 [INFO] iterations = 0
@@ -33,7 +33,7 @@ In this case, the [Drupal Umami demo](https://www.drupal.org/docs/umami-drupal-d
 05:09:07 [INFO] [user 7]: launching user from Admin user
 05:09:07 [INFO] [user 8]: launching user from Anonymous Spanish user
 05:09:07 [INFO] [user 9]: launching user from Anonymous English user
-All 9 users hatched.
+All 9 users launched.
 
 05:09:08 [INFO] entering GooseAttack phase: Maintain
 05:10:08 [INFO] entering GooseAttack phase: Decrease

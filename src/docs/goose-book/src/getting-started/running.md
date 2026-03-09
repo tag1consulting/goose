@@ -41,7 +41,7 @@ So, let's try again, this time passing in the `--host` flag. We will also add th
 08:53:55 [INFO] [user 8]: launching user from LoadtestTransactions
 08:53:56 [INFO] [user 9]: launching user from LoadtestTransactions
 08:53:57 [INFO] [user 10]: launching user from LoadtestTransactions
-All 10 users hatched.
+All 10 users launched.
 
 08:53:58 [INFO] entering GooseAttack phase: Maintain
 ^C08:54:25 [WARN] caught ctrl-c, stopping...
@@ -70,7 +70,7 @@ The print-optimized HTML contains the same comprehensive metrics data as the reg
 
 ![HTML report header section](report-header.png)
 
-By default, Goose will hatch 1 `GooseUser` per second, up to the number of CPU cores available on the server used for load testing. In the above example, the loadtest was run from a laptop with 10 CPU cores, so it took 10 seconds to hatch all users.
+By default, Goose will launch 1 `GooseUser` per second, up to the number of CPU cores available on the server used for load testing. In the above example, the loadtest was run from a laptop with 10 CPU cores, so it took 10 seconds to launch all users.
 
 By default, after all users are launched Goose will flush all metrics collected during the launching process (we used the `--no-reset-metrics` flag to disable this behavior) so the summary metrics are collected with all users running. If we'd not used `--no-reset-metrics`, before flushing the metrics they would have been displayed to the console so the data is not lost.
 

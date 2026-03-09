@@ -1,7 +1,7 @@
 # Glossary
 
 ## Controller
-An interface that allows real-time control of a running Goose load test. Goose provides both [Telnet](./controller/telnet.html) and [WebSocket](./controller/websocket.html) controllers for dynamically adjusting test parameters like user count, hatch rate, and runtime during execution.
+An interface that allows real-time control of a running Goose load test. Goose provides both [Telnet](./controller/telnet.html) and [WebSocket](./controller/websocket.html) controllers for dynamically adjusting test parameters like user count, increase rate, and runtime during execution.
 
 ## Coordinated Omission
 A phenomenon that occurs in load testing when the measurement system inadvertently excludes the results of requests that were affected by server slowdowns, leading to misleadingly optimistic performance metrics. Goose includes [Coordinated Omission Mitigation](./coordinated-omission/mitigation.html) functionality to detect and correct for this.
@@ -13,7 +13,7 @@ Goose's distributed load testing functionality that allows running coordinated l
 A load test defined by one or more [Scenarios](#scenario) with one or more [Transactions](#transaction).
 
 ## GooseConfiguration
-A structure that defines all configuration options for a Goose load test, including user count, hatch rate, runtime, host, and various other parameters. Can be set via command line arguments, configuration files, or programmatically.
+A structure that defines all configuration options for a Goose load test, including user count, increase rate, runtime, host, and various other parameters. Can be set via command line arguments, configuration files, or programmatically.
 
 ## GooseError
 A helper that defines all possible errors returned by Goose. A [Transaction](#transaction) returns a [TransactionResult](#transactionresult), which is either [`Ok(())`](https://doc.rust-lang.org/std/result/enum.Result.html#variant.Ok) or [`Err(TransactionError)`](https://doc.rust-lang.org/std/result/enum.Result.html#variant.Err).
@@ -21,8 +21,11 @@ A helper that defines all possible errors returned by Goose. A [Transaction](#tr
 ## GooseUser
 A thread that repeatedly runs a single [**scenario**](./getting-started/metrics.html#scenarios) for the duration of the load test. For example, when Goose starts, you may use the [`--users`](./getting-started/common.html#how-many-users-to-simulate) command line option to configure how many GooseUser threads are started. This is not intended to be a 1:1 correlation between GooseUsers and real website users.
 
-## Hatch Rate
-The rate at which new [GooseUsers](#gooseuser) are launched during the ramp-up phase of a load test, typically specified as users per second.
+## Increase Rate
+The rate at which new [GooseUsers](#gooseuser) are launched during the ramp-up phase of a load test, typically specified as users per second. Configured with [`--increase-rate`](./getting-started/common.html#how-fast-to-increase-the-number-of-users). See also [Decrease Rate](#decrease-rate).
+
+## Decrease Rate
+The rate at which [GooseUsers](#gooseuser) are removed during the ramp-down phase of a load test, typically specified as users per second. Configured with [`--decrease-rate`](./getting-started/common.html#how-fast-to-decrease-the-number-of-users). If not configured, Goose shuts down all users immediately when the load test completes.
 
 ## Request
 A single [**request**](./getting-started/metrics.html#requests) based around HTTP verbs.

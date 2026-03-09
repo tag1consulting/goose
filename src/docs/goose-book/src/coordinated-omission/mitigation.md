@@ -113,10 +113,10 @@ Avoid overwhelming your system with too few users:
 
 ```bash
 # Better: More users with think time
-cargo run --release -- --users 1000 --hatch-rate 10
+cargo run --release -- --users 1000 --increase-rate 10
 
 # Worse: Few users hammering the system
-cargo run --release -- --users 10 --hatch-rate 10
+cargo run --release -- --users 10 --increase-rate 10
 ```
 
 ### 2. Monitor Response Time Distributions

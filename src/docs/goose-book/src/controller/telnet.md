@@ -20,8 +20,10 @@ stop               stop a running load test and return to idle state
 shutdown           shutdown load test and exit controller
 
 host HOST          set host to load test, (ie https://web.site/)
-hatchrate FLOAT    set per-second rate users hatch
-startup-time TIME  set total time to take starting users
+increaserate FLOAT set per-second rate users increase
+increase-time TIME set total time to take increasing users
+decreaserate FLOAT set per-second rate users decrease
+decrease-time TIME set total time to take decreasing users
 users INT          set number of simulated users
 runtime TIME       set how long to run test, (ie 1h30m5s)
 test-plan PLAN     define or replace test-plan, (ie 10,5m;10,1h;0,30s)
@@ -40,7 +42,7 @@ goose> Connection closed by foreign host.
 One possible use-case for the controller is to dynamically reconfigure the number of users being simulated by the load test. In the following example, the load test was launched with the following parameters:
 
 ```bash
-% cargo run --release --example umami -- --no-autostart --host https://umami.ddev.site/ --hatch-rate 50 --report-file report.html
+% cargo run --release --example umami -- --no-autostart --host https://umami.ddev.site/ --increase-rate 50 --report-file report.html
 ```
 
 Then the telnet controller is invoked as follows:
@@ -65,8 +67,8 @@ goose> users 160
 users configured
 goose> users 20
 users configured
-goose> hatch_rate 5
-hatch_rate configured
+goose> increase_rate 5
+increase_rate configured
 goose> users 80
 users configured
 goose> users 20
@@ -76,9 +78,9 @@ load test shut down
 goose> Connection closed by foreign host.
 ```
 
-Initially the load test is configured with a hatch rate of 50, so goose increases and decreases the user count by 50 user threads per second. Later we reconfigure the hatch rate to 5, slowing down the rate that goose alters the number of user threads. The result is more clearly illustrated in the following graph generated at the end of the above example load test:
+Initially the load test is configured with an increase rate of 50, so goose increases and decreases the user count by 50 user threads per second. Later we reconfigure the increase rate to 5, slowing down the rate that goose alters the number of user threads. The result is more clearly illustrated in the following graph generated at the end of the above example load test:
 
-![Controller dynamic users and hatch rate](controller-users.png)
+![Controller dynamic users and increase rate](controller-users.png)
 
 The above commands are also summarized in the metrics overview:
 

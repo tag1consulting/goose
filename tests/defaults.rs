@@ -18,7 +18,7 @@ const ABOUT_KEY: usize = 1;
 // Load test configuration.
 const USERS: usize = 3;
 const RUN_TIME: usize = 3;
-const HATCH_RATE: &str = "10";
+const INCREASE_RATE: &str = "10";
 const LOG_LEVEL: usize = 0;
 const REQUEST_LOG: &str = "request-test.log";
 const DEBUG_LOG: &str = "debug-test.log";
@@ -88,7 +88,7 @@ fn validate_test(
     test_type: TestType,
 ) {
     // Confirm that we loaded the mock endpoints. This confirms that we started
-    // both users, which also verifies that hatch_rate was properly set.
+    // both users, which also verifies that increase_rate was properly set.
     assert!(mock_endpoints[INDEX_KEY].calls() > 0);
     assert!(mock_endpoints[ABOUT_KEY].calls() > 0);
 
@@ -136,7 +136,7 @@ fn validate_test(
             // Verify that Goose started the correct number of users.
             assert!(goose_metrics.total_users == USERS);
 
-            // Requests are made while GooseUsers are hatched, and then for run_time seconds.
+            // Requests are made while GooseUsers are launched, and then for run_time seconds.
             // Verify that the test ran as long as it was supposed to.
             assert!(goose_metrics.duration == RUN_TIME);
 
@@ -197,7 +197,7 @@ async fn test_defaults() {
     // Unset options set in common.rs so set_default() is instead used.
     config.users = None;
     config.run_time = "".to_string();
-    config.hatch_rate = None;
+    config.increase_rate = None;
     let host = std::mem::take(&mut config.host);
 
     let goose_metrics = crate::GooseAttack::initialize_with_config(config)
@@ -211,7 +211,7 @@ async fn test_defaults() {
         .unwrap()
         .set_default(GooseDefault::RunTime, RUN_TIME)
         .unwrap()
-        .set_default(GooseDefault::HatchRate, HATCH_RATE)
+        .set_default(GooseDefault::IncreaseRate, INCREASE_RATE)
         .unwrap()
         .set_default(GooseDefault::LogLevel, LOG_LEVEL)
         .unwrap()
@@ -282,7 +282,7 @@ async fn test_defaults_gaggle() {
     // Unset options set in common.rs so set_default() is instead used.
     configuration.users = None;
     configuration.run_time = "".to_string();
-    configuration.hatch_rate = None;
+    configuration.increase_rate = None;
     configuration.co_mitigation = None;
     let host = std::mem::take(&mut configuration.host);
 
@@ -327,7 +327,7 @@ async fn test_defaults_gaggle() {
         .unwrap()
         .set_default(GooseDefault::RunTime, RUN_TIME)
         .unwrap()
-        .set_default(GooseDefault::HatchRate, HATCH_RATE)
+        .set_default(GooseDefault::IncreaseRate, INCREASE_RATE)
         .unwrap()
         .set_default(
             GooseDefault::CoordinatedOmissionMitigation,
@@ -386,8 +386,8 @@ async fn test_no_defaults() {
         vec![
             "--users",
             &USERS.to_string(),
-            "--hatch-rate",
-            HATCH_RATE,
+            "--increase-rate",
+            INCREASE_RATE,
             "--run-time",
             &RUN_TIME.to_string(),
             "--request-log",
@@ -508,8 +508,8 @@ async fn test_no_defaults_gaggle() {
             &PORT.to_string(),
             "--users",
             &USERS.to_string(),
-            "--hatch-rate",
-            HATCH_RATE,
+            "--increase-rate",
+            INCREASE_RATE,
             "--run-time",
             &RUN_TIME.to_string(),
             "--no-reset-metrics",
@@ -568,7 +568,7 @@ async fn test_plan_defaults() {
     // Unset options set in common.rs so set_default() is instead used.
     config.users = None;
     config.run_time = "".to_string();
-    config.hatch_rate = None;
+    config.increase_rate = None;
     let host = std::mem::take(&mut config.host);
 
     let goose_metrics = crate::GooseAttack::initialize_with_config(config)
@@ -647,7 +647,7 @@ async fn test_plan_no_defaults() {
     );
 
     config.users = None;
-    config.hatch_rate = None;
+    config.increase_rate = None;
     config.run_time = "".to_string();
 
     let goose_metrics = crate::GooseAttack::initialize_with_config(config)
@@ -680,7 +680,7 @@ async fn test_defaults_no_metrics() {
     // Unset options set in common.rs so set_default() is instead used.
     config.users = None;
     config.run_time = "".to_string();
-    config.hatch_rate = None;
+    config.increase_rate = None;
 
     let goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .unwrap()
@@ -691,7 +691,7 @@ async fn test_defaults_no_metrics() {
         .unwrap()
         .set_default(GooseDefault::RunTime, RUN_TIME)
         .unwrap()
-        .set_default(GooseDefault::HatchRate, HATCH_RATE)
+        .set_default(GooseDefault::IncreaseRate, INCREASE_RATE)
         .unwrap()
         .set_default(GooseDefault::NoMetrics, true)
         .unwrap()

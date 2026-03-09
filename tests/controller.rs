@@ -30,9 +30,9 @@ const ABOUT_KEY: usize = 1;
 const START_USERS: usize = 5;
 const MAX_USERS: usize = 20;
 const FINAL_USERS: usize = 10;
-const HATCH_RATE: usize = 25;
+const INCREASE_RATE: usize = 25;
 const RUN_TIME: usize = 55;
-const STARTUP_TIME: usize = 1;
+const INCREASE_TIME: usize = 1;
 
 // There are multiple test variations in this file.
 #[derive(Clone, PartialEq)]
@@ -358,42 +358,42 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                     }
                 }
-                ControllerCommand::HatchRate => {
+                ControllerCommand::IncreaseRate => {
                     match test_state.step {
-                        // Configure a decimal hatch_rate.
+                        // Configure a decimal increase_rate.
                         0 => {
-                            make_request(&mut test_state, "hatchrate .1\r\n").await;
+                            make_request(&mut test_state, "increaserate .1\r\n").await;
                         }
-                        // Confirm hatch_rate is configured.
+                        // Confirm increase_rate is configured.
                         1 => {
-                            assert!(response.starts_with("hatch_rate configured"));
+                            assert!(response.starts_with("increase_rate configured"));
 
                             // Configure with leading and trailing zeros.
-                            make_request(&mut test_state, "hatchrate 0.90\r\n").await;
+                            make_request(&mut test_state, "increaserate 0.90\r\n").await;
                         }
-                        // Confirm hatch_rate is configured.
+                        // Confirm increase_rate is configured.
                         2 => {
-                            assert!(response.starts_with("hatch_rate configured"));
+                            assert!(response.starts_with("increase_rate configured"));
 
                             // Try to configure with an invalid decimal.
-                            make_request(&mut test_state, "hatchrate 1.2.3\r\n").await;
+                            make_request(&mut test_state, "increaserate 1.2.3\r\n").await;
                         }
-                        // Confirm hatch_rate is not configured.
+                        // Confirm increase_rate is not configured.
                         3 => {
                             assert!(response.starts_with("unrecognized command"));
 
-                            // Configure hatch_rate with a single integer.
+                            // Configure increase_rate with a single integer.
                             make_request(
                                 &mut test_state,
-                                &["hatchrate ", &HATCH_RATE.to_string(), "\r\n"].concat(),
+                                &["increaserate ", &INCREASE_RATE.to_string(), "\r\n"].concat(),
                             )
                             .await;
                         }
-                        // Confirm the final hatch_rate is configured.
+                        // Confirm the final increase_rate is configured.
                         _ => {
-                            assert!(response.starts_with("hatch_rate configured"));
+                            assert!(response.starts_with("increase_rate configured"));
 
-                            // The hatch_rate is verified when the load test finishes, so no
+                            // The increase_rate is verified when the load test finishes, so no
                             // further validation required here.
 
                             // Move onto the next command.
@@ -401,42 +401,112 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                     }
                 }
-                ControllerCommand::StartupTime => {
+                ControllerCommand::IncreaseTime => {
                     match test_state.step {
-                        // Try to configure a decimal StartupTime.
+                        // Try to configure a decimal IncreaseTime.
                         0 => {
-                            make_request(&mut test_state, "startup-time .1\r\n").await;
+                            make_request(&mut test_state, "increase-time .1\r\n").await;
                         }
-                        // Configure a StartupTime with hms notation.
+                        // Configure an IncreaseTime with hms notation.
                         1 => {
                             assert!(response.starts_with("unrecognized command"));
 
-                            make_request(&mut test_state, "startup-time 1h2m3s\r\n").await;
+                            make_request(&mut test_state, "increase-time 1h2m3s\r\n").await;
                         }
-                        // Configure a proper StartupTime.
+                        // Configure a proper IncreaseTime.
                         2 => {
-                            assert!(response.starts_with("startup_time configured"));
+                            assert!(response.starts_with("increase_time configured"));
 
                             make_request(
                                 &mut test_state,
-                                &["startup_time ", &STARTUP_TIME.to_string(), "\r\n"].concat(),
+                                &["increase_time ", &INCREASE_TIME.to_string(), "\r\n"].concat(),
                             )
                             .await;
                         }
-                        // Restore the HatchRate.
+                        // Restore the IncreaseRate.
                         3 => {
-                            assert!(response.starts_with("startup_time configured"));
+                            assert!(response.starts_with("increase_time configured"));
 
-                            // Configure hatch_rate with a single integer.
+                            // Configure increase_rate with a single integer.
                             make_request(
                                 &mut test_state,
-                                &["hatchrate ", &HATCH_RATE.to_string(), "\r\n"].concat(),
+                                &["increaserate ", &INCREASE_RATE.to_string(), "\r\n"].concat(),
                             )
                             .await;
                         }
-                        // Confirm hatch_rate is configured.
+                        // Confirm increase_rate is configured.
                         _ => {
-                            assert!(response.starts_with("hatch_rate configured"));
+                            assert!(response.starts_with("increase_rate configured"));
+
+                            test_state = update_state(Some(test_state), &test_type).await;
+                        }
+                    }
+                }
+                ControllerCommand::DecreaseRate => {
+                    match test_state.step {
+                        // Configure a decimal decrease_rate.
+                        0 => {
+                            make_request(&mut test_state, "decreaserate .5\r\n").await;
+                        }
+                        // Confirm decrease_rate is configured.
+                        1 => {
+                            assert!(response.starts_with("decrease_rate configured"));
+
+                            // Try to configure with an invalid decimal.
+                            make_request(&mut test_state, "decreaserate 1.2.3\r\n").await;
+                        }
+                        // Confirm decrease_rate is not configured.
+                        2 => {
+                            assert!(response.starts_with("unrecognized command"));
+
+                            // Configure decrease_rate with a single integer.
+                            make_request(&mut test_state, "decreaserate 2\r\n").await;
+                        }
+                        // Confirm the final decrease_rate is configured.
+                        _ => {
+                            assert!(response.starts_with("decrease_rate configured"));
+
+                            // Move onto the next command.
+                            test_state = update_state(Some(test_state), &test_type).await;
+                        }
+                    }
+                }
+                ControllerCommand::DecreaseTime => {
+                    match test_state.step {
+                        // Try to configure a decimal DecreaseTime.
+                        0 => {
+                            make_request(&mut test_state, "decrease-time .1\r\n").await;
+                        }
+                        // Configure a DecreaseTime with hms notation.
+                        1 => {
+                            assert!(response.starts_with("unrecognized command"));
+
+                            make_request(&mut test_state, "decrease-time 1h2m3s\r\n").await;
+                        }
+                        // Configure a proper DecreaseTime.
+                        2 => {
+                            assert!(response.starts_with("decrease_time configured"));
+
+                            make_request(
+                                &mut test_state,
+                                &["decrease_time ", "30", "\r\n"].concat(),
+                            )
+                            .await;
+                        }
+                        // Confirm decrease_time is configured, then restore increase_rate.
+                        3 => {
+                            assert!(response.starts_with("decrease_time configured"));
+
+                            // Restore increase_rate for subsequent tests.
+                            make_request(
+                                &mut test_state,
+                                &["increaserate ", &INCREASE_RATE.to_string(), "\r\n"].concat(),
+                            )
+                            .await;
+                        }
+                        // Confirm increase_rate is configured.
+                        _ => {
+                            assert!(response.starts_with("increase_rate configured"));
 
                             test_state = update_state(Some(test_state), &test_type).await;
                         }
@@ -708,8 +778,10 @@ async fn update_state(test_state: Option<TestState>, test_type: &TestType) -> Te
         ControllerCommand::Host,
         ControllerCommand::TestPlan,
         ControllerCommand::Users,
-        ControllerCommand::HatchRate,
-        ControllerCommand::StartupTime,
+        ControllerCommand::IncreaseRate,
+        ControllerCommand::IncreaseTime,
+        ControllerCommand::DecreaseRate,
+        ControllerCommand::DecreaseTime,
         ControllerCommand::RunTime,
         ControllerCommand::Start,
         ControllerCommand::Config,

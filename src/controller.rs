@@ -35,7 +35,7 @@ use tokio_tungstenite::tungstenite::Message;
 ///  2. Add the new command to `ControllerCommand::details` and populate all
 ///     `ControllerCommandDetails`, using other commands as an implementation reference.
 ///       - The `regex` is used to identify the command, and optionally to extract a
-///         value (for example see `Hatchrate` and `Users`)
+///         value (for example see `IncreaseRate` and `Users`)
 ///       - If additional validation is required beyond the regular expression, add
 ///         the necessary logic to `ControllerCommand::validate_value`.
 ///  3. Add any necessary parent process logic for the command to
@@ -108,21 +108,41 @@ pub enum ControllerCommand {
     /// # Example
     /// Tells Goose to launch a new user every 1.25 seconds.
     /// ```notest
-    /// hatchrate 1.25
+    /// increaserate 1.25
     /// ```
     ///
     /// Goose can be idle or running when processing this command.
-    HatchRate,
+    IncreaseRate,
     /// Configure how long to take to launch all [`GooseUser`](../goose/struct.GooseUser.html)s.
     ///
     /// # Example
-    /// Tells Goose to launch a new user every 1.25 seconds.
+    /// Tells Goose to increase users over 30 seconds.
     /// ```notest
-    /// startuptime 1.25
+    /// increasetime 30s
     /// ```
     ///
     /// Goose must be idle to process this command.
-    StartupTime,
+    IncreaseTime,
+    /// Configure how quickly [`GooseUser`](../goose/struct.GooseUser.html)s are stopped.
+    ///
+    /// # Example
+    /// Tells Goose to stop one user every 2 seconds.
+    /// ```notest
+    /// decreaserate 0.5
+    /// ```
+    ///
+    /// Goose can be idle or running when processing this command.
+    DecreaseRate,
+    /// Configure how long to take to stop all [`GooseUser`](../goose/struct.GooseUser.html)s.
+    ///
+    /// # Example
+    /// Tells Goose to decrease users over 30 seconds.
+    /// ```notest
+    /// decreasetime 30s
+    /// ```
+    ///
+    /// Goose must be idle to process this command.
+    DecreaseTime,
     /// Configure how many [`GooseUser`](../goose/struct.GooseUser.html)s to launch.
     ///
     /// # Example
@@ -246,17 +266,17 @@ impl ControllerCommand {
                     Err(e.to_string())
                 }),
             },
-            ControllerCommand::HatchRate => ControllerCommandDetails {
+            ControllerCommand::IncreaseRate => ControllerCommandDetails {
                 help: ControllerHelp {
-                    name: "hatchrate FLOAT",
-                    description: "set per-second rate users hatch\n",
+                    name: "increaserate FLOAT",
+                    description: "set per-second rate users increase\n",
                 },
-                regex: r"(?i)^(hatchrate|hatch_rate|hatch-rate) ([0-9]*(\.[0-9]*)?){1}$",
+                regex: r"(?i)^(increaserate|increase_rate|increase-rate) ([0-9]*(\.[0-9]*)?){1}$",
                 process_response: Box::new(|response| {
                     if let ControllerResponseMessage::Bool(true) = response {
-                        Ok("hatch_rate configured".to_string())
+                        Ok("increase_rate configured".to_string())
                     } else {
-                        Err("failed to configure hatch_rate".to_string())
+                        Err("failed to configure increase_rate".to_string())
                     }
                 }),
             },
@@ -361,18 +381,49 @@ impl ControllerCommand {
                     }),
                 }
             }
-            ControllerCommand::StartupTime => ControllerCommandDetails {
+            ControllerCommand::IncreaseTime => ControllerCommandDetails {
                 help: ControllerHelp {
-                    name: "startup-time TIME",
-                    description: "set total time to take starting users\n",
+                    name: "increase-time TIME",
+                    description: "set total time to take increasing users\n",
                 },
-                regex: r"(?i)^(starttime|start_time|start-time|startup|startuptime|startup_time|startup-time) (\d+|((\d+?)h)?((\d+?)m)?((\d+?)s)?)$",
+                regex: r"(?i)^(increasetime|increase_time|increase-time) (\d+|((\d+?)h)?((\d+?)m)?((\d+?)s)?)$",
                 process_response: Box::new(|response| {
                     if let ControllerResponseMessage::Bool(true) = response {
-                        Ok("startup_time configured".to_string())
+                        Ok("increase_time configured".to_string())
                     } else {
                         Err(
-                            "failed to configure startup_time, be sure load test is idle"
+                            "failed to configure increase_time, be sure load test is idle"
+                                .to_string(),
+                        )
+                    }
+                }),
+            },
+            ControllerCommand::DecreaseRate => ControllerCommandDetails {
+                help: ControllerHelp {
+                    name: "decreaserate FLOAT",
+                    description: "set per-second rate users decrease\n",
+                },
+                regex: r"(?i)^(decreaserate|decrease_rate|decrease-rate) ([0-9]*(\.[0-9]*)?){1}$",
+                process_response: Box::new(|response| {
+                    if let ControllerResponseMessage::Bool(true) = response {
+                        Ok("decrease_rate configured".to_string())
+                    } else {
+                        Err("failed to configure decrease_rate".to_string())
+                    }
+                }),
+            },
+            ControllerCommand::DecreaseTime => ControllerCommandDetails {
+                help: ControllerHelp {
+                    name: "decrease-time TIME",
+                    description: "set total time to take decreasing users\n",
+                },
+                regex: r"(?i)^(decreasetime|decrease_time|decrease-time) (\d+|((\d+?)h)?((\d+?)m)?((\d+?)s)?)$",
+                process_response: Box::new(|response| {
+                    if let ControllerResponseMessage::Bool(true) = response {
+                        Ok("decrease_time configured".to_string())
+                    } else {
+                        Err(
+                            "failed to configure decrease_time, be sure load test is idle"
                                 .to_string(),
                         )
                     }
@@ -686,24 +737,43 @@ impl GooseAttack {
                                         // Determine how long has elapsed since this step started.
                                         let elapsed = self.step_elapsed() as usize;
 
-                                        // Determine how quickly to adjust user account.
-                                        let hatch_rate = if let Some(hatch_rate) =
-                                            self.configuration.hatch_rate.as_ref()
-                                        {
-                                            util::get_hatch_rate(Some(hatch_rate.to_string()))
-                                        } else {
-                                            util::get_hatch_rate(None)
-                                        };
-                                        // Convert hatch_rate to milliseconds.
-                                        let ms_hatch_rate = 1.0 / hatch_rate * 1_000.0;
                                         // Determine how many users to increase or decrease by.
                                         let user_difference = (goose_attack_run_state.active_users
                                             as isize
                                             - new_users as isize)
                                             .abs();
-                                        // Multiply the user difference by the hatch rate to get the total_time required.
+
+                                        // Determine how quickly to adjust user count, using
+                                        // increase_rate when adding users and decrease_rate when
+                                        // removing users.
+                                        let rate = if new_users
+                                            > goose_attack_run_state.active_users
+                                        {
+                                            if let Some(increase_rate) =
+                                                self.configuration.increase_rate.as_ref()
+                                            {
+                                                util::get_increase_rate(Some(
+                                                    increase_rate.to_string(),
+                                                ))
+                                            } else {
+                                                util::get_increase_rate(None)
+                                            }
+                                        } else if let Some(decrease_rate) =
+                                            self.configuration.decrease_rate.as_ref()
+                                        {
+                                            util::get_increase_rate(Some(decrease_rate.to_string()))
+                                        } else if let Some(increase_rate) =
+                                            self.configuration.increase_rate.as_ref()
+                                        {
+                                            util::get_increase_rate(Some(increase_rate.to_string()))
+                                        } else {
+                                            util::get_increase_rate(None)
+                                        };
+                                        // Convert rate to milliseconds.
+                                        let ms_rate = 1.0 / rate * 1_000.0;
+                                        // Multiply the user difference by the rate to get the total_time required.
                                         let total_time =
-                                            (ms_hatch_rate * user_difference as f32) as usize;
+                                            (ms_rate * user_difference as f32) as usize;
 
                                         // Reset the test_plan to adjust to the newly specified users.
                                         self.test_plan.steps = vec![
@@ -752,25 +822,25 @@ impl GooseAttack {
                                 );
                             }
                         }
-                        ControllerCommand::HatchRate => {
+                        ControllerCommand::IncreaseRate => {
                             // The controller uses a regular expression to validate that
                             // this is a valid float, so simply use it with further
                             // validation.
-                            if let Some(hatch_rate) = &message.request.value {
-                                // If startup_time was already set, unset it first.
-                                if !self.configuration.startup_time.is_empty() {
+                            if let Some(increase_rate) = &message.request.value {
+                                // If increase_time was already set, unset it first.
+                                if !self.configuration.increase_time.is_empty() {
                                     info!(
-                                        "resetting startup_time from {} to 0",
-                                        self.configuration.startup_time
+                                        "resetting increase_time from {} to 0",
+                                        self.configuration.increase_time
                                     );
-                                    self.configuration.startup_time = "0".to_string();
+                                    self.configuration.increase_time = "0".to_string();
                                 }
                                 info!(
-                                    "changing hatch_rate from {:?} to {}",
-                                    self.configuration.hatch_rate, hatch_rate
+                                    "changing increase_rate from {:?} to {}",
+                                    self.configuration.increase_rate, increase_rate
                                 );
-                                self.configuration.hatch_rate = Some(hatch_rate.clone());
-                                // If setting hatch_rate, any existing configuration for a test plan isn't valid.
+                                self.configuration.increase_rate = Some(increase_rate.clone());
+                                // If setting increase_rate, any existing configuration for a test plan isn't valid.
                                 self.configuration.test_plan = None;
                                 self.reply_to_controller(
                                     message,
@@ -778,28 +848,30 @@ impl GooseAttack {
                                 );
                             } else {
                                 warn!(
-                                    "Controller didn't provide hatch_rate: {:#?}",
+                                    "Controller didn't provide increase_rate: {:#?}",
                                     &message.request
                                 );
                             }
                         }
-                        ControllerCommand::StartupTime => {
+                        ControllerCommand::IncreaseTime => {
                             if self.attack_phase == AttackPhase::Idle {
                                 // The controller uses a regular expression to validate that
-                                // this is a valid startup time, so simply use it with further
+                                // this is a valid time, so simply use it with further
                                 // validation.
-                                if let Some(startup_time) = &message.request.value {
-                                    // If hatch_rate was already set, unset it first.
-                                    if let Some(hatch_rate) = &self.configuration.hatch_rate {
-                                        info!("resetting hatch_rate from {hatch_rate} to None");
-                                        self.configuration.hatch_rate = None;
+                                if let Some(increase_time) = &message.request.value {
+                                    // If increase_rate was already set, unset it first.
+                                    if let Some(increase_rate) = &self.configuration.increase_rate {
+                                        info!(
+                                            "resetting increase_rate from {increase_rate} to None"
+                                        );
+                                        self.configuration.increase_rate = None;
                                     }
                                     info!(
-                                        "changing startup_rate from {} to {}",
-                                        self.configuration.startup_time, startup_time
+                                        "changing increase_time from {} to {}",
+                                        self.configuration.increase_time, increase_time
                                     );
-                                    self.configuration.startup_time.clone_from(startup_time);
-                                    // If setting startup_time, any existing configuration for a test plan isn't valid.
+                                    self.configuration.increase_time.clone_from(increase_time);
+                                    // If setting increase_time, any existing configuration for a test plan isn't valid.
                                     self.configuration.test_plan = None;
                                     self.reply_to_controller(
                                         message,
@@ -807,7 +879,79 @@ impl GooseAttack {
                                     );
                                 } else {
                                     warn!(
-                                        "Controller didn't provide startup_time: {:#?}",
+                                        "Controller didn't provide increase_time: {:#?}",
+                                        &message.request
+                                    );
+                                    self.reply_to_controller(
+                                        message,
+                                        ControllerResponseMessage::Bool(false),
+                                    );
+                                }
+                            } else {
+                                self.reply_to_controller(
+                                    message,
+                                    ControllerResponseMessage::Bool(false),
+                                );
+                            }
+                        }
+                        ControllerCommand::DecreaseRate => {
+                            // The controller uses a regular expression to validate that
+                            // this is a valid float, so simply use it with further
+                            // validation.
+                            if let Some(decrease_rate) = &message.request.value {
+                                // If decrease_time was already set, unset it first.
+                                if !self.configuration.decrease_time.is_empty() {
+                                    info!(
+                                        "resetting decrease_time from {} to 0",
+                                        self.configuration.decrease_time
+                                    );
+                                    self.configuration.decrease_time = "0".to_string();
+                                }
+                                info!(
+                                    "changing decrease_rate from {:?} to {}",
+                                    self.configuration.decrease_rate, decrease_rate
+                                );
+                                self.configuration.decrease_rate = Some(decrease_rate.clone());
+                                // If setting decrease_rate, any existing configuration for a test plan isn't valid.
+                                self.configuration.test_plan = None;
+                                self.reply_to_controller(
+                                    message,
+                                    ControllerResponseMessage::Bool(true),
+                                );
+                            } else {
+                                warn!(
+                                    "Controller didn't provide decrease_rate: {:#?}",
+                                    &message.request
+                                );
+                            }
+                        }
+                        ControllerCommand::DecreaseTime => {
+                            if self.attack_phase == AttackPhase::Idle {
+                                // The controller uses a regular expression to validate that
+                                // this is a valid time, so simply use it with further
+                                // validation.
+                                if let Some(decrease_time) = &message.request.value {
+                                    // If decrease_rate was already set, unset it first.
+                                    if let Some(decrease_rate) = &self.configuration.decrease_rate {
+                                        info!(
+                                            "resetting decrease_rate from {decrease_rate} to None"
+                                        );
+                                        self.configuration.decrease_rate = None;
+                                    }
+                                    info!(
+                                        "changing decrease_time from {} to {}",
+                                        self.configuration.decrease_time, decrease_time
+                                    );
+                                    self.configuration.decrease_time.clone_from(decrease_time);
+                                    // If setting decrease_time, any existing configuration for a test plan isn't valid.
+                                    self.configuration.test_plan = None;
+                                    self.reply_to_controller(
+                                        message,
+                                        ControllerResponseMessage::Bool(true),
+                                    );
+                                } else {
+                                    warn!(
+                                        "Controller didn't provide decrease_time: {:#?}",
                                         &message.request
                                     );
                                     self.reply_to_controller(
@@ -852,8 +996,10 @@ impl GooseAttack {
                                         // Switch the configuration to use the test plan.
                                         self.configuration.test_plan = Some(t.clone());
                                         self.configuration.users = None;
-                                        self.configuration.hatch_rate = None;
-                                        self.configuration.startup_time = "0".to_string();
+                                        self.configuration.increase_rate = None;
+                                        self.configuration.increase_time = "0".to_string();
+                                        self.configuration.decrease_rate = None;
+                                        self.configuration.decrease_time = "0".to_string();
                                         self.configuration.run_time = "0".to_string();
                                         match self.attack_phase {
                                             // If the load test is idle, just update the configuration.
