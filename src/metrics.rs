@@ -3527,11 +3527,11 @@ impl GooseAttack {
                     if self.metrics.display_metrics {
                         if goose_attack_run_state.active_users < users {
                             println!(
-                                "{} of {} users hatched, timer expired, resetting metrics (disable with --no-reset-metrics).\n", goose_attack_run_state.active_users, users
+                                "{} of {} users launched, timer expired, resetting metrics (disable with --no-reset-metrics).\n", goose_attack_run_state.active_users, users
                             );
                         } else {
                             println!(
-                                "All {users} users hatched, resetting metrics (disable with --no-reset-metrics).\n"
+                                "All {users} users launched, resetting metrics (disable with --no-reset-metrics).\n"
                             );
                         }
                     }
@@ -3540,17 +3540,17 @@ impl GooseAttack {
                     self.started = Some(std::time::Instant::now());
                 } else if goose_attack_run_state.active_users < users {
                     println!(
-                        "{} of {} users hatched, timer expired.\n",
+                        "{} of {} users launched, timer expired.\n",
                         goose_attack_run_state.active_users, users
                     );
                 } else {
                     println!(
-                        "All {} users hatched.\n",
+                        "All {} users launched.\n",
                         goose_attack_run_state.active_users
                     );
                 }
             } else {
-                println!("{} users hatched.", goose_attack_run_state.active_users);
+                println!("{} users launched.", goose_attack_run_state.active_users);
             }
         }
 

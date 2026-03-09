@@ -46,7 +46,7 @@ async fn test_pdf_generation_with_feature() {
     let configuration_flags = vec![
         "--users",
         "1",
-        "--hatch-rate",
+        "--increase-rate",
         "1",
         "--run-time",
         "1",
@@ -94,7 +94,7 @@ async fn test_pdf_print_html_without_feature_works() {
     let configuration_flags = vec![
         "--users",
         "1",
-        "--hatch-rate",
+        "--increase-rate",
         "1",
         "--run-time",
         "1",
@@ -160,7 +160,7 @@ async fn test_pdf_print_html_generation() {
     let configuration_flags = vec![
         "--users",
         "1",
-        "--hatch-rate",
+        "--increase-rate",
         "1",
         "--run-time",
         "1",
@@ -237,7 +237,7 @@ async fn test_pdf_resource_management() {
         let configuration_flags = vec![
             "--users",
             "1",
-            "--hatch-rate",
+            "--increase-rate",
             "1",
             "--run-time",
             "1",
@@ -287,7 +287,7 @@ async fn test_pdf_without_feature_fails() {
     let configuration_flags = vec![
         "--users",
         "1",
-        "--hatch-rate",
+        "--increase-rate",
         "1",
         "--run-time",
         "1",

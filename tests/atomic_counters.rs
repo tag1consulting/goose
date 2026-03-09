@@ -67,7 +67,7 @@ async fn test_atomic_counters_basic() {
 
     let config = common::build_configuration(
         &server,
-        vec!["--users", "2", "--hatch-rate", "4", "--run-time", "2"],
+        vec!["--users", "2", "--increase-rate", "4", "--run-time", "2"],
     );
 
     let metrics = common::run_load_test(
@@ -135,7 +135,7 @@ async fn test_atomic_counters_set_success() {
 
     let config = common::build_configuration(
         &server,
-        vec!["--users", "1", "--hatch-rate", "1", "--run-time", "2"],
+        vec!["--users", "1", "--increase-rate", "1", "--run-time", "2"],
     );
 
     let metrics = common::run_load_test(
@@ -178,7 +178,7 @@ async fn test_atomic_counters_set_failure() {
 
     let config = common::build_configuration(
         &server,
-        vec!["--users", "1", "--hatch-rate", "1", "--run-time", "2"],
+        vec!["--users", "1", "--increase-rate", "1", "--run-time", "2"],
     );
 
     let metrics = common::run_load_test(
@@ -223,11 +223,11 @@ async fn test_atomic_counters_metrics_reset() {
         then.status(200);
     });
 
-    // Use slow hatch-rate to create a meaningful ramp-up phase.
+    // Use slow increase-rate to create a meaningful ramp-up phase.
     // 2 users at 1/sec = 2 second ramp-up, then 2 seconds of stable load.
     let config = common::build_configuration(
         &server,
-        vec!["--users", "2", "--hatch-rate", "1", "--run-time", "2"],
+        vec!["--users", "2", "--increase-rate", "1", "--run-time", "2"],
     );
 
     let metrics = common::run_load_test(
@@ -292,7 +292,7 @@ async fn test_atomic_counters_coordinated_omission() {
         vec![
             "--users",
             "1",
-            "--hatch-rate",
+            "--increase-rate",
             "1",
             "--run-time",
             "3",
@@ -364,7 +364,7 @@ async fn test_atomic_counters_isolation() {
 
     let config = common::build_configuration(
         &server,
-        vec!["--users", "1", "--hatch-rate", "1", "--run-time", "2"],
+        vec!["--users", "1", "--increase-rate", "1", "--run-time", "2"],
     );
 
     let metrics = common::run_load_test(

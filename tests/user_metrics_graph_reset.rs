@@ -50,7 +50,7 @@ async fn run_graph_test(
         .unwrap()
         .set_default(GooseDefault::RunTime, 1)
         .unwrap()
-        .set_default(GooseDefault::StartupTime, 1)
+        .set_default(GooseDefault::IncreaseTime, 1)
         .unwrap()
         .set_default(GooseDefault::ReportFile, html_file)
         .unwrap();
@@ -252,17 +252,17 @@ fn verify_reset_vs_no_reset_behavior(
     );
 
     // Validate the difference is significant (should be at least 50% more requests)
-    // With --startup-time=1s and --run-time=1s configuration:
-    // - Reset scenario: Only counts metrics during the 1s run-time (excludes startup)
-    // - No-reset scenario: Counts metrics during both 1s startup + 1s run-time = 2s total
+    // With --increase-time=1s and --run-time=1s configuration:
+    // - Reset scenario: Only counts metrics during the 1s run-time (excludes increase phase)
+    // - No-reset scenario: Counts metrics during both 1s increase + 1s run-time = 2s total
     // This creates approximately 100% duration difference, resulting in 50-100% more requests
     let difference_percentage = ((without_reset_requests - with_reset_requests) as f64
         / with_reset_requests as f64)
         * 100.0;
     assert!(difference_percentage >= 50.0,
         "Difference between reset ({}) and no-reset ({}) should be at least 50%, but was {:.1}%. \
-         With startup-time=1s + run-time=1s, no-reset scenarios run ~2x longer (2s vs 1s), \
-         so we expect 50-100% more requests. This validates the startup time behavior works correctly.",
+         With increase-time=1s + run-time=1s, no-reset scenarios run ~2x longer (2s vs 1s), \
+         so we expect 50-100% more requests. This validates the increase time behavior works correctly.",
         with_reset_requests, without_reset_requests, difference_percentage);
 
     // 2. USER COUNT VALIDATION: Both should have same max users (user graph continuity maintained)

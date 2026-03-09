@@ -17,7 +17,8 @@ All run-time options can be configured with custom defaults. For example, you ma
 The following defaults can be configured with a `&str`:
  - host: `GooseDefault::Host`
  - set a per-request timeout: `GooseDefault::Timeout`
- - users to start per second: `GooseDefault::HatchRate`
+ - users to start per second: `GooseDefault::IncreaseRate`
+ - users to stop per second: `GooseDefault::DecreaseRate`
  - report file names: `GooseDefault::ReportFile`
  - goose log file name: `GooseDefault::GooseLog`
  - request log file name: `GooseDefault::RequestLog`
@@ -32,7 +33,8 @@ The following defaults can be configured with a `&str`:
 
 The following defaults can be configured with a `usize` integer:
  - total users to start: `GooseDefault::Users`
- - how quickly to start all users: `GooseDefault::StartupTime`
+ - how quickly to start all users: `GooseDefault::IncreaseTime`
+ - how quickly to stop all users: `GooseDefault::DecreaseTime`
  - how often to print running metrics: `GooseDefault::RunningMetrics`
  - number of seconds for test to run: `GooseDefault::RunTime`
  - log level: `GooseDefault::LogLevel`
@@ -84,7 +86,7 @@ For example, without any run-time options the following load test would automati
         .set_default(GooseDefault::RequestLog, "goose-requests.log")?
         .set_default(GooseDefault::DebugLog, "goose-debug.log")?
         .set_default(GooseDefault::Users, 20)?
-        .set_default(GooseDefault::HatchRate, 4)?
+        .set_default(GooseDefault::IncreaseRate, 4)?
         .set_default(GooseDefault::RunTime, 900)?
         .set_default(GooseDefault::RunningMetrics, 60)?
         .set_default(GooseDefault::NoStatusCodes, true)?

@@ -333,22 +333,22 @@ pub fn ms_timer_expired(started: time::Instant, elapsed: usize) -> bool {
 /// use goose::util;
 ///
 /// // No decimal returns a proper float.
-/// assert_eq!(util::get_hatch_rate(Some("1".to_string())), 1.0);
+/// assert_eq!(util::get_increase_rate(Some("1".to_string())), 1.0);
 ///
 /// // Leading decimal returns a proper float.
-/// assert_eq!(util::get_hatch_rate(Some(".1".to_string())), 0.1);
+/// assert_eq!(util::get_increase_rate(Some(".1".to_string())), 0.1);
 ///
 /// // Valid float string returns a proper float.
-/// assert_eq!(util::get_hatch_rate(Some("1.1".to_string())), 1.1);
+/// assert_eq!(util::get_increase_rate(Some("1.1".to_string())), 1.1);
 ///
 /// // Invalid number with too many decimals returns the defaut of 1.0.
-/// assert_eq!(util::get_hatch_rate(Some("1.1.1".to_string())), 1.0);
+/// assert_eq!(util::get_increase_rate(Some("1.1.1".to_string())), 1.0);
 ///
 /// // No number returns the defaut of 1.0.
-/// assert_eq!(util::get_hatch_rate(None), 1.0);
+/// assert_eq!(util::get_increase_rate(None), 1.0);
 /// ```
-pub fn get_hatch_rate(hatch_rate: Option<String>) -> f32 {
-    get_float_from_string(hatch_rate).unwrap_or(1.0)
+pub fn get_increase_rate(rate: Option<String>) -> f32 {
+    get_float_from_string(rate).unwrap_or(1.0)
 }
 
 /// Convert optional string to f32, otherwise return None.
@@ -580,20 +580,20 @@ mod tests {
     }
 
     #[test]
-    fn hatch_rate() {
+    fn increase_rate() {
         //  https://rust-lang.github.io/rust-clippy/master/index.html#float_cmp
-        assert!((get_hatch_rate(Some("1".to_string())) - 1.0).abs() < f32::EPSILON);
-        assert!((get_hatch_rate(Some("1.0".to_string())) - 1.0).abs() < f32::EPSILON);
-        assert!((get_hatch_rate(Some(".5".to_string())) - 0.5).abs() < f32::EPSILON);
-        assert!((get_hatch_rate(Some("0.5".to_string())) - 0.5).abs() < f32::EPSILON);
-        assert!((get_hatch_rate(Some(".12345".to_string())) - 0.12345).abs() < f32::EPSILON);
-        assert!((get_hatch_rate(Some("12.345".to_string())) - 12.345).abs() < f32::EPSILON);
+        assert!((get_increase_rate(Some("1".to_string())) - 1.0).abs() < f32::EPSILON);
+        assert!((get_increase_rate(Some("1.0".to_string())) - 1.0).abs() < f32::EPSILON);
+        assert!((get_increase_rate(Some(".5".to_string())) - 0.5).abs() < f32::EPSILON);
+        assert!((get_increase_rate(Some("0.5".to_string())) - 0.5).abs() < f32::EPSILON);
+        assert!((get_increase_rate(Some(".12345".to_string())) - 0.12345).abs() < f32::EPSILON);
+        assert!((get_increase_rate(Some("12.345".to_string())) - 12.345).abs() < f32::EPSILON);
         // Defaults to 1.0.
-        assert!((get_hatch_rate(None) - 1.0).abs() < f32::EPSILON);
+        assert!((get_increase_rate(None) - 1.0).abs() < f32::EPSILON);
         // Also on invalid input, defaults to 1.0.
-        assert!((get_hatch_rate(Some("g".to_string())) - 1.0).abs() < f32::EPSILON);
-        assert!((get_hatch_rate(Some("2.1f".to_string())) - 1.0).abs() < f32::EPSILON);
-        assert!((get_hatch_rate(Some("1.1.1".to_string())) - 1.0).abs() < f32::EPSILON);
+        assert!((get_increase_rate(Some("g".to_string())) - 1.0).abs() < f32::EPSILON);
+        assert!((get_increase_rate(Some("2.1f".to_string())) - 1.0).abs() < f32::EPSILON);
+        assert!((get_increase_rate(Some("1.1.1".to_string())) - 1.0).abs() < f32::EPSILON);
     }
 
     #[test]

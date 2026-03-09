@@ -43,7 +43,7 @@ async fn test_status_code_response_time_tracking() {
 
     let config = common::build_configuration(
         &server,
-        vec!["--users", "2", "--hatch-rate", "2", "--run-time", "2"],
+        vec!["--users", "2", "--increase-rate", "2", "--run-time", "2"],
     );
 
     let metrics = common::run_load_test(
@@ -164,7 +164,7 @@ async fn test_status_code_breakdowns_in_reports() {
         vec![
             "--users",
             "2",
-            "--hatch-rate",
+            "--increase-rate",
             "2",
             "--run-time",
             "2",

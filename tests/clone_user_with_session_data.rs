@@ -17,7 +17,7 @@ fn default_configuration() -> GooseConfiguration {
         "http://localhost:8080",
         "--users",
         "1",
-        "--hatch-rate",
+        "--increase-rate",
         "1",
         "--run-time",
         "1",

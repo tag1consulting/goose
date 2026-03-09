@@ -31,7 +31,7 @@ impl Default for TestPlan {
 
 /// Automatically represent all load tests internally as a test plan.
 ///
-/// Load tests launched using `--users`, `--startup-time`, `--hatch-rate`, and/or `--run-time` are
+/// Load tests launched using `--users`, `--increase-time`, `--increase-rate`, and/or `--run-time` are
 /// automatically converted to a `Vec<(usize, usize)>` test plan.
 impl TestPlan {
     /// Create a new, empty TestPlan structure.
@@ -52,23 +52,24 @@ impl TestPlan {
 
             // Build a simple test plan from configured options if possible.
             if let Some(users) = configuration.users {
-                if configuration.startup_time != "0" {
-                    // Load test is configured with --startup-time.
+                if configuration.increase_time != "0" {
+                    // Load test is configured with --increase-time.
                     steps.push((
                         users,
-                        util::parse_timespan(&configuration.startup_time) * 1_000,
+                        util::parse_timespan(&configuration.increase_time) * 1_000,
                     ));
                 } else {
-                    // Load test is configured with --hatch-rate.
-                    let hatch_rate = if let Some(hatch_rate) = configuration.hatch_rate.as_ref() {
-                        util::get_hatch_rate(Some(hatch_rate.to_string()))
-                    } else {
-                        util::get_hatch_rate(None)
-                    };
-                    // Convert hatch_rate to milliseconds.
-                    let ms_hatch_rate = 1.0 / hatch_rate * 1_000.0;
-                    // Finally, multiply the hatch rate by the number of users to hatch.
-                    let total_time = ms_hatch_rate * users as f32;
+                    // Load test is configured with --increase-rate.
+                    let increase_rate =
+                        if let Some(increase_rate) = configuration.increase_rate.as_ref() {
+                            util::get_increase_rate(Some(increase_rate.to_string()))
+                        } else {
+                            util::get_increase_rate(None)
+                        };
+                    // Convert increase_rate to milliseconds.
+                    let ms_increase_rate = 1.0 / increase_rate * 1_000.0;
+                    // Finally, multiply the increase rate by the number of users to start.
+                    let total_time = ms_increase_rate * users as f32;
                     steps.push((users, total_time as usize));
                 }
 
@@ -76,8 +77,24 @@ impl TestPlan {
                 if configuration.run_time != "0" {
                     // Maintain the configured number of users for the configured run-time.
                     steps.push((users, util::parse_timespan(&configuration.run_time) * 1_000));
-                    // Then shut down the load test as quickly as possible.
-                    steps.push((0, 0));
+
+                    // Ramp down using --decrease-time or --decrease-rate if configured.
+                    if configuration.decrease_time != "0" {
+                        // Decrease users over the configured decrease-time.
+                        steps.push((
+                            0,
+                            util::parse_timespan(&configuration.decrease_time) * 1_000,
+                        ));
+                    } else if let Some(decrease_rate) = configuration.decrease_rate.as_ref() {
+                        // Calculate decrease time from rate.
+                        let rate = util::get_increase_rate(Some(decrease_rate.to_string()));
+                        let ms_decrease_rate = 1.0 / rate * 1_000.0;
+                        let total_time = ms_decrease_rate * users as f32;
+                        steps.push((0, total_time as usize));
+                    } else {
+                        // Then shut down the load test as quickly as possible.
+                        steps.push((0, 0));
+                    }
                 }
             }
 

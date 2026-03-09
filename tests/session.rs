@@ -305,7 +305,7 @@ fn common_build_configuration(
         TestType::Session => vec![
             "--users",
             SESSION_USERS,
-            "--hatch-rate",
+            "--increase-rate",
             SESSION_USERS,
             "--run-time",
             "2",
@@ -314,7 +314,7 @@ fn common_build_configuration(
         TestType::Cookie => vec![
             "--users",
             COOKIE_USERS,
-            "--hatch-rate",
+            "--increase-rate",
             COOKIE_USERS,
             "--run-time",
             "2",

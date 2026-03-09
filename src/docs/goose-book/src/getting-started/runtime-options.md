@@ -17,8 +17,10 @@ Optional arguments:
 
   -H, --host HOST             Defines host to load test (ie http://10.21.32.33)
   -u, --users USERS           Sets concurrent users (default: number of CPUs)
-  -r, --hatch-rate RATE       Sets per-second user hatch rate (default: 1)
-  -s, --startup-time TIME     Starts users for up to (30s, 20m, 3h, 1h30m, etc)
+  -r, --increase-rate RATE    Sets per-second user increase rate (default: 1)
+  -s, --increase-time TIME    Increases users for up to (30s, 20m, 3h, 1h30m, etc)
+  --decrease-rate RATE        Sets per-second user decrease rate
+  --decrease-time TIME        Decreases users for up to (30s, 20m, 3h, 1h30m, etc)
   -t, --run-time TIME         Stops load test after (30s, 20m, 3h, 1h30m, etc)
   -G, --goose-log NAME        Enables Goose log file and sets name
   -g, --log-level             Increases Goose log level (-g, -gg, etc)

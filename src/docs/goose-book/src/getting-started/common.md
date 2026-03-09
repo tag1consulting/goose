@@ -28,37 +28,55 @@ cargo run --release -- -u 1000
 
 ## Controlling how long it takes Goose to launch all users
 
-There are several ways to configure how long Goose will take to launch all configured GooseUsers. For starters, you can user either `--hatch-rate` or `--startup-time`, but not both together. Alternatively, you can use [`--test-plan`](./test-plan.html) to build both simple and more complex traffic patterns that can include varying launch rates.
+There are several ways to configure how long Goose will take to launch all configured GooseUsers. For starters, you can use either `--increase-rate` or `--increase-time`, but not both together. Alternatively, you can use [`--test-plan`](./test-plan.html) to build both simple and more complex traffic patterns that can include varying launch rates.
 
-### Specifying the hatch rate
+### Specifying the increase rate
 
-By default, Goose starts one GooseUser per second. So if you configure `--users` to 10 it will take ten seconds to fully start the load test. If you set `--hatch-rate 5` then Goose will start 5 users every second, taking two seconds to start up. If you set `--hatch-rate 0.5` then Goose will start 1 user every 2 seconds, taking twenty seconds to start all 10 users.
- 
-(_The configured hatch rate is a best effort limit, Goose will not start users faster than this but there is no guarantee that your load test server is capable of starting users as fast as you configure._)
+By default, Goose starts one GooseUser per second. So if you configure `--users` to 10 it will take ten seconds to fully start the load test. If you set `--increase-rate 5` then Goose will start 5 users every second, taking two seconds to start up. If you set `--increase-rate 0.5` then Goose will start 1 user every 2 seconds, taking twenty seconds to start all 10 users.
 
-### Hatch rate example
+(_The configured increase rate is a best effort limit, Goose will not start users faster than this but there is no guarantee that your load test server is capable of starting users as fast as you configure._)
+
+### Increase rate example
 _Launch one user every two seconds._
 
 ```bash
 cargo run --release -- -r .5
 ```
 
-### Specifying the total startup time
+### Specifying the total increase time
 
-Alternatively, you can tell Goose how long you'd like it to take to start all GooseUsers. So, if you configure `--users` to 10 and set `--startup-time 10` it will launch 1 user every second. If you set `--startup-time 1m` it will start 1 user every 6 seconds, starting all users over one minute. And if you set `--startup-time 2s` it will launch five users per second, launching all users in two seconds.
+Alternatively, you can tell Goose how long you'd like it to take to start all GooseUsers. So, if you configure `--users` to 10 and set `--increase-time 10` it will launch 1 user every second. If you set `--increase-time 1m` it will start 1 user every 6 seconds, starting all users over one minute. And if you set `--increase-time 2s` it will launch five users per second, launching all users in two seconds.
 
-(_The configured startup time is a best effort limit, Goose will not start users faster than this but there is no guarantee that your load test server is capable of starting users as fast as you configure._)
+(_The configured increase time is a best effort limit, Goose will not start users faster than this but there is no guarantee that your load test server is capable of starting users as fast as you configure._)
 
-### Startup time example
+### Increase time example
 _Launch all users in 5 seconds._
 
 ```bash
 cargo run --release -- -s 5
 ```
 
+## Controlling the ramp-down rate
+
+Similarly, you can configure how quickly Goose stops users at the end of a load test using `--decrease-rate` or `--decrease-time`. These are mutually exclusive, just like their increase counterparts. If neither is set, Goose shuts down all users as quickly as possible.
+
+### Decrease rate example
+_Stop one user every two seconds._
+
+```bash
+cargo run --release -- --decrease-rate .5
+```
+
+### Decrease time example
+_Stop all users over 30 seconds._
+
+```bash
+cargo run --release -- --decrease-time 30s
+```
+
 ## Specifying how long the load test will run
 
-The `--run-time` option is not affected by how long Goose takes to start up. Thus, if you configure a load test with `--users 100 --startup-time 30m --run-time 5m` Goose will run for a total of 35 minutes, first ramping up for 30 minutes and then running at full load for 5 minutes. If you want Goose to exit immediately after all users start, you can set a very small run time, for example `--users 100 --hatch-rate .25 --run-time 1s`.
+The `--run-time` option is not affected by how long Goose takes to start up. Thus, if you configure a load test with `--users 100 --increase-time 30m --run-time 5m` Goose will run for a total of 35 minutes, first ramping up for 30 minutes and then running at full load for 5 minutes. If you want Goose to exit immediately after all users start, you can set a very small run time, for example `--users 100 --increase-rate .25 --run-time 1s`.
 
 Alternatively, you can use [`--test-plan`](./test-plan.html) to build both simple and more complex traffic patterns and can define how long the load test runs.
 

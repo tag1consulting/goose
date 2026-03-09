@@ -90,14 +90,14 @@ fn common_build_configuration(
                 &expect_workers.to_string(),
                 "--users",
                 USERS,
-                "--hatch-rate",
+                "--increase-rate",
                 USERS,
             ],
         )
     } else if worker.is_some() {
         common::build_configuration(server, vec!["--worker"])
     } else {
-        common::build_configuration(server, vec!["--users", USERS, "--hatch-rate", USERS])
+        common::build_configuration(server, vec!["--users", USERS, "--increase-rate", USERS])
     }
 }
 

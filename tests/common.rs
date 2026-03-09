@@ -17,7 +17,7 @@ type WorkerHandles = Vec<tokio::task::JoinHandle<GooseMetrics>>;
 /// and if not building a Worker configuration:
 ///  --host <mock-server>
 ///  --users 1
-///  --hatch-rate 1
+///  --increase-rate 1
 ///  --run-time 1
 ///  --co-mitigation disabled
 #[allow(dead_code)]
@@ -42,9 +42,9 @@ pub fn build_configuration(server: &MockServer, custom: Vec<&str>) -> GooseConfi
             configuration.extend_from_slice(&["--users", "1"]);
         }
 
-        // Default to hatch 1 user per second if not otherwise configured.
-        if !configuration.contains(&"--hatch-rate") {
-            configuration.extend_from_slice(&["--hatch-rate", "1"]);
+        // Default to increasing 1 user per second if not otherwise configured.
+        if !configuration.contains(&"--increase-rate") {
+            configuration.extend_from_slice(&["--increase-rate", "1"]);
         }
 
         // Default to running for 1 second if not otherwise configured.

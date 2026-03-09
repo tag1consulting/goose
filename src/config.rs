@@ -52,12 +52,18 @@ pub struct GooseConfiguration {
     /// Sets concurrent users (default: number of CPUs)
     #[options(short = "u")]
     pub users: Option<usize>,
-    /// Sets per-second user hatch rate (default: 1)
+    /// Sets per-second user increase rate (default: 1)
     #[options(short = "r", meta = "RATE")]
-    pub hatch_rate: Option<String>,
-    /// Starts users for up to (30s, 20m, 3h, 1h30m, etc)
+    pub increase_rate: Option<String>,
+    /// Increases users for up to (30s, 20m, 3h, 1h30m, etc)
     #[options(short = "s", meta = "TIME")]
-    pub startup_time: String,
+    pub increase_time: String,
+    /// Sets per-second user decrease rate
+    #[options(no_short, meta = "RATE")]
+    pub decrease_rate: Option<String>,
+    /// Decreases users for up to (30s, 20m, 3h, 1h30m, etc)
+    #[options(no_short, meta = "TIME")]
+    pub decrease_time: String,
     /// Stops load test after (30s, 20m, 3h, 1h30m, etc)
     #[options(short = "t", meta = "TIME")]
     pub run_time: String,
@@ -266,9 +272,13 @@ pub(crate) struct GooseDefaults {
     /// An optional default number of users to simulate.
     pub users: Option<usize>,
     /// An optional default number of clients to start per second.
-    pub hatch_rate: Option<String>,
-    /// An optional default number of seconds for the test to start.
-    pub startup_time: Option<usize>,
+    pub increase_rate: Option<String>,
+    /// An optional default number of seconds for the test to increase users.
+    pub increase_time: Option<usize>,
+    /// An optional default number of clients to stop per second.
+    pub decrease_rate: Option<String>,
+    /// An optional default number of seconds for the test to decrease users.
+    pub decrease_time: Option<usize>,
     /// An optional default number of seconds for the test to run.
     pub run_time: Option<usize>,
     /// An optional default test plan.
@@ -374,9 +384,13 @@ pub enum GooseDefault {
     /// An optional default number of users to simulate.
     Users,
     /// An optional default number of clients to start per second.
-    HatchRate,
-    /// An optional default number of seconds for the test to start up.
-    StartupTime,
+    IncreaseRate,
+    /// An optional default number of seconds for the test to increase users.
+    IncreaseTime,
+    /// An optional default number of clients to stop per second.
+    DecreaseRate,
+    /// An optional default number of seconds for the test to decrease users.
+    DecreaseTime,
     /// An optional default number of seconds for the test to run.
     RunTime,
     /// An optional default test plan.
@@ -504,7 +518,8 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::DebugLog`]
 ///  - [`GooseDefault::ErrorLog`]
 ///  - [`GooseDefault::GooseLog`]
-///  - [`GooseDefault::HatchRate`]
+///  - [`GooseDefault::IncreaseRate`]
+///  - [`GooseDefault::DecreaseRate`]
 ///  - [`GooseDefault::Host`]
 ///  - [`GooseDefault::ReportFile`]
 ///  - [`GooseDefault::RequestLog`]
@@ -519,7 +534,8 @@ pub enum GooseDefault {
 /// The following run-time options can be configured with a custom default using a
 /// [`usize`] integer:
 ///  - [`GooseDefault::Users`]
-///  - [`GooseDefault::StartupTime`]
+///  - [`GooseDefault::IncreaseTime`]
+///  - [`GooseDefault::DecreaseTime`]
 ///  - [`GooseDefault::RunTime`]
 ///  - [`GooseDefault::Iterations`]
 ///  - [`GooseDefault::RunningMetrics`]
@@ -590,7 +606,8 @@ impl GooseDefaultType<&str> for GooseAttack {
             GooseDefault::DebugLog => self.defaults.debug_log = Some(value.to_string()),
             GooseDefault::ErrorLog => self.defaults.error_log = Some(value.to_string()),
             GooseDefault::GooseLog => self.defaults.goose_log = Some(value.to_string()),
-            GooseDefault::HatchRate => self.defaults.hatch_rate = Some(value.to_string()),
+            GooseDefault::IncreaseRate => self.defaults.increase_rate = Some(value.to_string()),
+            GooseDefault::DecreaseRate => self.defaults.decrease_rate = Some(value.to_string()),
             GooseDefault::Host => {
                 self.defaults.host = if value.is_empty() {
                     None
@@ -614,7 +631,8 @@ impl GooseDefaultType<&str> for GooseAttack {
             GooseDefault::WebSocketHost => self.defaults.websocket_host = Some(value.to_string()),
             // Otherwise display a helpful and explicit error.
             GooseDefault::Users
-            | GooseDefault::StartupTime
+            | GooseDefault::IncreaseTime
+            | GooseDefault::DecreaseTime
             | GooseDefault::RunTime
             | GooseDefault::Iterations
             | GooseDefault::LogLevel
@@ -697,7 +715,8 @@ impl GooseDefaultType<usize> for GooseAttack {
     fn set_default(mut self, key: GooseDefault, value: usize) -> Result<Box<Self>, GooseError> {
         match key {
             GooseDefault::Users => self.defaults.users = Some(value),
-            GooseDefault::StartupTime => self.defaults.startup_time = Some(value),
+            GooseDefault::IncreaseTime => self.defaults.increase_time = Some(value),
+            GooseDefault::DecreaseTime => self.defaults.decrease_time = Some(value),
             GooseDefault::RunTime => self.defaults.run_time = Some(value),
             GooseDefault::Iterations => self.defaults.iterations = Some(value),
             GooseDefault::RunningMetrics => self.defaults.running_metrics = Some(value),
@@ -715,7 +734,8 @@ impl GooseDefaultType<usize> for GooseAttack {
             GooseDefault::DebugLog
             | GooseDefault::ErrorLog
             | GooseDefault::GooseLog
-            | GooseDefault::HatchRate
+            | GooseDefault::IncreaseRate
+            | GooseDefault::DecreaseRate
             | GooseDefault::Host
             | GooseDefault::ReportFile
             | GooseDefault::BaselineFile
@@ -812,7 +832,8 @@ impl GooseDefaultType<bool> for GooseAttack {
             GooseDefault::DebugLog
             | GooseDefault::ErrorLog
             | GooseDefault::GooseLog
-            | GooseDefault::HatchRate
+            | GooseDefault::IncreaseRate
+            | GooseDefault::DecreaseRate
             | GooseDefault::Host
             | GooseDefault::ReportFile
             | GooseDefault::BaselineFile
@@ -834,7 +855,8 @@ impl GooseDefaultType<bool> for GooseAttack {
                 })
             }
             GooseDefault::Users
-            | GooseDefault::StartupTime
+            | GooseDefault::IncreaseTime
+            | GooseDefault::DecreaseTime
             | GooseDefault::RunTime
             | GooseDefault::RunningMetrics
             | GooseDefault::Iterations
@@ -927,7 +949,8 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             GooseDefault::DebugLog
             | GooseDefault::ErrorLog
             | GooseDefault::GooseLog
-            | GooseDefault::HatchRate
+            | GooseDefault::IncreaseRate
+            | GooseDefault::DecreaseRate
             | GooseDefault::Host
             | GooseDefault::ReportFile
             | GooseDefault::BaselineFile
@@ -949,7 +972,8 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
                 })
             }
             GooseDefault::Users
-            | GooseDefault::StartupTime
+            | GooseDefault::IncreaseTime
+            | GooseDefault::DecreaseTime
             | GooseDefault::RunTime
             | GooseDefault::RunningMetrics
             | GooseDefault::Iterations
@@ -1037,7 +1061,8 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             GooseDefault::DebugLog
             | GooseDefault::ErrorLog
             | GooseDefault::GooseLog
-            | GooseDefault::HatchRate
+            | GooseDefault::IncreaseRate
+            | GooseDefault::DecreaseRate
             | GooseDefault::Host
             | GooseDefault::ReportFile
             | GooseDefault::BaselineFile
@@ -1059,7 +1084,8 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
                 })
             }
             GooseDefault::Users
-            | GooseDefault::StartupTime
+            | GooseDefault::IncreaseTime
+            | GooseDefault::DecreaseTime
             | GooseDefault::RunTime
             | GooseDefault::RunningMetrics
             | GooseDefault::Iterations
@@ -1466,20 +1492,38 @@ impl GooseConfiguration {
             },
         ]);
 
-        // Configure `startup_time`.
-        self.startup_time = self
+        // Configure `increase_time`.
+        self.increase_time = self
             .get_value(vec![
-                // Use --startup-time if set.
+                // Use --increase-time if set.
                 GooseValue {
-                    value: Some(util::parse_timespan(&self.startup_time)),
-                    filter: util::parse_timespan(&self.startup_time) == 0,
-                    message: "startup_time",
+                    value: Some(util::parse_timespan(&self.increase_time)),
+                    filter: util::parse_timespan(&self.increase_time) == 0,
+                    message: "increase_time",
                 },
                 // Otherwise use GooseDefault if set and not on Worker.
                 GooseValue {
-                    value: defaults.startup_time,
-                    filter: defaults.startup_time.is_none(),
-                    message: "startup_time",
+                    value: defaults.increase_time,
+                    filter: defaults.increase_time.is_none(),
+                    message: "increase_time",
+                },
+            ])
+            .map_or_else(|| "0".to_string(), |v| v.to_string());
+
+        // Configure `decrease_time`.
+        self.decrease_time = self
+            .get_value(vec![
+                // Use --decrease-time if set.
+                GooseValue {
+                    value: Some(util::parse_timespan(&self.decrease_time)),
+                    filter: util::parse_timespan(&self.decrease_time) == 0,
+                    message: "decrease_time",
+                },
+                // Otherwise use GooseDefault if set and not on Worker.
+                GooseValue {
+                    value: defaults.decrease_time,
+                    filter: defaults.decrease_time.is_none(),
+                    message: "decrease_time",
                 },
             ])
             .map_or_else(|| "0".to_string(), |v| v.to_string());
@@ -1502,20 +1546,38 @@ impl GooseConfiguration {
             ])
             .map_or_else(|| "0".to_string(), |v| v.to_string());
 
-        // Configure `hatch_rate`.
-        self.hatch_rate = self
+        // Configure `increase_rate`.
+        self.increase_rate = self
             .get_value(vec![
-                // Use --hatch-rate if set.
+                // Use --increase-rate if set.
                 GooseValue {
-                    value: Some(util::get_hatch_rate(self.hatch_rate.clone())),
-                    filter: self.hatch_rate.is_none(),
-                    message: "hatch_rate",
+                    value: Some(util::get_increase_rate(self.increase_rate.clone())),
+                    filter: self.increase_rate.is_none(),
+                    message: "increase_rate",
                 },
                 // Otherwise use GooseDefault if set and not on Worker.
                 GooseValue {
-                    value: Some(util::get_hatch_rate(defaults.hatch_rate.clone())),
-                    filter: defaults.hatch_rate.is_none(),
-                    message: "hatch_rate",
+                    value: Some(util::get_increase_rate(defaults.increase_rate.clone())),
+                    filter: defaults.increase_rate.is_none(),
+                    message: "increase_rate",
+                },
+            ])
+            .map(|v| v.to_string());
+
+        // Configure `decrease_rate`.
+        self.decrease_rate = self
+            .get_value(vec![
+                // Use --decrease-rate if set.
+                GooseValue {
+                    value: Some(util::get_increase_rate(self.decrease_rate.clone())),
+                    filter: self.decrease_rate.is_none(),
+                    message: "decrease_rate",
+                },
+                // Otherwise use GooseDefault if set and not on Worker.
+                GooseValue {
+                    value: Some(util::get_increase_rate(defaults.decrease_rate.clone())),
+                    filter: defaults.decrease_rate.is_none(),
+                    message: "decrease_rate",
                 },
             ])
             .map(|v| v.to_string());
@@ -1967,13 +2029,24 @@ impl GooseConfiguration {
             });
         }
 
-        // If set, hatch rate must be non-zero.
-        if let Some(hatch_rate) = self.hatch_rate.as_ref() {
-            if hatch_rate == "0" {
+        // If set, increase rate must be non-zero.
+        if let Some(increase_rate) = self.increase_rate.as_ref() {
+            if increase_rate == "0" {
                 return Err(GooseError::InvalidOption {
-                    option: "`configuration.hatch_rate`".to_string(),
-                    value: hatch_rate.to_string(),
-                    detail: "`configuration.hatch_rate` must be set to at least 1.".to_string(),
+                    option: "`configuration.increase_rate`".to_string(),
+                    value: increase_rate.to_string(),
+                    detail: "`configuration.increase_rate` must be set to at least 1.".to_string(),
+                });
+            }
+        }
+
+        // If set, decrease rate must be non-zero.
+        if let Some(decrease_rate) = self.decrease_rate.as_ref() {
+            if decrease_rate == "0" {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.decrease_rate`".to_string(),
+                    value: decrease_rate.to_string(),
+                    detail: "`configuration.decrease_rate` must be set to at least 1.".to_string(),
                 });
             }
         }
@@ -2003,26 +2076,38 @@ impl GooseConfiguration {
             }
         }
 
-        // Validate `startup_time`.
-        if self.startup_time != "0" {
-            // Startup time can't be set with hatch rate.
-            if self.hatch_rate.is_some() {
+        // Validate `increase_time`.
+        if self.increase_time != "0" {
+            // Increase time can't be set with increase rate.
+            if self.increase_rate.is_some() {
                 return Err(GooseError::InvalidOption {
-                    option: "`configuration.startup_time`".to_string(),
-                    value: self.startup_time.to_string(),
-                    detail: "`configuration.startup_time` can not be set with `configuration.hatch_rate`.".to_string(),
+                    option: "`configuration.increase_time`".to_string(),
+                    value: self.increase_time.to_string(),
+                    detail: "`configuration.increase_time` can not be set with `configuration.increase_rate`.".to_string(),
                 });
             }
 
-            // Startup time requires at least 2 users.
+            // Increase time requires at least 2 users.
             if let Some(users) = self.users.as_ref() {
                 if users < &2 {
                     return Err(GooseError::InvalidOption {
                         option: "configuration.users".to_string(),
                         value: users.to_string(),
-                        detail: "`configuration.users` must be set to at least 2 when `configuration.startup_time` is set.".to_string(),
+                        detail: "`configuration.users` must be set to at least 2 when `configuration.increase_time` is set.".to_string(),
                     });
                 }
+            }
+        }
+
+        // Validate `decrease_time`.
+        if self.decrease_time != "0" {
+            // Decrease time can't be set with decrease rate.
+            if self.decrease_rate.is_some() {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.decrease_time`".to_string(),
+                    value: self.decrease_time.to_string(),
+                    detail: "`configuration.decrease_time` can not be set with `configuration.decrease_rate`.".to_string(),
+                });
             }
         }
 
@@ -2037,21 +2122,39 @@ impl GooseConfiguration {
                         .to_string(),
                 });
             }
-            // The --startup-time option isn't compatible with --test-plan.
-            if self.startup_time != "0" {
+            // The --increase-time option isn't compatible with --test-plan.
+            if self.increase_time != "0" {
                 return Err(GooseError::InvalidOption {
-                    option: "`configuration.startup_time`".to_string(),
-                    value: self.startup_time.to_string(),
-                    detail: "`configuration.startup_time` can not be set with `configuration.test_plan`.".to_string(),
+                    option: "`configuration.increase_time`".to_string(),
+                    value: self.increase_time.to_string(),
+                    detail: "`configuration.increase_time` can not be set with `configuration.test_plan`.".to_string(),
                 });
             }
-            // The --hatch-rate option isn't compatible with --test-plan.
-            if let Some(hatch_rate) = self.hatch_rate.as_ref() {
+            // The --increase-rate option isn't compatible with --test-plan.
+            if let Some(increase_rate) = self.increase_rate.as_ref() {
                 return Err(GooseError::InvalidOption {
-                    option: "`configuration.hatch_rate`".to_string(),
-                    value: hatch_rate.to_string(),
+                    option: "`configuration.increase_rate`".to_string(),
+                    value: increase_rate.to_string(),
                     detail:
-                        "`configuration.hatch_rate` can not be set with `configuration.test_plan`."
+                        "`configuration.increase_rate` can not be set with `configuration.test_plan`."
+                            .to_string(),
+                });
+            }
+            // The --decrease-time option isn't compatible with --test-plan.
+            if self.decrease_time != "0" {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.decrease_time`".to_string(),
+                    value: self.decrease_time.to_string(),
+                    detail: "`configuration.decrease_time` can not be set with `configuration.test_plan`.".to_string(),
+                });
+            }
+            // The --decrease-rate option isn't compatible with --test-plan.
+            if let Some(decrease_rate) = self.decrease_rate.as_ref() {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.decrease_rate`".to_string(),
+                    value: decrease_rate.to_string(),
+                    detail:
+                        "`configuration.decrease_rate` can not be set with `configuration.test_plan`."
                             .to_string(),
                 });
             }
@@ -2353,7 +2456,7 @@ mod test {
         let host = "http://example.com/".to_string();
         let users: usize = 10;
         let run_time: usize = 10;
-        let hatch_rate = "2".to_string();
+        let increase_rate = "2".to_string();
         let timeout = "45".to_string();
         let log_level: usize = 1;
         let goose_log = "custom-goose.log".to_string();
@@ -2375,7 +2478,7 @@ mod test {
             .unwrap()
             .set_default(GooseDefault::RunTime, run_time)
             .unwrap()
-            .set_default(GooseDefault::HatchRate, hatch_rate.as_str())
+            .set_default(GooseDefault::IncreaseRate, increase_rate.as_str())
             .unwrap()
             .set_default(GooseDefault::LogLevel, log_level)
             .unwrap()
@@ -2450,7 +2553,7 @@ mod test {
         assert!(goose_attack.defaults.host == Some(host));
         assert!(goose_attack.defaults.users == Some(users));
         assert!(goose_attack.defaults.run_time == Some(run_time));
-        assert!(goose_attack.defaults.hatch_rate == Some(hatch_rate));
+        assert!(goose_attack.defaults.increase_rate == Some(increase_rate));
         assert!(goose_attack.defaults.log_level == Some(log_level as u8));
         assert!(goose_attack.defaults.goose_log == Some(goose_log));
         assert!(goose_attack.defaults.request_body == Some(true));

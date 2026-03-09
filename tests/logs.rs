@@ -113,7 +113,7 @@ fn validate_test(
     log_files: &LogFiles,
 ) {
     // Confirm that we loaded the mock endpoints. This confirms that we started
-    // both users, which also verifies that hatch_rate was properly set.
+    // both users, which also verifies that increase_rate was properly set.
     // Confirm that we loaded the mock endpoints.
     assert!(mock_endpoints[INDEX_KEY].calls() > 0);
     assert!(mock_endpoints[ERROR_KEY].calls() > 0);
@@ -293,7 +293,14 @@ async fn run_standalone_test(test_type: TestType, format: &str) {
             format,
         ],
     };
-    configuration_flags.extend(vec!["--users", "4", "--hatch-rate", "4", "--run-time", "2"]);
+    configuration_flags.extend(vec![
+        "--users",
+        "4",
+        "--increase-rate",
+        "4",
+        "--run-time",
+        "2",
+    ]);
     let configuration = common::build_configuration(&server, configuration_flags);
 
     // Run the Goose Attack.
@@ -437,7 +444,7 @@ async fn run_gaggle_test(test_type: TestType, format: &str) {
             &EXPECT_WORKERS.to_string(),
             "--users",
             "4",
-            "--hatch-rate",
+            "--increase-rate",
             "4",
             "--run-time",
             "2",

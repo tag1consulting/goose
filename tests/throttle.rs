@@ -68,7 +68,7 @@ fn common_build_configuration(
                 &expect_workers.to_string(),
                 "--users",
                 &users.to_string(),
-                "--hatch-rate",
+                "--increase-rate",
                 &users.to_string(),
                 // Run the load test long enough to confirm the throttle is working correctly.
                 "--run-time",
@@ -94,7 +94,7 @@ fn common_build_configuration(
             vec![
                 "--users",
                 &users.to_string(),
-                "--hatch-rate",
+                "--increase-rate",
                 &users.to_string(),
                 // Run the load test long enough to confirm the throttle is working correctly.
                 "--run-time",
@@ -128,7 +128,7 @@ fn validate_test(
     assert!(mock_endpoints[INDEX_KEY].calls() > 0);
     assert!(mock_endpoints[ABOUT_KEY].calls() > 0);
 
-    // Requests are made while GooseUsers are hatched, and then for RUN_TIME seconds.
+    // Requests are made while GooseUsers are launched, and then for RUN_TIME seconds.
     assert!(current_requests_file_lines <= (RUN_TIME + 1) * throttle_value);
 
     if let Some(previous_lines) = previous_requests_file_lines {

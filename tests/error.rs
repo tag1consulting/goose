@@ -61,7 +61,7 @@ fn common_build_configuration(server: &MockServer, custom: &mut Vec<&str>) -> Go
     let mut configuration = vec![
         "--users",
         "2",
-        "--hatch-rate",
+        "--increase-rate",
         "4",
         "--run-time",
         "2",

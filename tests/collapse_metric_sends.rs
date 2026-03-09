@@ -34,7 +34,7 @@ async fn single_request_per_scenario_metrics_correct() {
 
     let config = common::build_configuration(
         &server,
-        vec!["--users", "1", "--hatch-rate", "1", "--run-time", "2"],
+        vec!["--users", "1", "--increase-rate", "1", "--run-time", "2"],
     );
 
     let goose = common::build_load_test(
@@ -90,7 +90,7 @@ async fn multi_transaction_scenario_metrics_correct() {
 
     let config = common::build_configuration(
         &server,
-        vec!["--users", "1", "--hatch-rate", "1", "--run-time", "2"],
+        vec!["--users", "1", "--increase-rate", "1", "--run-time", "2"],
     );
 
     let goose = common::build_load_test(
@@ -147,7 +147,7 @@ async fn set_success_with_buffered_metrics() {
         vec![
             "--users",
             "1",
-            "--hatch-rate",
+            "--increase-rate",
             "1",
             "--run-time",
             "2",
@@ -185,7 +185,7 @@ async fn no_transaction_metrics_flag() {
         vec![
             "--users",
             "1",
-            "--hatch-rate",
+            "--increase-rate",
             "1",
             "--run-time",
             "2",

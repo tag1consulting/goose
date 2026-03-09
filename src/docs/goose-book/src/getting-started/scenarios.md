@@ -38,13 +38,13 @@ It is now possible to run any subset of the above scenarios by passing a comma s
 For example, to run only the two anonymous Scenarios, you could add `--scenarios "anon*"`:
 
 ```bash,ignore
-% cargo run --release --example umami -- --hatch-rate 10 --scenarios "anon*"
+% cargo run --release --example umami -- --increase-rate 10 --scenarios "anon*"
     Finished release [optimized] target(s) in 0.15s
-     Running `target/release/examples/umami --hatch-rate 10 --scenarios 'anon*'`
+     Running `target/release/examples/umami --increase-rate 10 --scenarios 'anon*'`
 05:50:17 [INFO] Output verbosity level: INFO
 05:50:17 [INFO] Logfile verbosity level: WARN
 05:50:17 [INFO] users defaulted to number of CPUs = 10
-05:50:17 [INFO] hatch_rate = 10
+05:50:17 [INFO] increase_rate = 10
 05:50:17 [INFO] iterations = 0
 05:50:17 [INFO] scenarios = Scenarios { active: ["anon*"] }
 ```
@@ -52,7 +52,7 @@ For example, to run only the two anonymous Scenarios, you could add `--scenarios
 Or, to run only the "Anonymous Spanish user" and "Admin user" Scenarios using their exact machine names, you could add `--scenarios "anonymousspanishuser,adminuser"`:
 
 ```bash,ignore
-% cargo run --release --example umami -- --hatch-rate 10 --scenarios "anonymousspanishuser,adminuser"
+% cargo run --release --example umami -- --increase-rate 10 --scenarios "anonymousspanishuser,adminuser"
 05:53:45 [INFO] scenarios = Scenarios { active: ["anonymousspanishuser", "adminuser"] }
 ```
 
