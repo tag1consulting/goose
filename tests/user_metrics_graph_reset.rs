@@ -11,6 +11,7 @@ use gumdrop::Options;
 use httpmock::{Method::GET, MockServer};
 use serial_test::serial;
 
+mod common;
 use goose::config::GooseConfiguration;
 use goose::metrics::GooseMetrics;
 use goose::prelude::*;
@@ -73,6 +74,9 @@ async fn run_graph_test(
 #[tokio::test]
 #[serial]
 async fn test_reset_vs_no_reset_behavioral_differences() {
+    let html_files = vec!["test_with_reset.html", "test_without_reset.html"];
+    common::cleanup_files(html_files.clone());
+
     // Run both scenarios to compare their behavior
     let (with_reset_metrics, _server1) = run_graph_test(
         3,
@@ -99,6 +103,8 @@ async fn test_reset_vs_no_reset_behavioral_differences() {
         "test_with_reset.html",
         "test_without_reset.html",
     );
+
+    common::cleanup_files(html_files);
 }
 
 // Test 2: Validate reset vs no-reset behavior with different user counts
@@ -112,6 +118,14 @@ async fn test_reset_vs_no_reset_behavioral_differences() {
 #[tokio::test]
 #[serial]
 async fn test_reset_vs_no_reset_different_user_counts() {
+    let html_files = vec![
+        "test_2users_with_reset.html",
+        "test_2users_without_reset.html",
+        "test_100users_with_reset.html",
+        "test_100users_without_reset.html",
+    ];
+    common::cleanup_files(html_files.clone());
+
     // Test with 2 users (minimum for startup time) - both reset and no-reset
     let (with_reset_2_users, _server1) = run_graph_test(
         2,
@@ -165,6 +179,8 @@ async fn test_reset_vs_no_reset_different_user_counts() {
         "test_100users_with_reset.html",
         "test_100users_without_reset.html",
     );
+
+    common::cleanup_files(html_files);
 }
 
 /// Verify test results and validate expected behavior differences  
