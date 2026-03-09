@@ -752,22 +752,22 @@ impl GooseAttack {
                                             if let Some(increase_rate) =
                                                 self.configuration.increase_rate.as_ref()
                                             {
-                                                util::get_increase_rate(Some(
+                                                util::parse_rate(Some(
                                                     increase_rate.to_string(),
                                                 ))
                                             } else {
-                                                util::get_increase_rate(None)
+                                                util::parse_rate(None)
                                             }
                                         } else if let Some(decrease_rate) =
                                             self.configuration.decrease_rate.as_ref()
                                         {
-                                            util::get_increase_rate(Some(decrease_rate.to_string()))
+                                            util::parse_rate(Some(decrease_rate.to_string()))
                                         } else if let Some(increase_rate) =
                                             self.configuration.increase_rate.as_ref()
                                         {
-                                            util::get_increase_rate(Some(increase_rate.to_string()))
+                                            util::parse_rate(Some(increase_rate.to_string()))
                                         } else {
-                                            util::get_increase_rate(None)
+                                            util::parse_rate(None)
                                         };
                                         // Convert rate to milliseconds.
                                         let ms_rate = 1.0 / rate * 1_000.0;
@@ -851,6 +851,10 @@ impl GooseAttack {
                                     "Controller didn't provide increase_rate: {:#?}",
                                     &message.request
                                 );
+                                self.reply_to_controller(
+                                    message,
+                                    ControllerResponseMessage::Bool(false),
+                                );
                             }
                         }
                         ControllerCommand::IncreaseTime => {
@@ -922,6 +926,10 @@ impl GooseAttack {
                                 warn!(
                                     "Controller didn't provide decrease_rate: {:#?}",
                                     &message.request
+                                );
+                                self.reply_to_controller(
+                                    message,
+                                    ControllerResponseMessage::Bool(false),
                                 );
                             }
                         }
