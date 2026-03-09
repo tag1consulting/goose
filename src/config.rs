@@ -2109,6 +2109,17 @@ impl GooseConfiguration {
                     detail: "`configuration.decrease_time` can not be set with `configuration.decrease_rate`.".to_string(),
                 });
             }
+
+            // Decrease time requires at least 2 users.
+            if let Some(users) = self.users.as_ref() {
+                if users < &2 {
+                    return Err(GooseError::InvalidOption {
+                        option: "configuration.users".to_string(),
+                        value: users.to_string(),
+                        detail: "`configuration.users` must be set to at least 2 when `configuration.decrease_time` is set.".to_string(),
+                    });
+                }
+            }
         }
 
         // Validate `test_plan`.
