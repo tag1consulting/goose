@@ -2330,31 +2330,36 @@ impl GooseUser {
                 status_code_timings: HashMap::new(),
             });
 
+        // Only non-update requests reach accumulate_request; updates go through
+        // set_success/set_failure → send_request_metric_now directly.
+        debug_assert!(
+            !request_metric.update,
+            "accumulate_request called with update request"
+        );
+
         // Pre-aggregate timing data using the same bucketing logic.
-        if !request_metric.update {
-            entry.raw_data.record_time(request_metric.response_time);
+        entry.raw_data.record_time(request_metric.response_time);
 
-            if !self.config.no_status_codes {
-                // Increment status-code count.
-                *entry
-                    .status_code_counts
-                    .entry(request_metric.status_code)
-                    .or_insert(0) += 1;
+        if !self.config.no_status_codes {
+            // Increment status-code count.
+            *entry
+                .status_code_counts
+                .entry(request_metric.status_code)
+                .or_insert(0) += 1;
 
-                // Record status-code timing summary.
-                let time = request_metric.response_time as usize;
-                let summary = entry
-                    .status_code_timings
-                    .entry(request_metric.status_code)
-                    .or_insert_with(StatusCodeTimingSummary::default);
-                summary.count += 1;
-                summary.total_time += time;
-                if time > 0 && (summary.min_time == 0 || time < summary.min_time) {
-                    summary.min_time = time;
-                }
-                if summary.max_time < time {
-                    summary.max_time = time;
-                }
+            // Record status-code timing summary.
+            let time = request_metric.response_time as usize;
+            let summary = entry
+                .status_code_timings
+                .entry(request_metric.status_code)
+                .or_insert_with(StatusCodeTimingSummary::default);
+            summary.count += 1;
+            summary.total_time += time;
+            if time > 0 && (summary.min_time == 0 || time < summary.min_time) {
+                summary.min_time = time;
+            }
+            if summary.max_time < time {
+                summary.max_time = time;
             }
         }
 

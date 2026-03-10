@@ -3668,7 +3668,14 @@ impl MetricsProcessor {
 
         // 3. Merge pre-aggregated transaction timing data.
         for ((si, ti), entry) in batch.transactions {
-            let agg = &mut self.metrics.transactions[si][ti];
+            let Some(scenario_txns) = self.metrics.transactions.get_mut(si) else {
+                // Invalid scenario index (possible in Gaggle mode with mismatched configs).
+                continue;
+            };
+            let Some(agg) = scenario_txns.get_mut(ti) else {
+                // Invalid transaction index within this scenario.
+                continue;
+            };
             for (time_bucket, count) in &entry.times {
                 *agg.times.entry(*time_bucket).or_insert(0) += count;
             }
@@ -3686,7 +3693,10 @@ impl MetricsProcessor {
 
         // 4. Merge pre-aggregated scenario timing data.
         for (index, entry) in batch.scenarios {
-            let agg = &mut self.metrics.scenarios[index];
+            let Some(agg) = self.metrics.scenarios.get_mut(index) else {
+                // Invalid scenario index (possible in Gaggle mode with mismatched configs).
+                continue;
+            };
             agg.users.insert(entry.user);
             for (time_bucket, count) in &entry.times {
                 *agg.times.entry(*time_bucket).or_insert(0) += count;
