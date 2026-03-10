@@ -13,7 +13,6 @@ use gumdrop::Options;
 use httpmock::{Method::GET, MockServer};
 use serial_test::serial;
 
-mod common;
 use goose::config::GooseConfiguration;
 use goose::metrics::GooseMetrics;
 use goose::prelude::*;

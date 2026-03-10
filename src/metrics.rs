@@ -5134,11 +5134,11 @@ mod test {
         // Set up one scenario with one transaction so batch indexing works.
         metrics.transactions = vec![vec![TransactionMetricAggregate::new(
             0,
-            "TestScenario",
+            "TestScenario".into(),
             0,
             TransactionName::InheritNameByRequests(Arc::from("tx")),
         )]];
-        metrics.scenarios = vec![ScenarioMetricAggregate::new(0, "TestScenario")];
+        metrics.scenarios = vec![ScenarioMetricAggregate::new(0, "TestScenario".into())];
 
         let metrics_epoch: MetricsEpoch = Arc::new(std::sync::atomic::AtomicU64::new(epoch));
 
@@ -5529,11 +5529,11 @@ mod test {
         let mut metrics1 = GooseMetrics::default();
         metrics1.transactions = vec![vec![TransactionMetricAggregate::new(
             0,
-            "TestScenario",
+            "TestScenario".into(),
             0,
             TransactionName::InheritNameByRequests(Arc::from("tx")),
         )]];
-        metrics1.scenarios = vec![ScenarioMetricAggregate::new(0, "TestScenario")];
+        metrics1.scenarios = vec![ScenarioMetricAggregate::new(0, "TestScenario".into())];
         let mut proc_individual = MetricsProcessor::new(
             metrics_rx1,
             cmd_rx1,
@@ -5559,11 +5559,11 @@ mod test {
         let mut metrics2 = GooseMetrics::default();
         metrics2.transactions = vec![vec![TransactionMetricAggregate::new(
             0,
-            "TestScenario",
+            "TestScenario".into(),
             0,
             TransactionName::InheritNameByRequests(Arc::from("tx")),
         )]];
-        metrics2.scenarios = vec![ScenarioMetricAggregate::new(0, "TestScenario")];
+        metrics2.scenarios = vec![ScenarioMetricAggregate::new(0, "TestScenario".into())];
         let mut proc_batch = MetricsProcessor::new(
             metrics_rx2,
             cmd_rx2,
