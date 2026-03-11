@@ -25,32 +25,28 @@ impl ItemsPerSecond {
 
     #[inline(always)]
     fn initialize_or_increment(&mut self, key: &str, second: usize, value: u32) -> u32 {
-        if !self.contains_key(key) {
-            self.insert(key, TimeSeries::new());
-        }
-        let data = self.0.get_mut(key).unwrap();
+        let data = self
+            .0
+            .entry(key.to_string())
+            .or_insert_with(TimeSeries::new);
         data.increase_value(second, value);
         data.get(second)
     }
 
-    #[inline(always)]
-    fn contains_key(&mut self, key: &str) -> bool {
-        self.0.contains_key(key)
-    }
-
+    #[cfg(test)]
     #[inline(always)]
     fn insert(&mut self, key: &str, time_series: TimeSeries<u32, u32>) {
         self.0.insert(key.to_string(), time_series);
     }
 
+    #[cfg(test)]
     #[inline(always)]
-    #[allow(dead_code)]
     fn len(&self) -> usize {
         self.0.len()
     }
 
+    #[cfg(test)]
     #[inline(always)]
-    #[allow(dead_code)]
     fn get(&self, key: &str) -> Option<TimeSeries<u32, u32>> {
         self.0.get(key).cloned()
     }
@@ -123,11 +119,10 @@ impl GraphData {
         second: usize,
         response_time: u64,
     ) {
-        if !self.average_response_time_per_second.contains_key(&key) {
-            self.average_response_time_per_second
-                .insert(key.clone(), TimeSeries::new());
-        }
-        let data = self.average_response_time_per_second.get_mut(&key).unwrap();
+        let data = self
+            .average_response_time_per_second
+            .entry(key)
+            .or_insert_with(TimeSeries::new);
         data.increase_value(second, response_time as f32);
 
         debug!(
@@ -157,6 +152,55 @@ impl GraphData {
             second,
             self.scenarios_per_second.get(second)
         );
+    }
+
+    /// Record multiple requests per second for batch merging.
+    pub(crate) fn record_requests_per_second_batch(
+        &mut self,
+        key: &str,
+        second: usize,
+        count: u32,
+    ) {
+        self.requests_per_second
+            .initialize_or_increment(key, second, count);
+    }
+
+    /// Record pre-aggregated average response time for batch merging.
+    ///
+    /// Performs a proper weighted merge of the batch's total response time and
+    /// count into the per-second moving average, avoiding the precision loss
+    /// that would result from truncating the average to an integer.
+    pub(crate) fn record_average_response_time_per_second_batch(
+        &mut self,
+        key: &str,
+        second: usize,
+        total_time: f64,
+        count: u32,
+    ) {
+        if count == 0 {
+            return;
+        }
+        let data = self
+            .average_response_time_per_second
+            .entry(key.to_string())
+            .or_insert_with(TimeSeries::new);
+        data.expand(second, MovingAverage::new());
+        let batch_avg = MovingAverage {
+            count,
+            average: total_time as f32 / count as f32,
+        };
+        data.data[second].merge(&batch_avg);
+        data.total.merge(&batch_avg);
+    }
+
+    /// Record multiple transactions per second for batch merging.
+    pub(crate) fn record_transactions_per_second_batch(&mut self, second: usize, count: usize) {
+        self.transactions_per_second.increase_value(second, count);
+    }
+
+    /// Record multiple scenarios per second for batch merging.
+    pub(crate) fn record_scenarios_per_second_batch(&mut self, second: usize, count: usize) {
+        self.scenarios_per_second.increase_value(second, count);
     }
 
     /// Records number of users for a current second.
@@ -1391,6 +1435,54 @@ mod test {
                 .total(),
             4.8125005
         );
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)]
+    fn test_record_average_response_time_per_second_batch() {
+        let mut graph = GraphData::new();
+
+        // Batch merge: 3 requests with total_time 60.0 → avg 20.0
+        graph.record_average_response_time_per_second_batch("GET /", 0, 60.0, 3);
+        let avg = graph
+            .average_response_time_per_second
+            .get("GET /")
+            .unwrap()
+            .get(0);
+        assert_eq!(avg.average, 20.0);
+        assert_eq!(avg.count, 3);
+
+        // Add a single individual request with response time 40.
+        graph.record_average_response_time_per_second("GET /".to_string(), 0, 40);
+        let avg = graph
+            .average_response_time_per_second
+            .get("GET /")
+            .unwrap()
+            .get(0);
+        // Weighted merge: (3 * 20 + 1 * 40) / 4 = 25.0
+        assert_eq!(avg.average, 25.0);
+        assert_eq!(avg.count, 4);
+
+        // Another batch at a different second.
+        graph.record_average_response_time_per_second_batch("GET /", 5, 100.0, 2);
+        let avg = graph
+            .average_response_time_per_second
+            .get("GET /")
+            .unwrap()
+            .get(5);
+        assert_eq!(avg.average, 50.0);
+        assert_eq!(avg.count, 2);
+
+        // Merge a second batch into the same second.
+        graph.record_average_response_time_per_second_batch("GET /", 5, 200.0, 2);
+        let avg = graph
+            .average_response_time_per_second
+            .get("GET /")
+            .unwrap()
+            .get(5);
+        // Weighted: (2 * 50 + 2 * 100) / 4 = 75.0
+        assert_eq!(avg.average, 75.0);
+        assert_eq!(avg.count, 4);
     }
 
     #[test]

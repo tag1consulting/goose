@@ -294,7 +294,7 @@ use downcast_rs::{impl_downcast, Downcast};
 use regex::Regex;
 use reqwest::{header, Client, ClientBuilder, Method, RequestBuilder, Response};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::{self, Debug, Formatter, Write as _};
 use std::hash::{Hash, Hasher};
 use std::str;
@@ -306,8 +306,11 @@ use url::Url;
 
 use crate::logger::GooseLog;
 use crate::metrics::{
-    GooseCoordinatedOmissionMitigation, GooseMetric, GooseRawRequest, GooseRequestCounterRegistry,
-    GooseRequestCounters, GooseRequestMetric, TransactionDetail, TransactionMetric,
+    round_metric_time, GooseCoordinatedOmissionMitigation, GooseMetric, GooseMetricBatch,
+    GooseRawRequest, GooseRequestCounterRegistry, GooseRequestCounters, GooseRequestMetric,
+    GooseRequestMetricTimingData, MetricsEpoch, RequestBatchEntry, ScenarioBatchEntry,
+    ScenarioMetric, StatusCodeTimingSummary, TransactionBatchEntry, TransactionDetail,
+    TransactionMetric, METRICS_BATCH_MAX_AGE, METRICS_BATCH_SIZE,
 };
 use crate::{GooseConfiguration, GooseError, WeightedTransactions};
 
@@ -948,6 +951,20 @@ pub struct GooseUser {
     pub(crate) pending_request: Option<GooseRequestMetric>,
     /// Buffered transaction metric awaiting combination with scenario metric.
     pub(crate) pending_transaction: Option<TransactionMetric>,
+    /// Pre-aggregated metrics accumulator for batch sending. Reduces channel pressure
+    /// from `O(RPS)` to `O(RPS / batch_size)`. `None` when metrics are disabled.
+    pub(crate) metrics_batch: Option<GooseMetricBatch>,
+    /// Number of request metrics accumulated in the current batch (both
+    /// pre-aggregated and individual). Used as the size-based flush trigger;
+    /// transactions and scenarios are not counted here because they are
+    /// low-frequency and do not drive batch sizing.
+    pub(crate) batch_item_count: usize,
+    /// When the current batch started accumulating (`None` if batch is empty).
+    pub(crate) batch_start: Option<std::time::Instant>,
+    /// Whether `--report-file` is configured (cached to avoid repeated string checks).
+    pub(crate) has_report_file: bool,
+    /// Shared epoch counter for batch validity across metrics resets.
+    pub(crate) metrics_epoch: Option<MetricsEpoch>,
     /// Optional per-user session data of a generic type implementing the
     /// [`GooseUserData`] trait.
     session_data: Option<Box<dyn GooseUserData>>,
@@ -983,6 +1000,17 @@ impl Clone for GooseUser {
             slept: self.slept,
             pending_request: self.pending_request.clone(),
             pending_transaction: self.pending_transaction.clone(),
+            metrics_batch: self.metrics_batch.as_ref().map(|_| {
+                let epoch = self
+                    .metrics_epoch
+                    .as_ref()
+                    .map_or(0, |e| e.load(std::sync::atomic::Ordering::Relaxed));
+                GooseMetricBatch::new(epoch)
+            }),
+            batch_item_count: 0,
+            batch_start: None,
+            has_report_file: self.has_report_file,
+            metrics_epoch: self.metrics_epoch.clone(),
             session_data: self.session_data.clone(),
             request_counters: self.request_counters.clone(),
             request_counter_cache: HashMap::new(),
@@ -1018,6 +1046,8 @@ impl GooseUser {
             }
         };
 
+        let has_report_file = !configuration.report_file.is_empty();
+
         Ok(GooseUser {
             started: Instant::now(),
             iterations: 0,
@@ -1040,6 +1070,11 @@ impl GooseUser {
             slept: 0,
             pending_request: None,
             pending_transaction: None,
+            metrics_batch: None,
+            batch_item_count: 0,
+            batch_start: None,
+            has_report_file,
+            metrics_epoch: None,
             session_data: None,
             request_counters: None,
             request_counter_cache: HashMap::new(),
@@ -2092,25 +2127,48 @@ impl GooseUser {
         Ok(())
     }
 
-    /// Send any pending request metric immediately on the metrics channel.
+    /// Accumulate any pending request metric into the batch (or send directly
+    /// if batching is not active).
     pub(crate) fn flush_pending_request(&mut self) -> TransactionResult {
         if let Some(request) = self.pending_request.take() {
             // Save fields needed for atomic counter before moving request.
             let method = request.raw.method;
             let name = request.name.clone();
             let success = request.success;
-            self.send_request_metric_now(request)?;
-            // Increment at actual send time so metrics reset can't zero the counter
-            // before the parent processes this request.
+
+            if self.metrics_batch.is_some() {
+                // Discard stale batch if a metrics reset changed the epoch.
+                self.ensure_batch_current();
+                // Batch path: accumulate instead of sending individually.
+                if request.coordinated_omission_elapsed > 0 || !request.error.is_empty() {
+                    // CO-affected and failed requests need per-request processing.
+                    self.accumulate_individual_request(request);
+                } else {
+                    self.accumulate_request(&request);
+                }
+                if self.batch_start.is_none() {
+                    self.batch_start = Some(std::time::Instant::now());
+                }
+                self.maybe_flush_batch()?;
+            } else {
+                // Non-batch path: send directly (e.g., during test_start/test_stop).
+                self.send_request_metric_now(request)?;
+            }
+            // Increment at actual send/accumulate time so metrics reset can't zero
+            // the counter before the parent processes this request.
             self.increment_request_counter(&method, &name, success);
         }
         Ok(())
     }
 
-    /// Send any pending transaction metric immediately on the metrics channel.
+    /// Accumulate any pending transaction metric into the batch (or send
+    /// directly if batching is not active).
     pub(crate) fn flush_pending_transaction(&mut self) {
         if let Some(transaction) = self.pending_transaction.take() {
-            if let Some(metrics_channel) = self.metrics_channel.clone() {
+            if self.metrics_batch.is_some() {
+                self.ensure_batch_current();
+                self.accumulate_transaction(&transaction);
+            } else if let Some(metrics_channel) = self.metrics_channel.clone() {
                 let _ = metrics_channel.send(GooseMetric::Transaction(transaction));
             }
         }
@@ -2225,6 +2283,269 @@ impl GooseUser {
         }
     }
 
+    /// Accumulate a successful, non-CO request metric into the local batch.
+    ///
+    /// Pre-aggregates timing data, status codes, and status-code timings into
+    /// compact batch entries. Failed and CO-affected requests are handled by
+    /// [`accumulate_individual_request`] instead.
+    ///
+    /// # Invariants
+    ///
+    /// This method is only called for requests with an empty error and no CO
+    /// elapsed time (`flush_pending_request` routes all other requests to
+    /// `accumulate_individual_request`). Consequently, `request_metric.success`
+    /// is always `true` and `request_metric.error` is always empty here.
+    fn accumulate_request(&mut self, request_metric: &GooseRequestMetric) {
+        debug_assert!(
+            request_metric.success,
+            "accumulate_request called with unsuccessful request"
+        );
+        debug_assert!(
+            request_metric.error.is_empty(),
+            "accumulate_request called with non-empty error"
+        );
+
+        let batch = match self.metrics_batch.as_mut() {
+            Some(b) => b,
+            None => return,
+        };
+
+        let method_label = request_metric.raw.method_label();
+        // Format key into reusable buffer to avoid per-request allocation.
+        self.counter_key_buf.clear();
+        let _ = std::fmt::Write::write_fmt(
+            &mut self.counter_key_buf,
+            format_args!("{} {}", method_label, request_metric.name),
+        );
+
+        let entry = batch
+            .requests
+            .entry(self.counter_key_buf.clone())
+            .or_insert_with(|| RequestBatchEntry {
+                path: request_metric.name.to_string(),
+                method: request_metric.raw.method,
+                custom_method: request_metric.raw.custom_method.clone(),
+                raw_data: GooseRequestMetricTimingData::new(None),
+                status_code_counts: HashMap::new(),
+                status_code_timings: HashMap::new(),
+            });
+
+        // Only non-update requests reach accumulate_request; updates go through
+        // set_success/set_failure → send_request_metric_now directly.
+        debug_assert!(
+            !request_metric.update,
+            "accumulate_request called with update request"
+        );
+
+        // Pre-aggregate timing data using the same bucketing logic.
+        entry.raw_data.record_time(request_metric.response_time);
+
+        if !self.config.no_status_codes {
+            // Increment status-code count.
+            *entry
+                .status_code_counts
+                .entry(request_metric.status_code)
+                .or_insert(0) += 1;
+
+            // Record status-code timing summary.
+            let time = request_metric.response_time as usize;
+            let summary = entry
+                .status_code_timings
+                .entry(request_metric.status_code)
+                .or_insert_with(StatusCodeTimingSummary::default);
+            summary.count += 1;
+            summary.total_time += time;
+            if time > 0 && (summary.min_time == 0 || time < summary.min_time) {
+                summary.min_time = time;
+            }
+            if summary.max_time < time {
+                summary.max_time = time;
+            }
+        }
+
+        // Track graph data if report file is configured.
+        if self.has_report_file {
+            let second = (request_metric.elapsed / 1000) as usize;
+            let graph_entry = batch
+                .graph_request_data
+                .entry((self.counter_key_buf.clone(), second))
+                .or_default();
+            graph_entry.count += 1;
+            graph_entry.total_time += request_metric.response_time as f64;
+        }
+
+        self.batch_item_count += 1;
+    }
+
+    /// Buffer an individual request metric in the batch without pre-aggregating.
+    ///
+    /// Used for failed requests (which need per-request error logging on the
+    /// processor side) and CO-affected requests (which need per-request backfill).
+    fn accumulate_individual_request(&mut self, request_metric: GooseRequestMetric) {
+        if let Some(batch) = self.metrics_batch.as_mut() {
+            batch.individual_requests.push(request_metric);
+            self.batch_item_count += 1;
+        }
+    }
+
+    /// Accumulate a transaction metric into the local batch.
+    pub(crate) fn accumulate_transaction(&mut self, transaction: &TransactionMetric) {
+        let batch = match self.metrics_batch.as_mut() {
+            Some(b) => b,
+            None => return,
+        };
+
+        let key = (transaction.scenario_index, transaction.transaction_index);
+        let entry = batch
+            .transactions
+            .entry(key)
+            .or_insert_with(|| TransactionBatchEntry {
+                times: BTreeMap::new(),
+                min_time: 0,
+                max_time: 0,
+                total_time: 0,
+                counter: 0,
+                success_count: 0,
+                fail_count: 0,
+            });
+
+        let time = transaction.run_time as usize;
+        let rounded_time = round_metric_time(transaction.run_time);
+
+        *entry.times.entry(rounded_time).or_insert(0) += 1;
+        entry.counter += 1;
+        entry.total_time += time;
+        if time > 0 && (entry.min_time == 0 || time < entry.min_time) {
+            entry.min_time = time;
+        }
+        if time > entry.max_time {
+            entry.max_time = time;
+        }
+        if transaction.success {
+            entry.success_count += 1;
+        } else {
+            entry.fail_count += 1;
+        }
+
+        // Track graph data.
+        if self.has_report_file {
+            let second = (transaction.elapsed / 1000) as usize;
+            *batch.graph_tps.entry(second).or_insert(0) += 1;
+        }
+    }
+
+    /// Accumulate a scenario metric into the local batch.
+    pub(crate) fn accumulate_scenario(&mut self, scenario: &ScenarioMetric) {
+        let batch = match self.metrics_batch.as_mut() {
+            Some(b) => b,
+            None => return,
+        };
+
+        let entry = batch
+            .scenarios
+            .entry(scenario.index)
+            .or_insert_with(|| ScenarioBatchEntry {
+                times: BTreeMap::new(),
+                min_time: 0,
+                max_time: 0,
+                total_time: 0,
+                counter: 0,
+                user: scenario.user,
+            });
+
+        let time = scenario.run_time as usize;
+        let rounded_time = round_metric_time(scenario.run_time);
+
+        *entry.times.entry(rounded_time).or_insert(0) += 1;
+        entry.counter += 1;
+        entry.total_time += time;
+        if time > 0 && (entry.min_time == 0 || time < entry.min_time) {
+            entry.min_time = time;
+        }
+        if time > entry.max_time {
+            entry.max_time = time;
+        }
+
+        // Track graph data.
+        if self.has_report_file {
+            let second = (scenario.elapsed / 1000) as usize;
+            *batch.graph_sps.entry(second).or_insert(0) += 1;
+        }
+    }
+
+    /// Check if the current batch is stale (epoch changed due to metrics reset)
+    /// and discard it if so, creating a fresh batch with the current epoch.
+    ///
+    /// This must be called before accumulating any new metrics, so that
+    /// post-reset requests go into a fresh batch and maintain consistency
+    /// between atomic counters (which were reset) and batch data.
+    fn ensure_batch_current(&mut self) {
+        if let (Some(batch), Some(epoch_arc)) = (&self.metrics_batch, &self.metrics_epoch) {
+            let current_epoch = epoch_arc.load(AtomicOrdering::Relaxed);
+            if batch.epoch < current_epoch {
+                // Discard stale batch data from before the metrics reset.
+                // The atomic counters for these metrics were already reset to 0,
+                // so discarding the batch data maintains consistency.
+                self.metrics_batch = Some(GooseMetricBatch::new(current_epoch));
+                self.batch_item_count = 0;
+                self.batch_start = None;
+            }
+        }
+    }
+
+    /// Check if the current batch should be flushed, and flush if so.
+    ///
+    /// The batch is flushed when either:
+    /// - The number of accumulated requests reaches [`METRICS_BATCH_SIZE`]
+    /// - The batch has been accumulating for longer than [`METRICS_BATCH_MAX_AGE`]
+    pub(crate) fn maybe_flush_batch(&mut self) -> TransactionResult {
+        if self.batch_item_count >= METRICS_BATCH_SIZE {
+            return self.flush_batch();
+        }
+        if let Some(start) = self.batch_start {
+            if start.elapsed() >= METRICS_BATCH_MAX_AGE {
+                return self.flush_batch();
+            }
+        }
+        Ok(())
+    }
+
+    /// Flush the current batch to the metrics channel.
+    ///
+    /// Sends the accumulated batch as a single [`GooseMetric::Batch`] message
+    /// and resets the accumulator for the next batch.
+    pub(crate) fn flush_batch(&mut self) -> TransactionResult {
+        if self.batch_item_count == 0 {
+            // Also check if there are transactions/scenarios without requests.
+            let has_data = self
+                .metrics_batch
+                .as_ref()
+                .is_some_and(|b| !b.transactions.is_empty() || !b.scenarios.is_empty());
+            if !has_data {
+                return Ok(());
+            }
+        }
+        let current_epoch = self
+            .metrics_epoch
+            .as_ref()
+            .map_or(0, |e| e.load(AtomicOrdering::Relaxed));
+        if let Some(batch) = self.metrics_batch.take() {
+            if let Some(metrics_channel) = self.metrics_channel.as_ref() {
+                if let Err(e) = metrics_channel.send(GooseMetric::Batch(Box::new(batch))) {
+                    self.metrics_batch = Some(GooseMetricBatch::new(current_epoch));
+                    self.batch_item_count = 0;
+                    self.batch_start = None;
+                    return Err(Box::new(e.into()));
+                }
+            }
+            // Replace with a fresh batch stamped with the current epoch.
+            self.metrics_batch = Some(GooseMetricBatch::new(current_epoch));
+            self.batch_item_count = 0;
+            self.batch_start = None;
+        }
+        Ok(())
+    }
+
     /// If `request_name` is set, unwrap and use this. Otherwise, if the Transaction has a name
     /// set use it. Otherwise use the path.
     fn get_request_name<'a>(&'a self, request: &'a GooseRequest) -> &'a str {
@@ -2283,6 +2604,8 @@ impl GooseUser {
             request.update = true;
             // Flush any pending request metric to maintain ordering before the update.
             self.flush_pending_request()?;
+            // Flush the batch so the original metric arrives before the update.
+            self.flush_batch()?;
             self.send_request_metric_now(request.clone())?;
             // Atomically correct the shared counters (success +1, failure -1).
             // Done after the channel send so counts stay consistent if the send fails.
@@ -2360,6 +2683,8 @@ impl GooseUser {
             request.error = tag.to_string();
             // Flush any pending request metric to maintain ordering before the update.
             self.flush_pending_request()?;
+            // Flush the batch so the original metric arrives before the update.
+            self.flush_batch()?;
             self.send_request_metric_now(request.clone())?;
             // Atomically correct the shared counters (success -1, failure +1).
             // Done after the channel send so counts stay consistent if the send fails.

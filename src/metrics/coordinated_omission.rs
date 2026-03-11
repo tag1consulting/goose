@@ -137,7 +137,7 @@ impl CoordinatedOmissionMetrics {
     }
 
     /// Update the synthetic percentage calculation.
-    fn update_synthetic_percentage(&mut self) {
+    pub(crate) fn update_synthetic_percentage(&mut self) {
         let total = self.actual_requests + self.synthetic_requests;
         if total > 0 {
             self.synthetic_percentage = (self.synthetic_requests as f32 / total as f32) * 100.0;
