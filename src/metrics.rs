@@ -1141,9 +1141,9 @@ impl TransactionMetricAggregate {
             // Round to nearest 10 for times 100-500 ms.
             101..=500 => ((time as f64 / 10.0).round() * 10.0) as usize,
             // Round to nearest 100 for times 500-1000 ms.
-            501..=1000 => ((time as f64 / 100.0).round() * 10.0) as usize,
+            501..=1000 => ((time as f64 / 100.0).round() * 100.0) as usize,
             // Round to nearest 1000 for larger times.
-            _ => ((time as f64 / 1000.0).round() * 10.0) as usize,
+            _ => ((time as f64 / 1000.0).round() * 1000.0) as usize,
         };
 
         let counter = match self.times.get(&rounded_time) {
@@ -1229,9 +1229,9 @@ impl ScenarioMetricAggregate {
             // Round to nearest 10 for times 100-500 ms.
             101..=500 => ((time as f64 / 10.0).round() * 10.0) as usize,
             // Round to nearest 100 for times 500-1000 ms.
-            501..=1000 => ((time as f64 / 100.0).round() * 10.0) as usize,
+            501..=1000 => ((time as f64 / 100.0).round() * 100.0) as usize,
             // Round to nearest 1000 for larger times.
-            _ => ((time as f64 / 1000.0).round() * 10.0) as usize,
+            _ => ((time as f64 / 1000.0).round() * 1000.0) as usize,
         };
 
         let counter = match self.times.get(&rounded_time) {
