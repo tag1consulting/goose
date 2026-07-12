@@ -204,6 +204,9 @@ pub struct GooseConfiguration {
     /// Enables the live web dashboard
     #[options(no_short)]
     pub dashboard: bool,
+    /// Enable dashboard control endpoints (requires --dashboard and --dashboard-auth-token).
+    #[options(no_short)]
+    pub dashboard_control: bool,
     /// Sets dashboard bind host (default: 127.0.0.1)
     #[options(no_short, meta = "HOST")]
     pub dashboard_host: String,
@@ -383,6 +386,8 @@ pub(crate) struct GooseDefaults {
     pub websocket_port: Option<u16>,
     /// An optional default for enabling the live web dashboard.
     pub dashboard: Option<bool>,
+    /// An optional default for enabling dashboard control endpoints.
+    pub dashboard_control: Option<bool>,
     /// An optional default for host the dashboard listens on.
     pub dashboard_host: Option<String>,
     /// An optional default for port the dashboard listens on.
@@ -504,6 +509,8 @@ pub enum GooseDefault {
     WebSocketPort,
     /// An optional default for enabling the live web dashboard.
     Dashboard,
+    /// An optional default for enabling dashboard control endpoints.
+    DashboardControl,
     /// An optional default for host the dashboard listens on.
     DashboardHost,
     /// An optional default for port the dashboard listens on.
@@ -603,6 +610,7 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::StickyFollow`]
 ///  - [`GooseDefault::NoGranularData`]
 ///  - [`GooseDefault::Dashboard`]
+///  - [`GooseDefault::DashboardControl`]
 ///
 /// The following run-time flags can be configured with a custom default using a
 /// [`GooseLogFormat`].
@@ -712,6 +720,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::StickyFollow
             | GooseDefault::NoGranularData
             | GooseDefault::Dashboard
+            | GooseDefault::DashboardControl
             | GooseDefault::AcceptInvalidCerts => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
@@ -825,6 +834,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::StickyFollow
             | GooseDefault::NoGranularData
             | GooseDefault::Dashboard
+            | GooseDefault::DashboardControl
             | GooseDefault::AcceptInvalidCerts => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
@@ -883,6 +893,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             GooseDefault::StickyFollow => self.defaults.sticky_follow = Some(value),
             GooseDefault::NoGranularData => self.defaults.no_granular_report = Some(value),
             GooseDefault::Dashboard => self.defaults.dashboard = Some(value),
+            GooseDefault::DashboardControl => self.defaults.dashboard_control = Some(value),
             // Otherwise display a helpful and explicit error.
             GooseDefault::DebugLog
             | GooseDefault::ErrorLog
@@ -995,6 +1006,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::StickyFollow
             | GooseDefault::NoGranularData
             | GooseDefault::Dashboard
+            | GooseDefault::DashboardControl
             | GooseDefault::AcceptInvalidCerts
             => {
                 return Err(GooseError::InvalidOption {
@@ -1112,6 +1124,7 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::StickyFollow
             | GooseDefault::NoGranularData
             | GooseDefault::Dashboard
+            | GooseDefault::DashboardControl
             | GooseDefault::AcceptInvalidCerts
             => {
                 return Err(GooseError::InvalidOption {
@@ -2013,6 +2026,24 @@ impl GooseConfiguration {
             ])
             .unwrap_or(false);
 
+        // Configure `dashboard_control`.
+        self.dashboard_control = self
+            .get_value(vec![
+                // Use --dashboard-control if set.
+                GooseValue {
+                    value: Some(self.dashboard_control),
+                    filter: !self.dashboard_control,
+                    message: "dashboard_control",
+                },
+                // Use GooseDefault if not already set.
+                GooseValue {
+                    value: defaults.dashboard_control,
+                    filter: defaults.dashboard_control.is_none(),
+                    message: "dashboard_control",
+                },
+            ])
+            .unwrap_or(false);
+
         // Configure `dashboard_host`.
         self.dashboard_host = self
             .get_value(vec![
@@ -2564,11 +2595,24 @@ impl GooseConfiguration {
     /// Validate dashboard configuration.
     ///
     /// When the dashboard is enabled and bound to a non-loopback address, an auth
-    /// token is required. Loopback binds may omit the token (local trust model).
+    /// token is required. Loopback binds may omit the token (local trust model)
+    /// unless control endpoints are enabled.
+    ///
+    /// `--dashboard-control` requires `--dashboard` (does not auto-enable) and a
+    /// non-empty auth token even on loopback.
     ///
     /// If `--dashboard` is set but the crate was built without the `dashboard`
     /// feature, returns a compile-time feature error.
     pub(crate) fn validate_dashboard_config(&self) -> Result<(), GooseError> {
+        // Control requires --dashboard; do not auto-enable the observe dashboard.
+        if self.dashboard_control && !self.dashboard {
+            return Err(GooseError::InvalidOption {
+                option: "`configuration.dashboard_control`".to_string(),
+                value: "true".to_string(),
+                detail: "`configuration.dashboard_control` (--dashboard-control) requires `configuration.dashboard` (--dashboard); control does not auto-enable the dashboard".to_string(),
+            });
+        }
+
         if !self.dashboard {
             return Ok(());
         }
@@ -2579,6 +2623,15 @@ impl GooseConfiguration {
                 feature: "dashboard".to_string(),
                 detail: "dashboard support not compiled in (rebuild with `--features dashboard`)"
                     .to_string(),
+            });
+        }
+
+        // Control endpoints always require a configured auth token, even on loopback.
+        if self.dashboard_control && self.dashboard_auth_token.is_empty() {
+            return Err(GooseError::InvalidOption {
+                option: "`configuration.dashboard_control`".to_string(),
+                value: "true".to_string(),
+                detail: "`configuration.dashboard_control` (--dashboard-control) requires a non-empty `configuration.dashboard_auth_token` (--dashboard-auth-token), even on loopback".to_string(),
             });
         }
 
@@ -2816,6 +2869,8 @@ mod test {
             .unwrap()
             .set_default(GooseDefault::Dashboard, true)
             .unwrap()
+            .set_default(GooseDefault::DashboardControl, true)
+            .unwrap()
             .set_default(GooseDefault::DashboardHost, "127.0.0.1")
             .unwrap()
             .set_default(GooseDefault::DashboardPort, 5118)
@@ -2862,6 +2917,7 @@ mod test {
         assert!(goose_attack.defaults.throttle_requests == Some(throttle_requests));
         assert!(goose_attack.defaults.sticky_follow == Some(true));
         assert!(goose_attack.defaults.dashboard == Some(true));
+        assert!(goose_attack.defaults.dashboard_control == Some(true));
         assert!(goose_attack.defaults.dashboard_host == Some("127.0.0.1".to_string()));
         assert!(goose_attack.defaults.dashboard_port == Some(5118));
         assert!(goose_attack.defaults.dashboard_auth_token == Some("secret".to_string()));
@@ -2937,6 +2993,33 @@ mod test {
         // Token configured on loopback is also fine (enforced at runtime later).
         config.dashboard_host = "127.0.0.1".to_string();
         assert!(config.validate_dashboard_config().is_ok());
+
+        // Control without --dashboard: hard error (does not auto-enable).
+        let mut config = GooseConfiguration {
+            dashboard: false,
+            dashboard_control: true,
+            dashboard_auth_token: "s3cret".to_string(),
+            ..Default::default()
+        };
+        assert!(config.validate_dashboard_config().is_err());
+
+        // Control with dashboard but empty token on loopback: hard error.
+        config.dashboard = true;
+        config.dashboard_host = "127.0.0.1".to_string();
+        config.dashboard_auth_token = String::new();
+        assert!(config.validate_dashboard_config().is_err());
+
+        // Control with dashboard but empty token on localhost: hard error.
+        config.dashboard_host = "localhost".to_string();
+        assert!(config.validate_dashboard_config().is_err());
+
+        // Control with dashboard and token on loopback: ok.
+        config.dashboard_auth_token = "s3cret".to_string();
+        assert!(config.validate_dashboard_config().is_ok());
+
+        // Control with dashboard and token on non-loopback: ok.
+        config.dashboard_host = "0.0.0.0".to_string();
+        assert!(config.validate_dashboard_config().is_ok());
     }
 
     #[test]
@@ -2948,6 +3031,7 @@ mod test {
         };
         config.configure(&GooseDefaults::default());
         assert!(config.dashboard);
+        assert!(!config.dashboard_control);
         assert_eq!(config.dashboard_host, "127.0.0.1");
         assert_eq!(config.dashboard_port, 5118);
         assert!(config.dashboard_auth_token.is_empty());
@@ -2958,6 +3042,7 @@ mod test {
         let mut config = GooseConfiguration::default();
         config.configure(&GooseDefaults::default());
         assert!(!config.dashboard);
+        assert!(!config.dashboard_control);
         assert!(config.dashboard_host.is_empty());
         assert_eq!(config.dashboard_port, 0);
         assert!(config.dashboard_auth_token.is_empty());
@@ -3016,6 +3101,35 @@ mod test {
         config.configure(&defaults);
         assert_eq!(config.dashboard_auth_token, "from-default");
         assert_eq!(config.dashboard_max_clients, 16);
+        assert!(config.validate_dashboard_config().is_ok());
+
+        // GooseDefault enables dashboard_control when CLI flag is unset.
+        let mut config = GooseConfiguration {
+            dashboard: true,
+            dashboard_auth_token: "token".to_string(),
+            ..Default::default()
+        };
+        let defaults = GooseDefaults {
+            dashboard_control: Some(true),
+            ..GooseDefaults::default()
+        };
+        config.configure(&defaults);
+        assert!(config.dashboard_control);
+        assert!(config.validate_dashboard_config().is_ok());
+
+        // CLI --dashboard-control takes precedence over GooseDefault false.
+        let mut config = GooseConfiguration {
+            dashboard: true,
+            dashboard_control: true,
+            dashboard_auth_token: "token".to_string(),
+            ..Default::default()
+        };
+        let defaults = GooseDefaults {
+            dashboard_control: Some(false),
+            ..GooseDefaults::default()
+        };
+        config.configure(&defaults);
+        assert!(config.dashboard_control);
         assert!(config.validate_dashboard_config().is_ok());
     }
 }
