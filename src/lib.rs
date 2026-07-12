@@ -298,7 +298,7 @@ pub enum AttackMode {
     StandAlone,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 /// A [`GooseAttack`](./struct.GooseAttack.html) load test moves through each of the following
 /// phases during a complete load test.
 pub enum AttackPhase {
@@ -312,6 +312,53 @@ pub enum AttackPhase {
     Decrease,
     /// Exiting the load test.
     Shutdown,
+}
+
+/// Lowercase string for an [`AttackPhase`] (dashboard / control protocol).
+pub(crate) fn attack_phase_str(phase: AttackPhase) -> &'static str {
+    match phase {
+        AttackPhase::Idle => "idle",
+        AttackPhase::Increase => "increase",
+        AttackPhase::Maintain => "maintain",
+        AttackPhase::Decrease => "decrease",
+        AttackPhase::Shutdown => "shutdown",
+    }
+}
+
+/// Machine-readable outcome of a control action (soft success/failure).
+///
+/// Soft failures (expected rejections such as wrong phase or prepare failure)
+/// are returned as `ok: false` with a stable `error` code. Hard failures that
+/// Controllers already surface as `GooseError` (e.g. `weight_scenario_users`,
+/// `reset_run_state` after a successful Start reply) remain `Result::Err`.
+///
+/// Controllers currently map only `ok` → Bool; remaining fields are populated
+/// for the dashboard control surface (and debug use).
+#[derive(Debug, Clone)]
+#[allow(dead_code)] // fields beyond `ok` reserved for dashboard control JSON
+pub(crate) struct ControlOutcome {
+    pub ok: bool,
+    /// Stable code when !ok — soft failures only (`invalid_phase`, `prepare_failed`).
+    pub error: Option<&'static str>,
+    /// Human message (Controller wire protocol still maps only `ok` → Bool).
+    pub message: String,
+    /// Attack phase *after* the soft attempt (lowercase).
+    pub phase: String,
+    /// From `GooseAttackRunState.active_users` at reply time.
+    pub active_users: usize,
+    /// Command-specific target user count when applicable.
+    pub target_users: Option<usize>,
+}
+
+/// Result of the pre-reply portion of Start (Controller reply point).
+///
+/// Callers must reply to the client on either variant, then call
+/// [`GooseAttack::control_start_finish`] only on [`ControlStartBegin::Accepted`].
+pub(crate) enum ControlStartBegin {
+    /// Soft rejection — do not change phase; reply false / ok:false.
+    Rejected(ControlOutcome),
+    /// Phase is already `Increase`; caller must reply success NOW, then call finish.
+    Accepted(ControlOutcome),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1991,6 +2038,246 @@ impl GooseAttack {
         }
 
         Ok(())
+    }
+
+    // ========================================================================
+    // Staged control helpers (shared by Controllers; dashboard will reuse later)
+    //
+    // Soft vs hard errors:
+    // - Soft: expected rejections → ControlOutcome { ok: false, error: Some(...) }
+    // - Hard: Result::Err(GooseError) where Controllers already used `?` today
+    //   (weight_scenario_users on Users increase; reset_run_state in start finish;
+    //    cancel_attack if it ever returns Err).
+    // Controllers map only outcome.ok → ControllerResponseMessage::Bool for soft paths.
+    // ========================================================================
+
+    /// Build a [`ControlOutcome`] snapshot from the current attack/run state.
+    fn control_outcome(
+        &self,
+        goose_attack_run_state: &GooseAttackRunState,
+        ok: bool,
+        error: Option<&'static str>,
+        message: impl Into<String>,
+        target_users: Option<usize>,
+    ) -> ControlOutcome {
+        ControlOutcome {
+            ok,
+            error,
+            message: message.into(),
+            phase: attack_phase_str(self.attack_phase).to_string(),
+            active_users: goose_attack_run_state.active_users,
+            target_users,
+        }
+    }
+
+    /// Pre-reply Start work: validate Idle, build plan, prepare, enter Increase.
+    ///
+    /// Soft rejections: `invalid_phase`, `prepare_failed`.
+    /// On [`ControlStartBegin::Accepted`], the caller must reply success immediately,
+    /// then invoke [`Self::control_start_finish`].
+    pub(crate) fn control_start_begin(
+        &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+    ) -> Result<ControlStartBegin, GooseError> {
+        // Can only start an idle load test.
+        if self.attack_phase != AttackPhase::Idle {
+            return Ok(ControlStartBegin::Rejected(self.control_outcome(
+                goose_attack_run_state,
+                false,
+                Some("invalid_phase"),
+                "unable to start load test, be sure it is idle and host is configured",
+                None,
+            )));
+        }
+
+        self.test_plan = TestPlan::build(&self.configuration);
+        if self.prepare_load_test().is_err() {
+            // Soft: do not move to Increase if unable to prepare load test.
+            return Ok(ControlStartBegin::Rejected(self.control_outcome(
+                goose_attack_run_state,
+                false,
+                Some("prepare_failed"),
+                "unable to start load test, be sure it is idle and host is configured",
+                None,
+            )));
+        }
+
+        self.set_attack_phase(goose_attack_run_state, AttackPhase::Increase);
+
+        // Prefer configured users; fall back to first non-zero plan step.
+        let target_users = self.configuration.users.or_else(|| {
+            self.test_plan
+                .steps
+                .iter()
+                .map(|(users, _)| *users)
+                .find(|&u| u > 0)
+        });
+
+        Ok(ControlStartBegin::Accepted(self.control_outcome(
+            goose_attack_run_state,
+            true,
+            None,
+            "load test started",
+            target_users,
+        )))
+    }
+
+    /// Post-reply Start work: reset run state and push Increasing history.
+    ///
+    /// Hard errors only (`reset_run_state` / metrics init). Caller has already
+    /// replied success to the client.
+    pub(crate) async fn control_start_finish(
+        &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+    ) -> Result<(), GooseError> {
+        self.reset_run_state(goose_attack_run_state).await?;
+        self.metrics
+            .history
+            .push(TestPlanHistory::step(TestPlanStepAction::Increasing, 0));
+        Ok(())
+    }
+
+    /// Begin canceling a running load test (Increase/Maintain → Decrease/Canceling).
+    ///
+    /// Soft failure: `invalid_phase` when not Increase|Maintain (Decrease is not
+    /// stoppable). Hard errors: `cancel_attack` if it returns Err.
+    ///
+    /// Success leaves phase as **decrease** (not idle); Idle is eventual after
+    /// the cancel ramp completes with `shutdown_after_stop = false`.
+    pub(crate) async fn control_stop(
+        &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+    ) -> Result<ControlOutcome, GooseError> {
+        if ![AttackPhase::Increase, AttackPhase::Maintain].contains(&self.attack_phase) {
+            return Ok(self.control_outcome(
+                goose_attack_run_state,
+                false,
+                Some("invalid_phase"),
+                "load test not running, failed to stop",
+                None,
+            ));
+        }
+
+        // Don't shutdown when load test is stopped by controller; remain idle instead.
+        goose_attack_run_state.shutdown_after_stop = false;
+        // Don't automatically restart the load test.
+        self.configuration.no_autostart = true;
+        self.cancel_attack(goose_attack_run_state).await?;
+
+        Ok(self.control_outcome(
+            goose_attack_run_state,
+            true,
+            None,
+            "load test stopped",
+            Some(0),
+        ))
+    }
+
+    /// Set absolute target user count (Controller `users` command).
+    ///
+    /// Does **not** reject `new_users == 0` (Controller parity). Soft failure:
+    /// `invalid_phase` in Shutdown (or any phase other than Idle/Increase/Decrease/
+    /// Maintain). Hard error: `weight_scenario_users` when increasing while running.
+    pub(crate) fn control_set_users(
+        &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+        new_users: usize,
+    ) -> Result<ControlOutcome, GooseError> {
+        // If setting users, any existing configuration for a test plan isn't valid.
+        self.configuration.test_plan = None;
+
+        match self.attack_phase {
+            // If the load test is idle, simply update the configuration.
+            AttackPhase::Idle => {
+                let current_users = if !self.test_plan.steps.is_empty() {
+                    self.test_plan.steps[self.test_plan.current].0
+                } else {
+                    self.configuration.users.unwrap_or_default()
+                };
+                info!("changing users from {current_users:?} to {new_users}");
+                self.configuration.users = Some(new_users);
+                Ok(self.control_outcome(
+                    goose_attack_run_state,
+                    true,
+                    None,
+                    "users configured",
+                    Some(new_users),
+                ))
+            }
+            // If the load test is running, rebuild the active test plan.
+            AttackPhase::Increase | AttackPhase::Decrease | AttackPhase::Maintain => {
+                info!(
+                    "changing users from {} to {new_users}",
+                    goose_attack_run_state.active_users
+                );
+                // Determine how long has elapsed since this step started.
+                let elapsed = self.step_elapsed() as usize;
+
+                // Determine how many users to increase or decrease by.
+                let user_difference =
+                    (goose_attack_run_state.active_users as isize - new_users as isize).abs();
+
+                // Determine how quickly to adjust user count, using
+                // increase_rate when adding users and decrease_rate when
+                // removing users.
+                let rate = if new_users > goose_attack_run_state.active_users {
+                    if let Some(increase_rate) = self.configuration.increase_rate.as_ref() {
+                        util::parse_rate(Some(increase_rate.to_string()))
+                    } else {
+                        util::parse_rate(None)
+                    }
+                } else if let Some(decrease_rate) = self.configuration.decrease_rate.as_ref() {
+                    util::parse_rate(Some(decrease_rate.to_string()))
+                } else if let Some(increase_rate) = self.configuration.increase_rate.as_ref() {
+                    util::parse_rate(Some(increase_rate.to_string()))
+                } else {
+                    util::parse_rate(None)
+                };
+                // Convert rate to milliseconds.
+                let ms_rate = 1.0 / rate * 1_000.0;
+                // Multiply the user difference by the rate to get the total_time required.
+                let total_time = (ms_rate * user_difference as f32) as usize;
+
+                // Reset the test_plan to adjust to the newly specified users.
+                self.test_plan.steps = vec![
+                    // Record how many active users there are currently.
+                    (goose_attack_run_state.active_users, elapsed),
+                    // Configure the new user count.
+                    (new_users, total_time),
+                ];
+
+                // Reset the current step to what was happening when reconfiguration happened.
+                self.test_plan.current = 0;
+
+                // Allocate more users if increasing users (hard Err on failure).
+                if new_users > goose_attack_run_state.active_users {
+                    self.weighted_users = self.weight_scenario_users(user_difference as usize)?;
+                }
+
+                // Also update the running configuration (this impacts if the test is
+                // stopped and then restarted through the controller).
+                self.configuration.users = Some(new_users);
+
+                // Finally, advance to the next step to adjust user count.
+                self.advance_test_plan(goose_attack_run_state);
+
+                Ok(self.control_outcome(
+                    goose_attack_run_state,
+                    true,
+                    None,
+                    "users configured",
+                    Some(new_users),
+                ))
+            }
+            // Shutdown (and any other unexpected phase): soft fail.
+            _ => Ok(self.control_outcome(
+                goose_attack_run_state,
+                false,
+                Some("invalid_phase"),
+                "load test not idle, failed to reconfigure users",
+                None,
+            )),
+        }
     }
 
     // Quickly abort and shut down an active [`GooseAttack`](./struct.GooseAttack.html).

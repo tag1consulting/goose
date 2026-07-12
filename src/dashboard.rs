@@ -442,7 +442,9 @@ async fn build_once(inner: &HubInner) -> BuildOutcome {
             // observe `build_count` never read a stale watch value.
             let _ = inner.latest_tx.send(Some(Bytes::from(json)));
             let elapsed_ms = started.elapsed().as_millis() as u64;
-            inner.last_build_at_ms.store(unix_now_ms(), Ordering::Release);
+            inner
+                .last_build_at_ms
+                .store(unix_now_ms(), Ordering::Release);
             inner.last_build_ms.store(elapsed_ms, Ordering::Release);
             let count = inner.build_count.fetch_add(1, Ordering::Release) + 1;
             debug!(
