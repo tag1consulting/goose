@@ -267,6 +267,16 @@ async fn test_dashboard_token_auth() {
             .status(),
         200
     );
+    assert_eq!(
+        client
+            .get(format!("{base}/static/chart.min.js"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200,
+        "chart.min.js must stay public when token is configured"
+    );
 
     // Snapshot without token → 401, no metrics body.
     let unauth = client

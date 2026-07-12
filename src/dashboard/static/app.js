@@ -39,11 +39,13 @@
   var eventSource = null;
   var usingPoll = false;
   var authRequired = false;
+  var authBlocked = false;
   var finished = false;
 
   // Table state
   var requestRows = [];
   var errorRows = [];
+  var lastFlags = {};
   var reqSort = { key: "request_count", type: "num", dir: "desc" };
   var errSort = { key: "occurrences", type: "num", dir: "desc" };
 
@@ -52,6 +54,7 @@
   var chartUsers = null;
   var chartLatency = null;
   var chartsReady = typeof Chart !== "undefined";
+  var chartLoadWarned = false;
 
   function setConnection(mode) {
     // mode: "live" | "poll" | "disconnected" | "connecting" | "closed"
@@ -67,7 +70,7 @@
       cls = "disconnected";
       label = "connecting";
     } else if (mode === "closed") {
-      cls = "live";
+      cls = "finished";
       label = "finished";
     }
     connectionEl.className = "connection " + cls;
@@ -174,10 +177,9 @@
     };
   }
 
-  function ensureCharts() {
-    if (!chartsReady) return;
-    var colors = chartColors();
-    var commonOpts = {
+  function baseChartOpts(colors) {
+    // Fresh object per chart so Chart.js cannot share/mutate nested scales.
+    return {
       responsive: true,
       maintainAspectRatio: false,
       animation: false,
@@ -203,6 +205,11 @@
         },
       },
     };
+  }
+
+  function ensureCharts() {
+    if (!chartsReady) return;
+    var colors = chartColors();
 
     if (!chartRps) {
       chartRps = new Chart(document.getElementById("chart-rps"), {
@@ -230,7 +237,7 @@
             },
           ],
         },
-        options: commonOpts,
+        options: baseChartOpts(colors),
       });
     }
     if (!chartUsers) {
@@ -251,7 +258,7 @@
             },
           ],
         },
-        options: commonOpts,
+        options: baseChartOpts(colors),
       });
     }
     if (!chartLatency) {
@@ -271,15 +278,36 @@
             },
           ],
         },
-        options: commonOpts,
+        options: baseChartOpts(colors),
       });
     }
   }
 
+  function seriesHasData(series) {
+    if (!series) return false;
+    var rps = series.rps || [];
+    var fps = series.fps || [];
+    var users = series.users || [];
+    var lat = series.avg_latency_ms || [];
+    return (
+      rps.length > 0 || fps.length > 0 || users.length > 0 || lat.length > 0
+    );
+  }
+
   function updateCharts(series) {
-    if (!chartsReady) return;
-    ensureCharts();
     series = series || {};
+    if (!chartsReady) {
+      // One-shot warn when series data is present but Chart.js never loaded.
+      if (!chartLoadWarned && seriesHasData(series)) {
+        chartLoadWarned = true;
+        setBanner(
+          "Charts unavailable — Chart.js failed to load.",
+          "warn"
+        );
+      }
+      return;
+    }
+    ensureCharts();
     var start = typeof series.start_second === "number" ? series.start_second : 0;
     var rps = series.rps || [];
     var fps = series.fps || [];
@@ -348,6 +376,7 @@
   }
 
   function renderRequestTable(flags) {
+    flags = flags || lastFlags || {};
     var filter = (requestsFilter.value || "").toLowerCase().trim();
     var rows = sortRows(requestRows, reqSort);
     if (filter) {
@@ -365,13 +394,25 @@
       var td = document.createElement("td");
       td.colSpan = 9;
       td.className = "empty";
-      if (flags && flags.metrics_disabled) {
-        td.textContent = "Metrics disabled (--no-metrics). Charts and request tables are empty.";
+      if (flags.metrics_disabled) {
+        td.textContent =
+          "Metrics disabled (--no-metrics). Charts and request tables are empty.";
       } else {
         td.textContent = "No requests yet";
       }
       empty.appendChild(td);
       requestsBody.appendChild(empty);
+      return;
+    }
+
+    if (rows.length === 0) {
+      var noMatch = document.createElement("tr");
+      var ntd = document.createElement("td");
+      ntd.colSpan = 9;
+      ntd.className = "empty";
+      ntd.textContent = "No matching requests";
+      noMatch.appendChild(ntd);
+      requestsBody.appendChild(noMatch);
       return;
     }
 
@@ -448,6 +489,7 @@
     if (!snap) return;
 
     var flags = snap.flags || {};
+    lastFlags = flags;
     setPhase(snap.phase);
     hostsEl.textContent =
       snap.hosts && snap.hosts.length ? snap.hosts.join(", ") : "—";
@@ -507,6 +549,7 @@
     renderErrorTable();
     updateCharts(snap.series);
 
+    // Prefer metrics/auth banners; chart-load warning is sticky only when no other banner.
     if (flags.metrics_disabled) {
       setBanner(
         "Metrics are disabled (--no-metrics). The dashboard shell is live, but request/series data is empty.",
@@ -521,6 +564,11 @@
       // Clear previous auth banner once we have data.
       setBanner("");
       authRequired = false;
+    } else if (chartLoadWarned && !chartsReady) {
+      setBanner(
+        "Charts unavailable — Chart.js failed to load.",
+        "warn"
+      );
     } else {
       setBanner("");
     }
@@ -555,6 +603,17 @@
 
   function showAuthMissing() {
     authRequired = true;
+    authBlocked = true;
+    stopPoll();
+    usingPoll = false;
+    if (eventSource) {
+      try {
+        eventSource.close();
+      } catch (_) {
+        /* ignore */
+      }
+      eventSource = null;
+    }
     setConnection("disconnected");
     setBanner(
       "Open this dashboard as http://host:port/?token=… (token required for metrics).",
@@ -563,6 +622,7 @@
   }
 
   function fetchSnapshotOnce(modeLabel) {
+    if (authBlocked) return Promise.resolve(null);
     return fetch(snapshotUrl())
       .then(function (res) {
         if (res.status === 401) {
@@ -583,7 +643,7 @@
   }
 
   function startPollFallback(reason) {
-    if (finished) return;
+    if (finished || authBlocked) return;
     if (usingPoll && pollTimer != null) return;
     usingPoll = true;
     if (eventSource) {
@@ -599,14 +659,21 @@
       setBanner(reason + " — polling every 2s…", "warn");
     }
     function tick() {
+      if (authBlocked) {
+        stopPoll();
+        return;
+      }
       fetchSnapshotOnce("poll").catch(function (err) {
+        if (authBlocked) return;
         setConnection("disconnected");
         setBanner("Poll failed: " + err, "error");
       });
     }
     tick();
     stopPoll();
-    pollTimer = setInterval(tick, 2000);
+    if (!authBlocked) {
+      pollTimer = setInterval(tick, 2000);
+    }
   }
 
   function startSse() {
@@ -688,7 +755,7 @@
       reqSort = s;
     },
     function () {
-      renderRequestTable({});
+      renderRequestTable(lastFlags);
     }
   );
   wireSort(
@@ -705,7 +772,7 @@
   );
   if (requestsFilter) {
     requestsFilter.addEventListener("input", function () {
-      renderRequestTable({});
+      renderRequestTable(lastFlags);
     });
   }
 

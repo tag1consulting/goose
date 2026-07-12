@@ -117,10 +117,10 @@ TLS termination is not provided by Goose; use an SSH tunnel or reverse proxy whe
 `GET /api/v1/health` is intentionally **unauthenticated** so external monitors can check that the dashboard process is up without holding the metrics secret. The response is only:
 
 ```json
-{"ok": true, "version": "0.19.0-dev"}
+{"ok": true, "version": "<goose package version>"}
 ```
 
-It does **not** include rates, hosts under test, request names, or error strings.
+The `version` field is Goose’s crate package version (`CARGO_PKG_VERSION`). The response does **not** include rates, hosts under test, request names, or error strings.
 
 ## What the UI shows
 
@@ -155,7 +155,7 @@ If Goose is started with `--no-metrics`, the dashboard still serves the shell an
 - Token protects **metric APIs only**; shell/static/health stay public and contain no metrics.
 - Prefer `Authorization: Bearer` for scripts; browsers use `?token=` because of EventSource limits.
 - Query tokens can appear in reverse-proxy access logs and `Referer` headers — prefer SSH tunnels or a local reverse proxy when that matters.
-- Goose never logs the token value at info level; startup messages use a redacted URL form.
+- Goose never logs the token value; the startup line is only `listening on http://{host:port} (read-only)` with no query secret.
 - The UI renders metric fields with `textContent` only (no `innerHTML`) and serves a strict Content-Security-Policy without `'unsafe-inline'` scripts.
 
 ## Observe vs control
