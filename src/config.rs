@@ -2024,19 +2024,20 @@ impl GooseConfiguration {
             .unwrap_or(if self.dashboard { 5118 } else { 0 });
 
         // Configure `dashboard_auth_token`.
+        // Empty `message` intentionally: never log the raw auth token (shared secret).
         self.dashboard_auth_token = self
             .get_value(vec![
                 // Use --dashboard-auth-token if set.
                 GooseValue {
                     value: Some(self.dashboard_auth_token.to_string()),
                     filter: self.dashboard_auth_token.is_empty(),
-                    message: "dashboard_auth_token",
+                    message: "",
                 },
                 // Otherwise use GooseDefault if set.
                 GooseValue {
                     value: defaults.dashboard_auth_token.clone(),
                     filter: defaults.dashboard_auth_token.is_none(),
-                    message: "dashboard_auth_token",
+                    message: "",
                 },
             ])
             .unwrap_or_default();
@@ -2868,6 +2869,72 @@ mod test {
 
         // Token configured on loopback is also fine (enforced at runtime later).
         config.dashboard_host = "127.0.0.1".to_string();
+        assert!(config.validate_dashboard_config().is_ok());
+    }
+
+    #[test]
+    fn test_configure_dashboard_defaults() {
+        // --dashboard only → host 127.0.0.1, port 5118, empty token.
+        let mut config = GooseConfiguration::default();
+        config.dashboard = true;
+        config.configure(&GooseDefaults::default());
+        assert!(config.dashboard);
+        assert_eq!(config.dashboard_host, "127.0.0.1");
+        assert_eq!(config.dashboard_port, 5118);
+        assert!(config.dashboard_auth_token.is_empty());
+        assert!(config.validate_dashboard_config().is_ok());
+
+        // Dashboard disabled → host stays empty, port stays 0.
+        let mut config = GooseConfiguration::default();
+        config.configure(&GooseDefaults::default());
+        assert!(!config.dashboard);
+        assert!(config.dashboard_host.is_empty());
+        assert_eq!(config.dashboard_port, 0);
+        assert!(config.dashboard_auth_token.is_empty());
+
+        // CLI host/port override GooseDefault.
+        let mut config = GooseConfiguration::default();
+        config.dashboard = true;
+        config.dashboard_host = "192.168.1.10".to_string();
+        config.dashboard_port = 9999;
+        config.dashboard_auth_token = "cli-token".to_string();
+        let defaults = GooseDefaults {
+            dashboard_host: Some("10.0.0.1".to_string()),
+            dashboard_port: Some(4000),
+            dashboard_auth_token: Some("default-token".to_string()),
+            ..GooseDefaults::default()
+        };
+        config.configure(&defaults);
+        assert_eq!(config.dashboard_host, "192.168.1.10");
+        assert_eq!(config.dashboard_port, 9999);
+        assert_eq!(config.dashboard_auth_token, "cli-token");
+        assert!(config.validate_dashboard_config().is_ok());
+
+        // GooseDefault enablement without CLI flag; host/port from defaults.
+        let mut config = GooseConfiguration::default();
+        let defaults = GooseDefaults {
+            dashboard: Some(true),
+            dashboard_host: Some("0.0.0.0".to_string()),
+            dashboard_port: Some(6000),
+            ..GooseDefaults::default()
+        };
+        config.configure(&defaults);
+        assert!(config.dashboard);
+        assert_eq!(config.dashboard_host, "0.0.0.0");
+        assert_eq!(config.dashboard_port, 6000);
+        // Non-loopback without token fails validation after configure.
+        assert!(config.validate_dashboard_config().is_err());
+
+        // GooseDefault token fills when CLI token is empty.
+        let mut config = GooseConfiguration::default();
+        config.dashboard = true;
+        config.dashboard_host = "0.0.0.0".to_string();
+        let defaults = GooseDefaults {
+            dashboard_auth_token: Some("from-default".to_string()),
+            ..GooseDefaults::default()
+        };
+        config.configure(&defaults);
+        assert_eq!(config.dashboard_auth_token, "from-default");
         assert!(config.validate_dashboard_config().is_ok());
     }
 }
