@@ -1446,10 +1446,11 @@ impl GooseAttack {
             .map(|setup| (setup.request_rx, setup.close_tx)))
     }
 
-    /// Handle dashboard snapshot requests from the HTTP server task.
+    /// Handle dashboard snapshot and control requests from the HTTP server task.
     ///
-    /// Same pattern as Controllers: a single `try_recv` per main-loop iteration,
-    /// then `update_duration()` and `MetricsCommand::GetDashboardSnapshot`.
+    /// Same pattern as Controllers: a single `try_recv` per main-loop iteration.
+    /// Control arms **always** complete the oneshot (soft outcome or `internal`)
+    /// before returning; Start replies before `control_start_finish`.
     #[cfg(feature = "dashboard")]
     async fn handle_dashboard_requests(
         &mut self,
@@ -1460,14 +1461,7 @@ impl GooseAttack {
                 Ok(dashboard::DashboardRequest::GetSnapshot { respond }) => {
                     self.update_duration();
                     let (respond_tx, respond_rx) = tokio::sync::oneshot::channel();
-                    let phase = match self.attack_phase {
-                        AttackPhase::Idle => "idle",
-                        AttackPhase::Increase => "increase",
-                        AttackPhase::Maintain => "maintain",
-                        AttackPhase::Decrease => "decrease",
-                        AttackPhase::Shutdown => "shutdown",
-                    }
-                    .to_string();
+                    let phase = attack_phase_str(self.attack_phase).to_string();
                     let sent = goose_attack_run_state.metrics_cmd_tx.send(
                         MetricsCommand::GetDashboardSnapshot {
                             duration: self.metrics.duration,
@@ -1489,6 +1483,67 @@ impl GooseAttack {
                         }
                     } else {
                         warn!("[dashboard]: metrics processor unavailable");
+                    }
+                }
+                Ok(dashboard::DashboardRequest::Start { respond }) => {
+                    // Always complete oneshot; on Accepted reply BEFORE finish.
+                    match self.control_start_begin(goose_attack_run_state) {
+                        Ok(ControlStartBegin::Rejected(outcome)) => {
+                            let _ = respond
+                                .send(dashboard::ControlResult::from_outcome("start", outcome));
+                        }
+                        Ok(ControlStartBegin::Accepted(outcome)) => {
+                            let reply = dashboard::ControlResult::from_outcome("start", outcome);
+                            let _ = respond.send(reply);
+                            // HTTP already has ok:true; finish may run long test_start.
+                            if let Err(e) = self.control_start_finish(goose_attack_run_state).await
+                            {
+                                error!(
+                                    "[dashboard]: control_start_finish failed after success reply: {e}"
+                                );
+                                return Err(e);
+                            }
+                        }
+                        Err(e) => {
+                            let _ = respond.send(dashboard::ControlResult::internal(
+                                "start",
+                                attack_phase_str(self.attack_phase),
+                                goose_attack_run_state.active_users,
+                            ));
+                            return Err(e);
+                        }
+                    }
+                }
+                Ok(dashboard::DashboardRequest::Stop { respond }) => {
+                    match self.control_stop(goose_attack_run_state).await {
+                        Ok(outcome) => {
+                            let _ = respond
+                                .send(dashboard::ControlResult::from_outcome("stop", outcome));
+                        }
+                        Err(e) => {
+                            let _ = respond.send(dashboard::ControlResult::internal(
+                                "stop",
+                                attack_phase_str(self.attack_phase),
+                                goose_attack_run_state.active_users,
+                            ));
+                            return Err(e);
+                        }
+                    }
+                }
+                Ok(dashboard::DashboardRequest::SetUsers { users, respond }) => {
+                    match self.control_set_users(goose_attack_run_state, users) {
+                        Ok(outcome) => {
+                            let _ = respond
+                                .send(dashboard::ControlResult::from_outcome("users", outcome));
+                        }
+                        Err(e) => {
+                            let _ = respond.send(dashboard::ControlResult::internal(
+                                "users",
+                                attack_phase_str(self.attack_phase),
+                                goose_attack_run_state.active_users,
+                            ));
+                            return Err(e);
+                        }
                     }
                 }
                 Err(flume::TryRecvError::Empty) => {}
@@ -2041,7 +2096,7 @@ impl GooseAttack {
     }
 
     // ========================================================================
-    // Staged control helpers (shared by Controllers; dashboard will reuse later)
+    // Staged control helpers (shared by Controllers and dashboard control)
     //
     // Soft vs hard errors:
     // - Soft: expected rejections → ControlOutcome { ok: false, error: Some(...) }
@@ -2049,6 +2104,7 @@ impl GooseAttack {
     //   (weight_scenario_users on Users increase; reset_run_state in start finish;
     //    cancel_attack if it ever returns Err).
     // Controllers map only outcome.ok → ControllerResponseMessage::Bool for soft paths.
+    // Dashboard maps ControlOutcome → ControlResult and always completes oneshots.
     // ========================================================================
 
     /// Build a [`ControlOutcome`] snapshot from the current attack/run state.

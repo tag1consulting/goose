@@ -1,11 +1,13 @@
-//! Read-only live web dashboard HTTP server.
+//! Live web dashboard HTTP server.
 //!
 //! Compiled only with the `dashboard` crate feature. Spawns an axum server that
-//! serves a minimal static shell, a one-shot metrics snapshot API, and an SSE
-//! stream of coalesced snapshots.
+//! serves a minimal static shell, a one-shot metrics snapshot API, an SSE
+//! stream of coalesced snapshots, and (when `--dashboard-control` is set)
+//! authenticated Start/Stop/Users control endpoints.
 //!
 //! The parent GooseAttack main loop answers [`DashboardRequest`]s via oneshot
-//! channels using [`MetricsCommand::GetDashboardSnapshot`].
+//! channels using [`MetricsCommand::GetDashboardSnapshot`] for snapshots and
+//! staged control helpers for mutation.
 //!
 //! # Snapshot freshness
 //!
@@ -16,14 +18,14 @@
 //! latency.
 
 use crate::metrics::DashboardSnapshot;
-use crate::{GooseConfiguration, GooseError};
+use crate::{ControlOutcome, GooseConfiguration, GooseError};
 
 use axum::body::{Body, Bytes};
 use axum::extract::{Query, State};
 use axum::http::{header, HeaderMap, HeaderValue, Response, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::IntoResponse;
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures::stream;
 use serde::Deserialize;
@@ -60,6 +62,12 @@ const RECENT_POLL_WINDOW: Duration = Duration::from_secs(2);
 /// SSE comment heartbeat interval (`: ping`).
 const SSE_HEARTBEAT: Duration = Duration::from_secs(15);
 
+/// Oneshot wait for control POSTs (Start replies before `reset_run_state`).
+const CONTROL_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// HTTP-layer upper bound for `POST /api/v1/control/users` (Controller accepts 0).
+const MAX_CONTROL_USERS: u64 = 1_000_000;
+
 /// Result of a successful dashboard server spawn.
 #[derive(Debug)]
 pub(crate) struct DashboardSetup {
@@ -86,6 +94,87 @@ pub(crate) enum DashboardRequest {
     GetSnapshot {
         respond: tokio::sync::oneshot::Sender<DashboardSnapshot>,
     },
+    /// Start an idle load test (reply before `reset_run_state`).
+    Start {
+        respond: tokio::sync::oneshot::Sender<ControlResult>,
+    },
+    /// Begin cancel ramp (Increase/Maintain → Decrease).
+    Stop {
+        respond: tokio::sync::oneshot::Sender<ControlResult>,
+    },
+    /// Set absolute target user count.
+    SetUsers {
+        users: usize,
+        respond: tokio::sync::oneshot::Sender<ControlResult>,
+    },
+}
+
+/// JSON body returned by control endpoints after the main loop answers.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct ControlResult {
+    pub ok: bool,
+    pub command: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub message: String,
+    pub phase: String,
+    pub active_users: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_users: Option<u64>,
+}
+
+impl ControlResult {
+    /// Map a soft [`ControlOutcome`] from the shared control helpers.
+    pub(crate) fn from_outcome(command: &str, outcome: ControlOutcome) -> Self {
+        Self {
+            ok: outcome.ok,
+            command: command.to_string(),
+            error: outcome.error.map(str::to_string),
+            message: outcome.message,
+            phase: outcome.phase,
+            active_users: outcome.active_users as u64,
+            target_users: outcome.target_users.map(|u| u as u64),
+        }
+    }
+
+    /// Unexpected hard error mapped into the oneshot before re-raise.
+    pub(crate) fn internal(command: &str, phase: &str, active_users: usize) -> Self {
+        Self {
+            ok: false,
+            command: command.to_string(),
+            error: Some("internal".to_string()),
+            message: "internal control error".to_string(),
+            phase: phase.to_string(),
+            active_users: active_users as u64,
+            target_users: None,
+        }
+    }
+}
+
+/// HTTP-layer control error (auth / body / timeout) — main loop not consulted.
+#[derive(Debug, Serialize)]
+struct ControlHttpErrorBody {
+    ok: bool,
+    command: String,
+    error: String,
+    message: String,
+    phase: Option<String>,
+    active_users: Option<u64>,
+    target_users: Option<u64>,
+}
+
+impl ControlHttpErrorBody {
+    fn new(command: &str, error: &str, message: &str) -> Self {
+        Self {
+            ok: false,
+            command: command.to_string(),
+            error: error.to_string(),
+            message: message.to_string(),
+            phase: None,
+            active_users: None,
+            target_users: None,
+        }
+    }
 }
 
 /// Coalescing fan-out for dashboard snapshots.
@@ -466,10 +555,14 @@ async fn build_once(inner: &HubInner) -> BuildOutcome {
 /// Shared state for axum handlers.
 #[derive(Clone, Debug)]
 struct DashboardState {
-    /// Coalescing snapshot hub (owns the parent request channel sender).
+    /// Coalescing snapshot hub (owns a clone of the parent request channel sender).
     hub: SnapshotHub,
-    /// Auth token; empty means auth is disabled (loopback-only runs).
+    /// Clone of the flume sender for control handlers (same channel as the hub).
+    request_tx: flume::Sender<DashboardRequest>,
+    /// Auth token; empty means observe auth is disabled (loopback-only runs).
     auth_token: String,
+    /// When true, control routes are registered and require a non-empty token.
+    control_enabled: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -492,6 +585,8 @@ struct HealthResponse {
     build_count: u64,
     /// Concurrent SSE clients currently holding a slot.
     active_sse_clients: usize,
+    /// Whether Start/Stop/Users control endpoints are registered.
+    control_enabled: bool,
 }
 
 /// Format `host:port` for [`TcpListener::bind`], bracketing bare IPv6 literals.
@@ -553,20 +648,29 @@ pub(crate) async fn setup_dashboard(
     } else {
         configuration.dashboard_max_clients as usize
     };
+    // Clone sender for hub + control handlers (same channel).
     let hub = SnapshotHub::new(
-        request_tx,
+        request_tx.clone(),
         Arc::clone(&build_count),
         close_tx.clone(),
         max_sse_clients,
     );
+    let control_enabled = configuration.dashboard_control;
     let state = DashboardState {
         hub,
+        request_tx,
         auth_token: configuration.dashboard_auth_token.clone(),
+        control_enabled,
     };
 
     let app = build_router(state);
 
-    info!("[dashboard]: listening on http://{bound} (read-only)");
+    if control_enabled {
+        info!("[dashboard]: listening on http://{bound} (control enabled)");
+        info!("[dashboard]: control POST /api/v1/control/* requires Authorization: Bearer <token>");
+    } else {
+        info!("[dashboard]: listening on http://{bound} (read-only)");
+    }
 
     // Detached server task — no need to rejoin when the load test ends.
     // Wrap in Some so the JoinHandle is not a bare `let _ = future` (clippy).
@@ -585,15 +689,28 @@ pub(crate) async fn setup_dashboard(
 }
 
 /// Build the axum router with public shell/static/health and auth-gated metrics.
+///
+/// Control routes are registered only when `state.control_enabled` is true
+/// (otherwise POST /api/v1/control/* → 404).
 fn build_router(state: DashboardState) -> Router {
-    Router::new()
+    let control_enabled = state.control_enabled;
+    let mut router = Router::new()
         .route("/", get(index_handler))
         .route("/static/app.js", get(app_js_handler))
         .route("/static/app.css", get(app_css_handler))
         .route("/static/chart.min.js", get(chart_js_handler))
         .route("/api/v1/health", get(health_handler))
         .route("/api/v1/snapshot", get(snapshot_handler))
-        .route("/api/v1/events", get(events_handler))
+        .route("/api/v1/events", get(events_handler));
+
+    if control_enabled {
+        router = router
+            .route("/api/v1/control/start", post(control_start_handler))
+            .route("/api/v1/control/stop", post(control_stop_handler))
+            .route("/api/v1/control/users", post(control_users_handler));
+    }
+
+    router
         .layer(SetResponseHeaderLayer::overriding(
             header::CONTENT_SECURITY_POLICY,
             HeaderValue::from_static(CSP),
@@ -633,6 +750,7 @@ async fn health_handler(State(state): State<Arc<DashboardState>>) -> impl IntoRe
         last_build_ms: state.hub.last_build_ms(),
         build_count: state.hub.build_count(),
         active_sse_clients: state.hub.active_sse_clients(),
+        control_enabled: state.control_enabled,
     })
 }
 
@@ -794,6 +912,21 @@ fn authorize(configured_token: &str, headers: &HeaderMap, query_token: Option<&s
     false
 }
 
+/// Authorize a control API request.
+///
+/// Control always requires a non-empty configured token (fail closed if miswired).
+/// Accepts Bearer or `?token=` (scripts); SPA must use Bearer only.
+fn authorize_control(
+    configured_token: &str,
+    headers: &HeaderMap,
+    query_token: Option<&str>,
+) -> bool {
+    if configured_token.is_empty() {
+        return false;
+    }
+    authorize(configured_token, headers, query_token)
+}
+
 /// Best-effort constant-time equality for auth tokens.
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
@@ -804,6 +937,232 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
         diff |= x ^ y;
     }
     diff == 0
+}
+
+/// Validate start/stop body: empty, missing, or `{}` only (no unknown fields).
+fn parse_empty_control_body(body: &[u8]) -> Result<(), (&'static str, &'static str)> {
+    let trimmed = trim_ascii_whitespace(body);
+    if trimmed.is_empty() {
+        return Ok(());
+    }
+    let value: serde_json::Value = match serde_json::from_slice(trimmed) {
+        Ok(v) => v,
+        Err(_) => return Err(("bad_request", "request body must be empty or {}")),
+    };
+    match value.as_object() {
+        Some(obj) if obj.is_empty() => Ok(()),
+        _ => Err(("bad_request", "request body must be empty or {}")),
+    }
+}
+
+/// Parse `{"users": N}` with integer N in 1..=1_000_000.
+fn parse_users_body(body: &[u8]) -> Result<usize, (&'static str, &'static str)> {
+    let trimmed = trim_ascii_whitespace(body);
+    if trimmed.is_empty() {
+        return Err(("bad_request", "request body required"));
+    }
+    let value: serde_json::Value = match serde_json::from_slice(trimmed) {
+        Ok(v) => v,
+        Err(_) => return Err(("bad_request", "malformed JSON body")),
+    };
+    let obj = match value.as_object() {
+        Some(o) => o,
+        None => return Err(("bad_request", "request body must be a JSON object")),
+    };
+    let users_val = match obj.get("users") {
+        Some(v) => v,
+        None => {
+            return Err((
+                "invalid_users",
+                "users must be an integer between 1 and 1000000",
+            ))
+        }
+    };
+    // Reject floats/strings: only JSON integers (i64/u64), not f64.
+    let n = match users_val.as_u64() {
+        Some(n) => n,
+        None => {
+            // Negative integers arrive as i64; treat as invalid_users.
+            if users_val.as_i64().is_some() || users_val.is_number() || users_val.is_string() {
+                return Err((
+                    "invalid_users",
+                    "users must be an integer between 1 and 1000000",
+                ));
+            }
+            return Err((
+                "invalid_users",
+                "users must be an integer between 1 and 1000000",
+            ));
+        }
+    };
+    if !(1..=MAX_CONTROL_USERS).contains(&n) {
+        return Err((
+            "invalid_users",
+            "users must be an integer between 1 and 1000000",
+        ));
+    }
+    // Reject unknown extra fields? Design only requires deny_unknown on start/stop.
+    // Users: only `users` is required; extra fields are tolerated for forward compat.
+    Ok(n as usize)
+}
+
+fn trim_ascii_whitespace(bytes: &[u8]) -> &[u8] {
+    let start = bytes
+        .iter()
+        .position(|b| !b.is_ascii_whitespace())
+        .unwrap_or(bytes.len());
+    let end = bytes
+        .iter()
+        .rposition(|b| !b.is_ascii_whitespace())
+        .map(|i| i + 1)
+        .unwrap_or(0);
+    if start >= end {
+        &[]
+    } else {
+        &bytes[start..end]
+    }
+}
+
+fn control_http_error(
+    status: StatusCode,
+    command: &str,
+    error: &str,
+    message: &str,
+) -> Response<Body> {
+    let body = ControlHttpErrorBody::new(command, error, message);
+    (status, Json(body)).into_response()
+}
+
+/// Send a control request to the main loop and wait up to [`CONTROL_TIMEOUT`].
+async fn dispatch_control(
+    state: &DashboardState,
+    request: DashboardRequest,
+    respond_rx: oneshot::Receiver<ControlResult>,
+    command: &str,
+) -> Response<Body> {
+    if state.request_tx.send(request).is_err() {
+        warn!("[dashboard]: control channel disconnected ({command})");
+        return control_http_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            command,
+            "unavailable",
+            "control unavailable",
+        );
+    }
+
+    match tokio::time::timeout(CONTROL_TIMEOUT, respond_rx).await {
+        Ok(Ok(result)) => {
+            if result.ok {
+                info!(
+                    "[dashboard]: control {command} ok phase={} target={:?}",
+                    result.phase, result.target_users
+                );
+            } else {
+                info!(
+                    "[dashboard]: control {command} rejected error={:?} phase={}",
+                    result.error, result.phase
+                );
+            }
+            (StatusCode::OK, Json(result)).into_response()
+        }
+        Ok(Err(_)) => {
+            warn!("[dashboard]: control oneshot dropped ({command})");
+            control_http_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                command,
+                "unavailable",
+                "control unavailable",
+            )
+        }
+        Err(_) => {
+            warn!("[dashboard]: control oneshot timed out ({command})");
+            control_http_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                command,
+                "unavailable",
+                "control unavailable — retry",
+            )
+        }
+    }
+}
+
+async fn control_start_handler(
+    State(state): State<Arc<DashboardState>>,
+    headers: HeaderMap,
+    Query(query): Query<TokenQuery>,
+    body: Bytes,
+) -> Response<Body> {
+    if !authorize_control(&state.auth_token, &headers, query.token.as_deref()) {
+        warn!("[dashboard]: control start auth failure");
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    if let Err((code, msg)) = parse_empty_control_body(&body) {
+        return control_http_error(StatusCode::BAD_REQUEST, "start", code, msg);
+    }
+    let (respond_tx, respond_rx) = oneshot::channel();
+    dispatch_control(
+        &state,
+        DashboardRequest::Start {
+            respond: respond_tx,
+        },
+        respond_rx,
+        "start",
+    )
+    .await
+}
+
+async fn control_stop_handler(
+    State(state): State<Arc<DashboardState>>,
+    headers: HeaderMap,
+    Query(query): Query<TokenQuery>,
+    body: Bytes,
+) -> Response<Body> {
+    if !authorize_control(&state.auth_token, &headers, query.token.as_deref()) {
+        warn!("[dashboard]: control stop auth failure");
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    if let Err((code, msg)) = parse_empty_control_body(&body) {
+        return control_http_error(StatusCode::BAD_REQUEST, "stop", code, msg);
+    }
+    let (respond_tx, respond_rx) = oneshot::channel();
+    dispatch_control(
+        &state,
+        DashboardRequest::Stop {
+            respond: respond_tx,
+        },
+        respond_rx,
+        "stop",
+    )
+    .await
+}
+
+async fn control_users_handler(
+    State(state): State<Arc<DashboardState>>,
+    headers: HeaderMap,
+    Query(query): Query<TokenQuery>,
+    body: Bytes,
+) -> Response<Body> {
+    if !authorize_control(&state.auth_token, &headers, query.token.as_deref()) {
+        warn!("[dashboard]: control users auth failure");
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let users = match parse_users_body(&body) {
+        Ok(n) => n,
+        Err((code, msg)) => {
+            return control_http_error(StatusCode::BAD_REQUEST, "users", code, msg);
+        }
+    };
+    let (respond_tx, respond_rx) = oneshot::channel();
+    dispatch_control(
+        &state,
+        DashboardRequest::SetUsers {
+            users,
+            respond: respond_tx,
+        },
+        respond_rx,
+        "users",
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -856,6 +1215,7 @@ mod tests {
     }
 
     /// Answer `GetSnapshot` requests with incrementing dummy payloads.
+    /// Control requests get a soft success so tests do not hang on oneshot waits.
     fn spawn_mock_parent(
         request_rx: flume::Receiver<DashboardRequest>,
         parent_builds: Arc<AtomicU64>,
@@ -866,6 +1226,39 @@ mod tests {
                     DashboardRequest::GetSnapshot { respond } => {
                         let n = parent_builds.fetch_add(1, Ordering::SeqCst);
                         let _ = respond.send(dummy_snapshot(n));
+                    }
+                    DashboardRequest::Start { respond } => {
+                        let _ = respond.send(ControlResult {
+                            ok: true,
+                            command: "start".into(),
+                            error: None,
+                            message: "load test started".into(),
+                            phase: "increase".into(),
+                            active_users: 0,
+                            target_users: Some(1),
+                        });
+                    }
+                    DashboardRequest::Stop { respond } => {
+                        let _ = respond.send(ControlResult {
+                            ok: true,
+                            command: "stop".into(),
+                            error: None,
+                            message: "load test stopped".into(),
+                            phase: "decrease".into(),
+                            active_users: 1,
+                            target_users: Some(0),
+                        });
+                    }
+                    DashboardRequest::SetUsers { users, respond } => {
+                        let _ = respond.send(ControlResult {
+                            ok: true,
+                            command: "users".into(),
+                            error: None,
+                            message: "users configured".into(),
+                            phase: "idle".into(),
+                            active_users: 0,
+                            target_users: Some(users as u64),
+                        });
                     }
                 }
             }
@@ -891,18 +1284,29 @@ mod tests {
                             let _ = respond.send(dummy_snapshot(n));
                         }
                     }
+                    // Control not exercised by blip tests.
+                    DashboardRequest::Start { respond }
+                    | DashboardRequest::Stop { respond }
+                    | DashboardRequest::SetUsers { respond, .. } => {
+                        let _ = respond.send(ControlResult::internal("unused", "idle", 0));
+                    }
                 }
             }
         })
     }
 
     async fn bind_dashboard(token: &str) -> (DashboardSetup, String) {
-        bind_dashboard_with(token, 0).await
+        bind_dashboard_with(token, 0, false).await
     }
 
-    async fn bind_dashboard_with(token: &str, max_clients: u32) -> (DashboardSetup, String) {
+    async fn bind_dashboard_with(
+        token: &str,
+        max_clients: u32,
+        control: bool,
+    ) -> (DashboardSetup, String) {
         let config = GooseConfiguration {
             dashboard: true,
+            dashboard_control: control,
             dashboard_host: "127.0.0.1".to_string(),
             dashboard_port: 0,
             dashboard_auth_token: token.to_string(),
@@ -947,7 +1351,7 @@ mod tests {
         tokio::task::JoinHandle<()>,
         String,
     ) {
-        let (setup, base) = bind_dashboard_with(token, max_clients).await;
+        let (setup, base) = bind_dashboard_with(token, max_clients, false).await;
         let hub_builds = Arc::clone(&setup.build_count);
         let parent_builds = Arc::new(AtomicU64::new(0));
         let parent = spawn_mock_parent(setup.request_rx, Arc::clone(&parent_builds));
@@ -1018,6 +1422,70 @@ mod tests {
             HeaderValue::from_static("Bearer wrong"),
         );
         assert!(!authorize("s3cret", &headers, None));
+    }
+
+    #[test]
+    fn authorize_control_always_requires_token() {
+        let headers = HeaderMap::new();
+        // Empty configured token: fail closed (unlike observe authorize).
+        assert!(!authorize_control("", &headers, None));
+        assert!(!authorize_control("", &headers, Some("anything")));
+        assert!(!authorize_control("s3cret", &headers, None));
+        assert!(!authorize_control("s3cret", &headers, Some("wrong")));
+        assert!(authorize_control("s3cret", &headers, Some("s3cret")));
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer s3cret"),
+        );
+        assert!(authorize_control("s3cret", &headers, None));
+    }
+
+    #[test]
+    fn parse_empty_control_body_rules() {
+        assert!(parse_empty_control_body(b"").is_ok());
+        assert!(parse_empty_control_body(b"   ").is_ok());
+        assert!(parse_empty_control_body(b"{}").is_ok());
+        assert!(parse_empty_control_body(b"  {}  ").is_ok());
+        assert!(parse_empty_control_body(b"[]").is_err());
+        assert!(parse_empty_control_body(b"null").is_err());
+        assert!(parse_empty_control_body(b"{\"extra\":1}").is_err());
+        assert!(parse_empty_control_body(b"not-json").is_err());
+    }
+
+    #[test]
+    fn parse_users_body_rules() {
+        assert_eq!(parse_users_body(b"{\"users\":50}").unwrap(), 50);
+        assert_eq!(parse_users_body(b"{\"users\":1}").unwrap(), 1);
+        assert_eq!(parse_users_body(b"{\"users\":1000000}").unwrap(), 1_000_000);
+
+        let err = parse_users_body(b"").unwrap_err();
+        assert_eq!(err.0, "bad_request");
+
+        let err = parse_users_body(b"[]").unwrap_err();
+        assert_eq!(err.0, "bad_request");
+
+        let err = parse_users_body(b"not-json").unwrap_err();
+        assert_eq!(err.0, "bad_request");
+
+        let err = parse_users_body(b"{}").unwrap_err();
+        assert_eq!(err.0, "invalid_users");
+
+        let err = parse_users_body(b"{\"users\":0}").unwrap_err();
+        assert_eq!(err.0, "invalid_users");
+
+        let err = parse_users_body(b"{\"users\":1000001}").unwrap_err();
+        assert_eq!(err.0, "invalid_users");
+
+        let err = parse_users_body(b"{\"users\":-1}").unwrap_err();
+        assert_eq!(err.0, "invalid_users");
+
+        let err = parse_users_body(b"{\"users\":1.5}").unwrap_err();
+        assert_eq!(err.0, "invalid_users");
+
+        let err = parse_users_body(b"{\"users\":\"10\"}").unwrap_err();
+        assert_eq!(err.0, "invalid_users");
     }
 
     #[test]
@@ -1567,6 +2035,151 @@ mod tests {
             !buf.contains("event: closed"),
             "transient oneshot cancel must not emit closed"
         );
+
+        parent.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn control_disabled_returns_404_and_health_false() {
+        let (setup, base) = bind_dashboard_with("s3cret", 0, false).await;
+        drop(setup.close_tx);
+        drop(setup.request_rx);
+        let client = reqwest::Client::new();
+
+        let health: serde_json::Value = client
+            .get(format!("{base}/api/v1/health"))
+            .send()
+            .await
+            .expect("health")
+            .json()
+            .await
+            .expect("json");
+        assert_eq!(health["control_enabled"], false);
+
+        for path in [
+            "/api/v1/control/start",
+            "/api/v1/control/stop",
+            "/api/v1/control/users",
+        ] {
+            let resp = client
+                .post(format!("{base}{path}"))
+                .header(header::AUTHORIZATION, "Bearer s3cret")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body("{}")
+                .send()
+                .await
+                .expect("post");
+            assert_eq!(
+                resp.status(),
+                404,
+                "control off must 404 {path}, got {}",
+                resp.status()
+            );
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn control_requires_auth_and_validates_body() {
+        let (setup, base) = bind_dashboard_with("s3cret", 0, true).await;
+        let parent = spawn_mock_parent(setup.request_rx, Arc::new(AtomicU64::new(0)));
+        drop(setup.close_tx);
+        let client = reqwest::Client::new();
+
+        let health: serde_json::Value = client
+            .get(format!("{base}/api/v1/health"))
+            .send()
+            .await
+            .expect("health")
+            .json()
+            .await
+            .expect("json");
+        assert_eq!(health["control_enabled"], true);
+
+        // Missing token → 401.
+        let resp = client
+            .post(format!("{base}/api/v1/control/start"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body("{}")
+            .send()
+            .await
+            .expect("post");
+        assert_eq!(resp.status(), 401);
+
+        // Wrong token → 401.
+        let resp = client
+            .post(format!("{base}/api/v1/control/start"))
+            .header(header::AUTHORIZATION, "Bearer wrong")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body("{}")
+            .send()
+            .await
+            .expect("post");
+        assert_eq!(resp.status(), 401);
+
+        // Bad start body → 400 bad_request.
+        let resp = client
+            .post(format!("{base}/api/v1/control/start"))
+            .header(header::AUTHORIZATION, "Bearer s3cret")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body("[1]")
+            .send()
+            .await
+            .expect("post");
+        assert_eq!(resp.status(), 400);
+        let body: serde_json::Value = resp.json().await.expect("json");
+        assert_eq!(body["ok"], false);
+        assert_eq!(body["error"], "bad_request");
+        assert_eq!(body["command"], "start");
+
+        // users: 0 → 400 invalid_users.
+        let resp = client
+            .post(format!("{base}/api/v1/control/users"))
+            .header(header::AUTHORIZATION, "Bearer s3cret")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body("{\"users\":0}")
+            .send()
+            .await
+            .expect("post");
+        assert_eq!(resp.status(), 400);
+        let body: serde_json::Value = resp.json().await.expect("json");
+        assert_eq!(body["error"], "invalid_users");
+
+        // Valid start with Bearer → 200 ok (mock parent).
+        let resp = client
+            .post(format!("{base}/api/v1/control/start"))
+            .header(header::AUTHORIZATION, "Bearer s3cret")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body("{}")
+            .send()
+            .await
+            .expect("post");
+        assert_eq!(resp.status(), 200);
+        let body: serde_json::Value = resp.json().await.expect("json");
+        assert_eq!(body["ok"], true);
+        assert_eq!(body["command"], "start");
+        assert_eq!(body["phase"], "increase");
+
+        // Query token also accepted server-side for scripts.
+        let resp = client
+            .post(format!("{base}/api/v1/control/stop?token=s3cret"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body("{}")
+            .send()
+            .await
+            .expect("post");
+        assert_eq!(resp.status(), 200);
+        let body: serde_json::Value = resp.json().await.expect("json");
+        assert_eq!(body["ok"], true);
+        assert_eq!(body["phase"], "decrease");
+
+        // Empty body accepted for start.
+        let resp = client
+            .post(format!("{base}/api/v1/control/start"))
+            .header(header::AUTHORIZATION, "Bearer s3cret")
+            .send()
+            .await
+            .expect("post");
+        assert_eq!(resp.status(), 200);
 
         parent.abort();
     }

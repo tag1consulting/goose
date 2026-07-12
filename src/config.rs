@@ -2532,12 +2532,12 @@ impl GooseConfiguration {
             });
         }
 
-        // Can't disable autostart if there's no Controller enabled.
-        if self.no_autostart && self.no_telnet && self.no_websocket {
+        // Can't disable autostart unless a Controller or dashboard control can start the test.
+        if self.no_autostart && self.no_telnet && self.no_websocket && !self.dashboard_control {
             return Err(GooseError::InvalidOption {
                 option: "`configuration.no_autostart`".to_string(),
                 value: true.to_string(),
-                detail: "`configuration.no_autostart` requires at least one Controller be enabled"
+                detail: "`configuration.no_autostart` requires at least one Controller or dashboard control be enabled"
                     .to_string(),
             });
         }
@@ -3131,5 +3131,35 @@ mod test {
         config.configure(&defaults);
         assert!(config.dashboard_control);
         assert!(config.validate_dashboard_config().is_ok());
+    }
+
+    #[test]
+    fn test_no_autostart_allows_dashboard_control() {
+        // Helper: timespan fields must be "0" so validate() skips empty-string branches.
+        let base = || GooseConfiguration {
+            increase_time: "0".to_string(),
+            decrease_time: "0".to_string(),
+            run_time: "0".to_string(),
+            no_autostart: true,
+            no_telnet: true,
+            no_websocket: true,
+            ..Default::default()
+        };
+
+        // no_autostart with no Controllers and no dashboard-control: hard error.
+        let config = base();
+        assert!(config.validate().is_err());
+
+        // no_autostart + dashboard-control (with dashboard + token): OK.
+        let mut config = base();
+        config.dashboard = true;
+        config.dashboard_control = true;
+        config.dashboard_auth_token = "s3cret".to_string();
+        assert!(config.validate().is_ok());
+
+        // no_autostart + telnet Controller still OK without dashboard-control.
+        let mut config = base();
+        config.no_telnet = false;
+        assert!(config.validate().is_ok());
     }
 }
