@@ -105,11 +105,7 @@ async fn wait_for_health(bases: &[&str], attempts: u32) -> (String, reqwest::Res
         }
         tokio::time::sleep(Duration::from_millis(100 + i as u64 * 25)).await;
     }
-    panic!(
-        "dashboard health endpoint not ready for bases {:?} (listen_port={})",
-        bases,
-        goose::dashboard_listen_port()
-    );
+    panic!("dashboard health endpoint not ready for bases {:?}", bases);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

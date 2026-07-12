@@ -18,7 +18,6 @@ use axum::routing::get;
 use axum::{Json, Router};
 use serde::Deserialize;
 use serde::Serialize;
-use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
 use tower_http::set_header::SetResponseHeaderLayer;
 
@@ -31,18 +30,15 @@ const APP_CSS: &str = include_str!("dashboard/static/app.css");
 const CSP: &str =
     "default-src 'self'; script-src 'self'; connect-src 'self'; style-src 'self'; img-src 'self' data:";
 
-/// Last successfully bound dashboard TCP port (0 if not listening).
-///
-/// Used by integration tests that pass `--dashboard-port 0` (ephemeral bind)
-/// so they can discover the actual listen port without a TOCTOU free-port race.
-static BOUND_PORT: AtomicU16 = AtomicU16::new(0);
-
-/// Returns the TCP port the dashboard last bound to, or `0` if none.
-///
-/// Intended for tests using `--dashboard-port 0`.
-#[doc(hidden)]
-pub fn dashboard_listen_port() -> u16 {
-    BOUND_PORT.load(Ordering::SeqCst)
+/// Result of a successful dashboard server spawn.
+#[derive(Debug)]
+pub(crate) struct DashboardSetup {
+    /// Parent end of the request channel.
+    pub request_rx: flume::Receiver<DashboardRequest>,
+    /// Actual TCP port after bind (useful when configured port is 0 / ephemeral).
+    /// Read by unit tests; production only needs `request_rx`.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub bound_port: u16,
 }
 
 /// Requests from the dashboard HTTP task to the GooseAttack main loop.
@@ -98,9 +94,8 @@ fn format_bind_address(host: &str, port: u16) -> String {
 /// standalone/manager process — currently AttackMode is StandAlone only.
 pub(crate) async fn setup_dashboard(
     configuration: &GooseConfiguration,
-) -> Result<Option<flume::Receiver<DashboardRequest>>, GooseError> {
+) -> Result<Option<DashboardSetup>, GooseError> {
     if !configuration.dashboard {
-        BOUND_PORT.store(0, Ordering::SeqCst);
         return Ok(None);
     }
 
@@ -115,10 +110,6 @@ pub(crate) async fn setup_dashboard(
     // rejects hostnames and unbracketed `::1`.
     let address = format_bind_address(host, port);
 
-    // Clear before bind so tests waiting on dashboard_listen_port() do not see
-    // a stale port from a previous run.
-    BOUND_PORT.store(0, Ordering::SeqCst);
-
     let listener = tokio::net::TcpListener::bind(&address).await.map_err(|e| {
         error!("[dashboard]: failed to bind {address}: {e} (is the port already in use?)");
         GooseError::Io(e)
@@ -128,8 +119,6 @@ pub(crate) async fn setup_dashboard(
         error!("[dashboard]: failed to read local address after bind on {address}: {e}");
         GooseError::Io(e)
     })?;
-
-    BOUND_PORT.store(bound.port(), Ordering::SeqCst);
 
     let (request_tx, request_rx) = flume::unbounded();
     let state = DashboardState {
@@ -149,7 +138,10 @@ pub(crate) async fn setup_dashboard(
         }
     }));
 
-    Ok(Some(request_rx))
+    Ok(Some(DashboardSetup {
+        request_rx,
+        bound_port: bound.port(),
+    }))
 }
 
 /// Build the axum router with public shell/static/health and auth-gated snapshot.
@@ -324,14 +316,13 @@ mod tests {
             dashboard_auth_token: String::new(),
             ..Default::default()
         };
-        let rx = setup_dashboard(&config)
+        let setup = setup_dashboard(&config)
             .await
             .expect("localhost bind should succeed")
             .expect("dashboard enabled");
-        let port = dashboard_listen_port();
-        assert!(port > 0, "ephemeral port must be recorded");
+        assert!(setup.bound_port > 0, "ephemeral port must be recorded");
         // Drop the channel; server task keeps running until process ends (fine in tests).
-        drop(rx);
+        drop(setup);
 
         // ::1 (bare IPv6 literal needs brackets in the bind string).
         let config = GooseConfiguration {
@@ -344,8 +335,8 @@ mod tests {
         // ::1 may be unavailable in some CI network namespaces; treat bind errors
         // as soft-skip only when the OS reports address-family issues.
         match setup_dashboard(&config).await {
-            Ok(Some(_rx)) => {
-                assert!(dashboard_listen_port() > 0);
+            Ok(Some(setup)) => {
+                assert!(setup.bound_port > 0);
             }
             Ok(None) => panic!("dashboard enabled but setup returned None"),
             Err(e) => {

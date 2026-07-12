@@ -44,10 +44,6 @@ pub mod config;
 pub mod controller;
 #[cfg(feature = "dashboard")]
 mod dashboard;
-/// Discover the TCP port the live dashboard last bound to (ephemeral-port tests).
-#[cfg(feature = "dashboard")]
-#[doc(hidden)]
-pub use dashboard::dashboard_listen_port;
 pub mod goose;
 mod graph;
 pub mod logger;
@@ -1389,7 +1385,9 @@ impl GooseAttack {
     async fn setup_dashboard(
         &mut self,
     ) -> Result<Option<flume::Receiver<dashboard::DashboardRequest>>, GooseError> {
-        dashboard::setup_dashboard(&self.configuration).await
+        Ok(dashboard::setup_dashboard(&self.configuration)
+            .await?
+            .map(|setup| setup.request_rx))
     }
 
     /// Handle dashboard snapshot requests from the HTTP server task.
@@ -2124,10 +2122,10 @@ impl GooseAttack {
     async fn start_attack(mut self) -> Result<GooseAttack, GooseError> {
         // The GooseAttackRunState is used while spawning and running the
         // GooseUser threads that generate the load test.
-        let mut goose_attack_run_state = self
-            .initialize_attack()
-            .await
-            .expect("failed to initialize GooseAttackRunState");
+        // Propagate initialization errors (e.g. dashboard bind failure) as
+        // `GooseError` rather than panicking — library callers of `execute()`
+        // should get a structured Result.
+        let mut goose_attack_run_state = self.initialize_attack().await?;
 
         // The Goose parent process GooseAttack loop runs until Goose shuts down. Goose enters
         // the loop in AttackPhase::Idle, and exits in AttackPhase::Shutdown.
