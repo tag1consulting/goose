@@ -213,7 +213,7 @@ pub struct GooseConfiguration {
     /// Sets dashboard bind port (default: 5118)
     #[options(no_short, meta = "PORT")]
     pub dashboard_port: u16,
-    /// Sets dashboard auth token (required if host is not loopback)
+    /// Sets dashboard auth token (required for non-loopback binds, and always required with --dashboard-control)
     #[options(no_short, meta = "TOKEN")]
     pub dashboard_auth_token: String,
     /// Sets max concurrent dashboard SSE clients (default: 32)
