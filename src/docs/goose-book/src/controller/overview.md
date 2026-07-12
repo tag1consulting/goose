@@ -4,4 +4,4 @@ By default, Goose will launch a telnet Controller thread that listens on `0.0.0.
 
 NOTE: The controller currently is not Gaggle-aware, and only functions correctly when running Goose as a single process in standalone mode.
 
-To **observe** a running load test in a browser without controlling it, enable the optional [Live Dashboard](dashboard.md) (`--dashboard`, default `127.0.0.1:5118`). The dashboard is read-only; use the Controllers below to change users, host, or start/stop the test.
+To **observe** a running load test in a browser, enable the optional [Live Dashboard](dashboard.md) (`--dashboard`, default `127.0.0.1:5118`). With `--dashboard-control` and a required auth token, the dashboard can also Start, Stop, and set users. Controllers remain the power-user path for host/test-plan changes, rate tuning, and process shutdown.

@@ -10,6 +10,12 @@
     o enables GraphData series collection (same memory class as `--report-file`); documented in Goose Book “Live Dashboard”
     o tunable SSE client cap via `--dashboard-max-clients` / `GooseDefault::DashboardMaxClients` (default 32)
     o `/api/v1/health` exposes ops counters `last_build_ms`, `build_count`, and `active_sse_clients` (no load-test metrics)
+ - add optional **dashboard runtime control** (`--dashboard-control`, requires `--dashboard` and `--dashboard-auth-token` even on loopback)
+    o authenticated `POST /api/v1/control/{start,stop,users}` with structured JSON success/error; routes unregistered (404) when control is off
+    o phase-aware SPA control panel: Start, Stop, absolute target users with Apply and ± step buttons
+    o Stop begins a cancel ramp through Decrease (not instantaneous Idle); Start success means entered Increase (not `test_start` complete)
+    o `--no-autostart` allowed with dashboard control (no Controllers required); Controllers remain power-user path (host/rates/shutdown not in dashboard)
+    o documented in Goose Book “Live Dashboard” (flags, auth matrix, curl examples, semantics)
  - [#468](https://github.com/tag1consulting/goose/issues/468) replace `--hatch-rate` and `--startup-time` with `--increase-rate`, `--increase-time`, `--decrease-rate`, and `--decrease-time`
     o **breaking**: `--hatch-rate` / `-r` is now `--increase-rate` / `-r` (sets per-second rate users are added)
     o **breaking**: `--startup-time` / `-s` is now `--increase-time` / `-s` (sets total time to launch all users)
