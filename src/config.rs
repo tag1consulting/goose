@@ -201,6 +201,18 @@ pub struct GooseConfiguration {
     /// Sets WebSocket Controller TCP port (default: 5117)
     #[options(no_short, meta = "PORT")]
     pub websocket_port: u16,
+    /// Enables the live web dashboard
+    #[options(no_short)]
+    pub dashboard: bool,
+    /// Sets dashboard bind host (default: 127.0.0.1)
+    #[options(no_short, meta = "HOST")]
+    pub dashboard_host: String,
+    /// Sets dashboard bind port (default: 5118)
+    #[options(no_short, meta = "PORT")]
+    pub dashboard_port: u16,
+    /// Sets dashboard auth token (required if host is not loopback)
+    #[options(no_short, meta = "TOKEN")]
+    pub dashboard_auth_token: String,
     /// Doesn't automatically start load test
     #[options(no_short)]
     pub no_autostart: bool,
@@ -366,6 +378,14 @@ pub(crate) struct GooseDefaults {
     pub websocket_host: Option<String>,
     /// An optional default for port WebSocket Controller listens on.
     pub websocket_port: Option<u16>,
+    /// An optional default for enabling the live web dashboard.
+    pub dashboard: Option<bool>,
+    /// An optional default for host the dashboard listens on.
+    pub dashboard_host: Option<String>,
+    /// An optional default for port the dashboard listens on.
+    pub dashboard_port: Option<u16>,
+    /// An optional default for the dashboard auth token.
+    pub dashboard_auth_token: Option<String>,
     /// An optional default for not validating https certificates.
     pub accept_invalid_certs: Option<bool>,
     /// An optional default for PDF generation timeout (seconds).
@@ -477,6 +497,14 @@ pub enum GooseDefault {
     WebSocketHost,
     /// An optional default for port WebSocket Controller listens on.
     WebSocketPort,
+    /// An optional default for enabling the live web dashboard.
+    Dashboard,
+    /// An optional default for host the dashboard listens on.
+    DashboardHost,
+    /// An optional default for port the dashboard listens on.
+    DashboardPort,
+    /// An optional default for the dashboard auth token.
+    DashboardAuthToken,
     /// An optional default for not validating https certificates.
     AcceptInvalidCerts,
     /// An optional default for PDF generation timeout (seconds).
@@ -530,6 +558,8 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::Timeout`]
 ///  - [`GooseDefault::TransactionLog`]
 ///  - [`GooseDefault::WebSocketHost`]
+///  - [`GooseDefault::DashboardHost`]
+///  - [`GooseDefault::DashboardAuthToken`]
 ///
 /// The following run-time options can be configured with a custom default using a
 /// [`usize`] integer:
@@ -545,6 +575,7 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::ThrottleRequests`]
 ///  - [`GooseDefault::TelnetPort`]
 ///  - [`GooseDefault::WebSocketPort`]
+///  - [`GooseDefault::DashboardPort`]
 ///
 /// The following run-time flags can be configured with a custom default using a
 /// [`bool`] (and otherwise default to [`false`]).
@@ -563,6 +594,7 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::NoStatusCodes`]
 ///  - [`GooseDefault::StickyFollow`]
 ///  - [`GooseDefault::NoGranularData`]
+///  - [`GooseDefault::Dashboard`]
 ///
 /// The following run-time flags can be configured with a custom default using a
 /// [`GooseLogFormat`].
@@ -629,6 +661,10 @@ impl GooseDefaultType<&str> for GooseAttack {
             GooseDefault::Timeout => self.defaults.timeout = Some(value.to_string()),
             GooseDefault::TransactionLog => self.defaults.transaction_log = Some(value.to_string()),
             GooseDefault::WebSocketHost => self.defaults.websocket_host = Some(value.to_string()),
+            GooseDefault::DashboardHost => self.defaults.dashboard_host = Some(value.to_string()),
+            GooseDefault::DashboardAuthToken => {
+                self.defaults.dashboard_auth_token = Some(value.to_string())
+            }
             // Otherwise display a helpful and explicit error.
             GooseDefault::Users
             | GooseDefault::IncreaseTime
@@ -640,7 +676,8 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::Verbose
             | GooseDefault::ThrottleRequests
             | GooseDefault::TelnetPort
-            | GooseDefault::WebSocketPort => {
+            | GooseDefault::WebSocketPort
+            | GooseDefault::DashboardPort => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: value.to_string(),
@@ -665,6 +702,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::NoStatusCodes
             | GooseDefault::StickyFollow
             | GooseDefault::NoGranularData
+            | GooseDefault::Dashboard
             | GooseDefault::AcceptInvalidCerts => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
@@ -726,6 +764,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             GooseDefault::ThrottleRequests => self.defaults.throttle_requests = Some(value),
             GooseDefault::TelnetPort => self.defaults.telnet_port = Some(value as u16),
             GooseDefault::WebSocketPort => self.defaults.websocket_port = Some(value as u16),
+            GooseDefault::DashboardPort => self.defaults.dashboard_port = Some(value as u16),
             #[cfg(feature = "pdf-reports")]
             GooseDefault::PdfTimeout => {
                 self.defaults.pdf_timeout = Some(value as u64)
@@ -747,6 +786,8 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::Timeout
             | GooseDefault::TransactionLog
             | GooseDefault::WebSocketHost
+            | GooseDefault::DashboardHost
+            | GooseDefault::DashboardAuthToken
             => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
@@ -771,6 +812,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::NoStatusCodes
             | GooseDefault::StickyFollow
             | GooseDefault::NoGranularData
+            | GooseDefault::Dashboard
             | GooseDefault::AcceptInvalidCerts => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
@@ -828,6 +870,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             GooseDefault::NoStatusCodes => self.defaults.no_status_codes = Some(value),
             GooseDefault::StickyFollow => self.defaults.sticky_follow = Some(value),
             GooseDefault::NoGranularData => self.defaults.no_granular_report = Some(value),
+            GooseDefault::Dashboard => self.defaults.dashboard = Some(value),
             // Otherwise display a helpful and explicit error.
             GooseDefault::DebugLog
             | GooseDefault::ErrorLog
@@ -845,6 +888,8 @@ impl GooseDefaultType<bool> for GooseAttack {
             | GooseDefault::Timeout
             | GooseDefault::TransactionLog
             | GooseDefault::WebSocketHost
+            | GooseDefault::DashboardHost
+            | GooseDefault::DashboardAuthToken
             => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
@@ -865,7 +910,8 @@ impl GooseDefaultType<bool> for GooseAttack {
             | GooseDefault::Verbose
             | GooseDefault::ThrottleRequests
             | GooseDefault::TelnetPort
-            | GooseDefault::WebSocketPort => {
+            | GooseDefault::WebSocketPort
+            | GooseDefault::DashboardPort => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: format!("{value}"),
@@ -935,6 +981,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::NoStatusCodes
             | GooseDefault::StickyFollow
             | GooseDefault::NoGranularData
+            | GooseDefault::Dashboard
             | GooseDefault::AcceptInvalidCerts
             => {
                 return Err(GooseError::InvalidOption {
@@ -962,6 +1009,8 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::Timeout
             | GooseDefault::TransactionLog
             | GooseDefault::WebSocketHost
+            | GooseDefault::DashboardHost
+            | GooseDefault::DashboardAuthToken
             => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
@@ -982,7 +1031,8 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::Verbose
             | GooseDefault::ThrottleRequests
             | GooseDefault::TelnetPort
-            | GooseDefault::WebSocketPort => {
+            | GooseDefault::WebSocketPort
+            | GooseDefault::DashboardPort => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: format!("{value:?}"),
@@ -1047,13 +1097,14 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::NoStatusCodes
             | GooseDefault::StickyFollow
             | GooseDefault::NoGranularData
+            | GooseDefault::Dashboard
             | GooseDefault::AcceptInvalidCerts
             => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: format!("{value:?}"),
                     detail: format!(
-                        "set_default(GooseDefault::{key:?}, {value:?}) expected bool value, received GooseCoordinatedOmissionMitigation"
+                        "set_default(GooseDefault::{key:?}, {value:?}) expected bool value, received GooseLogFormat"
                     ),
                 })
             }
@@ -1074,12 +1125,14 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::Timeout
             | GooseDefault::TransactionLog
             | GooseDefault::WebSocketHost
+            | GooseDefault::DashboardHost
+            | GooseDefault::DashboardAuthToken
             => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: format!("{value:?}"),
                     detail: format!(
-                        "set_default(GooseDefault::{key:?}, {value:?}) expected &str value, received GooseCoordinatedOmissionMitigation"
+                        "set_default(GooseDefault::{key:?}, {value:?}) expected &str value, received GooseLogFormat"
                     ),
                 })
             }
@@ -1094,12 +1147,13 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::Verbose
             | GooseDefault::ThrottleRequests
             | GooseDefault::TelnetPort
-            | GooseDefault::WebSocketPort => {
+            | GooseDefault::WebSocketPort
+            | GooseDefault::DashboardPort => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: format!("{value:?}"),
                     detail: format!(
-                        "set_default(GooseDefault::{key:?}, {value:?}) expected usize value, received GooseCoordinatedOmissionMitigation"
+                        "set_default(GooseDefault::{key:?}, {value:?}) expected usize value, received GooseLogFormat"
                     ),
                 })
             }
@@ -1124,6 +1178,30 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             }
         }
         Ok(Box::new(self))
+    }
+}
+
+/// Returns true if `host` is a loopback bind address for dashboard auth policy.
+///
+/// Accepts `localhost` (case-insensitive, no DNS lookup), IPv4 loopback
+/// (`127.0.0.0/8`), and IPv6 loopback (`::1`, with optional brackets).
+/// Unspecified addresses (`0.0.0.0`, `::`) and unparseable hostnames are
+/// treated as non-loopback.
+pub(crate) fn is_loopback_bind(host: &str) -> bool {
+    let host = host.trim();
+    // Special-case common hostname; DNS is not consulted.
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    // Strip IPv6 brackets if present: "[::1]" -> "::1"
+    let host = host
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(host);
+    match host.parse::<std::net::IpAddr>() {
+        Ok(ip) => ip.is_loopback(),
+        // Unparseable hostnames (e.g. "my-loadgen.local") are NOT loopback.
+        Err(_) => false,
     }
 }
 
@@ -1884,6 +1962,85 @@ impl GooseConfiguration {
             ])
             .unwrap_or(false);
 
+        // Configure `dashboard`.
+        self.dashboard = self
+            .get_value(vec![
+                // Use --dashboard if set.
+                GooseValue {
+                    value: Some(self.dashboard),
+                    filter: !self.dashboard,
+                    message: "dashboard",
+                },
+                // Use GooseDefault if not already set.
+                GooseValue {
+                    value: defaults.dashboard,
+                    filter: defaults.dashboard.is_none(),
+                    message: "dashboard",
+                },
+            ])
+            .unwrap_or(false);
+
+        // Configure `dashboard_host`.
+        self.dashboard_host = self
+            .get_value(vec![
+                // Use --dashboard-host if set.
+                GooseValue {
+                    value: Some(self.dashboard_host.to_string()),
+                    filter: self.dashboard_host.is_empty(),
+                    message: "dashboard_host",
+                },
+                // Otherwise use GooseDefault if set.
+                GooseValue {
+                    value: defaults.dashboard_host.clone(),
+                    filter: defaults.dashboard_host.is_none(),
+                    message: "dashboard_host",
+                },
+            ])
+            .unwrap_or_else(|| {
+                // Built-in default when the dashboard is enabled.
+                if self.dashboard {
+                    "127.0.0.1".to_string()
+                } else {
+                    String::new()
+                }
+            });
+
+        // Configure `dashboard_port`.
+        self.dashboard_port = self
+            .get_value(vec![
+                // Use --dashboard-port if set.
+                GooseValue {
+                    value: Some(self.dashboard_port),
+                    filter: self.dashboard_port == 0,
+                    message: "dashboard_port",
+                },
+                // Otherwise use GooseDefault if set.
+                GooseValue {
+                    value: defaults.dashboard_port,
+                    filter: defaults.dashboard_port.is_none(),
+                    message: "dashboard_port",
+                },
+            ])
+            .unwrap_or(if self.dashboard { 5118 } else { 0 });
+
+        // Configure `dashboard_auth_token`.
+        self.dashboard_auth_token = self
+            .get_value(vec![
+                // Use --dashboard-auth-token if set.
+                GooseValue {
+                    value: Some(self.dashboard_auth_token.to_string()),
+                    filter: self.dashboard_auth_token.is_empty(),
+                    message: "dashboard_auth_token",
+                },
+                // Otherwise use GooseDefault if set.
+                GooseValue {
+                    value: defaults.dashboard_auth_token.clone(),
+                    filter: defaults.dashboard_auth_token.is_none(),
+                    message: "dashboard_auth_token",
+                },
+            ])
+            .unwrap_or_default();
+
         // Configure `no_autostart`.
         self.no_autostart = self
             .get_value(vec![
@@ -2345,6 +2502,38 @@ impl GooseConfiguration {
         // Unified PDF configuration validation
         self.validate_pdf_configuration()?;
 
+        // Dashboard bind host / auth token validation.
+        self.validate_dashboard_config()?;
+
+        Ok(())
+    }
+
+    /// Validate dashboard configuration.
+    ///
+    /// When the dashboard is enabled and bound to a non-loopback address, an auth
+    /// token is required. Loopback binds may omit the token (local trust model).
+    pub(crate) fn validate_dashboard_config(&self) -> Result<(), GooseError> {
+        if !self.dashboard {
+            return Ok(());
+        }
+
+        // Effective host for validation (mirrors configure defaults).
+        let host = if self.dashboard_host.is_empty() {
+            "127.0.0.1"
+        } else {
+            self.dashboard_host.as_str()
+        };
+
+        if !is_loopback_bind(host) && self.dashboard_auth_token.is_empty() {
+            return Err(GooseError::InvalidOption {
+                option: "`configuration.dashboard_host`".to_string(),
+                value: host.to_string(),
+                detail: format!(
+                    "`configuration.dashboard` is enabled with non-loopback host `{host}`; set `configuration.dashboard_auth_token` (--dashboard-auth-token) when binding outside loopback"
+                ),
+            });
+        }
+
         Ok(())
     }
 
@@ -2559,6 +2748,14 @@ mod test {
             .set_default(GooseDefault::ThrottleRequests, throttle_requests)
             .unwrap()
             .set_default(GooseDefault::StickyFollow, true)
+            .unwrap()
+            .set_default(GooseDefault::Dashboard, true)
+            .unwrap()
+            .set_default(GooseDefault::DashboardHost, "127.0.0.1")
+            .unwrap()
+            .set_default(GooseDefault::DashboardPort, 5118)
+            .unwrap()
+            .set_default(GooseDefault::DashboardAuthToken, "secret")
             .unwrap();
 
         assert!(goose_attack.defaults.host == Some(host));
@@ -2597,5 +2794,80 @@ mod test {
         );
         assert!(goose_attack.defaults.throttle_requests == Some(throttle_requests));
         assert!(goose_attack.defaults.sticky_follow == Some(true));
+        assert!(goose_attack.defaults.dashboard == Some(true));
+        assert!(goose_attack.defaults.dashboard_host == Some("127.0.0.1".to_string()));
+        assert!(goose_attack.defaults.dashboard_port == Some(5118));
+        assert!(goose_attack.defaults.dashboard_auth_token == Some("secret".to_string()));
+    }
+
+    #[test]
+    fn test_is_loopback_bind() {
+        // IPv4 loopback (entire 127.0.0.0/8).
+        assert!(is_loopback_bind("127.0.0.1"));
+        assert!(is_loopback_bind("127.0.0.2"));
+        assert!(is_loopback_bind(" 127.0.0.1 "));
+
+        // IPv6 loopback, with and without brackets.
+        assert!(is_loopback_bind("::1"));
+        assert!(is_loopback_bind("[::1]"));
+
+        // Special-cased hostname (no DNS).
+        assert!(is_loopback_bind("localhost"));
+        assert!(is_loopback_bind("LOCALHOST"));
+        assert!(is_loopback_bind("LocalHost"));
+
+        // Unspecified addresses are not loopback for auth policy.
+        assert!(!is_loopback_bind("0.0.0.0"));
+        assert!(!is_loopback_bind("::"));
+        assert!(!is_loopback_bind("[::]"));
+
+        // LAN / public / hostnames are not loopback.
+        assert!(!is_loopback_bind("192.168.1.10"));
+        assert!(!is_loopback_bind("loadgen.example.com"));
+        assert!(!is_loopback_bind(""));
+    }
+
+    #[test]
+    fn test_validate_dashboard_config() {
+        // Disabled dashboard: always ok.
+        let mut config = GooseConfiguration::default();
+        assert!(config.validate_dashboard_config().is_ok());
+
+        // Loopback without token: ok.
+        config.dashboard = true;
+        config.dashboard_host = "127.0.0.1".to_string();
+        config.dashboard_auth_token = String::new();
+        assert!(config.validate_dashboard_config().is_ok());
+
+        config.dashboard_host = "localhost".to_string();
+        assert!(config.validate_dashboard_config().is_ok());
+
+        config.dashboard_host = "::1".to_string();
+        assert!(config.validate_dashboard_config().is_ok());
+
+        config.dashboard_host = "[::1]".to_string();
+        assert!(config.validate_dashboard_config().is_ok());
+
+        // Empty host treated as default loopback: ok without token.
+        config.dashboard_host = String::new();
+        assert!(config.validate_dashboard_config().is_ok());
+
+        // Non-loopback without token: hard error.
+        config.dashboard_host = "0.0.0.0".to_string();
+        assert!(config.validate_dashboard_config().is_err());
+
+        config.dashboard_host = "192.168.1.10".to_string();
+        assert!(config.validate_dashboard_config().is_err());
+
+        config.dashboard_host = "loadgen.example.com".to_string();
+        assert!(config.validate_dashboard_config().is_err());
+
+        // Non-loopback with token: ok.
+        config.dashboard_auth_token = "s3cret".to_string();
+        assert!(config.validate_dashboard_config().is_ok());
+
+        // Token configured on loopback is also fine (enforced at runtime later).
+        config.dashboard_host = "127.0.0.1".to_string();
+        assert!(config.validate_dashboard_config().is_ok());
     }
 }
