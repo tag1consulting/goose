@@ -2513,9 +2513,21 @@ impl GooseConfiguration {
     ///
     /// When the dashboard is enabled and bound to a non-loopback address, an auth
     /// token is required. Loopback binds may omit the token (local trust model).
+    ///
+    /// If `--dashboard` is set but the crate was built without the `dashboard`
+    /// feature, returns a compile-time feature error.
     pub(crate) fn validate_dashboard_config(&self) -> Result<(), GooseError> {
         if !self.dashboard {
             return Ok(());
+        }
+
+        // Feature requires the HTTP server feature (DTO/builder always compile).
+        if !cfg!(feature = "dashboard") {
+            return Err(GooseError::FeatureNotEnabled {
+                feature: "dashboard".to_string(),
+                detail: "dashboard support not compiled in (rebuild with `--features dashboard`)"
+                    .to_string(),
+            });
         }
 
         // Effective host for validation (mirrors configure defaults).

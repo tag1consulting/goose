@@ -18,7 +18,7 @@ pub(crate) const MAX_ERROR_ROWS: usize = 50;
 /// Default trailing series window length in seconds (5 minutes).
 ///
 /// Consumed by the dashboard HTTP server when issuing GetDashboardSnapshot.
-#[allow(dead_code)]
+#[cfg_attr(not(feature = "dashboard"), allow(dead_code))]
 pub(crate) const SERIES_WINDOW_SECS: u32 = 300;
 
 /// Wire format versioned so UI and server can evolve independently.

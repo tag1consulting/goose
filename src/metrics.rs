@@ -190,8 +190,8 @@ pub(crate) enum MetricsCommand {
     /// Same drain + atomic sync path as [`MetricsCommand::GetMetrics`]. Phase and
     /// `active_users` are supplied by the main loop (processor does not own them).
     ///
-    /// Constructed by the dashboard HTTP server (PR 3+); unit-tested here.
-    #[allow(dead_code)]
+    /// Constructed by the dashboard HTTP server; unit-tested here.
+    #[cfg_attr(not(feature = "dashboard"), allow(dead_code))]
     GetDashboardSnapshot {
         /// Same path Controllers use: main loop calls `update_duration()` first,
         /// then passes `self.metrics.duration` (processor overwrites snapshot field).

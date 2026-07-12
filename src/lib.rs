@@ -42,6 +42,8 @@ extern crate log;
 pub mod client;
 pub mod config;
 pub mod controller;
+#[cfg(feature = "dashboard")]
+mod dashboard;
 pub mod goose;
 mod graph;
 pub mod logger;
@@ -371,6 +373,9 @@ struct GooseAttackRunState {
     parent_to_throttle_tx: Option<flume::Sender<bool>>,
     /// Optional channel allowing controller thread to make requests, if not disabled.
     controller_channel_rx: Option<flume::Receiver<ControllerRequest>>,
+    /// Optional channel allowing the dashboard HTTP task to request snapshots.
+    #[cfg(feature = "dashboard")]
+    dashboard_channel_rx: Option<flume::Receiver<dashboard::DashboardRequest>>,
     /// A flag tracking whether or not the header has been written when the metrics
     /// log is enabled.
     metrics_header_displayed: bool,
@@ -1368,6 +1373,71 @@ impl GooseAttack {
         Some(controller_request_rx)
     }
 
+    /// Optionally spawn the read-only dashboard HTTP server.
+    ///
+    /// Mirrors [`setup_controllers`]: returns the parent end of a flume channel
+    /// the dashboard task uses to request snapshots. Only compiled when the
+    /// `dashboard` feature is enabled.
+    #[cfg(feature = "dashboard")]
+    async fn setup_dashboard(&mut self) -> Option<flume::Receiver<dashboard::DashboardRequest>> {
+        dashboard::setup_dashboard(&self.configuration).await
+    }
+
+    /// Handle dashboard snapshot requests from the HTTP server task.
+    ///
+    /// Same pattern as Controllers: a single `try_recv` per main-loop iteration,
+    /// then `update_duration()` and `MetricsCommand::GetDashboardSnapshot`.
+    #[cfg(feature = "dashboard")]
+    async fn handle_dashboard_requests(
+        &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+    ) -> Result<(), GooseError> {
+        if let Some(rx) = goose_attack_run_state.dashboard_channel_rx.as_ref() {
+            match rx.try_recv() {
+                Ok(dashboard::DashboardRequest::GetSnapshot { respond }) => {
+                    self.update_duration();
+                    let (respond_tx, respond_rx) = tokio::sync::oneshot::channel();
+                    let phase = match self.attack_phase {
+                        AttackPhase::Idle => "idle",
+                        AttackPhase::Increase => "increase",
+                        AttackPhase::Maintain => "maintain",
+                        AttackPhase::Decrease => "decrease",
+                        AttackPhase::Shutdown => "shutdown",
+                    }
+                    .to_string();
+                    let sent = goose_attack_run_state.metrics_cmd_tx.send(
+                        MetricsCommand::GetDashboardSnapshot {
+                            duration: self.metrics.duration,
+                            total_users: self.metrics.total_users,
+                            maximum_users: self.metrics.maximum_users,
+                            active_users: goose_attack_run_state.active_users,
+                            phase,
+                            series_window_secs: metrics::dashboard_snapshot::SERIES_WINDOW_SECS,
+                            respond: respond_tx,
+                        },
+                    );
+                    if sent.is_ok() {
+                        if let Ok(snapshot) = respond_rx.await {
+                            if respond.send(snapshot).is_err() {
+                                debug!("[dashboard]: snapshot requester disconnected");
+                            }
+                        } else {
+                            warn!("[dashboard]: metrics processor failed to build snapshot");
+                        }
+                    } else {
+                        warn!("[dashboard]: metrics processor unavailable");
+                    }
+                }
+                Err(flume::TryRecvError::Empty) => {}
+                Err(flume::TryRecvError::Disconnected) => {
+                    // Dashboard task exited; stop polling.
+                    goose_attack_run_state.dashboard_channel_rx = None;
+                }
+            }
+        }
+        Ok(())
+    }
+
     // Invoke `test_start` transactions if existing.
     async fn run_test_start(&self) -> Result<(), GooseError> {
         // First run global test_start_transaction, if defined.
@@ -1431,6 +1501,10 @@ impl GooseAttack {
         // Optionally spawn a telnet and/or Websocket Controller thread.
         let controller_channel_rx = self.setup_controllers().await;
 
+        // Optionally spawn the read-only live dashboard HTTP server.
+        #[cfg(feature = "dashboard")]
+        let dashboard_channel_rx = self.setup_dashboard().await;
+
         // Grab now() once from the standard library, used by multiple timers in
         // the run state.
         let std_now = std::time::Instant::now();
@@ -1474,6 +1548,8 @@ impl GooseAttack {
             throttle_threads_tx: None,
             parent_to_throttle_tx: None,
             controller_channel_rx,
+            #[cfg(feature = "dashboard")]
+            dashboard_channel_rx,
             metrics_header_displayed: false,
             idle_status_displayed: false,
             users: Vec::new(),
@@ -2113,6 +2189,11 @@ impl GooseAttack {
 
             // Check if a Controller has made a request.
             self.handle_controller_requests(&mut goose_attack_run_state)
+                .await?;
+
+            // Check if the dashboard has requested a snapshot.
+            #[cfg(feature = "dashboard")]
+            self.handle_dashboard_requests(&mut goose_attack_run_state)
                 .await?;
 
             let mut message = goose_attack_run_state.shutdown_rx.try_recv();

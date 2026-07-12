@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Goose Dashboard</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header>
+    <h1>Goose Dashboard</h1>
+    <p class="subtitle">Read-only live metrics</p>
+    <p id="status" class="status">Loading…</p>
+  </header>
+
+  <section id="summary" class="card">
+    <h2>Summary</h2>
+    <div id="summary-body" class="grid">—</div>
+  </section>
+
+  <section id="aggregate" class="card">
+    <h2>Aggregate</h2>
+    <div id="aggregate-body" class="grid">—</div>
+  </section>
+
+  <section id="requests" class="card">
+    <h2>Requests</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Method</th>
+            <th>Name</th>
+            <th>#reqs</th>
+            <th>#fails</th>
+            <th>req/s</th>
+            <th>avg ms</th>
+            <th>p50</th>
+            <th>p95</th>
+            <th>p99</th>
+          </tr>
+        </thead>
+        <tbody id="requests-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="errors" class="card">
+    <h2>Errors</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Method</th>
+            <th>Name</th>
+            <th>Error</th>
+            <th>Occurrences</th>
+          </tr>
+        </thead>
+        <tbody id="errors-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    <p>Control this test via telnet :5116 or WebSocket :5117. This dashboard is read-only.</p>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
