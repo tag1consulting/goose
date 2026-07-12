@@ -215,6 +215,118 @@ body {
   color: var(--muted);
 }
 
+/* Control panel */
+.control-panel.hidden {
+  display: none;
+}
+
+.control-panel.disabled {
+  opacity: 0.65;
+}
+
+.control-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.65rem;
+  margin-bottom: 0.65rem;
+}
+
+.control-users-row {
+  margin-bottom: 0.35rem;
+}
+
+.control-active {
+  color: var(--muted);
+  font-size: 0.9rem;
+  margin-right: 0.35rem;
+}
+
+.control-active strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.control-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.control-label input {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.3rem 0.45rem;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  width: 5.5rem;
+}
+
+#ctrl-step {
+  width: 4rem;
+}
+
+.ctrl-btn {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.35rem 0.75rem;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ctrl-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.ctrl-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.ctrl-btn.ctrl-start:not(:disabled) {
+  border-color: color-mix(in srgb, var(--ok) 55%, var(--border));
+  color: var(--ok);
+}
+
+.ctrl-btn.ctrl-stop:not(:disabled) {
+  border-color: color-mix(in srgb, var(--err) 55%, var(--border));
+  color: var(--err);
+}
+
+.ctrl-step-btn {
+  min-width: 2.25rem;
+  padding-left: 0.55rem;
+  padding-right: 0.55rem;
+}
+
+.control-status {
+  margin: 0.35rem 0 0;
+  min-height: 1.25rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.control-status.ok {
+  color: var(--ok);
+}
+
+.control-status.error {
+  color: var(--err);
+}
+
+.control-status.info {
+  color: var(--muted);
+}
+
 /* KPIs */
 .kpi-row {
   display: grid;

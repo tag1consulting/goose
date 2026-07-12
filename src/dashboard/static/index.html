@@ -10,7 +10,7 @@
   <header class="top-bar">
     <div class="brand">
       <h1>Goose</h1>
-      <span class="subtitle">Live dashboard · read-only</span>
+      <span id="subtitle" class="subtitle">Live dashboard</span>
     </div>
     <div class="header-meta">
       <span id="phase-badge" class="phase-badge phase-idle">idle</span>
@@ -24,6 +24,31 @@
   </header>
 
   <section id="banner" class="banner hidden" role="status"></section>
+
+  <section id="control-panel" class="card control-panel hidden" aria-label="Load test control">
+    <h2>Control</h2>
+    <div class="control-row">
+      <button type="button" id="ctrl-start" class="ctrl-btn ctrl-start">Start</button>
+      <button type="button" id="ctrl-stop" class="ctrl-btn ctrl-stop">Stop</button>
+    </div>
+    <div class="control-row control-users-row">
+      <span class="control-active" title="Active users from latest snapshot">
+        Active: <strong id="ctrl-active">—</strong>
+      </span>
+      <label class="control-label" for="ctrl-target">
+        Target
+        <input id="ctrl-target" type="number" min="1" step="1" inputmode="numeric" autocomplete="off">
+      </label>
+      <button type="button" id="ctrl-apply" class="ctrl-btn">Apply</button>
+      <button type="button" id="ctrl-minus" class="ctrl-btn ctrl-step-btn" title="Decrease target by step">−</button>
+      <button type="button" id="ctrl-plus" class="ctrl-btn ctrl-step-btn" title="Increase target by step">+</button>
+      <label class="control-label" for="ctrl-step">
+        step
+        <input id="ctrl-step" type="number" min="1" step="1" value="10" inputmode="numeric" autocomplete="off">
+      </label>
+    </div>
+    <p id="ctrl-status" class="control-status" role="status"></p>
+  </section>
 
   <section id="kpis" class="kpi-row">
     <div class="kpi card">
@@ -119,7 +144,7 @@
   </section>
 
   <footer>
-    <p>Control this test via telnet :5116 or WebSocket :5117. This dashboard is read-only.</p>
+    <p id="footer-note">Control this test via telnet :5116 or WebSocket :5117. This dashboard is read-only.</p>
   </footer>
 
   <script src="/static/chart.min.js"></script>

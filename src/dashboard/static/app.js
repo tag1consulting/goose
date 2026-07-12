@@ -34,6 +34,18 @@
   var kpiFail = document.getElementById("kpi-fail");
   var kpiP95 = document.getElementById("kpi-p95");
   var kpiAvg = document.getElementById("kpi-avg");
+  var subtitleEl = document.getElementById("subtitle");
+  var footerNoteEl = document.getElementById("footer-note");
+  var controlPanel = document.getElementById("control-panel");
+  var ctrlStart = document.getElementById("ctrl-start");
+  var ctrlStop = document.getElementById("ctrl-stop");
+  var ctrlActive = document.getElementById("ctrl-active");
+  var ctrlTarget = document.getElementById("ctrl-target");
+  var ctrlApply = document.getElementById("ctrl-apply");
+  var ctrlMinus = document.getElementById("ctrl-minus");
+  var ctrlPlus = document.getElementById("ctrl-plus");
+  var ctrlStep = document.getElementById("ctrl-step");
+  var ctrlStatus = document.getElementById("ctrl-status");
 
   var pollTimer = null;
   var eventSource = null;
@@ -41,6 +53,17 @@
   var authRequired = false;
   var authBlocked = false;
   var finished = false;
+
+  // Control panel state (normative lastTarget/dirty algorithm)
+  var controlEnabled = false;
+  var lastTarget = null;
+  var dirty = false;
+  var step = 10;
+  var inFlight = false;
+  var lastSnap = null;
+  var lastDisplayTarget = null;
+  var currentPhase = "idle";
+  var controlTokenMissing = false;
 
   // Table state
   var requestRows = [];
@@ -97,8 +120,300 @@
       shutdown: true,
     };
     var cls = known[p] ? p : "idle";
+    currentPhase = cls;
     phaseBadge.className = "phase-badge phase-" + cls;
     phaseBadge.textContent = p;
+  }
+
+  function setControlStatus(text, kind) {
+    if (!ctrlStatus) return;
+    ctrlStatus.textContent = text || "";
+    ctrlStatus.className = "control-status" + (kind ? " " + kind : "");
+  }
+
+  function displayTargetFromSnap(snap) {
+    if (lastTarget != null) return lastTarget;
+    if (!snap) return null;
+    if (typeof snap.maximum_users === "number" && isFinite(snap.maximum_users)) {
+      return snap.maximum_users;
+    }
+    if (typeof snap.active_users === "number" && isFinite(snap.active_users)) {
+      return snap.active_users;
+    }
+    return null;
+  }
+
+  function readStep() {
+    var n = parseInt(ctrlStep && ctrlStep.value, 10);
+    if (!isFinite(n) || n < 1) n = 10;
+    step = n;
+    return step;
+  }
+
+  function updateControlEnablement() {
+    if (!controlPanel || !controlEnabled) return;
+
+    var hasToken = !!token;
+    var phase = currentPhase || "idle";
+    var canStart = hasToken && !inFlight && phase === "idle";
+    var canStop =
+      hasToken && !inFlight && (phase === "increase" || phase === "maintain");
+    var canUsers =
+      hasToken &&
+      !inFlight &&
+      (phase === "idle" ||
+        phase === "increase" ||
+        phase === "maintain" ||
+        phase === "decrease");
+
+    if (ctrlStart) ctrlStart.disabled = !canStart;
+    if (ctrlStop) ctrlStop.disabled = !canStop;
+    if (ctrlApply) ctrlApply.disabled = !canUsers;
+    if (ctrlMinus) ctrlMinus.disabled = !canUsers;
+    if (ctrlPlus) ctrlPlus.disabled = !canUsers;
+    if (ctrlTarget) ctrlTarget.disabled = !hasToken || inFlight;
+    if (ctrlStep) ctrlStep.disabled = !hasToken || inFlight;
+
+    if (!hasToken) {
+      controlPanel.classList.add("disabled");
+    } else {
+      controlPanel.classList.remove("disabled");
+    }
+  }
+
+  function updateControlFromSnapshot(snap) {
+    if (!controlEnabled || !controlPanel || !snap) return;
+    lastSnap = snap;
+
+    if (ctrlActive) {
+      ctrlActive.textContent =
+        typeof snap.active_users === "number"
+          ? formatInt(snap.active_users)
+          : "—";
+    }
+
+    if (!dirty && ctrlTarget) {
+      var dt = displayTargetFromSnap(snap);
+      if (dt != null) {
+        ctrlTarget.value = String(dt);
+        lastDisplayTarget = dt;
+      }
+    }
+
+    updateControlEnablement();
+  }
+
+  // Control POSTs: Bearer only — never append ?token= (do not use withToken).
+  function postControl(path, body) {
+    var headers = { "Content-Type": "application/json" };
+    if (token) {
+      headers["Authorization"] = "Bearer " + token;
+    }
+    return fetch(path, {
+      method: "POST",
+      headers: headers,
+      body: body === undefined ? "{}" : JSON.stringify(body),
+    });
+  }
+
+  function handleControlResponse(res, appliedUsers) {
+    if (res.status === 401) {
+      setBanner(
+        "Open this dashboard as http://host:port/?token=… (token required for control).",
+        "error"
+      );
+      setControlStatus("Unauthorized — reopen with ?token=", "error");
+      return Promise.resolve(null);
+    }
+    if (res.status === 503) {
+      setControlStatus("Control unavailable — retry", "error");
+      return Promise.resolve(null);
+    }
+    return res.json().then(
+      function (data) {
+        if (!data) {
+          setControlStatus("Unexpected control response", "error");
+          return null;
+        }
+        if (data.ok) {
+          setControlStatus(data.message || "OK", "ok");
+          if (data.phase) {
+            setPhase(data.phase);
+          }
+          if (
+            typeof appliedUsers === "number" &&
+            isFinite(appliedUsers) &&
+            appliedUsers >= 1
+          ) {
+            lastTarget = appliedUsers;
+            dirty = false;
+            if (ctrlTarget) {
+              ctrlTarget.value = String(appliedUsers);
+              lastDisplayTarget = appliedUsers;
+            }
+          } else if (
+            data.target_users != null &&
+            typeof data.target_users === "number" &&
+            data.target_users >= 1
+          ) {
+            lastTarget = data.target_users;
+            dirty = false;
+            if (ctrlTarget) {
+              ctrlTarget.value = String(data.target_users);
+              lastDisplayTarget = data.target_users;
+            }
+          }
+          updateControlEnablement();
+          return data;
+        }
+        setControlStatus(data.message || "Control rejected", "error");
+        if (data.phase) {
+          setPhase(data.phase);
+        }
+        updateControlEnablement();
+        return data;
+      },
+      function () {
+        setControlStatus("HTTP " + res.status, "error");
+        return null;
+      }
+    );
+  }
+
+  function runControl(path, body, appliedUsers) {
+    if (inFlight || !token) return;
+    inFlight = true;
+    updateControlEnablement();
+    setControlStatus("Sending…", "info");
+    postControl(path, body)
+      .then(function (res) {
+        return handleControlResponse(res, appliedUsers);
+      })
+      .catch(function (err) {
+        setControlStatus("Request failed: " + err, "error");
+      })
+      .then(function () {
+        inFlight = false;
+        updateControlEnablement();
+      });
+  }
+
+  function onStartClick() {
+    runControl("/api/v1/control/start");
+  }
+
+  function onStopClick() {
+    runControl("/api/v1/control/stop");
+  }
+
+  function onApplyClick() {
+    var n = parseInt(ctrlTarget && ctrlTarget.value, 10);
+    if (!isFinite(n) || n < 1) {
+      setControlStatus("Target must be an integer ≥ 1", "error");
+      return;
+    }
+    runControl("/api/v1/control/users", { users: n }, n);
+  }
+
+  function onStepClick(delta) {
+    readStep();
+    var base;
+    if (dirty) {
+      base = parseInt(ctrlTarget && ctrlTarget.value, 10);
+    } else {
+      base = displayTargetFromSnap(lastSnap);
+    }
+    if (!isFinite(base)) {
+      base =
+        lastSnap && typeof lastSnap.active_users === "number"
+          ? lastSnap.active_users
+          : 1;
+    }
+    var next = Math.max(1, base + delta * step);
+    if (ctrlTarget) ctrlTarget.value = String(next);
+    dirty = true;
+    runControl("/api/v1/control/users", { users: next }, next);
+  }
+
+  function applyControlChrome() {
+    if (subtitleEl) {
+      subtitleEl.textContent = controlEnabled
+        ? "Live dashboard · control"
+        : "Live dashboard";
+    }
+    if (footerNoteEl) {
+      footerNoteEl.textContent = controlEnabled
+        ? "Start, stop, and adjust users from this panel (authenticated). Stop begins a cancel ramp (decrease) before idle. Advanced control remains on Controllers."
+        : "Control this test via telnet :5116 or WebSocket :5117. This dashboard is read-only.";
+    }
+  }
+
+  function initControlPanel() {
+    if (!controlPanel) return;
+
+    fetch("/api/v1/health")
+      .then(function (res) {
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        return res.json();
+      })
+      .then(function (health) {
+        controlEnabled = !!(health && health.control_enabled);
+        applyControlChrome();
+        if (!controlEnabled) {
+          controlPanel.classList.add("hidden");
+          return;
+        }
+        controlPanel.classList.remove("hidden");
+        if (!token) {
+          controlTokenMissing = true;
+          setBanner(
+            "Open this dashboard as http://host:port/?token=… (token required for control).",
+            "error"
+          );
+        }
+        updateControlEnablement();
+      })
+      .catch(function () {
+        // Health probe failed — leave panel hidden (observe-only fallback).
+        controlEnabled = false;
+        applyControlChrome();
+        controlPanel.classList.add("hidden");
+      });
+
+    if (ctrlStart) ctrlStart.addEventListener("click", onStartClick);
+    if (ctrlStop) ctrlStop.addEventListener("click", onStopClick);
+    if (ctrlApply) ctrlApply.addEventListener("click", onApplyClick);
+    if (ctrlMinus)
+      ctrlMinus.addEventListener("click", function () {
+        onStepClick(-1);
+      });
+    if (ctrlPlus)
+      ctrlPlus.addEventListener("click", function () {
+        onStepClick(1);
+      });
+    if (ctrlStep) {
+      ctrlStep.addEventListener("change", readStep);
+      ctrlStep.addEventListener("input", readStep);
+    }
+    if (ctrlTarget) {
+      ctrlTarget.addEventListener("focus", function () {
+        dirty = true;
+      });
+      ctrlTarget.addEventListener("input", function () {
+        dirty = true;
+      });
+      ctrlTarget.addEventListener("blur", function () {
+        if (!dirty) return;
+        var n = parseInt(ctrlTarget.value, 10);
+        if (
+          lastDisplayTarget != null &&
+          isFinite(n) &&
+          n === lastDisplayTarget
+        ) {
+          dirty = false;
+        }
+      });
+    }
   }
 
   function textCell(value) {
@@ -548,8 +863,10 @@
     renderRequestTable(flags);
     renderErrorTable();
     updateCharts(snap.series);
+    updateControlFromSnapshot(snap);
 
     // Prefer metrics/auth banners; chart-load warning is sticky only when no other banner.
+    // Keep the control-token-missing banner sticky while control is on without a token.
     if (flags.metrics_disabled) {
       setBanner(
         "Metrics are disabled (--no-metrics). The dashboard shell is live, but request/series data is empty.",
@@ -560,6 +877,11 @@
       if (flags.requests_truncated) parts.push("request rows truncated");
       if (flags.errors_truncated) parts.push("error rows truncated");
       setBanner(parts.join("; ") + " (showing top rows only).", "info");
+    } else if (controlTokenMissing) {
+      setBanner(
+        "Open this dashboard as http://host:port/?token=… (token required for control).",
+        "error"
+      );
     } else if (authRequired) {
       // Clear previous auth banner once we have data.
       setBanner("");
@@ -777,5 +1099,6 @@
   }
 
   ensureCharts();
+  initControlPanel();
   startSse();
 })();
