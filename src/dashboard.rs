@@ -2183,4 +2183,177 @@ mod tests {
 
         parent.abort();
     }
+
+    /// Parent that drops control oneshots (simulates main-loop disconnect mid-command).
+    fn spawn_control_drop_parent(
+        request_rx: flume::Receiver<DashboardRequest>,
+    ) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            while let Ok(msg) = request_rx.recv_async().await {
+                match msg {
+                    DashboardRequest::GetSnapshot { respond } => {
+                        let _ = respond.send(dummy_snapshot(0));
+                    }
+                    DashboardRequest::Start { respond }
+                    | DashboardRequest::Stop { respond }
+                    | DashboardRequest::SetUsers { respond, .. } => {
+                        drop(respond);
+                    }
+                }
+            }
+        })
+    }
+
+    /// Parent that answers control with `error: "internal"` (hard-error mapping).
+    fn spawn_control_internal_parent(
+        request_rx: flume::Receiver<DashboardRequest>,
+    ) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            while let Ok(msg) = request_rx.recv_async().await {
+                match msg {
+                    DashboardRequest::GetSnapshot { respond } => {
+                        let _ = respond.send(dummy_snapshot(0));
+                    }
+                    DashboardRequest::Start { respond } => {
+                        let _ = respond.send(ControlResult::internal("start", "idle", 0));
+                    }
+                    DashboardRequest::Stop { respond } => {
+                        let _ = respond.send(ControlResult::internal("stop", "maintain", 1));
+                    }
+                    DashboardRequest::SetUsers { respond, .. } => {
+                        let _ = respond.send(ControlResult::internal("users", "maintain", 1));
+                    }
+                }
+            }
+        })
+    }
+
+    /// Parent that never completes control oneshots (exercises CONTROL_TIMEOUT → 503).
+    fn spawn_control_silent_parent(
+        request_rx: flume::Receiver<DashboardRequest>,
+    ) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            while let Ok(msg) = request_rx.recv_async().await {
+                match msg {
+                    DashboardRequest::GetSnapshot { respond } => {
+                        let _ = respond.send(dummy_snapshot(0));
+                    }
+                    // Hold oneshots until task abort / channel drop — do not reply.
+                    DashboardRequest::Start { respond }
+                    | DashboardRequest::Stop { respond }
+                    | DashboardRequest::SetUsers { respond, .. } => {
+                        // Keep the oneshot Sender alive so the client hits CONTROL_TIMEOUT
+                        // rather than an immediate oneshot-drop 503.
+                        let _hold = respond;
+                        futures::future::pending::<()>().await;
+                        drop(_hold);
+                    }
+                }
+            }
+        })
+    }
+
+    /// Case 10: channel disconnect / oneshot drop → 503 `unavailable`;
+    /// parent `internal` → 200 `error=internal`; oneshot timeout → 503.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn control_oneshot_error_paths() {
+        let client = reqwest::Client::new();
+
+        // --- disconnect: no parent consuming request_rx ---
+        {
+            let (setup, base) = bind_dashboard_with("s3cret", 0, true).await;
+            drop(setup.close_tx);
+            drop(setup.request_rx);
+            let resp = client
+                .post(format!("{base}/api/v1/control/start"))
+                .header(header::AUTHORIZATION, "Bearer s3cret")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body("{}")
+                .send()
+                .await
+                .expect("post");
+            assert_eq!(resp.status(), 503, "disconnected channel must 503");
+            let body: serde_json::Value = resp.json().await.expect("json");
+            assert_eq!(body["ok"], false);
+            assert_eq!(body["error"], "unavailable");
+            assert_eq!(body["command"], "start");
+        }
+
+        // --- oneshot drop: parent receives then drops respond ---
+        {
+            let (setup, base) = bind_dashboard_with("s3cret", 0, true).await;
+            let parent = spawn_control_drop_parent(setup.request_rx);
+            drop(setup.close_tx);
+            let resp = client
+                .post(format!("{base}/api/v1/control/stop"))
+                .header(header::AUTHORIZATION, "Bearer s3cret")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body("{}")
+                .send()
+                .await
+                .expect("post");
+            assert_eq!(resp.status(), 503, "oneshot drop must 503");
+            let body: serde_json::Value = resp.json().await.expect("json");
+            assert_eq!(body["ok"], false);
+            assert_eq!(body["error"], "unavailable");
+            assert_eq!(body["command"], "stop");
+            parent.abort();
+        }
+
+        // --- internal soft mapping: 200 + error=internal ---
+        {
+            let (setup, base) = bind_dashboard_with("s3cret", 0, true).await;
+            let parent = spawn_control_internal_parent(setup.request_rx);
+            drop(setup.close_tx);
+            let resp = client
+                .post(format!("{base}/api/v1/control/users"))
+                .header(header::AUTHORIZATION, "Bearer s3cret")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(r#"{"users":5}"#)
+                .send()
+                .await
+                .expect("post");
+            assert_eq!(resp.status(), 200, "internal maps to HTTP 200");
+            let body: serde_json::Value = resp.json().await.expect("json");
+            assert_eq!(body["ok"], false);
+            assert_eq!(body["error"], "internal");
+            assert_eq!(body["command"], "users");
+            assert_eq!(body["message"], "internal control error");
+            parent.abort();
+        }
+
+        // --- oneshot timeout: parent never replies → 503 after CONTROL_TIMEOUT ---
+        {
+            let (setup, base) = bind_dashboard_with("s3cret", 0, true).await;
+            let parent = spawn_control_silent_parent(setup.request_rx);
+            drop(setup.close_tx);
+            let started = Instant::now();
+            let resp = client
+                .post(format!("{base}/api/v1/control/start"))
+                .header(header::AUTHORIZATION, "Bearer s3cret")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body("{}")
+                .send()
+                .await
+                .expect("post");
+            let elapsed = started.elapsed();
+            assert_eq!(resp.status(), 503, "timeout must 503");
+            let body: serde_json::Value = resp.json().await.expect("json");
+            assert_eq!(body["ok"], false);
+            assert_eq!(body["error"], "unavailable");
+            assert_eq!(body["command"], "start");
+            // CONTROL_TIMEOUT is 5s; allow a little slack for scheduling.
+            assert!(
+                elapsed >= Duration::from_secs(4),
+                "expected ~5s timeout, got {:?}",
+                elapsed
+            );
+            assert!(
+                elapsed < Duration::from_secs(15),
+                "timeout should not hang forever, got {:?}",
+                elapsed
+            );
+            parent.abort();
+        }
+    }
 }

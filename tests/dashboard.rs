@@ -3,11 +3,10 @@
 //! Requires the `dashboard` crate feature (default-on). Does **not** require
 //! `--report-file` — GraphData collection is gated on `--dashboard` alone.
 //!
-//! Control HTTP cases (design Testing § integration 1–10) live here and use
-//! `#[serial]` + httpmock. Oneshot/error paths (case 10: 503 `unavailable` on
-//! channel disconnect / oneshot drop / 5s timeout, and `internal` soft mapping)
-//! are covered by unit tests and `dispatch_control` in `src/dashboard.rs`; no
-//! extra integration case is required.
+//! Control HTTP cases (design Testing § integration 1–9) live here and use
+//! `#[serial]` + httpmock. Case 10 (oneshot disconnect / drop / timeout → 503
+//! `unavailable`, and parent `internal` → 200) is covered by the unit test
+//! `control_oneshot_error_paths` in `src/dashboard.rs`.
 
 #![cfg(feature = "dashboard")]
 
@@ -326,9 +325,48 @@ async fn wait_until_startable(
 }
 
 /// Abort a no-autostart GooseAttack that would otherwise idle forever.
+///
+/// Prefer [`LoadTestGuard`] in tests so panics still abort the task.
 async fn abort_load_test(handle: tokio::task::JoinHandle<Result<GooseMetrics, GooseError>>) {
     handle.abort();
     let _ = handle.await;
+}
+
+/// RAII guard: aborts the load-test task on drop (including panic paths).
+///
+/// Tokio detaches `JoinHandle` on drop without aborting; with `run_time=0` /
+/// `--no-autostart` that can leave a dashboard bound until process exit.
+struct LoadTestGuard {
+    handle: Option<tokio::task::JoinHandle<Result<GooseMetrics, GooseError>>>,
+}
+
+impl LoadTestGuard {
+    fn new(handle: tokio::task::JoinHandle<Result<GooseMetrics, GooseError>>) -> Self {
+        Self {
+            handle: Some(handle),
+        }
+    }
+
+    /// Abort and await the task (happy-path cleanup).
+    async fn abort(mut self) {
+        if let Some(handle) = self.handle.take() {
+            abort_load_test(handle).await;
+        }
+    }
+
+    /// Wait for natural completion (observe-only short run_time tests).
+    async fn join(mut self) -> Result<GooseMetrics, GooseError> {
+        let handle = self.handle.take().expect("load test handle");
+        handle.await.expect("join load test")
+    }
+}
+
+impl Drop for LoadTestGuard {
+    fn drop(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            handle.abort();
+        }
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -626,7 +664,7 @@ async fn test_control_disabled_returns_404() {
     assert!(!configuration.dashboard_control);
 
     let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
-    let load_handle = tokio::spawn(async move { goose_attack.execute().await });
+    let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
 
     let (base, health) = wait_for_health(&[&base_v4], 80).await;
     let health_json: serde_json::Value = health.json().await.expect("health json");
@@ -641,7 +679,7 @@ async fn test_control_disabled_returns_404() {
         resp.status()
     );
 
-    let _ = load_handle.await.expect("join").expect("execute");
+    let _ = load.join().await.expect("execute");
 }
 
 /// Case 2: control always requires token on loopback.
@@ -659,7 +697,7 @@ async fn test_control_requires_token_on_loopback() {
     assert!(configuration.no_autostart);
 
     let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
-    let load_handle = tokio::spawn(async move { goose_attack.execute().await });
+    let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
 
     let (base, health) = wait_for_health(&[&base_v4], 80).await;
     let health_json: serde_json::Value = health.json().await.expect("health json");
@@ -679,7 +717,7 @@ async fn test_control_requires_token_on_loopback() {
     assert_eq!(body["command"], "start");
     assert_eq!(body["phase"], "increase");
 
-    abort_load_test(load_handle).await;
+    load.abort().await;
 }
 
 /// Case 3: start → running traffic → stop decrease → idle; second start while not idle fails.
@@ -691,19 +729,22 @@ async fn test_control_start_stop() {
     let port = reserve_port();
     let base_v4 = format!("http://127.0.0.1:{port}");
 
+    // Many users so the cancel ramp is wide enough to hard-assert Start rejection
+    // while still decreasing (cancel plan is (active, elapsed)→(0, 0) but one user
+    // exits per main-loop iteration).
     let configuration = build_control_config(
         &server,
         "127.0.0.1",
         port,
         ControlTestOpts {
-            users: 3,
-            increase_rate: "50",
+            users: 20,
+            increase_rate: "100",
             ..ControlTestOpts::default()
         },
     );
 
     let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
-    let load_handle = tokio::spawn(async move { goose_attack.execute().await });
+    let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
 
     let (base, _) = wait_for_health(&[&base_v4], 80).await;
     let client = reqwest::Client::new();
@@ -719,7 +760,7 @@ async fn test_control_start_stop() {
     assert_eq!(start_body["ok"], true);
     assert_eq!(start_body["phase"], "increase");
 
-    // Running: increase or maintain, with mock traffic.
+    // Running: increase or maintain, with mock traffic and enough users hatched.
     wait_for_phase(
         &client,
         &base,
@@ -728,6 +769,7 @@ async fn test_control_start_stop() {
         Duration::from_secs(30),
     )
     .await;
+    wait_for_active_users(&client, &base, token, 10, Duration::from_secs(30)).await;
 
     let deadline = Instant::now() + Duration::from_secs(30);
     while Instant::now() < deadline {
@@ -746,34 +788,57 @@ async fn test_control_start_stop() {
     assert_eq!(second_body["ok"], false);
     assert_eq!(second_body["error"], "invalid_phase");
 
-    let stop = post_control(&client, &base, "/api/v1/control/stop", Some("{}"), true).await;
+    // Pipeline Stop then Start into the shared flume while Maintain sleeps
+    // (~500 ms). One try_recv per main-loop iteration ⇒ Stop is handled first
+    // (phase→decrease), then Start is dequeued on the next iteration still in
+    // decrease. Cancel uses a 0 ms ramp, so awaiting Stop fully before Start
+    // often races past Idle before the second request is processed.
+    let stop_client = client.clone();
+    let start_client = client.clone();
+    let stop_base = base.clone();
+    let start_base = base.clone();
+    let (stop, during_stop) = tokio::join!(
+        post_control(
+            &stop_client,
+            &stop_base,
+            "/api/v1/control/stop",
+            Some("{}"),
+            true
+        ),
+        async {
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            post_control(
+                &start_client,
+                &start_base,
+                "/api/v1/control/start",
+                Some("{}"),
+                true,
+            )
+            .await
+        }
+    );
     assert_eq!(stop.status(), 200);
     let stop_body: serde_json::Value = stop.json().await.expect("stop json");
     assert_eq!(stop_body["ok"], true);
     assert_eq!(stop_body["phase"], "decrease");
     assert_eq!(stop_body["target_users"], 0);
 
-    // Stop begins cancel (decrease), not idle: Start must still be rejected.
-    let during_stop = post_control(&client, &base, "/api/v1/control/start", Some("{}"), true).await;
     assert_eq!(during_stop.status(), 200);
     let during_body: serde_json::Value = during_stop.json().await.expect("start json");
-    // Either still decreasing, or already idle if cancel was instant — if idle,
-    // ok would be true and wait_until_startable below is a no-op start attempt.
-    if during_body["ok"] == false {
-        assert_eq!(during_body["error"], "invalid_phase");
-    }
+    assert_eq!(
+        during_body["ok"], false,
+        "Start must fail while decreasing, got {}",
+        during_body
+    );
+    assert_eq!(during_body["error"], "invalid_phase");
 
     // Eventual idle after cancel ramp: metrics processor is recycled on the way
     // to idle, so snapshot may 503; detect idle by Start acceptance instead.
-    let restart_body = if during_body["ok"] == true {
-        during_body
-    } else {
-        wait_until_startable(&client, &base, Duration::from_secs(60)).await
-    };
+    let restart_body = wait_until_startable(&client, &base, Duration::from_secs(60)).await;
     assert_eq!(restart_body["ok"], true);
     assert_eq!(restart_body["phase"], "increase");
 
-    abort_load_test(load_handle).await;
+    load.abort().await;
 }
 
 /// Case 4: while running, POST higher users with pinned high increase-rate.
@@ -797,7 +862,7 @@ async fn test_control_set_users() {
     );
 
     let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
-    let load_handle = tokio::spawn(async move { goose_attack.execute().await });
+    let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
 
     let (base, _) = wait_for_health(&[&base_v4], 80).await;
     let client = reqwest::Client::new();
@@ -832,7 +897,7 @@ async fn test_control_set_users() {
         snap
     );
 
-    abort_load_test(load_handle).await;
+    load.abort().await;
 }
 
 /// Case 5: second start while running → ok:false invalid_phase.
@@ -847,7 +912,7 @@ async fn test_control_start_when_running_fails() {
     let configuration =
         build_control_config(&server, "127.0.0.1", port, ControlTestOpts::default());
     let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
-    let load_handle = tokio::spawn(async move { goose_attack.execute().await });
+    let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
 
     let (base, _) = wait_for_health(&[&base_v4], 80).await;
     let client = reqwest::Client::new();
@@ -874,7 +939,7 @@ async fn test_control_start_when_running_fails() {
     assert_eq!(body["error"], "invalid_phase");
     assert_eq!(body["command"], "start");
 
-    abort_load_test(load_handle).await;
+    load.abort().await;
 }
 
 /// Case 6: users validation — 0 / missing / non-integer → 400.
@@ -889,7 +954,7 @@ async fn test_control_users_validation() {
     let configuration =
         build_control_config(&server, "127.0.0.1", port, ControlTestOpts::default());
     let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
-    let load_handle = tokio::spawn(async move { goose_attack.execute().await });
+    let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
 
     let (base, _) = wait_for_health(&[&base_v4], 80).await;
     let client = reqwest::Client::new();
@@ -941,7 +1006,7 @@ async fn test_control_users_validation() {
     let bad_body: serde_json::Value = bad.json().await.expect("json");
     assert_eq!(bad_body["error"], "bad_request");
 
-    abort_load_test(load_handle).await;
+    load.abort().await;
 }
 
 /// Case 7: second stop while decreasing → ok:false invalid_phase.
@@ -966,7 +1031,7 @@ async fn test_control_stop_while_decreasing() {
     );
 
     let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
-    let load_handle = tokio::spawn(async move { goose_attack.execute().await });
+    let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
 
     let (base, _) = wait_for_health(&[&base_v4], 80).await;
     let client = reqwest::Client::new();
@@ -978,21 +1043,49 @@ async fn test_control_stop_while_decreasing() {
 
     wait_for_active_users(&client, &base, token, 10, Duration::from_secs(30)).await;
 
-    let stop = post_control(&client, &base, "/api/v1/control/stop", Some("{}"), true).await;
+    // Pipeline two Stops into the flume during Maintain sleep so the second is
+    // dequeued while phase is still decrease (see test_control_start_stop).
+    let stop1_client = client.clone();
+    let stop2_client = client.clone();
+    let stop1_base = base.clone();
+    let stop2_base = base.clone();
+    let (stop, stop2) = tokio::join!(
+        post_control(
+            &stop1_client,
+            &stop1_base,
+            "/api/v1/control/stop",
+            Some("{}"),
+            true
+        ),
+        async {
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            post_control(
+                &stop2_client,
+                &stop2_base,
+                "/api/v1/control/stop",
+                Some("{}"),
+                true,
+            )
+            .await
+        }
+    );
     assert_eq!(stop.status(), 200);
     let stop_body: serde_json::Value = stop.json().await.expect("json");
     assert_eq!(stop_body["ok"], true);
     assert_eq!(stop_body["phase"], "decrease");
 
-    // Immediate second stop — still not Increase/Maintain.
-    let stop2 = post_control(&client, &base, "/api/v1/control/stop", Some("{}"), true).await;
     assert_eq!(stop2.status(), 200);
     let stop2_body: serde_json::Value = stop2.json().await.expect("json");
     assert_eq!(stop2_body["ok"], false);
     assert_eq!(stop2_body["error"], "invalid_phase");
     assert_eq!(stop2_body["command"], "stop");
+    assert_eq!(
+        stop2_body["phase"], "decrease",
+        "second stop must still report decrease phase, got {}",
+        stop2_body
+    );
 
-    abort_load_test(load_handle).await;
+    load.abort().await;
 }
 
 /// Case 8: Users during decrease succeeds (Controller parity).
@@ -1016,7 +1109,7 @@ async fn test_control_users_while_decreasing() {
     );
 
     let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
-    let load_handle = tokio::spawn(async move { goose_attack.execute().await });
+    let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
 
     let (base, _) = wait_for_health(&[&base_v4], 80).await;
     let client = reqwest::Client::new();
@@ -1028,20 +1121,35 @@ async fn test_control_users_while_decreasing() {
 
     wait_for_active_users(&client, &base, token, 10, Duration::from_secs(30)).await;
 
-    let stop = post_control(&client, &base, "/api/v1/control/stop", Some("{}"), true).await;
+    // Pipeline Stop then Users so Users is handled while still decreasing.
+    let stop_client = client.clone();
+    let users_client = client.clone();
+    let stop_base = base.clone();
+    let users_base = base.clone();
+    let (stop, users) = tokio::join!(
+        post_control(
+            &stop_client,
+            &stop_base,
+            "/api/v1/control/stop",
+            Some("{}"),
+            true
+        ),
+        async {
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            post_control(
+                &users_client,
+                &users_base,
+                "/api/v1/control/users",
+                Some(r#"{"users":5}"#),
+                true,
+            )
+            .await
+        }
+    );
     let stop_body: serde_json::Value = stop.json().await.expect("json");
     assert_eq!(stop_body["ok"], true);
     assert_eq!(stop_body["phase"], "decrease");
 
-    // Users is allowed during Decrease.
-    let users = post_control(
-        &client,
-        &base,
-        "/api/v1/control/users",
-        Some(r#"{"users":5}"#),
-        true,
-    )
-    .await;
     assert_eq!(users.status(), 200);
     let users_body: serde_json::Value = users.json().await.expect("json");
     assert_eq!(
@@ -1052,7 +1160,7 @@ async fn test_control_users_while_decreasing() {
     assert_eq!(users_body["command"], "users");
     assert_eq!(users_body["target_users"], 5);
 
-    abort_load_test(load_handle).await;
+    load.abort().await;
 }
 
 /// Case 9: open SSE, then Start; control still completes (shared flume FIFO).
@@ -1067,7 +1175,7 @@ async fn test_control_with_active_sse() {
     let configuration =
         build_control_config(&server, "127.0.0.1", port, ControlTestOpts::default());
     let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
-    let load_handle = tokio::spawn(async move { goose_attack.execute().await });
+    let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
 
     let (base, _) = wait_for_health(&[&base_v4], 80).await;
     let client = reqwest::Client::new();
@@ -1119,5 +1227,5 @@ async fn test_control_with_active_sse() {
 
     // Drop SSE and shut down.
     drop(sse);
-    abort_load_test(load_handle).await;
+    load.abort().await;
 }
