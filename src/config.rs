@@ -213,6 +213,9 @@ pub struct GooseConfiguration {
     /// Sets dashboard auth token (required if host is not loopback)
     #[options(no_short, meta = "TOKEN")]
     pub dashboard_auth_token: String,
+    /// Sets max concurrent dashboard SSE clients (default: 32)
+    #[options(no_short, meta = "COUNT")]
+    pub dashboard_max_clients: u32,
     /// Doesn't automatically start load test
     #[options(no_short)]
     pub no_autostart: bool,
@@ -386,6 +389,8 @@ pub(crate) struct GooseDefaults {
     pub dashboard_port: Option<u16>,
     /// An optional default for the dashboard auth token.
     pub dashboard_auth_token: Option<String>,
+    /// An optional default for max concurrent dashboard SSE clients.
+    pub dashboard_max_clients: Option<u32>,
     /// An optional default for not validating https certificates.
     pub accept_invalid_certs: Option<bool>,
     /// An optional default for PDF generation timeout (seconds).
@@ -505,6 +510,8 @@ pub enum GooseDefault {
     DashboardPort,
     /// An optional default for the dashboard auth token.
     DashboardAuthToken,
+    /// An optional default for max concurrent dashboard SSE clients.
+    DashboardMaxClients,
     /// An optional default for not validating https certificates.
     AcceptInvalidCerts,
     /// An optional default for PDF generation timeout (seconds).
@@ -576,6 +583,7 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::TelnetPort`]
 ///  - [`GooseDefault::WebSocketPort`]
 ///  - [`GooseDefault::DashboardPort`]
+///  - [`GooseDefault::DashboardMaxClients`]
 ///
 /// The following run-time flags can be configured with a custom default using a
 /// [`bool`] (and otherwise default to [`false`]).
@@ -677,7 +685,8 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::ThrottleRequests
             | GooseDefault::TelnetPort
             | GooseDefault::WebSocketPort
-            | GooseDefault::DashboardPort => {
+            | GooseDefault::DashboardPort
+            | GooseDefault::DashboardMaxClients => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: value.to_string(),
@@ -765,6 +774,9 @@ impl GooseDefaultType<usize> for GooseAttack {
             GooseDefault::TelnetPort => self.defaults.telnet_port = Some(value as u16),
             GooseDefault::WebSocketPort => self.defaults.websocket_port = Some(value as u16),
             GooseDefault::DashboardPort => self.defaults.dashboard_port = Some(value as u16),
+            GooseDefault::DashboardMaxClients => {
+                self.defaults.dashboard_max_clients = Some(value as u32)
+            }
             #[cfg(feature = "pdf-reports")]
             GooseDefault::PdfTimeout => {
                 self.defaults.pdf_timeout = Some(value as u64)
@@ -911,7 +923,8 @@ impl GooseDefaultType<bool> for GooseAttack {
             | GooseDefault::ThrottleRequests
             | GooseDefault::TelnetPort
             | GooseDefault::WebSocketPort
-            | GooseDefault::DashboardPort => {
+            | GooseDefault::DashboardPort
+            | GooseDefault::DashboardMaxClients => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: format!("{value}"),
@@ -1032,7 +1045,8 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::ThrottleRequests
             | GooseDefault::TelnetPort
             | GooseDefault::WebSocketPort
-            | GooseDefault::DashboardPort => {
+            | GooseDefault::DashboardPort
+            | GooseDefault::DashboardMaxClients => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: format!("{value:?}"),
@@ -1148,7 +1162,8 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::ThrottleRequests
             | GooseDefault::TelnetPort
             | GooseDefault::WebSocketPort
-            | GooseDefault::DashboardPort => {
+            | GooseDefault::DashboardPort
+            | GooseDefault::DashboardMaxClients => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: format!("{value:?}"),
@@ -1260,6 +1275,24 @@ impl GooseConfigure<u64> for GooseConfiguration {
 impl GooseConfigure<u16> for GooseConfiguration {
     /// Use [`GooseValue`] to set a [`u16`] value.
     fn get_value(&self, values: Vec<GooseValue<u16>>) -> Option<u16> {
+        for value in values {
+            if let Some(v) = value.value {
+                if value.filter {
+                    continue;
+                } else {
+                    if !value.message.is_empty() {
+                        info!("{} = {}", value.message, v)
+                    }
+                    return Some(v);
+                }
+            }
+        }
+        None
+    }
+}
+impl GooseConfigure<u32> for GooseConfiguration {
+    /// Use [`GooseValue`] to set a [`u32`] value.
+    fn get_value(&self, values: Vec<GooseValue<u32>>) -> Option<u32> {
         for value in values {
             if let Some(v) = value.value {
                 if value.filter {
@@ -2042,6 +2075,25 @@ impl GooseConfiguration {
             ])
             .unwrap_or_default();
 
+        // Configure `dashboard_max_clients`.
+        // 0 means unset (CLI default); fill 32 when the dashboard is enabled.
+        self.dashboard_max_clients = self
+            .get_value(vec![
+                // Use --dashboard-max-clients if set.
+                GooseValue {
+                    value: Some(self.dashboard_max_clients),
+                    filter: self.dashboard_max_clients == 0,
+                    message: "dashboard_max_clients",
+                },
+                // Otherwise use GooseDefault if set.
+                GooseValue {
+                    value: defaults.dashboard_max_clients,
+                    filter: defaults.dashboard_max_clients.is_none(),
+                    message: "dashboard_max_clients",
+                },
+            ])
+            .unwrap_or(if self.dashboard { 32 } else { 0 });
+
         // Configure `no_autostart`.
         self.no_autostart = self
             .get_value(vec![
@@ -2769,6 +2821,8 @@ mod test {
             .set_default(GooseDefault::DashboardPort, 5118)
             .unwrap()
             .set_default(GooseDefault::DashboardAuthToken, "secret")
+            .unwrap()
+            .set_default(GooseDefault::DashboardMaxClients, 64)
             .unwrap();
 
         assert!(goose_attack.defaults.host == Some(host));
@@ -2811,6 +2865,7 @@ mod test {
         assert!(goose_attack.defaults.dashboard_host == Some("127.0.0.1".to_string()));
         assert!(goose_attack.defaults.dashboard_port == Some(5118));
         assert!(goose_attack.defaults.dashboard_auth_token == Some("secret".to_string()));
+        assert!(goose_attack.defaults.dashboard_max_clients == Some(64));
     }
 
     #[test]
@@ -2886,7 +2941,7 @@ mod test {
 
     #[test]
     fn test_configure_dashboard_defaults() {
-        // --dashboard only → host 127.0.0.1, port 5118, empty token.
+        // --dashboard only → host 127.0.0.1, port 5118, empty token, max clients 32.
         let mut config = GooseConfiguration {
             dashboard: true,
             ..Default::default()
@@ -2896,34 +2951,39 @@ mod test {
         assert_eq!(config.dashboard_host, "127.0.0.1");
         assert_eq!(config.dashboard_port, 5118);
         assert!(config.dashboard_auth_token.is_empty());
+        assert_eq!(config.dashboard_max_clients, 32);
         assert!(config.validate_dashboard_config().is_ok());
 
-        // Dashboard disabled → host stays empty, port stays 0.
+        // Dashboard disabled → host stays empty, port stays 0, max clients stays 0.
         let mut config = GooseConfiguration::default();
         config.configure(&GooseDefaults::default());
         assert!(!config.dashboard);
         assert!(config.dashboard_host.is_empty());
         assert_eq!(config.dashboard_port, 0);
         assert!(config.dashboard_auth_token.is_empty());
+        assert_eq!(config.dashboard_max_clients, 0);
 
-        // CLI host/port override GooseDefault.
+        // CLI host/port/max-clients override GooseDefault.
         let mut config = GooseConfiguration {
             dashboard: true,
             dashboard_host: "192.168.1.10".to_string(),
             dashboard_port: 9999,
             dashboard_auth_token: "cli-token".to_string(),
+            dashboard_max_clients: 8,
             ..Default::default()
         };
         let defaults = GooseDefaults {
             dashboard_host: Some("10.0.0.1".to_string()),
             dashboard_port: Some(4000),
             dashboard_auth_token: Some("default-token".to_string()),
+            dashboard_max_clients: Some(64),
             ..GooseDefaults::default()
         };
         config.configure(&defaults);
         assert_eq!(config.dashboard_host, "192.168.1.10");
         assert_eq!(config.dashboard_port, 9999);
         assert_eq!(config.dashboard_auth_token, "cli-token");
+        assert_eq!(config.dashboard_max_clients, 8);
         assert!(config.validate_dashboard_config().is_ok());
 
         // GooseDefault enablement without CLI flag; host/port from defaults.
@@ -2938,6 +2998,7 @@ mod test {
         assert!(config.dashboard);
         assert_eq!(config.dashboard_host, "0.0.0.0");
         assert_eq!(config.dashboard_port, 6000);
+        assert_eq!(config.dashboard_max_clients, 32);
         // Non-loopback without token fails validation after configure.
         assert!(config.validate_dashboard_config().is_err());
 
@@ -2949,10 +3010,12 @@ mod test {
         };
         let defaults = GooseDefaults {
             dashboard_auth_token: Some("from-default".to_string()),
+            dashboard_max_clients: Some(16),
             ..GooseDefaults::default()
         };
         config.configure(&defaults);
         assert_eq!(config.dashboard_auth_token, "from-default");
+        assert_eq!(config.dashboard_max_clients, 16);
         assert!(config.validate_dashboard_config().is_ok());
     }
 }

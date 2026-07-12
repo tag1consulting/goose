@@ -29,8 +29,9 @@ http://127.0.0.1:5118/
 | `--dashboard-host HOST` | `127.0.0.1` | Bind address |
 | `--dashboard-port PORT` | `5118` | Bind port |
 | `--dashboard-auth-token TOKEN` | empty | Shared secret for metric APIs (required when host is not loopback) |
+| `--dashboard-max-clients COUNT` | `32` | Max concurrent SSE clients (`GET /api/v1/events`); further clients receive HTTP 503 |
 
-Defaults can also be set programmatically with `GooseDefault::Dashboard`, `GooseDefault::DashboardHost`, `GooseDefault::DashboardPort`, and `GooseDefault::DashboardAuthToken`.
+Defaults can also be set programmatically with `GooseDefault::Dashboard`, `GooseDefault::DashboardHost`, `GooseDefault::DashboardPort`, `GooseDefault::DashboardAuthToken`, and `GooseDefault::DashboardMaxClients`.
 
 > **Feature flag:** the HTTP server is compiled behind the `dashboard` crate feature (enabled by default). Builds with `--no-default-features` (and without `--features dashboard`) reject `--dashboard` at startup.
 
@@ -54,7 +55,7 @@ If a token **is** configured, it is enforced on metric APIs even on loopback.
 |------|----------------------------|
 | `GET /` (SPA shell) | **Public** |
 | `GET /static/*` | **Public** |
-| `GET /api/v1/health` | **Public** (liveness only; no metrics) |
+| `GET /api/v1/health` | **Public** (liveness + ops counters; no load-test metrics) |
 | `GET /api/v1/snapshot` | **Required** |
 | `GET /api/v1/events` (SSE) | **Required** |
 
@@ -114,13 +115,27 @@ TLS termination is not provided by Goose; use an SSH tunnel or reverse proxy whe
 
 ## Health endpoint exception
 
-`GET /api/v1/health` is intentionally **unauthenticated** so external monitors can check that the dashboard process is up without holding the metrics secret. The response is only:
+`GET /api/v1/health` is intentionally **unauthenticated** so external monitors can check that the dashboard process is up without holding the metrics secret. Example response:
 
 ```json
-{"ok": true, "version": "<goose package version>"}
+{
+  "ok": true,
+  "version": "<goose package version>",
+  "last_build_ms": 2,
+  "build_count": 42,
+  "active_sse_clients": 1
+}
 ```
 
-The `version` field is Goose’s crate package version (`CARGO_PKG_VERSION`). The response does **not** include rates, hosts under test, request names, or error strings.
+| Field | Meaning |
+|-------|---------|
+| `ok` | Always `true` when the handler runs |
+| `version` | Goose crate package version (`CARGO_PKG_VERSION`) |
+| `last_build_ms` | Wall-clock duration of the last successful snapshot build in milliseconds (`0` if none yet) |
+| `build_count` | Successful hub snapshot builds since process start |
+| `active_sse_clients` | Concurrent SSE clients currently holding a slot |
+
+These counters are ops-safe (timing and client counts only). The response does **not** include rates, hosts under test, request names, or error strings. Snapshot build duration is also logged at `debug` with a `[dashboard]` prefix when a build completes.
 
 ## What the UI shows
 
@@ -140,7 +155,7 @@ Enabling `--dashboard` turns on the same per-second **GraphData** series collect
 - Memory scales with unique request names × run length (same class of cost as generating HTML graphs).
 - Snapshot tables truncate to the top rows (`flags.requests_truncated` / `flags.errors_truncated` when capped); series charts use a fixed trailing window (default 5 minutes).
 
-With zero connected clients the dashboard issues **no** snapshot builds (no extra metrics-processor work beyond GraphData recording). When clients are connected, snapshots are coalesced to about **1 Hz** for all viewers (hard cap: 32 concurrent SSE clients; further clients receive HTTP 503).
+With zero connected clients the dashboard issues **no** snapshot builds (no extra metrics-processor work beyond GraphData recording). When clients are connected, snapshots are coalesced to about **1 Hz** for all viewers. Concurrent SSE clients are capped (default **32**, tunable with `--dashboard-max-clients`); further clients receive HTTP 503.
 
 For extreme runs with tens of thousands of unique request names, expect higher GraphData memory (same as `--report-file`). Disable the dashboard if you need absolute minimal overhead, just as you can disable Controllers with `--no-telnet --no-websocket`.
 

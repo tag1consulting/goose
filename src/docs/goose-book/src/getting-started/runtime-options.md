@@ -70,6 +70,8 @@ Advanced:
   --dashboard-port PORT       Sets dashboard bind port (default: 5118)
   --dashboard-auth-token TOKEN
                               Sets dashboard auth token (required if host is not loopback)
+  --dashboard-max-clients COUNT
+                              Sets max concurrent dashboard SSE clients (default: 32)
   --no-autostart              Doesn't automatically start load test
   --no-gzip                   Doesn't set the gzip Accept-Encoding header
   --timeout VALUE             Sets per-request timeout, in seconds (default: 60)

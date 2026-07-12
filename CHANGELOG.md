@@ -8,6 +8,8 @@
     o token auth on metric APIs when configured (`--dashboard-auth-token`); required for non-loopback binds; browser bootstrap via `?token=`
     o public shell/static/health; Content-Security-Policy without inline scripts
     o enables GraphData series collection (same memory class as `--report-file`); documented in Goose Book “Live Dashboard”
+    o tunable SSE client cap via `--dashboard-max-clients` / `GooseDefault::DashboardMaxClients` (default 32)
+    o `/api/v1/health` exposes ops counters `last_build_ms`, `build_count`, and `active_sse_clients` (no load-test metrics)
  - [#468](https://github.com/tag1consulting/goose/issues/468) replace `--hatch-rate` and `--startup-time` with `--increase-rate`, `--increase-time`, `--decrease-rate`, and `--decrease-time`
     o **breaking**: `--hatch-rate` / `-r` is now `--increase-rate` / `-r` (sets per-second rate users are added)
     o **breaking**: `--startup-time` / `-s` is now `--increase-time` / `-s` (sets total time to launch all users)

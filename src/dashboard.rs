@@ -31,7 +31,7 @@ use serde::Serialize;
 use std::convert::Infallible;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::{oneshot, watch, Notify};
 use tower_http::set_header::SetResponseHeaderLayer;
 
@@ -46,7 +46,9 @@ const CHART_JS: &str = include_str!("dashboard/static/chart.min.js");
 const CSP: &str =
     "default-src 'self'; script-src 'self'; connect-src 'self'; style-src 'self'; img-src 'self' data:";
 
-/// Hard cap on concurrent SSE clients (v1). The 33rd connection receives 503.
+/// Default hard cap on concurrent SSE clients. Overridable via
+/// `--dashboard-max-clients` / [`crate::config::GooseDefault::DashboardMaxClients`].
+/// Additional `GET /api/v1/events` connections receive 503.
 const MAX_SSE_CLIENTS: usize = 32;
 
 /// Server-side snapshot cadence while clients are active.
@@ -102,9 +104,13 @@ struct HubInner {
     latest_tx: watch::Sender<Option<Bytes>>,
     /// Concurrent SSE subscribers.
     active_sse: AtomicUsize,
+    /// Configured concurrent SSE client cap (default [`MAX_SSE_CLIENTS`]).
+    max_sse_clients: usize,
     /// Unix-ms of the most recent `/api/v1/snapshot` poll mark (0 = never).
     last_poll_ms: AtomicU64,
-    /// Unix-ms of the most recent successful build (0 = never).
+    /// Unix-ms of the most recent successful build (0 = never). Used for freshness.
+    last_build_at_ms: AtomicU64,
+    /// Wall-clock duration of the most recent successful build, in milliseconds.
     last_build_ms: AtomicU64,
     /// Successful hub builds (shared with [`DashboardSetup::build_count`]).
     build_count: Arc<AtomicU64>,
@@ -119,8 +125,13 @@ impl std::fmt::Debug for HubInner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("HubInner")
             .field("active_sse", &self.active_sse.load(Ordering::Relaxed))
+            .field("max_sse_clients", &self.max_sse_clients)
             .field("build_count", &self.build_count.load(Ordering::Relaxed))
             .field("last_poll_ms", &self.last_poll_ms.load(Ordering::Relaxed))
+            .field(
+                "last_build_at_ms",
+                &self.last_build_at_ms.load(Ordering::Relaxed),
+            )
             .field("last_build_ms", &self.last_build_ms.load(Ordering::Relaxed))
             .finish()
     }
@@ -131,13 +142,21 @@ impl SnapshotHub {
         request_tx: flume::Sender<DashboardRequest>,
         build_count: Arc<AtomicU64>,
         shutdown_tx: watch::Sender<bool>,
+        max_sse_clients: usize,
     ) -> Self {
+        let max_sse_clients = if max_sse_clients == 0 {
+            MAX_SSE_CLIENTS
+        } else {
+            max_sse_clients
+        };
         let (latest_tx, _) = watch::channel(None);
         let inner = Arc::new(HubInner {
             request_tx,
             latest_tx,
             active_sse: AtomicUsize::new(0),
+            max_sse_clients,
             last_poll_ms: AtomicU64::new(0),
+            last_build_at_ms: AtomicU64::new(0),
             last_build_ms: AtomicU64::new(0),
             build_count,
             wake: Notify::new(),
@@ -157,15 +176,16 @@ impl SnapshotHub {
         self.inner.wake.notify_one();
     }
 
-    /// Reserve an SSE client slot. Returns `false` when at [`MAX_SSE_CLIENTS`].
+    /// Reserve an SSE client slot. Returns `false` when at the configured cap.
     fn try_acquire_sse(&self) -> bool {
         // Do not consume a slot when the hub is already permanently closed.
         if *self.inner.shutdown_tx.borrow() {
             return false;
         }
+        let cap = self.inner.max_sse_clients;
         let mut current = self.inner.active_sse.load(Ordering::Relaxed);
         loop {
-            if current >= MAX_SSE_CLIENTS {
+            if current >= cap {
                 return false;
             }
             match self.inner.active_sse.compare_exchange_weak(
@@ -194,6 +214,19 @@ impl SnapshotHub {
 
     fn is_closed(&self) -> bool {
         *self.inner.shutdown_tx.borrow()
+    }
+
+    fn active_sse_clients(&self) -> usize {
+        self.inner.active_sse.load(Ordering::Relaxed)
+    }
+
+    fn build_count(&self) -> u64 {
+        self.inner.build_count.load(Ordering::Relaxed)
+    }
+
+    /// Duration of the last successful snapshot build in milliseconds (0 if none).
+    fn last_build_ms(&self) -> u64 {
+        self.inner.last_build_ms.load(Ordering::Relaxed)
     }
 
     fn subscribe_latest(&self) -> watch::Receiver<Option<Bytes>> {
@@ -263,7 +296,7 @@ impl SnapshotHub {
     /// Cached snapshot if one was built within [`SNAPSHOT_INTERVAL`].
     fn fresh_latest(&self) -> Option<Bytes> {
         let bytes = self.inner.latest_tx.borrow().clone()?;
-        let built_at = self.inner.last_build_ms.load(Ordering::Relaxed);
+        let built_at = self.inner.last_build_at_ms.load(Ordering::Relaxed);
         if built_at == 0 {
             return None;
         }
@@ -382,6 +415,7 @@ async fn build_once(inner: &HubInner) -> BuildOutcome {
         return BuildOutcome::Fatal;
     }
 
+    let started = Instant::now();
     let (respond_tx, respond_rx) = oneshot::channel();
     if inner
         .request_tx
@@ -407,8 +441,16 @@ async fn build_once(inner: &HubInner) -> BuildOutcome {
             // Publish first, then advance generation counters so waiters that
             // observe `build_count` never read a stale watch value.
             let _ = inner.latest_tx.send(Some(Bytes::from(json)));
-            inner.last_build_ms.store(unix_now_ms(), Ordering::Release);
-            inner.build_count.fetch_add(1, Ordering::Release);
+            let elapsed_ms = started.elapsed().as_millis() as u64;
+            inner.last_build_at_ms.store(unix_now_ms(), Ordering::Release);
+            inner.last_build_ms.store(elapsed_ms, Ordering::Release);
+            let count = inner.build_count.fetch_add(1, Ordering::Release) + 1;
+            debug!(
+                "[dashboard]: snapshot build {} took {}ms (active_sse={})",
+                count,
+                elapsed_ms,
+                inner.active_sse.load(Ordering::Relaxed)
+            );
             BuildOutcome::Built
         }
         Err(e) => {
@@ -433,10 +475,21 @@ struct TokenQuery {
     token: Option<String>,
 }
 
+/// Liveness plus lightweight operational counters (no load-test metrics).
+///
+/// `last_build_ms` is the wall-clock duration of the last successful hub build,
+/// not a Unix timestamp. Fields are always present so external monitors can
+/// scrape them without auth; they do not leak request names, hosts, or rates.
 #[derive(Debug, Serialize)]
 struct HealthResponse {
     ok: bool,
     version: String,
+    /// Duration of the last successful snapshot build in milliseconds (0 if none).
+    last_build_ms: u64,
+    /// Total successful hub snapshot builds since process start.
+    build_count: u64,
+    /// Concurrent SSE clients currently holding a slot.
+    active_sse_clients: usize,
 }
 
 /// Format `host:port` for [`TcpListener::bind`], bracketing bare IPv6 literals.
@@ -492,7 +545,18 @@ pub(crate) async fn setup_dashboard(
     let (request_tx, request_rx) = flume::unbounded();
     let build_count = Arc::new(AtomicU64::new(0));
     let (close_tx, _) = watch::channel(false);
-    let hub = SnapshotHub::new(request_tx, Arc::clone(&build_count), close_tx.clone());
+    // 0 means unset (direct setup without configure); fall back to default cap.
+    let max_sse_clients = if configuration.dashboard_max_clients == 0 {
+        MAX_SSE_CLIENTS
+    } else {
+        configuration.dashboard_max_clients as usize
+    };
+    let hub = SnapshotHub::new(
+        request_tx,
+        Arc::clone(&build_count),
+        close_tx.clone(),
+        max_sse_clients,
+    );
     let state = DashboardState {
         hub,
         auth_token: configuration.dashboard_auth_token.clone(),
@@ -560,10 +624,13 @@ fn static_response(content_type: &'static str, body: &'static str) -> Response<B
     ([(header::CONTENT_TYPE, content_type)], Body::from(body)).into_response()
 }
 
-async fn health_handler() -> impl IntoResponse {
+async fn health_handler(State(state): State<Arc<DashboardState>>) -> impl IntoResponse {
     Json(HealthResponse {
         ok: true,
         version: env!("CARGO_PKG_VERSION").to_string(),
+        last_build_ms: state.hub.last_build_ms(),
+        build_count: state.hub.build_count(),
+        active_sse_clients: state.hub.active_sse_clients(),
     })
 }
 
@@ -828,11 +895,16 @@ mod tests {
     }
 
     async fn bind_dashboard(token: &str) -> (DashboardSetup, String) {
+        bind_dashboard_with(token, 0).await
+    }
+
+    async fn bind_dashboard_with(token: &str, max_clients: u32) -> (DashboardSetup, String) {
         let config = GooseConfiguration {
             dashboard: true,
             dashboard_host: "127.0.0.1".to_string(),
             dashboard_port: 0,
             dashboard_auth_token: token.to_string(),
+            dashboard_max_clients: max_clients,
             ..Default::default()
         };
         let setup = setup_dashboard(&config)
@@ -861,7 +933,19 @@ mod tests {
         tokio::task::JoinHandle<()>,
         String,
     ) {
-        let (setup, base) = bind_dashboard(token).await;
+        setup_with_mock_max(token, 0).await
+    }
+
+    async fn setup_with_mock_max(
+        token: &str,
+        max_clients: u32,
+    ) -> (
+        Arc<AtomicU64>,
+        Arc<AtomicU64>,
+        tokio::task::JoinHandle<()>,
+        String,
+    ) {
+        let (setup, base) = bind_dashboard_with(token, max_clients).await;
         let hub_builds = Arc::clone(&setup.build_count);
         let parent_builds = Arc::new(AtomicU64::new(0));
         let parent = spawn_mock_parent(setup.request_rx, Arc::clone(&parent_builds));
@@ -1138,6 +1222,111 @@ mod tests {
         );
 
         drop(held);
+        parent.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn sse_client_cap_respects_dashboard_max_clients() {
+        let cap = 2u32;
+        let (_hub_builds, _parent_builds, parent, base) = setup_with_mock_max("", cap).await;
+        let client = reqwest::Client::new();
+
+        let mut held = Vec::with_capacity(cap as usize);
+        for i in 0..cap {
+            let resp = client
+                .get(format!("{base}/api/v1/events"))
+                .send()
+                .await
+                .unwrap_or_else(|e| panic!("client {} connect failed: {}", i, e));
+            assert_eq!(resp.status(), 200, "client {} should be accepted", i);
+            held.push(resp);
+        }
+
+        let overflow = client
+            .get(format!("{base}/api/v1/events"))
+            .send()
+            .await
+            .expect("overflow connect");
+        assert_eq!(
+            overflow.status(),
+            503,
+            "client beyond --dashboard-max-clients must receive 503"
+        );
+
+        // Health should report the active SSE count at the configured cap.
+        let health = client
+            .get(format!("{base}/api/v1/health"))
+            .send()
+            .await
+            .expect("health");
+        assert_eq!(health.status(), 200);
+        let health_json: serde_json::Value = health.json().await.expect("health json");
+        assert_eq!(health_json["ok"], true);
+        assert_eq!(health_json["active_sse_clients"], cap);
+
+        drop(held);
+        parent.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn health_exposes_build_timing_and_client_counts() {
+        let (hub_builds, _parent_builds, parent, base) = setup_with_mock("").await;
+        let client = reqwest::Client::new();
+
+        // Before any demand: counters are zero.
+        let idle = client
+            .get(format!("{base}/api/v1/health"))
+            .send()
+            .await
+            .expect("health idle");
+        assert_eq!(idle.status(), 200);
+        let idle_json: serde_json::Value = idle.json().await.expect("json");
+        assert_eq!(idle_json["ok"], true);
+        assert!(!idle_json["version"].as_str().unwrap().is_empty());
+        assert_eq!(idle_json["build_count"], 0);
+        assert_eq!(idle_json["last_build_ms"], 0);
+        assert_eq!(idle_json["active_sse_clients"], 0);
+
+        // Trigger a snapshot build via one-shot poll.
+        let snap = client
+            .get(format!("{base}/api/v1/snapshot"))
+            .send()
+            .await
+            .expect("snapshot");
+        assert_eq!(snap.status(), 200);
+
+        // Wait until the hub has recorded at least one build.
+        for _ in 0..50 {
+            if hub_builds.load(Ordering::SeqCst) >= 1 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(
+            hub_builds.load(Ordering::SeqCst) >= 1,
+            "expected at least one hub build after snapshot poll"
+        );
+
+        let after = client
+            .get(format!("{base}/api/v1/health"))
+            .send()
+            .await
+            .expect("health after");
+        let after_json: serde_json::Value = after.json().await.expect("json");
+        assert!(
+            after_json["build_count"].as_u64().unwrap() >= 1,
+            "build_count should advance after a snapshot, got {}",
+            after_json["build_count"]
+        );
+        // last_build_ms is a duration; 0 is possible on a very fast mock parent,
+        // but the field must be present and numeric.
+        assert!(
+            after_json["last_build_ms"].as_u64().is_some(),
+            "last_build_ms must be a number, got {}",
+            after_json["last_build_ms"]
+        );
+        assert_eq!(after_json["active_sse_clients"], 0);
+
         parent.abort();
     }
 
