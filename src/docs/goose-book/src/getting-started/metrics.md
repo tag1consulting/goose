@@ -529,5 +529,9 @@ Goose doesn't currently have built-in support for custom metrics aggregation, so
 
 **Note:** Reading complete response bodies will consume more memory and may reduce the load generation capacity of your test.
 
+### Live dashboard
+
+For **live** metrics while a load test is running (RPS, users, latency charts, request/error tables), enable the optional [Live Dashboard](../controller/dashboard.md) with `--dashboard`. It is read-only; use Controllers to control the test. Enabling the dashboard records the same per-second GraphData series used for HTML report graphs.
+
 ### Developer documentation
 Additional details about how metrics are collected, stored, and displayed can be found [in the developer documentation](https://docs.rs/goose/*/goose/metrics/index.html).

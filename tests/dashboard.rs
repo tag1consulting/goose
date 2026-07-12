@@ -136,8 +136,12 @@ async fn test_dashboard_loopback_no_token() {
     let index = client.get(format!("{base}/")).send().await.expect("GET /");
     assert_eq!(index.status(), 200);
     let index_body = index.text().await.unwrap();
-    assert!(index_body.contains("Goose Dashboard"));
+    assert!(index_body.contains("Goose"));
     assert!(index_body.contains("/static/app.js"));
+    assert!(
+        index_body.contains("/static/chart.min.js"),
+        "UI must load vendored Chart.js"
+    );
 
     let app_js = client
         .get(format!("{base}/static/app.js"))
@@ -155,6 +159,10 @@ async fn test_dashboard_loopback_no_token() {
         js_body.contains("/api/v1/events"),
         "UI must wire EventSource to /api/v1/events"
     );
+    assert!(
+        js_body.contains("series"),
+        "UI must render SeriesWindow charts"
+    );
 
     let app_css = client
         .get(format!("{base}/static/app.css"))
@@ -162,6 +170,18 @@ async fn test_dashboard_loopback_no_token() {
         .await
         .expect("GET /static/app.css");
     assert_eq!(app_css.status(), 200);
+
+    let chart_js = client
+        .get(format!("{base}/static/chart.min.js"))
+        .send()
+        .await
+        .expect("GET /static/chart.min.js");
+    assert_eq!(chart_js.status(), 200);
+    let chart_body = chart_js.text().await.unwrap();
+    assert!(
+        chart_body.contains("Chart"),
+        "vendored chart.min.js must expose Chart"
+    );
 
     // Snapshot without token on loopback → 200.
     let snapshot = client

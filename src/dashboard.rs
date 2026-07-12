@@ -39,6 +39,8 @@ use tower_http::set_header::SetResponseHeaderLayer;
 const INDEX_HTML: &str = include_str!("dashboard/static/index.html");
 const APP_JS: &str = include_str!("dashboard/static/app.js");
 const APP_CSS: &str = include_str!("dashboard/static/app.css");
+/// Vendored minified Chart.js (UMD) for series charts.
+const CHART_JS: &str = include_str!("dashboard/static/chart.min.js");
 
 /// Content-Security-Policy applied to every response.
 const CSP: &str =
@@ -522,6 +524,7 @@ fn build_router(state: DashboardState) -> Router {
         .route("/", get(index_handler))
         .route("/static/app.js", get(app_js_handler))
         .route("/static/app.css", get(app_css_handler))
+        .route("/static/chart.min.js", get(chart_js_handler))
         .route("/api/v1/health", get(health_handler))
         .route("/api/v1/snapshot", get(snapshot_handler))
         .route("/api/v1/events", get(events_handler))
@@ -546,6 +549,10 @@ async fn app_js_handler() -> Response<Body> {
 
 async fn app_css_handler() -> Response<Body> {
     static_response("text/css; charset=utf-8", APP_CSS)
+}
+
+async fn chart_js_handler() -> Response<Body> {
+    static_response("application/javascript; charset=utf-8", CHART_JS)
 }
 
 /// Build a static asset response without `unwrap` on the builder.

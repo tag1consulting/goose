@@ -1,6 +1,13 @@
 # Changelog
 
 ## 0.19.0-dev
+ - add opt-in read-only **live web dashboard** (`--dashboard`, default bind `127.0.0.1:5118`)
+    o streams coalesced metric snapshots over SSE (`/api/v1/events`) with poll fallback; one-shot `GET /api/v1/snapshot`
+    o trailing series charts (RPS, failures/s, active users, average latency) via vendored Chart.js
+    o phase badges, connection indicator (SSE / poll / disconnected), sortable request/error tables
+    o token auth on metric APIs when configured (`--dashboard-auth-token`); required for non-loopback binds; browser bootstrap via `?token=`
+    o public shell/static/health; Content-Security-Policy without inline scripts
+    o enables GraphData series collection (same memory class as `--report-file`); documented in Goose Book “Live Dashboard”
  - [#468](https://github.com/tag1consulting/goose/issues/468) replace `--hatch-rate` and `--startup-time` with `--increase-rate`, `--increase-time`, `--decrease-rate`, and `--decrease-time`
     o **breaking**: `--hatch-rate` / `-r` is now `--increase-rate` / `-r` (sets per-second rate users are added)
     o **breaking**: `--startup-time` / `-s` is now `--increase-time` / `-s` (sets total time to launch all users)
