@@ -10,11 +10,13 @@
 
 mod common;
 pub mod coordinated_omission;
+pub(crate) mod dashboard_snapshot;
 mod delta;
 mod nullable;
 
 pub(crate) use common::{load_baseline_file, ReportData};
 pub use coordinated_omission::{CadenceCalculator, CoMetricsSummary, CoordinatedOmissionMetrics};
+pub(crate) use dashboard_snapshot::DashboardSnapshot;
 pub(crate) use delta::{ApplyBaseline, DeltaTo, Value};
 pub(crate) use nullable::NullableFloat;
 
@@ -182,6 +184,26 @@ pub(crate) enum MetricsCommand {
         total_users: usize,
         maximum_users: usize,
         respond: tokio::sync::oneshot::Sender<(GooseMetrics, GraphData)>,
+    },
+    /// Build a compact dashboard snapshot (always compiled; used by the HTTP dashboard).
+    ///
+    /// Same drain + atomic sync path as [`MetricsCommand::GetMetrics`]. Phase and
+    /// `active_users` are supplied by the main loop (processor does not own them).
+    ///
+    /// Constructed by the dashboard HTTP server (PR 3+); unit-tested here.
+    #[allow(dead_code)]
+    GetDashboardSnapshot {
+        /// Same path Controllers use: main loop calls `update_duration()` first,
+        /// then passes `self.metrics.duration` (processor overwrites snapshot field).
+        duration: usize,
+        total_users: usize,
+        maximum_users: usize,
+        /// Live count from GooseAttackRunState.active_users — NOT on GooseMetrics.
+        active_users: usize,
+        /// String form of AttackPhase: "idle"|"increase"|"maintain"|"decrease"|"shutdown".
+        phase: String,
+        series_window_secs: u32,
+        respond: tokio::sync::oneshot::Sender<DashboardSnapshot>,
     },
 }
 
@@ -3238,6 +3260,37 @@ impl MetricsProcessor {
                 let _ = respond.send((metrics, graph_data));
                 true
             }
+            MetricsCommand::GetDashboardSnapshot {
+                duration,
+                total_users,
+                maximum_users,
+                active_users,
+                phase,
+                series_window_secs,
+                respond,
+            } => {
+                self.drain_pending();
+                self.sync_atomic_counters();
+                self.metrics.duration = duration;
+                self.metrics.total_users = total_users;
+                self.metrics.maximum_users = maximum_users;
+                let series = self.graph_data.export_series_window(series_window_secs);
+                let snapshot = dashboard_snapshot::build_dashboard_snapshot(
+                    dashboard_snapshot::DashboardSnapshotInput {
+                        metrics: &self.metrics,
+                        series,
+                        active_users,
+                        maximum_users,
+                        total_users,
+                        phase,
+                        series_window_secs,
+                        no_status_codes: self.configuration.no_status_codes,
+                        metrics_disabled: self.configuration.no_metrics,
+                    },
+                );
+                let _ = respond.send(snapshot);
+                false
+            }
         }
     }
 
@@ -3374,7 +3427,7 @@ impl MetricsProcessor {
 
             self.record_request_metric(request_metric);
 
-            if !self.configuration.report_file.is_empty() {
+            if !self.configuration.report_file.is_empty() || self.configuration.dashboard {
                 let seconds_since_start = (request_metric.elapsed / 1000) as usize;
 
                 let key = format!(
@@ -3404,7 +3457,7 @@ impl MetricsProcessor {
             [raw_transaction.transaction_index]
             .set_time(raw_transaction.run_time, raw_transaction.success);
 
-        if !self.configuration.report_file.is_empty() {
+        if !self.configuration.report_file.is_empty() || self.configuration.dashboard {
             self.graph_data
                 .record_transactions_per_second((raw_transaction.elapsed / 1000) as usize);
         }
@@ -3414,7 +3467,7 @@ impl MetricsProcessor {
     fn process_scenario_metric(&mut self, raw_scenario: &ScenarioMetric) {
         self.metrics.scenarios[raw_scenario.index].update(raw_scenario.run_time, raw_scenario.user);
 
-        if !self.configuration.report_file.is_empty() {
+        if !self.configuration.report_file.is_empty() || self.configuration.dashboard {
             self.graph_data
                 .record_scenarios_per_second((raw_scenario.elapsed / 1000) as usize);
         }
@@ -4830,5 +4883,142 @@ mod test {
         let json = serde_json::to_string(&metric).expect("serialize");
         let deserialized: GooseMetric = serde_json::from_str(&json).expect("deserialize");
         assert!(matches!(deserialized, GooseMetric::All { .. }));
+    }
+
+    /// Build a minimal MetricsProcessor for unit tests of process_* paths.
+    fn make_test_processor(configuration: GooseConfiguration) -> MetricsProcessor {
+        let (_metrics_tx, metrics_rx) = flume::unbounded();
+        let (_cmd_tx, cmd_rx) = flume::unbounded();
+        MetricsProcessor::new(
+            metrics_rx,
+            cmd_rx,
+            GooseMetrics::default(),
+            GraphData::new(),
+            configuration,
+            Vec::new(),
+            GooseDefaults::default(),
+            Arc::new(Mutex::new(HashMap::new())),
+            None,
+        )
+    }
+
+    #[test]
+    fn graph_data_recorded_when_dashboard_enabled_without_report_file() {
+        // Regression: --dashboard alone must collect GraphData series so charts
+        // are non-empty even when --report-file is not set.
+        let configuration = GooseConfiguration {
+            dashboard: true,
+            report_file: Vec::new(),
+            ..Default::default()
+        };
+        assert!(configuration.report_file.is_empty());
+
+        let mut processor = make_test_processor(configuration);
+
+        let mut request = make_test_request_metric();
+        request.elapsed = 2_500; // second 2
+        request.response_time = 42;
+        request.success = true;
+        processor.process_request_metric(&request);
+
+        let mut request2 = make_test_request_metric();
+        request2.elapsed = 3_100; // second 3
+        request2.response_time = 50;
+        request2.success = false;
+        request2.error = "boom".to_string();
+        processor.process_request_metric(&request2);
+
+        let window = processor.graph_data.export_series_window(300);
+        assert!(
+            !window.rps.is_empty(),
+            "series export must be non-empty when dashboard is on"
+        );
+        assert!(
+            window.rps.iter().any(|&v| v > 0.0),
+            "expected at least one non-zero RPS bucket, got {:?}",
+            window.rps
+        );
+        assert!(
+            window.fps.iter().any(|&v| v > 0.0),
+            "expected at least one non-zero error bucket from failed request"
+        );
+        assert!(
+            window.avg_latency_ms.iter().any(|&v| v > 0.0),
+            "expected non-zero latency samples"
+        );
+    }
+
+    #[test]
+    fn graph_data_not_recorded_when_dashboard_and_report_file_off() {
+        let configuration = GooseConfiguration {
+            dashboard: false,
+            report_file: Vec::new(),
+            ..Default::default()
+        };
+
+        let mut processor = make_test_processor(configuration);
+        let mut request = make_test_request_metric();
+        request.elapsed = 1_000;
+        request.response_time = 10;
+        processor.process_request_metric(&request);
+
+        let window = processor.graph_data.export_series_window(300);
+        assert!(
+            window.rps.is_empty(),
+            "series must stay empty when neither report_file nor dashboard is set"
+        );
+    }
+
+    #[tokio::test]
+    async fn get_dashboard_snapshot_command_builds_snapshot() {
+        let configuration = GooseConfiguration {
+            dashboard: true,
+            ..Default::default()
+        };
+
+        let mut processor = make_test_processor(configuration);
+        let mut request = make_test_request_metric();
+        request.elapsed = 1_500;
+        request.response_time = 25;
+        request.success = true;
+        processor.process_request_metric(&request);
+        // Simulate atomic success counter so aggregate totals are non-zero.
+        {
+            let key = format!("{} {}", request.raw.method_label(), request.name);
+            if let Some(agg) = processor.metrics.requests.get_mut(&key) {
+                agg.success_count = 1;
+            }
+        }
+        processor
+            .metrics
+            .hosts
+            .insert("http://localhost/".to_string());
+
+        let (respond_tx, respond_rx) = tokio::sync::oneshot::channel();
+        let shutdown = processor.handle_command(MetricsCommand::GetDashboardSnapshot {
+            duration: 10,
+            total_users: 5,
+            maximum_users: 10,
+            active_users: 3,
+            phase: "maintain".to_string(),
+            series_window_secs: dashboard_snapshot::SERIES_WINDOW_SECS,
+            respond: respond_tx,
+        });
+        assert!(!shutdown);
+
+        let snapshot = respond_rx.await.expect("snapshot response");
+        assert_eq!(snapshot.version, 1);
+        assert_eq!(snapshot.phase, "maintain");
+        assert_eq!(snapshot.duration_secs, 10);
+        assert_eq!(snapshot.active_users, 3);
+        assert_eq!(snapshot.maximum_users, 10);
+        assert_eq!(snapshot.total_users, 5);
+        assert_eq!(snapshot.aggregate.total_requests, 1);
+        assert!(!snapshot.series.rps.is_empty());
+        assert_eq!(
+            snapshot.flags.series_seconds,
+            dashboard_snapshot::SERIES_WINDOW_SECS
+        );
+        assert_eq!(snapshot.hosts, vec!["http://localhost/".to_string()]);
     }
 }

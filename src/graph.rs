@@ -5,6 +5,7 @@
 //! this data is converted into [`Graph`] structures and HTML markup is generated
 //! based on them.
 
+use crate::metrics::dashboard_snapshot::SeriesWindow;
 use crate::test_plan::{TestPlanHistory, TestPlanStepAction};
 use chrono::prelude::*;
 use itertools::Itertools;
@@ -162,6 +163,91 @@ impl GraphData {
     /// Records number of users for a current second.
     pub(crate) fn record_users_per_second(&mut self, users: usize, second: usize) {
         self.users_per_second.set_and_maintain_last(second, users);
+    }
+
+    /// Export a trailing aggregate series window for the live dashboard.
+    ///
+    /// Normative algorithm:
+    /// 1. `end_second` = max second index across RPS keys and users series
+    /// 2. `start_second` = `end_second.saturating_sub(window_secs - 1)`
+    /// 3. For each second in the inclusive window: sum RPS/errors across keys,
+    ///    take global users, and compute request-count-weighted average latency
+    /// 4. Missing seconds contribute 0
+    pub(crate) fn export_series_window(&self, window_secs: u32) -> SeriesWindow {
+        if window_secs == 0 {
+            return SeriesWindow::empty();
+        }
+
+        let mut end_second: Option<usize> = None;
+        for series in self.requests_per_second.0.values() {
+            if !series.data.is_empty() {
+                let last = series.data.len() - 1;
+                end_second = Some(end_second.map_or(last, |e| e.max(last)));
+            }
+        }
+        if !self.users_per_second.data.is_empty() {
+            let last = self.users_per_second.data.len() - 1;
+            end_second = Some(end_second.map_or(last, |e| e.max(last)));
+        }
+
+        let end_second = match end_second {
+            Some(end) => end,
+            None => return SeriesWindow::empty(),
+        };
+
+        let start_second = end_second.saturating_sub(window_secs as usize - 1);
+        let len = end_second - start_second + 1;
+        let mut rps = Vec::with_capacity(len);
+        let mut fps = Vec::with_capacity(len);
+        let mut users = Vec::with_capacity(len);
+        let mut avg_latency_ms = Vec::with_capacity(len);
+
+        for s in start_second..=end_second {
+            let mut rps_sum: u64 = 0;
+            for series in self.requests_per_second.0.values() {
+                rps_sum += series.get(s) as u64;
+            }
+            rps.push(rps_sum as f64);
+
+            let mut fps_sum: u64 = 0;
+            for series in self.errors_per_second.0.values() {
+                fps_sum += series.get(s) as u64;
+            }
+            fps.push(fps_sum as f64);
+
+            users.push(self.users_per_second.get(s) as u64);
+
+            // Request-count-weighted average of per-key MovingAverage at second s.
+            let mut weighted_sum: f64 = 0.0;
+            let mut weight: u64 = 0;
+            for (key, latency_series) in &self.average_response_time_per_second {
+                let count = self
+                    .requests_per_second
+                    .0
+                    .get(key)
+                    .map(|ts| ts.get(s) as u64)
+                    .unwrap_or(0);
+                if count == 0 {
+                    continue;
+                }
+                let avg = latency_series.get(s).average as f64;
+                weighted_sum += avg * count as f64;
+                weight += count;
+            }
+            avg_latency_ms.push(if weight > 0 {
+                weighted_sum / weight as f64
+            } else {
+                0.0
+            });
+        }
+
+        SeriesWindow {
+            start_second: start_second as u64,
+            rps,
+            fps,
+            users,
+            avg_latency_ms,
+        }
     }
 
     /// Generate active users graph.
@@ -1464,6 +1550,97 @@ mod test {
             assert_eq!(graph.users_per_second.data[second], 5);
         }
         assert_eq!(graph.users_per_second.total(), 187);
+    }
+
+    #[test]
+    fn test_export_series_window_empty() {
+        let graph = GraphData::new();
+        let window = graph.export_series_window(300);
+        assert_eq!(window, SeriesWindow::empty());
+        assert_eq!(window.start_second, 0);
+        assert!(window.rps.is_empty());
+        assert!(window.fps.is_empty());
+        assert!(window.users.is_empty());
+        assert!(window.avg_latency_ms.is_empty());
+    }
+
+    #[test]
+    fn test_export_series_window_multi_key_reduction() {
+        let mut graph = GraphData::new();
+
+        // Key A: 2 requests at second 0 (latency 10ms each), 1 request at second 2 (latency 30ms).
+        graph.record_requests_per_second("GET /a", 0);
+        graph.record_requests_per_second("GET /a", 0);
+        graph.record_average_response_time_per_second("GET /a".to_string(), 0, 10);
+        graph.record_average_response_time_per_second("GET /a".to_string(), 0, 10);
+        graph.record_requests_per_second("GET /a", 2);
+        graph.record_average_response_time_per_second("GET /a".to_string(), 2, 30);
+
+        // Key B: 3 requests at second 2 only (latency 50ms), disjoint from A's second-0 traffic.
+        graph.record_requests_per_second("GET /b", 2);
+        graph.record_requests_per_second("GET /b", 2);
+        graph.record_requests_per_second("GET /b", 2);
+        graph.record_average_response_time_per_second("GET /b".to_string(), 2, 50);
+        graph.record_average_response_time_per_second("GET /b".to_string(), 2, 50);
+        graph.record_average_response_time_per_second("GET /b".to_string(), 2, 50);
+
+        // One error on key B at second 2.
+        graph.record_errors_per_second("GET /b", 2);
+
+        graph.record_users_per_second(1, 0);
+        graph.record_users_per_second(4, 2);
+
+        let window = graph.export_series_window(300);
+        assert_eq!(window.start_second, 0);
+        assert_eq!(window.rps.len(), 3);
+        assert_eq!(window.fps.len(), 3);
+        assert_eq!(window.users.len(), 3);
+        assert_eq!(window.avg_latency_ms.len(), 3);
+
+        // Second 0: 2 RPS from A only; latency 10ms.
+        assert!((window.rps[0] - 2.0).abs() < f64::EPSILON);
+        assert!((window.fps[0] - 0.0).abs() < f64::EPSILON);
+        assert_eq!(window.users[0], 1);
+        assert!((window.avg_latency_ms[0] - 10.0).abs() < 0.001);
+
+        // Second 1: empty → 0 (gap filled by users maintain-last, but RPS/latency 0).
+        assert!((window.rps[1] - 0.0).abs() < f64::EPSILON);
+        assert!((window.fps[1] - 0.0).abs() < f64::EPSILON);
+        // users_per_second.set_and_maintain_last fills gap with last value (1).
+        assert_eq!(window.users[1], 1);
+        assert!((window.avg_latency_ms[1] - 0.0).abs() < f64::EPSILON);
+
+        // Second 2: 1 (A) + 3 (B) = 4 RPS; 1 error; weighted latency = (30*1 + 50*3)/4 = 45.
+        assert!((window.rps[2] - 4.0).abs() < f64::EPSILON);
+        assert!((window.fps[2] - 1.0).abs() < f64::EPSILON);
+        assert_eq!(window.users[2], 4);
+        assert!((window.avg_latency_ms[2] - 45.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_export_series_window_trailing_window_and_empty_seconds() {
+        let mut graph = GraphData::new();
+        // Activity only at seconds 0 and 5; window of 3 ending at 5 → seconds 3,4,5.
+        graph.record_requests_per_second("GET /", 0);
+        graph.record_requests_per_second("GET /", 5);
+        graph.record_requests_per_second("GET /", 5);
+        graph.record_average_response_time_per_second("GET /".to_string(), 0, 100);
+        graph.record_average_response_time_per_second("GET /".to_string(), 5, 20);
+        graph.record_average_response_time_per_second("GET /".to_string(), 5, 40);
+        graph.record_users_per_second(2, 0);
+        graph.record_users_per_second(8, 5);
+
+        let window = graph.export_series_window(3);
+        assert_eq!(window.start_second, 3);
+        assert_eq!(window.rps.len(), 3);
+        // Seconds 3 and 4 empty for RPS → 0.
+        assert!((window.rps[0] - 0.0).abs() < f64::EPSILON);
+        assert!((window.rps[1] - 0.0).abs() < f64::EPSILON);
+        assert!((window.rps[2] - 2.0).abs() < f64::EPSILON);
+        assert!((window.avg_latency_ms[0] - 0.0).abs() < f64::EPSILON);
+        assert!((window.avg_latency_ms[1] - 0.0).abs() < f64::EPSILON);
+        // Average of 20 and 40 = 30.
+        assert!((window.avg_latency_ms[2] - 30.0).abs() < 0.001);
     }
 
     #[test]

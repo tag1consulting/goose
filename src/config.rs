@@ -2875,8 +2875,10 @@ mod test {
     #[test]
     fn test_configure_dashboard_defaults() {
         // --dashboard only → host 127.0.0.1, port 5118, empty token.
-        let mut config = GooseConfiguration::default();
-        config.dashboard = true;
+        let mut config = GooseConfiguration {
+            dashboard: true,
+            ..Default::default()
+        };
         config.configure(&GooseDefaults::default());
         assert!(config.dashboard);
         assert_eq!(config.dashboard_host, "127.0.0.1");
@@ -2893,11 +2895,13 @@ mod test {
         assert!(config.dashboard_auth_token.is_empty());
 
         // CLI host/port override GooseDefault.
-        let mut config = GooseConfiguration::default();
-        config.dashboard = true;
-        config.dashboard_host = "192.168.1.10".to_string();
-        config.dashboard_port = 9999;
-        config.dashboard_auth_token = "cli-token".to_string();
+        let mut config = GooseConfiguration {
+            dashboard: true,
+            dashboard_host: "192.168.1.10".to_string(),
+            dashboard_port: 9999,
+            dashboard_auth_token: "cli-token".to_string(),
+            ..Default::default()
+        };
         let defaults = GooseDefaults {
             dashboard_host: Some("10.0.0.1".to_string()),
             dashboard_port: Some(4000),
@@ -2926,9 +2930,11 @@ mod test {
         assert!(config.validate_dashboard_config().is_err());
 
         // GooseDefault token fills when CLI token is empty.
-        let mut config = GooseConfiguration::default();
-        config.dashboard = true;
-        config.dashboard_host = "0.0.0.0".to_string();
+        let mut config = GooseConfiguration {
+            dashboard: true,
+            dashboard_host: "0.0.0.0".to_string(),
+            ..Default::default()
+        };
         let defaults = GooseDefaults {
             dashboard_auth_token: Some("from-default".to_string()),
             ..GooseDefaults::default()

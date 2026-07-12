@@ -146,6 +146,14 @@ impl CoordinatedOmissionMetrics {
         }
     }
 
+    /// Returns true if at least one CO event or synthetic request has been recorded.
+    ///
+    /// Used by the dashboard snapshot `co_active` flag. Mitigation being enabled
+    /// alone does **not** count as active.
+    pub fn has_events(&self) -> bool {
+        self.synthetic_requests > 0 || !self.co_events.is_empty()
+    }
+
     /// Get a summary of CO metrics for reporting.
     pub fn get_summary(&self) -> CoMetricsSummary {
         let now = SystemTime::now()
