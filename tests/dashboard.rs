@@ -18,13 +18,25 @@ mod common;
 const INDEX_PATH: &str = "/";
 const AUTH_TOKEN: &str = "test-dashboard-token";
 
-/// Pick an ephemeral free TCP port on loopback.
-fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .expect("bind ephemeral")
-        .local_addr()
-        .expect("local_addr")
-        .port()
+/// Reserve an ephemeral loopback port for the dashboard.
+///
+/// Goose's configure path treats `dashboard_port == 0` as "unset" (fills 5118),
+/// so tests cannot pass `--dashboard-port 0` through `execute()`. Instead we
+/// sample a free port here. The listener is dropped before Goose binds, which
+/// is a small TOCTOU window; tests are `#[serial]` and retry reservation to
+/// keep CI stable. Unit tests in `src/dashboard.rs` cover true ephemeral bind
+/// (port 0) via direct `setup_dashboard` without configure().
+fn reserve_port() -> u16 {
+    for _ in 0..32 {
+        if let Ok(listener) = std::net::TcpListener::bind("127.0.0.1:0") {
+            let port = listener.local_addr().expect("local_addr").port();
+            drop(listener);
+            if port > 1024 {
+                return port;
+            }
+        }
+    }
+    panic!("could not reserve an ephemeral TCP port for dashboard tests");
 }
 
 fn setup_mock_endpoints(server: &MockServer) -> Vec<Mock<'_>> {
@@ -43,10 +55,11 @@ fn get_transactions() -> Scenario {
     scenario!("DashboardLoad").register_transaction(transaction!(get_index))
 }
 
-/// Build a short-running load test with the dashboard enabled on a free port.
+/// Build a short-running load test with the dashboard enabled.
 /// Does not set `--report-file` — dashboard alone must be sufficient.
 fn build_dashboard_config(
     server: &MockServer,
+    host: &str,
     port: u16,
     token: Option<&str>,
 ) -> GooseConfiguration {
@@ -61,7 +74,7 @@ fn build_dashboard_config(
         "--no-websocket".into(),
         "--dashboard".into(),
         "--dashboard-host".into(),
-        "127.0.0.1".into(),
+        host.to_string(),
         "--dashboard-port".into(),
         port.to_string(),
         "--co-mitigation".into(),
@@ -79,18 +92,24 @@ fn build_dashboard_config(
         .expect("failed to parse dashboard test configuration")
 }
 
-async fn wait_for_health(base: &str, attempts: u32) -> reqwest::Response {
+async fn wait_for_health(bases: &[&str], attempts: u32) -> (String, reqwest::Response) {
     let client = reqwest::Client::new();
-    let url = format!("{base}/api/v1/health");
     for i in 0..attempts {
-        match client.get(&url).send().await {
-            Ok(resp) if resp.status().is_success() => return resp,
-            _ => {
-                tokio::time::sleep(Duration::from_millis(100 + i as u64 * 25)).await;
+        for base in bases {
+            let url = format!("{base}/api/v1/health");
+            if let Ok(resp) = client.get(&url).send().await {
+                if resp.status().is_success() {
+                    return ((*base).to_string(), resp);
+                }
             }
         }
+        tokio::time::sleep(Duration::from_millis(100 + i as u64 * 25)).await;
     }
-    panic!("dashboard health endpoint not ready at {}", url);
+    panic!(
+        "dashboard health endpoint not ready for bases {:?} (listen_port={})",
+        bases,
+        goose::dashboard_listen_port()
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -98,10 +117,10 @@ async fn wait_for_health(base: &str, attempts: u32) -> reqwest::Response {
 async fn test_dashboard_loopback_no_token() {
     let server = MockServer::start();
     let _mocks = setup_mock_endpoints(&server);
-    let port = free_port();
-    let base = format!("http://127.0.0.1:{port}");
+    let port = reserve_port();
+    let base_v4 = format!("http://127.0.0.1:{port}");
 
-    let configuration = build_dashboard_config(&server, port, None);
+    let configuration = build_dashboard_config(&server, "127.0.0.1", port, None);
     assert!(configuration.dashboard);
     assert!(configuration.dashboard_auth_token.is_empty());
     assert!(configuration.report_file.is_empty());
@@ -111,7 +130,7 @@ async fn test_dashboard_loopback_no_token() {
     let load_handle = tokio::spawn(async move { goose_attack.execute().await });
 
     // Wait for the dashboard to accept connections.
-    let health = wait_for_health(&base, 80).await;
+    let (base, health) = wait_for_health(&[&base_v4], 80).await;
     let health_json: serde_json::Value = health.json().await.expect("health json");
     assert_eq!(health_json["ok"], true);
     assert!(!health_json["version"].as_str().unwrap().is_empty());
@@ -184,17 +203,17 @@ async fn test_dashboard_loopback_no_token() {
 async fn test_dashboard_token_auth() {
     let server = MockServer::start();
     let _mocks = setup_mock_endpoints(&server);
-    let port = free_port();
-    let base = format!("http://127.0.0.1:{port}");
+    let port = reserve_port();
+    let base_v4 = format!("http://127.0.0.1:{port}");
 
-    let configuration = build_dashboard_config(&server, port, Some(AUTH_TOKEN));
+    let configuration = build_dashboard_config(&server, "127.0.0.1", port, Some(AUTH_TOKEN));
     assert_eq!(configuration.dashboard_auth_token, AUTH_TOKEN);
 
     let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
 
     let load_handle = tokio::spawn(async move { goose_attack.execute().await });
 
-    let _ = wait_for_health(&base, 80).await;
+    let (base, _) = wait_for_health(&[&base_v4], 80).await;
     let client = reqwest::Client::new();
 
     // Health remains public with token configured.
@@ -264,6 +283,43 @@ async fn test_dashboard_token_auth() {
         .await
         .expect("bearer token");
     assert_eq!(with_header.status(), 200);
+
+    let _ = load_handle.await.expect("join").expect("execute");
+}
+
+/// Regression: `--dashboard-host localhost` must bind via ToSocketAddrs
+/// (SocketAddr::parse rejects hostnames).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn test_dashboard_binds_localhost() {
+    let server = MockServer::start();
+    let _mocks = setup_mock_endpoints(&server);
+    let port = reserve_port();
+    // `localhost` may resolve to 127.0.0.1 and/or ::1; try both families.
+    let base_v4 = format!("http://127.0.0.1:{port}");
+    let base_name = format!("http://localhost:{port}");
+    let base_v6 = format!("http://[::1]:{port}");
+
+    let configuration = build_dashboard_config(&server, "localhost", port, None);
+    assert_eq!(configuration.dashboard_host, "localhost");
+
+    let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
+
+    let load_handle = tokio::spawn(async move { goose_attack.execute().await });
+
+    let (base, _) = wait_for_health(&[&base_name, &base_v4, &base_v6], 80).await;
+
+    let client = reqwest::Client::new();
+    let snapshot = client
+        .get(format!("{base}/api/v1/snapshot"))
+        .send()
+        .await
+        .expect("snapshot after localhost bind");
+    assert_eq!(
+        snapshot.status(),
+        200,
+        "dashboard must be listening when host is localhost"
+    );
 
     let _ = load_handle.await.expect("join").expect("execute");
 }

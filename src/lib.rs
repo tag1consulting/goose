@@ -44,6 +44,10 @@ pub mod config;
 pub mod controller;
 #[cfg(feature = "dashboard")]
 mod dashboard;
+/// Discover the TCP port the live dashboard last bound to (ephemeral-port tests).
+#[cfg(feature = "dashboard")]
+#[doc(hidden)]
+pub use dashboard::dashboard_listen_port;
 pub mod goose;
 mod graph;
 pub mod logger;
@@ -1378,8 +1382,13 @@ impl GooseAttack {
     /// Mirrors [`setup_controllers`]: returns the parent end of a flume channel
     /// the dashboard task uses to request snapshots. Only compiled when the
     /// `dashboard` feature is enabled.
+    ///
+    /// Bind failure is a hard error when `--dashboard` is set (opt-in server
+    /// must not silently disappear).
     #[cfg(feature = "dashboard")]
-    async fn setup_dashboard(&mut self) -> Option<flume::Receiver<dashboard::DashboardRequest>> {
+    async fn setup_dashboard(
+        &mut self,
+    ) -> Result<Option<flume::Receiver<dashboard::DashboardRequest>>, GooseError> {
         dashboard::setup_dashboard(&self.configuration).await
     }
 
@@ -1502,8 +1511,9 @@ impl GooseAttack {
         let controller_channel_rx = self.setup_controllers().await;
 
         // Optionally spawn the read-only live dashboard HTTP server.
+        // Bind failure aborts attack init when --dashboard is set.
         #[cfg(feature = "dashboard")]
-        let dashboard_channel_rx = self.setup_dashboard().await;
+        let dashboard_channel_rx = self.setup_dashboard().await?;
 
         // Grab now() once from the standard library, used by multiple timers in
         // the run state.

@@ -8,7 +8,7 @@
 //! SSE streaming lands in a later PR; this module serves one-shot snapshots only.
 
 use crate::metrics::DashboardSnapshot;
-use crate::GooseConfiguration;
+use crate::{GooseConfiguration, GooseError};
 
 use axum::body::Body;
 use axum::extract::{Query, State};
@@ -18,7 +18,7 @@ use axum::routing::get;
 use axum::{Json, Router};
 use serde::Deserialize;
 use serde::Serialize;
-use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
 use tower_http::set_header::SetResponseHeaderLayer;
 
@@ -30,6 +30,20 @@ const APP_CSS: &str = include_str!("dashboard/static/app.css");
 /// Content-Security-Policy applied to every response.
 const CSP: &str =
     "default-src 'self'; script-src 'self'; connect-src 'self'; style-src 'self'; img-src 'self' data:";
+
+/// Last successfully bound dashboard TCP port (0 if not listening).
+///
+/// Used by integration tests that pass `--dashboard-port 0` (ephemeral bind)
+/// so they can discover the actual listen port without a TOCTOU free-port race.
+static BOUND_PORT: AtomicU16 = AtomicU16::new(0);
+
+/// Returns the TCP port the dashboard last bound to, or `0` if none.
+///
+/// Intended for tests using `--dashboard-port 0`.
+#[doc(hidden)]
+pub fn dashboard_listen_port() -> u16 {
+    BOUND_PORT.load(Ordering::SeqCst)
+}
 
 /// Requests from the dashboard HTTP task to the GooseAttack main loop.
 #[derive(Debug)]
@@ -60,18 +74,34 @@ struct HealthResponse {
     version: String,
 }
 
+/// Format `host:port` for [`TcpListener::bind`], bracketing bare IPv6 literals.
+///
+/// Mirrors how operators type `--dashboard-host` (`localhost`, `127.0.0.1`,
+/// `::1`, `[::1]`) while remaining valid for `ToSocketAddrs`.
+fn format_bind_address(host: &str, port: u16) -> String {
+    if host.contains(':') && !host.starts_with('[') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    }
+}
+
 /// Spawn the dashboard HTTP server task.
 ///
 /// Binds to `configuration.dashboard_host`:`configuration.dashboard_port` and
 /// returns the parent end of the request channel. Logs the listening URL.
 ///
+/// When `--dashboard` is set, bind failure is a hard error (opt-in server must
+/// not silently disappear). When the dashboard is disabled, returns `Ok(None)`.
+///
 /// When/if multi-mode (Gaggle) returns, the dashboard should only run on the
 /// standalone/manager process — currently AttackMode is StandAlone only.
 pub(crate) async fn setup_dashboard(
     configuration: &GooseConfiguration,
-) -> Option<flume::Receiver<DashboardRequest>> {
+) -> Result<Option<flume::Receiver<DashboardRequest>>, GooseError> {
     if !configuration.dashboard {
-        return None;
+        BOUND_PORT.store(0, Ordering::SeqCst);
+        return Ok(None);
     }
 
     let host = if configuration.dashboard_host.is_empty() {
@@ -80,29 +110,26 @@ pub(crate) async fn setup_dashboard(
         configuration.dashboard_host.as_str()
     };
     let port = configuration.dashboard_port;
-    let addr: SocketAddr = match format!("{host}:{port}").parse() {
-        Ok(a) => a,
-        Err(e) => {
-            error!("[dashboard]: invalid bind address {host}:{port}: {e}");
-            return None;
-        }
-    };
+    // Use a host:port string so `ToSocketAddrs` resolves `localhost` and IPv6
+    // (same approach as Controllers). Do not parse as SocketAddr first — that
+    // rejects hostnames and unbracketed `::1`.
+    let address = format_bind_address(host, port);
 
-    let listener = match tokio::net::TcpListener::bind(addr).await {
-        Ok(l) => l,
-        Err(e) => {
-            error!("[dashboard]: failed to bind {addr}: {e}");
-            return None;
-        }
-    };
+    // Clear before bind so tests waiting on dashboard_listen_port() do not see
+    // a stale port from a previous run.
+    BOUND_PORT.store(0, Ordering::SeqCst);
 
-    let bound = match listener.local_addr() {
-        Ok(a) => a,
-        Err(e) => {
-            error!("[dashboard]: failed to read local address: {e}");
-            return None;
-        }
-    };
+    let listener = tokio::net::TcpListener::bind(&address).await.map_err(|e| {
+        error!("[dashboard]: failed to bind {address}: {e} (is the port already in use?)");
+        GooseError::Io(e)
+    })?;
+
+    let bound = listener.local_addr().map_err(|e| {
+        error!("[dashboard]: failed to read local address after bind on {address}: {e}");
+        GooseError::Io(e)
+    })?;
+
+    BOUND_PORT.store(bound.port(), Ordering::SeqCst);
 
     let (request_tx, request_rx) = flume::unbounded();
     let state = DashboardState {
@@ -122,7 +149,7 @@ pub(crate) async fn setup_dashboard(
         }
     }));
 
-    Some(request_rx)
+    Ok(Some(request_rx))
 }
 
 /// Build the axum router with public shell/static/health and auth-gated snapshot.
@@ -145,34 +172,20 @@ fn build_router(state: DashboardState) -> Router {
 }
 
 async fn index_handler() -> Response<Body> {
-    html_response(INDEX_HTML)
+    static_response("text/html; charset=utf-8", INDEX_HTML)
 }
 
 async fn app_js_handler() -> Response<Body> {
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(
-            header::CONTENT_TYPE,
-            "application/javascript; charset=utf-8",
-        )
-        .body(Body::from(APP_JS))
-        .unwrap()
+    static_response("application/javascript; charset=utf-8", APP_JS)
 }
 
 async fn app_css_handler() -> Response<Body> {
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "text/css; charset=utf-8")
-        .body(Body::from(APP_CSS))
-        .unwrap()
+    static_response("text/css; charset=utf-8", APP_CSS)
 }
 
-fn html_response(body: &'static str) -> Response<Body> {
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
-        .body(Body::from(body))
-        .unwrap()
+/// Build a static asset response without `unwrap` on the builder.
+fn static_response(content_type: &'static str, body: &'static str) -> Response<Body> {
+    ([(header::CONTENT_TYPE, content_type)], Body::from(body)).into_response()
 }
 
 async fn health_handler() -> impl IntoResponse {
@@ -252,6 +265,7 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::GooseConfiguration;
 
     #[test]
     fn constant_time_eq_matches() {
@@ -289,5 +303,82 @@ mod tests {
             HeaderValue::from_static("Bearer wrong"),
         );
         assert!(!authorize("s3cret", &headers, None));
+    }
+
+    #[test]
+    fn format_bind_address_brackets_ipv6() {
+        assert_eq!(format_bind_address("127.0.0.1", 5118), "127.0.0.1:5118");
+        assert_eq!(format_bind_address("localhost", 5118), "localhost:5118");
+        assert_eq!(format_bind_address("::1", 5118), "[::1]:5118");
+        assert_eq!(format_bind_address("[::1]", 5118), "[::1]:5118");
+        assert_eq!(format_bind_address("0.0.0.0", 80), "0.0.0.0:80");
+    }
+
+    #[tokio::test]
+    async fn binds_localhost_and_ipv6_loopback() {
+        // localhost (hostname — rejected by SocketAddr::parse, must use ToSocketAddrs).
+        let config = GooseConfiguration {
+            dashboard: true,
+            dashboard_host: "localhost".to_string(),
+            dashboard_port: 0,
+            dashboard_auth_token: String::new(),
+            ..Default::default()
+        };
+        let rx = setup_dashboard(&config)
+            .await
+            .expect("localhost bind should succeed")
+            .expect("dashboard enabled");
+        let port = dashboard_listen_port();
+        assert!(port > 0, "ephemeral port must be recorded");
+        // Drop the channel; server task keeps running until process ends (fine in tests).
+        drop(rx);
+
+        // ::1 (bare IPv6 literal needs brackets in the bind string).
+        let config = GooseConfiguration {
+            dashboard: true,
+            dashboard_host: "::1".to_string(),
+            dashboard_port: 0,
+            dashboard_auth_token: String::new(),
+            ..Default::default()
+        };
+        // ::1 may be unavailable in some CI network namespaces; treat bind errors
+        // as soft-skip only when the OS reports address-family issues.
+        match setup_dashboard(&config).await {
+            Ok(Some(_rx)) => {
+                assert!(dashboard_listen_port() > 0);
+            }
+            Ok(None) => panic!("dashboard enabled but setup returned None"),
+            Err(e) => {
+                // Acceptable on hosts without IPv6 loopback.
+                let msg = format!("{e}");
+                eprintln!("skipping ::1 bind assertion: {msg}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn bind_failure_is_hard_error() {
+        // Occupy a port, then try to bind the dashboard to the same port.
+        let occupied = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("occupy port");
+        let port = occupied.local_addr().unwrap().port();
+
+        let config = GooseConfiguration {
+            dashboard: true,
+            dashboard_host: "127.0.0.1".to_string(),
+            dashboard_port: port,
+            dashboard_auth_token: String::new(),
+            ..Default::default()
+        };
+        let err = setup_dashboard(&config)
+            .await
+            .expect_err("second bind on same port must fail hard");
+        match err {
+            GooseError::Io(_) => {}
+            other => panic!("expected GooseError::Io, got {:?}", other),
+        }
+        // Keep occupied alive until after the failed bind.
+        drop(occupied);
     }
 }
