@@ -1,4 +1,4 @@
-// Goose live dashboard — one-shot snapshot fetch (SSE lands later).
+// Goose live dashboard — SSE stream with poll fallback.
 (function () {
   "use strict";
 
@@ -23,6 +23,10 @@
   var aggregateEl = document.getElementById("aggregate-body");
   var requestsBody = document.getElementById("requests-body");
   var errorsBody = document.getElementById("errors-body");
+
+  var pollTimer = null;
+  var eventSource = null;
+  var usingPoll = false;
 
   function setStatus(text, cls) {
     statusEl.textContent = text;
@@ -59,7 +63,7 @@
     return (n * 100).toFixed(2) + "%";
   }
 
-  function renderSnapshot(snap) {
+  function renderSnapshot(snap, modeLabel) {
     summaryEl.textContent = "";
     summaryEl.appendChild(kv("Phase", snap.phase));
     summaryEl.appendChild(kv("Duration (s)", snap.duration_secs));
@@ -132,20 +136,33 @@
       }
     }
 
-    setStatus("Snapshot loaded · phase " + snap.phase, "ok");
+    var mode = modeLabel || "live";
+    setStatus(mode + " · phase " + snap.phase, "ok");
+  }
+
+  function withToken(path) {
+    if (!token) return path;
+    var sep = path.indexOf("?") >= 0 ? "&" : "?";
+    return path + sep + "token=" + encodeURIComponent(token);
   }
 
   function snapshotUrl() {
-    var url = "/api/v1/snapshot";
-    if (token) {
-      url += "?token=" + encodeURIComponent(token);
-    }
-    return url;
+    return withToken("/api/v1/snapshot");
   }
 
-  function loadSnapshot() {
-    setStatus("Fetching snapshot…");
-    fetch(snapshotUrl())
+  function eventsUrl() {
+    return withToken("/api/v1/events");
+  }
+
+  function stopPoll() {
+    if (pollTimer != null) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+  }
+
+  function fetchSnapshotOnce(modeLabel) {
+    return fetch(snapshotUrl())
       .then(function (res) {
         if (res.status === 401) {
           setStatus(
@@ -161,13 +178,90 @@
       })
       .then(function (snap) {
         if (snap) {
-          renderSnapshot(snap);
+          renderSnapshot(snap, modeLabel || "poll");
         }
-      })
-      .catch(function (err) {
-        setStatus("Failed to load snapshot: " + err, "error");
+        return snap;
       });
   }
 
-  loadSnapshot();
+  function startPollFallback(reason) {
+    if (usingPoll) return;
+    usingPoll = true;
+    if (eventSource) {
+      try {
+        eventSource.close();
+      } catch (_) {
+        /* ignore */
+      }
+      eventSource = null;
+    }
+    setStatus(
+      (reason ? reason + " — " : "") + "polling every 2s…",
+      "error"
+    );
+    function tick() {
+      fetchSnapshotOnce("poll").catch(function (err) {
+        setStatus("Poll failed: " + err, "error");
+      });
+    }
+    tick();
+    stopPoll();
+    pollTimer = setInterval(tick, 2000);
+  }
+
+  function startSse() {
+    if (typeof EventSource === "undefined") {
+      startPollFallback("SSE unavailable");
+      return;
+    }
+
+    setStatus("Connecting…");
+    try {
+      eventSource = new EventSource(eventsUrl());
+    } catch (err) {
+      startPollFallback("SSE open failed");
+      return;
+    }
+
+    var sawSnapshot = false;
+
+    eventSource.addEventListener("snapshot", function (ev) {
+      try {
+        var snap = JSON.parse(ev.data);
+        sawSnapshot = true;
+        usingPoll = false;
+        stopPoll();
+        renderSnapshot(snap, "live");
+      } catch (err) {
+        setStatus("Bad snapshot event: " + err, "error");
+      }
+    });
+
+    eventSource.addEventListener("closed", function () {
+      try {
+        eventSource.close();
+      } catch (_) {
+        /* ignore */
+      }
+      eventSource = null;
+      stopPoll();
+      setStatus("Load test finished", "ok");
+    });
+
+    eventSource.onerror = function () {
+      // EventSource reconnects automatically on transient errors; only fall
+      // back after we never received a snapshot (auth failure, 503, etc.).
+      if (!sawSnapshot) {
+        try {
+          eventSource.close();
+        } catch (_) {
+          /* ignore */
+        }
+        eventSource = null;
+        startPollFallback("SSE failed");
+      }
+    };
+  }
+
+  startSse();
 })();

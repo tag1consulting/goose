@@ -147,6 +147,14 @@ async fn test_dashboard_loopback_no_token() {
     assert_eq!(app_js.status(), 200);
     let js_body = app_js.text().await.unwrap();
     assert!(js_body.contains("snapshot"));
+    assert!(
+        js_body.contains("EventSource"),
+        "UI must use EventSource for live SSE updates"
+    );
+    assert!(
+        js_body.contains("/api/v1/events"),
+        "UI must wire EventSource to /api/v1/events"
+    );
 
     let app_css = client
         .get(format!("{base}/static/app.css"))
@@ -279,6 +287,33 @@ async fn test_dashboard_token_auth() {
         .await
         .expect("bearer token");
     assert_eq!(with_header.status(), 200);
+
+    // Events SSE without token → 401.
+    let events_unauth = client
+        .get(format!("{base}/api/v1/events"))
+        .send()
+        .await
+        .expect("unauth events");
+    assert_eq!(events_unauth.status(), 401);
+
+    // Events SSE with query token → 200 + event-stream.
+    let events_ok = client
+        .get(format!("{base}/api/v1/events?token={AUTH_TOKEN}"))
+        .send()
+        .await
+        .expect("events token");
+    assert_eq!(events_ok.status(), 200);
+    let events_ct = events_ok
+        .headers()
+        .get("content-type")
+        .expect("content-type")
+        .to_str()
+        .unwrap();
+    assert!(
+        events_ct.contains("text/event-stream"),
+        "SSE content-type was {}",
+        events_ct
+    );
 
     let _ = load_handle.await.expect("join").expect("execute");
 }

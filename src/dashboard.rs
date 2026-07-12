@@ -1,24 +1,38 @@
 //! Read-only live web dashboard HTTP server.
 //!
 //! Compiled only with the `dashboard` crate feature. Spawns an axum server that
-//! serves a minimal static shell and a one-shot metrics snapshot API. The parent
-//! GooseAttack main loop answers [`DashboardRequest`]s via oneshot channels using
-//! [`MetricsCommand::GetDashboardSnapshot`].
+//! serves a minimal static shell, a one-shot metrics snapshot API, and an SSE
+//! stream of coalesced snapshots.
 //!
-//! SSE streaming lands in a later PR; this module serves one-shot snapshots only.
+//! The parent GooseAttack main loop answers [`DashboardRequest`]s via oneshot
+//! channels using [`MetricsCommand::GetDashboardSnapshot`].
+//!
+//! # Snapshot freshness
+//!
+//! [`SnapshotHub`] builds at most one snapshot per second while SSE clients are
+//! connected or a recent poll occurred. Expected display freshness is **~1 s**,
+//! with up to **~0.5 s scheduling jitter** in the main loop before a snapshot
+//! request is dequeued. Tests assert multi-client coalescing, not sub-100 ms
+//! latency.
 
 use crate::metrics::DashboardSnapshot;
 use crate::{GooseConfiguration, GooseError};
 
-use axum::body::Body;
+use axum::body::{Body, Bytes};
 use axum::extract::{Query, State};
 use axum::http::{header, HeaderMap, HeaderValue, Response, StatusCode};
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::{Json, Router};
+use futures::stream;
 use serde::Deserialize;
 use serde::Serialize;
+use std::convert::Infallible;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::sync::{oneshot, watch, Notify};
 use tower_http::set_header::SetResponseHeaderLayer;
 
 /// Embedded SPA shell and assets (no inline scripts — CSP-friendly).
@@ -30,6 +44,18 @@ const APP_CSS: &str = include_str!("dashboard/static/app.css");
 const CSP: &str =
     "default-src 'self'; script-src 'self'; connect-src 'self'; style-src 'self'; img-src 'self' data:";
 
+/// Hard cap on concurrent SSE clients (v1). The 33rd connection receives 503.
+const MAX_SSE_CLIENTS: usize = 32;
+
+/// Server-side snapshot cadence while clients are active.
+const SNAPSHOT_INTERVAL: Duration = Duration::from_secs(1);
+
+/// How long a one-shot poll keeps the hub building after the request.
+const RECENT_POLL_WINDOW: Duration = Duration::from_secs(2);
+
+/// SSE comment heartbeat interval (`: ping`).
+const SSE_HEARTBEAT: Duration = Duration::from_secs(15);
+
 /// Result of a successful dashboard server spawn.
 #[derive(Debug)]
 pub(crate) struct DashboardSetup {
@@ -39,6 +65,9 @@ pub(crate) struct DashboardSetup {
     /// Read by unit tests; production only needs `request_rx`.
     #[cfg_attr(not(test), allow(dead_code))]
     pub bound_port: u16,
+    /// Number of snapshots the hub has successfully built (tests / diagnostics).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub build_count: Arc<AtomicU64>,
 }
 
 /// Requests from the dashboard HTTP task to the GooseAttack main loop.
@@ -50,11 +79,260 @@ pub(crate) enum DashboardRequest {
     },
 }
 
-/// Shared state for axum handlers.
-#[derive(Clone)]
-struct DashboardState {
-    /// Channel to the parent main loop.
+/// Coalescing fan-out for dashboard snapshots.
+///
+/// One hub task builds at most ~1 snapshot/sec while `active_sse > 0` or a poll
+/// was recent. Idle (no clients, no recent poll) issues **no**
+/// `GetDashboardSnapshot` commands.
+#[derive(Clone, Debug)]
+struct SnapshotHub {
+    inner: Arc<HubInner>,
+}
+
+struct HubInner {
     request_tx: flume::Sender<DashboardRequest>,
+    /// Latest pre-serialized snapshot JSON (`None` until the first build).
+    latest_tx: watch::Sender<Option<Bytes>>,
+    /// Concurrent SSE subscribers.
+    active_sse: AtomicUsize,
+    /// Unix-ms of the most recent `/api/v1/snapshot` poll mark (0 = never).
+    last_poll_ms: AtomicU64,
+    /// Unix-ms of the most recent successful build (0 = never).
+    last_build_ms: AtomicU64,
+    /// Successful hub builds (shared with [`DashboardSetup::build_count`]).
+    build_count: Arc<AtomicU64>,
+    /// Wake the hub loop from idle when demand appears.
+    wake: Notify,
+    /// When `true`, SSE clients should emit `event: closed` and disconnect.
+    shutdown_tx: watch::Sender<bool>,
+}
+
+// Manual Debug — `Notify` is not Debug on all tokio versions.
+impl std::fmt::Debug for HubInner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HubInner")
+            .field("active_sse", &self.active_sse.load(Ordering::Relaxed))
+            .field("build_count", &self.build_count.load(Ordering::Relaxed))
+            .field("last_poll_ms", &self.last_poll_ms.load(Ordering::Relaxed))
+            .field("last_build_ms", &self.last_build_ms.load(Ordering::Relaxed))
+            .finish()
+    }
+}
+
+impl SnapshotHub {
+    fn new(request_tx: flume::Sender<DashboardRequest>, build_count: Arc<AtomicU64>) -> Self {
+        let (latest_tx, _) = watch::channel(None);
+        let (shutdown_tx, _) = watch::channel(false);
+        let inner = Arc::new(HubInner {
+            request_tx,
+            latest_tx,
+            active_sse: AtomicUsize::new(0),
+            last_poll_ms: AtomicU64::new(0),
+            last_build_ms: AtomicU64::new(0),
+            build_count,
+            wake: Notify::new(),
+            shutdown_tx,
+        });
+        let loop_inner = Arc::clone(&inner);
+        tokio::spawn(async move {
+            hub_loop(loop_inner).await;
+        });
+        SnapshotHub { inner }
+    }
+
+    fn mark_poll(&self) {
+        self.inner
+            .last_poll_ms
+            .store(unix_now_ms(), Ordering::Relaxed);
+        self.inner.wake.notify_one();
+    }
+
+    /// Reserve an SSE client slot. Returns `false` when at [`MAX_SSE_CLIENTS`].
+    fn try_acquire_sse(&self) -> bool {
+        let mut current = self.inner.active_sse.load(Ordering::Relaxed);
+        loop {
+            if current >= MAX_SSE_CLIENTS {
+                return false;
+            }
+            match self.inner.active_sse.compare_exchange_weak(
+                current,
+                current + 1,
+                Ordering::AcqRel,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => {
+                    self.inner.wake.notify_one();
+                    return true;
+                }
+                Err(observed) => current = observed,
+            }
+        }
+    }
+
+    fn release_sse(&self) {
+        self.inner.active_sse.fetch_sub(1, Ordering::AcqRel);
+    }
+
+    fn subscribe_latest(&self) -> watch::Receiver<Option<Bytes>> {
+        self.inner.latest_tx.subscribe()
+    }
+
+    fn subscribe_shutdown(&self) -> watch::Receiver<bool> {
+        self.inner.shutdown_tx.subscribe()
+    }
+
+    /// Mark demand and wait for a (coalesced) snapshot JSON body.
+    async fn snapshot_bytes(&self) -> Result<Bytes, StatusCode> {
+        self.mark_poll();
+
+        // Fast path: return a snapshot built within the last cadence interval.
+        if let Some(bytes) = self.fresh_latest() {
+            return Ok(bytes);
+        }
+
+        let gen_before = self.inner.build_count.load(Ordering::Acquire);
+        // Re-notify in case the hub was between checks.
+        self.inner.wake.notify_one();
+
+        let mut rx = self.inner.latest_tx.subscribe();
+        let wait = async {
+            loop {
+                if self.inner.build_count.load(Ordering::Acquire) > gen_before {
+                    if let Some(bytes) = rx.borrow().clone() {
+                        return Ok(bytes);
+                    }
+                }
+                if let Some(bytes) = self.fresh_latest() {
+                    return Ok(bytes);
+                }
+
+                if rx.changed().await.is_err() {
+                    return Err(StatusCode::SERVICE_UNAVAILABLE);
+                }
+            }
+        };
+
+        match tokio::time::timeout(Duration::from_secs(5), wait).await {
+            Ok(result) => result,
+            Err(_) => Err(StatusCode::SERVICE_UNAVAILABLE),
+        }
+    }
+
+    /// Cached snapshot if one was built within [`SNAPSHOT_INTERVAL`].
+    fn fresh_latest(&self) -> Option<Bytes> {
+        let bytes = self.inner.latest_tx.borrow().clone()?;
+        let built_at = self.inner.last_build_ms.load(Ordering::Relaxed);
+        if built_at == 0 {
+            return None;
+        }
+        let age = unix_now_ms().saturating_sub(built_at);
+        if age < SNAPSHOT_INTERVAL.as_millis() as u64 {
+            Some(bytes)
+        } else {
+            None
+        }
+    }
+}
+
+fn unix_now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn should_build(inner: &HubInner) -> bool {
+    if *inner.shutdown_tx.borrow() {
+        return false;
+    }
+    if inner.active_sse.load(Ordering::Relaxed) > 0 {
+        return true;
+    }
+    let last_poll = inner.last_poll_ms.load(Ordering::Relaxed);
+    if last_poll == 0 {
+        return false;
+    }
+    unix_now_ms().saturating_sub(last_poll) < RECENT_POLL_WINDOW.as_millis() as u64
+}
+
+async fn hub_loop(inner: Arc<HubInner>) {
+    let mut shutdown_rx = inner.shutdown_tx.subscribe();
+    loop {
+        // Idle: no timer, no GetDashboardSnapshot — wait for demand or shutdown.
+        while !should_build(&inner) {
+            tokio::select! {
+                biased;
+                result = shutdown_rx.changed() => {
+                    if result.is_err() || *shutdown_rx.borrow() {
+                        return;
+                    }
+                }
+                _ = inner.wake.notified() => {}
+            }
+        }
+
+        if build_once(&inner).await.is_err() {
+            // Parent request channel gone — signal SSE clients and stop.
+            let _ = inner.shutdown_tx.send(true);
+            return;
+        }
+
+        // 1 Hz pace while demand continues.
+        tokio::select! {
+            biased;
+            result = shutdown_rx.changed() => {
+                if result.is_err() || *shutdown_rx.borrow() {
+                    return;
+                }
+            }
+            _ = tokio::time::sleep(SNAPSHOT_INTERVAL) => {}
+        }
+    }
+}
+
+/// Request one snapshot from the parent and publish pre-serialized JSON.
+///
+/// Returns `Err(())` when the parent channel is disconnected.
+async fn build_once(inner: &HubInner) -> Result<(), ()> {
+    let (respond_tx, respond_rx) = oneshot::channel();
+    if inner
+        .request_tx
+        .send(DashboardRequest::GetSnapshot {
+            respond: respond_tx,
+        })
+        .is_err()
+    {
+        return Err(());
+    }
+
+    let snapshot = match respond_rx.await {
+        Ok(s) => s,
+        Err(_) => {
+            // Metrics processor dropped the oneshot — treat as fatal for the hub.
+            return Err(());
+        }
+    };
+
+    match serde_json::to_vec(&snapshot) {
+        Ok(json) => {
+            inner.last_build_ms.store(unix_now_ms(), Ordering::Release);
+            inner.build_count.fetch_add(1, Ordering::Release);
+            let _ = inner.latest_tx.send(Some(Bytes::from(json)));
+            Ok(())
+        }
+        Err(e) => {
+            warn!("[dashboard]: failed to serialize snapshot: {e}");
+            // Keep the hub running; waiters will time out or get a later build.
+            Ok(())
+        }
+    }
+}
+
+/// Shared state for axum handlers.
+#[derive(Clone, Debug)]
+struct DashboardState {
+    /// Coalescing snapshot hub (owns the parent request channel sender).
+    hub: SnapshotHub,
     /// Auth token; empty means auth is disabled (loopback-only runs).
     auth_token: String,
 }
@@ -121,8 +399,10 @@ pub(crate) async fn setup_dashboard(
     })?;
 
     let (request_tx, request_rx) = flume::unbounded();
+    let build_count = Arc::new(AtomicU64::new(0));
+    let hub = SnapshotHub::new(request_tx, Arc::clone(&build_count));
     let state = DashboardState {
-        request_tx,
+        hub,
         auth_token: configuration.dashboard_auth_token.clone(),
     };
 
@@ -141,10 +421,11 @@ pub(crate) async fn setup_dashboard(
     Ok(Some(DashboardSetup {
         request_rx,
         bound_port: bound.port(),
+        build_count,
     }))
 }
 
-/// Build the axum router with public shell/static/health and auth-gated snapshot.
+/// Build the axum router with public shell/static/health and auth-gated metrics.
 fn build_router(state: DashboardState) -> Router {
     Router::new()
         .route("/", get(index_handler))
@@ -152,6 +433,7 @@ fn build_router(state: DashboardState) -> Router {
         .route("/static/app.css", get(app_css_handler))
         .route("/api/v1/health", get(health_handler))
         .route("/api/v1/snapshot", get(snapshot_handler))
+        .route("/api/v1/events", get(events_handler))
         .layer(SetResponseHeaderLayer::overriding(
             header::CONTENT_SECURITY_POLICY,
             HeaderValue::from_static(CSP),
@@ -191,26 +473,96 @@ async fn snapshot_handler(
     State(state): State<Arc<DashboardState>>,
     headers: HeaderMap,
     Query(query): Query<TokenQuery>,
-) -> Result<Json<DashboardSnapshot>, StatusCode> {
+) -> Result<impl IntoResponse, StatusCode> {
     if !authorize(&state.auth_token, &headers, query.token.as_deref()) {
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let (respond_tx, respond_rx) = tokio::sync::oneshot::channel();
-    if state
-        .request_tx
-        .send(DashboardRequest::GetSnapshot {
-            respond: respond_tx,
-        })
-        .is_err()
-    {
-        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    let bytes = state.hub.snapshot_bytes().await?;
+    Ok(([(header::CONTENT_TYPE, "application/json")], bytes))
+}
+
+/// SSE stream of coalesced `snapshot` events, with `: ping` heartbeats and a
+/// terminal `closed` event when the hub shuts down.
+async fn events_handler(
+    State(state): State<Arc<DashboardState>>,
+    headers: HeaderMap,
+    Query(query): Query<TokenQuery>,
+) -> Response<Body> {
+    if !authorize(&state.auth_token, &headers, query.token.as_deref()) {
+        return StatusCode::UNAUTHORIZED.into_response();
     }
 
-    match respond_rx.await {
-        Ok(snapshot) => Ok(Json(snapshot)),
-        Err(_) => Err(StatusCode::SERVICE_UNAVAILABLE),
+    if !state.hub.try_acquire_sse() {
+        return (StatusCode::SERVICE_UNAVAILABLE, "too many SSE clients").into_response();
     }
+
+    let hub = state.hub.clone();
+    let mut snap_rx = hub.subscribe_latest();
+    let mut shutdown_rx = hub.subscribe_shutdown();
+
+    // Channel bridges the select-loop task to the SSE body stream.
+    let (event_tx, event_rx) = tokio::sync::mpsc::channel::<Event>(8);
+
+    tokio::spawn(async move {
+        // Release the client slot when this task ends (client disconnect or closed).
+        struct SseGuard(SnapshotHub);
+        impl Drop for SseGuard {
+            fn drop(&mut self) {
+                self.0.release_sse();
+            }
+        }
+        let _guard = SseGuard(hub);
+
+        // Push the current snapshot immediately when available.
+        // Clone out of the watch Ref before awaiting so the future stays Send.
+        let initial = snap_rx.borrow_and_update().clone();
+        if let Some(bytes) = initial {
+            if event_tx.send(snapshot_event(&bytes)).await.is_err() {
+                return;
+            }
+        }
+
+        loop {
+            tokio::select! {
+                result = snap_rx.changed() => {
+                    if result.is_err() {
+                        break;
+                    }
+                    let next = snap_rx.borrow_and_update().clone();
+                    if let Some(bytes) = next {
+                        if event_tx.send(snapshot_event(&bytes)).await.is_err() {
+                            break;
+                        }
+                    }
+                }
+                result = shutdown_rx.changed() => {
+                    let closed = result.is_err() || *shutdown_rx.borrow();
+                    if closed {
+                        let _ = event_tx
+                            .send(Event::default().event("closed").data("1"))
+                            .await;
+                        break;
+                    }
+                }
+            }
+        }
+    });
+
+    let stream = stream::unfold(event_rx, |mut rx| async move {
+        rx.recv()
+            .await
+            .map(|event| (Ok::<_, Infallible>(event), rx))
+    });
+
+    Sse::new(stream)
+        .keep_alive(KeepAlive::new().interval(SSE_HEARTBEAT).text("ping"))
+        .into_response()
+}
+
+fn snapshot_event(bytes: &Bytes) -> Event {
+    let data = std::str::from_utf8(bytes).unwrap_or("{}");
+    Event::default().event("snapshot").data(data)
 }
 
 /// Authorize a metric API request.
@@ -258,6 +610,103 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 mod tests {
     use super::*;
     use crate::config::GooseConfiguration;
+    use crate::metrics::dashboard_snapshot::{
+        AggregateMetrics, Percentiles, SeriesWindow, SnapshotFlags,
+    };
+    use chrono::Utc;
+    use std::time::Instant;
+
+    fn dummy_snapshot(seq: u64) -> DashboardSnapshot {
+        DashboardSnapshot {
+            version: 1,
+            generated_at: Utc::now(),
+            goose_version: "test".into(),
+            phase: "maintain".into(),
+            duration_secs: seq,
+            active_users: 1,
+            maximum_users: 1,
+            total_users: 1,
+            hosts: vec!["http://example.test".into()],
+            aggregate: AggregateMetrics {
+                total_requests: seq,
+                total_failures: 0,
+                requests_per_second: 1.0,
+                failures_per_second: 0.0,
+                failure_rate: 0.0,
+                response_time_avg_ms: 1.0,
+                response_time_min_ms: 1,
+                response_time_max_ms: 1,
+                percentile_ms: Percentiles {
+                    p50: 1,
+                    p95: 1,
+                    p99: 1,
+                },
+                co_active: false,
+            },
+            requests: vec![],
+            errors: vec![],
+            series: SeriesWindow::empty(),
+            flags: SnapshotFlags {
+                metrics_disabled: false,
+                requests_truncated: false,
+                errors_truncated: false,
+                series_seconds: 300,
+            },
+        }
+    }
+
+    /// Answer `GetSnapshot` requests with incrementing dummy payloads.
+    fn spawn_mock_parent(
+        request_rx: flume::Receiver<DashboardRequest>,
+        parent_builds: Arc<AtomicU64>,
+    ) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            while let Ok(msg) = request_rx.recv_async().await {
+                match msg {
+                    DashboardRequest::GetSnapshot { respond } => {
+                        let n = parent_builds.fetch_add(1, Ordering::SeqCst);
+                        let _ = respond.send(dummy_snapshot(n));
+                    }
+                }
+            }
+        })
+    }
+
+    /// Bind dashboard + mock parent; returns (hub_builds, parent_builds, parent, base_url).
+    async fn setup_with_mock(
+        token: &str,
+    ) -> (
+        Arc<AtomicU64>,
+        Arc<AtomicU64>,
+        tokio::task::JoinHandle<()>,
+        String,
+    ) {
+        let config = GooseConfiguration {
+            dashboard: true,
+            dashboard_host: "127.0.0.1".to_string(),
+            dashboard_port: 0,
+            dashboard_auth_token: token.to_string(),
+            ..Default::default()
+        };
+        let setup = setup_dashboard(&config)
+            .await
+            .expect("bind")
+            .expect("enabled");
+        let hub_builds = Arc::clone(&setup.build_count);
+        let parent_builds = Arc::new(AtomicU64::new(0));
+        let parent = spawn_mock_parent(setup.request_rx, Arc::clone(&parent_builds));
+        let base = format!("http://127.0.0.1:{}", setup.bound_port);
+        let client = reqwest::Client::new();
+        for _ in 0..50 {
+            if let Ok(r) = client.get(format!("{base}/api/v1/health")).send().await {
+                if r.status().is_success() {
+                    break;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        (hub_builds, parent_builds, parent, base)
+    }
 
     #[test]
     fn constant_time_eq_matches() {
@@ -371,5 +820,226 @@ mod tests {
         }
         // Keep occupied alive until after the failed bind.
         drop(occupied);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn idle_hub_issues_no_snapshot_commands() {
+        let (hub_builds, parent_builds, parent, _base) = setup_with_mock("").await;
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        assert_eq!(
+            parent_builds.load(Ordering::SeqCst),
+            0,
+            "no clients ⇒ parent must not see GetSnapshot"
+        );
+        assert_eq!(hub_builds.load(Ordering::SeqCst), 0);
+        parent.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn multi_client_sse_coalesces_to_about_one_build_per_sec() {
+        let (hub_builds, parent_builds, parent, base) = setup_with_mock("").await;
+        let client = reqwest::Client::new();
+
+        // Open several concurrent SSE clients.
+        let n_clients = 6usize;
+        let mut responses = Vec::new();
+        for _ in 0..n_clients {
+            let resp = client
+                .get(format!("{base}/api/v1/events"))
+                .send()
+                .await
+                .expect("sse connect");
+            assert_eq!(resp.status(), 200, "SSE must accept client");
+            let ct = resp
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
+            assert!(
+                ct.contains("text/event-stream"),
+                "content-type was {:?}",
+                ct
+            );
+            responses.push(resp);
+        }
+
+        // Hold connections open for ~3.2s of active streaming.
+        let start = Instant::now();
+        tokio::time::sleep(Duration::from_millis(3200)).await;
+        let elapsed = start.elapsed().as_secs_f64();
+
+        // Drop clients so slots release.
+        drop(responses);
+
+        let builds = parent_builds.load(Ordering::SeqCst);
+        let hub = hub_builds.load(Ordering::SeqCst);
+        // Expect roughly 1 build/sec, not one per client per second.
+        // Allow generous bounds: at least 2, at most ~elapsed+3 (startup + jitter).
+        assert!(
+            builds >= 2,
+            "expected several coalesced builds over {:.1}s, got {}",
+            elapsed,
+            builds
+        );
+        assert!(
+            builds as f64 <= elapsed + 3.0,
+            "builds={} over {:.1}s looks uncoalesced (clients={})",
+            builds,
+            elapsed,
+            n_clients
+        );
+        // Far below N clients * seconds.
+        assert!(
+            (builds as f64) < (n_clients as f64) * elapsed * 0.5,
+            "builds={} too high for coalescing with {} clients over {:.1}s",
+            builds,
+            n_clients,
+            elapsed
+        );
+        assert_eq!(builds, hub, "hub and parent build counters should match");
+        parent.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn sse_client_cap_rejects_33rd_with_503() {
+        let (_hub_builds, _parent_builds, parent, base) = setup_with_mock("").await;
+        let client = reqwest::Client::new();
+
+        let mut held = Vec::with_capacity(MAX_SSE_CLIENTS);
+        for i in 0..MAX_SSE_CLIENTS {
+            let resp = client
+                .get(format!("{base}/api/v1/events"))
+                .send()
+                .await
+                .unwrap_or_else(|e| panic!("client {} connect failed: {}", i, e));
+            assert_eq!(resp.status(), 200, "client {i} should be accepted");
+            held.push(resp);
+        }
+
+        let overflow = client
+            .get(format!("{base}/api/v1/events"))
+            .send()
+            .await
+            .expect("33rd connect");
+        assert_eq!(overflow.status(), 503, "33rd SSE client must receive 503");
+        let body = overflow.text().await.unwrap_or_default();
+        assert!(
+            body.contains("too many") || body.contains("SSE"),
+            "503 should include a short plain-text body, got {:?}",
+            body
+        );
+
+        drop(held);
+        parent.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn events_require_token_when_configured() {
+        let token = "sse-secret";
+        let (_hub, _parent_builds, parent, base) = setup_with_mock(token).await;
+        let client = reqwest::Client::new();
+
+        let unauth = client
+            .get(format!("{base}/api/v1/events"))
+            .send()
+            .await
+            .expect("unauth");
+        assert_eq!(unauth.status(), 401);
+
+        let wrong = client
+            .get(format!("{base}/api/v1/events?token=wrong"))
+            .send()
+            .await
+            .expect("wrong");
+        assert_eq!(wrong.status(), 401);
+
+        let ok = client
+            .get(format!("{base}/api/v1/events?token={token}"))
+            .send()
+            .await
+            .expect("query token");
+        assert_eq!(ok.status(), 200);
+
+        let bearer = client
+            .get(format!("{base}/api/v1/events"))
+            .header("Authorization", format!("Bearer {token}"))
+            .send()
+            .await
+            .expect("bearer");
+        assert_eq!(bearer.status(), 200);
+
+        parent.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn snapshot_goes_through_hub() {
+        let (hub_builds, parent_builds, parent, base) = setup_with_mock("").await;
+        let client = reqwest::Client::new();
+
+        let resp = client
+            .get(format!("{base}/api/v1/snapshot"))
+            .send()
+            .await
+            .expect("snapshot");
+        assert_eq!(resp.status(), 200);
+        let body: serde_json::Value = resp.json().await.expect("json");
+        assert_eq!(body["version"], 1);
+        assert_eq!(body["phase"], "maintain");
+
+        // Concurrent polls coalesce onto hub builds.
+        let start_builds = parent_builds.load(Ordering::SeqCst);
+        let mut joins = Vec::new();
+        for _ in 0..8 {
+            let c = client.clone();
+            let url = format!("{base}/api/v1/snapshot");
+            joins.push(tokio::spawn(async move {
+                c.get(url).send().await.expect("poll").status()
+            }));
+        }
+        for j in joins {
+            assert_eq!(j.await.unwrap(), 200);
+        }
+        let delta = parent_builds.load(Ordering::SeqCst) - start_builds;
+        assert!(
+            delta <= 2,
+            "8 concurrent polls should coalesce (delta builds={})",
+            delta
+        );
+        assert!(hub_builds.load(Ordering::SeqCst) >= 1);
+        parent.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sse_stream_emits_snapshot_event() {
+        let (_hub, _parent_builds, parent, base) = setup_with_mock("").await;
+        let client = reqwest::Client::new();
+
+        let mut resp = client
+            .get(format!("{base}/api/v1/events"))
+            .send()
+            .await
+            .expect("sse");
+        assert_eq!(resp.status(), 200);
+
+        // Read body chunks until we observe a snapshot event (or timeout).
+        // Uses `chunk()` so we do not need reqwest's optional `stream` feature.
+        let mut buf = String::new();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < deadline {
+            match tokio::time::timeout(Duration::from_millis(500), resp.chunk()).await {
+                Ok(Ok(Some(chunk))) => {
+                    buf.push_str(&String::from_utf8_lossy(&chunk));
+                    if buf.contains("event: snapshot") && buf.contains("data: {") {
+                        parent.abort();
+                        return;
+                    }
+                }
+                Ok(Ok(None)) => break,
+                Ok(Err(e)) => panic!("stream error: {}", e),
+                Err(_) => continue,
+            }
+        }
+        parent.abort();
+        panic!("did not observe snapshot SSE event in body: {:?}", buf);
     }
 }
