@@ -376,6 +376,9 @@ struct GooseAttackRunState {
     /// Optional channel allowing the dashboard HTTP task to request snapshots.
     #[cfg(feature = "dashboard")]
     dashboard_channel_rx: Option<flume::Receiver<dashboard::DashboardRequest>>,
+    /// Signals the dashboard SnapshotHub to emit SSE `event: closed` on final exit.
+    #[cfg(feature = "dashboard")]
+    dashboard_close_tx: Option<tokio::sync::watch::Sender<bool>>,
     /// A flag tracking whether or not the header has been written when the metrics
     /// log is enabled.
     metrics_header_displayed: bool,
@@ -1384,10 +1387,16 @@ impl GooseAttack {
     #[cfg(feature = "dashboard")]
     async fn setup_dashboard(
         &mut self,
-    ) -> Result<Option<flume::Receiver<dashboard::DashboardRequest>>, GooseError> {
+    ) -> Result<
+        Option<(
+            flume::Receiver<dashboard::DashboardRequest>,
+            tokio::sync::watch::Sender<bool>,
+        )>,
+        GooseError,
+    > {
         Ok(dashboard::setup_dashboard(&self.configuration)
             .await?
-            .map(|setup| setup.request_rx))
+            .map(|setup| (setup.request_rx, setup.close_tx)))
     }
 
     /// Handle dashboard snapshot requests from the HTTP server task.
@@ -1511,7 +1520,10 @@ impl GooseAttack {
         // Optionally spawn the read-only live dashboard HTTP server.
         // Bind failure aborts attack init when --dashboard is set.
         #[cfg(feature = "dashboard")]
-        let dashboard_channel_rx = self.setup_dashboard().await?;
+        let (dashboard_channel_rx, dashboard_close_tx) = match self.setup_dashboard().await? {
+            Some((rx, close_tx)) => (Some(rx), Some(close_tx)),
+            None => (None, None),
+        };
 
         // Grab now() once from the standard library, used by multiple timers in
         // the run state.
@@ -1558,6 +1570,8 @@ impl GooseAttack {
             controller_channel_rx,
             #[cfg(feature = "dashboard")]
             dashboard_channel_rx,
+            #[cfg(feature = "dashboard")]
+            dashboard_close_tx,
             metrics_header_displayed: false,
             idle_status_displayed: false,
             users: Vec::new(),
@@ -2178,7 +2192,15 @@ impl GooseAttack {
                     self.decrease_attack(&mut goose_attack_run_state).await?;
                 }
                 // By reaching the Shutdown phase, break out of the GooseAttack loop.
-                AttackPhase::Shutdown => break,
+                AttackPhase::Shutdown => {
+                    // Proactively close SSE clients so browsers see `event: closed`
+                    // without waiting for the next 1 Hz hub tick / flume disconnect.
+                    #[cfg(feature = "dashboard")]
+                    if let Some(close_tx) = goose_attack_run_state.dashboard_close_tx.take() {
+                        let _ = close_tx.send(true);
+                    }
+                    break;
+                }
             }
 
             // Record current users for users per second graph in HTML report.

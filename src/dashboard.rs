@@ -68,6 +68,11 @@ pub(crate) struct DashboardSetup {
     /// Number of snapshots the hub has successfully built (tests / diagnostics).
     #[cfg_attr(not(test), allow(dead_code))]
     pub build_count: Arc<AtomicU64>,
+    /// Signal SSE clients to emit `event: closed` and stop the hub loop.
+    ///
+    /// Used on final process shutdown so browsers get a clean close without
+    /// waiting for the next 1 Hz build attempt to observe a dropped flume channel.
+    pub close_tx: watch::Sender<bool>,
 }
 
 /// Requests from the dashboard HTTP task to the GooseAttack main loop.
@@ -120,9 +125,12 @@ impl std::fmt::Debug for HubInner {
 }
 
 impl SnapshotHub {
-    fn new(request_tx: flume::Sender<DashboardRequest>, build_count: Arc<AtomicU64>) -> Self {
+    fn new(
+        request_tx: flume::Sender<DashboardRequest>,
+        build_count: Arc<AtomicU64>,
+        shutdown_tx: watch::Sender<bool>,
+    ) -> Self {
         let (latest_tx, _) = watch::channel(None);
-        let (shutdown_tx, _) = watch::channel(false);
         let inner = Arc::new(HubInner {
             request_tx,
             latest_tx,
@@ -149,6 +157,10 @@ impl SnapshotHub {
 
     /// Reserve an SSE client slot. Returns `false` when at [`MAX_SSE_CLIENTS`].
     fn try_acquire_sse(&self) -> bool {
+        // Do not consume a slot when the hub is already permanently closed.
+        if *self.inner.shutdown_tx.borrow() {
+            return false;
+        }
         let mut current = self.inner.active_sse.load(Ordering::Relaxed);
         loop {
             if current >= MAX_SSE_CLIENTS {
@@ -161,6 +173,11 @@ impl SnapshotHub {
                 Ordering::Relaxed,
             ) {
                 Ok(_) => {
+                    // Re-check sticky shutdown: a close may have raced with acquire.
+                    if *self.inner.shutdown_tx.borrow() {
+                        self.inner.active_sse.fetch_sub(1, Ordering::AcqRel);
+                        return false;
+                    }
                     self.inner.wake.notify_one();
                     return true;
                 }
@@ -173,6 +190,10 @@ impl SnapshotHub {
         self.inner.active_sse.fetch_sub(1, Ordering::AcqRel);
     }
 
+    fn is_closed(&self) -> bool {
+        *self.inner.shutdown_tx.borrow()
+    }
+
     fn subscribe_latest(&self) -> watch::Receiver<Option<Bytes>> {
         self.inner.latest_tx.subscribe()
     }
@@ -183,6 +204,10 @@ impl SnapshotHub {
 
     /// Mark demand and wait for a (coalesced) snapshot JSON body.
     async fn snapshot_bytes(&self) -> Result<Bytes, StatusCode> {
+        if self.is_closed() {
+            return Err(StatusCode::SERVICE_UNAVAILABLE);
+        }
+
         self.mark_poll();
 
         // Fast path: return a snapshot built within the last cadence interval.
@@ -195,8 +220,14 @@ impl SnapshotHub {
         self.inner.wake.notify_one();
 
         let mut rx = self.inner.latest_tx.subscribe();
+        let mut shutdown_rx = self.inner.shutdown_tx.subscribe();
         let wait = async {
             loop {
+                if self.is_closed() {
+                    return Err(StatusCode::SERVICE_UNAVAILABLE);
+                }
+                // `build_count` is only incremented after `latest_tx.send`, so a
+                // higher generation implies the watch already holds the new body.
                 if self.inner.build_count.load(Ordering::Acquire) > gen_before {
                     if let Some(bytes) = rx.borrow().clone() {
                         return Ok(bytes);
@@ -206,8 +237,17 @@ impl SnapshotHub {
                     return Ok(bytes);
                 }
 
-                if rx.changed().await.is_err() {
-                    return Err(StatusCode::SERVICE_UNAVAILABLE);
+                tokio::select! {
+                    result = rx.changed() => {
+                        if result.is_err() {
+                            return Err(StatusCode::SERVICE_UNAVAILABLE);
+                        }
+                    }
+                    result = shutdown_rx.changed() => {
+                        if result.is_err() || *shutdown_rx.borrow() {
+                            return Err(StatusCode::SERVICE_UNAVAILABLE);
+                        }
+                    }
                 }
             }
         };
@@ -255,11 +295,31 @@ fn should_build(inner: &HubInner) -> bool {
     unix_now_ms().saturating_sub(last_poll) < RECENT_POLL_WINDOW.as_millis() as u64
 }
 
+/// Outcome of one hub build attempt.
+enum BuildOutcome {
+    /// Snapshot published (or serialization failed but hub remains healthy).
+    Built,
+    /// Reply channel cancelled (e.g. metrics processor recycled) — skip tick, keep hub.
+    Transient,
+    /// Parent flume channel disconnected — permanent stop + `event: closed`.
+    Fatal,
+}
+
 async fn hub_loop(inner: Arc<HubInner>) {
     let mut shutdown_rx = inner.shutdown_tx.subscribe();
+    // Sticky shutdown may already be true (proactive close from main loop).
+    if *shutdown_rx.borrow() {
+        return;
+    }
     loop {
-        // Idle: no timer, no GetDashboardSnapshot — wait for demand or shutdown.
+        // Idle: no GetDashboardSnapshot — wait for demand or shutdown.
+        // A 1s disconnect poll does not touch the metrics path; it only lets
+        // the hub notice a dropped parent channel while parked (Issue 6).
         while !should_build(&inner) {
+            if inner.request_tx.is_disconnected() {
+                let _ = inner.shutdown_tx.send(true);
+                return;
+            }
             tokio::select! {
                 biased;
                 result = shutdown_rx.changed() => {
@@ -268,16 +328,35 @@ async fn hub_loop(inner: Arc<HubInner>) {
                     }
                 }
                 _ = inner.wake.notified() => {}
+                _ = tokio::time::sleep(Duration::from_secs(1)) => {}
             }
         }
 
-        if build_once(&inner).await.is_err() {
-            // Parent request channel gone — signal SSE clients and stop.
-            let _ = inner.shutdown_tx.send(true);
-            return;
+        match build_once(&inner).await {
+            BuildOutcome::Built => {}
+            BuildOutcome::Transient => {
+                // Metrics/main-loop blip: do not kill the hub. Brief backoff so
+                // we do not spin while the processor is recycling.
+                debug!("[dashboard]: snapshot reply cancelled; will retry");
+                tokio::select! {
+                    biased;
+                    result = shutdown_rx.changed() => {
+                        if result.is_err() || *shutdown_rx.borrow() {
+                            return;
+                        }
+                    }
+                    _ = tokio::time::sleep(SNAPSHOT_INTERVAL) => {}
+                }
+                continue;
+            }
+            BuildOutcome::Fatal => {
+                // Parent request channel gone — signal SSE clients and stop.
+                let _ = inner.shutdown_tx.send(true);
+                return;
+            }
         }
 
-        // 1 Hz pace while demand continues.
+        // 1 Hz pace while demand continues; also observe disconnect / close.
         tokio::select! {
             biased;
             result = shutdown_rx.changed() => {
@@ -285,15 +364,22 @@ async fn hub_loop(inner: Arc<HubInner>) {
                     return;
                 }
             }
-            _ = tokio::time::sleep(SNAPSHOT_INTERVAL) => {}
+            _ = tokio::time::sleep(SNAPSHOT_INTERVAL) => {
+                if inner.request_tx.is_disconnected() {
+                    let _ = inner.shutdown_tx.send(true);
+                    return;
+                }
+            }
         }
     }
 }
 
 /// Request one snapshot from the parent and publish pre-serialized JSON.
-///
-/// Returns `Err(())` when the parent channel is disconnected.
-async fn build_once(inner: &HubInner) -> Result<(), ()> {
+async fn build_once(inner: &HubInner) -> BuildOutcome {
+    if inner.request_tx.is_disconnected() {
+        return BuildOutcome::Fatal;
+    }
+
     let (respond_tx, respond_rx) = oneshot::channel();
     if inner
         .request_tx
@@ -302,28 +388,31 @@ async fn build_once(inner: &HubInner) -> Result<(), ()> {
         })
         .is_err()
     {
-        return Err(());
+        return BuildOutcome::Fatal;
     }
 
     let snapshot = match respond_rx.await {
         Ok(s) => s,
         Err(_) => {
-            // Metrics processor dropped the oneshot — treat as fatal for the hub.
-            return Err(());
+            // Metrics processor / main-loop dropped this oneshot without a
+            // reply. Recoverable (e.g. Idle after controller stop then restart).
+            return BuildOutcome::Transient;
         }
     };
 
     match serde_json::to_vec(&snapshot) {
         Ok(json) => {
+            // Publish first, then advance generation counters so waiters that
+            // observe `build_count` never read a stale watch value.
+            let _ = inner.latest_tx.send(Some(Bytes::from(json)));
             inner.last_build_ms.store(unix_now_ms(), Ordering::Release);
             inner.build_count.fetch_add(1, Ordering::Release);
-            let _ = inner.latest_tx.send(Some(Bytes::from(json)));
-            Ok(())
+            BuildOutcome::Built
         }
         Err(e) => {
             warn!("[dashboard]: failed to serialize snapshot: {e}");
             // Keep the hub running; waiters will time out or get a later build.
-            Ok(())
+            BuildOutcome::Built
         }
     }
 }
@@ -400,7 +489,8 @@ pub(crate) async fn setup_dashboard(
 
     let (request_tx, request_rx) = flume::unbounded();
     let build_count = Arc::new(AtomicU64::new(0));
-    let hub = SnapshotHub::new(request_tx, Arc::clone(&build_count));
+    let (close_tx, _) = watch::channel(false);
+    let hub = SnapshotHub::new(request_tx, Arc::clone(&build_count), close_tx.clone());
     let state = DashboardState {
         hub,
         auth_token: configuration.dashboard_auth_token.clone(),
@@ -422,6 +512,7 @@ pub(crate) async fn setup_dashboard(
         request_rx,
         bound_port: bound.port(),
         build_count,
+        close_tx,
     }))
 }
 
@@ -493,7 +584,16 @@ async fn events_handler(
         return StatusCode::UNAUTHORIZED.into_response();
     }
 
+    // Sticky shutdown: do not hold a client slot; emit `closed` immediately.
+    if state.hub.is_closed() {
+        return closed_sse_response();
+    }
+
     if !state.hub.try_acquire_sse() {
+        // Distinguish full cap vs raced into shutdown.
+        if state.hub.is_closed() {
+            return closed_sse_response();
+        }
         return (StatusCode::SERVICE_UNAVAILABLE, "too many SSE clients").into_response();
     }
 
@@ -514,6 +614,15 @@ async fn events_handler(
         }
         let _guard = SseGuard(hub);
 
+        // watch does not notify for the value present at subscribe time — check
+        // sticky shutdown before pushing a stale snapshot or blocking forever.
+        if *shutdown_rx.borrow() {
+            let _ = event_tx
+                .send(Event::default().event("closed").data("1"))
+                .await;
+            return;
+        }
+
         // Push the current snapshot immediately when available.
         // Clone out of the watch Ref before awaiting so the future stays Send.
         let initial = snap_rx.borrow_and_update().clone();
@@ -527,6 +636,13 @@ async fn events_handler(
             tokio::select! {
                 result = snap_rx.changed() => {
                     if result.is_err() {
+                        break;
+                    }
+                    // Re-check shutdown in case both fired; prefer closed.
+                    if *shutdown_rx.borrow() {
+                        let _ = event_tx
+                            .send(Event::default().event("closed").data("1"))
+                            .await;
                         break;
                     }
                     let next = snap_rx.borrow_and_update().clone();
@@ -558,6 +674,14 @@ async fn events_handler(
     Sse::new(stream)
         .keep_alive(KeepAlive::new().interval(SSE_HEARTBEAT).text("ping"))
         .into_response()
+}
+
+/// One-shot SSE body that only delivers `event: closed` (late subscribers after
+/// sticky shutdown, without consuming a client slot).
+fn closed_sse_response() -> Response<Body> {
+    let stream =
+        stream::once(async { Ok::<_, Infallible>(Event::default().event("closed").data("1")) });
+    Sse::new(stream).into_response()
 }
 
 fn snapshot_event(bytes: &Bytes) -> Event {
@@ -672,15 +796,31 @@ mod tests {
         })
     }
 
-    /// Bind dashboard + mock parent; returns (hub_builds, parent_builds, parent, base_url).
-    async fn setup_with_mock(
-        token: &str,
-    ) -> (
-        Arc<AtomicU64>,
-        Arc<AtomicU64>,
-        tokio::task::JoinHandle<()>,
-        String,
-    ) {
+    /// Parent that drops a window of oneshots (simulates metrics processor recycle)
+    /// then resumes answering.
+    fn spawn_blip_parent(
+        request_rx: flume::Receiver<DashboardRequest>,
+        parent_builds: Arc<AtomicU64>,
+        drop_from: u64,
+        drop_until: u64,
+    ) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            while let Ok(msg) = request_rx.recv_async().await {
+                match msg {
+                    DashboardRequest::GetSnapshot { respond } => {
+                        let n = parent_builds.fetch_add(1, Ordering::SeqCst);
+                        if n >= drop_from && n < drop_until {
+                            drop(respond);
+                        } else {
+                            let _ = respond.send(dummy_snapshot(n));
+                        }
+                    }
+                }
+            }
+        })
+    }
+
+    async fn bind_dashboard(token: &str) -> (DashboardSetup, String) {
         let config = GooseConfiguration {
             dashboard: true,
             dashboard_host: "127.0.0.1".to_string(),
@@ -692,9 +832,6 @@ mod tests {
             .await
             .expect("bind")
             .expect("enabled");
-        let hub_builds = Arc::clone(&setup.build_count);
-        let parent_builds = Arc::new(AtomicU64::new(0));
-        let parent = spawn_mock_parent(setup.request_rx, Arc::clone(&parent_builds));
         let base = format!("http://127.0.0.1:{}", setup.bound_port);
         let client = reqwest::Client::new();
         for _ in 0..50 {
@@ -705,7 +842,51 @@ mod tests {
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
+        (setup, base)
+    }
+
+    /// Bind dashboard + mock parent; returns (hub_builds, parent_builds, parent, base_url).
+    async fn setup_with_mock(
+        token: &str,
+    ) -> (
+        Arc<AtomicU64>,
+        Arc<AtomicU64>,
+        tokio::task::JoinHandle<()>,
+        String,
+    ) {
+        let (setup, base) = bind_dashboard(token).await;
+        let hub_builds = Arc::clone(&setup.build_count);
+        let parent_builds = Arc::new(AtomicU64::new(0));
+        let parent = spawn_mock_parent(setup.request_rx, Arc::clone(&parent_builds));
+        // Keep close_tx alive for the duration of the test by not dropping setup's other fields.
+        // close_tx is intentionally moved out of setup when request_rx is taken; the watch
+        // sender remaining in the hub keeps the channel open (false).
+        drop(setup.close_tx);
         (hub_builds, parent_builds, parent, base)
+    }
+
+    /// Read SSE body chunks until `predicate` is true or `timeout` elapses.
+    async fn read_sse_until(
+        resp: &mut reqwest::Response,
+        timeout: Duration,
+        predicate: impl Fn(&str) -> bool,
+    ) -> String {
+        let mut buf = String::new();
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            match tokio::time::timeout(Duration::from_millis(400), resp.chunk()).await {
+                Ok(Ok(Some(chunk))) => {
+                    buf.push_str(&String::from_utf8_lossy(&chunk));
+                    if predicate(&buf) {
+                        return buf;
+                    }
+                }
+                Ok(Ok(None)) => break,
+                Ok(Err(e)) => panic!("stream error: {}", e),
+                Err(_) => continue,
+            }
+        }
+        buf
     }
 
     #[test]
@@ -897,6 +1078,26 @@ mod tests {
             elapsed
         );
         assert_eq!(builds, hub, "hub and parent build counters should match");
+
+        // After all clients disconnect, hub must return to idle (no further builds).
+        let after_drop = parent_builds.load(Ordering::SeqCst);
+        // Past RECENT_POLL_WINDOW + a couple of cadence intervals.
+        tokio::time::sleep(Duration::from_millis(3500)).await;
+        let idle_baseline = parent_builds.load(Ordering::SeqCst);
+        // Allow at most one in-flight tick that started before disconnect.
+        assert!(
+            idle_baseline <= after_drop + 2,
+            "builds should stop after clients disconnect (after_drop={}, now={})",
+            after_drop,
+            idle_baseline
+        );
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        assert_eq!(
+            parent_builds.load(Ordering::SeqCst),
+            idle_baseline,
+            "idle hub must not issue further GetSnapshot after clients disconnect"
+        );
+
         parent.abort();
     }
 
@@ -912,7 +1113,7 @@ mod tests {
                 .send()
                 .await
                 .unwrap_or_else(|e| panic!("client {} connect failed: {}", i, e));
-            assert_eq!(resp.status(), 200, "client {i} should be accepted");
+            assert_eq!(resp.status(), 200, "client {} should be accepted", i);
             held.push(resp);
         }
 
@@ -1021,25 +1222,154 @@ mod tests {
             .expect("sse");
         assert_eq!(resp.status(), 200);
 
-        // Read body chunks until we observe a snapshot event (or timeout).
-        // Uses `chunk()` so we do not need reqwest's optional `stream` feature.
-        let mut buf = String::new();
-        let deadline = Instant::now() + Duration::from_secs(3);
-        while Instant::now() < deadline {
-            match tokio::time::timeout(Duration::from_millis(500), resp.chunk()).await {
-                Ok(Ok(Some(chunk))) => {
-                    buf.push_str(&String::from_utf8_lossy(&chunk));
-                    if buf.contains("event: snapshot") && buf.contains("data: {") {
-                        parent.abort();
-                        return;
-                    }
-                }
-                Ok(Ok(None)) => break,
-                Ok(Err(e)) => panic!("stream error: {}", e),
-                Err(_) => continue,
-            }
-        }
+        let buf = read_sse_until(&mut resp, Duration::from_secs(3), |b| {
+            b.contains("event: snapshot") && b.contains("data: {")
+        })
+        .await;
+        assert!(
+            buf.contains("event: snapshot") && buf.contains("data: {"),
+            "did not observe snapshot SSE event in body: {:?}",
+            buf
+        );
         parent.abort();
-        panic!("did not observe snapshot SSE event in body: {:?}", buf);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sse_emits_closed_when_parent_disconnects() {
+        let (setup, base) = bind_dashboard("").await;
+        let parent_builds = Arc::new(AtomicU64::new(0));
+        let parent = spawn_mock_parent(setup.request_rx, Arc::clone(&parent_builds));
+        // Retain close_tx so we can also test proactive close path separately;
+        // this test uses parent/channel drop.
+        let _close_tx = setup.close_tx;
+        let client = reqwest::Client::new();
+
+        let mut resp = client
+            .get(format!("{base}/api/v1/events"))
+            .send()
+            .await
+            .expect("sse");
+        assert_eq!(resp.status(), 200);
+
+        let buf = read_sse_until(&mut resp, Duration::from_secs(3), |b| {
+            b.contains("event: snapshot")
+        })
+        .await;
+        assert!(
+            buf.contains("event: snapshot"),
+            "expected snapshot before close, got {:?}",
+            buf
+        );
+
+        // Drop parent (and its request_rx) so the hub observes flume disconnect.
+        parent.abort();
+        // Give the aborted task a moment to drop request_rx.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let buf = read_sse_until(&mut resp, Duration::from_secs(3), |b| {
+            b.contains("event: closed")
+        })
+        .await;
+        assert!(
+            buf.contains("event: closed"),
+            "expected event: closed after parent disconnect, got {:?}",
+            buf
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sse_emits_closed_on_proactive_close_and_late_subscriber() {
+        let (setup, base) = bind_dashboard("").await;
+        let parent_builds = Arc::new(AtomicU64::new(0));
+        let parent = spawn_mock_parent(setup.request_rx, Arc::clone(&parent_builds));
+        let close_tx = setup.close_tx;
+        let client = reqwest::Client::new();
+
+        let mut resp = client
+            .get(format!("{base}/api/v1/events"))
+            .send()
+            .await
+            .expect("sse");
+        assert_eq!(resp.status(), 200);
+        let _ = read_sse_until(&mut resp, Duration::from_secs(3), |b| {
+            b.contains("event: snapshot")
+        })
+        .await;
+
+        // Proactive close (mirrors main-loop AttackPhase::Shutdown).
+        let _ = close_tx.send(true);
+
+        let buf = read_sse_until(&mut resp, Duration::from_secs(2), |b| {
+            b.contains("event: closed")
+        })
+        .await;
+        assert!(
+            buf.contains("event: closed"),
+            "live client must see closed after proactive signal, got {:?}",
+            buf
+        );
+
+        // Late subscriber after sticky shutdown must also get closed (not hang).
+        let mut late = client
+            .get(format!("{base}/api/v1/events"))
+            .send()
+            .await
+            .expect("late sse");
+        assert_eq!(late.status(), 200);
+        let late_buf = read_sse_until(&mut late, Duration::from_secs(2), |b| {
+            b.contains("event: closed")
+        })
+        .await;
+        assert!(
+            late_buf.contains("event: closed"),
+            "late subscriber after shutdown must receive closed, got {:?}",
+            late_buf
+        );
+
+        parent.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn oneshot_cancel_does_not_kill_hub() {
+        let (setup, base) = bind_dashboard("").await;
+        let parent_builds = Arc::new(AtomicU64::new(0));
+        // Drop oneshots for build attempts 2..5 (0-indexed counts after fetch_add).
+        let parent = spawn_blip_parent(setup.request_rx, Arc::clone(&parent_builds), 2, 5);
+        drop(setup.close_tx);
+        let client = reqwest::Client::new();
+
+        let mut resp = client
+            .get(format!("{base}/api/v1/events"))
+            .send()
+            .await
+            .expect("sse");
+        assert_eq!(resp.status(), 200);
+
+        // Wait long enough to cover the blip window (3 cancelled ticks) + recovery.
+        tokio::time::sleep(Duration::from_millis(7000)).await;
+        let builds = parent_builds.load(Ordering::SeqCst);
+        // drop_from=2, drop_until=5 ⇒ attempts 2,3,4 cancelled; 6+ proves post-blip recovery.
+        assert!(
+            builds >= 6,
+            "hub must keep requesting after oneshot cancels (builds={})",
+            builds
+        );
+
+        // Still streaming snapshots (not stuck closed).
+        let buf = read_sse_until(&mut resp, Duration::from_secs(2), |b| {
+            b.contains("event: snapshot")
+        })
+        .await;
+        assert!(
+            buf.contains("event: snapshot"),
+            "SSE must still deliver snapshots after transient oneshot cancels, got {:?}",
+            buf
+        );
+        assert!(
+            !buf.contains("event: closed"),
+            "transient oneshot cancel must not emit closed"
+        );
+
+        parent.abort();
     }
 }
