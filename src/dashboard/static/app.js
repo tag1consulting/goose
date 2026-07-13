@@ -1013,11 +1013,16 @@
     }
 
     var sawSnapshot = false;
+    // After the first snapshot, EventSource auto-reconnects; if errors keep
+    // stacking without a fresh snapshot, fall back to poll so the UI recovers.
+    var sseErrorStreak = 0;
+    var SSE_ERROR_FALLBACK_THRESHOLD = 3;
 
     eventSource.addEventListener("snapshot", function (ev) {
       try {
         var snap = JSON.parse(ev.data);
         sawSnapshot = true;
+        sseErrorStreak = 0;
         usingPoll = false;
         stopPoll();
         renderSnapshot(snap, "live");
@@ -1040,8 +1045,12 @@
     });
 
     eventSource.onerror = function () {
-      // EventSource reconnects automatically on transient errors; only fall
-      // back after we never received a snapshot (auth failure, 503, etc.).
+      if (finished) {
+        return;
+      }
+      // EventSource reconnects automatically on transient errors; fall back to
+      // poll when we never received a snapshot, or after repeated errors once
+      // live (server gone, 503 cap, sticky-closed without closed event).
       if (!sawSnapshot) {
         try {
           eventSource.close();
@@ -1061,8 +1070,18 @@
           .catch(function () {
             startPollFallback("SSE failed");
           });
-      } else if (!finished) {
+      } else {
+        sseErrorStreak += 1;
         setConnection("disconnected");
+        if (sseErrorStreak >= SSE_ERROR_FALLBACK_THRESHOLD) {
+          try {
+            eventSource.close();
+          } catch (_) {
+            /* ignore */
+          }
+          eventSource = null;
+          startPollFallback("SSE reconnect failed");
+        }
       }
     };
   }
