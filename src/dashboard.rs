@@ -1020,17 +1020,21 @@ fn authorize_control(
 
 /// Extract a Bearer token from `Authorization`. Scheme match is case-insensitive
 /// (RFC 7235); the token itself is compared separately with constant-time eq.
+///
+/// Accepts any ASCII whitespace between scheme and token (`Bearer TOKEN`,
+/// `Bearer\tTOKEN`, multiple spaces). Rejects extra tokens after the credential.
 fn bearer_token_from_headers(headers: &HeaderMap) -> Option<&str> {
     let value = headers.get(header::AUTHORIZATION)?;
     let s = value.to_str().ok()?;
-    let (scheme, token) = s.split_once(' ')?;
-    if scheme.eq_ignore_ascii_case("Bearer") {
-        let token = token.trim();
-        if token.is_empty() {
-            None
-        } else {
-            Some(token)
-        }
+    let mut parts = s.split_whitespace();
+    let scheme = parts.next()?;
+    let token = parts.next()?;
+    // Reject `Bearer tok extra` — only scheme + single token credential.
+    if parts.next().is_some() {
+        return None;
+    }
+    if scheme.eq_ignore_ascii_case("Bearer") && !token.is_empty() {
+        Some(token)
     } else {
         None
     }
@@ -1594,6 +1598,28 @@ mod tests {
         );
         assert!(authorize_control("s3cret", &headers, None));
         assert!(authorize("s3cret", &headers, None));
+
+        // Tabs / multi-space between scheme and token are accepted.
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer\ts3cret"),
+        );
+        assert!(authorize("s3cret", &headers, None));
+        assert!(authorize_control("s3cret", &headers, None));
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer    s3cret"),
+        );
+        assert!(authorize("s3cret", &headers, None));
+        // Extra credential parts are rejected.
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer s3cret extra"),
+        );
+        assert!(!authorize("s3cret", &headers, None));
     }
 
     #[test]

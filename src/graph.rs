@@ -17,48 +17,65 @@ use std::fmt::Write;
 use std::marker::PhantomData;
 
 #[derive(Clone)]
-struct ItemsPerSecond(HashMap<String, TimeSeries<u32, u32>>);
+struct ItemsPerSecond {
+    series: HashMap<String, TimeSeries<u32, u32>>,
+    /// Absolute second used as `origin` for newly inserted keys.
+    ///
+    /// After dashboard pruning / rate-series reset this tracks the retained window
+    /// so a late-seen request name does not allocate from absolute second 0.
+    origin: usize,
+}
 
 impl ItemsPerSecond {
     fn new() -> ItemsPerSecond {
-        ItemsPerSecond(Default::default())
+        ItemsPerSecond {
+            series: Default::default(),
+            origin: 0,
+        }
+    }
+
+    fn with_origin(origin: usize) -> ItemsPerSecond {
+        ItemsPerSecond {
+            series: Default::default(),
+            origin,
+        }
     }
 
     #[inline(always)]
     fn initialize_or_increment(&mut self, key: &str, second: usize, value: u32) -> u32 {
         if !self.contains_key(key) {
-            self.insert(key, TimeSeries::new());
+            self.insert(key, TimeSeries::with_origin(self.origin));
         }
-        let data = self.0.get_mut(key).unwrap();
+        let data = self.series.get_mut(key).unwrap();
         data.increase_value(second, value);
         data.get(second)
     }
 
     #[inline(always)]
     fn contains_key(&mut self, key: &str) -> bool {
-        self.0.contains_key(key)
+        self.series.contains_key(key)
     }
 
     #[inline(always)]
     fn insert(&mut self, key: &str, time_series: TimeSeries<u32, u32>) {
-        self.0.insert(key.to_string(), time_series);
+        self.series.insert(key.to_string(), time_series);
     }
 
     #[inline(always)]
     #[allow(dead_code)]
     fn len(&self) -> usize {
-        self.0.len()
+        self.series.len()
     }
 
     #[inline(always)]
     #[allow(dead_code)]
     fn get(&self, key: &str) -> Option<TimeSeries<u32, u32>> {
-        self.0.get(key).cloned()
+        self.series.get(key).cloned()
     }
 
     #[inline(always)]
     fn get_map(&self) -> HashMap<String, TimeSeries<u32, u32>> {
-        self.0.clone()
+        self.series.clone()
     }
 }
 
@@ -102,12 +119,17 @@ impl GraphData {
     /// still show the initial ramp and any later increases/decreases. Wiping
     /// users and reseeding second 0 with the final count made the chart look
     /// like the test had always been at full load.
+    ///
+    /// When dashboard pruning has already advanced the users series `origin`,
+    /// rate series are recreated with that same origin so the next sample at
+    /// absolute second *S* does not expand vectors from 0..S.
     pub(crate) fn reset_rate_series(&mut self) {
-        self.requests_per_second = ItemsPerSecond::new();
-        self.errors_per_second = ItemsPerSecond::new();
+        let origin = self.users_per_second.origin;
+        self.requests_per_second = ItemsPerSecond::with_origin(origin);
+        self.errors_per_second = ItemsPerSecond::with_origin(origin);
         self.average_response_time_per_second = HashMap::new();
-        self.transactions_per_second = TimeSeries::new();
-        self.scenarios_per_second = TimeSeries::new();
+        self.transactions_per_second = TimeSeries::with_origin(origin);
+        self.scenarios_per_second = TimeSeries::with_origin(origin);
     }
 
     /// Last absolute second with a users sample, if any.
@@ -140,8 +162,10 @@ impl GraphData {
         response_time: u64,
     ) {
         if !self.average_response_time_per_second.contains_key(&key) {
-            self.average_response_time_per_second
-                .insert(key.clone(), TimeSeries::new());
+            self.average_response_time_per_second.insert(
+                key.clone(),
+                TimeSeries::with_origin(self.users_per_second.origin),
+            );
         }
         let data = self.average_response_time_per_second.get_mut(&key).unwrap();
         data.increase_value(second, response_time as f32);
@@ -230,7 +254,7 @@ impl GraphData {
         }
 
         let mut end_second: Option<usize> = end_second_hint;
-        for series in self.requests_per_second.0.values() {
+        for series in self.requests_per_second.series.values() {
             if let Some(last) = series.last_absolute_second() {
                 end_second = Some(end_second.map_or(last, |e| e.max(last)));
             }
@@ -253,13 +277,13 @@ impl GraphData {
 
         for s in start_second..=end_second {
             let mut rps_sum: u64 = 0;
-            for series in self.requests_per_second.0.values() {
+            for series in self.requests_per_second.series.values() {
                 rps_sum += series.get(s) as u64;
             }
             rps.push(rps_sum as f64);
 
             let mut fps_sum: u64 = 0;
-            for series in self.errors_per_second.0.values() {
+            for series in self.errors_per_second.series.values() {
                 fps_sum += series.get(s) as u64;
             }
             fps.push(fps_sum as f64);
@@ -274,7 +298,7 @@ impl GraphData {
             for (key, latency_series) in &self.average_response_time_per_second {
                 let count = self
                     .requests_per_second
-                    .0
+                    .series
                     .get(key)
                     .map(|ts| ts.get(s) as u64)
                     .unwrap_or(0);
@@ -312,10 +336,10 @@ impl GraphData {
         if keep == 0 {
             return;
         }
-        for series in self.requests_per_second.0.values_mut() {
+        for series in self.requests_per_second.series.values_mut() {
             series.prune_to_window(keep);
         }
-        for series in self.errors_per_second.0.values_mut() {
+        for series in self.errors_per_second.series.values_mut() {
             series.prune_to_window(keep);
         }
         for series in self.average_response_time_per_second.values_mut() {
@@ -324,16 +348,20 @@ impl GraphData {
         self.transactions_per_second.prune_to_window(keep);
         self.scenarios_per_second.prune_to_window(keep);
         self.users_per_second.prune_to_window(keep);
+        // New keys after prune must start at the retained window, not absolute 0.
+        let origin = self.users_per_second.origin;
+        self.requests_per_second.origin = origin;
+        self.errors_per_second.origin = origin;
     }
 
     /// Max stored samples across RPS/users series (unit tests / diagnostics).
     #[cfg(test)]
     pub(crate) fn max_series_len_for_test(&self) -> usize {
         let mut max_len = self.users_per_second.data.len();
-        for series in self.requests_per_second.0.values() {
+        for series in self.requests_per_second.series.values() {
             max_len = max_len.max(series.data.len());
         }
-        for series in self.errors_per_second.0.values() {
+        for series in self.errors_per_second.series.values() {
             max_len = max_len.max(series.data.len());
         }
         max_len
@@ -803,9 +831,17 @@ impl<T: Clone + TimeSeriesValue<T, U>, U: PartialEq> PartialEq for TimeSeries<T,
 impl<T: Clone + TimeSeriesValue<T, U>, U> TimeSeries<T, U> {
     /// Creates a new TimeSeries object.
     fn new() -> TimeSeries<T, U> {
+        Self::with_origin(0)
+    }
+
+    /// Creates an empty series whose first bucket is absolute second `origin`.
+    ///
+    /// Used after dashboard pruning / rate reset so inserts at absolute second *S*
+    /// store at index `S - origin` instead of expanding from 0.
+    fn with_origin(origin: usize) -> TimeSeries<T, U> {
         TimeSeries {
             data: Vec::new(),
-            origin: 0,
+            origin,
             phantom: PhantomData,
             total: T::initial_value(),
         }
@@ -1966,6 +2002,42 @@ mod test {
         assert!(window.rps.iter().all(|&v| v == 0.0));
         assert!(window.fps.iter().all(|&v| v == 0.0));
         assert!(window.avg_latency_ms.iter().all(|&v| v == 0.0));
+    }
+
+    #[test]
+    fn test_reset_rate_series_preserves_pruned_origin() {
+        // After a long dashboard-only soak, prune advances origin. A subsequent
+        // increase→maintain reset must not recreate rate series at origin=0 or the
+        // next absolute-second sample allocates a multi-hour-sized vector.
+        let mut graph = GraphData::new();
+        for s in 0..=900 {
+            graph.record_users_per_second(10, s);
+            graph.record_requests_per_second("GET /", s);
+        }
+        graph.prune_to_window(600);
+        assert!(graph.users_per_second.origin > 0);
+        let origin_before = graph.users_per_second.origin;
+
+        graph.reset_rate_series();
+        assert_eq!(graph.requests_per_second.origin, origin_before);
+        assert_eq!(graph.transactions_per_second.origin, origin_before);
+
+        // Sample at a late absolute second: storage length stays near the window,
+        // not ~absolute second from 0.
+        let late = origin_before + 50;
+        graph.record_requests_per_second("GET /new", late);
+        let stored = graph
+            .requests_per_second
+            .series
+            .get("GET /new")
+            .expect("series")
+            .data
+            .len();
+        assert!(
+            stored <= 51,
+            "expected compact storage after origin-preserving reset, got len={stored}",
+            stored = stored
+        );
     }
 
     #[test]
