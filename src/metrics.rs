@@ -3276,19 +3276,11 @@ impl MetricsProcessor {
                 self.metrics.duration = duration;
                 self.metrics.total_users = total_users;
                 self.metrics.maximum_users = maximum_users;
-                // Request metrics (just drained) may advance RPS past the last
-                // main-loop RecordUsers second. Stamp the live active_users count
-                // at the latest series second so the Active users chart does not
-                // lag and drop to 0 at the trailing edge.
-                if self.configuration.dashboard {
-                    let stamp_second = self
-                        .graph_data
-                        .latest_absolute_second()
-                        .unwrap_or(0)
-                        .max(duration as usize);
-                    self.graph_data
-                        .record_users_per_second(active_users, stamp_second);
-                }
+                // Do NOT stamp active_users forward to the RPS/duration second here.
+                // set_and_maintain_last would fill the gap with a stale count; later
+                // real RecordUsers samples only overwrite some seconds and leave a
+                // V-shaped glitch during increase/decrease ramps. Trailing RPS lead
+                // is handled by export_series_window's get_held() level hold instead.
                 let series = self.graph_data.export_series_window(series_window_secs);
                 let snapshot = dashboard_snapshot::build_dashboard_snapshot(
                     dashboard_snapshot::DashboardSnapshotInput {

@@ -254,20 +254,6 @@ impl GraphData {
         }
     }
 
-    /// Latest absolute second across RPS and users series (for stamping users).
-    pub(crate) fn latest_absolute_second(&self) -> Option<usize> {
-        let mut end: Option<usize> = None;
-        for series in self.requests_per_second.0.values() {
-            if let Some(last) = series.last_absolute_second() {
-                end = Some(end.map_or(last, |e| e.max(last)));
-            }
-        }
-        if let Some(last) = self.users_per_second.last_absolute_second() {
-            end = Some(end.map_or(last, |e| e.max(last)));
-        }
-        end
-    }
-
     /// Drop series samples older than the trailing `keep_secs` window.
     ///
     /// Used when the live dashboard is enabled without `--report-file`, so
@@ -1819,6 +1805,76 @@ mod test {
         }
         // RPS still present at the end (not all zeros).
         assert!(window.rps[56] > 0.0);
+    }
+
+    #[test]
+    fn test_export_series_users_monotonic_ramp_without_forward_stamp() {
+        // Regression: stamping active_users forward to the RPS/duration second
+        // (set_and_maintain_last gap-fill with a stale count, then partial
+        // overwrites from real RecordUsers) produced V-shaped glitches mid-ramp.
+        // Only sequential RecordUsers samples should define the series; export
+        // holds the last known level past the end.
+        let mut graph = GraphData::new();
+        // Steady 10 users.
+        for s in 0..=60 {
+            graph.record_users_per_second(10, s);
+        }
+        // Clean increase 10 → 20 over seconds 61..70.
+        for (s, users) in (61..=70).zip(11..=20) {
+            graph.record_users_per_second(users, s);
+        }
+        // RPS leads past the last users sample (as drain_pending does).
+        for s in 0..=78 {
+            graph.record_requests_per_second("GET /", s);
+        }
+
+        let window = graph.export_series_window(300);
+        assert_eq!(window.users.len(), 79);
+        // Steady region.
+        for s in 0..=60 {
+            assert_eq!(window.users[s], 10, "steady users[{s}]");
+        }
+        // Monotonic ramp — no dips.
+        for s in 61..=70 {
+            let expected = (s - 60 + 10) as u64; // 11..20
+            assert_eq!(window.users[s], expected, "ramp users[{s}]");
+            if s > 61 {
+                assert!(
+                    window.users[s] >= window.users[s - 1],
+                    "ramp must be non-decreasing at {s}: {} < {}",
+                    window.users[s],
+                    window.users[s - 1]
+                );
+            }
+        }
+        // Trailing hold at 20 (not 0, not a dip).
+        for s in 71..=78 {
+            assert_eq!(window.users[s], 20, "hold users[{s}]");
+        }
+    }
+
+    #[test]
+    fn test_forward_stamp_pollution_creates_v_glitch() {
+        // Documents why GetDashboardSnapshot must not stamp users forward:
+        // gap-fill + partial intermediate overwrites → V-shaped artifact.
+        let mut graph = GraphData::new();
+        graph.record_users_per_second(10, 60);
+        // Bad stamp: jump to second 70 with live count 20 (fills 61..69 with 10).
+        graph.record_users_per_second(20, 70);
+        // Real hatch samples only overwrite some intermediate seconds.
+        graph.record_users_per_second(15, 65);
+        graph.record_users_per_second(18, 68);
+
+        let window = graph.export_series_window(300);
+        // 60=10, 61-64=10 (stale fill), 65=15, 66-67=10 (stale!), 68=18, 69=10, 70=20
+        assert_eq!(window.users[60], 10);
+        assert_eq!(window.users[65], 15);
+        assert_eq!(window.users[66], 10, "stale gap-fill creates a dip after 15");
+        assert_eq!(window.users[68], 18);
+        assert_eq!(window.users[69], 10, "stale gap-fill creates a dip before 20");
+        assert_eq!(window.users[70], 20);
+        // Confirm the V: 15 → 10 → 18 is non-monotonic mid-ramp.
+        assert!(window.users[66] < window.users[65] && window.users[66] < window.users[68]);
     }
 
     #[test]
