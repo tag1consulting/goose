@@ -12,7 +12,7 @@ use itertools::Itertools;
 use serde::Serialize;
 use serde_json::json;
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fmt::Write;
 use std::marker::PhantomData;
 
@@ -826,9 +826,13 @@ fn accumulate_rate_series_into_window(
 struct TimeSeries<T: TimeSeriesValue<T, U>, U> {
     /// Time series data.
     ///
-    /// Each element of the vector represents value for one second in the time series.
+    /// Each element represents the value for one second in the time series.
     /// `data[i]` holds the sample for absolute second `origin + i`.
-    data: Vec<T>,
+    ///
+    /// Stored as a [`VecDeque`] so dashboard pruning can drop a prefix with
+    /// amortized O(dropped) cost (`pop_front`) instead of O(retained) shifts
+    /// from `Vec::drain(0..n)` on every 1 Hz prune across many request keys.
+    data: VecDeque<T>,
     /// Absolute second corresponding to `data[0]`. Non-zero only after pruning
     /// (dashboard-only long soaks). Report-file collection never prunes, so this
     /// stays 0 and indices remain absolute seconds from test start.
@@ -880,7 +884,7 @@ impl<T: Clone + TimeSeriesValue<T, U>, U> TimeSeries<T, U> {
     /// store at index `S - origin` instead of expanding from 0.
     fn with_origin(origin: usize) -> TimeSeries<T, U> {
         TimeSeries {
-            data: Vec::new(),
+            data: VecDeque::new(),
             origin,
             phantom: PhantomData,
             total: T::initial_value(),
@@ -901,12 +905,18 @@ impl<T: Clone + TimeSeriesValue<T, U>, U> TimeSeries<T, U> {
     /// After pruning, `origin` advances and `data` holds only the retained window so
     /// multi-hour dashboard-only soaks do not grow unbounded. No-op when the series
     /// is already within the window.
+    ///
+    /// Uses repeated [`VecDeque::pop_front`] so cost is O(dropped) rather than
+    /// O(retained) from a front `Vec::drain` — important when many per-key series
+    /// are pruned at ~1 Hz after already sitting at the keep window.
     fn prune_to_window(&mut self, keep_secs: usize) {
         if keep_secs == 0 || self.data.len() <= keep_secs {
             return;
         }
         let drop = self.data.len() - keep_secs;
-        self.data.drain(0..drop);
+        for _ in 0..drop {
+            self.data.pop_front();
+        }
         self.origin = self.origin.saturating_add(drop);
         // `total` still reflects historical increments (including dropped samples).
         // Dashboard export uses per-second buckets only; HTML reports never prune.
@@ -983,7 +993,7 @@ impl<T: Clone + TimeSeriesValue<T, U>, U> TimeSeries<T, U> {
     /// Returns the last value in the time series or initial value if the time
     /// series is empty.
     fn last(&self) -> T {
-        match self.data.last() {
+        match self.data.back() {
             Some(last) => last.clone(),
             None => T::initial_value(),
         }
@@ -1016,7 +1026,7 @@ impl<T: Clone + TimeSeriesValue<T, U>, U> TimeSeries<T, U> {
         let idx = second - self.origin;
         if self.data.len() <= idx {
             for _ in 0..(idx - self.data.len() + 1) {
-                self.data.push(initial.clone());
+                self.data.push_back(initial.clone());
                 self.total.merge(&initial);
             }
         };
@@ -1194,14 +1204,14 @@ mod test {
             "GET /",
             TimeSeries {
                 origin: 0,
-                data: vec![123, 234, 345, 456, 567],
+                data: VecDeque::from(vec![123, 234, 345, 456, 567]),
                 phantom: PhantomData,
                 total: 0,
             },
         );
         graph.users_per_second = TimeSeries {
             origin: 0,
-            data: vec![345, 456, 567, 123, 234],
+            data: VecDeque::from(vec![345, 456, 567, 123, 234]),
             phantom: PhantomData,
             total: 0,
         };
@@ -1209,7 +1219,7 @@ mod test {
             "GET /".to_string(),
             TimeSeries {
                 origin: 0,
-                data: vec![
+                data: VecDeque::from(vec![
                     MovingAverage {
                         count: 123,
                         average: 1.23,
@@ -1230,7 +1240,7 @@ mod test {
                         count: 567,
                         average: 5.67,
                     },
-                ],
+                ]),
                 phantom: PhantomData,
                 total: MovingAverage {
                     count: 0,
@@ -1240,14 +1250,14 @@ mod test {
         );
         graph.transactions_per_second = TimeSeries {
             origin: 0,
-            data: vec![345, 123, 234, 456, 567],
+            data: VecDeque::from(vec![345, 123, 234, 456, 567]),
             phantom: PhantomData,
             total: 0,
         };
 
         graph.scenarios_per_second = TimeSeries {
             origin: 0,
-            data: vec![345, 123, 234, 456, 567],
+            data: VecDeque::from(vec![345, 123, 234, 456, 567]),
             phantom: PhantomData,
             total: 0,
         };
@@ -1256,7 +1266,7 @@ mod test {
             "GET /",
             TimeSeries {
                 origin: 0,
-                data: vec![567, 123, 234, 345, 456],
+                data: VecDeque::from(vec![567, 123, 234, 345, 456]),
                 phantom: PhantomData,
                 total: 0,
             },
@@ -1265,7 +1275,7 @@ mod test {
         let rps_graph = graph.get_requests_per_second_graph(true);
         let expected_time_series: TimeSeries<u32, u32> = TimeSeries {
             origin: 0,
-            data: vec![123, 234, 345, 456, 567],
+            data: VecDeque::from(vec![123, 234, 345, 456, 567]),
             phantom: PhantomData,
             total: 0,
         };
@@ -1279,7 +1289,7 @@ mod test {
         let users_graph = graph.get_active_users_graph(true);
         let expected_time_series: TimeSeries<usize, usize> = TimeSeries {
             origin: 0,
-            data: vec![345, 456, 567, 123, 234],
+            data: VecDeque::from(vec![345, 456, 567, 123, 234]),
             phantom: PhantomData,
             total: 0,
         };
@@ -1293,7 +1303,7 @@ mod test {
         let avg_rt_graph = graph.get_average_response_time_graph(true);
         let expected_time_series: TimeSeries<MovingAverage, f32> = TimeSeries {
             origin: 0,
-            data: vec![
+            data: VecDeque::from(vec![
                 MovingAverage {
                     count: 123,
                     average: 1.23,
@@ -1314,7 +1324,7 @@ mod test {
                     count: 567,
                     average: 5.67,
                 },
-            ],
+            ]),
             phantom: PhantomData,
             total: MovingAverage {
                 count: 0,
@@ -1331,7 +1341,7 @@ mod test {
         let transactions_graph = graph.get_transactions_per_second_graph(true);
         let expected_time_series: TimeSeries<usize, usize> = TimeSeries {
             origin: 0,
-            data: vec![345, 123, 234, 456, 567],
+            data: VecDeque::from(vec![345, 123, 234, 456, 567]),
             phantom: PhantomData,
             total: 0,
         };
@@ -1345,7 +1355,7 @@ mod test {
         let scenarios_graph = graph.get_scenarios_per_second_graph(true);
         let expected_time_series: TimeSeries<usize, usize> = TimeSeries {
             origin: 0,
-            data: vec![345, 123, 234, 456, 567],
+            data: VecDeque::from(vec![345, 123, 234, 456, 567]),
             phantom: PhantomData,
             total: 0,
         };
@@ -1359,7 +1369,7 @@ mod test {
         let errors_graph = graph.get_errors_per_second_graph(true);
         let expected_time_series: TimeSeries<u32, u32> = TimeSeries {
             origin: 0,
-            data: vec![567, 123, 234, 345, 456],
+            data: VecDeque::from(vec![567, 123, 234, 345, 456]),
             phantom: PhantomData,
             total: 0,
         };
@@ -2338,7 +2348,7 @@ mod test {
 
         let data: TimeSeries<usize, usize> = TimeSeries {
             origin: 0,
-            data: vec![123, 111, 99, 134],
+            data: VecDeque::from(vec![123, 111, 99, 134]),
             phantom: PhantomData,
             total: 0,
         };
@@ -2539,7 +2549,7 @@ mod test {
 
         let user_data: TimeSeries<usize, usize> = TimeSeries {
             origin: 0,
-            data: vec![23, 12, 44, 22],
+            data: VecDeque::from(vec![23, 12, 44, 22]),
             phantom: PhantomData,
             total: 0,
         };
@@ -2675,7 +2685,7 @@ mod test {
 
         let more_data: TimeSeries<usize, usize> = TimeSeries {
             origin: 0,
-            data: vec![1, 1, 1, 1],
+            data: VecDeque::from(vec![1, 1, 1, 1]),
             phantom: PhantomData,
             total: 0,
         };
