@@ -28,9 +28,9 @@ http://127.0.0.1:5118/
 | `--dashboard` | off | Enable the live dashboard HTTP server (observe) |
 | `--dashboard-control` | off | Enable Start/Stop/Users control endpoints and UI (requires `--dashboard`; does **not** auto-enable the dashboard) |
 | `--dashboard-host HOST` | `127.0.0.1` | Bind address |
-| `--dashboard-port PORT` | `5118` | Bind port |
-| `--dashboard-auth-token TOKEN` | empty | Shared secret for metric APIs when configured; **always required** when `--dashboard-control` is set (even on loopback) |
-| `--dashboard-max-clients COUNT` | `32` | Max concurrent SSE clients (`GET /api/v1/events`); further clients receive HTTP 503 |
+| `--dashboard-port PORT` | `5118` | Bind port. CLI value `0` means “unset” and is rewritten to `5118` when the dashboard is enabled (not an ephemeral OS port). |
+| `--dashboard-auth-token TOKEN` | empty | Shared secret for metric APIs when configured; **always required** when `--dashboard-control` is set (even on loopback). Visible in process listings (`ps`) like any CLI flag. |
+| `--dashboard-max-clients COUNT` | `32` | Max concurrent SSE clients (`GET /api/v1/events`); further clients receive HTTP 503. CLI value `0` means “unset” and becomes `32`. |
 
 Defaults can also be set programmatically with `GooseDefault::Dashboard`, `GooseDefault::DashboardControl`, `GooseDefault::DashboardHost`, `GooseDefault::DashboardPort`, `GooseDefault::DashboardAuthToken`, and `GooseDefault::DashboardMaxClients`.
 
@@ -118,7 +118,7 @@ curl -H "Authorization: Bearer SECRET" http://host:5118/api/v1/snapshot
 curl "http://host:5118/api/v1/snapshot?token=SECRET"
 ```
 
-For **control**, prefer Bearer (query token is accepted server-side for scripts but not used by the SPA):
+For **control**, the server accepts **`Authorization: Bearer` only** (query `?token=` is rejected on control routes):
 
 ```bash
 curl -H "Authorization: Bearer SECRET" \
@@ -186,7 +186,7 @@ Then Start from the UI or via `POST /api/v1/control/start`. Without Controllers 
 | `POST` | `/api/v1/control/stop` | empty or `{}` | Begin cancel → enters **Decrease** (eventual Idle) |
 | `POST` | `/api/v1/control/users` | `{"users": N}` | Set absolute target user count (`N` integer, 1–1_000_000) |
 
-Auth: `Authorization: Bearer <token>` (preferred) or `?token=` for scripts. Missing/wrong token → **401**. Control disabled → **404**.
+Auth: `Authorization: Bearer <token>` only (query `?token=` → **401**). Missing/wrong token → **401**. Control disabled → **404**.
 
 #### curl examples
 
@@ -324,6 +324,8 @@ Enabling `--dashboard` turns on the same per-second **GraphData** series collect
 
 With zero connected clients the dashboard issues **no** snapshot builds (no extra metrics-processor work beyond GraphData recording). When clients are connected, snapshots are coalesced to about **1 Hz** for all viewers. Concurrent SSE clients are capped (default **32**, tunable with `--dashboard-max-clients`); further clients receive HTTP 503.
 
+Each snapshot build (while clients are connected) runs on the **metrics processor** task: it drains pending metrics, exports the trailing series window, and builds percentile maps for the aggregate plus up to 100 request rows. That cost scales with unique request names and the timing histograms Goose already maintains — the attack main loop does **not** await the build. Under extreme cardinality, prefer fewer unique request names, a shorter test, or disable the dashboard if you need absolute minimal overhead (same trade-off as `--report-file`).
+
 For extreme runs with tens of thousands of unique request names, expect higher GraphData memory (same as `--report-file`). Disable the dashboard if you need absolute minimal overhead, just as you can disable Controllers with `--no-telnet --no-websocket`.
 
 ## Metrics disabled
@@ -337,8 +339,9 @@ If Goose is started with `--no-metrics`, the dashboard still serves the shell an
 - Control without a token → **startup hard-fail**, even on loopback.
 - Token protects **metric APIs** when configured; control POSTs **always** require the token when control is on.
 - Shell/static/health stay public and contain no load-test metrics.
-- Prefer `Authorization: Bearer` for scripts; browsers use `?token=` for metrics (EventSource limits) and Bearer for control POSTs.
-- Query tokens can appear in reverse-proxy access logs and `Referer` headers — prefer SSH tunnels or a local reverse proxy when that matters.
+- Prefer `Authorization: Bearer` for scripts; browsers use `?token=` for metrics (EventSource limits) and **Bearer only** for control POSTs (server rejects query tokens on `/api/v1/control/*`).
+- Query tokens on metric URLs can appear in reverse-proxy access logs and `Referer` headers — prefer SSH tunnels or a local reverse proxy when that matters.
+- `--dashboard-auth-token` is visible in process listings (`ps`) like any CLI argument; for shared hosts prefer a short-lived secret and restricted process visibility.
 - Goose never logs the token value; the startup line is only `listening on http://{host:port} (read-only|control enabled)` with no query secret.
 - The UI renders metric fields with `textContent` only (no `innerHTML`) and serves a strict Content-Security-Policy without `'unsafe-inline'` scripts.
 - No session cookies and no permissive CORS; classic cross-site cookie CSRF does not apply.

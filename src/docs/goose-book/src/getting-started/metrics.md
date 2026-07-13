@@ -531,7 +531,7 @@ Goose doesn't currently have built-in support for custom metrics aggregation, so
 
 ### Live dashboard
 
-For **live** metrics while a load test is running (RPS, users, latency charts, request/error tables), enable the optional [Live Dashboard](../controller/dashboard.md) with `--dashboard`. It is read-only; use Controllers to control the test. Enabling the dashboard records the same per-second GraphData series used for HTML report graphs.
+For **live** metrics while a load test is running (RPS, users, latency charts, request/error tables), enable the optional [Live Dashboard](../controller/dashboard.md) with `--dashboard`. By default it is observe-only; with `--dashboard-control` and a required auth token the browser can also Start, Stop, and set users. Controllers remain the power-user path for host/test-plan changes, rate tuning, and process shutdown. Enabling the dashboard records the same per-second GraphData series used for HTML report graphs.
 
 ### Developer documentation
 Additional details about how metrics are collected, stored, and displayed can be found [in the developer documentation](https://docs.rs/goose/*/goose/metrics/index.html).
