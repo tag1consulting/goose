@@ -226,8 +226,32 @@
       return Promise.resolve(null);
     }
     if (res.status === 503) {
-      setControlStatus("Control unavailable — retry", "error");
-      return Promise.resolve(null);
+      // Prefer server message: timeout vs busy vs unavailable. Never blind-retry
+      // on timeout — the action may still be applying on the load generator.
+      return res.json().then(
+        function (body) {
+          var err = body && body.error ? String(body.error) : "";
+          var msg =
+            body && body.message
+              ? String(body.message)
+              : "Control unavailable";
+          if (err === "timeout") {
+            setControlStatus(
+              "Timed out — check phase/users before retrying",
+              "error"
+            );
+          } else if (err === "busy") {
+            setControlStatus("Control busy — wait and retry", "error");
+          } else {
+            setControlStatus(msg, "error");
+          }
+          return null;
+        },
+        function () {
+          setControlStatus("Control unavailable", "error");
+          return null;
+        }
+      );
     }
     return res.json().then(
       function (data) {

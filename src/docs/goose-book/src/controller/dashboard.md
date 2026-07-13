@@ -184,7 +184,7 @@ Then Start from the UI or via `POST /api/v1/control/start`. Without Controllers 
 |--------|------|------|-------------|
 | `POST` | `/api/v1/control/start` | empty or `{}` | Start an idle load test → enters **Increase** |
 | `POST` | `/api/v1/control/stop` | empty or `{}` | Begin cancel → enters **Decrease** (eventual Idle) |
-| `POST` | `/api/v1/control/users` | `{"users": N}` | Set absolute target user count (`N` integer, 1–1_000_000) |
+| `POST` | `/api/v1/control/users` | `{"users": N}` | Set absolute target user count (`N` integer, 1–100_000) |
 
 Auth: `Authorization: Bearer <token>` only (query `?token=` → **401**). Missing/wrong token → **401**. Control disabled → **404**.
 

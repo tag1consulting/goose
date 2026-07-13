@@ -45,8 +45,11 @@ const APP_CSS: &str = include_str!("dashboard/static/app.css");
 const CHART_JS: &str = include_str!("dashboard/static/chart.min.js");
 
 /// Content-Security-Policy applied to every response.
+///
+/// `frame-ancestors 'none'` blocks embedding the control UI in third-party
+/// frames (clickjacking Start/Stop/Users if a user is induced to interact).
 const CSP: &str =
-    "default-src 'self'; script-src 'self'; connect-src 'self'; style-src 'self'; img-src 'self' data:";
+    "default-src 'self'; script-src 'self'; connect-src 'self'; style-src 'self'; img-src 'self' data:; frame-ancestors 'none'";
 
 /// Default hard cap on concurrent SSE clients. Overridable via
 /// `--dashboard-max-clients` / [`crate::config::GooseDefault::DashboardMaxClients`].
@@ -64,9 +67,15 @@ const SSE_HEARTBEAT: Duration = Duration::from_secs(15);
 
 /// Oneshot wait for control POSTs (Start replies before `reset_run_state`).
 ///
-/// If this fires the HTTP client receives 503; the main loop **skips** applying
-/// the command when the oneshot is already closed (no orphan Start/Stop/Users).
-const CONTROL_TIMEOUT: Duration = Duration::from_secs(5);
+/// If this fires the HTTP client receives 503 with `error=timeout`. The main
+/// loop **skips** applying the command when the oneshot is already closed
+/// (still queued). If the main loop had already started applying (e.g. large
+/// `SetUsers` allocation), a residual race can still mutate after this 503 —
+/// clients must re-check phase/users before retrying (do not blind-retry).
+///
+/// 15s allows non-trivial `weight_scenario_users` work; Start still replies
+/// before `control_start_finish` so HTTP usually completes much sooner.
+const CONTROL_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Hub wait for a single parent/metrics snapshot reply before treating the build
 /// as transient (poll clients already use a 5s outer timeout).
@@ -75,8 +84,17 @@ const SNAPSHOT_BUILD_TIMEOUT: Duration = Duration::from_secs(4);
 /// Max JSON body size for control POSTs (start/stop are tiny; users is one int).
 const CONTROL_BODY_LIMIT: usize = 16 * 1024;
 
-/// HTTP-layer upper bound for `POST /api/v1/control/users` (Controller accepts 0).
-const MAX_CONTROL_USERS: u64 = 1_000_000;
+/// HTTP-layer upper bound for `POST /api/v1/control/users`.
+///
+/// Controllers historically had no cap; the dashboard makes user changes one
+/// click/curl away, so a hard limit prevents accidental multi-GB client
+/// allocation from a single POST. Extreme values still require Controllers.
+const MAX_CONTROL_USERS: u64 = 100_000;
+
+/// Max concurrent control POSTs waiting on the main loop (admission control).
+/// Additional authenticated control requests receive 503 `busy` without
+/// enqueueing unbounded flume work.
+const MAX_CONTROL_IN_FLIGHT: usize = 4;
 
 /// Result of a successful dashboard server spawn.
 #[derive(Debug)]
@@ -618,6 +636,8 @@ struct DashboardState {
     auth_token: String,
     /// When true, control routes are registered and require a non-empty token.
     control_enabled: bool,
+    /// Concurrent control POSTs currently waiting on the main loop.
+    control_in_flight: Arc<AtomicUsize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -716,6 +736,7 @@ pub(crate) async fn setup_dashboard(
         request_tx,
         auth_token: configuration.dashboard_auth_token.clone(),
         control_enabled,
+        control_in_flight: Arc::new(AtomicUsize::new(0)),
     };
 
     let app = build_router(state);
@@ -727,7 +748,10 @@ pub(crate) async fn setup_dashboard(
         info!("[dashboard]: listening on http://{bound} (read-only)");
     }
 
-    // Detached server task — no need to rejoin when the load test ends.
+    // Detached server task. `close_tx` only signals the SSE hub to emit
+    // `event: closed` — the HTTP listener stays up so late subscribers and
+    // idle re-Start polls still work until the process/runtime ends. Binding
+    // is released when the Tokio runtime is dropped (CLI exit).
     // Wrap in Some so the JoinHandle is not a bare `let _ = future` (clippy).
     let _ = Some(tokio::spawn(async move {
         if let Err(e) = axum::serve(listener, app).await {
@@ -1043,8 +1067,9 @@ fn parse_empty_control_body(body: &[u8]) -> Result<(), (&'static str, &'static s
     }
 }
 
-/// Parse `{"users": N}` with integer N in 1..=1_000_000.
+/// Parse `{"users": N}` with integer N in 1..=[`MAX_CONTROL_USERS`].
 fn parse_users_body(body: &[u8]) -> Result<usize, (&'static str, &'static str)> {
+    const USERS_MSG: &str = "users must be an integer between 1 and 100000";
     let trimmed = trim_ascii_whitespace(body);
     if trimmed.is_empty() {
         return Err(("bad_request", "request body required"));
@@ -1059,12 +1084,7 @@ fn parse_users_body(body: &[u8]) -> Result<usize, (&'static str, &'static str)> 
     };
     let users_val = match obj.get("users") {
         Some(v) => v,
-        None => {
-            return Err((
-                "invalid_users",
-                "users must be an integer between 1 and 1000000",
-            ))
-        }
+        None => return Err(("invalid_users", USERS_MSG)),
     };
     // Reject floats/strings: only JSON integers (i64/u64), not f64.
     let n = match users_val.as_u64() {
@@ -1072,22 +1092,13 @@ fn parse_users_body(body: &[u8]) -> Result<usize, (&'static str, &'static str)> 
         None => {
             // Negative integers arrive as i64; treat as invalid_users.
             if users_val.as_i64().is_some() || users_val.is_number() || users_val.is_string() {
-                return Err((
-                    "invalid_users",
-                    "users must be an integer between 1 and 1000000",
-                ));
+                return Err(("invalid_users", USERS_MSG));
             }
-            return Err((
-                "invalid_users",
-                "users must be an integer between 1 and 1000000",
-            ));
+            return Err(("invalid_users", USERS_MSG));
         }
     };
     if !(1..=MAX_CONTROL_USERS).contains(&n) {
-        return Err((
-            "invalid_users",
-            "users must be an integer between 1 and 1000000",
-        ));
+        return Err(("invalid_users", USERS_MSG));
     }
     // Reject unknown extra fields? Design only requires deny_unknown on start/stop.
     // Users: only `users` is required; extra fields are tolerated for forward compat.
@@ -1121,6 +1132,29 @@ fn control_http_error(
     (status, Json(body)).into_response()
 }
 
+/// RAII guard that decrements `control_in_flight` on drop.
+struct ControlInFlightGuard {
+    counter: Arc<AtomicUsize>,
+}
+
+impl Drop for ControlInFlightGuard {
+    fn drop(&mut self) {
+        self.counter.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+/// Try to reserve a control admission slot. Returns `None` when at cap.
+fn try_acquire_control_slot(state: &DashboardState) -> Option<ControlInFlightGuard> {
+    let prev = state.control_in_flight.fetch_add(1, Ordering::AcqRel);
+    if prev >= MAX_CONTROL_IN_FLIGHT {
+        state.control_in_flight.fetch_sub(1, Ordering::AcqRel);
+        return None;
+    }
+    Some(ControlInFlightGuard {
+        counter: Arc::clone(&state.control_in_flight),
+    })
+}
+
 /// Send a control request to the main loop and wait up to [`CONTROL_TIMEOUT`].
 async fn dispatch_control(
     state: &DashboardState,
@@ -1128,6 +1162,16 @@ async fn dispatch_control(
     respond_rx: oneshot::Receiver<ControlResult>,
     command: &str,
 ) -> Response<Body> {
+    let Some(_slot) = try_acquire_control_slot(state) else {
+        warn!("[dashboard]: control admission full ({command})");
+        return control_http_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            command,
+            "busy",
+            "too many control requests in flight — wait and retry",
+        );
+    };
+
     if state.request_tx.send(request).is_err() {
         warn!("[dashboard]: control channel disconnected ({command})");
         return control_http_error(
@@ -1173,8 +1217,8 @@ async fn dispatch_control(
             control_http_error(
                 StatusCode::SERVICE_UNAVAILABLE,
                 command,
-                "unavailable",
-                "control unavailable — retry if the action did not take effect",
+                "timeout",
+                "control timed out — action may still be applying; check phase/users before retrying",
             )
         }
     }
@@ -1572,7 +1616,7 @@ mod tests {
     fn parse_users_body_rules() {
         assert_eq!(parse_users_body(b"{\"users\":50}").unwrap(), 50);
         assert_eq!(parse_users_body(b"{\"users\":1}").unwrap(), 1);
-        assert_eq!(parse_users_body(b"{\"users\":1000000}").unwrap(), 1_000_000);
+        assert_eq!(parse_users_body(b"{\"users\":100000}").unwrap(), 100_000);
 
         let err = parse_users_body(b"").unwrap_err();
         assert_eq!(err.0, "bad_request");
@@ -1589,7 +1633,10 @@ mod tests {
         let err = parse_users_body(b"{\"users\":0}").unwrap_err();
         assert_eq!(err.0, "invalid_users");
 
-        let err = parse_users_body(b"{\"users\":1000001}").unwrap_err();
+        let err = parse_users_body(b"{\"users\":100001}").unwrap_err();
+        assert_eq!(err.0, "invalid_users");
+
+        let err = parse_users_body(b"{\"users\":1000000}").unwrap_err();
         assert_eq!(err.0, "invalid_users");
 
         let err = parse_users_body(b"{\"users\":-1}").unwrap_err();
@@ -2540,20 +2587,37 @@ mod tests {
             assert_eq!(resp.status(), 503, "timeout must 503");
             let body: serde_json::Value = resp.json().await.expect("json");
             assert_eq!(body["ok"], false);
-            assert_eq!(body["error"], "unavailable");
+            assert_eq!(body["error"], "timeout");
             assert_eq!(body["command"], "start");
-            // CONTROL_TIMEOUT is 5s; allow a little slack for scheduling.
             assert!(
-                elapsed >= Duration::from_secs(4),
-                "expected ~5s timeout, got {:?}",
+                body["message"]
+                    .as_str()
+                    .unwrap_or("")
+                    .contains("check phase"),
+                "timeout message must warn against blind retry: {:?}",
+                body["message"]
+            );
+            // CONTROL_TIMEOUT is 15s; allow a little slack for scheduling.
+            assert!(
+                elapsed >= Duration::from_secs(14),
+                "expected ~15s timeout, got {:?}",
                 elapsed
             );
             assert!(
-                elapsed < Duration::from_secs(15),
+                elapsed < Duration::from_secs(30),
                 "timeout should not hang forever, got {:?}",
                 elapsed
             );
             parent.abort();
         }
+    }
+
+    #[test]
+    fn csp_includes_frame_ancestors_none() {
+        assert!(
+            CSP.contains("frame-ancestors 'none'"),
+            "CSP must block embedding: {}",
+            CSP
+        );
     }
 }
