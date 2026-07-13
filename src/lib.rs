@@ -2416,11 +2416,8 @@ impl GooseAttack {
                 // Clear configured test plan only when the command is accepted —
                 // soft rejects must not destroy an existing plan.
                 self.configuration.test_plan = None;
-                let current_users = if !self.test_plan.steps.is_empty() {
-                    self.test_plan.steps[self.test_plan.current].0
-                } else {
-                    self.configuration.users.unwrap_or_default()
-                };
+                // Safe when `current` has advanced past the last plan step.
+                let current_users = self.current_target_users();
                 info!("changing users from {current_users:?} to {new_users}");
                 self.configuration.users = Some(new_users);
                 Ok(self.control_outcome(
