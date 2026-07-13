@@ -203,6 +203,8 @@ pub(crate) enum MetricsCommand {
         maximum_users: usize,
         /// Live count from GooseAttackRunState.active_users — NOT on GooseMetrics.
         active_users: usize,
+        /// Current plan-step / configured target (users ramping toward).
+        target_users: usize,
         /// Seconds since the continuous series clock started (not restarted on
         /// metrics reset). Used to pin the active-users series at "now".
         series_elapsed_secs: usize,
@@ -3281,6 +3283,7 @@ impl MetricsProcessor {
                 total_users,
                 maximum_users,
                 active_users,
+                target_users,
                 series_elapsed_secs,
                 phase,
                 series_window_secs,
@@ -3306,6 +3309,7 @@ impl MetricsProcessor {
                         series,
                         active_users,
                         maximum_users,
+                        target_users,
                         total_users,
                         phase,
                         series_window_secs,
@@ -5127,6 +5131,7 @@ mod test {
             total_users: 5,
             maximum_users: 10,
             active_users: 3,
+            target_users: 8,
             // series clock "now" past the request sample at second 1
             series_elapsed_secs: 5,
             phase: "maintain".to_string(),
@@ -5141,6 +5146,7 @@ mod test {
         assert_eq!(snapshot.duration_secs, 10);
         assert_eq!(snapshot.active_users, 3);
         assert_eq!(snapshot.maximum_users, 10);
+        assert_eq!(snapshot.target_users, 8);
         assert_eq!(snapshot.total_users, 5);
         assert_eq!(snapshot.aggregate.total_requests, 1);
         assert!(!snapshot.series.rps.is_empty());

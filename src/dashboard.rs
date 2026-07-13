@@ -1329,6 +1329,7 @@ mod tests {
             duration_secs: seq,
             active_users: 1,
             maximum_users: 1,
+            target_users: 1,
             total_users: 1,
             hosts: vec!["http://example.test".into()],
             aggregate: AggregateMetrics {

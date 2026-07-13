@@ -141,6 +141,12 @@
             return lastTarget;
         if (!snap)
             return null;
+        // Prefer plan/control target over peak HWM (maximum_users) so the control
+        // field matches the KPI "active / target" second number.
+        if (typeof snap.target_users === "number" &&
+            isFinite(snap.target_users)) {
+            return snap.target_users;
+        }
         if (typeof snap.maximum_users === "number" &&
             isFinite(snap.maximum_users)) {
             return snap.maximum_users;
@@ -806,8 +812,12 @@
         hostsEl.textContent =
             snap.hosts && snap.hosts.length ? snap.hosts.join(", ") : "—";
         durationEl.textContent = formatDuration(snap.duration_secs);
+        // active / target (not peak maximum_users — that stays equal during ramp).
+        const usersTarget = typeof snap.target_users === "number" && isFinite(snap.target_users)
+            ? snap.target_users
+            : snap.maximum_users;
         kpiUsers.textContent =
-            formatInt(snap.active_users) + " / " + formatInt(snap.maximum_users);
+            formatInt(snap.active_users) + " / " + formatInt(usersTarget);
         const agg = snap.aggregate || {};
         kpiRps.textContent = formatRate(agg.requests_per_second);
         kpiFail.textContent = formatPct(agg.failure_rate);
@@ -817,7 +827,7 @@
         summaryEl.textContent = "";
         summaryEl.appendChild(kv("Phase", snap.phase));
         summaryEl.appendChild(kv("Duration", formatDuration(snap.duration_secs)));
-        summaryEl.appendChild(kv("Users", formatInt(snap.active_users) + " / " + formatInt(snap.maximum_users)));
+        summaryEl.appendChild(kv("Users", formatInt(snap.active_users) + " / " + formatInt(usersTarget)));
         summaryEl.appendChild(kv("Total users", formatInt(snap.total_users)));
         summaryEl.appendChild(kv("Goose", snap.goose_version));
         summaryEl.appendChild(kv("Hosts", snap.hosts && snap.hosts.length ? snap.hosts.join(", ") : "—"));

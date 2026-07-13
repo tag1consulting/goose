@@ -1624,12 +1624,14 @@ impl GooseAttack {
                 self.update_duration();
                 let phase = attack_phase_str(self.attack_phase).to_string();
                 let active_users = goose_attack_run_state.active_users;
+                let target_users = self.current_target_users();
                 match goose_attack_run_state.metrics_cmd_tx.send(
                     MetricsCommand::GetDashboardSnapshot {
                         duration: self.metrics.duration,
                         total_users: self.metrics.total_users,
                         maximum_users: self.metrics.maximum_users,
                         active_users,
+                        target_users,
                         series_elapsed_secs: self.series_elapsed_secs(),
                         phase: phase.clone(),
                         series_window_secs: metrics::dashboard_snapshot::SERIES_WINDOW_SECS,
@@ -1669,6 +1671,18 @@ impl GooseAttack {
             .unwrap_or(0)
     }
 
+    /// Users the attack is currently increasing/decreasing toward.
+    ///
+    /// Prefers the active test-plan step target; falls back to configured
+    /// `--users` when the plan is empty (e.g. idle before start).
+    fn current_target_users(&self) -> usize {
+        if !self.test_plan.steps.is_empty() {
+            self.test_plan.steps[self.test_plan.current].0
+        } else {
+            self.configuration.users.unwrap_or_default()
+        }
+    }
+
     /// Build a dashboard snapshot from main-loop metrics/graph state.
     ///
     /// Used when the dedicated metrics processor is not running (Idle after
@@ -1691,6 +1705,7 @@ impl GooseAttack {
                 series,
                 active_users,
                 maximum_users: self.metrics.maximum_users,
+                target_users: self.current_target_users(),
                 total_users: self.metrics.total_users,
                 phase,
                 series_window_secs: metrics::dashboard_snapshot::SERIES_WINDOW_SECS,

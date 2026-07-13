@@ -30,8 +30,13 @@ pub(crate) struct DashboardSnapshot {
 
     pub phase: String,
     pub duration_secs: u64,
+    /// Users currently running (main-loop active count).
     pub active_users: u64,
+    /// Peak concurrent users observed during this run (high-water mark).
     pub maximum_users: u64,
+    /// Current test-plan step target — users the attack is increasing or
+    /// decreasing toward (not the historical peak).
+    pub target_users: u64,
     pub total_users: u64,
     pub hosts: Vec<String>,
 
@@ -153,6 +158,8 @@ pub(crate) struct DashboardSnapshotInput<'a> {
     pub series: SeriesWindow,
     pub active_users: usize,
     pub maximum_users: usize,
+    /// Current plan-step / configured target (see [`DashboardSnapshot::target_users`]).
+    pub target_users: usize,
     pub total_users: usize,
     pub phase: String,
     pub series_window_secs: u32,
@@ -175,6 +182,7 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
             duration_secs: input.metrics.duration as u64,
             active_users: input.active_users as u64,
             maximum_users: input.maximum_users as u64,
+            target_users: input.target_users as u64,
             total_users: input.total_users as u64,
             hosts,
             aggregate: AggregateMetrics {
@@ -286,6 +294,7 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
         duration_secs: duration as u64,
         active_users: input.active_users as u64,
         maximum_users: input.maximum_users as u64,
+        target_users: input.target_users as u64,
         total_users: input.total_users as u64,
         hosts,
         aggregate: AggregateMetrics {
@@ -408,6 +417,7 @@ mod tests {
             series: SeriesWindow::empty(),
             active_users: 0,
             maximum_users: 10,
+            target_users: 10,
             total_users: 10,
             phase: "idle".to_string(),
             series_window_secs: SERIES_WINDOW_SECS,
@@ -417,6 +427,7 @@ mod tests {
         assert_eq!(snap.version, 1);
         assert_eq!(snap.phase, "idle");
         assert_eq!(snap.maximum_users, 10);
+        assert_eq!(snap.target_users, 10);
         assert_eq!(snap.aggregate.total_requests, 0);
         assert!(!snap.aggregate.co_active);
         assert!(snap.requests.is_empty());
@@ -456,6 +467,7 @@ mod tests {
             series: SeriesWindow::empty(),
             active_users: 5,
             maximum_users: 5,
+            target_users: 5,
             total_users: 5,
             phase: "maintain".to_string(),
             series_window_secs: 60,
@@ -489,6 +501,7 @@ mod tests {
             series: SeriesWindow::empty(),
             active_users: 0,
             maximum_users: 0,
+            target_users: 0,
             total_users: 0,
             phase: "maintain".to_string(),
             series_window_secs: 300,
@@ -514,6 +527,7 @@ mod tests {
             series: SeriesWindow::empty(),
             active_users: 0,
             maximum_users: 0,
+            target_users: 0,
             total_users: 0,
             phase: "maintain".to_string(),
             series_window_secs: 300,
@@ -539,6 +553,7 @@ mod tests {
             series: SeriesWindow::empty(),
             active_users: 3,
             maximum_users: 10,
+            target_users: 10,
             total_users: 10,
             phase: "increase".to_string(),
             series_window_secs: 300,
@@ -554,6 +569,7 @@ mod tests {
         assert_eq!(snap.requests[0].name, "/a");
         assert_eq!(snap.requests[0].request_count, 10);
         assert_eq!(snap.active_users, 3);
+        assert_eq!(snap.target_users, 10);
         assert!(snap.aggregate.response_time_avg_ms > 0.0);
         assert!(snap.aggregate.percentile_ms.p50 > 0);
     }
@@ -588,6 +604,7 @@ mod tests {
             series,
             active_users: 7,
             maximum_users: 10,
+            target_users: 10,
             total_users: 10,
             phase: "maintain".to_string(),
             series_window_secs: 120,
@@ -609,6 +626,7 @@ mod tests {
         assert_eq!(snap.phase, "maintain");
         assert_eq!(snap.duration_secs, 42);
         assert_eq!(snap.active_users, 7);
+        assert_eq!(snap.target_users, 10);
         assert_eq!(snap.hosts, vec!["https://example.com".to_string()]);
     }
 }
