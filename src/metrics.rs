@@ -1869,7 +1869,7 @@ impl GooseMetrics {
 
                 // Iterate over user transaction times, and merge into global transaction times.
                 aggregate_transaction_times =
-                    merge_times(aggregate_transaction_times, transaction.times.clone());
+                    merge_times(aggregate_transaction_times, &transaction.times);
 
                 // Increment total transaction time counter.
                 aggregate_total_transaction_time += &transaction.total_time;
@@ -2051,8 +2051,7 @@ impl GooseMetrics {
         )?;
         for scenario in &self.scenarios {
             // Iterate over user transaction times, and merge into global transaction times.
-            aggregate_scenario_times =
-                merge_times(aggregate_scenario_times, scenario.times.clone());
+            aggregate_scenario_times = merge_times(aggregate_scenario_times, &scenario.times);
 
             // Increment total scenario time counter.
             aggregate_total_scenario_time += &scenario.total_time;
@@ -2164,7 +2163,7 @@ impl GooseMetrics {
             let raw_average_precision = determine_precision(raw_average);
 
             // Merge in all times from this request into an aggregate.
-            aggregate_raw_times = merge_times(aggregate_raw_times, request.raw_data.times.clone());
+            aggregate_raw_times = merge_times(aggregate_raw_times, &request.raw_data.times);
             // Increment total response time counter.
             aggregate_raw_total_time += &request.raw_data.total_time;
             // Increment counter tracking individual response times seen.
@@ -2287,7 +2286,7 @@ impl GooseMetrics {
                     _ => co_data.total_time as f32 / co_data.counter as f32,
                 };
                 standard_deviation = util::standard_deviation(raw_average, co_average);
-                aggregate_co_times = merge_times(aggregate_co_times, co_data.times.clone());
+                aggregate_co_times = merge_times(aggregate_co_times, &co_data.times);
                 aggregate_co_counter += co_data.counter;
                 // If user had new fastest response time, update global fastest response time.
                 aggregate_co_min_time =
@@ -2419,7 +2418,7 @@ impl GooseMetrics {
 
             // Iterate over user response times, and merge into global response times.
             raw_aggregate_response_times =
-                merge_times(raw_aggregate_response_times, request.raw_data.times.clone());
+                merge_times(raw_aggregate_response_times, &request.raw_data.times);
 
             // Increment total response time counter.
             raw_aggregate_total_response_time += &request.raw_data.total_time;
@@ -2575,7 +2574,7 @@ impl GooseMetrics {
                 // Iterate over user response times, and merge into global response times.
                 co_aggregate_response_times = merge_times(
                     co_aggregate_response_times,
-                    coordinated_omission_data.times.clone(),
+                    &coordinated_omission_data.times,
                 );
 
                 // Increment total response time counter.
@@ -4214,13 +4213,14 @@ pub(crate) fn format_value(value: &Value<usize>) -> String {
 /// A helper function that merges together times.
 ///
 /// Used in `lib.rs` to merge together per-thread times, and in `metrics.rs` to
-/// aggregate all times.
+/// aggregate all times. Takes the local map by shared reference so callers
+/// (including ~1 Hz dashboard snapshot builds) do not need to clone.
 pub(crate) fn merge_times(
     mut global_response_times: BTreeMap<usize, usize>,
-    local_response_times: BTreeMap<usize, usize>,
+    local_response_times: &BTreeMap<usize, usize>,
 ) -> BTreeMap<usize, usize> {
     // Iterate over user response times, and merge into global response times.
-    for (response_time, count) in &local_response_times {
+    for (response_time, count) in local_response_times {
         let counter = match global_response_times.get(response_time) {
             // We've seen this response_time before, increment counter.
             Some(c) => *c + count,
@@ -4347,7 +4347,7 @@ mod test {
     fn response_time_merge() {
         let mut global_response_times: BTreeMap<usize, usize> = BTreeMap::new();
         let local_response_times: BTreeMap<usize, usize> = BTreeMap::new();
-        global_response_times = merge_times(global_response_times, local_response_times.clone());
+        global_response_times = merge_times(global_response_times, &local_response_times);
         // @TODO: how can we do useful testing of private method and objects?
         assert_eq!(&global_response_times, &local_response_times);
     }

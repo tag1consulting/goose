@@ -224,7 +224,7 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
         aggregate_response_time_total += request.raw_data.total_time;
         aggregate_min = update_min_time(aggregate_min, request.raw_data.minimum_time);
         aggregate_max = update_max_time(aggregate_max, request.raw_data.maximum_time);
-        aggregate_times = merge_times(aggregate_times, request.raw_data.times.clone());
+        aggregate_times = merge_times(aggregate_times, &request.raw_data.times);
         request_rank.push((request, total_count));
     }
 

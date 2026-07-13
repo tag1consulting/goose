@@ -233,8 +233,9 @@ impl GraphData {
     /// 1. `end_second` = max second index across RPS keys, users series, and
     ///    optional `end_second_hint` (series clock "now" from the main loop)
     /// 2. `start_second` = `end_second.saturating_sub(window_secs - 1)`
-    /// 3. For each second in the inclusive window: sum RPS/errors across keys,
-    ///    take global users, and compute request-count-weighted average latency
+    /// 3. Allocate fixed-length RPS/FPS/latency buffers; for each per-key series
+    ///    add its overlapping range into those buffers (and accumulate
+    ///    request-count-weighted latency the same way)
     /// 4. Missing RPS/error/latency seconds contribute 0
     /// 5. **Users are a level, not a rate**: missing samples (including trailing
     ///    seconds where request metrics advanced past the last `RecordUsers`)
@@ -270,50 +271,65 @@ impl GraphData {
 
         let start_second = end_second.saturating_sub(window_secs as usize - 1);
         let len = end_second - start_second + 1;
-        let mut rps = Vec::with_capacity(len);
-        let mut fps = Vec::with_capacity(len);
-        let mut users = Vec::with_capacity(len);
-        let mut avg_latency_ms = Vec::with_capacity(len);
 
-        for s in start_second..=end_second {
-            let mut rps_sum: u64 = 0;
-            for series in self.requests_per_second.series.values() {
-                rps_sum += series.get(s) as u64;
+        // Allocate fixed-length outputs once, then accumulate per key into the
+        // overlapping range. This is O(stored_samples_in_window) rather than
+        // O(window_secs × unique_keys), which matters at ~1 Hz with many request
+        // names.
+        let mut rps = vec![0.0f64; len];
+        let mut fps = vec![0.0f64; len];
+        let mut avg_latency_ms = vec![0.0f64; len];
+        let mut latency_weight = vec![0u64; len];
+
+        for series in self.requests_per_second.series.values() {
+            accumulate_rate_series_into_window(series, start_second, end_second, &mut rps);
+        }
+        for series in self.errors_per_second.series.values() {
+            accumulate_rate_series_into_window(series, start_second, end_second, &mut fps);
+        }
+
+        // Weighted latency: for each key, walk the overlap of its RPS and latency
+        // series with the export window and add into fixed output vectors.
+        for (key, latency_series) in &self.average_response_time_per_second {
+            let Some(rps_series) = self.requests_per_second.series.get(key) else {
+                continue;
+            };
+            if latency_series.data.is_empty() || rps_series.data.is_empty() {
+                continue;
             }
-            rps.push(rps_sum as f64);
-
-            let mut fps_sum: u64 = 0;
-            for series in self.errors_per_second.series.values() {
-                fps_sum += series.get(s) as u64;
+            let series_start = latency_series
+                .origin
+                .max(rps_series.origin)
+                .max(start_second);
+            let series_end = (latency_series.origin + latency_series.data.len() - 1)
+                .min(rps_series.origin + rps_series.data.len() - 1)
+                .min(end_second);
+            if series_start > series_end {
+                continue;
             }
-            fps.push(fps_sum as f64);
-
-            // Level hold: do not paint "0 users" for trailing seconds where only
-            // RPS has advanced (main-loop RecordUsers lags drain_pending).
-            users.push(self.users_per_second.get_held(s) as u64);
-
-            // Request-count-weighted average of per-key MovingAverage at second s.
-            let mut weighted_sum: f64 = 0.0;
-            let mut weight: u64 = 0;
-            for (key, latency_series) in &self.average_response_time_per_second {
-                let count = self
-                    .requests_per_second
-                    .series
-                    .get(key)
-                    .map(|ts| ts.get(s) as u64)
-                    .unwrap_or(0);
+            for s in series_start..=series_end {
+                let count = rps_series.data[s - rps_series.origin] as u64;
                 if count == 0 {
                     continue;
                 }
-                let avg = latency_series.get(s).average as f64;
-                weighted_sum += avg * count as f64;
-                weight += count;
+                let avg = latency_series.data[s - latency_series.origin].average as f64;
+                let idx = s - start_second;
+                avg_latency_ms[idx] += avg * count as f64;
+                latency_weight[idx] += count;
             }
-            avg_latency_ms.push(if weight > 0 {
-                weighted_sum / weight as f64
-            } else {
-                0.0
-            });
+        }
+        for i in 0..len {
+            if latency_weight[i] > 0 {
+                avg_latency_ms[i] /= latency_weight[i] as f64;
+            }
+        }
+
+        // Level hold: do not paint "0 users" for trailing seconds where only
+        // RPS has advanced (main-loop RecordUsers lags drain_pending). Users are
+        // a single series so O(window) is fine.
+        let mut users = Vec::with_capacity(len);
+        for s in start_second..=end_second {
+            users.push(self.users_per_second.get_held(s) as u64);
         }
 
         SeriesWindow {
@@ -778,6 +794,30 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
             })
             .filter_map(|(time, data_option)| data_option.map(|data| (time, data)))
             .collect::<Vec<_>>()
+    }
+}
+
+/// Add one rate series' samples into a fixed-length export window buffer.
+///
+/// Only visits the absolute-second overlap between the series storage and
+/// `[start_second, end_second]`. Missing buckets stay at their pre-zeroed value.
+fn accumulate_rate_series_into_window(
+    series: &TimeSeries<u32, u32>,
+    start_second: usize,
+    end_second: usize,
+    out: &mut [f64],
+) {
+    if series.data.is_empty() {
+        return;
+    }
+    let series_end = series.origin + series.data.len() - 1;
+    let overlap_start = start_second.max(series.origin);
+    let overlap_end = end_second.min(series_end);
+    if overlap_start > overlap_end {
+        return;
+    }
+    for s in overlap_start..=overlap_end {
+        out[s - start_second] += series.data[s - series.origin] as f64;
     }
 }
 
