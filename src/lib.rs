@@ -2239,12 +2239,12 @@ impl GooseAttack {
         goose_attack_run_state: &mut GooseAttackRunState,
         new_users: usize,
     ) -> Result<ControlOutcome, GooseError> {
-        // If setting users, any existing configuration for a test plan isn't valid.
-        self.configuration.test_plan = None;
-
         match self.attack_phase {
             // If the load test is idle, simply update the configuration.
             AttackPhase::Idle => {
+                // Clear configured test plan only when the command is accepted —
+                // soft rejects must not destroy an existing plan.
+                self.configuration.test_plan = None;
                 let current_users = if !self.test_plan.steps.is_empty() {
                     self.test_plan.steps[self.test_plan.current].0
                 } else {
@@ -2262,6 +2262,8 @@ impl GooseAttack {
             }
             // If the load test is running, rebuild the active test plan.
             AttackPhase::Increase | AttackPhase::Decrease | AttackPhase::Maintain => {
+                // Clear configured test plan only when the command is accepted.
+                self.configuration.test_plan = None;
                 info!(
                     "changing users from {} to {new_users}",
                     goose_attack_run_state.active_users
