@@ -1484,9 +1484,8 @@ impl GooseAttack {
         const MAX_DRAIN: usize = 16;
 
         let mut control_batch: Vec<dashboard::DashboardRequest> = Vec::new();
-        let mut pending_snapshot: Option<
-            tokio::sync::oneshot::Sender<metrics::DashboardSnapshot>,
-        > = None;
+        let mut pending_snapshot: Option<tokio::sync::oneshot::Sender<metrics::DashboardSnapshot>> =
+            None;
         let mut disconnected = false;
 
         {
@@ -1625,9 +1624,8 @@ impl GooseAttack {
                 self.update_duration();
                 let phase = attack_phase_str(self.attack_phase).to_string();
                 let active_users = goose_attack_run_state.active_users;
-                match goose_attack_run_state
-                    .metrics_cmd_tx
-                    .send(MetricsCommand::GetDashboardSnapshot {
+                match goose_attack_run_state.metrics_cmd_tx.send(
+                    MetricsCommand::GetDashboardSnapshot {
                         duration: self.metrics.duration,
                         total_users: self.metrics.total_users,
                         maximum_users: self.metrics.maximum_users,
@@ -1636,7 +1634,8 @@ impl GooseAttack {
                         phase: phase.clone(),
                         series_window_secs: metrics::dashboard_snapshot::SERIES_WINDOW_SECS,
                         respond,
-                    }) {
+                    },
+                ) {
                     Ok(()) => {}
                     // Processor gone (e.g. Idle after control Stop): serve from
                     // main-loop state so the SPA can observe idle and re-Start.
@@ -1649,8 +1648,7 @@ impl GooseAttack {
                         debug!(
                             "[dashboard]: metrics processor unavailable; serving local snapshot (phase={phase})"
                         );
-                        let snapshot =
-                            self.build_local_dashboard_snapshot(phase, active_users);
+                        let snapshot = self.build_local_dashboard_snapshot(phase, active_users);
                         let _ = respond.send(snapshot);
                     }
                     Err(_) => {

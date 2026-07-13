@@ -3237,12 +3237,8 @@ impl MetricsProcessor {
                 // known second (or second 0 if empty) so the chart does not dip
                 // to zero when the next sample is slightly delayed.
                 if active_users > 0 {
-                    let second = self
-                        .graph_data
-                        .users_last_absolute_second()
-                        .unwrap_or(0);
-                    self.graph_data
-                        .record_users_monotonic(active_users, second);
+                    let second = self.graph_data.users_last_absolute_second().unwrap_or(0);
+                    self.graph_data.record_users_monotonic(active_users, second);
                 }
                 let _ = ack.send(());
                 false
@@ -5162,9 +5158,7 @@ mod test {
 
         // Simulated ramp 1 → 5 over seconds 0..4.
         for (s, users) in (0..=4).zip(1..=5) {
-            processor
-                .graph_data
-                .record_users_per_second(users, s);
+            processor.graph_data.record_users_per_second(users, s);
         }
         // Steady at 5 through second 10.
         for s in 5..=10 {
@@ -5194,10 +5188,7 @@ mod test {
         );
 
         // Users ramp still present.
-        assert_eq!(
-            processor.graph_data.users_last_absolute_second(),
-            Some(10)
-        );
+        assert_eq!(processor.graph_data.users_last_absolute_second(), Some(10));
         let users_window = processor.graph_data.export_series_window(300);
         assert_eq!(users_window.users.len(), 11);
         assert_eq!(users_window.users[0], 1);

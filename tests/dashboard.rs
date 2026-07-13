@@ -809,14 +809,8 @@ async fn test_control_start_stop() {
 
     // After the cancel ramp completes the main loop returns to Idle and still
     // serves snapshots from local metrics (processor is recycled until Start).
-    let idle_after = wait_for_phase(
-        &client,
-        &base,
-        token,
-        &["idle"],
-        Duration::from_secs(60),
-    )
-    .await;
+    let idle_after =
+        wait_for_phase(&client, &base, token, &["idle"], Duration::from_secs(60)).await;
     assert_eq!(idle_after["phase"], "idle");
     assert_eq!(
         idle_after["active_users"].as_u64().unwrap_or(u64::MAX),

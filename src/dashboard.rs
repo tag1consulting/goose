@@ -1211,9 +1211,7 @@ async fn dispatch_control(
             // mutation when `respond.is_closed()` *before* handling — the common
             // case (still queued). If the main loop had already started applying
             // the command, a residual race can still mutate state after this 503.
-            warn!(
-                "[dashboard]: control oneshot timed out ({command}); skipped if still queued"
-            );
+            warn!("[dashboard]: control oneshot timed out ({command}); skipped if still queued");
             control_http_error(
                 StatusCode::SERVICE_UNAVAILABLE,
                 command,

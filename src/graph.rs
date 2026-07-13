@@ -1845,10 +1845,7 @@ mod test {
         assert_eq!(window.users.len(), 57);
         // Trailing seconds past last RecordUsers must hold 10, not drop to 0.
         for (i, &u) in window.users.iter().enumerate() {
-            assert_eq!(
-                u, 10,
-                "users[{i}] should hold last known count 10, got {u}"
-            );
+            assert_eq!(u, 10, "users[{i}] should hold last known count 10, got {u}");
         }
         // RPS still present at the end (not all zeros).
         assert!(window.rps[56] > 0.0);
@@ -1916,9 +1913,15 @@ mod test {
         // 60=10, 61-64=10 (stale fill), 65=15, 66-67=10 (stale!), 68=18, 69=10, 70=20
         assert_eq!(window.users[60], 10);
         assert_eq!(window.users[65], 15);
-        assert_eq!(window.users[66], 10, "stale gap-fill creates a dip after 15");
+        assert_eq!(
+            window.users[66], 10,
+            "stale gap-fill creates a dip after 15"
+        );
         assert_eq!(window.users[68], 18);
-        assert_eq!(window.users[69], 10, "stale gap-fill creates a dip before 20");
+        assert_eq!(
+            window.users[69], 10,
+            "stale gap-fill creates a dip before 20"
+        );
         assert_eq!(window.users[70], 20);
         // Confirm the V: 15 → 10 → 18 is non-monotonic mid-ramp.
         assert!(window.users[66] < window.users[65] && window.users[66] < window.users[68]);
