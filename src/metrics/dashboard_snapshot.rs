@@ -162,6 +162,45 @@ pub(crate) struct DashboardSnapshotInput<'a> {
 
 /// Build a compact [`DashboardSnapshot`] from live metrics + series window.
 pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> DashboardSnapshot {
+    // With `--no-metrics`, document an honest empty state: no tables, no series,
+    // and no truncation flags. Runtime still reports phase/user counts.
+    if input.metrics_disabled {
+        let mut hosts: Vec<String> = input.metrics.hosts.iter().cloned().collect();
+        hosts.sort();
+        return DashboardSnapshot {
+            version: 1,
+            generated_at: Utc::now(),
+            goose_version: env!("CARGO_PKG_VERSION").to_string(),
+            phase: input.phase,
+            duration_secs: input.metrics.duration as u64,
+            active_users: input.active_users as u64,
+            maximum_users: input.maximum_users as u64,
+            total_users: input.total_users as u64,
+            hosts,
+            aggregate: AggregateMetrics {
+                total_requests: 0,
+                total_failures: 0,
+                requests_per_second: 0.0,
+                failures_per_second: 0.0,
+                failure_rate: 0.0,
+                response_time_avg_ms: 0.0,
+                response_time_min_ms: 0,
+                response_time_max_ms: 0,
+                percentile_ms: Percentiles::zero(),
+                co_active: false,
+            },
+            requests: Vec::new(),
+            errors: Vec::new(),
+            series: SeriesWindow::empty(),
+            flags: SnapshotFlags {
+                metrics_disabled: true,
+                requests_truncated: false,
+                errors_truncated: false,
+                series_seconds: input.series_window_secs,
+            },
+        };
+    }
+
     let duration = input.metrics.duration;
 
     let mut request_rows: Vec<RequestRow> = Vec::new();
@@ -269,7 +308,7 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
         errors: error_rows,
         series: input.series,
         flags: SnapshotFlags {
-            metrics_disabled: input.metrics_disabled,
+            metrics_disabled: false,
             requests_truncated,
             errors_truncated,
             series_seconds: input.series_window_secs,
@@ -516,5 +555,59 @@ mod tests {
         assert_eq!(snap.active_users, 3);
         assert!(snap.aggregate.response_time_avg_ms > 0.0);
         assert!(snap.aggregate.percentile_ms.p50 > 0);
+    }
+
+    #[test]
+    fn metrics_disabled_forces_empty_tables_and_series() {
+        let mut metrics = empty_metrics();
+        metrics.duration = 42;
+        metrics.hosts.insert("https://example.com".to_string());
+        metrics
+            .requests
+            .insert("GET /a".to_string(), make_request("/a", 8, 2, &[(20, 10)]));
+        let mut err = GooseErrorMetricAggregate::new(
+            GooseMethod::Get,
+            "/a".to_string(),
+            "boom".to_string(),
+            "",
+        );
+        err.occurrences = 3;
+        metrics.errors.insert("err".to_string(), err);
+
+        let series = SeriesWindow {
+            start_second: 10,
+            rps: vec![1.0, 2.0],
+            fps: vec![0.0, 0.5],
+            users: vec![1, 2],
+            avg_latency_ms: vec![10.0, 20.0],
+        };
+
+        let snap = build_dashboard_snapshot(DashboardSnapshotInput {
+            metrics: &metrics,
+            series,
+            active_users: 7,
+            maximum_users: 10,
+            total_users: 10,
+            phase: "maintain".to_string(),
+            series_window_secs: 120,
+            no_status_codes: false,
+            metrics_disabled: true,
+        });
+
+        assert!(snap.flags.metrics_disabled);
+        assert!(!snap.flags.requests_truncated);
+        assert!(!snap.flags.errors_truncated);
+        assert_eq!(snap.flags.series_seconds, 120);
+        assert!(snap.requests.is_empty());
+        assert!(snap.errors.is_empty());
+        assert_eq!(snap.series, SeriesWindow::empty());
+        assert_eq!(snap.aggregate.total_requests, 0);
+        assert_eq!(snap.aggregate.total_failures, 0);
+        assert!(!snap.aggregate.co_active);
+        // Runtime context is still honest.
+        assert_eq!(snap.phase, "maintain");
+        assert_eq!(snap.duration_secs, 42);
+        assert_eq!(snap.active_users, 7);
+        assert_eq!(snap.hosts, vec!["https://example.com".to_string()]);
     }
 }
