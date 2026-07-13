@@ -299,31 +299,6 @@ async fn wait_for_active_users(
     );
 }
 
-/// After Stop, decrease shuts down the metrics processor before Idle is visible
-/// on `/snapshot`. Detect idle by polling Start until it is accepted.
-async fn wait_until_startable(
-    client: &reqwest::Client,
-    base: &str,
-    timeout: Duration,
-) -> serde_json::Value {
-    let deadline = Instant::now() + timeout;
-    let mut last = serde_json::Value::Null;
-    while Instant::now() < deadline {
-        let resp = post_control(client, base, "/api/v1/control/start", Some("{}"), true).await;
-        if resp.status() == reqwest::StatusCode::OK {
-            last = resp.json().await.expect("start json");
-            if last["ok"] == true {
-                return last;
-            }
-        }
-        tokio::time::sleep(Duration::from_millis(250)).await;
-    }
-    panic!(
-        "timed out waiting until Start succeeds (idle); last: {}",
-        last
-    );
-}
-
 /// Abort a no-autostart GooseAttack that would otherwise idle forever.
 ///
 /// Prefer [`LoadTestGuard`] in tests so panics still abort the task.
@@ -832,9 +807,27 @@ async fn test_control_start_stop() {
     );
     assert_eq!(during_body["error"], "invalid_phase");
 
-    // Eventual idle after cancel ramp: metrics processor is recycled on the way
-    // to idle, so snapshot may 503; detect idle by Start acceptance instead.
-    let restart_body = wait_until_startable(&client, &base, Duration::from_secs(60)).await;
+    // After the cancel ramp completes the main loop returns to Idle and still
+    // serves snapshots from local metrics (processor is recycled until Start).
+    let idle_after = wait_for_phase(
+        &client,
+        &base,
+        token,
+        &["idle"],
+        Duration::from_secs(60),
+    )
+    .await;
+    assert_eq!(idle_after["phase"], "idle");
+    assert_eq!(
+        idle_after["active_users"].as_u64().unwrap_or(u64::MAX),
+        0,
+        "idle after stop must report zero active users, got {idle_after}"
+    );
+
+    // Start must work again from idle (SPA re-enable path).
+    let restart = post_control(&client, &base, "/api/v1/control/start", Some("{}"), true).await;
+    assert_eq!(restart.status(), 200);
+    let restart_body: serde_json::Value = restart.json().await.expect("restart json");
     assert_eq!(restart_body["ok"], true);
     assert_eq!(restart_body["phase"], "increase");
 

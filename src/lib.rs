@@ -1455,6 +1455,11 @@ impl GooseAttack {
     /// [`MetricsCommand::GetDashboardSnapshot`] with the hub's oneshot and does
     /// not await the metrics processor.
     ///
+    /// When the metrics processor is unavailable (typical after control Stop
+    /// merges final metrics and returns to Idle until the next Start), a
+    /// snapshot is built from the main-loop [`GooseMetrics`] / [`GraphData`] so
+    /// poll/SSE clients still observe `phase: "idle"` and can re-enable Start.
+    ///
     /// Control arms skip mutation when the HTTP oneshot is already closed (client
     /// timed out / disconnected) so orphan Start/Stop/Users cannot apply after a
     /// 503. When the client is still waiting, oneshots are always completed (soft
@@ -1593,25 +1598,71 @@ impl GooseAttack {
             } else {
                 self.update_duration();
                 let phase = attack_phase_str(self.attack_phase).to_string();
-                if goose_attack_run_state
+                let active_users = goose_attack_run_state.active_users;
+                match goose_attack_run_state
                     .metrics_cmd_tx
                     .send(MetricsCommand::GetDashboardSnapshot {
                         duration: self.metrics.duration,
                         total_users: self.metrics.total_users,
                         maximum_users: self.metrics.maximum_users,
-                        active_users: goose_attack_run_state.active_users,
-                        phase,
+                        active_users,
+                        phase: phase.clone(),
                         series_window_secs: metrics::dashboard_snapshot::SERIES_WINDOW_SECS,
                         respond,
-                    })
-                    .is_err()
-                {
-                    warn!("[dashboard]: metrics processor unavailable");
+                    }) {
+                    Ok(()) => {}
+                    // Processor gone (e.g. Idle after control Stop): serve from
+                    // main-loop state so the SPA can observe idle and re-Start.
+                    Err(flume::SendError(MetricsCommand::GetDashboardSnapshot {
+                        respond,
+                        phase,
+                        active_users,
+                        ..
+                    })) => {
+                        debug!(
+                            "[dashboard]: metrics processor unavailable; serving local snapshot (phase={phase})"
+                        );
+                        let snapshot =
+                            self.build_local_dashboard_snapshot(phase, active_users);
+                        let _ = respond.send(snapshot);
+                    }
+                    Err(_) => {
+                        // Other command variants cannot appear here.
+                        debug!("[dashboard]: metrics processor unavailable");
+                    }
                 }
             }
         }
 
         Ok(())
+    }
+
+    /// Build a dashboard snapshot from main-loop metrics/graph state.
+    ///
+    /// Used when the dedicated metrics processor is not running (Idle after
+    /// Stop) so clients still receive a coherent phase/users view.
+    #[cfg(feature = "dashboard")]
+    fn build_local_dashboard_snapshot(
+        &self,
+        phase: String,
+        active_users: usize,
+    ) -> metrics::DashboardSnapshot {
+        let series = self
+            .graph_data
+            .export_series_window(metrics::dashboard_snapshot::SERIES_WINDOW_SECS);
+        metrics::dashboard_snapshot::build_dashboard_snapshot(
+            metrics::dashboard_snapshot::DashboardSnapshotInput {
+                metrics: &self.metrics,
+                series,
+                active_users,
+                maximum_users: self.metrics.maximum_users,
+                total_users: self.metrics.total_users,
+                phase,
+                series_window_secs: metrics::dashboard_snapshot::SERIES_WINDOW_SECS,
+                no_status_codes: self.configuration.no_status_codes,
+                metrics_disabled: self.configuration.no_metrics,
+            },
+        )
     }
 
     // Invoke `test_start` transactions if existing.
