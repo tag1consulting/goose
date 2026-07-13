@@ -203,7 +203,6 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
 
     let duration = input.metrics.duration;
 
-    let mut request_rows: Vec<RequestRow> = Vec::new();
     let mut aggregate_total_count: usize = 0;
     let mut aggregate_fail_count: usize = 0;
     let mut aggregate_response_time_counter: usize = 0;
@@ -212,6 +211,11 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
     let mut aggregate_max: usize = 0;
     let mut aggregate_times: BTreeMap<usize, usize> = BTreeMap::new();
 
+    // Rank by count first; only materialize full table rows for the top N so
+    // high request-name cardinality does not pay percentile/status work ~1 Hz
+    // for rows the UI never shows.
+    let mut request_rank: Vec<(&GooseRequestMetricAggregate, usize)> =
+        Vec::with_capacity(input.metrics.requests.len());
     for request in input.metrics.requests.values() {
         let total_count = request.success_count + request.fail_count;
         aggregate_total_count += total_count;
@@ -221,39 +225,36 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
         aggregate_min = update_min_time(aggregate_min, request.raw_data.minimum_time);
         aggregate_max = update_max_time(aggregate_max, request.raw_data.maximum_time);
         aggregate_times = merge_times(aggregate_times, request.raw_data.times.clone());
-
-        request_rows.push(request_row_from_aggregate(
-            request,
-            duration,
-            input.no_status_codes,
-        ));
+        request_rank.push((request, total_count));
     }
 
-    // Sort by request count descending, then method+name for stability.
-    request_rows.sort_by(|a, b| {
-        b.request_count
-            .cmp(&a.request_count)
-            .then_with(|| a.method.cmp(&b.method))
-            .then_with(|| a.name.cmp(&b.name))
+    request_rank.sort_by(|(a, a_count), (b, b_count)| {
+        b_count
+            .cmp(a_count)
+            .then_with(|| a.method_label().cmp(b.method_label()))
+            .then_with(|| a.path.cmp(&b.path))
     });
-    let requests_truncated = request_rows.len() > MAX_REQUEST_ROWS;
-    request_rows.truncate(MAX_REQUEST_ROWS);
-
-    let mut error_rows: Vec<ErrorRow> = input
-        .metrics
-        .errors
-        .values()
-        .map(error_row_from_aggregate)
+    let requests_truncated = request_rank.len() > MAX_REQUEST_ROWS;
+    request_rank.truncate(MAX_REQUEST_ROWS);
+    let request_rows: Vec<RequestRow> = request_rank
+        .into_iter()
+        .map(|(request, _)| request_row_from_aggregate(request, duration, input.no_status_codes))
         .collect();
-    error_rows.sort_by(|a, b| {
+
+    let mut error_rank: Vec<&GooseErrorMetricAggregate> = input.metrics.errors.values().collect();
+    error_rank.sort_by(|a, b| {
         b.occurrences
             .cmp(&a.occurrences)
-            .then_with(|| a.method.cmp(&b.method))
+            .then_with(|| a.method_label().cmp(b.method_label()))
             .then_with(|| a.name.cmp(&b.name))
             .then_with(|| a.error.cmp(&b.error))
     });
-    let errors_truncated = error_rows.len() > MAX_ERROR_ROWS;
-    error_rows.truncate(MAX_ERROR_ROWS);
+    let errors_truncated = error_rank.len() > MAX_ERROR_ROWS;
+    error_rank.truncate(MAX_ERROR_ROWS);
+    let error_rows: Vec<ErrorRow> = error_rank
+        .into_iter()
+        .map(error_row_from_aggregate)
+        .collect();
 
     let (rps, fps) = per_second_calculations(duration, aggregate_total_count, aggregate_fail_count);
     let failure_rate = if aggregate_total_count > 0 {
