@@ -3183,6 +3183,8 @@ impl MetricsProcessor {
             } => {
                 self.graph_data
                     .record_users_per_second(active_users, elapsed_secs);
+                // Bound per-second history on long dashboard-only soaks.
+                self.maybe_prune_dashboard_graph();
                 false
             }
             MetricsCommand::Reset {
@@ -3289,8 +3291,23 @@ impl MetricsProcessor {
                     },
                 );
                 let _ = respond.send(snapshot);
+                // After export, drop series older than the dashboard window so
+                // memory stays bounded when --report-file is not also set.
+                self.maybe_prune_dashboard_graph();
                 false
             }
+        }
+    }
+
+    /// Prune GraphData to a trailing window when only the live dashboard needs series.
+    ///
+    /// HTML/markdown reports need full-run history; when `report_file` is set we
+    /// never prune. Dashboard export uses at most [`dashboard_snapshot::SERIES_WINDOW_SECS`];
+    /// we keep 2× that as a small buffer against edge flicker at the window boundary.
+    fn maybe_prune_dashboard_graph(&mut self) {
+        if self.configuration.dashboard && self.configuration.report_file.is_empty() {
+            let keep = dashboard_snapshot::SERIES_WINDOW_SECS.saturating_mul(2);
+            self.graph_data.prune_to_window(keep);
         }
     }
 
@@ -3447,6 +3464,7 @@ impl MetricsProcessor {
                     self.graph_data
                         .record_errors_per_second(&key, seconds_since_start);
                 }
+                self.maybe_prune_dashboard_graph();
             }
         }
     }
@@ -3460,6 +3478,7 @@ impl MetricsProcessor {
         if !self.configuration.report_file.is_empty() || self.configuration.dashboard {
             self.graph_data
                 .record_transactions_per_second((raw_transaction.elapsed / 1000) as usize);
+            self.maybe_prune_dashboard_graph();
         }
     }
 
@@ -3470,6 +3489,7 @@ impl MetricsProcessor {
         if !self.configuration.report_file.is_empty() || self.configuration.dashboard {
             self.graph_data
                 .record_scenarios_per_second((raw_scenario.elapsed / 1000) as usize);
+            self.maybe_prune_dashboard_graph();
         }
     }
 
@@ -4966,6 +4986,72 @@ mod test {
         assert!(
             window.rps.is_empty(),
             "series must stay empty when neither report_file nor dashboard is set"
+        );
+    }
+
+    #[test]
+    fn graph_data_pruned_when_dashboard_only_without_report_file() {
+        // Multi-hour soaks with --dashboard (no --report-file) must not retain
+        // unbounded per-second series; keep 2× SERIES_WINDOW_SECS max.
+        let configuration = GooseConfiguration {
+            dashboard: true,
+            report_file: Vec::new(),
+            ..Default::default()
+        };
+        let mut processor = make_test_processor(configuration);
+
+        let keep = dashboard_snapshot::SERIES_WINDOW_SECS.saturating_mul(2) as usize;
+        // Record past the keep window so pruning must drop early samples.
+        let far_second = keep + 120;
+        for sec in 0..=far_second {
+            let mut request = make_test_request_metric();
+            request.elapsed = (sec as u64) * 1000;
+            request.response_time = 10;
+            request.success = true;
+            processor.process_request_metric(&request);
+        }
+
+        // Export still sees recent absolute seconds (origin advanced, data bounded).
+        let window = processor.graph_data.export_series_window(300);
+        assert!(!window.rps.is_empty());
+        assert!(
+            window.start_second as usize >= far_second.saturating_sub(299),
+            "export should cover the trailing window near second {far_second}, got start {}",
+            window.start_second
+        );
+        assert!(
+            processor.graph_data.max_series_len_for_test() <= keep,
+            "dashboard-only GraphData must stay within keep window ({keep}), got {}",
+            processor.graph_data.max_series_len_for_test()
+        );
+        // Early absolute second must no longer hold data (pruned away).
+        let early = processor.graph_data.export_series_window(300);
+        // With end near far_second, a 300s export starts near far_second-299, not 0.
+        assert!(early.start_second > 0);
+    }
+
+    #[test]
+    fn graph_data_not_pruned_when_report_file_set() {
+        let configuration = GooseConfiguration {
+            dashboard: true,
+            report_file: vec!["report.html".to_string()],
+            ..Default::default()
+        };
+        let mut processor = make_test_processor(configuration);
+
+        let far_second = dashboard_snapshot::SERIES_WINDOW_SECS as usize * 2 + 200;
+        for sec in 0..=far_second {
+            let mut request = make_test_request_metric();
+            request.elapsed = (sec as u64) * 1000;
+            request.response_time = 5;
+            processor.process_request_metric(&request);
+        }
+
+        // Full history retained for HTML report graphs.
+        assert!(
+            processor.graph_data.max_series_len_for_test() > far_second,
+            "report_file path must retain full series, got len {}",
+            processor.graph_data.max_series_len_for_test()
         );
     }
 

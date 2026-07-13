@@ -180,13 +180,11 @@ impl GraphData {
 
         let mut end_second: Option<usize> = None;
         for series in self.requests_per_second.0.values() {
-            if !series.data.is_empty() {
-                let last = series.data.len() - 1;
+            if let Some(last) = series.last_absolute_second() {
                 end_second = Some(end_second.map_or(last, |e| e.max(last)));
             }
         }
-        if !self.users_per_second.data.is_empty() {
-            let last = self.users_per_second.data.len() - 1;
+        if let Some(last) = self.users_per_second.last_absolute_second() {
             end_second = Some(end_second.map_or(last, |e| e.max(last)));
         }
 
@@ -248,6 +246,46 @@ impl GraphData {
             users,
             avg_latency_ms,
         }
+    }
+
+    /// Drop series samples older than the trailing `keep_secs` window.
+    ///
+    /// Used when the live dashboard is enabled without `--report-file`, so
+    /// multi-hour soaks do not retain per-second history that the dashboard
+    /// never exports (export window is [`SERIES_WINDOW_SECS`](crate::metrics::dashboard_snapshot::SERIES_WINDOW_SECS)).
+    /// No-op when `keep_secs == 0`.
+    pub(crate) fn prune_to_window(&mut self, keep_secs: u32) {
+        let keep = keep_secs as usize;
+        if keep == 0 {
+            return;
+        }
+        for series in self.requests_per_second.0.values_mut() {
+            series.prune_to_window(keep);
+        }
+        for series in self.errors_per_second.0.values_mut() {
+            series.prune_to_window(keep);
+        }
+        for series in self.average_response_time_per_second.values_mut() {
+            series.prune_to_window(keep);
+        }
+        self.transactions_per_second.prune_to_window(keep);
+        self.scenarios_per_second.prune_to_window(keep);
+        self.users_per_second.prune_to_window(keep);
+    }
+
+    /// Max stored samples across RPS/users series (unit tests / diagnostics).
+    #[cfg(test)]
+    pub(crate) fn max_series_len_for_test(&self) -> usize {
+        let mut max_len = self.users_per_second.data.len();
+        for series in self.requests_per_second.0.values() {
+            max_len = max_len.max(series.data.len());
+        }
+        for series in self.errors_per_second.0.values() {
+            max_len = max_len.max(series.data.len());
+        }
+        max_len
+            .max(self.transactions_per_second.data.len())
+            .max(self.scenarios_per_second.data.len())
     }
 
     /// Generate active users graph.
@@ -668,7 +706,12 @@ struct TimeSeries<T: TimeSeriesValue<T, U>, U> {
     /// Time series data.
     ///
     /// Each element of the vector represents value for one second in the time series.
+    /// `data[i]` holds the sample for absolute second `origin + i`.
     data: Vec<T>,
+    /// Absolute second corresponding to `data[0]`. Non-zero only after pruning
+    /// (dashboard-only long soaks). Report-file collection never prunes, so this
+    /// stays 0 and indices remain absolute seconds from test start.
+    origin: usize,
     /// Total value of the time series (sum of all elements).
     total: T,
     /// Phantom data indicates to the compiler that the "U" generic data type has zero size.
@@ -709,23 +752,59 @@ impl<T: Clone + TimeSeriesValue<T, U>, U> TimeSeries<T, U> {
     fn new() -> TimeSeries<T, U> {
         TimeSeries {
             data: Vec::new(),
+            origin: 0,
             phantom: PhantomData,
             total: T::initial_value(),
         }
     }
 
+    /// Last absolute second that has a stored sample, if any.
+    fn last_absolute_second(&self) -> Option<usize> {
+        if self.data.is_empty() {
+            None
+        } else {
+            Some(self.origin + self.data.len() - 1)
+        }
+    }
+
+    /// Drop samples older than the trailing `keep_secs` window (by absolute second).
+    ///
+    /// After pruning, `origin` advances and `data` holds only the retained window so
+    /// multi-hour dashboard-only soaks do not grow unbounded. No-op when the series
+    /// is already within the window.
+    fn prune_to_window(&mut self, keep_secs: usize) {
+        if keep_secs == 0 || self.data.len() <= keep_secs {
+            return;
+        }
+        let drop = self.data.len() - keep_secs;
+        self.data.drain(0..drop);
+        self.origin = self.origin.saturating_add(drop);
+        // `total` still reflects historical increments (including dropped samples).
+        // Dashboard export uses per-second buckets only; HTML reports never prune.
+    }
+
     /// Increases the the value for a given second.
     fn increase_value(&mut self, second: usize, value: U) {
+        // Samples that fall before the pruned window are dropped (dashboard-only).
+        if second < self.origin {
+            return;
+        }
         self.expand(second, T::initial_value());
-        self.data[second].increase_value(&value);
+        let idx = second - self.origin;
+        self.data[idx].increase_value(&value);
         self.total.increase_value(&value);
     }
 
     /// Adds another time series.
     fn add_time_series(&mut self, other: &TimeSeries<T, U>) {
-        for (second, other_item) in other.data.iter().enumerate() {
+        for (offset, other_item) in other.data.iter().enumerate() {
+            let second = other.origin + offset;
+            if second < self.origin {
+                continue;
+            }
             self.expand(second, T::initial_value());
-            self.data.get_mut(second).unwrap().merge(other_item);
+            let idx = second - self.origin;
+            self.data.get_mut(idx).unwrap().merge(other_item);
             self.total.merge(other_item);
         }
     }
@@ -733,14 +812,21 @@ impl<T: Clone + TimeSeriesValue<T, U>, U> TimeSeries<T, U> {
     /// Sets a value for a given second and maintains last recorded value if
     /// there is a gap in the time series.
     fn set_and_maintain_last(&mut self, second: usize, value: U) {
+        if second < self.origin {
+            return;
+        }
         self.expand(second, self.last());
         self.total.increase_value(&value);
-        self.data[second].set_value(value);
+        let idx = second - self.origin;
+        self.data[idx].set_value(value);
     }
 
     /// Returns a value for a given second.
     fn get(&self, second: usize) -> T {
-        match self.data.get(second) {
+        if second < self.origin {
+            return T::initial_value();
+        }
+        match self.data.get(second - self.origin) {
             Some(value) => value.clone(),
             None => T::initial_value(),
         }
@@ -757,6 +843,11 @@ impl<T: Clone + TimeSeriesValue<T, U>, U> TimeSeries<T, U> {
 
     /// Gets time series suitable for usage in HTML graphs (generally each value
     /// becomes some kind of a scalar).
+    ///
+    /// Report generation never prunes (`origin == 0`), so the returned vector is
+    /// indexed by absolute second from test start. If pruning were used with
+    /// reports, callers would need to pad `origin` leading empties; that path is
+    /// intentionally unsupported.
     fn get_graph_data(&self) -> Vec<Option<U>> {
         self.data
             .iter()
@@ -770,9 +861,13 @@ impl<T: Clone + TimeSeriesValue<T, U>, U> TimeSeries<T, U> {
     /// We need to do that since we don't know for how long the load test will run
     /// and we can't initialize these vectors at the beginning. It is also
     /// better to do it as we go to save memory.
+    ///
+    /// `second` is absolute (from test start). Storage index is `second - origin`.
     fn expand(&mut self, second: usize, initial: T) {
-        if self.data.len() <= second {
-            for _ in 0..(second - self.data.len() + 1) {
+        debug_assert!(second >= self.origin);
+        let idx = second - self.origin;
+        if self.data.len() <= idx {
+            for _ in 0..(idx - self.data.len() + 1) {
                 self.data.push(initial.clone());
                 self.total.merge(&initial);
             }
@@ -950,12 +1045,14 @@ mod test {
         graph.requests_per_second.insert(
             "GET /",
             TimeSeries {
+                origin: 0,
                 data: vec![123, 234, 345, 456, 567],
                 phantom: PhantomData,
                 total: 0,
             },
         );
         graph.users_per_second = TimeSeries {
+            origin: 0,
             data: vec![345, 456, 567, 123, 234],
             phantom: PhantomData,
             total: 0,
@@ -963,6 +1060,7 @@ mod test {
         graph.average_response_time_per_second.insert(
             "GET /".to_string(),
             TimeSeries {
+                origin: 0,
                 data: vec![
                     MovingAverage {
                         count: 123,
@@ -993,12 +1091,14 @@ mod test {
             },
         );
         graph.transactions_per_second = TimeSeries {
+            origin: 0,
             data: vec![345, 123, 234, 456, 567],
             phantom: PhantomData,
             total: 0,
         };
 
         graph.scenarios_per_second = TimeSeries {
+            origin: 0,
             data: vec![345, 123, 234, 456, 567],
             phantom: PhantomData,
             total: 0,
@@ -1007,6 +1107,7 @@ mod test {
         graph.errors_per_second.insert(
             "GET /",
             TimeSeries {
+                origin: 0,
                 data: vec![567, 123, 234, 345, 456],
                 phantom: PhantomData,
                 total: 0,
@@ -1015,6 +1116,7 @@ mod test {
 
         let rps_graph = graph.get_requests_per_second_graph(true);
         let expected_time_series: TimeSeries<u32, u32> = TimeSeries {
+            origin: 0,
             data: vec![123, 234, 345, 456, 567],
             phantom: PhantomData,
             total: 0,
@@ -1028,6 +1130,7 @@ mod test {
 
         let users_graph = graph.get_active_users_graph(true);
         let expected_time_series: TimeSeries<usize, usize> = TimeSeries {
+            origin: 0,
             data: vec![345, 456, 567, 123, 234],
             phantom: PhantomData,
             total: 0,
@@ -1041,6 +1144,7 @@ mod test {
 
         let avg_rt_graph = graph.get_average_response_time_graph(true);
         let expected_time_series: TimeSeries<MovingAverage, f32> = TimeSeries {
+            origin: 0,
             data: vec![
                 MovingAverage {
                     count: 123,
@@ -1078,6 +1182,7 @@ mod test {
 
         let transactions_graph = graph.get_transactions_per_second_graph(true);
         let expected_time_series: TimeSeries<usize, usize> = TimeSeries {
+            origin: 0,
             data: vec![345, 123, 234, 456, 567],
             phantom: PhantomData,
             total: 0,
@@ -1091,6 +1196,7 @@ mod test {
 
         let scenarios_graph = graph.get_scenarios_per_second_graph(true);
         let expected_time_series: TimeSeries<usize, usize> = TimeSeries {
+            origin: 0,
             data: vec![345, 123, 234, 456, 567],
             phantom: PhantomData,
             total: 0,
@@ -1104,6 +1210,7 @@ mod test {
 
         let errors_graph = graph.get_errors_per_second_graph(true);
         let expected_time_series: TimeSeries<u32, u32> = TimeSeries {
+            origin: 0,
             data: vec![567, 123, 234, 345, 456],
             phantom: PhantomData,
             total: 0,
@@ -1886,6 +1993,7 @@ mod test {
         let expected_prefix = expected_graph_html_prefix("graph-rps", "Requests #", "GET /");
 
         let data: TimeSeries<usize, usize> = TimeSeries {
+            origin: 0,
             data: vec![123, 111, 99, 134],
             phantom: PhantomData,
             total: 0,
@@ -2086,6 +2194,7 @@ mod test {
         );
 
         let user_data: TimeSeries<usize, usize> = TimeSeries {
+            origin: 0,
             data: vec![23, 12, 44, 22],
             phantom: PhantomData,
             total: 0,
@@ -2221,6 +2330,7 @@ mod test {
         );
 
         let more_data: TimeSeries<usize, usize> = TimeSeries {
+            origin: 0,
             data: vec![1, 1, 1, 1],
             phantom: PhantomData,
             total: 0,
