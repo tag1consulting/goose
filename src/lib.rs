@@ -1507,6 +1507,21 @@ impl GooseAttack {
             goose_attack_run_state.dashboard_channel_rx = None;
         }
 
+        // Control mutations can block the main loop (test_start, weight_scenario_users).
+        // Flush any coalesced snapshot first with a cheap local build so the hub/SSE
+        // clients observe the pre-mutation phase rather than stalling past timeouts.
+        if !control_batch.is_empty() {
+            if let Some(respond) = pending_snapshot.take() {
+                if !respond.is_closed() {
+                    self.update_duration();
+                    let phase = attack_phase_str(self.attack_phase).to_string();
+                    let active_users = goose_attack_run_state.active_users;
+                    let snapshot = self.build_local_dashboard_snapshot(phase, active_users);
+                    let _ = respond.send(snapshot);
+                }
+            }
+        }
+
         // Control first so latency-sensitive Start/Stop/Users beat snapshot work.
         for req in control_batch {
             match req {
