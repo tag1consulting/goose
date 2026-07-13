@@ -873,8 +873,17 @@ async fn test_control_set_users() {
     let start_body: serde_json::Value = start.json().await.expect("start json");
     assert_eq!(start_body["ok"], true);
 
-    // Reach at least the initial 2 users.
+    // Reach the initial 2 users and settle into maintain before reconfiguring
+    // (avoids racing the first Increase→Maintain transition).
     wait_for_active_users(&client, &base, token, 2, Duration::from_secs(30)).await;
+    wait_for_phase(
+        &client,
+        &base,
+        token,
+        &["maintain"],
+        Duration::from_secs(30),
+    )
+    .await;
 
     let users_resp = post_control(
         &client,
@@ -889,6 +898,10 @@ async fn test_control_set_users() {
     assert_eq!(users_body["ok"], true);
     assert_eq!(users_body["command"], "users");
     assert_eq!(users_body["target_users"], 8);
+    assert_eq!(
+        users_body["phase"], "increase",
+        "set-users while running must enter increase, got {users_body}"
+    );
 
     let snap = wait_for_active_users(&client, &base, token, 8, Duration::from_secs(45)).await;
     assert!(

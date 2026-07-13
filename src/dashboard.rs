@@ -575,7 +575,14 @@ async fn build_once(inner: &Arc<HubInner>) -> BuildOutcome {
         Ok(json) => {
             // Publish first, then advance generation counters so waiters that
             // observe `build_count` never read a stale watch value.
-            let _ = inner.latest_tx.send(Some(Bytes::from(json)));
+            //
+            // Use `send_replace` (not `send`): `watch::Sender::send` is a no-op
+            // when no receivers are currently subscribed, which is the common
+            // poll-only path (`fresh_latest` reads via the sender). Without this,
+            // last_build_at / build_count advance while the cached JSON stays
+            // frozen — clients keep receiving a stale snapshot for the entire
+            // load test after the first poll's receiver is dropped.
+            let _ = inner.latest_tx.send_replace(Some(Bytes::from(json)));
             let elapsed_ms = started.elapsed().as_millis() as u64;
             inner
                 .last_build_at_ms
@@ -1924,6 +1931,81 @@ mod tests {
         assert_eq!(bearer.status(), 200);
 
         parent.abort();
+    }
+
+    /// Poll-only clients must observe successive hub publishes. Regression for
+    /// `watch::Sender::send` no-op when no receivers are subscribed (the common
+    /// path after the first poll's temporary receiver is dropped).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn poll_only_snapshots_refresh_without_sse() {
+        let counter = Arc::new(AtomicU64::new(0));
+        let counter2 = Arc::clone(&counter);
+        let (tx, rx) = flume::unbounded();
+        // Parent answers GetSnapshot with incrementing active_users.
+        let parent = tokio::spawn(async move {
+            while let Ok(req) = rx.recv_async().await {
+                match req {
+                    DashboardRequest::GetSnapshot { respond } => {
+                        let n = counter2.fetch_add(1, Ordering::SeqCst);
+                        let mut snap = dummy_snapshot(n + 1);
+                        snap.active_users = n + 1;
+                        snap.phase = if n == 0 {
+                            "maintain".into()
+                        } else {
+                            "increase".into()
+                        };
+                        let _ = respond.send(snap);
+                    }
+                    other => {
+                        // Control arms unused in this test.
+                        match other {
+                            DashboardRequest::Start { respond } => {
+                                let _ = respond.send(ControlResult::internal("start", "idle", 0));
+                            }
+                            DashboardRequest::Stop { respond } => {
+                                let _ = respond.send(ControlResult::internal("stop", "idle", 0));
+                            }
+                            DashboardRequest::SetUsers { respond, .. } => {
+                                let _ = respond.send(ControlResult::internal("users", "idle", 0));
+                            }
+                            DashboardRequest::GetSnapshot { .. } => unreachable!(),
+                        }
+                    }
+                }
+            }
+        });
+
+        let build_count = Arc::new(AtomicU64::new(0));
+        let (close_tx, _) = watch::channel(false);
+        let hub = SnapshotHub::new(tx, Arc::clone(&build_count), close_tx, MAX_SSE_CLIENTS);
+
+        // First poll.
+        let b1 = hub.snapshot_bytes().await.expect("first");
+        let v1: serde_json::Value = serde_json::from_slice(&b1).expect("json1");
+        let users1 = v1["active_users"].as_u64().unwrap();
+
+        // Wait past SNAPSHOT_INTERVAL so the next poll is not served from cache.
+        tokio::time::sleep(SNAPSHOT_INTERVAL + Duration::from_millis(50)).await;
+
+        // Second poll must receive a newly published snapshot (not the first body).
+        let b2 = hub.snapshot_bytes().await.expect("second");
+        let v2: serde_json::Value = serde_json::from_slice(&b2).expect("json2");
+        let users2 = v2["active_users"].as_u64().unwrap();
+
+        assert!(
+            users2 > users1,
+            "poll-only path must publish updated snapshots; got users {users1} then {users2}, builds={}",
+            build_count.load(Ordering::SeqCst)
+        );
+        assert!(
+            build_count.load(Ordering::SeqCst) >= 2,
+            "expected at least 2 hub builds, got {}",
+            build_count.load(Ordering::SeqCst)
+        );
+
+        parent.abort();
+        // Keep hub alive until after polls (drop order).
+        drop(hub);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
