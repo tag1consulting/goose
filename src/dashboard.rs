@@ -958,13 +958,9 @@ fn authorize(configured_token: &str, headers: &HeaderMap, query_token: Option<&s
         }
     }
 
-    if let Some(value) = headers.get(header::AUTHORIZATION) {
-        if let Ok(s) = value.to_str() {
-            if let Some(token) = s.strip_prefix("Bearer ") {
-                if constant_time_eq(token.as_bytes(), configured_token.as_bytes()) {
-                    return true;
-                }
-            }
+    if let Some(token) = bearer_token_from_headers(headers) {
+        if constant_time_eq(token.as_bytes(), configured_token.as_bytes()) {
+            return true;
         }
     }
 
@@ -986,15 +982,29 @@ fn authorize_control(
         return false;
     }
 
-    if let Some(value) = headers.get(header::AUTHORIZATION) {
-        if let Ok(s) = value.to_str() {
-            if let Some(token) = s.strip_prefix("Bearer ") {
-                return constant_time_eq(token.as_bytes(), configured_token.as_bytes());
-            }
-        }
+    if let Some(token) = bearer_token_from_headers(headers) {
+        return constant_time_eq(token.as_bytes(), configured_token.as_bytes());
     }
 
     false
+}
+
+/// Extract a Bearer token from `Authorization`. Scheme match is case-insensitive
+/// (RFC 7235); the token itself is compared separately with constant-time eq.
+fn bearer_token_from_headers(headers: &HeaderMap) -> Option<&str> {
+    let value = headers.get(header::AUTHORIZATION)?;
+    let s = value.to_str().ok()?;
+    let (scheme, token) = s.split_once(' ')?;
+    if scheme.eq_ignore_ascii_case("Bearer") {
+        let token = token.trim();
+        if token.is_empty() {
+            None
+        } else {
+            Some(token)
+        }
+    } else {
+        None
+    }
 }
 
 /// Best-effort constant-time equality for auth tokens.
@@ -1527,6 +1537,15 @@ mod tests {
         assert!(authorize_control("s3cret", &headers, None));
         // Query token must not override/augment Bearer requirement.
         assert!(authorize_control("s3cret", &headers, Some("wrong")));
+
+        // Scheme is case-insensitive (RFC 7235).
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("bearer s3cret"),
+        );
+        assert!(authorize_control("s3cret", &headers, None));
+        assert!(authorize("s3cret", &headers, None));
     }
 
     #[test]
