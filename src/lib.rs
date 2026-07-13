@@ -1448,45 +1448,74 @@ impl GooseAttack {
 
     /// Handle dashboard snapshot and control requests from the HTTP server task.
     ///
-    /// Same pattern as Controllers: a single `try_recv` per main-loop iteration.
-    /// Control arms **always** complete the oneshot (soft outcome or `internal`)
-    /// before returning; Start replies before `control_start_finish`.
+    /// Drains up to a small batch per main-loop iteration. Control messages are
+    /// applied first; at most one snapshot is forwarded per tick (latest wins).
+    ///
+    /// Snapshots are **non-blocking** for the attack loop: the parent forwards
+    /// [`MetricsCommand::GetDashboardSnapshot`] with the hub's oneshot and does
+    /// not await the metrics processor.
+    ///
+    /// Control arms skip mutation when the HTTP oneshot is already closed (client
+    /// timed out / disconnected) so orphan Start/Stop/Users cannot apply after a
+    /// 503. When the client is still waiting, oneshots are always completed (soft
+    /// outcome or `internal`); Start replies before `control_start_finish`.
     #[cfg(feature = "dashboard")]
     async fn handle_dashboard_requests(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> Result<(), GooseError> {
-        if let Some(rx) = goose_attack_run_state.dashboard_channel_rx.as_ref() {
-            match rx.try_recv() {
-                Ok(dashboard::DashboardRequest::GetSnapshot { respond }) => {
-                    self.update_duration();
-                    let (respond_tx, respond_rx) = tokio::sync::oneshot::channel();
-                    let phase = attack_phase_str(self.attack_phase).to_string();
-                    let sent = goose_attack_run_state.metrics_cmd_tx.send(
-                        MetricsCommand::GetDashboardSnapshot {
-                            duration: self.metrics.duration,
-                            total_users: self.metrics.total_users,
-                            maximum_users: self.metrics.maximum_users,
-                            active_users: goose_attack_run_state.active_users,
-                            phase,
-                            series_window_secs: metrics::dashboard_snapshot::SERIES_WINDOW_SECS,
-                            respond: respond_tx,
-                        },
-                    );
-                    if sent.is_ok() {
-                        if let Ok(snapshot) = respond_rx.await {
-                            if respond.send(snapshot).is_err() {
-                                debug!("[dashboard]: snapshot requester disconnected");
-                            }
-                        } else {
-                            warn!("[dashboard]: metrics processor failed to build snapshot");
+        /// Cap messages drained per tick so a flood cannot monopolize the loop.
+        const MAX_DRAIN: usize = 16;
+
+        let mut control_batch: Vec<dashboard::DashboardRequest> = Vec::new();
+        let mut pending_snapshot: Option<
+            tokio::sync::oneshot::Sender<metrics::DashboardSnapshot>,
+        > = None;
+        let mut disconnected = false;
+
+        {
+            let Some(rx) = goose_attack_run_state.dashboard_channel_rx.as_ref() else {
+                return Ok(());
+            };
+
+            for _ in 0..MAX_DRAIN {
+                match rx.try_recv() {
+                    Ok(dashboard::DashboardRequest::GetSnapshot { respond }) => {
+                        // Coalesce: only the latest snapshot request is kept.
+                        if let Some(stale) = pending_snapshot.replace(respond) {
+                            drop(stale);
                         }
-                    } else {
-                        warn!("[dashboard]: metrics processor unavailable");
+                    }
+                    Ok(control_req) => {
+                        control_batch.push(control_req);
+                    }
+                    Err(flume::TryRecvError::Empty) => break,
+                    Err(flume::TryRecvError::Disconnected) => {
+                        disconnected = true;
+                        break;
                     }
                 }
-                Ok(dashboard::DashboardRequest::Start { respond }) => {
-                    // Always complete oneshot; on Accepted reply BEFORE finish.
+            }
+        }
+
+        if disconnected {
+            goose_attack_run_state.dashboard_channel_rx = None;
+        }
+
+        // Control first so latency-sensitive Start/Stop/Users beat snapshot work.
+        for req in control_batch {
+            match req {
+                dashboard::DashboardRequest::GetSnapshot { .. } => {
+                    // GetSnapshot is coalesced above; should not appear here.
+                    unreachable!("snapshot requests are not pushed into control_batch");
+                }
+                dashboard::DashboardRequest::Start { respond } => {
+                    // Client already gone (HTTP timeout dropped the oneshot) — do not
+                    // mutate phase / start the test after a 503 response.
+                    if respond.is_closed() {
+                        debug!("[dashboard]: start skipped; client disconnected");
+                        continue;
+                    }
                     match self.control_start_begin(goose_attack_run_state) {
                         Ok(ControlStartBegin::Rejected(outcome)) => {
                             let _ = respond
@@ -1514,7 +1543,11 @@ impl GooseAttack {
                         }
                     }
                 }
-                Ok(dashboard::DashboardRequest::Stop { respond }) => {
+                dashboard::DashboardRequest::Stop { respond } => {
+                    if respond.is_closed() {
+                        debug!("[dashboard]: stop skipped; client disconnected");
+                        continue;
+                    }
                     match self.control_stop(goose_attack_run_state).await {
                         Ok(outcome) => {
                             let _ = respond
@@ -1530,7 +1563,11 @@ impl GooseAttack {
                         }
                     }
                 }
-                Ok(dashboard::DashboardRequest::SetUsers { users, respond }) => {
+                dashboard::DashboardRequest::SetUsers { users, respond } => {
+                    if respond.is_closed() {
+                        debug!("[dashboard]: set users skipped; client disconnected");
+                        continue;
+                    }
                     match self.control_set_users(goose_attack_run_state, users) {
                         Ok(outcome) => {
                             let _ = respond
@@ -1546,13 +1583,34 @@ impl GooseAttack {
                         }
                     }
                 }
-                Err(flume::TryRecvError::Empty) => {}
-                Err(flume::TryRecvError::Disconnected) => {
-                    // Dashboard task exited; stop polling.
-                    goose_attack_run_state.dashboard_channel_rx = None;
+            }
+        }
+
+        // Forward at most one snapshot request without parking the attack loop.
+        if let Some(respond) = pending_snapshot {
+            if respond.is_closed() {
+                debug!("[dashboard]: snapshot skipped; hub waiter disconnected");
+            } else {
+                self.update_duration();
+                let phase = attack_phase_str(self.attack_phase).to_string();
+                if goose_attack_run_state
+                    .metrics_cmd_tx
+                    .send(MetricsCommand::GetDashboardSnapshot {
+                        duration: self.metrics.duration,
+                        total_users: self.metrics.total_users,
+                        maximum_users: self.metrics.maximum_users,
+                        active_users: goose_attack_run_state.active_users,
+                        phase,
+                        series_window_secs: metrics::dashboard_snapshot::SERIES_WINDOW_SECS,
+                        respond,
+                    })
+                    .is_err()
+                {
+                    warn!("[dashboard]: metrics processor unavailable");
                 }
             }
         }
+
         Ok(())
     }
 
