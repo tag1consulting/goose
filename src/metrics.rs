@@ -3328,6 +3328,9 @@ impl MetricsProcessor {
     /// HTML/markdown reports need full-run history; when `report_file` is set we
     /// never prune. Dashboard export uses at most [`dashboard_snapshot::SERIES_WINDOW_SECS`];
     /// we keep 2× that as a small buffer against edge flicker at the window boundary.
+    ///
+    /// Call only from low-frequency paths (`RecordUsers`, `GetDashboardSnapshot`),
+    /// not from per-request/transaction/scenario handlers.
     fn maybe_prune_dashboard_graph(&mut self) {
         if self.configuration.dashboard && self.configuration.report_file.is_empty() {
             let keep = dashboard_snapshot::SERIES_WINDOW_SECS.saturating_mul(2);
@@ -3488,7 +3491,9 @@ impl MetricsProcessor {
                     self.graph_data
                         .record_errors_per_second(&key, seconds_since_start);
                 }
-                self.maybe_prune_dashboard_graph();
+                // Do not prune here: per-request pruning is O(unique keys) and
+                // would dominate at high RPS. Pruning runs from low-frequency
+                // RecordUsers (~1 Hz) and GetDashboardSnapshot instead.
             }
         }
     }
@@ -3502,7 +3507,6 @@ impl MetricsProcessor {
         if !self.configuration.report_file.is_empty() || self.configuration.dashboard {
             self.graph_data
                 .record_transactions_per_second((raw_transaction.elapsed / 1000) as usize);
-            self.maybe_prune_dashboard_graph();
         }
     }
 
@@ -3513,7 +3517,6 @@ impl MetricsProcessor {
         if !self.configuration.report_file.is_empty() || self.configuration.dashboard {
             self.graph_data
                 .record_scenarios_per_second((raw_scenario.elapsed / 1000) as usize);
-            self.maybe_prune_dashboard_graph();
         }
     }
 
@@ -5017,6 +5020,7 @@ mod test {
     fn graph_data_pruned_when_dashboard_only_without_report_file() {
         // Multi-hour soaks with --dashboard (no --report-file) must not retain
         // unbounded per-second series; keep 2× SERIES_WINDOW_SECS max.
+        // Pruning runs from low-frequency RecordUsers / snapshot, not per request.
         let configuration = GooseConfiguration {
             dashboard: true,
             report_file: Vec::new(),
@@ -5034,6 +5038,19 @@ mod test {
             request.success = true;
             processor.process_request_metric(&request);
         }
+
+        // Without a prune trigger, series may still be long (hot path no longer prunes).
+        assert!(
+            processor.graph_data.max_series_len_for_test() > keep,
+            "expected growth before low-frequency prune"
+        );
+
+        // RecordUsers (~1 Hz in production) is the prune cadence.
+        let shutdown = processor.handle_command(MetricsCommand::RecordUsers {
+            active_users: 1,
+            elapsed_secs: far_second,
+        });
+        assert!(!shutdown);
 
         // Export still sees recent absolute seconds (origin advanced, data bounded).
         let window = processor.graph_data.export_series_window(300);
