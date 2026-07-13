@@ -864,7 +864,7 @@ impl GooseConfiguration {
         {
             Ok(_) => (),
             Err(e) => {
-                warn!("failed to write to {}: {e}", &self.debug_log);
+                warn!("failed to write to {}: {e}", self.debug_log);
             }
         }
     }
@@ -995,13 +995,13 @@ impl GooseConfiguration {
 
         // Flush debug logs to disk if enabled.
         if let Some(debug_log_file) = debug_log.as_mut() {
-            info!("[logger]: flushing debug_log: {}", &self.debug_log);
+            info!("[logger]: flushing debug_log: {}", self.debug_log);
             let _ = debug_log_file.flush().await;
         };
 
         // Flush requests log to disk if enabled.
         if let Some(requests_log_file) = request_log.as_mut() {
-            info!("[logger]: flushing request_log: {}", &self.request_log);
+            info!("[logger]: flushing request_log: {}", self.request_log);
             let _ = requests_log_file.flush().await;
         }
 
@@ -1009,20 +1009,20 @@ impl GooseConfiguration {
         if let Some(transactions_log_file) = transaction_log.as_mut() {
             info!(
                 "[logger]: flushing transaction_log: {}",
-                &self.transaction_log
+                self.transaction_log
             );
             let _ = transactions_log_file.flush().await;
         }
 
         // Flush scenario log to disk if enabled.
         if let Some(scenarios_log_file) = scenario_log.as_mut() {
-            info!("[logger]: flushing scenario: {}", &self.scenario_log);
+            info!("[logger]: flushing scenario: {}", self.scenario_log);
             let _ = scenarios_log_file.flush().await;
         }
 
         // Flush error logs to disk if enabled.
         if let Some(error_log_file) = error_log.as_mut() {
-            info!("[logger]: flushing error_log: {}", &self.error_log);
+            info!("[logger]: flushing error_log: {}", self.error_log);
             let _ = error_log_file.flush().await;
         };
 

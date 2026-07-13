@@ -2952,6 +2952,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(feature = "dashboard")]
     fn test_validate_dashboard_config() {
         // Disabled dashboard: always ok.
         let mut config = GooseConfiguration::default();
@@ -3023,6 +3024,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(feature = "dashboard")]
     fn test_configure_dashboard_defaults() {
         // --dashboard only → host 127.0.0.1, port 5118, empty token, max clients 32.
         let mut config = GooseConfiguration {
@@ -3134,6 +3136,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(feature = "dashboard")]
     fn test_no_autostart_allows_dashboard_control() {
         // Helper: timespan fields must be "0" so validate() skips empty-string branches.
         let base = || GooseConfiguration {
@@ -3161,5 +3164,25 @@ mod test {
         let mut config = base();
         config.no_telnet = false;
         assert!(config.validate().is_ok());
+    }
+
+    /// Without the `dashboard` feature, enabling `--dashboard` must fail validation.
+    #[test]
+    #[cfg(not(feature = "dashboard"))]
+    fn test_dashboard_requires_feature() {
+        let mut config = GooseConfiguration {
+            dashboard: true,
+            dashboard_host: "127.0.0.1".to_string(),
+            ..Default::default()
+        };
+        assert!(config.validate_dashboard_config().is_err());
+        // Control without feature also fails when dashboard is on.
+        config.dashboard_control = true;
+        config.dashboard_auth_token = "s3cret".to_string();
+        assert!(config.validate_dashboard_config().is_err());
+        // Disabled dashboard remains ok without the feature.
+        config.dashboard = false;
+        config.dashboard_control = false;
+        assert!(config.validate_dashboard_config().is_ok());
     }
 }

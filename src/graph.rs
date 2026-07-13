@@ -574,7 +574,7 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
         } else {
             let (legend, main_label, main_values, other_values) = if self.data.len() > 1 {
                 // If we are dealing with a metric with granular data we need to calculate totals.
-                for (_, single_data) in self.data.iter() {
+                for single_data in self.data.values() {
                     total_values.add_time_series(single_data);
                 }
 

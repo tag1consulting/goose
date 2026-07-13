@@ -136,7 +136,7 @@ async fn drupal_memcache_front_page(user: &mut GooseUser) -> TransactionResult {
 /// View a node from 1 to 10,000, created by preptest.sh.
 async fn drupal_memcache_node_page(user: &mut GooseUser) -> TransactionResult {
     let nid = rand::rng().random_range(1..10_000);
-    let _goose = user.get(format!("/node/{}", &nid).as_str()).await?;
+    let _goose = user.get(format!("/node/{}", nid).as_str()).await?;
 
     Ok(())
 }
@@ -144,7 +144,7 @@ async fn drupal_memcache_node_page(user: &mut GooseUser) -> TransactionResult {
 /// View a profile from 2 to 5,001, created by preptest.sh.
 async fn drupal_memcache_profile_page(user: &mut GooseUser) -> TransactionResult {
     let uid = rand::rng().random_range(2..5_001);
-    let _goose = user.get(format!("/user/{}", &uid).as_str()).await?;
+    let _goose = user.get(format!("/user/{}", uid).as_str()).await?;
 
     Ok(())
 }
@@ -218,8 +218,8 @@ async fn drupal_memcache_login(user: &mut GooseUser) -> TransactionResult {
 /// Post a comment.
 async fn drupal_memcache_post_comment(user: &mut GooseUser) -> TransactionResult {
     let nid: i32 = rand::rng().random_range(1..10_000);
-    let node_path = format!("node/{}", &nid);
-    let comment_path = format!("/comment/reply/{}", &nid);
+    let node_path = format!("node/{}", nid);
+    let comment_path = format!("/comment/reply/{}", nid);
 
     let mut goose = user.get(&node_path).await?;
 
@@ -237,7 +237,7 @@ async fn drupal_memcache_post_comment(user: &mut GooseUser) -> TransactionResult
                             // This will automatically get written to the error log if enabled, and will
                             // be displayed to stdout if `-v` is enabled when running the load test.
                             return user.set_failure(
-                                &format!("post_comment: no form_build_id found on {}", &node_path),
+                                &format!("post_comment: no form_build_id found on {}", node_path),
                                 &mut goose.request,
                                 Some(headers),
                                 Some(&html),
@@ -252,7 +252,7 @@ async fn drupal_memcache_post_comment(user: &mut GooseUser) -> TransactionResult
                             // This will automatically get written to the error log if enabled, and will
                             // be displayed to stdout if `-v` is enabled when running the load test.
                             return user.set_failure(
-                                &format!("post_comment: no form_token found on {}", &node_path),
+                                &format!("post_comment: no form_token found on {}", node_path),
                                 &mut goose.request,
                                 Some(headers),
                                 Some(&html),
@@ -267,7 +267,7 @@ async fn drupal_memcache_post_comment(user: &mut GooseUser) -> TransactionResult
                             // This will automatically get written to the error log if enabled, and will
                             // be displayed to stdout if `-v` is enabled when running the load test.
                             return user.set_failure(
-                                &format!("post_comment: no form_id found on {}", &node_path),
+                                &format!("post_comment: no form_id found on {}", node_path),
                                 &mut goose.request,
                                 Some(headers),
                                 Some(&html),
@@ -313,7 +313,7 @@ async fn drupal_memcache_post_comment(user: &mut GooseUser) -> TransactionResult
                                         // This will automatically get written to the error log if enabled, and will
                                         // be displayed to stdout if `-v` is enabled when running the load test.
                                         return user.set_failure(
-                                            &format!("post_comment: no comment showed up after posting to {}", &comment_path),
+                                            &format!("post_comment: no comment showed up after posting to {}", comment_path),
                                             &mut goose.request,
                                             Some(headers),
                                             Some(&html),
@@ -326,7 +326,7 @@ async fn drupal_memcache_post_comment(user: &mut GooseUser) -> TransactionResult
                                     return user.set_failure(
                                         &format!(
                                             "post_comment: unexpected error when posting to {}: {}",
-                                            &comment_path, e
+                                            comment_path, e
                                         ),
                                         &mut goose.request,
                                         Some(headers),
@@ -341,7 +341,7 @@ async fn drupal_memcache_post_comment(user: &mut GooseUser) -> TransactionResult
                             return user.set_failure(
                                 &format!(
                                     "post_comment: no response when posting to {}: {}",
-                                    &comment_path, e
+                                    comment_path, e
                                 ),
                                 &mut goose.request,
                                 None,
@@ -354,7 +354,7 @@ async fn drupal_memcache_post_comment(user: &mut GooseUser) -> TransactionResult
                     // This will automatically get written to the error log if enabled, and will
                     // be displayed to stdout if `-v` is enabled when running the load test.
                     return user.set_failure(
-                        &format!("post_comment: no text when loading {}: {}", &node_path, e),
+                        &format!("post_comment: no text when loading {}: {}", node_path, e),
                         &mut goose.request,
                         None,
                         None,
@@ -368,7 +368,7 @@ async fn drupal_memcache_post_comment(user: &mut GooseUser) -> TransactionResult
             return user.set_failure(
                 &format!(
                     "post_comment: no response when loading {}: {}",
-                    &node_path, e
+                    node_path, e
                 ),
                 &mut goose.request,
                 None,

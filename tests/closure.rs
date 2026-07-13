@@ -157,9 +157,9 @@ fn validate_closer_test(
         assert!(
             mock_endpoint.calls() > 0,
             "Endpoint was not called > 0 for item: {:#?}",
-            &item
+            item
         );
-        let expect_error = format!("Item does not exist in goose_metrics: {:#?}", &item);
+        let expect_error = format!("Item does not exist in goose_metrics: {:#?}", item);
         let endpoint_metrics = goose_metrics
             .requests
             .get(&format!("GET {}", item.path))
@@ -170,7 +170,7 @@ fn validate_closer_test(
             "{} != {} for item: {:#?}",
             endpoint_metrics.path,
             item.path,
-            &item
+            item
         );
         assert!(endpoint_metrics.method == GooseMethod::Get);
 
@@ -180,22 +180,22 @@ fn validate_closer_test(
         assert!(
             endpoint_metrics.raw_data.counter == mock_endpoint.calls(),
             "response_time_counter != hits() for item: {:#?}",
-            &item
+            item
         );
         assert!(
             endpoint_metrics.status_code_counts[&status_code] == mock_endpoint.calls(),
             "status_code_counts != hits() for item: {:#?}",
-            &item
+            item
         );
         assert!(
             endpoint_metrics.success_count == mock_endpoint.calls(),
             "success_count != hits() for item: {:#?}",
-            &item
+            item
         );
         assert!(
             endpoint_metrics.fail_count == 0,
             "fail_count != 0 for item: {:#?}",
-            &item
+            item
         );
     }
 

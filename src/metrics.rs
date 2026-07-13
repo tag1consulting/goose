@@ -1700,7 +1700,7 @@ impl GooseMetrics {
                             &format!(
                                 "{}: {}",
                                 transaction.scenario_index + 1,
-                                &transaction.scenario_name
+                                transaction.scenario_name
                             ),
                             60
                         ),
@@ -1859,7 +1859,7 @@ impl GooseMetrics {
                             &format!(
                                 "{}: {}",
                                 transaction.scenario_index + 1,
-                                &transaction.scenario_name
+                                transaction.scenario_name
                             ),
                             60
                         ),
@@ -1985,7 +1985,7 @@ impl GooseMetrics {
             writeln!(
                 fmt,
                 " {:24 } | {:>8} | {:>12} | {:>11.runs_p$} | {:>10.iterations_p$}",
-                util::truncate_string(&format!("{}: {}", scenario.index + 1, &scenario.name,), 24),
+                util::truncate_string(&format!("{}: {}", scenario.index + 1, scenario.name,), 24),
                 scenario.users.len(),
                 scenario.counter,
                 runs,

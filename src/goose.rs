@@ -568,7 +568,7 @@ impl Scenario {
     /// let mut example_transactions = scenario!("ExampleTransactions");
     /// ```
     pub fn new(name: &str) -> Self {
-        trace!("new scenario: name: {}", &name);
+        trace!("new scenario: name: {}", name);
         Scenario {
             name: Arc::from(name),
             machine_name: Arc::from(Scenario::get_machine_name(name)),
@@ -1863,7 +1863,7 @@ impl GooseUser {
         match &response {
             Ok(r) => {
                 let status_code = r.status();
-                debug!("{:?}: status_code {}", &path, status_code);
+                debug!("{:?}: status_code {}", path, status_code);
 
                 // Update the request_metric object.
                 request_metric.set_status_code(Some(status_code));
@@ -1896,8 +1896,8 @@ impl GooseUser {
                         info!(
                             "base_url for user {} redirected from {} to {}",
                             self.weighted_users_index + 1,
-                            &base_url,
-                            &redirected_base_url
+                            base_url,
+                            redirected_base_url
                         );
                         let _ = self.set_base_url(&redirected_base_url);
                     }
@@ -1905,7 +1905,7 @@ impl GooseUser {
             }
             Err(e) => {
                 // @TODO: what can we learn from a reqwest error?
-                warn!("{:?}: {}", &path, e);
+                warn!("{:?}: {}", path, e);
                 request_metric.success = false;
                 request_metric.set_status_code(None);
                 request_metric.error = clean_reqwest_error(e, request_name);
@@ -1931,7 +1931,7 @@ impl GooseUser {
         }
 
         if request.error_on_fail && !request_metric.success {
-            error!("{:?} {}", &path, &request_metric.error);
+            error!("{:?} {}", path, request_metric.error);
             return Err(Box::new(TransactionError::RequestFailed {
                 raw_request: request_metric,
             }));

@@ -1068,7 +1068,7 @@ impl GooseAttack {
         goose_attack_run_state.drift_timer = tokio::time::Instant::now();
 
         // Optional debug output.
-        info!("entering GooseAttack phase: {:?}", &phase);
+        info!("entering GooseAttack phase: {:?}", phase);
 
         // Update the current phase.
         self.attack_phase = phase;
@@ -2998,7 +2998,7 @@ fn schedule_sequenced_transactions(
 ) -> Vec<usize> {
     let mut weighted_transactions: Vec<usize> = Vec::new();
 
-    for (_sequence, transactions) in available_sequenced_transactions.iter() {
+    for transactions in available_sequenced_transactions.values() {
         let scheduled_transactions =
             schedule_unsequenced_transactions(transactions, transactions[0].len(), scheduler);
         weighted_transactions.extend(scheduled_transactions);
