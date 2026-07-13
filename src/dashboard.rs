@@ -994,14 +994,19 @@ fn authorize(configured_token: &str, headers: &HeaderMap, query_token: Option<&s
 /// Authorize a control API request.
 ///
 /// Control always requires a non-empty configured token (fail closed if miswired).
-/// **Bearer only** — query `?token=` is rejected so mutating URLs do not carry the
-/// secret (scripts and the SPA should use `Authorization: Bearer`).
+/// **Bearer only** — any query `?token=` is rejected so mutating URLs do not carry
+/// the secret (even alongside a valid Bearer header). Scripts and the SPA must use
+/// `Authorization: Bearer`.
 fn authorize_control(
     configured_token: &str,
     headers: &HeaderMap,
     query_token: Option<&str>,
 ) -> bool {
-    let _ = query_token; // deliberately ignored — Bearer only
+    // Reject URL tokens outright so control endpoints never accept (or log-leak)
+    // secrets in the query string, including when a valid Bearer is also present.
+    if query_token.is_some() {
+        return false;
+    }
     if configured_token.is_empty() {
         return false;
     }
@@ -1577,8 +1582,9 @@ mod tests {
             HeaderValue::from_static("Bearer s3cret"),
         );
         assert!(authorize_control("s3cret", &headers, None));
-        // Query token must not override/augment Bearer requirement.
-        assert!(authorize_control("s3cret", &headers, Some("wrong")));
+        // Any query token is rejected on control, even with a valid Bearer.
+        assert!(!authorize_control("s3cret", &headers, Some("wrong")));
+        assert!(!authorize_control("s3cret", &headers, Some("s3cret")));
 
         // Scheme is case-insensitive (RFC 7235).
         let mut headers = HeaderMap::new();
@@ -2396,6 +2402,17 @@ mod tests {
         // Query token alone is rejected for control (Bearer only).
         let resp = client
             .post(format!("{base}/api/v1/control/stop?token=s3cret"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body("{}")
+            .send()
+            .await
+            .expect("post");
+        assert_eq!(resp.status(), 401);
+
+        // Query token with valid Bearer is also rejected (no URL secret on control).
+        let resp = client
+            .post(format!("{base}/api/v1/control/stop?token=s3cret"))
+            .header(header::AUTHORIZATION, "Bearer s3cret")
             .header(header::CONTENT_TYPE, "application/json")
             .body("{}")
             .send()
