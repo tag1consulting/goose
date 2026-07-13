@@ -52,7 +52,7 @@ impl ItemsPerSecond {
     }
 
     #[inline(always)]
-    fn contains_key(&mut self, key: &str) -> bool {
+    fn contains_key(&self, key: &str) -> bool {
         self.series.contains_key(key)
     }
 
