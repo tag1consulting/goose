@@ -1673,14 +1673,17 @@ impl GooseAttack {
 
     /// Users the attack is currently increasing/decreasing toward.
     ///
-    /// Prefers the active test-plan step target; falls back to configured
-    /// `--users` when the plan is empty (e.g. idle before start).
+    /// Prefers the active test-plan step target; falls back to the last plan
+    /// step when `current` has advanced past the end (common after the final
+    /// step / cancel), then to configured `--users` when the plan is empty.
     fn current_target_users(&self) -> usize {
-        if !self.test_plan.steps.is_empty() {
-            self.test_plan.steps[self.test_plan.current].0
-        } else {
-            self.configuration.users.unwrap_or_default()
-        }
+        self.test_plan
+            .steps
+            .get(self.test_plan.current)
+            .or_else(|| self.test_plan.steps.last())
+            .map(|&(users, _)| users)
+            .or(self.configuration.users)
+            .unwrap_or_default()
     }
 
     /// Build a dashboard snapshot from main-loop metrics/graph state.

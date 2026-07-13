@@ -142,17 +142,21 @@
         if (!snap)
             return null;
         // Prefer plan/control target over peak HWM (maximum_users) so the control
-        // field matches the KPI "active / target" second number.
+        // field matches the KPI "active / target" second number. Ignore 0 (stop /
+        // cancel ramp) — control input and server only accept users >= 1.
         if (typeof snap.target_users === "number" &&
-            isFinite(snap.target_users)) {
+            isFinite(snap.target_users) &&
+            snap.target_users >= 1) {
             return snap.target_users;
         }
         if (typeof snap.maximum_users === "number" &&
-            isFinite(snap.maximum_users)) {
+            isFinite(snap.maximum_users) &&
+            snap.maximum_users >= 1) {
             return snap.maximum_users;
         }
         if (typeof snap.active_users === "number" &&
-            isFinite(snap.active_users)) {
+            isFinite(snap.active_users) &&
+            snap.active_users >= 1) {
             return snap.active_users;
         }
         return null;
