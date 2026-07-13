@@ -63,7 +63,17 @@ const RECENT_POLL_WINDOW: Duration = Duration::from_secs(2);
 const SSE_HEARTBEAT: Duration = Duration::from_secs(15);
 
 /// Oneshot wait for control POSTs (Start replies before `reset_run_state`).
+///
+/// If this fires the HTTP client receives 503; the main loop **skips** applying
+/// the command when the oneshot is already closed (no orphan Start/Stop/Users).
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Hub wait for a single parent/metrics snapshot reply before treating the build
+/// as transient (poll clients already use a 5s outer timeout).
+const SNAPSHOT_BUILD_TIMEOUT: Duration = Duration::from_secs(4);
+
+/// Max JSON body size for control POSTs (start/stop are tiny; users is one int).
+const CONTROL_BODY_LIMIT: usize = 16 * 1024;
 
 /// HTTP-layer upper bound for `POST /api/v1/control/users` (Controller accepts 0).
 const MAX_CONTROL_USERS: u64 = 1_000_000;
@@ -516,11 +526,17 @@ async fn build_once(inner: &HubInner) -> BuildOutcome {
         return BuildOutcome::Fatal;
     }
 
-    let snapshot = match respond_rx.await {
-        Ok(s) => s,
-        Err(_) => {
+    let snapshot = match tokio::time::timeout(SNAPSHOT_BUILD_TIMEOUT, respond_rx).await {
+        Ok(Ok(s)) => s,
+        Ok(Err(_)) => {
             // Metrics processor / main-loop dropped this oneshot without a
             // reply. Recoverable (e.g. Idle after controller stop then restart).
+            return BuildOutcome::Transient;
+        }
+        Err(_) => {
+            // Parent/metrics too slow; release this attempt and retry later.
+            // Dropping respond_rx cancels the oneshot so a late reply is ignored.
+            debug!("[dashboard]: snapshot build timed out after {SNAPSHOT_BUILD_TIMEOUT:?}");
             return BuildOutcome::Transient;
         }
     };
@@ -704,10 +720,14 @@ fn build_router(state: DashboardState) -> Router {
         .route("/api/v1/events", get(events_handler));
 
     if control_enabled {
-        router = router
+        // Bound control request bodies so a large POST cannot blow memory/CPU
+        // on the dashboard task (start/stop expect empty/`{}`; users is small).
+        let control_routes = Router::new()
             .route("/api/v1/control/start", post(control_start_handler))
             .route("/api/v1/control/stop", post(control_stop_handler))
-            .route("/api/v1/control/users", post(control_users_handler));
+            .route("/api/v1/control/users", post(control_users_handler))
+            .layer(axum::extract::DefaultBodyLimit::max(CONTROL_BODY_LIMIT));
+        router = router.merge(control_routes);
     }
 
     router
@@ -915,26 +935,45 @@ fn authorize(configured_token: &str, headers: &HeaderMap, query_token: Option<&s
 /// Authorize a control API request.
 ///
 /// Control always requires a non-empty configured token (fail closed if miswired).
-/// Accepts Bearer or `?token=` (scripts); SPA must use Bearer only.
+/// **Bearer only** — query `?token=` is rejected so mutating URLs do not carry the
+/// secret (scripts and the SPA should use `Authorization: Bearer`).
 fn authorize_control(
     configured_token: &str,
     headers: &HeaderMap,
     query_token: Option<&str>,
 ) -> bool {
+    let _ = query_token; // deliberately ignored — Bearer only
     if configured_token.is_empty() {
         return false;
     }
-    authorize(configured_token, headers, query_token)
+
+    if let Some(value) = headers.get(header::AUTHORIZATION) {
+        if let Ok(s) = value.to_str() {
+            if let Some(token) = s.strip_prefix("Bearer ") {
+                return constant_time_eq(token.as_bytes(), configured_token.as_bytes());
+            }
+        }
+    }
+
+    false
 }
 
 /// Best-effort constant-time equality for auth tokens.
+///
+/// Always walks a fixed number of bytes derived from both lengths so short-circuit
+/// on length mismatch does not dominate the timing profile for typical token sizes.
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (x, y) in a.iter().zip(b.iter()) {
+    // Compare up to max(len_a, len_b), treating missing bytes as 0, and fold in
+    // a length mismatch bit so equal prefixes of different lengths never match.
+    let len_mismatch = (a.len() != b.len()) as u8;
+    let max_len = a.len().max(b.len());
+    let mut diff = len_mismatch;
+    let mut i = 0;
+    while i < max_len {
+        let x = if i < a.len() { a[i] } else { 0 };
+        let y = if i < b.len() { b[i] } else { 0 };
         diff |= x ^ y;
+        i += 1;
     }
     diff == 0
 }
@@ -1075,12 +1114,14 @@ async fn dispatch_control(
             )
         }
         Err(_) => {
-            warn!("[dashboard]: control oneshot timed out ({command})");
+            // Dropping respond_rx closes the oneshot; the main loop skips
+            // mutation when `respond.is_closed()` so this is not an orphan apply.
+            warn!("[dashboard]: control oneshot timed out ({command}); action will not apply");
             control_http_error(
                 StatusCode::SERVICE_UNAVAILABLE,
                 command,
                 "unavailable",
-                "control unavailable — retry",
+                "control unavailable — not applied; retry if needed",
             )
         }
     }
@@ -1431,8 +1472,9 @@ mod tests {
         assert!(!authorize_control("", &headers, None));
         assert!(!authorize_control("", &headers, Some("anything")));
         assert!(!authorize_control("s3cret", &headers, None));
+        // Query token alone is rejected for control (Bearer only).
         assert!(!authorize_control("s3cret", &headers, Some("wrong")));
-        assert!(authorize_control("s3cret", &headers, Some("s3cret")));
+        assert!(!authorize_control("s3cret", &headers, Some("s3cret")));
 
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -1440,6 +1482,16 @@ mod tests {
             HeaderValue::from_static("Bearer s3cret"),
         );
         assert!(authorize_control("s3cret", &headers, None));
+        // Query token must not override/augment Bearer requirement.
+        assert!(authorize_control("s3cret", &headers, Some("wrong")));
+    }
+
+    #[test]
+    fn constant_time_eq_length_mismatch() {
+        assert!(!constant_time_eq(b"abc", b"ab"));
+        assert!(!constant_time_eq(b"ab", b"abc"));
+        assert!(constant_time_eq(b"secret", b"secret"));
+        assert!(!constant_time_eq(b"secret", b"secreT"));
     }
 
     #[test]
@@ -2159,9 +2211,20 @@ mod tests {
         assert_eq!(body["command"], "start");
         assert_eq!(body["phase"], "increase");
 
-        // Query token also accepted server-side for scripts.
+        // Query token alone is rejected for control (Bearer only).
         let resp = client
             .post(format!("{base}/api/v1/control/stop?token=s3cret"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body("{}")
+            .send()
+            .await
+            .expect("post");
+        assert_eq!(resp.status(), 401);
+
+        // Stop with Bearer → 200.
+        let resp = client
+            .post(format!("{base}/api/v1/control/stop"))
+            .header(header::AUTHORIZATION, "Bearer s3cret")
             .header(header::CONTENT_TYPE, "application/json")
             .body("{}")
             .send()
