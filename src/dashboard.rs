@@ -31,7 +31,7 @@ use futures::stream;
 use serde::Deserialize;
 use serde::Serialize;
 use std::convert::Infallible;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::{oneshot, watch, Notify};
@@ -213,6 +213,9 @@ struct HubInner {
     last_build_ms: AtomicU64,
     /// Successful hub builds (shared with [`DashboardSetup::build_count`]).
     build_count: Arc<AtomicU64>,
+    /// True while a GetSnapshot request is outstanding (including after the hub
+    /// timed out waiting — prevents re-request pile-up on the metrics processor).
+    snapshot_in_flight: AtomicBool,
     /// Wake the hub loop from idle when demand appears.
     wake: Notify,
     /// When `true`, SSE clients should emit `event: closed` and disconnect.
@@ -232,6 +235,10 @@ impl std::fmt::Debug for HubInner {
                 &self.last_build_at_ms.load(Ordering::Relaxed),
             )
             .field("last_build_ms", &self.last_build_ms.load(Ordering::Relaxed))
+            .field(
+                "snapshot_in_flight",
+                &self.snapshot_in_flight.load(Ordering::Relaxed),
+            )
             .finish()
     }
 }
@@ -258,6 +265,7 @@ impl SnapshotHub {
             last_build_at_ms: AtomicU64::new(0),
             last_build_ms: AtomicU64::new(0),
             build_count,
+            snapshot_in_flight: AtomicBool::new(false),
             wake: Notify::new(),
             shutdown_tx,
         });
@@ -469,9 +477,9 @@ async fn hub_loop(inner: Arc<HubInner>) {
         match build_once(&inner).await {
             BuildOutcome::Built => {}
             BuildOutcome::Transient => {
-                // Metrics/main-loop blip: do not kill the hub. Brief backoff so
-                // we do not spin while the processor is recycling.
-                debug!("[dashboard]: snapshot reply cancelled; will retry");
+                // Metrics/main-loop blip or in-flight wait: do not kill the hub.
+                // Brief backoff so we do not spin while the processor is busy.
+                debug!("[dashboard]: snapshot build transient; will retry");
                 tokio::select! {
                     biased;
                     result = shutdown_rx.changed() => {
@@ -509,13 +517,23 @@ async fn hub_loop(inner: Arc<HubInner>) {
 }
 
 /// Request one snapshot from the parent and publish pre-serialized JSON.
-async fn build_once(inner: &HubInner) -> BuildOutcome {
+async fn build_once(inner: &Arc<HubInner>) -> BuildOutcome {
     if inner.request_tx.is_disconnected() {
         return BuildOutcome::Fatal;
     }
 
+    // At most one outstanding GetSnapshot (including late replies after a hub
+    // wait timeout) so slow metrics builds cannot pile up unbounded work.
+    if inner
+        .snapshot_in_flight
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return BuildOutcome::Transient;
+    }
+
     let started = Instant::now();
-    let (respond_tx, respond_rx) = oneshot::channel();
+    let (respond_tx, mut respond_rx) = oneshot::channel();
     if inner
         .request_tx
         .send(DashboardRequest::GetSnapshot {
@@ -523,25 +541,37 @@ async fn build_once(inner: &HubInner) -> BuildOutcome {
         })
         .is_err()
     {
+        inner.snapshot_in_flight.store(false, Ordering::Release);
         return BuildOutcome::Fatal;
     }
 
-    let snapshot = match tokio::time::timeout(SNAPSHOT_BUILD_TIMEOUT, respond_rx).await {
-        Ok(Ok(s)) => s,
-        Ok(Err(_)) => {
-            // Metrics processor / main-loop dropped this oneshot without a
-            // reply. Recoverable (e.g. Idle after controller stop then restart).
-            return BuildOutcome::Transient;
+    // Wait up to SNAPSHOT_BUILD_TIMEOUT; on timeout keep the oneshot alive in a
+    // background task so in_flight stays set until the metrics reply is drained.
+    let snapshot = tokio::select! {
+        result = &mut respond_rx => {
+            match result {
+                Ok(s) => s,
+                Err(_) => {
+                    // Metrics/main-loop dropped the oneshot without a reply.
+                    inner.snapshot_in_flight.store(false, Ordering::Release);
+                    return BuildOutcome::Transient;
+                }
+            }
         }
-        Err(_) => {
-            // Parent/metrics too slow; release this attempt and retry later.
-            // Dropping respond_rx cancels the oneshot so a late reply is ignored.
-            debug!("[dashboard]: snapshot build timed out after {SNAPSHOT_BUILD_TIMEOUT:?}");
+        _ = tokio::time::sleep(SNAPSHOT_BUILD_TIMEOUT) => {
+            debug!(
+                "[dashboard]: snapshot build timed out after {SNAPSHOT_BUILD_TIMEOUT:?}; waiting in background"
+            );
+            let clear_flag = Arc::clone(inner);
+            tokio::spawn(async move {
+                let _ = respond_rx.await;
+                clear_flag.snapshot_in_flight.store(false, Ordering::Release);
+            });
             return BuildOutcome::Transient;
         }
     };
 
-    match serde_json::to_vec(&snapshot) {
+    let outcome = match serde_json::to_vec(&snapshot) {
         Ok(json) => {
             // Publish first, then advance generation counters so waiters that
             // observe `build_count` never read a stale watch value.
@@ -565,7 +595,9 @@ async fn build_once(inner: &HubInner) -> BuildOutcome {
             // Keep the hub running; waiters will time out or get a later build.
             BuildOutcome::Built
         }
-    }
+    };
+    inner.snapshot_in_flight.store(false, Ordering::Release);
+    outcome
 }
 
 /// Shared state for axum handlers.
@@ -1114,14 +1146,18 @@ async fn dispatch_control(
             )
         }
         Err(_) => {
-            // Dropping respond_rx closes the oneshot; the main loop skips
-            // mutation when `respond.is_closed()` so this is not an orphan apply.
-            warn!("[dashboard]: control oneshot timed out ({command}); action will not apply");
+            // Dropping respond_rx closes the oneshot. The main loop skips
+            // mutation when `respond.is_closed()` *before* handling — the common
+            // case (still queued). If the main loop had already started applying
+            // the command, a residual race can still mutate state after this 503.
+            warn!(
+                "[dashboard]: control oneshot timed out ({command}); skipped if still queued"
+            );
             control_http_error(
                 StatusCode::SERVICE_UNAVAILABLE,
                 command,
                 "unavailable",
-                "control unavailable — not applied; retry if needed",
+                "control unavailable — retry if the action did not take effect",
             )
         }
     }
