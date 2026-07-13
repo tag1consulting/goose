@@ -477,7 +477,16 @@ pub struct GooseAttack {
     /// [`Transaction`](./goose/struct.Transaction.html)s are allocated.
     scheduler: GooseScheduler,
     /// When the load test started.
+    ///
+    /// Restarted after the increase→maintain metrics reset so running duration
+    /// and report rate windows exclude ramp-up. Do **not** use this for the
+    /// active-users series clock — see [`Self::series_started`].
     started: Option<time::Instant>,
+    /// Continuous clock for per-second graph series (especially active users).
+    ///
+    /// Set once when a run starts (`reset_run_state`) and **not** restarted on
+    /// metrics reset, so ramp-up and later user changes stay on one timeline.
+    series_started: Option<time::Instant>,
     /// Internal Goose test plan representation.
     test_plan: TestPlan,
     /// When the current test plan step started.
@@ -545,6 +554,7 @@ impl GooseAttack {
             attack_phase: AttackPhase::Idle,
             scheduler: GooseScheduler::RoundRobin,
             started: None,
+            series_started: None,
             test_plan: TestPlan::new(),
             step_started: None,
             metrics: GooseMetrics::default(),
@@ -581,6 +591,7 @@ impl GooseAttack {
             attack_phase: AttackPhase::Idle,
             scheduler: GooseScheduler::RoundRobin,
             started: None,
+            series_started: None,
             test_plan: TestPlan::new(),
             step_started: None,
             metrics: GooseMetrics::default(),
@@ -1621,6 +1632,7 @@ impl GooseAttack {
                         total_users: self.metrics.total_users,
                         maximum_users: self.metrics.maximum_users,
                         active_users,
+                        series_elapsed_secs: self.series_elapsed_secs(),
                         phase: phase.clone(),
                         series_window_secs: metrics::dashboard_snapshot::SERIES_WINDOW_SECS,
                         respond,
@@ -1652,6 +1664,13 @@ impl GooseAttack {
         Ok(())
     }
 
+    /// Seconds on the continuous series clock (0 if the run has not started).
+    fn series_elapsed_secs(&self) -> usize {
+        self.series_started
+            .map(|started| started.elapsed().as_secs() as usize)
+            .unwrap_or(0)
+    }
+
     /// Build a dashboard snapshot from main-loop metrics/graph state.
     ///
     /// Used when the dedicated metrics processor is not running (Idle after
@@ -1662,9 +1681,12 @@ impl GooseAttack {
         phase: String,
         active_users: usize,
     ) -> metrics::DashboardSnapshot {
-        let series = self
-            .graph_data
-            .export_series_window(metrics::dashboard_snapshot::SERIES_WINDOW_SECS);
+        // Main-loop graph_data is usually empty until Shutdown merge. Export with
+        // series-clock "now" so any retained users level holds to the right edge.
+        let series = self.graph_data.export_series_window_until(
+            metrics::dashboard_snapshot::SERIES_WINDOW_SECS,
+            Some(self.series_elapsed_secs()),
+        );
         metrics::dashboard_snapshot::build_dashboard_snapshot(
             metrics::dashboard_snapshot::DashboardSnapshotInput {
                 metrics: &self.metrics,
@@ -1949,6 +1971,14 @@ impl GooseAttack {
                 // Start at 1 as this is human visible.
                 let thread_number = self.metrics.total_users + 1;
 
+                // Align request `elapsed` (graph second) with the continuous series
+                // clock so RPS and active-users charts share one timeline. Weighted
+                // users are often created before the run starts; mid-test increases
+                // create users later — both must report seconds since series start.
+                if let Some(series_started) = self.series_started {
+                    thread_user.started = series_started;
+                }
+
                 // Launch a new user.
                 let user = tokio::spawn(user::user_main(
                     thread_number,
@@ -2074,13 +2104,14 @@ impl GooseAttack {
             self.stop_attack().await?;
 
             // Record final users for the users-per-second graph before shutting
-            // down the metrics processor.
-            if let Some(started) = self.started {
+            // down the metrics processor. Use the continuous series clock so
+            // this sample stays aligned with ramp history after metrics reset.
+            if self.series_started.is_some() {
                 let _ = goose_attack_run_state
                     .metrics_cmd_tx
                     .send(MetricsCommand::RecordUsers {
                         active_users: goose_attack_run_state.active_users,
-                        elapsed_secs: started.elapsed().as_secs() as usize,
+                        elapsed_secs: self.series_elapsed_secs(),
                     });
             }
 
@@ -2595,8 +2626,15 @@ impl GooseAttack {
         // Try to create the requested report files, to confirm access.
         self.create_reports().await?;
 
-        // Record when the GooseAttack officially started.
-        self.started = Some(time::Instant::now());
+        // Record when the GooseAttack officially started. series_started is the
+        // continuous graph clock and is not restarted on metrics reset.
+        let now = time::Instant::now();
+        self.started = Some(now);
+        self.series_started = Some(now);
+        // Align pre-created weighted users so request.elapsed matches series time.
+        for user in &mut self.weighted_users {
+            user.started = now;
+        }
 
         Ok(())
     }
@@ -2672,13 +2710,15 @@ impl GooseAttack {
                 }
             }
 
-            // Record current users for users per second graph in HTML report.
-            if let Some(started) = self.started {
+            // Record current users for the active-users graph (report + dashboard).
+            // Use the continuous series clock — not `started`, which restarts on
+            // metrics reset and would wipe/offset ramp history on the chart.
+            if self.series_started.is_some() {
                 let _ = goose_attack_run_state
                     .metrics_cmd_tx
                     .send(MetricsCommand::RecordUsers {
                         active_users: goose_attack_run_state.active_users,
-                        elapsed_secs: started.elapsed().as_secs() as usize,
+                        elapsed_secs: self.series_elapsed_secs(),
                     });
             };
 

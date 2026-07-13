@@ -92,12 +92,27 @@ impl GraphData {
         }
     }
 
-    /// Reset graph data while preserving user count to maintain continuity.
-    pub(crate) fn reset_preserving_users(&mut self, active_users: usize) {
-        *self = GraphData::new();
-        if active_users > 0 {
-            self.users_per_second.set_and_maintain_last(0, active_users);
-        }
+    /// Reset per-second *rate* series after the increase→maintain metrics reset.
+    ///
+    /// Request/error/latency/transaction/scenario buckets restart so running
+    /// metrics and HTML report rates reflect steady-state load only.
+    ///
+    /// **Active users are a level over the whole run**, not a rate: the users
+    /// series is preserved so the live dashboard (and HTML active-users graph)
+    /// still show the initial ramp and any later increases/decreases. Wiping
+    /// users and reseeding second 0 with the final count made the chart look
+    /// like the test had always been at full load.
+    pub(crate) fn reset_rate_series(&mut self) {
+        self.requests_per_second = ItemsPerSecond::new();
+        self.errors_per_second = ItemsPerSecond::new();
+        self.average_response_time_per_second = HashMap::new();
+        self.transactions_per_second = TimeSeries::new();
+        self.scenarios_per_second = TimeSeries::new();
+    }
+
+    /// Last absolute second with a users sample, if any.
+    pub(crate) fn users_last_absolute_second(&self) -> Option<usize> {
+        self.users_per_second.last_absolute_second()
     }
 
     /// Record requests per second metric.
@@ -165,10 +180,34 @@ impl GraphData {
         self.users_per_second.set_and_maintain_last(second, users);
     }
 
+    /// Record active users at `second` only if time is not going backwards.
+    ///
+    /// Used by the dashboard snapshot path to pin the current level at "now"
+    /// without rewinding past samples (which would recreate mid-ramp V-glitches
+    /// when combined with gap-fill).
+    pub(crate) fn record_users_monotonic(&mut self, users: usize, second: usize) {
+        if let Some(last) = self.users_per_second.last_absolute_second() {
+            if second < last {
+                return;
+            }
+        }
+        self.users_per_second.set_and_maintain_last(second, users);
+    }
+
+    /// Convenience wrapper for unit tests (no end-second hint).
+    ///
+    /// Production paths always pass a series-clock hint via
+    /// [`Self::export_series_window_until`].
+    #[cfg(test)]
+    pub(crate) fn export_series_window(&self, window_secs: u32) -> SeriesWindow {
+        self.export_series_window_until(window_secs, None)
+    }
+
     /// Export a trailing aggregate series window for the live dashboard.
     ///
     /// Normative algorithm:
-    /// 1. `end_second` = max second index across RPS keys and users series
+    /// 1. `end_second` = max second index across RPS keys, users series, and
+    ///    optional `end_second_hint` (series clock "now" from the main loop)
     /// 2. `start_second` = `end_second.saturating_sub(window_secs - 1)`
     /// 3. For each second in the inclusive window: sum RPS/errors across keys,
     ///    take global users, and compute request-count-weighted average latency
@@ -177,12 +216,20 @@ impl GraphData {
     ///    seconds where request metrics advanced past the last `RecordUsers`)
     ///    hold the last known active-user count — never drop to 0 solely because
     ///    the users series lags RPS by a few seconds.
-    pub(crate) fn export_series_window(&self, window_secs: u32) -> SeriesWindow {
+    ///
+    /// `end_second_hint` extends the window through series-clock "now" when the
+    /// last stored sample is a few seconds older (main-loop cadence / no recent
+    /// requests).
+    pub(crate) fn export_series_window_until(
+        &self,
+        window_secs: u32,
+        end_second_hint: Option<usize>,
+    ) -> SeriesWindow {
         if window_secs == 0 {
             return SeriesWindow::empty();
         }
 
-        let mut end_second: Option<usize> = None;
+        let mut end_second: Option<usize> = end_second_hint;
         for series in self.requests_per_second.0.values() {
             if let Some(last) = series.last_absolute_second() {
                 end_second = Some(end_second.map_or(last, |e| e.max(last)));
@@ -1854,9 +1901,9 @@ mod test {
     }
 
     #[test]
-    fn test_forward_stamp_pollution_creates_v_glitch() {
-        // Documents why GetDashboardSnapshot must not stamp users forward:
-        // gap-fill + partial intermediate overwrites → V-shaped artifact.
+    fn test_out_of_order_users_write_creates_v_glitch() {
+        // Documents why user stamps must be monotonic in time: gap-fill with a
+        // jump forward, then overwriting intermediate seconds, leaves stale dips.
         let mut graph = GraphData::new();
         graph.record_users_per_second(10, 60);
         // Bad stamp: jump to second 70 with live count 20 (fills 61..69 with 10).
@@ -1875,6 +1922,61 @@ mod test {
         assert_eq!(window.users[70], 20);
         // Confirm the V: 15 → 10 → 18 is non-monotonic mid-ramp.
         assert!(window.users[66] < window.users[65] && window.users[66] < window.users[68]);
+    }
+
+    #[test]
+    fn test_record_users_monotonic_rejects_backwards_writes() {
+        let mut graph = GraphData::new();
+        graph.record_users_per_second(10, 5);
+        graph.record_users_per_second(20, 10);
+        // Would create a V-glitch if applied — must be ignored.
+        graph.record_users_monotonic(15, 7);
+        let window = graph.export_series_window(300);
+        assert_eq!(window.users[7], 10, "backwards write must not rewrite past");
+        assert_eq!(window.users[10], 20);
+        // Forward monotonic stamp is allowed and pins the edge.
+        graph.record_users_monotonic(25, 12);
+        let window = graph.export_series_window(300);
+        assert_eq!(window.users[10], 20);
+        assert_eq!(window.users[11], 20);
+        assert_eq!(window.users[12], 25);
+    }
+
+    #[test]
+    fn test_reset_rate_series_preserves_users_history() {
+        let mut graph = GraphData::new();
+        for (s, users) in (0..=5).zip(1..=6) {
+            graph.record_users_per_second(users, s);
+        }
+        graph.record_requests_per_second("GET /", 3);
+        graph.record_errors_per_second("GET /", 3);
+        graph.record_average_response_time_per_second("GET /".into(), 3, 42);
+        graph.record_transactions_per_second(3);
+        graph.record_scenarios_per_second(3);
+
+        graph.reset_rate_series();
+
+        let window = graph.export_series_window(300);
+        // Users ramp intact.
+        assert_eq!(window.users, vec![1, 2, 3, 4, 5, 6]);
+        // Rate series wiped.
+        assert!(window.rps.iter().all(|&v| v == 0.0));
+        assert!(window.fps.iter().all(|&v| v == 0.0));
+        assert!(window.avg_latency_ms.iter().all(|&v| v == 0.0));
+    }
+
+    #[test]
+    fn test_export_series_window_until_extends_to_hint() {
+        let mut graph = GraphData::new();
+        graph.record_users_per_second(7, 2);
+        // No RPS; without hint end would be second 2.
+        let window = graph.export_series_window_until(300, Some(8));
+        assert_eq!(window.users.len(), 9); // seconds 0..8
+        assert_eq!(window.users[2], 7);
+        // Hold last known level through the hint ("now").
+        for s in 3..=8 {
+            assert_eq!(window.users[s], 7, "hold users[{s}]");
+        }
     }
 
     #[test]

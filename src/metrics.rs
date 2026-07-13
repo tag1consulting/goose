@@ -160,13 +160,16 @@ pub(crate) enum MetricsCommand {
         active_users: usize,
         elapsed_secs: usize,
     },
-    /// Flush all pending metrics, print running metrics, then reset all state.
+    /// Flush all pending metrics, print running metrics, then reset rate metrics.
     ///
-    /// Sends an ack when complete so the main loop can safely continue.
+    /// Active-users graph history is **not** cleared (see
+    /// [`GraphData::reset_rate_series`]). Sends an ack when complete so the main
+    /// loop can safely continue.
     Reset {
         duration: usize,
         total_users: usize,
         maximum_users: usize,
+        /// Live user count at reset (for logging continuity; users series is kept).
         active_users: usize,
         ack: tokio::sync::oneshot::Sender<()>,
     },
@@ -200,6 +203,9 @@ pub(crate) enum MetricsCommand {
         maximum_users: usize,
         /// Live count from GooseAttackRunState.active_users — NOT on GooseMetrics.
         active_users: usize,
+        /// Seconds since the continuous series clock started (not restarted on
+        /// metrics reset). Used to pin the active-users series at "now".
+        series_elapsed_secs: usize,
         /// String form of AttackPhase: "idle"|"increase"|"maintain"|"decrease"|"shutdown".
         phase: String,
         series_window_secs: u32,
@@ -3223,8 +3229,21 @@ impl MetricsProcessor {
                         counters.reset();
                     }
                 }
-                // Reset graph data while preserving user count.
-                self.graph_data.reset_preserving_users(active_users);
+                // Clear rate series only. Active-users history (ramp + later
+                // changes) is kept on a continuous series clock so the dashboard
+                // still shows how load evolved over the full run.
+                self.graph_data.reset_rate_series();
+                // Ensure the users series reflects the live count at the last
+                // known second (or second 0 if empty) so the chart does not dip
+                // to zero when the next sample is slightly delayed.
+                if active_users > 0 {
+                    let second = self
+                        .graph_data
+                        .users_last_absolute_second()
+                        .unwrap_or(0);
+                    self.graph_data
+                        .record_users_monotonic(active_users, second);
+                }
                 let _ = ack.send(());
                 false
             }
@@ -3267,6 +3286,7 @@ impl MetricsProcessor {
                 total_users,
                 maximum_users,
                 active_users,
+                series_elapsed_secs,
                 phase,
                 series_window_secs,
                 respond,
@@ -3276,12 +3296,15 @@ impl MetricsProcessor {
                 self.metrics.duration = duration;
                 self.metrics.total_users = total_users;
                 self.metrics.maximum_users = maximum_users;
-                // Do NOT stamp active_users forward to the RPS/duration second here.
-                // set_and_maintain_last would fill the gap with a stale count; later
-                // real RecordUsers samples only overwrite some seconds and leave a
-                // V-shaped glitch during increase/decrease ramps. Trailing RPS lead
-                // is handled by export_series_window's get_held() level hold instead.
-                let series = self.graph_data.export_series_window(series_window_secs);
+                // Pin the live user count at the continuous series clock "now".
+                // Monotonic-only: never rewrite past samples (avoids mid-ramp
+                // V-glitches from gap-fill + out-of-order overwrites). Extends
+                // the right edge so the chart matches the KPI active_users.
+                self.graph_data
+                    .record_users_monotonic(active_users, series_elapsed_secs);
+                let series = self
+                    .graph_data
+                    .export_series_window_until(series_window_secs, Some(series_elapsed_secs));
                 let snapshot = dashboard_snapshot::build_dashboard_snapshot(
                     dashboard_snapshot::DashboardSnapshotInput {
                         metrics: &self.metrics,
@@ -5091,6 +5114,8 @@ mod test {
             total_users: 5,
             maximum_users: 10,
             active_users: 3,
+            // series clock "now" past the request sample at second 1
+            series_elapsed_secs: 5,
             phase: "maintain".to_string(),
             series_window_secs: dashboard_snapshot::SERIES_WINDOW_SECS,
             respond: respond_tx,
@@ -5106,10 +5131,90 @@ mod test {
         assert_eq!(snapshot.total_users, 5);
         assert_eq!(snapshot.aggregate.total_requests, 1);
         assert!(!snapshot.series.rps.is_empty());
+        // Users series must extend to series_elapsed and hold live active_users.
+        assert!(
+            snapshot.series.users.len() >= 6,
+            "expected users through second 5, got len {}",
+            snapshot.series.users.len()
+        );
+        assert_eq!(
+            *snapshot.series.users.last().unwrap(),
+            3,
+            "right edge must match live active_users"
+        );
         assert_eq!(
             snapshot.flags.series_seconds,
             dashboard_snapshot::SERIES_WINDOW_SECS
         );
         assert_eq!(snapshot.hosts, vec!["http://localhost/".to_string()]);
+    }
+
+    #[test]
+    fn reset_preserves_active_users_ramp_history() {
+        // Regression: metrics reset used to wipe users and reseed second 0 with
+        // the final count, so the dashboard looked like the test started at full
+        // load. Ramp history must survive reset_rate_series.
+        let configuration = GooseConfiguration {
+            dashboard: true,
+            ..Default::default()
+        };
+        let mut processor = make_test_processor(configuration);
+
+        // Simulated ramp 1 → 5 over seconds 0..4.
+        for (s, users) in (0..=4).zip(1..=5) {
+            processor
+                .graph_data
+                .record_users_per_second(users, s);
+        }
+        // Steady at 5 through second 10.
+        for s in 5..=10 {
+            processor.graph_data.record_users_per_second(5, s);
+        }
+        // Some RPS during ramp (will be cleared on reset).
+        for s in 0..=10 {
+            processor.graph_data.record_requests_per_second("GET /", s);
+        }
+
+        let (ack_tx, _ack_rx) = tokio::sync::oneshot::channel();
+        let shutdown = processor.handle_command(MetricsCommand::Reset {
+            duration: 10,
+            total_users: 5,
+            maximum_users: 5,
+            active_users: 5,
+            ack: ack_tx,
+        });
+        assert!(!shutdown);
+
+        // Rate series cleared.
+        let after_reset = processor.graph_data.export_series_window(300);
+        assert!(
+            after_reset.rps.iter().all(|&v| v == 0.0),
+            "RPS must be cleared on metrics reset, got {:?}",
+            after_reset.rps
+        );
+
+        // Users ramp still present.
+        assert_eq!(
+            processor.graph_data.users_last_absolute_second(),
+            Some(10)
+        );
+        let users_window = processor.graph_data.export_series_window(300);
+        assert_eq!(users_window.users.len(), 11);
+        assert_eq!(users_window.users[0], 1);
+        assert_eq!(users_window.users[1], 2);
+        assert_eq!(users_window.users[2], 3);
+        assert_eq!(users_window.users[3], 4);
+        assert_eq!(users_window.users[4], 5);
+        for s in 5..=10 {
+            assert_eq!(users_window.users[s], 5, "steady users[{s}]");
+        }
+
+        // Post-reset recording continues on the same clock (no restart at 0).
+        processor.graph_data.record_users_per_second(8, 15);
+        let continued = processor.graph_data.export_series_window(300);
+        assert_eq!(continued.users[10], 5);
+        // Gap 11..14 held at 5, second 15 = 8.
+        assert_eq!(continued.users[14], 5);
+        assert_eq!(continued.users[15], 8);
     }
 }
