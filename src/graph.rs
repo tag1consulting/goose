@@ -172,7 +172,11 @@ impl GraphData {
     /// 2. `start_second` = `end_second.saturating_sub(window_secs - 1)`
     /// 3. For each second in the inclusive window: sum RPS/errors across keys,
     ///    take global users, and compute request-count-weighted average latency
-    /// 4. Missing seconds contribute 0
+    /// 4. Missing RPS/error/latency seconds contribute 0
+    /// 5. **Users are a level, not a rate**: missing samples (including trailing
+    ///    seconds where request metrics advanced past the last `RecordUsers`)
+    ///    hold the last known active-user count — never drop to 0 solely because
+    ///    the users series lags RPS by a few seconds.
     pub(crate) fn export_series_window(&self, window_secs: u32) -> SeriesWindow {
         if window_secs == 0 {
             return SeriesWindow::empty();
@@ -213,7 +217,9 @@ impl GraphData {
             }
             fps.push(fps_sum as f64);
 
-            users.push(self.users_per_second.get(s) as u64);
+            // Level hold: do not paint "0 users" for trailing seconds where only
+            // RPS has advanced (main-loop RecordUsers lags drain_pending).
+            users.push(self.users_per_second.get_held(s) as u64);
 
             // Request-count-weighted average of per-key MovingAverage at second s.
             let mut weighted_sum: f64 = 0.0;
@@ -246,6 +252,20 @@ impl GraphData {
             users,
             avg_latency_ms,
         }
+    }
+
+    /// Latest absolute second across RPS and users series (for stamping users).
+    pub(crate) fn latest_absolute_second(&self) -> Option<usize> {
+        let mut end: Option<usize> = None;
+        for series in self.requests_per_second.0.values() {
+            if let Some(last) = series.last_absolute_second() {
+                end = Some(end.map_or(last, |e| e.max(last)));
+            }
+        }
+        if let Some(last) = self.users_per_second.last_absolute_second() {
+            end = Some(end.map_or(last, |e| e.max(last)));
+        }
+        end
     }
 
     /// Drop series samples older than the trailing `keep_secs` window.
@@ -830,6 +850,25 @@ impl<T: Clone + TimeSeriesValue<T, U>, U> TimeSeries<T, U> {
             Some(value) => value.clone(),
             None => T::initial_value(),
         }
+    }
+
+    /// Level-style read: hold the nearest known sample when `second` is outside
+    /// the stored range (before origin or past the last sample).
+    ///
+    /// Used for active-user counts, which are continuous levels. Rate series
+    /// (RPS/errors) correctly use [`Self::get`] so missing buckets stay 0.
+    fn get_held(&self, second: usize) -> T {
+        if self.data.is_empty() {
+            return T::initial_value();
+        }
+        if second < self.origin {
+            return self.data[0].clone();
+        }
+        let last_abs = self.origin + self.data.len() - 1;
+        if second > last_abs {
+            return self.last();
+        }
+        self.data[second - self.origin].clone()
     }
 
     /// Returns the last value in the time series or initial value if the time
@@ -1748,6 +1787,38 @@ mod test {
         assert!((window.avg_latency_ms[1] - 0.0).abs() < f64::EPSILON);
         // Average of 20 and 40 = 30.
         assert!((window.avg_latency_ms[2] - 30.0).abs() < 0.001);
+        // Users: 2 at second 0, then set_and_maintain fills 1..4 with 2 when
+        // recording 8 at second 5. Window seconds 3,4,5 → [2, 2, 8].
+        assert_eq!(window.users, vec![2, 2, 8]);
+    }
+
+    #[test]
+    fn test_export_series_users_hold_when_rps_leads() {
+        // Regression: Active users chart dropped to 0 near the right edge because
+        // end_second came from RPS while users series lagged (RecordUsers is
+        // main-loop only; drain_pending can advance RPS further).
+        let mut graph = GraphData::new();
+        for s in 0..=50 {
+            graph.record_users_per_second(10, s);
+        }
+        // RPS continues through second 56 with no further RecordUsers.
+        for s in 0..=56 {
+            graph.record_requests_per_second("GET /", s);
+        }
+
+        let window = graph.export_series_window(300);
+        assert_eq!(window.start_second, 0);
+        assert_eq!(window.rps.len(), 57);
+        assert_eq!(window.users.len(), 57);
+        // Trailing seconds past last RecordUsers must hold 10, not drop to 0.
+        for (i, &u) in window.users.iter().enumerate() {
+            assert_eq!(
+                u, 10,
+                "users[{i}] should hold last known count 10, got {u}"
+            );
+        }
+        // RPS still present at the end (not all zeros).
+        assert!(window.rps[56] > 0.0);
     }
 
     #[test]
