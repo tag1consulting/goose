@@ -38,6 +38,40 @@ jobs:
         command: clippy 
         args: --all-targets --all-features -- -D warnings
 
+  # TypeScript dashboard SPA: type-check and ensure committed app.js matches tsc output.
+  # Cargo embeds app.js via include_str!; it must not drift from app.ts.
+  dashboard-ui:
+    name: dashboard UI (TypeScript)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/dashboard/static
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: "20"
+        cache: npm
+        cache-dependency-path: src/dashboard/static/package-lock.json
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Type-check (tsc --noEmit)
+      run: npm run check
+
+    - name: Rebuild app.js and verify no drift
+      run: |
+        npm run build
+        if ! git diff --exit-code -- app.js; then
+          echo "::error::src/dashboard/static/app.js is out of date. Run: cd src/dashboard/static && npm ci && npm run build"
+          exit 1
+        fi
+
   build:
     name: build and run tests
     runs-on: ubuntu-latest

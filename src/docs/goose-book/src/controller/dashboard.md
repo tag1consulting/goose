@@ -363,6 +363,7 @@ npm run check
 - Do not hand-edit `app.js`; changes there will be lost on the next `npm run build`.
 - `node_modules/` is gitignored; only `package.json` / `package-lock.json` are committed so installs stay reproducible.
 - Chart.js is loaded as a separate UMD script (`chart.min.js`); the TypeScript build does not bundle it.
+- CI runs `npm run check` and rebuilds `app.js`, failing if the committed file differs from the TypeScript compiler output.
 
 ## GraphData memory cost
 
