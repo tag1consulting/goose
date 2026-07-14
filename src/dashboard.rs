@@ -101,8 +101,11 @@ const MAX_CONTROL_IN_FLIGHT: usize = 4;
 pub(crate) struct DashboardSetup {
     /// Parent end of the request channel.
     pub request_rx: flume::Receiver<DashboardRequest>,
-    /// Actual TCP port after bind (useful when configured port is 0 / ephemeral).
-    /// Read by unit tests; production only needs `request_rx`.
+    /// Actual TCP port after bind.
+    ///
+    /// Exposed for unit tests and internal callers that bind with port 0 (ephemeral).
+    /// Note: the CLI treats `--dashboard-port 0` as “unset” and rewrites it to the
+    /// default (5118) when the dashboard is enabled.
     #[cfg_attr(not(test), allow(dead_code))]
     pub bound_port: u16,
     /// Number of snapshots the hub has successfully built (tests / diagnostics).
