@@ -311,11 +311,11 @@ async fn run_standalone_test(test_type: TestType, format: &str) {
     .await;
 
     let log_files = LogFiles {
-        request_logs: &[request_log.to_string()],
-        transaction_logs: &[transaction_log.to_string()],
-        scenario_logs: &[scenario_log.to_string()],
-        error_logs: &[error_log.to_string()],
-        debug_logs: &[debug_log.to_string()],
+        request_logs: std::slice::from_ref(&request_log),
+        transaction_logs: std::slice::from_ref(&transaction_log),
+        scenario_logs: std::slice::from_ref(&scenario_log),
+        error_logs: std::slice::from_ref(&error_log),
+        debug_logs: std::slice::from_ref(&debug_log),
     };
 
     validate_test(goose_metrics, &mock_endpoints, &test_type, &log_files);

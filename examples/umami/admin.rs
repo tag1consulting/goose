@@ -36,7 +36,7 @@ pub async fn log_in(user: &mut GooseUser) -> TransactionResult {
                     let title = "Log in";
                     if !common::valid_title(&html, title) {
                         return user.set_failure(
-                            &format!("{}: title not found: {}", &goose.request.raw.url, title),
+                            &format!("{}: title not found: {}", goose.request.raw.url, title),
                             &mut goose.request,
                             Some(headers),
                             Some(&html),
@@ -130,7 +130,7 @@ pub async fn edit_article(user: &mut GooseUser) -> TransactionResult {
                     let title = "Edit Article";
                     if !common::valid_title(&html, title) {
                         return user.set_failure(
-                            &format!("{}: title not found: {}", &goose.request.raw.url, title),
+                            &format!("{}: title not found: {}", goose.request.raw.url, title),
                             &mut goose.request,
                             Some(headers),
                             Some(&html),

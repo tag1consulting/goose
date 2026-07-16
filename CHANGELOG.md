@@ -1,6 +1,22 @@
 # Changelog
 
 ## 0.19.0-dev
+ - add opt-in read-only **live web dashboard** (crate feature `dashboard` + runtime `--dashboard`, default bind `127.0.0.1:5118`)
+    o compile with `--features dashboard` (not in default features; avoids axum/tower-http on every build); without the feature, `--dashboard` fails at startup with a clear rebuild hint
+    o streams coalesced metric snapshots over SSE (`/api/v1/events`) with poll fallback; one-shot `GET /api/v1/snapshot`
+    o trailing series charts (RPS, failures/s, active users, average latency) via vendored Chart.js
+    o phase badges, connection indicator (SSE / poll / disconnected), sortable request/error tables
+    o token auth on metric APIs when configured (`--dashboard-auth-token`); required for non-loopback binds; browser bootstrap via `?token=`
+    o public shell/static/health; Content-Security-Policy without inline scripts
+    o enables GraphData series collection (same memory class as `--report-file`); documented in Goose Book “Live Dashboard”
+    o tunable SSE client cap via `--dashboard-max-clients` / `GooseDefault::DashboardMaxClients` (default 32)
+    o `/api/v1/health` exposes ops counters `last_build_ms`, `build_count`, and `active_sse_clients` (no load-test metrics)
+ - add optional **dashboard runtime control** (`--dashboard-control`, requires `--dashboard` and `--dashboard-auth-token` even on loopback; same `dashboard` crate feature)
+    o authenticated `POST /api/v1/control/{start,stop,users}` with structured JSON success/error; routes unregistered (404) when control is off
+    o phase-aware SPA control panel: Start, Stop, absolute target users with Apply and ± step buttons
+    o Stop begins a cancel ramp through Decrease (not instantaneous Idle); Start success means entered Increase (not `test_start` complete)
+    o `--no-autostart` allowed with dashboard control (no Controllers required); Controllers remain power-user path (host/rates/shutdown not in dashboard)
+    o documented in Goose Book “Live Dashboard” (flags, auth matrix, curl examples, semantics)
  - [#468](https://github.com/tag1consulting/goose/issues/468) replace `--hatch-rate` and `--startup-time` with `--increase-rate`, `--increase-time`, `--decrease-rate`, and `--decrease-time`
     o **breaking**: `--hatch-rate` / `-r` is now `--increase-rate` / `-r` (sets per-second rate users are added)
     o **breaking**: `--startup-time` / `-s` is now `--increase-time` / `-s` (sets total time to launch all users)

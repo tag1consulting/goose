@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Goose Dashboard</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header class="top-bar">
+    <div class="brand">
+      <h1>Goose</h1>
+      <span id="subtitle" class="subtitle">Live dashboard</span>
+    </div>
+    <div class="header-meta">
+      <span id="phase-badge" class="phase-badge phase-idle">idle</span>
+      <span id="hosts" class="meta-item" title="Target hosts">—</span>
+      <span id="duration" class="meta-item" title="Test duration">0s</span>
+      <span id="connection" class="connection disconnected" title="Connection status">
+        <span class="dot" aria-hidden="true"></span>
+        <span id="connection-label">connecting</span>
+      </span>
+    </div>
+  </header>
+
+  <section id="banner" class="banner hidden" role="status"></section>
+
+  <section id="control-panel" class="card control-panel hidden" aria-label="Load test control">
+    <h2>Control</h2>
+    <div class="control-row">
+      <button type="button" id="ctrl-start" class="ctrl-btn ctrl-start">Start</button>
+      <button type="button" id="ctrl-stop" class="ctrl-btn ctrl-stop">Stop</button>
+    </div>
+    <div class="control-row control-users-row">
+      <span class="control-active" title="Active users from latest snapshot">
+        Active: <strong id="ctrl-active">—</strong>
+      </span>
+      <label class="control-label" for="ctrl-target">
+        Target
+        <input id="ctrl-target" type="number" min="1" step="1" inputmode="numeric" autocomplete="off">
+      </label>
+      <button type="button" id="ctrl-apply" class="ctrl-btn">Apply</button>
+      <button type="button" id="ctrl-minus" class="ctrl-btn ctrl-step-btn" title="Decrease target by step">−</button>
+      <button type="button" id="ctrl-plus" class="ctrl-btn ctrl-step-btn" title="Increase target by step">+</button>
+      <label class="control-label" for="ctrl-step">
+        step
+        <input id="ctrl-step" type="number" min="1" step="1" value="10" inputmode="numeric" autocomplete="off">
+      </label>
+    </div>
+    <p id="ctrl-status" class="control-status" role="status"></p>
+  </section>
+
+  <section id="kpis" class="kpi-row">
+    <div class="kpi card">
+      <span class="k">Users</span>
+      <span id="kpi-users" class="v">—</span>
+    </div>
+    <div class="kpi card">
+      <span class="k">RPS</span>
+      <span id="kpi-rps" class="v">—</span>
+    </div>
+    <div class="kpi card">
+      <span class="k">Fail %</span>
+      <span id="kpi-fail" class="v">—</span>
+    </div>
+    <div class="kpi card">
+      <span class="k">p95 ms</span>
+      <span id="kpi-p95" class="v">—</span>
+    </div>
+    <div class="kpi card">
+      <span class="k">Avg ms</span>
+      <span id="kpi-avg" class="v">—</span>
+    </div>
+  </section>
+
+  <section id="charts" class="charts-grid">
+    <div class="card chart-card">
+      <h2>Requests / failures per second</h2>
+      <canvas id="chart-rps" aria-label="RPS and failures chart"></canvas>
+    </div>
+    <div class="card chart-card">
+      <h2>Active users</h2>
+      <canvas id="chart-users" aria-label="Active users chart"></canvas>
+    </div>
+    <div class="card chart-card chart-wide">
+      <h2>Average latency (ms)</h2>
+      <canvas id="chart-latency" aria-label="Average latency chart"></canvas>
+    </div>
+  </section>
+
+  <section id="summary" class="card">
+    <h2>Summary</h2>
+    <div id="summary-body" class="grid">—</div>
+  </section>
+
+  <section id="aggregate" class="card">
+    <h2>Aggregate</h2>
+    <div id="aggregate-body" class="grid">—</div>
+  </section>
+
+  <section id="requests" class="card">
+    <h2>Requests</h2>
+    <div class="table-toolbar">
+      <label class="filter-label">
+        Filter
+        <input id="requests-filter" type="search" placeholder="method or name…" autocomplete="off">
+      </label>
+    </div>
+    <div class="table-wrap">
+      <table id="requests-table">
+        <thead>
+          <tr>
+            <th data-sort="method" data-type="str">Method</th>
+            <th data-sort="name" data-type="str">Name</th>
+            <th data-sort="request_count" data-type="num" class="sorted desc">#reqs</th>
+            <th data-sort="failure_count" data-type="num">#fails</th>
+            <th data-sort="requests_per_second" data-type="num">req/s</th>
+            <th data-sort="response_time_avg_ms" data-type="num">avg ms</th>
+            <th data-sort="p50" data-type="num">p50</th>
+            <th data-sort="p95" data-type="num">p95</th>
+            <th data-sort="p99" data-type="num">p99</th>
+          </tr>
+        </thead>
+        <tbody id="requests-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="errors" class="card">
+    <h2>Errors</h2>
+    <div class="table-wrap">
+      <table id="errors-table">
+        <thead>
+          <tr>
+            <th data-sort="method" data-type="str">Method</th>
+            <th data-sort="name" data-type="str">Name</th>
+            <th data-sort="error" data-type="str">Error</th>
+            <th data-sort="occurrences" data-type="num" class="sorted desc">Occurrences</th>
+          </tr>
+        </thead>
+        <tbody id="errors-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    <p id="footer-note">Control this test via telnet :5116 or WebSocket :5117. This dashboard is read-only.</p>
+  </footer>
+
+  <script src="/static/chart.min.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

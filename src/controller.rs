@@ -5,9 +5,9 @@
 
 use crate::config::GooseConfiguration;
 use crate::metrics::{GooseMetrics, MetricsCommand};
-use crate::test_plan::{TestPlan, TestPlanHistory, TestPlanStepAction};
+use crate::test_plan::TestPlan;
 use crate::util;
-use crate::{AttackPhase, GooseAttack, GooseAttackRunState, GooseError};
+use crate::{AttackPhase, ControlStartBegin, GooseAttack, GooseAttackRunState, GooseError};
 
 use async_trait::async_trait;
 use futures::{SinkExt, StreamExt};
@@ -586,61 +586,32 @@ impl GooseAttack {
                             );
                         }
                         // Start the load test, and acknowledge command.
+                        // Reply BEFORE control_start_finish so clients are not blocked
+                        // on reset_run_state / test_start.
                         ControllerCommand::Start => {
-                            // We can only start an idle load test.
-                            if self.attack_phase == AttackPhase::Idle {
-                                self.test_plan = TestPlan::build(&self.configuration);
-                                if self.prepare_load_test().is_ok() {
-                                    // Rebuild test plan in case any parameters have been changed.
-                                    self.set_attack_phase(
-                                        goose_attack_run_state,
-                                        AttackPhase::Increase,
-                                    );
-                                    self.reply_to_controller(
-                                        message,
-                                        ControllerResponseMessage::Bool(true),
-                                    );
-                                    // Reset the run state when starting a new load test.
-                                    self.reset_run_state(goose_attack_run_state).await?;
-                                    self.metrics.history.push(TestPlanHistory::step(
-                                        TestPlanStepAction::Increasing,
-                                        0,
-                                    ));
-                                } else {
-                                    // Do not move to Starting phase if unable to prepare load test.
+                            match self.control_start_begin(goose_attack_run_state)? {
+                                ControlStartBegin::Rejected(_outcome) => {
                                     self.reply_to_controller(
                                         message,
                                         ControllerResponseMessage::Bool(false),
                                     );
                                 }
-                            } else {
-                                self.reply_to_controller(
-                                    message,
-                                    ControllerResponseMessage::Bool(false),
-                                );
+                                ControlStartBegin::Accepted(_outcome) => {
+                                    self.reply_to_controller(
+                                        message,
+                                        ControllerResponseMessage::Bool(true),
+                                    );
+                                    self.control_start_finish(goose_attack_run_state).await?;
+                                }
                             }
                         }
                         // Stop the load test, and acknowledge command.
                         ControllerCommand::Stop => {
-                            // We can only stop a starting or running load test.
-                            if [AttackPhase::Increase, AttackPhase::Maintain]
-                                .contains(&self.attack_phase)
-                            {
-                                // Don't shutdown when load test is stopped by controller, remain idle instead.
-                                goose_attack_run_state.shutdown_after_stop = false;
-                                // Don't automatically restart the load test.
-                                self.configuration.no_autostart = true;
-                                self.cancel_attack(goose_attack_run_state).await?;
-                                self.reply_to_controller(
-                                    message,
-                                    ControllerResponseMessage::Bool(true),
-                                );
-                            } else {
-                                self.reply_to_controller(
-                                    message,
-                                    ControllerResponseMessage::Bool(false),
-                                );
-                            }
+                            let outcome = self.control_stop(goose_attack_run_state).await?;
+                            self.reply_to_controller(
+                                message,
+                                ControllerResponseMessage::Bool(outcome.ok),
+                            );
                         }
                         // Stop the load test, and acknowledge request.
                         ControllerCommand::Shutdown => {
@@ -684,7 +655,7 @@ impl GooseAttack {
                                 } else {
                                     debug!(
                                         "controller didn't provide host: {:#?}",
-                                        &message.request
+                                        message.request
                                     );
                                     self.reply_to_controller(
                                         message,
@@ -706,114 +677,14 @@ impl GooseAttack {
                                 // Use expect() as Controller uses regex to validate this is an integer.
                                 let new_users = usize::from_str(users)
                                     .expect("failed to convert string to usize");
-                                // If setting users, any existing configuration for a test plan isn't valid.
-                                self.configuration.test_plan = None;
-
-                                match self.attack_phase {
-                                    // If the load test is idle, simply update the configuration.
-                                    AttackPhase::Idle => {
-                                        let current_users = if !self.test_plan.steps.is_empty() {
-                                            self.test_plan.steps[self.test_plan.current].0
-                                        } else {
-                                            self.configuration.users.unwrap_or_default()
-                                        };
-                                        info!(
-                                            "changing users from {current_users:?} to {new_users}"
-                                        );
-                                        self.configuration.users = Some(new_users);
-                                        self.reply_to_controller(
-                                            message,
-                                            ControllerResponseMessage::Bool(true),
-                                        );
-                                    }
-                                    // If the load test is running, rebuild the active test plan.
-                                    AttackPhase::Increase
-                                    | AttackPhase::Decrease
-                                    | AttackPhase::Maintain => {
-                                        info!(
-                                            "changing users from {} to {new_users}",
-                                            goose_attack_run_state.active_users
-                                        );
-                                        // Determine how long has elapsed since this step started.
-                                        let elapsed = self.step_elapsed() as usize;
-
-                                        // Determine how many users to increase or decrease by.
-                                        let user_difference = (goose_attack_run_state.active_users
-                                            as isize
-                                            - new_users as isize)
-                                            .abs();
-
-                                        // Determine how quickly to adjust user count, using
-                                        // increase_rate when adding users and decrease_rate when
-                                        // removing users.
-                                        let rate = if new_users
-                                            > goose_attack_run_state.active_users
-                                        {
-                                            if let Some(increase_rate) =
-                                                self.configuration.increase_rate.as_ref()
-                                            {
-                                                util::parse_rate(Some(increase_rate.to_string()))
-                                            } else {
-                                                util::parse_rate(None)
-                                            }
-                                        } else if let Some(decrease_rate) =
-                                            self.configuration.decrease_rate.as_ref()
-                                        {
-                                            util::parse_rate(Some(decrease_rate.to_string()))
-                                        } else if let Some(increase_rate) =
-                                            self.configuration.increase_rate.as_ref()
-                                        {
-                                            util::parse_rate(Some(increase_rate.to_string()))
-                                        } else {
-                                            util::parse_rate(None)
-                                        };
-                                        // Convert rate to milliseconds.
-                                        let ms_rate = 1.0 / rate * 1_000.0;
-                                        // Multiply the user difference by the rate to get the total_time required.
-                                        let total_time =
-                                            (ms_rate * user_difference as f32) as usize;
-
-                                        // Reset the test_plan to adjust to the newly specified users.
-                                        self.test_plan.steps = vec![
-                                            // Record how many active users there are currently.
-                                            (goose_attack_run_state.active_users, elapsed),
-                                            // Configure the new user count.
-                                            (new_users, total_time),
-                                        ];
-
-                                        // Reset the current step to what was happening when reconfiguration happened.
-                                        self.test_plan.current = 0;
-
-                                        // Allocate more users if increasing users.
-                                        if new_users > goose_attack_run_state.active_users {
-                                            self.weighted_users = self
-                                                .weight_scenario_users(user_difference as usize)?;
-                                        }
-
-                                        // Also update the running configurtion (this impacts if the test is stopped and then
-                                        // restarted through the controller).
-                                        self.configuration.users = Some(new_users);
-
-                                        // Finally, advance to the next step to adjust user count.
-                                        self.advance_test_plan(goose_attack_run_state);
-
-                                        self.reply_to_controller(
-                                            message,
-                                            ControllerResponseMessage::Bool(true),
-                                        );
-                                    }
-                                    _ => {
-                                        self.reply_to_controller(
-                                            message,
-                                            ControllerResponseMessage::Bool(false),
-                                        );
-                                    }
-                                }
-                            } else {
-                                warn!(
-                                    "[controller]: didn't provide users: {:#?}",
-                                    &message.request
+                                let outcome =
+                                    self.control_set_users(goose_attack_run_state, new_users)?;
+                                self.reply_to_controller(
+                                    message,
+                                    ControllerResponseMessage::Bool(outcome.ok),
                                 );
+                            } else {
+                                warn!("[controller]: didn't provide users: {:#?}", message.request);
                                 self.reply_to_controller(
                                     message,
                                     ControllerResponseMessage::Bool(false),
@@ -847,7 +718,7 @@ impl GooseAttack {
                             } else {
                                 warn!(
                                     "Controller didn't provide increase_rate: {:#?}",
-                                    &message.request
+                                    message.request
                                 );
                                 self.reply_to_controller(
                                     message,
@@ -882,7 +753,7 @@ impl GooseAttack {
                                 } else {
                                     warn!(
                                         "Controller didn't provide increase_time: {:#?}",
-                                        &message.request
+                                        message.request
                                     );
                                     self.reply_to_controller(
                                         message,
@@ -923,7 +794,7 @@ impl GooseAttack {
                             } else {
                                 warn!(
                                     "Controller didn't provide decrease_rate: {:#?}",
-                                    &message.request
+                                    message.request
                                 );
                                 self.reply_to_controller(
                                     message,
@@ -958,7 +829,7 @@ impl GooseAttack {
                                 } else {
                                     warn!(
                                         "Controller didn't provide decrease_time: {:#?}",
-                                        &message.request
+                                        message.request
                                     );
                                     self.reply_to_controller(
                                         message,
@@ -989,10 +860,7 @@ impl GooseAttack {
                                     ControllerResponseMessage::Bool(true),
                                 );
                             } else {
-                                warn!(
-                                    "Controller didn't provide run_time: {:#?}",
-                                    &message.request
-                                );
+                                warn!("Controller didn't provide run_time: {:#?}", message.request);
                             }
                         }
                         ControllerCommand::TestPlan => {
@@ -1061,7 +929,7 @@ impl GooseAttack {
                             } else {
                                 warn!(
                                     "Controller didn't provide test_plan: {:#?}",
-                                    &message.request
+                                    message.request
                                 );
                                 self.reply_to_controller(
                                     message,
@@ -1071,7 +939,7 @@ impl GooseAttack {
                         }
                         // These messages shouldn't be received here.
                         ControllerCommand::Help | ControllerCommand::Exit => {
-                            warn!("Unexpected command: {:?}", &message.request);
+                            warn!("Unexpected command: {:?}", message.request);
                         }
                     }
                 }

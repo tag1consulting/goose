@@ -5,59 +5,77 @@
 //! this data is converted into [`Graph`] structures and HTML markup is generated
 //! based on them.
 
+use crate::metrics::dashboard_snapshot::SeriesWindow;
 use crate::test_plan::{TestPlanHistory, TestPlanStepAction};
 use chrono::prelude::*;
 use itertools::Itertools;
 use serde::Serialize;
 use serde_json::json;
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fmt::Write;
 use std::marker::PhantomData;
 
 #[derive(Clone)]
-struct ItemsPerSecond(HashMap<String, TimeSeries<u32, u32>>);
+struct ItemsPerSecond {
+    series: HashMap<String, TimeSeries<u32, u32>>,
+    /// Absolute second used as `origin` for newly inserted keys.
+    ///
+    /// After dashboard pruning / rate-series reset this tracks the retained window
+    /// so a late-seen request name does not allocate from absolute second 0.
+    origin: usize,
+}
 
 impl ItemsPerSecond {
     fn new() -> ItemsPerSecond {
-        ItemsPerSecond(Default::default())
+        ItemsPerSecond {
+            series: Default::default(),
+            origin: 0,
+        }
+    }
+
+    fn with_origin(origin: usize) -> ItemsPerSecond {
+        ItemsPerSecond {
+            series: Default::default(),
+            origin,
+        }
     }
 
     #[inline(always)]
     fn initialize_or_increment(&mut self, key: &str, second: usize, value: u32) -> u32 {
         if !self.contains_key(key) {
-            self.insert(key, TimeSeries::new());
+            self.insert(key, TimeSeries::with_origin(self.origin));
         }
-        let data = self.0.get_mut(key).unwrap();
+        let data = self.series.get_mut(key).unwrap();
         data.increase_value(second, value);
         data.get(second)
     }
 
     #[inline(always)]
-    fn contains_key(&mut self, key: &str) -> bool {
-        self.0.contains_key(key)
+    fn contains_key(&self, key: &str) -> bool {
+        self.series.contains_key(key)
     }
 
     #[inline(always)]
     fn insert(&mut self, key: &str, time_series: TimeSeries<u32, u32>) {
-        self.0.insert(key.to_string(), time_series);
+        self.series.insert(key.to_string(), time_series);
     }
 
     #[inline(always)]
     #[allow(dead_code)]
     fn len(&self) -> usize {
-        self.0.len()
+        self.series.len()
     }
 
     #[inline(always)]
     #[allow(dead_code)]
     fn get(&self, key: &str) -> Option<TimeSeries<u32, u32>> {
-        self.0.get(key).cloned()
+        self.series.get(key).cloned()
     }
 
     #[inline(always)]
     fn get_map(&self) -> HashMap<String, TimeSeries<u32, u32>> {
-        self.0.clone()
+        self.series.clone()
     }
 }
 
@@ -91,12 +109,32 @@ impl GraphData {
         }
     }
 
-    /// Reset graph data while preserving user count to maintain continuity.
-    pub(crate) fn reset_preserving_users(&mut self, active_users: usize) {
-        *self = GraphData::new();
-        if active_users > 0 {
-            self.users_per_second.set_and_maintain_last(0, active_users);
-        }
+    /// Reset per-second *rate* series after the increase→maintain metrics reset.
+    ///
+    /// Request/error/latency/transaction/scenario buckets restart so running
+    /// metrics and HTML report rates reflect steady-state load only.
+    ///
+    /// **Active users are a level over the whole run**, not a rate: the users
+    /// series is preserved so the live dashboard (and HTML active-users graph)
+    /// still show the initial ramp and any later increases/decreases. Wiping
+    /// users and reseeding second 0 with the final count made the chart look
+    /// like the test had always been at full load.
+    ///
+    /// When dashboard pruning has already advanced the users series `origin`,
+    /// rate series are recreated with that same origin so the next sample at
+    /// absolute second *S* does not expand vectors from 0..S.
+    pub(crate) fn reset_rate_series(&mut self) {
+        let origin = self.users_per_second.origin;
+        self.requests_per_second = ItemsPerSecond::with_origin(origin);
+        self.errors_per_second = ItemsPerSecond::with_origin(origin);
+        self.average_response_time_per_second = HashMap::new();
+        self.transactions_per_second = TimeSeries::with_origin(origin);
+        self.scenarios_per_second = TimeSeries::with_origin(origin);
+    }
+
+    /// Last absolute second with a users sample, if any.
+    pub(crate) fn users_last_absolute_second(&self) -> Option<usize> {
+        self.users_per_second.last_absolute_second()
     }
 
     /// Record requests per second metric.
@@ -124,8 +162,10 @@ impl GraphData {
         response_time: u64,
     ) {
         if !self.average_response_time_per_second.contains_key(&key) {
-            self.average_response_time_per_second
-                .insert(key.clone(), TimeSeries::new());
+            self.average_response_time_per_second.insert(
+                key.clone(),
+                TimeSeries::with_origin(self.users_per_second.origin),
+            );
         }
         let data = self.average_response_time_per_second.get_mut(&key).unwrap();
         data.increase_value(second, response_time as f32);
@@ -162,6 +202,207 @@ impl GraphData {
     /// Records number of users for a current second.
     pub(crate) fn record_users_per_second(&mut self, users: usize, second: usize) {
         self.users_per_second.set_and_maintain_last(second, users);
+    }
+
+    /// Record active users at `second` only if time is not going backwards.
+    ///
+    /// Used by the dashboard snapshot path to pin the current level at "now"
+    /// without rewinding past samples (which would recreate mid-ramp V-glitches
+    /// when combined with gap-fill).
+    pub(crate) fn record_users_monotonic(&mut self, users: usize, second: usize) {
+        if let Some(last) = self.users_per_second.last_absolute_second() {
+            if second < last {
+                return;
+            }
+        }
+        self.users_per_second.set_and_maintain_last(second, users);
+    }
+
+    /// Convenience wrapper for unit tests (no end-second hint).
+    ///
+    /// Production paths always pass a series-clock hint via
+    /// [`Self::export_series_window_until`].
+    #[cfg(test)]
+    pub(crate) fn export_series_window(&self, window_secs: u32) -> SeriesWindow {
+        self.export_series_window_until(window_secs, None)
+    }
+
+    /// Export a trailing aggregate series window for the live dashboard.
+    ///
+    /// Normative algorithm:
+    /// 1. `end_second` = max second index across RPS keys, users series, and
+    ///    optional `end_second_hint` (series clock "now" from the main loop)
+    /// 2. `start_second` = `end_second.saturating_sub(window_secs - 1)`
+    /// 3. Allocate fixed-length RPS/FPS/latency buffers; for each per-key series
+    ///    add its overlapping range into those buffers (and accumulate
+    ///    request-count-weighted latency the same way)
+    /// 4. Missing RPS/error/latency seconds contribute 0
+    /// 5. **Users are a level, not a rate**: missing samples (including trailing
+    ///    seconds where request metrics advanced past the last `RecordUsers`)
+    ///    hold the last known active-user count — never drop to 0 solely because
+    ///    the users series lags RPS by a few seconds.
+    ///
+    /// `end_second_hint` extends the window through series-clock "now" when the
+    /// last stored sample is a few seconds older (main-loop cadence / no recent
+    /// requests).
+    pub(crate) fn export_series_window_until(
+        &self,
+        window_secs: u32,
+        end_second_hint: Option<usize>,
+    ) -> SeriesWindow {
+        if window_secs == 0 {
+            return SeriesWindow::empty();
+        }
+
+        let mut end_second: Option<usize> = end_second_hint;
+        for series in self.requests_per_second.series.values() {
+            if let Some(last) = series.last_absolute_second() {
+                end_second = Some(end_second.map_or(last, |e| e.max(last)));
+            }
+        }
+        if let Some(last) = self.users_per_second.last_absolute_second() {
+            end_second = Some(end_second.map_or(last, |e| e.max(last)));
+        }
+
+        let end_second = match end_second {
+            Some(end) => end,
+            None => return SeriesWindow::empty(),
+        };
+
+        let start_second = end_second.saturating_sub(window_secs as usize - 1);
+        let len = end_second - start_second + 1;
+
+        // Allocate fixed-length outputs once, then accumulate per key into the
+        // overlapping range. This is O(stored_samples_in_window) rather than
+        // O(window_secs × unique_keys), which matters at ~1 Hz with many request
+        // names.
+        let mut rps = vec![0.0f64; len];
+        let mut fps = vec![0.0f64; len];
+        let mut avg_latency_ms = vec![0.0f64; len];
+        let mut latency_weight = vec![0u64; len];
+
+        for series in self.requests_per_second.series.values() {
+            accumulate_rate_series_into_window(series, start_second, end_second, &mut rps);
+        }
+        for series in self.errors_per_second.series.values() {
+            accumulate_rate_series_into_window(series, start_second, end_second, &mut fps);
+        }
+
+        // Weighted latency: for each key, walk the overlap of its RPS and latency
+        // series with the export window and add into fixed output vectors.
+        for (key, latency_series) in &self.average_response_time_per_second {
+            let Some(rps_series) = self.requests_per_second.series.get(key) else {
+                continue;
+            };
+            if latency_series.data.is_empty() || rps_series.data.is_empty() {
+                continue;
+            }
+            let series_start = latency_series
+                .origin
+                .max(rps_series.origin)
+                .max(start_second);
+            let series_end = (latency_series.origin + latency_series.data.len() - 1)
+                .min(rps_series.origin + rps_series.data.len() - 1)
+                .min(end_second);
+            if series_start > series_end {
+                continue;
+            }
+            for s in series_start..=series_end {
+                let count = rps_series.data[s - rps_series.origin] as u64;
+                if count == 0 {
+                    continue;
+                }
+                let avg = latency_series.data[s - latency_series.origin].average as f64;
+                let idx = s - start_second;
+                avg_latency_ms[idx] += avg * count as f64;
+                latency_weight[idx] += count;
+            }
+        }
+        for i in 0..len {
+            if latency_weight[i] > 0 {
+                avg_latency_ms[i] /= latency_weight[i] as f64;
+            }
+        }
+
+        // Level hold: do not paint "0 users" for trailing seconds where only
+        // RPS has advanced (main-loop RecordUsers lags drain_pending). Users are
+        // a single series so O(window) is fine.
+        let mut users = Vec::with_capacity(len);
+        for s in start_second..=end_second {
+            users.push(self.users_per_second.get_held(s) as u64);
+        }
+
+        SeriesWindow {
+            start_second: start_second as u64,
+            rps,
+            fps,
+            users,
+            avg_latency_ms,
+        }
+    }
+
+    /// Drop series samples older than the trailing `keep_secs` window.
+    ///
+    /// Used when the live dashboard is enabled without `--report-file`, so
+    /// multi-hour soaks do not retain per-second history that the dashboard
+    /// never exports (export window is [`SERIES_WINDOW_SECS`](crate::metrics::dashboard_snapshot::SERIES_WINDOW_SECS)).
+    /// No-op when `keep_secs == 0`.
+    ///
+    /// After length-based pruning, all per-key series are **aligned** to
+    /// `users_per_second.origin`. Length-only prune leaves idle keys (short
+    /// `data`, origin still 0) alone; if such a key becomes active again at a
+    /// large absolute second, `increase_value` would expand from the stale
+    /// origin and defeat the memory bound. Alignment drops pre-window samples
+    /// and advances each series origin to the retained window.
+    pub(crate) fn prune_to_window(&mut self, keep_secs: u32) {
+        let keep = keep_secs as usize;
+        if keep == 0 {
+            return;
+        }
+        for series in self.requests_per_second.series.values_mut() {
+            series.prune_to_window(keep);
+        }
+        for series in self.errors_per_second.series.values_mut() {
+            series.prune_to_window(keep);
+        }
+        for series in self.average_response_time_per_second.values_mut() {
+            series.prune_to_window(keep);
+        }
+        self.transactions_per_second.prune_to_window(keep);
+        self.scenarios_per_second.prune_to_window(keep);
+        self.users_per_second.prune_to_window(keep);
+
+        // Align every series (and the ItemsPerSecond new-key origin) to the
+        // retained users window so idle keys cannot re-expand from second 0.
+        let origin = self.users_per_second.origin;
+        for series in self.requests_per_second.series.values_mut() {
+            series.align_origin_to(origin);
+        }
+        for series in self.errors_per_second.series.values_mut() {
+            series.align_origin_to(origin);
+        }
+        for series in self.average_response_time_per_second.values_mut() {
+            series.align_origin_to(origin);
+        }
+        self.transactions_per_second.align_origin_to(origin);
+        self.scenarios_per_second.align_origin_to(origin);
+        self.requests_per_second.origin = origin;
+        self.errors_per_second.origin = origin;
+    }
+
+    /// Max stored samples across RPS/users series (unit tests / diagnostics).
+    #[cfg(test)]
+    pub(crate) fn max_series_len_for_test(&self) -> usize {
+        let mut max_len = self.users_per_second.data.len();
+        for series in self.requests_per_second.series.values() {
+            max_len = max_len.max(series.data.len());
+        }
+        for series in self.errors_per_second.series.values() {
+            max_len = max_len.max(series.data.len());
+        }
+        max_len
+            .max(self.transactions_per_second.data.len())
+            .max(self.scenarios_per_second.data.len())
     }
 
     /// Generate active users graph.
@@ -397,7 +638,7 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
         } else {
             let (legend, main_label, main_values, other_values) = if self.data.len() > 1 {
                 // If we are dealing with a metric with granular data we need to calculate totals.
-                for (_, single_data) in self.data.iter() {
+                for single_data in self.data.values() {
                     total_values.add_time_series(single_data);
                 }
 
@@ -576,13 +817,46 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
     }
 }
 
+/// Add one rate series' samples into a fixed-length export window buffer.
+///
+/// Only visits the absolute-second overlap between the series storage and
+/// `[start_second, end_second]`. Missing buckets stay at their pre-zeroed value.
+fn accumulate_rate_series_into_window(
+    series: &TimeSeries<u32, u32>,
+    start_second: usize,
+    end_second: usize,
+    out: &mut [f64],
+) {
+    if series.data.is_empty() {
+        return;
+    }
+    let series_end = series.origin + series.data.len() - 1;
+    let overlap_start = start_second.max(series.origin);
+    let overlap_end = end_second.min(series_end);
+    if overlap_start > overlap_end {
+        return;
+    }
+    for s in overlap_start..=overlap_end {
+        out[s - start_second] += series.data[s - series.origin] as f64;
+    }
+}
+
 /// Data structure to represent time series data.
 #[derive(Debug, Clone)]
 struct TimeSeries<T: TimeSeriesValue<T, U>, U> {
     /// Time series data.
     ///
-    /// Each element of the vector represents value for one second in the time series.
-    data: Vec<T>,
+    /// Each element represents the value for one second in the time series.
+    /// `data[i]` holds the sample for absolute second `origin + i`.
+    ///
+    /// Stored as a [`VecDeque`] so dashboard pruning can drop a prefix with
+    /// amortized O(dropped) cost (`pop_front`) instead of O(retained) shifts
+    /// from `Vec::drain(0..n)` on every 1 Hz prune across many request keys.
+    data: VecDeque<T>,
+    /// Absolute second corresponding to `data[0]`. Non-zero only after pruning
+    /// (dashboard-only long soaks). Report-file collection never prunes, so this
+    /// stays 0 and indices remain absolute seconds from test start.
+    origin: usize,
     /// Total value of the time series (sum of all elements).
     total: T,
     /// Phantom data indicates to the compiler that the "U" generic data type has zero size.
@@ -621,25 +895,107 @@ impl<T: Clone + TimeSeriesValue<T, U>, U: PartialEq> PartialEq for TimeSeries<T,
 impl<T: Clone + TimeSeriesValue<T, U>, U> TimeSeries<T, U> {
     /// Creates a new TimeSeries object.
     fn new() -> TimeSeries<T, U> {
+        Self::with_origin(0)
+    }
+
+    /// Creates an empty series whose first bucket is absolute second `origin`.
+    ///
+    /// Used after dashboard pruning / rate reset so inserts at absolute second *S*
+    /// store at index `S - origin` instead of expanding from 0.
+    fn with_origin(origin: usize) -> TimeSeries<T, U> {
         TimeSeries {
-            data: Vec::new(),
+            data: VecDeque::new(),
+            origin,
             phantom: PhantomData,
             total: T::initial_value(),
         }
     }
 
+    /// Last absolute second that has a stored sample, if any.
+    fn last_absolute_second(&self) -> Option<usize> {
+        if self.data.is_empty() {
+            None
+        } else {
+            Some(self.origin + self.data.len() - 1)
+        }
+    }
+
+    /// Drop samples older than the trailing `keep_secs` window (by absolute second).
+    ///
+    /// After pruning, `origin` advances and `data` holds only the retained window so
+    /// multi-hour dashboard-only soaks do not grow unbounded. No-op when the series
+    /// is already within the window.
+    ///
+    /// Uses repeated [`VecDeque::pop_front`] so cost is O(dropped) rather than
+    /// O(retained) from a front `Vec::drain` — important when many per-key series
+    /// are pruned at ~1 Hz after already sitting at the keep window.
+    ///
+    /// **Limitation:** when `data.len() <= keep_secs` this is a no-op even if the
+    /// series still has a stale low `origin` (idle keys). Callers that need a
+    /// shared window must follow up with [`Self::align_origin_to`].
+    fn prune_to_window(&mut self, keep_secs: usize) {
+        if keep_secs == 0 || self.data.len() <= keep_secs {
+            return;
+        }
+        let drop = self.data.len() - keep_secs;
+        for _ in 0..drop {
+            self.data.pop_front();
+        }
+        self.origin = self.origin.saturating_add(drop);
+        // `total` still reflects historical increments (including dropped samples).
+        // Dashboard export uses per-second buckets only; HTML reports never prune.
+    }
+
+    /// Advance `origin` to `target_origin`, dropping any samples strictly before it.
+    ///
+    /// Complements length-based [`Self::prune_to_window`]: idle per-key series keep
+    /// a short `data` buffer and never length-prune, so without this step a late
+    /// reappearance at absolute second *S* would expand from the stale origin.
+    /// No-op when `target_origin <= self.origin`.
+    fn align_origin_to(&mut self, target_origin: usize) {
+        if target_origin <= self.origin {
+            return;
+        }
+        if self.data.is_empty() {
+            self.origin = target_origin;
+            return;
+        }
+        let last = self.origin + self.data.len() - 1;
+        if last < target_origin {
+            // Entire series is before the retained window.
+            self.data.clear();
+            self.origin = target_origin;
+            return;
+        }
+        let drop = target_origin - self.origin;
+        for _ in 0..drop {
+            self.data.pop_front();
+        }
+        self.origin = target_origin;
+    }
+
     /// Increases the the value for a given second.
     fn increase_value(&mut self, second: usize, value: U) {
+        // Samples that fall before the pruned window are dropped (dashboard-only).
+        if second < self.origin {
+            return;
+        }
         self.expand(second, T::initial_value());
-        self.data[second].increase_value(&value);
+        let idx = second - self.origin;
+        self.data[idx].increase_value(&value);
         self.total.increase_value(&value);
     }
 
     /// Adds another time series.
     fn add_time_series(&mut self, other: &TimeSeries<T, U>) {
-        for (second, other_item) in other.data.iter().enumerate() {
+        for (offset, other_item) in other.data.iter().enumerate() {
+            let second = other.origin + offset;
+            if second < self.origin {
+                continue;
+            }
             self.expand(second, T::initial_value());
-            self.data.get_mut(second).unwrap().merge(other_item);
+            let idx = second - self.origin;
+            self.data.get_mut(idx).unwrap().merge(other_item);
             self.total.merge(other_item);
         }
     }
@@ -647,23 +1003,49 @@ impl<T: Clone + TimeSeriesValue<T, U>, U> TimeSeries<T, U> {
     /// Sets a value for a given second and maintains last recorded value if
     /// there is a gap in the time series.
     fn set_and_maintain_last(&mut self, second: usize, value: U) {
+        if second < self.origin {
+            return;
+        }
         self.expand(second, self.last());
         self.total.increase_value(&value);
-        self.data[second].set_value(value);
+        let idx = second - self.origin;
+        self.data[idx].set_value(value);
     }
 
     /// Returns a value for a given second.
     fn get(&self, second: usize) -> T {
-        match self.data.get(second) {
+        if second < self.origin {
+            return T::initial_value();
+        }
+        match self.data.get(second - self.origin) {
             Some(value) => value.clone(),
             None => T::initial_value(),
         }
     }
 
+    /// Level-style read: hold the nearest known sample when `second` is outside
+    /// the stored range (before origin or past the last sample).
+    ///
+    /// Used for active-user counts, which are continuous levels. Rate series
+    /// (RPS/errors) correctly use [`Self::get`] so missing buckets stay 0.
+    fn get_held(&self, second: usize) -> T {
+        if self.data.is_empty() {
+            return T::initial_value();
+        }
+        if second < self.origin {
+            return self.data[0].clone();
+        }
+        let last_abs = self.origin + self.data.len() - 1;
+        if second > last_abs {
+            return self.last();
+        }
+        self.data[second - self.origin].clone()
+    }
+
     /// Returns the last value in the time series or initial value if the time
     /// series is empty.
     fn last(&self) -> T {
-        match self.data.last() {
+        match self.data.back() {
             Some(last) => last.clone(),
             None => T::initial_value(),
         }
@@ -671,6 +1053,11 @@ impl<T: Clone + TimeSeriesValue<T, U>, U> TimeSeries<T, U> {
 
     /// Gets time series suitable for usage in HTML graphs (generally each value
     /// becomes some kind of a scalar).
+    ///
+    /// Report generation never prunes (`origin == 0`), so the returned vector is
+    /// indexed by absolute second from test start. If pruning were used with
+    /// reports, callers would need to pad `origin` leading empties; that path is
+    /// intentionally unsupported.
     fn get_graph_data(&self) -> Vec<Option<U>> {
         self.data
             .iter()
@@ -684,10 +1071,14 @@ impl<T: Clone + TimeSeriesValue<T, U>, U> TimeSeries<T, U> {
     /// We need to do that since we don't know for how long the load test will run
     /// and we can't initialize these vectors at the beginning. It is also
     /// better to do it as we go to save memory.
+    ///
+    /// `second` is absolute (from test start). Storage index is `second - origin`.
     fn expand(&mut self, second: usize, initial: T) {
-        if self.data.len() <= second {
-            for _ in 0..(second - self.data.len() + 1) {
-                self.data.push(initial.clone());
+        debug_assert!(second >= self.origin);
+        let idx = second - self.origin;
+        if self.data.len() <= idx {
+            for _ in 0..(idx - self.data.len() + 1) {
+                self.data.push_back(initial.clone());
                 self.total.merge(&initial);
             }
         };
@@ -864,20 +1255,23 @@ mod test {
         graph.requests_per_second.insert(
             "GET /",
             TimeSeries {
-                data: vec![123, 234, 345, 456, 567],
+                origin: 0,
+                data: VecDeque::from(vec![123, 234, 345, 456, 567]),
                 phantom: PhantomData,
                 total: 0,
             },
         );
         graph.users_per_second = TimeSeries {
-            data: vec![345, 456, 567, 123, 234],
+            origin: 0,
+            data: VecDeque::from(vec![345, 456, 567, 123, 234]),
             phantom: PhantomData,
             total: 0,
         };
         graph.average_response_time_per_second.insert(
             "GET /".to_string(),
             TimeSeries {
-                data: vec![
+                origin: 0,
+                data: VecDeque::from(vec![
                     MovingAverage {
                         count: 123,
                         average: 1.23,
@@ -898,7 +1292,7 @@ mod test {
                         count: 567,
                         average: 5.67,
                     },
-                ],
+                ]),
                 phantom: PhantomData,
                 total: MovingAverage {
                     count: 0,
@@ -907,13 +1301,15 @@ mod test {
             },
         );
         graph.transactions_per_second = TimeSeries {
-            data: vec![345, 123, 234, 456, 567],
+            origin: 0,
+            data: VecDeque::from(vec![345, 123, 234, 456, 567]),
             phantom: PhantomData,
             total: 0,
         };
 
         graph.scenarios_per_second = TimeSeries {
-            data: vec![345, 123, 234, 456, 567],
+            origin: 0,
+            data: VecDeque::from(vec![345, 123, 234, 456, 567]),
             phantom: PhantomData,
             total: 0,
         };
@@ -921,7 +1317,8 @@ mod test {
         graph.errors_per_second.insert(
             "GET /",
             TimeSeries {
-                data: vec![567, 123, 234, 345, 456],
+                origin: 0,
+                data: VecDeque::from(vec![567, 123, 234, 345, 456]),
                 phantom: PhantomData,
                 total: 0,
             },
@@ -929,7 +1326,8 @@ mod test {
 
         let rps_graph = graph.get_requests_per_second_graph(true);
         let expected_time_series: TimeSeries<u32, u32> = TimeSeries {
-            data: vec![123, 234, 345, 456, 567],
+            origin: 0,
+            data: VecDeque::from(vec![123, 234, 345, 456, 567]),
             phantom: PhantomData,
             total: 0,
         };
@@ -942,7 +1340,8 @@ mod test {
 
         let users_graph = graph.get_active_users_graph(true);
         let expected_time_series: TimeSeries<usize, usize> = TimeSeries {
-            data: vec![345, 456, 567, 123, 234],
+            origin: 0,
+            data: VecDeque::from(vec![345, 456, 567, 123, 234]),
             phantom: PhantomData,
             total: 0,
         };
@@ -955,7 +1354,8 @@ mod test {
 
         let avg_rt_graph = graph.get_average_response_time_graph(true);
         let expected_time_series: TimeSeries<MovingAverage, f32> = TimeSeries {
-            data: vec![
+            origin: 0,
+            data: VecDeque::from(vec![
                 MovingAverage {
                     count: 123,
                     average: 1.23,
@@ -976,7 +1376,7 @@ mod test {
                     count: 567,
                     average: 5.67,
                 },
-            ],
+            ]),
             phantom: PhantomData,
             total: MovingAverage {
                 count: 0,
@@ -992,7 +1392,8 @@ mod test {
 
         let transactions_graph = graph.get_transactions_per_second_graph(true);
         let expected_time_series: TimeSeries<usize, usize> = TimeSeries {
-            data: vec![345, 123, 234, 456, 567],
+            origin: 0,
+            data: VecDeque::from(vec![345, 123, 234, 456, 567]),
             phantom: PhantomData,
             total: 0,
         };
@@ -1005,7 +1406,8 @@ mod test {
 
         let scenarios_graph = graph.get_scenarios_per_second_graph(true);
         let expected_time_series: TimeSeries<usize, usize> = TimeSeries {
-            data: vec![345, 123, 234, 456, 567],
+            origin: 0,
+            data: VecDeque::from(vec![345, 123, 234, 456, 567]),
             phantom: PhantomData,
             total: 0,
         };
@@ -1018,7 +1420,8 @@ mod test {
 
         let errors_graph = graph.get_errors_per_second_graph(true);
         let expected_time_series: TimeSeries<u32, u32> = TimeSeries {
-            data: vec![567, 123, 234, 345, 456],
+            origin: 0,
+            data: VecDeque::from(vec![567, 123, 234, 345, 456]),
             phantom: PhantomData,
             total: 0,
         };
@@ -1467,6 +1870,386 @@ mod test {
     }
 
     #[test]
+    fn test_export_series_window_empty() {
+        let graph = GraphData::new();
+        let window = graph.export_series_window(300);
+        assert_eq!(window, SeriesWindow::empty());
+        assert_eq!(window.start_second, 0);
+        assert!(window.rps.is_empty());
+        assert!(window.fps.is_empty());
+        assert!(window.users.is_empty());
+        assert!(window.avg_latency_ms.is_empty());
+    }
+
+    #[test]
+    fn test_export_series_window_multi_key_reduction() {
+        let mut graph = GraphData::new();
+
+        // Key A: 2 requests at second 0 (latency 10ms each), 1 request at second 2 (latency 30ms).
+        graph.record_requests_per_second("GET /a", 0);
+        graph.record_requests_per_second("GET /a", 0);
+        graph.record_average_response_time_per_second("GET /a".to_string(), 0, 10);
+        graph.record_average_response_time_per_second("GET /a".to_string(), 0, 10);
+        graph.record_requests_per_second("GET /a", 2);
+        graph.record_average_response_time_per_second("GET /a".to_string(), 2, 30);
+
+        // Key B: 3 requests at second 2 only (latency 50ms), disjoint from A's second-0 traffic.
+        graph.record_requests_per_second("GET /b", 2);
+        graph.record_requests_per_second("GET /b", 2);
+        graph.record_requests_per_second("GET /b", 2);
+        graph.record_average_response_time_per_second("GET /b".to_string(), 2, 50);
+        graph.record_average_response_time_per_second("GET /b".to_string(), 2, 50);
+        graph.record_average_response_time_per_second("GET /b".to_string(), 2, 50);
+
+        // One error on key B at second 2.
+        graph.record_errors_per_second("GET /b", 2);
+
+        graph.record_users_per_second(1, 0);
+        graph.record_users_per_second(4, 2);
+
+        let window = graph.export_series_window(300);
+        assert_eq!(window.start_second, 0);
+        assert_eq!(window.rps.len(), 3);
+        assert_eq!(window.fps.len(), 3);
+        assert_eq!(window.users.len(), 3);
+        assert_eq!(window.avg_latency_ms.len(), 3);
+
+        // Second 0: 2 RPS from A only; latency 10ms.
+        assert!((window.rps[0] - 2.0).abs() < f64::EPSILON);
+        assert!((window.fps[0] - 0.0).abs() < f64::EPSILON);
+        assert_eq!(window.users[0], 1);
+        assert!((window.avg_latency_ms[0] - 10.0).abs() < 0.001);
+
+        // Second 1: empty → 0 (gap filled by users maintain-last, but RPS/latency 0).
+        assert!((window.rps[1] - 0.0).abs() < f64::EPSILON);
+        assert!((window.fps[1] - 0.0).abs() < f64::EPSILON);
+        // users_per_second.set_and_maintain_last fills gap with last value (1).
+        assert_eq!(window.users[1], 1);
+        assert!((window.avg_latency_ms[1] - 0.0).abs() < f64::EPSILON);
+
+        // Second 2: 1 (A) + 3 (B) = 4 RPS; 1 error; weighted latency = (30*1 + 50*3)/4 = 45.
+        assert!((window.rps[2] - 4.0).abs() < f64::EPSILON);
+        assert!((window.fps[2] - 1.0).abs() < f64::EPSILON);
+        assert_eq!(window.users[2], 4);
+        assert!((window.avg_latency_ms[2] - 45.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_export_series_window_trailing_window_and_empty_seconds() {
+        let mut graph = GraphData::new();
+        // Activity only at seconds 0 and 5; window of 3 ending at 5 → seconds 3,4,5.
+        graph.record_requests_per_second("GET /", 0);
+        graph.record_requests_per_second("GET /", 5);
+        graph.record_requests_per_second("GET /", 5);
+        graph.record_average_response_time_per_second("GET /".to_string(), 0, 100);
+        graph.record_average_response_time_per_second("GET /".to_string(), 5, 20);
+        graph.record_average_response_time_per_second("GET /".to_string(), 5, 40);
+        graph.record_users_per_second(2, 0);
+        graph.record_users_per_second(8, 5);
+
+        let window = graph.export_series_window(3);
+        assert_eq!(window.start_second, 3);
+        assert_eq!(window.rps.len(), 3);
+        // Seconds 3 and 4 empty for RPS → 0.
+        assert!((window.rps[0] - 0.0).abs() < f64::EPSILON);
+        assert!((window.rps[1] - 0.0).abs() < f64::EPSILON);
+        assert!((window.rps[2] - 2.0).abs() < f64::EPSILON);
+        assert!((window.avg_latency_ms[0] - 0.0).abs() < f64::EPSILON);
+        assert!((window.avg_latency_ms[1] - 0.0).abs() < f64::EPSILON);
+        // Average of 20 and 40 = 30.
+        assert!((window.avg_latency_ms[2] - 30.0).abs() < 0.001);
+        // Users: 2 at second 0, then set_and_maintain fills 1..4 with 2 when
+        // recording 8 at second 5. Window seconds 3,4,5 → [2, 2, 8].
+        assert_eq!(window.users, vec![2, 2, 8]);
+    }
+
+    #[test]
+    fn test_export_series_users_hold_when_rps_leads() {
+        // Regression: Active users chart dropped to 0 near the right edge because
+        // end_second came from RPS while users series lagged (RecordUsers is
+        // main-loop only; drain_pending can advance RPS further).
+        let mut graph = GraphData::new();
+        for s in 0..=50 {
+            graph.record_users_per_second(10, s);
+        }
+        // RPS continues through second 56 with no further RecordUsers.
+        for s in 0..=56 {
+            graph.record_requests_per_second("GET /", s);
+        }
+
+        let window = graph.export_series_window(300);
+        assert_eq!(window.start_second, 0);
+        assert_eq!(window.rps.len(), 57);
+        assert_eq!(window.users.len(), 57);
+        // Trailing seconds past last RecordUsers must hold 10, not drop to 0.
+        for (i, &u) in window.users.iter().enumerate() {
+            assert_eq!(u, 10, "users[{i}] should hold last known count 10, got {u}");
+        }
+        // RPS still present at the end (not all zeros).
+        assert!(window.rps[56] > 0.0);
+    }
+
+    #[test]
+    fn test_export_series_users_monotonic_ramp_without_forward_stamp() {
+        // Regression: stamping active_users forward to the RPS/duration second
+        // (set_and_maintain_last gap-fill with a stale count, then partial
+        // overwrites from real RecordUsers) produced V-shaped glitches mid-ramp.
+        // Only sequential RecordUsers samples should define the series; export
+        // holds the last known level past the end.
+        let mut graph = GraphData::new();
+        // Steady 10 users.
+        for s in 0..=60 {
+            graph.record_users_per_second(10, s);
+        }
+        // Clean increase 10 → 20 over seconds 61..70.
+        for (s, users) in (61..=70).zip(11..=20) {
+            graph.record_users_per_second(users, s);
+        }
+        // RPS leads past the last users sample (as drain_pending does).
+        for s in 0..=78 {
+            graph.record_requests_per_second("GET /", s);
+        }
+
+        let window = graph.export_series_window(300);
+        assert_eq!(window.users.len(), 79);
+        // Steady region.
+        for s in 0..=60 {
+            assert_eq!(window.users[s], 10, "steady users[{s}]");
+        }
+        // Monotonic ramp — no dips.
+        for s in 61..=70 {
+            let expected = (s - 60 + 10) as u64; // 11..20
+            assert_eq!(window.users[s], expected, "ramp users[{s}]");
+            if s > 61 {
+                assert!(
+                    window.users[s] >= window.users[s - 1],
+                    "ramp must be non-decreasing at {s}: {} < {}",
+                    window.users[s],
+                    window.users[s - 1]
+                );
+            }
+        }
+        // Trailing hold at 20 (not 0, not a dip).
+        for s in 71..=78 {
+            assert_eq!(window.users[s], 20, "hold users[{s}]");
+        }
+    }
+
+    #[test]
+    fn test_out_of_order_users_write_creates_v_glitch() {
+        // Documents why user stamps must be monotonic in time: gap-fill with a
+        // jump forward, then overwriting intermediate seconds, leaves stale dips.
+        let mut graph = GraphData::new();
+        graph.record_users_per_second(10, 60);
+        // Bad stamp: jump to second 70 with live count 20 (fills 61..69 with 10).
+        graph.record_users_per_second(20, 70);
+        // Real hatch samples only overwrite some intermediate seconds.
+        graph.record_users_per_second(15, 65);
+        graph.record_users_per_second(18, 68);
+
+        let window = graph.export_series_window(300);
+        // 60=10, 61-64=10 (stale fill), 65=15, 66-67=10 (stale!), 68=18, 69=10, 70=20
+        assert_eq!(window.users[60], 10);
+        assert_eq!(window.users[65], 15);
+        assert_eq!(
+            window.users[66], 10,
+            "stale gap-fill creates a dip after 15"
+        );
+        assert_eq!(window.users[68], 18);
+        assert_eq!(
+            window.users[69], 10,
+            "stale gap-fill creates a dip before 20"
+        );
+        assert_eq!(window.users[70], 20);
+        // Confirm the V: 15 → 10 → 18 is non-monotonic mid-ramp.
+        assert!(window.users[66] < window.users[65] && window.users[66] < window.users[68]);
+    }
+
+    #[test]
+    fn test_record_users_monotonic_rejects_backwards_writes() {
+        let mut graph = GraphData::new();
+        graph.record_users_per_second(10, 5);
+        graph.record_users_per_second(20, 10);
+        // Would create a V-glitch if applied — must be ignored.
+        graph.record_users_monotonic(15, 7);
+        let window = graph.export_series_window(300);
+        assert_eq!(window.users[7], 10, "backwards write must not rewrite past");
+        assert_eq!(window.users[10], 20);
+        // Forward monotonic stamp is allowed and pins the edge.
+        graph.record_users_monotonic(25, 12);
+        let window = graph.export_series_window(300);
+        assert_eq!(window.users[10], 20);
+        assert_eq!(window.users[11], 20);
+        assert_eq!(window.users[12], 25);
+    }
+
+    #[test]
+    fn test_reset_rate_series_preserves_users_history() {
+        let mut graph = GraphData::new();
+        for (s, users) in (0..=5).zip(1..=6) {
+            graph.record_users_per_second(users, s);
+        }
+        graph.record_requests_per_second("GET /", 3);
+        graph.record_errors_per_second("GET /", 3);
+        graph.record_average_response_time_per_second("GET /".into(), 3, 42);
+        graph.record_transactions_per_second(3);
+        graph.record_scenarios_per_second(3);
+
+        graph.reset_rate_series();
+
+        let window = graph.export_series_window(300);
+        // Users ramp intact.
+        assert_eq!(window.users, vec![1, 2, 3, 4, 5, 6]);
+        // Rate series wiped.
+        assert!(window.rps.iter().all(|&v| v == 0.0));
+        assert!(window.fps.iter().all(|&v| v == 0.0));
+        assert!(window.avg_latency_ms.iter().all(|&v| v == 0.0));
+    }
+
+    #[test]
+    fn test_reset_rate_series_preserves_pruned_origin() {
+        // After a long dashboard-only soak, prune advances origin. A subsequent
+        // increase→maintain reset must not recreate rate series at origin=0 or the
+        // next absolute-second sample allocates a multi-hour-sized vector.
+        let mut graph = GraphData::new();
+        for s in 0..=900 {
+            graph.record_users_per_second(10, s);
+            graph.record_requests_per_second("GET /", s);
+        }
+        graph.prune_to_window(600);
+        assert!(graph.users_per_second.origin > 0);
+        let origin_before = graph.users_per_second.origin;
+
+        graph.reset_rate_series();
+        assert_eq!(graph.requests_per_second.origin, origin_before);
+        assert_eq!(graph.transactions_per_second.origin, origin_before);
+
+        // Sample at a late absolute second: storage length stays near the window,
+        // not ~absolute second from 0.
+        let late = origin_before + 50;
+        graph.record_requests_per_second("GET /new", late);
+        let stored = graph
+            .requests_per_second
+            .series
+            .get("GET /new")
+            .expect("series")
+            .data
+            .len();
+        assert!(
+            stored <= 51,
+            "expected compact storage after origin-preserving reset, got len={stored}",
+            stored = stored
+        );
+    }
+
+    #[test]
+    fn test_prune_aligns_idle_key_origin_on_reappear() {
+        // Idle request names only receive early samples, so length-based prune
+        // leaves their origin at 0. After a long soak, re-activating that key
+        // must not expand from absolute second 0.
+        let mut graph = GraphData::new();
+        graph.record_requests_per_second("GET /idle", 0);
+        graph.record_requests_per_second("GET /idle", 1);
+        graph.record_errors_per_second("GET /idle", 0);
+        graph.record_average_response_time_per_second("GET /idle".into(), 0, 10);
+
+        for s in 0..=900 {
+            graph.record_users_per_second(10, s);
+            graph.record_requests_per_second("GET /active", s);
+            graph.record_transactions_per_second(s);
+            graph.record_scenarios_per_second(s);
+        }
+        graph.prune_to_window(600);
+
+        let origin = graph.users_per_second.origin;
+        assert!(origin > 0, "users origin should advance after prune");
+        assert_eq!(
+            graph
+                .requests_per_second
+                .series
+                .get("GET /idle")
+                .expect("idle rps")
+                .origin,
+            origin
+        );
+        assert_eq!(
+            graph
+                .errors_per_second
+                .series
+                .get("GET /idle")
+                .expect("idle errors")
+                .origin,
+            origin
+        );
+        assert_eq!(
+            graph
+                .average_response_time_per_second
+                .get("GET /idle")
+                .expect("idle latency")
+                .origin,
+            origin
+        );
+
+        let late = origin + 50;
+        graph.record_requests_per_second("GET /idle", late);
+        graph.record_errors_per_second("GET /idle", late);
+        graph.record_average_response_time_per_second("GET /idle".into(), late, 12);
+
+        for (label, len) in [
+            (
+                "rps",
+                graph
+                    .requests_per_second
+                    .series
+                    .get("GET /idle")
+                    .unwrap()
+                    .data
+                    .len(),
+            ),
+            (
+                "errors",
+                graph
+                    .errors_per_second
+                    .series
+                    .get("GET /idle")
+                    .unwrap()
+                    .data
+                    .len(),
+            ),
+            (
+                "latency",
+                graph
+                    .average_response_time_per_second
+                    .get("GET /idle")
+                    .unwrap()
+                    .data
+                    .len(),
+            ),
+        ] {
+            assert!(
+                len <= 51,
+                "idle {label} series must stay compact after reappear, got len={len}",
+                label = label,
+                len = len
+            );
+        }
+    }
+
+    #[test]
+    fn test_export_series_window_until_extends_to_hint() {
+        let mut graph = GraphData::new();
+        graph.record_users_per_second(7, 2);
+        // No RPS; without hint end would be second 2.
+        let window = graph.export_series_window_until(300, Some(8));
+        assert_eq!(window.users.len(), 9); // seconds 0..8
+        assert_eq!(window.users[2], 7);
+        // Hold last known level through the hint ("now").
+        for s in 3..=8 {
+            assert_eq!(window.users[s], 7, "hold users[{s}]");
+        }
+    }
+
+    #[test]
     fn test_moving_average() {
         let mut moving_average = MovingAverage::new();
         assert_eq!(
@@ -1709,7 +2492,8 @@ mod test {
         let expected_prefix = expected_graph_html_prefix("graph-rps", "Requests #", "GET /");
 
         let data: TimeSeries<usize, usize> = TimeSeries {
-            data: vec![123, 111, 99, 134],
+            origin: 0,
+            data: VecDeque::from(vec![123, 111, 99, 134]),
             phantom: PhantomData,
             total: 0,
         };
@@ -1909,7 +2693,8 @@ mod test {
         );
 
         let user_data: TimeSeries<usize, usize> = TimeSeries {
-            data: vec![23, 12, 44, 22],
+            origin: 0,
+            data: VecDeque::from(vec![23, 12, 44, 22]),
             phantom: PhantomData,
             total: 0,
         };
@@ -2044,7 +2829,8 @@ mod test {
         );
 
         let more_data: TimeSeries<usize, usize> = TimeSeries {
-            data: vec![1, 1, 1, 1],
+            origin: 0,
+            data: VecDeque::from(vec![1, 1, 1, 1]),
             phantom: PhantomData,
             total: 0,
         };
