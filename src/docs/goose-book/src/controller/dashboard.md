@@ -6,10 +6,10 @@ By default the dashboard is **observe-only**: start, stop, user counts, and othe
 
 ## Enabling the dashboard
 
-The dashboard is off by default. Enable observation with `--dashboard`:
+The dashboard is off by default. Compile Goose with the `dashboard` crate feature, then enable observation with `--dashboard`:
 
 ```bash
-cargo run --release --example simple -- \
+cargo run --release --features dashboard --example simple -- \
   --dashboard \
   -H https://staging.example.com \
   -u 50 -t 10m
@@ -34,7 +34,7 @@ http://127.0.0.1:5118/
 
 Defaults can also be set programmatically with `GooseDefault::Dashboard`, `GooseDefault::DashboardControl`, `GooseDefault::DashboardHost`, `GooseDefault::DashboardPort`, `GooseDefault::DashboardAuthToken`, and `GooseDefault::DashboardMaxClients`.
 
-> **Feature flag:** the HTTP server is compiled behind the `dashboard` crate feature (enabled by default). Builds with `--no-default-features` (and without `--features dashboard`) reject `--dashboard` at startup.
+> **Feature flag:** the HTTP server is compiled behind the opt-in `dashboard` crate feature (not in default features, same pattern as `pdf-reports`). Enable it with `--features dashboard`. Builds without that feature reject `--dashboard` at startup with a clear rebuild hint.
 
 ### Observe vs control at a glance
 
@@ -132,7 +132,7 @@ curl -H "Authorization: Bearer SECRET" \
 ```bash
 export DASHBOARD_TOKEN="replace-me"
 
-cargo run --release --example simple -- \
+cargo run --release --features dashboard --example simple -- \
   --dashboard \
   --dashboard-host 0.0.0.0 \
   --dashboard-auth-token "$DASHBOARD_TOKEN" \
@@ -149,7 +149,7 @@ Control is **off by default**. Enable it with `--dashboard-control` (and a token
 ```bash
 export DASHBOARD_TOKEN="replace-me"
 
-cargo run --release --example simple -- \
+cargo run --release --features dashboard --example simple -- \
   --dashboard \
   --dashboard-control \
   --dashboard-auth-token "$DASHBOARD_TOKEN" \
@@ -166,7 +166,7 @@ Open `http://127.0.0.1:5118/?token=$DASHBOARD_TOKEN`. The header shows `Live das
 ```bash
 export DASHBOARD_TOKEN="replace-me"
 
-cargo run --release --example simple -- \
+cargo run --release --features dashboard --example simple -- \
   --no-autostart \
   --no-telnet --no-websocket \
   --dashboard \
@@ -348,7 +348,7 @@ That runs `tsc -p tsconfig.json` and overwrites `app.js` in the same directory. 
 ```bash
 cargo build
 # or exercise the dashboard:
-cargo run --release --example simple -- --dashboard ...
+cargo run --release --features dashboard --example simple -- --dashboard ...
 ```
 
 ### Type-check without emitting

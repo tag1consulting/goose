@@ -80,6 +80,7 @@ jobs:
         features:
           - ""  # No features (minimal build)
           - "cookies"
+          - "dashboard"  # Live dashboard HTTP server (opt-in; not in default)
           - "rustls-tls"
           - "all-features"  # Keep existing all-features test
 

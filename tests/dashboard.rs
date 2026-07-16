@@ -1,7 +1,7 @@
 //! Integration tests for the live web dashboard (observe + control).
 //!
-//! Requires the `dashboard` crate feature (default-on). Does **not** require
-//! `--report-file` — GraphData collection is gated on `--dashboard` alone.
+//! Requires the `dashboard` crate feature (`--features dashboard`). Does **not**
+//! require `--report-file` — GraphData collection is gated on `--dashboard` alone.
 //!
 //! Control HTTP cases (design Testing § integration 1–9) live here and use
 //! `#[serial]` + httpmock. Case 10 (oneshot disconnect / drop / timeout → 503

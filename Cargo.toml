@@ -56,14 +56,15 @@ axum = { version = "0.8", optional = true }
 tower-http = { version = "0.6", optional = true, features = ["set-header"] }
 
 [features]
-# Include cookies and the live dashboard by default.
-default = ["cookies", "dashboard"]
+# Include cookies by default for backward compatibility and expected behavior in web load testing
+default = ["cookies"]
 # reqwest >==0.13 already defaults to rustls
 rustls-tls = ["tokio-tungstenite/rustls"]
 # Cookie support - can be completely disabled by compiling with --no-default-features for maximum performance
 cookies = ["reqwest/cookies"]
 pdf-reports = ["headless_chrome", "urlencoding"]
 # Live web dashboard HTTP server (axum). DTO/builder always compiled; only HTTP is gated.
+# Opt-in so default builds do not compile axum/tower-http. Enable with --features dashboard.
 dashboard = ["axum", "tower-http"]
 
 [dev-dependencies]
