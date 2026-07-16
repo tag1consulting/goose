@@ -347,6 +347,13 @@ impl GraphData {
     /// multi-hour soaks do not retain per-second history that the dashboard
     /// never exports (export window is [`SERIES_WINDOW_SECS`](crate::metrics::dashboard_snapshot::SERIES_WINDOW_SECS)).
     /// No-op when `keep_secs == 0`.
+    ///
+    /// After length-based pruning, all per-key series are **aligned** to
+    /// `users_per_second.origin`. Length-only prune leaves idle keys (short
+    /// `data`, origin still 0) alone; if such a key becomes active again at a
+    /// large absolute second, `increase_value` would expand from the stale
+    /// origin and defeat the memory bound. Alignment drops pre-window samples
+    /// and advances each series origin to the retained window.
     pub(crate) fn prune_to_window(&mut self, keep_secs: u32) {
         let keep = keep_secs as usize;
         if keep == 0 {
@@ -364,8 +371,21 @@ impl GraphData {
         self.transactions_per_second.prune_to_window(keep);
         self.scenarios_per_second.prune_to_window(keep);
         self.users_per_second.prune_to_window(keep);
-        // New keys after prune must start at the retained window, not absolute 0.
+
+        // Align every series (and the ItemsPerSecond new-key origin) to the
+        // retained users window so idle keys cannot re-expand from second 0.
         let origin = self.users_per_second.origin;
+        for series in self.requests_per_second.series.values_mut() {
+            series.align_origin_to(origin);
+        }
+        for series in self.errors_per_second.series.values_mut() {
+            series.align_origin_to(origin);
+        }
+        for series in self.average_response_time_per_second.values_mut() {
+            series.align_origin_to(origin);
+        }
+        self.transactions_per_second.align_origin_to(origin);
+        self.scenarios_per_second.align_origin_to(origin);
         self.requests_per_second.origin = origin;
         self.errors_per_second.origin = origin;
     }
@@ -909,6 +929,10 @@ impl<T: Clone + TimeSeriesValue<T, U>, U> TimeSeries<T, U> {
     /// Uses repeated [`VecDeque::pop_front`] so cost is O(dropped) rather than
     /// O(retained) from a front `Vec::drain` — important when many per-key series
     /// are pruned at ~1 Hz after already sitting at the keep window.
+    ///
+    /// **Limitation:** when `data.len() <= keep_secs` this is a no-op even if the
+    /// series still has a stale low `origin` (idle keys). Callers that need a
+    /// shared window must follow up with [`Self::align_origin_to`].
     fn prune_to_window(&mut self, keep_secs: usize) {
         if keep_secs == 0 || self.data.len() <= keep_secs {
             return;
@@ -920,6 +944,34 @@ impl<T: Clone + TimeSeriesValue<T, U>, U> TimeSeries<T, U> {
         self.origin = self.origin.saturating_add(drop);
         // `total` still reflects historical increments (including dropped samples).
         // Dashboard export uses per-second buckets only; HTML reports never prune.
+    }
+
+    /// Advance `origin` to `target_origin`, dropping any samples strictly before it.
+    ///
+    /// Complements length-based [`Self::prune_to_window`]: idle per-key series keep
+    /// a short `data` buffer and never length-prune, so without this step a late
+    /// reappearance at absolute second *S* would expand from the stale origin.
+    /// No-op when `target_origin <= self.origin`.
+    fn align_origin_to(&mut self, target_origin: usize) {
+        if target_origin <= self.origin {
+            return;
+        }
+        if self.data.is_empty() {
+            self.origin = target_origin;
+            return;
+        }
+        let last = self.origin + self.data.len() - 1;
+        if last < target_origin {
+            // Entire series is before the retained window.
+            self.data.clear();
+            self.origin = target_origin;
+            return;
+        }
+        let drop = target_origin - self.origin;
+        for _ in 0..drop {
+            self.data.pop_front();
+        }
+        self.origin = target_origin;
     }
 
     /// Increases the the value for a given second.
@@ -2088,6 +2140,99 @@ mod test {
             "expected compact storage after origin-preserving reset, got len={stored}",
             stored = stored
         );
+    }
+
+    #[test]
+    fn test_prune_aligns_idle_key_origin_on_reappear() {
+        // Idle request names only receive early samples, so length-based prune
+        // leaves their origin at 0. After a long soak, re-activating that key
+        // must not expand from absolute second 0.
+        let mut graph = GraphData::new();
+        graph.record_requests_per_second("GET /idle", 0);
+        graph.record_requests_per_second("GET /idle", 1);
+        graph.record_errors_per_second("GET /idle", 0);
+        graph.record_average_response_time_per_second("GET /idle".into(), 0, 10);
+
+        for s in 0..=900 {
+            graph.record_users_per_second(10, s);
+            graph.record_requests_per_second("GET /active", s);
+            graph.record_transactions_per_second(s);
+            graph.record_scenarios_per_second(s);
+        }
+        graph.prune_to_window(600);
+
+        let origin = graph.users_per_second.origin;
+        assert!(origin > 0, "users origin should advance after prune");
+        assert_eq!(
+            graph
+                .requests_per_second
+                .series
+                .get("GET /idle")
+                .expect("idle rps")
+                .origin,
+            origin
+        );
+        assert_eq!(
+            graph
+                .errors_per_second
+                .series
+                .get("GET /idle")
+                .expect("idle errors")
+                .origin,
+            origin
+        );
+        assert_eq!(
+            graph
+                .average_response_time_per_second
+                .get("GET /idle")
+                .expect("idle latency")
+                .origin,
+            origin
+        );
+
+        let late = origin + 50;
+        graph.record_requests_per_second("GET /idle", late);
+        graph.record_errors_per_second("GET /idle", late);
+        graph.record_average_response_time_per_second("GET /idle".into(), late, 12);
+
+        for (label, len) in [
+            (
+                "rps",
+                graph
+                    .requests_per_second
+                    .series
+                    .get("GET /idle")
+                    .unwrap()
+                    .data
+                    .len(),
+            ),
+            (
+                "errors",
+                graph
+                    .errors_per_second
+                    .series
+                    .get("GET /idle")
+                    .unwrap()
+                    .data
+                    .len(),
+            ),
+            (
+                "latency",
+                graph
+                    .average_response_time_per_second
+                    .get("GET /idle")
+                    .unwrap()
+                    .data
+                    .len(),
+            ),
+        ] {
+            assert!(
+                len <= 51,
+                "idle {label} series must stay compact after reappear, got len={len}",
+                label = label,
+                len = len
+            );
+        }
     }
 
     #[test]
