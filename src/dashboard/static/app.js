@@ -1056,6 +1056,13 @@
                 });
             }
             else {
+                // Hard close (e.g. 503 at client cap, non-200 reconnect): EventSource
+                // fires onerror once and does not reconnect. Fall back immediately.
+                if (eventSource && eventSource.readyState === EventSource.CLOSED) {
+                    eventSource = null;
+                    startPollFallback("SSE reconnect failed");
+                    return;
+                }
                 sseErrorStreak += 1;
                 setConnection("disconnected");
                 if (sseErrorStreak >= SSE_ERROR_FALLBACK_THRESHOLD) {
