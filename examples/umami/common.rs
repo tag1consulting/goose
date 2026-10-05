@@ -733,7 +733,7 @@ pub async fn search(user: &mut GooseUser, english: bool) -> TransactionResult {
                         return user.set_failure(
                             &format!(
                                 "{}: search terms ({}) not on page",
-                                goose.request.raw.url, &search_phrase
+                                goose.request.raw.url, search_phrase
                             ),
                             &mut goose.request,
                             Some(headers),

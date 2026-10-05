@@ -298,7 +298,7 @@ use std::collections::HashMap;
 use std::fmt::{self, Debug, Formatter, Write as _};
 use std::hash::{Hash, Hasher};
 use std::str;
-use std::sync::atomic::Ordering as AtomicOrdering;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::Arc;
 use std::time::Duration;
 use std::{future::Future, pin::Pin, time::Instant};
@@ -316,6 +316,26 @@ static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_P
 
 /// By default Goose times out requests after 60,000 milliseconds.
 static GOOSE_REQUEST_TIMEOUT: u64 = 60_000;
+
+/// Atomically decrement `counter` by one, saturating at zero.
+///
+/// An explicit `compare_exchange_weak` loop with `Relaxed` ordering, equivalent to
+/// `fetch_update(Relaxed, Relaxed, |v| Some(v.saturating_sub(1)))`, which is
+/// deprecated as of Rust 1.99 in favor of `try_update`.
+fn saturating_decrement(counter: &AtomicU64) {
+    let mut current = counter.load(AtomicOrdering::Relaxed);
+    loop {
+        match counter.compare_exchange_weak(
+            current,
+            current.saturating_sub(1),
+            AtomicOrdering::Relaxed,
+            AtomicOrdering::Relaxed,
+        ) {
+            Ok(_) => break,
+            Err(actual) => current = actual,
+        }
+    }
+}
 
 /// `transaction!(foo)` expands to `Transaction::new(foo)`, but also does some boxing to work around a limitation in the compiler.
 #[macro_export]
@@ -362,7 +382,7 @@ pub enum TransactionError {
     /// The request failed.
     RequestFailed {
         /// The [`GooseRequestMetric`](./struct.GooseRequestMetric.html) that failed.
-        raw_request: GooseRequestMetric,
+        raw_request: Box<GooseRequestMetric>,
     },
     /// The request was canceled. This happens when the throttle is enabled and the load
     /// test finishes.
@@ -381,7 +401,7 @@ pub enum TransactionError {
     LoggerFailed {
         /// Wraps a [`flume::SendError`](https://docs.rs/flume/*/flume/struct.SendError.html),
         /// which contains the [`GooseDebug`](./struct.GooseDebug.html) that wasn't sent.
-        source: flume::SendError<Option<GooseLog>>,
+        source: Box<flume::SendError<Option<GooseLog>>>,
     },
     /// Attempted an unrecognized HTTP request method.
     InvalidMethod {
@@ -443,7 +463,7 @@ impl std::error::Error for TransactionError {
             TransactionError::Url(ref source) => Some(source),
             TransactionError::RequestCanceled { ref source } => Some(source),
             TransactionError::MetricsFailed { ref source } => Some(source),
-            TransactionError::LoggerFailed { ref source } => Some(source),
+            TransactionError::LoggerFailed { ref source } => Some(source.as_ref()),
             _ => None,
         }
     }
@@ -491,7 +511,9 @@ impl From<flume::SendError<GooseMetric>> for TransactionError {
 /// Attempt to send logs to the logger thread failed.
 impl From<flume::SendError<Option<GooseLog>>> for TransactionError {
     fn from(source: flume::SendError<Option<GooseLog>>) -> TransactionError {
-        TransactionError::LoggerFailed { source }
+        TransactionError::LoggerFailed {
+            source: Box::new(source),
+        }
     }
 }
 
@@ -568,7 +590,7 @@ impl Scenario {
     /// let mut example_transactions = scenario!("ExampleTransactions");
     /// ```
     pub fn new(name: &str) -> Self {
-        trace!("new scenario: name: {}", &name);
+        trace!("new scenario: name: {}", name);
         Scenario {
             name: Arc::from(name),
             machine_name: Arc::from(Scenario::get_machine_name(name)),
@@ -1863,7 +1885,7 @@ impl GooseUser {
         match &response {
             Ok(r) => {
                 let status_code = r.status();
-                debug!("{:?}: status_code {}", &path, status_code);
+                debug!("{:?}: status_code {}", path, status_code);
 
                 // Update the request_metric object.
                 request_metric.set_status_code(Some(status_code));
@@ -1896,8 +1918,8 @@ impl GooseUser {
                         info!(
                             "base_url for user {} redirected from {} to {}",
                             self.weighted_users_index + 1,
-                            &base_url,
-                            &redirected_base_url
+                            base_url,
+                            redirected_base_url
                         );
                         let _ = self.set_base_url(&redirected_base_url);
                     }
@@ -1905,7 +1927,7 @@ impl GooseUser {
             }
             Err(e) => {
                 // @TODO: what can we learn from a reqwest error?
-                warn!("{:?}: {}", &path, e);
+                warn!("{:?}: {}", path, e);
                 request_metric.success = false;
                 request_metric.set_status_code(None);
                 request_metric.error = clean_reqwest_error(e, request_name);
@@ -1931,9 +1953,9 @@ impl GooseUser {
         }
 
         if request.error_on_fail && !request_metric.success {
-            error!("{:?} {}", &path, &request_metric.error);
+            error!("{:?} {}", path, request_metric.error);
             return Err(Box::new(TransactionError::RequestFailed {
-                raw_request: request_metric,
+                raw_request: Box::new(request_metric),
             }));
         }
 
@@ -2205,20 +2227,10 @@ impl GooseUser {
                 if success {
                     // Was failure, now success: increment success, saturating-decrement failure.
                     counter.success.fetch_add(1, AtomicOrdering::Relaxed);
-                    counter
-                        .failure
-                        .fetch_update(AtomicOrdering::Relaxed, AtomicOrdering::Relaxed, |v| {
-                            Some(v.saturating_sub(1))
-                        })
-                        .ok();
+                    saturating_decrement(&counter.failure);
                 } else {
                     // Was success, now failure: saturating-decrement success, increment failure.
-                    counter
-                        .success
-                        .fetch_update(AtomicOrdering::Relaxed, AtomicOrdering::Relaxed, |v| {
-                            Some(v.saturating_sub(1))
-                        })
-                        .ok();
+                    saturating_decrement(&counter.success);
                     counter.failure.fetch_add(1, AtomicOrdering::Relaxed);
                 }
             }
@@ -2272,7 +2284,7 @@ impl GooseUser {
     ///     }
     ///
     ///     Err(Box::new(TransactionError::RequestFailed {
-    ///         raw_request: goose.request.clone(),
+    ///         raw_request: Box::new(goose.request.clone()),
     ///     }))
     /// }
     /// ````
@@ -2372,7 +2384,7 @@ impl GooseUser {
         info!("set_failure: {tag}");
 
         Err(Box::new(TransactionError::RequestFailed {
-            raw_request: request.clone(),
+            raw_request: Box::new(request.clone()),
         }))
     }
 
