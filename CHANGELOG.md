@@ -47,6 +47,8 @@
     o `Arc<str>` derefs to `&str`, so most read-only usage (formatting, logging, comparisons) works unchanged
     o fix flaky `test_status_code_response_time_tracking` integration test that assumed localhost responses always take ≥1ms
  - [#685](https://github.com/tag1consulting/goose/pull/685) log info message when writing JSON and Markdown report files, matching existing HTML and PDF report behavior ([#604](https://github.com/tag1consulting/goose/issues/604))
+ - [#691](https://github.com/tag1consulting/goose/pull/691) fix clippy lints and deprecations reported by Rust 1.99
+    o **breaking**: `TransactionError::RequestFailed { raw_request }` changes from `GooseRequestMetric` to `Box<GooseRequestMetric>`, and `TransactionError::LoggerFailed { source }` changes from `flume::SendError<Option<GooseLog>>` to `Box<flume::SendError<Option<GooseLog>>>`
 
 ## 0.18.1 August 14, 2025
  - [#634](https://github.com/tag1consulting/goose/pull/634) add killswitch mechanism for programmatic test termination
