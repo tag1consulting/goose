@@ -92,7 +92,7 @@ pub enum GooseMetric {
     ///
     /// Reduces channel pressure from `O(RPS)` to `O(RPS / batch_size)` by
     /// accumulating metrics locally in each user thread and flushing them as a
-    /// single channel message. The [`MetricsProcessor`] merges batch entries
+    /// single channel message. The metrics processor merges batch entries
     /// into global aggregates using the same logic as individual metrics.
     Batch(Box<GooseMetricBatch>),
 }
@@ -107,15 +107,16 @@ pub(crate) const METRICS_BATCH_MAX_AGE: std::time::Duration = std::time::Duratio
 /// When a metrics reset occurs, the processor increments the epoch. Batches
 /// stamped with a previous epoch are discarded, preventing stale pre-reset
 /// data from leaking into post-reset metrics.
-pub type MetricsEpoch = Arc<AtomicU64>;
+pub(crate) type MetricsEpoch = Arc<AtomicU64>;
 
-/// A batch of pre-aggregated metrics from a single [`GooseUser`] thread.
+/// A batch of pre-aggregated metrics from a single
+/// [`GooseUser`](crate::goose::GooseUser) thread.
 ///
 /// Instead of sending one channel message per request, each user thread
 /// accumulates metrics locally into this struct and flushes it when the batch
-/// reaches [`METRICS_BATCH_SIZE`] requests or [`METRICS_BATCH_MAX_AGE`] has
-/// elapsed. The [`MetricsProcessor`] merges pre-aggregated entries into the
-/// global [`GooseMetrics`] using the same aggregation logic.
+/// reaches 100 requests or 250 milliseconds have elapsed. The metrics
+/// processor merges pre-aggregated entries into the global [`GooseMetrics`]
+/// using the same aggregation logic.
 ///
 /// Successful, non-CO requests are pre-aggregated (timing data, status codes).
 /// Failed requests and CO-affected requests are buffered individually since

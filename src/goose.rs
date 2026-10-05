@@ -2287,7 +2287,7 @@ impl GooseUser {
     ///
     /// Pre-aggregates timing data, status codes, and status-code timings into
     /// compact batch entries. Failed and CO-affected requests are handled by
-    /// [`accumulate_individual_request`] instead.
+    /// [`Self::accumulate_individual_request`] instead.
     ///
     /// # Invariants
     ///
