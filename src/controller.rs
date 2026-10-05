@@ -684,7 +684,7 @@ impl GooseAttack {
                                 } else {
                                     debug!(
                                         "controller didn't provide host: {:#?}",
-                                        &message.request
+                                        message.request
                                     );
                                     self.reply_to_controller(
                                         message,
@@ -810,10 +810,7 @@ impl GooseAttack {
                                     }
                                 }
                             } else {
-                                warn!(
-                                    "[controller]: didn't provide users: {:#?}",
-                                    &message.request
-                                );
+                                warn!("[controller]: didn't provide users: {:#?}", message.request);
                                 self.reply_to_controller(
                                     message,
                                     ControllerResponseMessage::Bool(false),
@@ -847,7 +844,7 @@ impl GooseAttack {
                             } else {
                                 warn!(
                                     "Controller didn't provide increase_rate: {:#?}",
-                                    &message.request
+                                    message.request
                                 );
                                 self.reply_to_controller(
                                     message,
@@ -882,7 +879,7 @@ impl GooseAttack {
                                 } else {
                                     warn!(
                                         "Controller didn't provide increase_time: {:#?}",
-                                        &message.request
+                                        message.request
                                     );
                                     self.reply_to_controller(
                                         message,
@@ -923,7 +920,7 @@ impl GooseAttack {
                             } else {
                                 warn!(
                                     "Controller didn't provide decrease_rate: {:#?}",
-                                    &message.request
+                                    message.request
                                 );
                                 self.reply_to_controller(
                                     message,
@@ -958,7 +955,7 @@ impl GooseAttack {
                                 } else {
                                     warn!(
                                         "Controller didn't provide decrease_time: {:#?}",
-                                        &message.request
+                                        message.request
                                     );
                                     self.reply_to_controller(
                                         message,
@@ -989,10 +986,7 @@ impl GooseAttack {
                                     ControllerResponseMessage::Bool(true),
                                 );
                             } else {
-                                warn!(
-                                    "Controller didn't provide run_time: {:#?}",
-                                    &message.request
-                                );
+                                warn!("Controller didn't provide run_time: {:#?}", message.request);
                             }
                         }
                         ControllerCommand::TestPlan => {
@@ -1061,7 +1055,7 @@ impl GooseAttack {
                             } else {
                                 warn!(
                                     "Controller didn't provide test_plan: {:#?}",
-                                    &message.request
+                                    message.request
                                 );
                                 self.reply_to_controller(
                                     message,
@@ -1071,7 +1065,7 @@ impl GooseAttack {
                         }
                         // These messages shouldn't be received here.
                         ControllerCommand::Help | ControllerCommand::Exit => {
-                            warn!("Unexpected command: {:?}", &message.request);
+                            warn!("Unexpected command: {:?}", message.request);
                         }
                     }
                 }
