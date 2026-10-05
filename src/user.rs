@@ -214,7 +214,7 @@ async fn record_scenario(
     thread_scenario: &Scenario,
     thread_user: &mut GooseUser,
     run_time: u128,
-) -> Result<(), flume::SendError<Option<GooseLog>>> {
+) -> Result<(), Box<flume::SendError<Option<GooseLog>>>> {
     if !thread_user.config.no_scenario_metrics && !thread_user.config.no_metrics {
         let raw_scenario = ScenarioMetric::new(
             thread_user.started.elapsed().as_millis(),
@@ -271,7 +271,7 @@ async fn invoke_transaction_function(
     thread_user: &mut GooseUser,
     thread_transaction_index: usize,
     thread_transaction_name: &TransactionName,
-) -> Result<(), flume::SendError<Option<GooseLog>>> {
+) -> Result<(), Box<flume::SendError<Option<GooseLog>>>> {
     // Flush any previously buffered transaction metric (from a prior transaction in this
     // scenario iteration). This ensures earlier transaction metrics are sent before we
     // start collecting new ones.

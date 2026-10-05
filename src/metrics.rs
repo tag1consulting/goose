@@ -51,13 +51,13 @@ pub(crate) mod arc_str_serde {
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::OsStr;
+use std::fmt;
 use std::fmt::Write;
 use std::io::BufWriter;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex};
-use std::{f32, fmt};
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
@@ -1791,7 +1791,7 @@ impl GooseMetrics {
                             &format!(
                                 "{}: {}",
                                 transaction.scenario_index + 1,
-                                &transaction.scenario_name
+                                transaction.scenario_name
                             ),
                             60
                         ),
@@ -1950,7 +1950,7 @@ impl GooseMetrics {
                             &format!(
                                 "{}: {}",
                                 transaction.scenario_index + 1,
-                                &transaction.scenario_name
+                                transaction.scenario_name
                             ),
                             60
                         ),
@@ -2076,7 +2076,7 @@ impl GooseMetrics {
             writeln!(
                 fmt,
                 " {:24 } | {:>8} | {:>12} | {:>11.runs_p$} | {:>10.iterations_p$}",
-                util::truncate_string(&format!("{}: {}", scenario.index + 1, &scenario.name,), 24),
+                util::truncate_string(&format!("{}: {}", scenario.index + 1, scenario.name,), 24),
                 scenario.users.len(),
                 scenario.counter,
                 runs,
@@ -4340,15 +4340,14 @@ impl GooseAttack {
 
 /// Helper to calculate requests and fails per seconds.
 pub(crate) fn per_second_calculations(duration: usize, total: usize, fail: usize) -> (f32, f32) {
-    let requests_per_second;
-    let fails_per_second;
-    if duration == 0 {
-        requests_per_second = 0.0;
-        fails_per_second = 0.0;
+    let (requests_per_second, fails_per_second) = if duration == 0 {
+        (0.0, 0.0)
     } else {
-        requests_per_second = total as f32 / duration as f32;
-        fails_per_second = fail as f32 / duration as f32;
-    }
+        (
+            total as f32 / duration as f32,
+            fail as f32 / duration as f32,
+        )
+    };
     (requests_per_second, fails_per_second)
 }
 
