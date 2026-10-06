@@ -1329,6 +1329,7 @@ mod tests {
             generated_at: Utc::now(),
             goose_version: "test".into(),
             phase: "maintain".into(),
+            stopping: false,
             duration_secs: seq,
             active_users: 1,
             maximum_users: 1,

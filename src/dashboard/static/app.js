@@ -69,6 +69,8 @@
     let lastSnap = null;
     let lastDisplayTarget = null;
     let currentPhase = "idle";
+    // A cancel is in progress: the server refuses Users until idle.
+    let stopping = false;
     let controlTokenMissing = false;
     // Table state
     let requestRows = [];
@@ -177,6 +179,7 @@
         const canStop = hasToken && !inFlight && (phase === "increase" || phase === "maintain");
         const canUsers = hasToken &&
             !inFlight &&
+            !stopping &&
             (phase === "idle" ||
                 phase === "increase" ||
                 phase === "maintain" ||
@@ -206,6 +209,7 @@
         if (!controlEnabled || !controlPanel || !snap)
             return;
         lastSnap = snap;
+        stopping = snap.stopping === true;
         if (ctrlActive) {
             ctrlActive.textContent =
                 typeof snap.active_users === "number"
@@ -273,6 +277,10 @@
                 setControlStatus(data.message || "OK", "ok");
                 if (data.phase) {
                     setPhase(data.phase);
+                }
+                // Lock the user controls now rather than at the next snapshot.
+                if (data.command === "stop") {
+                    stopping = true;
                 }
                 if (typeof appliedUsers === "number" &&
                     isFinite(appliedUsers) &&
@@ -368,7 +376,7 @@
         }
         if (footerNoteEl) {
             footerNoteEl.textContent = controlEnabled
-                ? "Start, stop, and adjust users from this panel (authenticated). Stop begins a cancel ramp (decrease) before idle. Advanced control remains on Controllers."
+                ? "Start, stop, and adjust users from this panel (authenticated). Stop begins a cancel ramp (decrease) before idle, and users cannot be changed until then. Advanced control remains on Controllers."
                 : "Control this test via telnet :5116 or WebSocket :5117. This dashboard is read-only.";
         }
     }

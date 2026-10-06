@@ -618,6 +618,9 @@ impl GooseAttack {
                             // If load test is Idle, there are no metrics to display.
                             if self.attack_phase == AttackPhase::Idle {
                                 self.metrics.display_metrics = false;
+                                // Nothing to cancel, but the run is stopping all
+                                // the same: refuse Users until it shuts down.
+                                goose_attack_run_state.stopping = true;
                                 self.set_attack_phase(
                                     goose_attack_run_state,
                                     AttackPhase::Decrease,

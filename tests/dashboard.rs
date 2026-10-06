@@ -71,6 +71,9 @@ struct ControlTestOpts {
     no_autostart: bool,
     control: bool,
     token: Option<&'static str>,
+    /// `--test-plan`; replaces `users`, `increase_rate`, `decrease_rate` and
+    /// `run_time`, which Goose refuses alongside a test plan.
+    test_plan: Option<&'static str>,
 }
 
 impl Default for ControlTestOpts {
@@ -86,6 +89,7 @@ impl Default for ControlTestOpts {
             no_autostart: true,
             control: true,
             token: Some(AUTH_TOKEN),
+            test_plan: None,
         }
     }
 }
@@ -134,13 +138,18 @@ fn build_control_config(
     port: u16,
     opts: ControlTestOpts,
 ) -> GooseConfiguration {
-    let mut owned: Vec<String> = vec![
-        "--users".into(),
-        opts.users.to_string(),
-        "--increase-rate".into(),
-        opts.increase_rate.into(),
-        "--run-time".into(),
-        opts.run_time.into(),
+    let mut owned: Vec<String> = match opts.test_plan {
+        Some(plan) => vec!["--test-plan".into(), plan.into()],
+        None => vec![
+            "--users".into(),
+            opts.users.to_string(),
+            "--increase-rate".into(),
+            opts.increase_rate.into(),
+            "--run-time".into(),
+            opts.run_time.into(),
+        ],
+    };
+    owned.extend([
         "--no-telnet".into(),
         "--no-websocket".into(),
         "--dashboard".into(),
@@ -153,7 +162,7 @@ fn build_control_config(
         "--quiet".into(),
         "--host".into(),
         server.base_url(),
-    ];
+    ]);
     if let Some(rate) = opts.decrease_rate {
         owned.push("--decrease-rate".into());
         owned.push(rate.into());
@@ -1088,7 +1097,8 @@ async fn test_control_stop_while_decreasing() {
     load.abort().await;
 }
 
-/// Case 8: Users during decrease succeeds (Controller parity).
+/// Case 8: Users during a Stop's cancel ramp is refused, and the run still
+/// ends in idle instead of maintaining the new count.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial]
 async fn test_control_users_while_decreasing() {
@@ -1115,50 +1125,159 @@ async fn test_control_users_while_decreasing() {
     let client = reqwest::Client::new();
     let token = Some(AUTH_TOKEN);
 
+    // Pipeline Stop then Users during the Maintain sleep so the main loop
+    // dequeues both in one tick, with Users handled while the cancel is still
+    // decreasing. If the loop wakes between the two, Users lands after the run
+    // is idle (accepted, phase idle) and tests nothing, so start again. Users
+    // asks for 15 so a Users accepted while idle still starts 10 or more.
+    let mut users_body = serde_json::Value::Null;
+    for _ in 0..5 {
+        let start = post_control(&client, &base, "/api/v1/control/start", Some("{}"), true).await;
+        let start_body: serde_json::Value = start.json().await.expect("json");
+        assert_eq!(start_body["ok"], true, "start: {}", start_body);
+
+        wait_for_active_users(&client, &base, token, 10, Duration::from_secs(30)).await;
+
+        let stop_client = client.clone();
+        let users_client = client.clone();
+        let stop_base = base.clone();
+        let users_base = base.clone();
+        let (stop, users) = tokio::join!(
+            post_control(
+                &stop_client,
+                &stop_base,
+                "/api/v1/control/stop",
+                Some("{}"),
+                true
+            ),
+            async {
+                tokio::time::sleep(Duration::from_millis(30)).await;
+                post_control(
+                    &users_client,
+                    &users_base,
+                    "/api/v1/control/users",
+                    Some(r#"{"users":15}"#),
+                    true,
+                )
+                .await
+            }
+        );
+        let stop_body: serde_json::Value = stop.json().await.expect("json");
+        assert_eq!(stop_body["ok"], true);
+        assert_eq!(stop_body["phase"], "decrease");
+
+        assert_eq!(users.status(), 200);
+        users_body = users.json().await.expect("json");
+        if users_body["phase"] != "idle" {
+            break;
+        }
+    }
+
+    assert_eq!(
+        users_body["phase"], "decrease",
+        "users must be handled during the cancel: {}",
+        users_body
+    );
+    assert_eq!(
+        users_body["ok"], false,
+        "users during a stop must be refused: {}",
+        users_body
+    );
+    assert_eq!(users_body["command"], "users");
+    assert_eq!(users_body["error"], "invalid_phase");
+    assert!(
+        users_body["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("stopping")),
+        "message must say the load test is stopping: {}",
+        users_body
+    );
+    assert!(users_body["target_users"].is_null());
+
+    // The cancel runs to completion: idle with no users, never maintain.
+    let idle = wait_for_phase(&client, &base, token, &["idle"], Duration::from_secs(30)).await;
+    assert_eq!(idle["active_users"], 0);
+    assert_eq!(idle["stopping"], false, "idle ends the cancel: {}", idle);
+
+    load.abort().await;
+}
+
+/// Case 8b: a test plan's own ramp down is not a cancel. The snapshot does not
+/// report it as stopping, and Users is accepted and takes effect.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn test_control_users_during_plan_ramp_down() {
+    let server = MockServer::start();
+    let _mocks = setup_mock_endpoints(&server);
+    let port = reserve_port();
+    let base_v4 = format!("http://127.0.0.1:{port}");
+
+    // 10 users in 1s, hold 1s, then one user off every 3s.
+    let configuration = build_control_config(
+        &server,
+        "127.0.0.1",
+        port,
+        ControlTestOpts {
+            test_plan: Some("10,1s;10,1s;0,30s"),
+            ..ControlTestOpts::default()
+        },
+    );
+
+    let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
+    let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
+
+    let (base, _) = wait_for_health(&[&base_v4], 80).await;
+    let client = reqwest::Client::new();
+    let token = Some(AUTH_TOKEN);
+
     let start = post_control(&client, &base, "/api/v1/control/start", Some("{}"), true).await;
     let start_body: serde_json::Value = start.json().await.expect("json");
-    assert_eq!(start_body["ok"], true);
+    assert_eq!(start_body["ok"], true, "start: {}", start_body);
 
-    wait_for_active_users(&client, &base, token, 10, Duration::from_secs(30)).await;
-
-    // Pipeline Stop then Users so Users is handled while still decreasing.
-    let stop_client = client.clone();
-    let users_client = client.clone();
-    let stop_base = base.clone();
-    let users_base = base.clone();
-    let (stop, users) = tokio::join!(
-        post_control(
-            &stop_client,
-            &stop_base,
-            "/api/v1/control/stop",
-            Some("{}"),
-            true
-        ),
-        async {
-            tokio::time::sleep(Duration::from_millis(30)).await;
-            post_control(
-                &users_client,
-                &users_base,
-                "/api/v1/control/users",
-                Some(r#"{"users":5}"#),
-                true,
-            )
-            .await
-        }
+    let ramp_down = wait_for_phase(
+        &client,
+        &base,
+        token,
+        &["decrease"],
+        Duration::from_secs(30),
+    )
+    .await;
+    assert_eq!(
+        ramp_down["stopping"], false,
+        "a plan's ramp down is not a cancel: {}",
+        ramp_down
     );
-    let stop_body: serde_json::Value = stop.json().await.expect("json");
-    assert_eq!(stop_body["ok"], true);
-    assert_eq!(stop_body["phase"], "decrease");
 
+    let users = post_control(
+        &client,
+        &base,
+        "/api/v1/control/users",
+        Some(r#"{"users":8}"#),
+        true,
+    )
+    .await;
     assert_eq!(users.status(), 200);
     let users_body: serde_json::Value = users.json().await.expect("json");
     assert_eq!(
         users_body["ok"], true,
-        "users during decrease: {}",
+        "users during a plan ramp down: {}",
         users_body
     );
     assert_eq!(users_body["command"], "users");
-    assert_eq!(users_body["target_users"], 5);
+    assert_eq!(users_body["phase"], "decrease");
+    assert_eq!(users_body["target_users"], 8);
+
+    // The new count replaces the rest of the plan: hold 8 users.
+    let held = wait_for_phase(
+        &client,
+        &base,
+        token,
+        &["maintain"],
+        Duration::from_secs(30),
+    )
+    .await;
+    assert_eq!(held["target_users"], 8, "maintain after users: {}", held);
+    assert_eq!(held["stopping"], false);
 
     load.abort().await;
 }
