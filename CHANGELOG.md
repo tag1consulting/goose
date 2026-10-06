@@ -69,6 +69,7 @@
     o fix transaction and scenario response times over 500ms being bucketed 10× (501 to 1000ms) or 100× (over 1000ms) too low, which skewed their percentiles; request times were not affected (also fixed on `main` in [#688](https://github.com/tag1consulting/goose/pull/688) by [@aditanase](https://github.com/aditanase))
  - [#691](https://github.com/tag1consulting/goose/pull/691) fix clippy lints and deprecations reported by Rust 1.99
     o **breaking**: `TransactionError::RequestFailed { raw_request }` changes from `GooseRequestMetric` to `Box<GooseRequestMetric>`, and `TransactionError::LoggerFailed { source }` changes from `flume::SendError<Option<GooseLog>>` to `Box<flume::SendError<Option<GooseLog>>>`
+ - [#690](https://github.com/tag1consulting/goose/pull/690), [#682](https://github.com/tag1consulting/goose/pull/682) fix empty or misplaced live dashboard charts without `--report-file`: batched metrics bypassed the dashboard's chart condition and series origin, so batched requests, transactions and scenarios were not charted and batched latency was indexed by absolute second after pruning
 
 ## 0.18.1 August 14, 2025
  - [#634](https://github.com/tag1consulting/goose/pull/634) add killswitch mechanism for programmatic test termination

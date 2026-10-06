@@ -220,17 +220,16 @@ impl GraphData {
         if count == 0 {
             return;
         }
+        let origin = self.users_per_second.origin;
         let data = self
             .average_response_time_per_second
             .entry(key.to_string())
-            .or_insert_with(TimeSeries::new);
-        data.expand(second, MovingAverage::new());
+            .or_insert_with(|| TimeSeries::with_origin(origin));
         let batch_avg = MovingAverage {
             count,
             average: total_time as f32 / count as f32,
         };
-        data.data[second].merge(&batch_avg);
-        data.total.merge(&batch_avg);
+        data.merge_value(second, &batch_avg);
     }
 
     /// Record multiple transactions per second for batch merging.
@@ -1028,6 +1027,18 @@ impl<T: Clone + TimeSeriesValue<T, U>, U> TimeSeries<T, U> {
         let idx = second - self.origin;
         self.data[idx].increase_value(&value);
         self.total.increase_value(&value);
+    }
+
+    /// Merges a pre-aggregated value into a given second.
+    fn merge_value(&mut self, second: usize, value: &T) {
+        // Samples that fall before the pruned window are dropped (dashboard-only).
+        if second < self.origin {
+            return;
+        }
+        self.expand(second, T::initial_value());
+        let idx = second - self.origin;
+        self.data[idx].merge(value);
+        self.total.merge(value);
     }
 
     /// Adds another time series.

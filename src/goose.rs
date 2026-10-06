@@ -983,8 +983,9 @@ pub struct GooseUser {
     pub(crate) batch_item_count: usize,
     /// When the current batch started accumulating (`None` if batch is empty).
     pub(crate) batch_start: Option<std::time::Instant>,
-    /// Whether `--report-file` is configured (cached to avoid repeated string checks).
-    pub(crate) has_report_file: bool,
+    /// Whether graph data is collected: `--report-file` is set or `--dashboard` is on
+    /// (cached to avoid repeated string checks).
+    pub(crate) record_graph_data: bool,
     /// Shared epoch counter for batch validity across metrics resets.
     pub(crate) metrics_epoch: Option<MetricsEpoch>,
     /// Optional per-user session data of a generic type implementing the
@@ -1031,7 +1032,7 @@ impl Clone for GooseUser {
             }),
             batch_item_count: 0,
             batch_start: None,
-            has_report_file: self.has_report_file,
+            record_graph_data: self.record_graph_data,
             metrics_epoch: self.metrics_epoch.clone(),
             session_data: self.session_data.clone(),
             request_counters: self.request_counters.clone(),
@@ -1068,7 +1069,7 @@ impl GooseUser {
             }
         };
 
-        let has_report_file = !configuration.report_file.is_empty();
+        let record_graph_data = !configuration.report_file.is_empty() || configuration.dashboard;
 
         Ok(GooseUser {
             started: Instant::now(),
@@ -1095,7 +1096,7 @@ impl GooseUser {
             metrics_batch: None,
             batch_item_count: 0,
             batch_start: None,
-            has_report_file,
+            record_graph_data,
             metrics_epoch: None,
             session_data: None,
             request_counters: None,
@@ -2384,8 +2385,8 @@ impl GooseUser {
             }
         }
 
-        // Track graph data if report file is configured.
-        if self.has_report_file {
+        // Track graph data if a report file is configured or the dashboard is on.
+        if self.record_graph_data {
             let second = (request_metric.elapsed / 1000) as usize;
             let graph_entry = batch
                 .graph_request_data
@@ -2449,7 +2450,7 @@ impl GooseUser {
         }
 
         // Track graph data.
-        if self.has_report_file {
+        if self.record_graph_data {
             let second = (transaction.elapsed / 1000) as usize;
             *batch.graph_tps.entry(second).or_insert(0) += 1;
         }
@@ -2488,7 +2489,7 @@ impl GooseUser {
         }
 
         // Track graph data.
-        if self.has_report_file {
+        if self.record_graph_data {
             let second = (scenario.elapsed / 1000) as usize;
             *batch.graph_sps.entry(second).or_insert(0) += 1;
         }

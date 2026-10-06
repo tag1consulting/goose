@@ -3818,8 +3818,8 @@ impl MetricsProcessor {
             }
         }
 
-        // 5. Apply graph data if report file is configured.
-        if !self.configuration.report_file.is_empty() {
+        // 5. Apply graph data if a report file is configured or the dashboard is on.
+        if !self.configuration.report_file.is_empty() || self.configuration.dashboard {
             for ((key, second), entry) in batch.graph_request_data {
                 self.graph_data
                     .record_requests_per_second_batch(&key, second, entry.count);
@@ -6026,6 +6026,77 @@ mod test {
         assert_eq!(ind_agg.raw_data.total_time, bat_agg.raw_data.total_time);
         assert_eq!(ind_agg.raw_data.minimum_time, bat_agg.raw_data.minimum_time);
         assert_eq!(ind_agg.raw_data.maximum_time, bat_agg.raw_data.maximum_time);
+    }
+
+    /// Batched requests must feed the dashboard charts like the per-request
+    /// path: recorded with `--dashboard` and no report file, and stored relative
+    /// to the series origin after dashboard pruning has advanced it.
+    #[test]
+    fn process_batch_graph_data_dashboard_after_prune() {
+        // Accumulate (elapsed ms, response time ms) requests through the user
+        // side batch path, then apply the flushed batch on the parent side.
+        fn apply_batch(
+            user: &mut crate::goose::GooseUser,
+            rx: &flume::Receiver<GooseMetric>,
+            processor: &mut MetricsProcessor,
+            requests: &[(u64, u64)],
+        ) {
+            for &(elapsed, response_time) in requests {
+                user.pending_request = Some(make_request_metric("/", response_time, 200, elapsed));
+                user.flush_pending_request().unwrap();
+            }
+            user.flush_batch().unwrap();
+            while let Ok(metric) = rx.try_recv() {
+                match metric {
+                    GooseMetric::Batch(batch) => processor.process_batch(*batch),
+                    other => panic!("expected GooseMetric::Batch, got {:?}", other),
+                }
+            }
+        }
+
+        let mut configuration = GooseConfiguration::default();
+        configuration.dashboard = true;
+        let mut user =
+            crate::goose::GooseUser::single("http://localhost/".parse().unwrap(), &configuration)
+                .unwrap();
+        let (metrics_tx, metrics_rx) = flume::unbounded::<GooseMetric>();
+        user.metrics_channel = Some(metrics_tx);
+        user.metrics_batch = Some(GooseMetricBatch::new(0));
+
+        let mut processor = make_test_processor(0);
+        processor.configuration = configuration;
+
+        // Second 5: two requests averaging 200 ms.
+        apply_batch(
+            &mut user,
+            &metrics_rx,
+            &mut processor,
+            &[(5000, 100), (5500, 300)],
+        );
+        processor.graph_data.record_users_per_second(1, 5);
+
+        // Keep the last 2 seconds (4 and 5) so every series origin moves to 4.
+        processor.graph_data.prune_to_window(2);
+
+        // Second 7: two requests averaging 100 ms, stored relative to origin 4.
+        apply_batch(
+            &mut user,
+            &metrics_rx,
+            &mut processor,
+            &[(7000, 50), (7200, 150)],
+        );
+        // Second 2 is older than the origin: dropped, not a panic.
+        apply_batch(&mut user, &metrics_rx, &mut processor, &[(2000, 999)]);
+
+        let window = processor.graph_data.export_series_window(300);
+        assert_eq!(window.start_second, 0);
+        assert_eq!(window.rps.len(), 8);
+        assert_eq!(window.rps[2], 0.0);
+        assert_eq!(window.rps[5], 2.0);
+        assert_eq!(window.rps[7], 2.0);
+        assert_eq!(window.avg_latency_ms[2], 0.0);
+        assert_eq!(window.avg_latency_ms[5], 200.0);
+        assert_eq!(window.avg_latency_ms[7], 100.0);
     }
 
     #[test]

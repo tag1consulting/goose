@@ -1229,3 +1229,47 @@ async fn test_control_with_active_sse() {
     drop(sse);
     load.abort().await;
 }
+
+/// Batched request metrics must reach the dashboard charts without
+/// `--report-file`: the requests per second series has nonzero samples while
+/// the load test runs.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn test_dashboard_series_without_report_file() {
+    let server = MockServer::start();
+    let _mocks = setup_mock_endpoints(&server);
+    let port = reserve_port();
+    let base_v4 = format!("http://127.0.0.1:{port}");
+
+    let mut configuration = build_dashboard_config(&server, "127.0.0.1", port, None);
+    configuration.run_time = "5".to_string();
+    assert!(configuration.report_file.is_empty());
+
+    let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
+    let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
+
+    let (base, _health) = wait_for_health(&[&base_v4], 80).await;
+    let client = reqwest::Client::new();
+
+    // Poll until the requests per second series shows load or the run ends.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut rps_sum = 0.0;
+    while Instant::now() < deadline {
+        if let Ok(snap) = get_snapshot_json(&client, &base, None).await {
+            rps_sum = snap["series"]["rps"]
+                .as_array()
+                .map(|rps| rps.iter().filter_map(|v| v.as_f64()).sum())
+                .unwrap_or(0.0);
+            if rps_sum > 0.0 {
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    assert!(
+        rps_sum > 0.0,
+        "requests per second series must have nonzero samples without --report-file"
+    );
+
+    let _metrics = load.join().await.expect("load test execute");
+}
