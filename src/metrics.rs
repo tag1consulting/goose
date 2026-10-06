@@ -5631,4 +5631,58 @@ mod test {
         const { assert!(METRICS_BATCH_MAX_AGE.as_millis() > 0) };
         const { assert!(METRICS_BATCH_MAX_AGE.as_millis() <= 1000) };
     }
+
+    #[test]
+    fn round_metric_time_buckets() {
+        let cases: [(u64, usize); 13] = [
+            (0, 0),
+            (100, 100),
+            (101, 100),
+            (105, 110),
+            (500, 500),
+            (501, 500),
+            (550, 600),
+            (750, 800),
+            (1000, 1000),
+            (1001, 1000),
+            (1499, 1000),
+            (1500, 2000),
+            (2600, 3000),
+        ];
+        for (time, expected) in cases {
+            assert_eq!(
+                round_metric_time(time),
+                expected,
+                "round_metric_time({time}) should bucket to {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn aggregate_time_buckets_over_500ms() {
+        const GUARD: &str = "guards the time bucket bug fixed in pull request 688";
+
+        let mut transaction = TransactionMetricAggregate::new(
+            0,
+            Arc::from("scenario"),
+            0,
+            TransactionName::TransactionOnly(Arc::from("transaction")),
+        );
+        transaction.set_time(750, true);
+        transaction.set_time(1499, true);
+        assert_eq!(
+            transaction.times.keys().copied().collect::<Vec<_>>(),
+            vec![800, 1000],
+            "transaction times must bucket 750ms to 800 and 1499ms to 1000, not 80 and 10: {GUARD}"
+        );
+
+        let mut scenario = ScenarioMetricAggregate::new(0, Arc::from("scenario"));
+        scenario.update(750, 0);
+        scenario.update(1499, 0);
+        assert_eq!(
+            scenario.times.keys().copied().collect::<Vec<_>>(),
+            vec![800, 1000],
+            "scenario times must bucket 750ms to 800 and 1499ms to 1000, not 80 and 10: {GUARD}"
+        );
+    }
 }
