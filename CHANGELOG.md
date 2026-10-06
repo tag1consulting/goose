@@ -17,6 +17,8 @@
     o Stop begins a cancel ramp through Decrease (not instantaneous Idle); Start success means entered Increase (not `test_start` complete)
     o `--no-autostart` allowed with dashboard control (no Controllers required); Controllers remain power-user path (host/rates/shutdown not in dashboard)
     o documented in Goose Book “Live Dashboard” (flags, auth matrix, curl examples, semantics)
+ - [#639](https://github.com/tag1consulting/goose/issues/639) only capture request headers when the request log, the debug log or the error log is enabled, skipping a string allocation per header on every request otherwise
+    o **behavior change**: `GooseRawRequest.headers` (for example `goose.request.raw.headers`, or the `raw_request` in `TransactionError::RequestFailed`) is now empty unless one of these logs is enabled; log output is unchanged
  - [#468](https://github.com/tag1consulting/goose/issues/468) replace `--hatch-rate` and `--startup-time` with `--increase-rate`, `--increase-time`, `--decrease-rate`, and `--decrease-time`
     o **breaking**: `--hatch-rate` / `-r` is now `--increase-rate` / `-r` (sets per-second rate users are added)
     o **breaking**: `--startup-time` / `-s` is now `--increase-time` / `-s` (sets total time to launch all users)
@@ -63,6 +65,10 @@
     o `Arc<str>` derefs to `&str`, so most read-only usage (formatting, logging, comparisons) works unchanged
     o fix flaky `test_status_code_response_time_tracking` integration test that assumed localhost responses always take ≥1ms
  - [#685](https://github.com/tag1consulting/goose/pull/685) log info message when writing JSON and Markdown report files, matching existing HTML and PDF report behavior ([#604](https://github.com/tag1consulting/goose/issues/604))
+ - [#682](https://github.com/tag1consulting/goose/pull/682) batch metrics per user: each `GooseUser` pre-aggregates its metrics locally and sends one `GooseMetric::Batch` message every 100 requests or 250ms, cutting metrics channel traffic by up to 100× ([#675](https://github.com/tag1consulting/goose/issues/675))
+    o fix transaction and scenario response times over 500ms being bucketed 10× (501 to 1000ms) or 100× (over 1000ms) too low, which skewed their percentiles; request times were not affected (also fixed on `main` in [#688](https://github.com/tag1consulting/goose/pull/688) by [@aditanase](https://github.com/aditanase))
+ - [#691](https://github.com/tag1consulting/goose/pull/691) fix clippy lints and deprecations reported by Rust 1.99
+    o **breaking**: `TransactionError::RequestFailed { raw_request }` changes from `GooseRequestMetric` to `Box<GooseRequestMetric>`, and `TransactionError::LoggerFailed { source }` changes from `flume::SendError<Option<GooseLog>>` to `Box<flume::SendError<Option<GooseLog>>>`
 
 ## 0.18.1 August 14, 2025
  - [#634](https://github.com/tag1consulting/goose/pull/634) add killswitch mechanism for programmatic test termination

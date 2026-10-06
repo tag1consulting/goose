@@ -41,6 +41,7 @@ pub(crate) async fn user_main(
         // Flush any pending metrics from on_start transactions (they won't be combined
         // into a GooseMetric::All since on_start doesn't produce scenario metrics).
         let _ = thread_user.flush_pending_metrics();
+        let _ = thread_user.flush_batch();
     }
 
     // If normal transactions are defined, loop launching transactions until parent tells us to stop.
@@ -176,6 +177,8 @@ pub(crate) async fn user_main(
 
     // Flush any remaining pending metrics before the user thread exits.
     let _ = thread_user.flush_pending_metrics();
+    // Flush any remaining batch data.
+    let _ = thread_user.flush_batch();
 
     // Optional debug output when exiting.
     info!(
@@ -203,14 +206,15 @@ fn received_exit(thread_receiver: &flume::Receiver<GooseUserCommand>) -> bool {
     false
 }
 
-// Send scenario metric to parent and logger when enabled. When a pending request
-// metric and a pending transaction metric are available, all three are combined
-// into a single GooseMetric::All channel message to reduce channel pressure.
+// Send scenario metric to parent and logger when enabled. When batching is
+// active, all metrics (request, transaction, scenario) are accumulated into
+// the local batch and flushed based on size/time thresholds. When batching
+// is inactive, the GooseMetric::All optimization is used.
 async fn record_scenario(
     thread_scenario: &Scenario,
     thread_user: &mut GooseUser,
     run_time: u128,
-) -> Result<(), flume::SendError<Option<GooseLog>>> {
+) -> Result<(), Box<flume::SendError<Option<GooseLog>>>> {
     if !thread_user.config.no_scenario_metrics && !thread_user.config.no_metrics {
         let raw_scenario = ScenarioMetric::new(
             thread_user.started.elapsed().as_millis(),
@@ -219,10 +223,13 @@ async fn record_scenario(
             run_time,
             thread_user.weighted_users_index,
         );
-        if let Some(metrics_channel) = thread_user.metrics_channel.clone() {
-            // When both a request and transaction metric are pending, combine all three
-            // into a single GooseMetric::All message (3× fewer channel sends in the
-            // common case of 1 request per transaction per scenario iteration).
+        if thread_user.metrics_batch.is_some() {
+            // Batch path: accumulate all pending metrics into the batch.
+            let _ = thread_user.flush_pending_metrics();
+            thread_user.accumulate_scenario(&raw_scenario);
+            let _ = thread_user.maybe_flush_batch();
+        } else if let Some(metrics_channel) = thread_user.metrics_channel.clone() {
+            // Non-batch path: use the GooseMetric::All optimization.
             if let (Some(request), Some(transaction)) = (
                 thread_user.pending_request.take(),
                 thread_user.pending_transaction.take(),
@@ -264,7 +271,7 @@ async fn invoke_transaction_function(
     thread_user: &mut GooseUser,
     thread_transaction_index: usize,
     thread_transaction_name: &TransactionName,
-) -> Result<(), flume::SendError<Option<GooseLog>>> {
+) -> Result<(), Box<flume::SendError<Option<GooseLog>>>> {
     // Flush any previously buffered transaction metric (from a prior transaction in this
     // scenario iteration). This ensures earlier transaction metrics are sent before we
     // start collecting new ones.

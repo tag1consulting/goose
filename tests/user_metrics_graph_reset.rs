@@ -7,11 +7,12 @@
 // Each test validates the core behavioral difference: metrics accumulate without reset,
 // but are reset (with user graph continuity maintained) when reset is enabled.
 
+mod common;
+
 use gumdrop::Options;
 use httpmock::{Method::GET, MockServer};
 use serial_test::serial;
 
-mod common;
 use goose::config::GooseConfiguration;
 use goose::metrics::GooseMetrics;
 use goose::prelude::*;

@@ -119,6 +119,8 @@ jobs:
     
     - name: 📖 Docs
       if: ${{ matrix.features == 'all-features' }}
+      env:
+        RUSTDOCFLAGS: "-D warnings"
       uses: actions-rs/cargo@v1
       with:
         command: rustdoc 
