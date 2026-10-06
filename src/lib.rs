@@ -3227,9 +3227,22 @@ mod tests {
     async fn test_shutdown_while_idle_sets_stopping() {
         use crate::controller::{ControllerCommand, ControllerRequestMessage};
 
-        let configuration =
-            GooseConfiguration::parse_args_default(&["--no-telnet", "--no-websocket"]).unwrap();
-        let mut goose_attack = GooseAttack::initialize_with_config(configuration).unwrap();
+        async fn noop(_user: &mut GooseUser) -> crate::goose::TransactionResult {
+            Ok(())
+        }
+
+        // A scenario and host let a Users that wrongly gets through launch
+        // users and fail the assertion, rather than loop with nothing to weight.
+        let configuration = GooseConfiguration::parse_args_default(&[
+            "--no-telnet",
+            "--no-websocket",
+            "--host",
+            "http://127.0.0.1",
+        ])
+        .unwrap();
+        let mut goose_attack = GooseAttack::initialize_with_config(configuration)
+            .unwrap()
+            .register_scenario(scenario!("Idle").register_transaction(transaction!(noop)));
         let mut run_state = goose_attack.initialize_attack().await.unwrap();
         let (controller_tx, controller_rx) = flume::unbounded();
         run_state.controller_channel_rx = Some(controller_rx);
@@ -3249,8 +3262,6 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(goose_attack.attack_phase, AttackPhase::Decrease);
-        // Checked before Users: without the flag, Users would grow the run
-        // from zero users and this attack has no scenarios to launch.
         assert!(run_state.stopping);
         let outcome = goose_attack.control_set_users(&mut run_state, 5).unwrap();
         assert!(!outcome.ok, "shutdown must refuse users: {:?}", outcome);
@@ -3283,13 +3294,11 @@ mod tests {
             .handle_dashboard_requests(&mut run_state)
             .await
             .unwrap();
-        match metrics_cmd_rx.try_recv() {
-            Ok(MetricsCommand::GetDashboardSnapshot { stopping, .. }) => assert!(stopping),
-            other => panic!(
-                "expected a forwarded snapshot request, got {:?}",
-                other.is_ok()
-            ),
-        }
+        let Ok(MetricsCommand::GetDashboardSnapshot { stopping, .. }) = metrics_cmd_rx.try_recv()
+        else {
+            panic!("expected a forwarded snapshot request");
+        };
+        assert!(stopping);
 
         // Processor gone: served from main-loop state.
         drop(metrics_cmd_rx);
