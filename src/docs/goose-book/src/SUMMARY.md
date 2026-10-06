@@ -27,6 +27,7 @@
 - [Controllers](controller/overview.md)
     - [Telnet Controller](controller/telnet.md)
     - [WebSocket Controller](controller/websocket.md)
+    - [Live Dashboard](controller/dashboard.md)
 
 - [Gaggle: Distributed Load Test](gaggle/overview.md)
     - [Manager](gaggle/manager.md)

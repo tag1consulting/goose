@@ -8,3 +8,7 @@
 /.idea
 /.env
 /.venv
+
+# Dashboard TypeScript toolchain
+src/dashboard/static/node_modules/
+

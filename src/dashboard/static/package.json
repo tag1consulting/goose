@@ -1,0 +1,12 @@
+{
+  "name": "goose-dashboard-ui",
+  "private": true,
+  "description": "TypeScript sources for the Goose live dashboard SPA (compiles to app.js, embedded via include_str!).",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0"
+  }
+}

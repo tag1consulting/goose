@@ -11,6 +11,8 @@ Load testing is a critical step in ensuring your web application can handle real
 
 * Realistic User Behavior Simulation: Goes beyond just sending requests; simulates user behaviors like logging in, filling out forms, and navigating through your application.
 
+* **Live Dashboard:** Opt-in web UI (compile with `--features dashboard`, run with `--dashboard`) streams live metrics (RPS, users, latency charts) over SSE while a test runs. Optional authenticated control lets you Start, Stop, and set target users from the browser—see [Live Dashboard](https://book.goose.rs/controller/dashboard.html) in the Goose Book.
+
 * Have you ever been attacked by a goose?
 
 ## Getting Started
@@ -19,6 +21,8 @@ To use Goose, you'll need to write a Rust application using the Goose library. T
 You may find the following resources helpful:
 
 * [**The Goose Book**](https://book.goose.rs/) A comprehensive guide to getting started with Goose.
+
+* [**Live Dashboard**](https://book.goose.rs/controller/dashboard.html) Observe (and optionally control) a running load test from the browser (`--features dashboard`, `--dashboard`, `--dashboard-control`).
 
 * [**Developer Documentation**](https://docs.rs/goose/) Detailed API information and tutorials.
 

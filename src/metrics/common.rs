@@ -198,7 +198,7 @@ impl<'m> Prepare<'m> {
                 request.raw_data.maximum_time,
             );
             raw_aggregate_response_times =
-                merge_times(raw_aggregate_response_times, request.raw_data.times.clone());
+                merge_times(raw_aggregate_response_times, &request.raw_data.times);
         }
 
         // Prepare aggregate per-request metrics.
@@ -303,7 +303,7 @@ impl<'m> Prepare<'m> {
                 );
                 co_aggregate_response_times = merge_times(
                     co_aggregate_response_times,
-                    coordinated_omission_data.times.clone(),
+                    &coordinated_omission_data.times,
                 );
             }
             let total_request_count = request.success_count + request.fail_count;
@@ -395,7 +395,7 @@ impl<'m> Prepare<'m> {
                 aggregate_total_count += total_run_count;
                 aggregate_fail_count += transaction.fail_count;
                 aggregate_transaction_times =
-                    merge_times(aggregate_transaction_times, transaction.times.clone());
+                    merge_times(aggregate_transaction_times, &transaction.times);
                 aggregate_transaction_time_counter += &transaction.counter;
                 aggregate_transaction_time_minimum =
                     update_min_time(aggregate_transaction_time_minimum, transaction.min_time);
@@ -465,8 +465,7 @@ impl<'m> Prepare<'m> {
 
             aggregate_users += scenario.users.len();
             aggregate_count += scenario.counter;
-            aggregate_scenario_times =
-                merge_times(aggregate_scenario_times, scenario.times.clone());
+            aggregate_scenario_times = merge_times(aggregate_scenario_times, &scenario.times);
             aggregate_scenario_time_counter += &scenario.counter;
             aggregate_scenario_time_minimum =
                 update_min_time(aggregate_scenario_time_minimum, scenario.min_time);
