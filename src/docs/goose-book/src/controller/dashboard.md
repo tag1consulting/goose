@@ -250,7 +250,9 @@ Logical rejections (wrong phase, prepare failure) return **HTTP 200** with `"ok"
 
 - **Stop** is disabled (cannot stop again mid-ramp)
 - **Start** stays disabled until phase is `idle` again
-- **Users** remains allowed (same as Controllers)
+- **Users** is refused with `"ok": false` and `invalid_phase` until phase is `idle` again, from the dashboard and from Controllers alike, so a Stop cannot be turned back into a running load test
+
+The snapshot's `stopping` field is `true` from the Stop until `idle`; a Controller `shutdown` and Ctrl-C set it the same way. A test plan's own ramp down is also phase `decrease`, but `stopping` stays `false` and **Users** is accepted there.
 
 ### UI walkthrough (control panel)
 
@@ -259,7 +261,7 @@ When `health.control_enabled` is true and the SPA has a token:
 1. **Phase badge** still shows `idle` / `increase` / `maintain` / `decrease` / `shutdown`.
 2. **Start** is enabled only in `idle`.
 3. **Stop** is enabled in `increase` and `maintain` only.
-4. **Target users** — enter an absolute count and **Apply**, or use **−** / **+** with a configurable step (default 10). Active user count is a read-only label from the latest snapshot.
+4. **Target users** — enter an absolute count and **Apply**, or use **−** / **+** with a configurable step (default 10). Active user count is a read-only label from the latest snapshot. **Apply**, **−** and **+** are disabled while `stopping` is set.
 5. Status line shows server `message` on success, or an error banner on soft failure / 401 / 503.
 
 There is no process-shutdown button in the dashboard. Use a Controller `shutdown` command when you need to exit the Goose process.

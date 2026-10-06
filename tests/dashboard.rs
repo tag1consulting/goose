@@ -1252,7 +1252,7 @@ async fn test_control_users_during_plan_ramp_down() {
         &client,
         &base,
         "/api/v1/control/users",
-        Some(r#"{"users":8}"#),
+        Some(r#"{"users":4}"#),
         true,
     )
     .await;
@@ -1265,9 +1265,9 @@ async fn test_control_users_during_plan_ramp_down() {
     );
     assert_eq!(users_body["command"], "users");
     assert_eq!(users_body["phase"], "decrease");
-    assert_eq!(users_body["target_users"], 8);
+    assert_eq!(users_body["target_users"], 4);
 
-    // The new count replaces the rest of the plan: hold 8 users.
+    // The new count replaces the rest of the plan: hold 4 users.
     let held = wait_for_phase(
         &client,
         &base,
@@ -1276,7 +1276,7 @@ async fn test_control_users_during_plan_ramp_down() {
         Duration::from_secs(30),
     )
     .await;
-    assert_eq!(held["target_users"], 8, "maintain after users: {}", held);
+    assert_eq!(held["target_users"], 4, "maintain after users: {}", held);
     assert_eq!(held["stopping"], false);
 
     load.abort().await;
