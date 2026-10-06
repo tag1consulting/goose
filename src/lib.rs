@@ -3135,7 +3135,10 @@ fn schedule_unsequenced_transactions(
 mod tests {
     use super::*;
 
+    // Serial with every test that calls `initialize_attack`: installing the
+    // Ctrl-C handler a second time resets the killswitch this test reads.
     #[tokio::test]
+    #[serial_test::serial]
     async fn test_killswitch_functions() {
         // Reset the killswitch state for testing
         *CANCELED.write().unwrap() = false;
@@ -3173,6 +3176,7 @@ mod tests {
     /// Users is refused while a cancel ramps the run down, accepted during a
     /// test plan's own ramp down, and accepted again once the run is Idle.
     #[tokio::test]
+    #[serial_test::serial]
     async fn test_set_users_refused_while_stopping() {
         let configuration =
             GooseConfiguration::parse_args_default(&["--no-telnet", "--no-websocket"]).unwrap();
@@ -3214,6 +3218,106 @@ mod tests {
         assert!(!run_state.stopping);
         let outcome = goose_attack.control_set_users(&mut run_state, 5).unwrap();
         assert!(outcome.ok, "idle must accept users: {:?}", outcome);
+    }
+
+    /// A controller `shutdown` while idle cancels nothing, but the run is
+    /// stopping all the same: Users is refused until it shuts down.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_shutdown_while_idle_sets_stopping() {
+        use crate::controller::{ControllerCommand, ControllerRequestMessage};
+
+        let configuration =
+            GooseConfiguration::parse_args_default(&["--no-telnet", "--no-websocket"]).unwrap();
+        let mut goose_attack = GooseAttack::initialize_with_config(configuration).unwrap();
+        let mut run_state = goose_attack.initialize_attack().await.unwrap();
+        let (controller_tx, controller_rx) = flume::unbounded();
+        run_state.controller_channel_rx = Some(controller_rx);
+
+        controller_tx
+            .send(ControllerRequest {
+                response_channel: None,
+                client_id: 0,
+                request: ControllerRequestMessage {
+                    command: ControllerCommand::Shutdown,
+                    value: None,
+                },
+            })
+            .unwrap();
+        goose_attack
+            .handle_controller_requests(&mut run_state)
+            .await
+            .unwrap();
+        assert_eq!(goose_attack.attack_phase, AttackPhase::Decrease);
+        // Checked before Users: without the flag, Users would grow the run
+        // from zero users and this attack has no scenarios to launch.
+        assert!(run_state.stopping);
+        let outcome = goose_attack.control_set_users(&mut run_state, 5).unwrap();
+        assert!(!outcome.ok, "shutdown must refuse users: {:?}", outcome);
+        assert_eq!(outcome.error, Some("invalid_phase"));
+    }
+
+    /// Every snapshot the main loop serves carries the stopping flag: the one
+    /// forwarded to the metrics processor, the local fallback when the
+    /// processor is gone, and the one flushed before a control batch.
+    #[cfg(feature = "dashboard")]
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_dashboard_snapshot_carries_stopping() {
+        let configuration =
+            GooseConfiguration::parse_args_default(&["--no-telnet", "--no-websocket"]).unwrap();
+        let mut goose_attack = GooseAttack::initialize_with_config(configuration).unwrap();
+        let mut run_state = goose_attack.initialize_attack().await.unwrap();
+        let (dashboard_tx, dashboard_rx) = flume::unbounded();
+        run_state.dashboard_channel_rx = Some(dashboard_rx);
+        let (metrics_cmd_tx, metrics_cmd_rx) = flume::unbounded();
+        run_state.metrics_cmd_tx = metrics_cmd_tx;
+        run_state.stopping = true;
+
+        // Forwarded to the metrics processor.
+        let (respond, _snapshot_rx) = tokio::sync::oneshot::channel();
+        dashboard_tx
+            .send(dashboard::DashboardRequest::GetSnapshot { respond })
+            .unwrap();
+        goose_attack
+            .handle_dashboard_requests(&mut run_state)
+            .await
+            .unwrap();
+        match metrics_cmd_rx.try_recv() {
+            Ok(MetricsCommand::GetDashboardSnapshot { stopping, .. }) => assert!(stopping),
+            other => panic!(
+                "expected a forwarded snapshot request, got {:?}",
+                other.is_ok()
+            ),
+        }
+
+        // Processor gone: served from main-loop state.
+        drop(metrics_cmd_rx);
+        let (respond, snapshot_rx) = tokio::sync::oneshot::channel();
+        dashboard_tx
+            .send(dashboard::DashboardRequest::GetSnapshot { respond })
+            .unwrap();
+        goose_attack
+            .handle_dashboard_requests(&mut run_state)
+            .await
+            .unwrap();
+        assert!(snapshot_rx.await.unwrap().stopping);
+
+        // Flushed before a control batch, which then refuses Users.
+        let (respond, snapshot_rx) = tokio::sync::oneshot::channel();
+        dashboard_tx
+            .send(dashboard::DashboardRequest::GetSnapshot { respond })
+            .unwrap();
+        let (respond, users_rx) = tokio::sync::oneshot::channel();
+        dashboard_tx
+            .send(dashboard::DashboardRequest::SetUsers { users: 5, respond })
+            .unwrap();
+        goose_attack
+            .handle_dashboard_requests(&mut run_state)
+            .await
+            .unwrap();
+        assert!(snapshot_rx.await.unwrap().stopping);
+        assert!(!users_rx.await.unwrap().ok);
     }
 
     #[test]
