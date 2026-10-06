@@ -1,6 +1,8 @@
 # Changelog
 
 ## 0.19.0-dev
+ - [#639](https://github.com/tag1consulting/goose/issues/639) only capture request headers when the request log, the debug log or the error log is enabled, skipping a string allocation per header on every request otherwise
+    o **behavior change**: `GooseRawRequest.headers` (for example `goose.request.raw.headers`, or the `raw_request` in `TransactionError::RequestFailed`) is now empty unless one of these logs is enabled; log output is unchanged
  - [#468](https://github.com/tag1consulting/goose/issues/468) replace `--hatch-rate` and `--startup-time` with `--increase-rate`, `--increase-time`, `--decrease-rate`, and `--decrease-time`
     o **breaking**: `--hatch-rate` / `-r` is now `--increase-rate` / `-r` (sets per-second rate users are added)
     o **breaking**: `--startup-time` / `-s` is now `--increase-time` / `-s` (sets total time to launch all users)
