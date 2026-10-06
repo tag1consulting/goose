@@ -1861,12 +1861,21 @@ impl GooseUser {
             }
         };
 
-        // Grab a copy of any headers set by this request, included in the request log
-        // and the debug log.
-        let mut headers: Vec<String> = Vec::new();
-        for header in built_request.headers() {
-            headers.push(format!("{header:?}"));
-        }
+        // Grab a copy of any headers set by this request, included in the request log,
+        // the debug log and the error log. Skip the formatting when none of those logs
+        // is enabled, as nothing else reads them.
+        let headers: Vec<String> = if !self.config.request_log.is_empty()
+            || !self.config.debug_log.is_empty()
+            || !self.config.error_log.is_empty()
+        {
+            let mut headers = Vec::with_capacity(built_request.headers().len());
+            for header in built_request.headers() {
+                headers.push(format!("{header:?}"));
+            }
+            headers
+        } else {
+            Vec::new()
+        };
 
         // If enabled, grab a copy of the request body, included in the request log and
         // the debug log.

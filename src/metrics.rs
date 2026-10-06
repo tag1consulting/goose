@@ -600,6 +600,9 @@ pub struct GooseRawRequest {
     /// The full URL that was requested.
     pub url: String,
     /// Any headers set by the client when making the request.
+    ///
+    /// Only captured when the request log, the debug log or the error log is enabled,
+    /// as these are the only consumers. Empty otherwise.
     pub headers: Vec<String>,
     /// The body of the request made, if `--request-body` is enabled.
     pub body: String,
