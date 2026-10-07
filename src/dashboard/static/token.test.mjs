@@ -99,7 +99,9 @@ function newTabOf(window) {
 // Load the dashboard at `path` with the browser storage `from` against a stub
 // server (`serverToken` and `options` as in stubServer), and let its startup
 // requests finish. `blockStorage` makes every sessionStorage access throw, as a
-// browser does when site data is blocked.
+// browser does when site data is blocked. jsdom has no EventSource, so the
+// client polls; `eventSource` installs one that fails at once, as a browser's
+// does when the server answers 401, so the client takes its SSE error path.
 async function openPage(path, from, serverToken, options = {}) {
   const dom = new JSDOM(INDEX_HTML, {
     url: ORIGIN + path,
@@ -119,6 +121,17 @@ async function openPage(path, from, serverToken, options = {}) {
         throw new window.DOMException("blocked", "SecurityError");
       },
     });
+  }
+  if (options.eventSource) {
+    window.EventSource = class {
+      static CLOSED = 2;
+      constructor() {
+        this.readyState = 2;
+        window.setTimeout(() => this.onerror && this.onerror(), 0);
+      }
+      addEventListener() {}
+      close() {}
+    };
   }
   const server = stubServer(serverToken, options);
   window.fetch = server.fetch;
@@ -209,6 +222,16 @@ test("a metrics 401 clears the stored token so a reload does not resend it", asy
   }
 });
 
+test("a 401 on the SSE path clears the stored token", async () => {
+  const first = await openPage("/?token=s3cret", FRESH, "s3cret");
+  const stale = await openPage("/", reloadOf(first.window), "rotated", {
+    eventSource: true,
+  });
+  assert.equal(snapshotTokens(stale.requests)[0], "s3cret");
+  assert.ok(bannerText(stale.window).includes(METRICS_BANNER));
+  assert.deepEqual(dump(stale.window.sessionStorage), {});
+});
+
 test("a control 401 clears the stored token", async () => {
   const page = await openPage("/?token=s3cret", FRESH, "s3cret", {
     controlEnabled: true,
@@ -277,4 +300,12 @@ test("blocked storage leaves the URL token working for this page", async () => {
     assert.equal(t, "s3cret");
   }
   assert.equal(bannerText(page.window), "");
+});
+
+test("blocked storage on a bare URL still shows the 401 banner", async () => {
+  const page = await openPage("/", FRESH, "s3cret", { blockStorage: true });
+  for (const t of snapshotTokens(page.requests)) {
+    assert.equal(t, null);
+  }
+  assert.ok(bannerText(page.window).includes(METRICS_BANNER));
 });
