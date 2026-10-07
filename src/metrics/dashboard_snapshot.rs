@@ -792,33 +792,88 @@ mod tests {
         types
     }
 
-    /// Asserts that `value`, serialized by serde, has exactly the keys the
-    /// generated declaration `ty` names, recursing into nested structs.
+    /// Asserts that `value`, serialized by serde, has the shape of the
+    /// TypeScript type `ty`: the right JSON type for every leaf, and exactly
+    /// the declared keys for every struct, recursing into nested values.
+    /// Records the name of every struct it reaches in `reached`.
     fn assert_matches_declaration(
         types: &BTreeMap<String, Vec<(String, String)>>,
         ty: &str,
         value: &serde_json::Value,
         at: &str,
+        reached: &mut std::collections::BTreeSet<String>,
     ) {
-        if let Some(item) = ty.strip_prefix("Array<").and_then(|t| t.strip_suffix('>')) {
-            for (i, element) in value.as_array().expect(at).iter().enumerate() {
-                assert_matches_declaration(types, item, element, &format!("{}[{}]", at, i));
+        if let Some(inner) = ty.strip_suffix(" | null") {
+            if !value.is_null() {
+                assert_matches_declaration(types, inner, value, at, reached);
             }
-        } else if let Some(fields) = types.get(ty) {
-            let object = value.as_object().expect(at);
-            let sent: Vec<&str> = object.keys().map(String::as_str).collect();
-            let mut declared: Vec<&str> = fields.iter().map(|(k, _)| k.as_str()).collect();
-            declared.sort_unstable();
-            assert_eq!(sent, declared, "keys of {} ({})", at, ty);
-            for (key, field_ty) in fields {
+        } else if let Some(item) = ty.strip_prefix("Array<").and_then(|t| t.strip_suffix('>')) {
+            for (i, element) in value.as_array().expect(at).iter().enumerate() {
                 assert_matches_declaration(
                     types,
-                    field_ty,
-                    &object[key],
-                    &format!("{}.{}", at, key),
+                    item,
+                    element,
+                    &format!("{}[{}]", at, i),
+                    reached,
                 );
             }
+        } else if let Some(items) = ty.strip_prefix('[').and_then(|t| t.strip_suffix(']')) {
+            let items: Vec<&str> = items.split(", ").collect();
+            let array = value.as_array().expect(at);
+            assert_eq!(array.len(), items.len(), "tuple length at {}", at);
+            for (i, (item, element)) in items.iter().zip(array).enumerate() {
+                assert_matches_declaration(types, item, element, &format!("{}.{}", at, i), reached);
+            }
+        } else if let Some(fields) = types.get(ty) {
+            reached.insert(ty.to_string());
+            let object = value.as_object().expect(at);
+            for key in object.keys() {
+                assert!(
+                    fields.iter().any(|(k, _)| k.trim_end_matches('?') == key),
+                    "{}.{} is sent but not declared in {}",
+                    at,
+                    key,
+                    ty
+                );
+            }
+            for (key, field_ty) in fields {
+                let optional = key.ends_with('?');
+                let key = key.trim_end_matches('?');
+                match object.get(key) {
+                    Some(field) => assert_matches_declaration(
+                        types,
+                        field_ty,
+                        field,
+                        &format!("{}.{}", at, key),
+                        reached,
+                    ),
+                    None => assert!(optional, "{}.{} is declared but not sent", at, key),
+                }
+            }
+        } else {
+            let matches = match ty {
+                "number" => value.is_number(),
+                "string" => value.is_string(),
+                "boolean" => value.is_boolean(),
+                _ => panic!("{}: no check for TypeScript type {}", at, ty),
+            };
+            assert!(matches, "{} is {} but declared {}", at, value, ty);
         }
+    }
+
+    #[test]
+    fn snapshot_structs_have_no_serde_attributes() {
+        // ts-rs ignores serde attributes such as `serialize_with`, or
+        // `skip_serializing_if` without `default`, so they could change the
+        // JSON without changing the generated types. The needle is split so
+        // this test's own source does not match it.
+        let source = include_str!("dashboard_snapshot.rs");
+        let structs = source.split("#[cfg(test)]").next().expect("source");
+        assert!(
+            !structs.contains(concat!("#[", "serde(")),
+            "a serde attribute on a snapshot struct needs its generated type and \
+             serialized_snapshot_matches_declarations checked by hand"
+        );
     }
 
     #[test]
@@ -855,6 +910,7 @@ mod tests {
         // Populated, the `--no-metrics` early return, and empty (so a field
         // serde skips when empty is caught too).
         let empty = empty_metrics();
+        let mut reached = std::collections::BTreeSet::new();
         let cases = [
             (&metrics, series.clone(), false),
             (&metrics, series, true),
@@ -864,10 +920,10 @@ mod tests {
             let snap = build_dashboard_snapshot(DashboardSnapshotInput {
                 metrics,
                 series,
-                active_users: 1,
-                maximum_users: 1,
-                target_users: 1,
-                total_users: 1,
+                active_users: 2,
+                maximum_users: 3,
+                target_users: 4,
+                total_users: 5,
                 phase: "maintain".to_string(),
                 series_window_secs: 60,
                 no_status_codes: false,
@@ -880,7 +936,17 @@ mod tests {
             assert_eq!(!snap.errors.is_empty(), populated);
             assert_eq!(!snap.series.rps.is_empty(), populated);
             let value = serde_json::to_value(&snap).expect("serialize snapshot");
-            assert_matches_declaration(&types, "DashboardSnapshot", &value, "snapshot");
+            assert_matches_declaration(
+                &types,
+                "DashboardSnapshot",
+                &value,
+                "snapshot",
+                &mut reached,
+            );
         }
+        // The populated case must reach every declared struct, so a new one
+        // the fixture leaves empty does not go unchecked.
+        let declared: std::collections::BTreeSet<String> = types.keys().cloned().collect();
+        assert_eq!(reached, declared);
     }
 }

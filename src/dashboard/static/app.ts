@@ -1006,12 +1006,10 @@
     snap: DashboardSnapshot,
     modeLabel?: ConnectionMode | string
   ): void {
-
     const flags = snap.flags;
     lastFlags = flags;
     setPhase(snap.phase);
-    hostsEl.textContent =
-      snap.hosts.length ? snap.hosts.join(", ") : "—";
+    hostsEl.textContent = snap.hosts.length ? snap.hosts.join(", ") : "—";
     durationEl.textContent = formatDuration(snap.duration_secs);
 
     // active / target (not peak maximum_users — that stays equal during ramp).
