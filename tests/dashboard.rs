@@ -630,6 +630,69 @@ async fn test_dashboard_binds_localhost() {
     let _ = load_handle.await.expect("join").expect("execute");
 }
 
+/// Send one `GET path` with the given `Host` on a new connection and return
+/// the raw response.
+async fn get_with_host(port: u16, path: &str, host: &str) -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("connect");
+    let request = format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n");
+    stream.write_all(request.as_bytes()).await.expect("write");
+    let mut buf = Vec::new();
+    let _ = tokio::time::timeout(Duration::from_secs(2), stream.read_to_end(&mut buf)).await;
+    String::from_utf8_lossy(&buf).into_owned()
+}
+
+/// Regression for #697: on a loopback bind with no token, a page that rebinds
+/// its own domain to 127.0.0.1 gets 403 instead of metrics, and every response
+/// carries `no-store`, `nosniff` and `no-referrer`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn test_dashboard_refuses_rebound_host() {
+    let server = MockServer::start();
+    let _mocks = setup_mock_endpoints(&server);
+    let port = reserve_port();
+    let base_v4 = format!("http://127.0.0.1:{port}");
+
+    let configuration = build_dashboard_config(&server, "127.0.0.1", port, None);
+    assert!(configuration.dashboard_auth_token.is_empty());
+    let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
+    let load_handle = tokio::spawn(async move { goose_attack.execute().await });
+    wait_for_health(&[&base_v4], 80).await;
+
+    for path in ["/api/v1/snapshot", "/api/v1/events", "/"] {
+        let reply = get_with_host(port, path, &format!("rebind.example:{port}")).await;
+        assert!(
+            reply.starts_with("HTTP/1.1 403"),
+            "{} with a rebound Host must get 403, got {:?}",
+            path,
+            reply
+        );
+    }
+
+    let reply = get_with_host(port, "/api/v1/snapshot", &format!("localhost:{port}")).await;
+    assert!(
+        reply.starts_with("HTTP/1.1 200"),
+        "a loopback Host must be served, got {:?}",
+        reply
+    );
+    for line in [
+        "cache-control: no-store\r\n",
+        "x-content-type-options: nosniff\r\n",
+        "referrer-policy: no-referrer\r\n",
+    ] {
+        assert!(
+            reply.contains(line),
+            "snapshot must carry {:?}: {:?}",
+            line,
+            reply
+        );
+    }
+
+    let _ = load_handle.await.expect("join").expect("execute");
+}
+
 // ---------------------------------------------------------------------------
 // Dashboard control HTTP integration tests (design cases 1–9; case 10 = units)
 // ---------------------------------------------------------------------------
