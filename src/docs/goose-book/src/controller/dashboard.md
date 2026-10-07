@@ -36,6 +36,8 @@ Defaults can also be set programmatically with `GooseDefault::Dashboard`, `Goose
 
 > **Feature flag:** the HTTP server is compiled behind the opt-in `dashboard` crate feature (not in default features, same pattern as `pdf-reports`). Enable it with `--features dashboard`. Builds without that feature reject `--dashboard` at startup with a clear rebuild hint.
 
+The server lives as long as the load test. When `GooseAttack::execute()` returns, whether the run finished or failed, connected browsers receive `event: closed`, open connections get up to one second to finish, and the listener and every connection are closed before `execute()` returns, so a program can run another `GooseAttack` on the same port right away.
+
 ### Observe vs control at a glance
 
 | Capability | Live Dashboard (observe) | Live Dashboard + control | Controllers (telnet / WebSocket) |

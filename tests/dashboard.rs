@@ -1273,3 +1273,200 @@ async fn test_dashboard_series_without_report_file() {
 
     let _metrics = load.join().await.expect("load test execute");
 }
+
+/// Send one keep-alive `GET /api/v1/health` on `stream` and return the
+/// response, or `None` if the connection is closed or gives no complete
+/// response within two seconds.
+async fn health_on(stream: &mut tokio::net::TcpStream) -> Option<String> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let request = "GET /api/v1/health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
+    stream.write_all(request.as_bytes()).await.ok()?;
+    let mut buf = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let text = String::from_utf8_lossy(&buf).to_string();
+        if let Some((head, body)) = text.split_once("\r\n\r\n") {
+            let length = head
+                .lines()
+                .find_map(|l| l.strip_prefix("content-length: "))
+                .and_then(|v| v.trim().parse::<usize>().ok())?;
+            if body.len() >= length {
+                return Some(text);
+            }
+        }
+        let mut chunk = [0u8; 1024];
+        let left = deadline.checked_duration_since(Instant::now())?;
+        match tokio::time::timeout(left, stream.read(&mut chunk)).await {
+            Ok(Ok(n)) if n > 0 => buf.extend_from_slice(&chunk[..n]),
+            _ => return None,
+        }
+    }
+}
+
+/// Assert that nothing on `port` answers: a new connection is refused, the
+/// keep-alive connection gets no response, and the port can be bound again.
+async fn assert_dashboard_stopped(port: u16, keep_alive: &mut tokio::net::TcpStream) {
+    assert!(
+        tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .is_err(),
+        "dashboard must not accept connections after execute() returns"
+    );
+    assert_eq!(
+        health_on(keep_alive).await,
+        None,
+        "keep-alive connection must not be served after execute() returns"
+    );
+    drop(
+        tokio::net::TcpListener::bind(("127.0.0.1", port))
+            .await
+            .expect("dashboard port must be free after execute() returns"),
+    );
+}
+
+/// Run one short attack on `port`, open a keep-alive connection to the
+/// dashboard while it runs, and return that connection after `execute()`.
+async fn attack_with_keep_alive(server: &MockServer, port: u16) -> tokio::net::TcpStream {
+    let mut configuration = build_dashboard_config(server, "127.0.0.1", port, None);
+    configuration.run_time = "2".to_string();
+    let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
+    let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
+
+    let base = format!("http://127.0.0.1:{port}");
+    let _ = wait_for_health(&[&base], 80).await;
+    let mut keep_alive = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("connect to dashboard");
+    let first = health_on(&mut keep_alive)
+        .await
+        .expect("health answers during the attack");
+    assert!(first.starts_with("HTTP/1.1 200"), "{}", first);
+
+    let _metrics = load.join().await.expect("load test execute");
+    keep_alive
+}
+
+/// Regression for #695: two attacks back to back on one port in one
+/// runtime. The second binds, and the dashboard stops answering when each
+/// `execute()` returns, on a new connection and on a keep-alive one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn test_dashboard_stops_when_execute_returns() {
+    let server = MockServer::start();
+    let _mocks = setup_mock_endpoints(&server);
+    let port = reserve_port();
+
+    let mut keep_alive = attack_with_keep_alive(&server, port).await;
+    assert_dashboard_stopped(port, &mut keep_alive).await;
+
+    let mut keep_alive = attack_with_keep_alive(&server, port).await;
+    assert_dashboard_stopped(port, &mut keep_alive).await;
+}
+
+/// Write a request whose body never arrives, so the dashboard connection is
+/// busy (the handler waits for the body) rather than idle.
+async fn stalled_request(port: u16) -> tokio::net::TcpStream {
+    use tokio::io::AsyncWriteExt;
+    let mut stalled = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("connect to dashboard");
+    stalled
+        .write_all(
+            b"POST /api/v1/control/users HTTP/1.1\r\nHost: 127.0.0.1\r\n\
+              Content-Length: 100\r\n\r\n{",
+        )
+        .await
+        .expect("write partial request");
+    stalled
+}
+
+/// Assert `stalled` is already closed: `execute()` waited for the drain.
+async fn assert_closed_now(stalled: &mut tokio::net::TcpStream) {
+    use tokio::io::AsyncReadExt;
+    let mut chunk = [0u8; 64];
+    let read = tokio::time::timeout(Duration::from_millis(100), stalled.read(&mut chunk)).await;
+    assert!(
+        matches!(read, Ok(Ok(0)) | Ok(Err(_))),
+        "busy connection must be closed when execute() returns, got {:?}",
+        read
+    );
+}
+
+/// `execute()` waits for the dashboard drain: a connection stuck in a request
+/// is already closed when `execute()` returns.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn test_execute_waits_for_dashboard_drain() {
+    let server = MockServer::start();
+    let _mocks = setup_mock_endpoints(&server);
+    let port = reserve_port();
+    let configuration = build_control_config(
+        &server,
+        "127.0.0.1",
+        port,
+        ControlTestOpts {
+            users: 1,
+            increase_rate: "1",
+            run_time: "2",
+            no_autostart: false,
+            ..ControlTestOpts::default()
+        },
+    );
+    let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
+    let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
+
+    let base = format!("http://127.0.0.1:{port}");
+    let _ = wait_for_health(&[&base], 80).await;
+    let mut stalled = stalled_request(port).await;
+
+    let _metrics = load.join().await.expect("load test execute");
+    assert_closed_now(&mut stalled).await;
+}
+
+async fn slow_test_start(_user: &mut GooseUser) -> TransactionResult {
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    Ok(())
+}
+
+/// The dashboard also stops when `execute()` returns an error from the phase
+/// loop: here the report file cannot be created, which fails after the
+/// (slow) test_start transaction, so the test can connect first.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn test_dashboard_stops_when_execute_fails() {
+    let server = MockServer::start();
+    let _mocks = setup_mock_endpoints(&server);
+    let port = reserve_port();
+
+    let mut configuration = build_control_config(
+        &server,
+        "127.0.0.1",
+        port,
+        ControlTestOpts {
+            no_autostart: false,
+            ..ControlTestOpts::default()
+        },
+    );
+    configuration.report_file = vec!["/nonexistent-goose-dir/report.html".to_string()];
+    let start = transaction!(slow_test_start);
+    let goose_attack =
+        common::build_load_test(configuration, vec![get_transactions()], Some(&start), None);
+    let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
+
+    let base = format!("http://127.0.0.1:{port}");
+    let _ = wait_for_health(&[&base], 80).await;
+    let mut keep_alive = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("connect to dashboard");
+    assert!(health_on(&mut keep_alive).await.is_some());
+    let mut stalled = stalled_request(port).await;
+
+    let result = load.join().await;
+    assert!(
+        matches!(result, Err(GooseError::InvalidOption { ref option, .. }) if option == "--report-file"),
+        "execute() must fail on the report file: {:?}",
+        result.map(|_| ())
+    );
+    assert_closed_now(&mut stalled).await;
+    assert_dashboard_stopped(port, &mut keep_alive).await;
+}

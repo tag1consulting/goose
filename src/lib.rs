@@ -426,6 +426,9 @@ struct GooseAttackRunState {
     /// Signals the dashboard SnapshotHub to emit SSE `event: closed` on final exit.
     #[cfg(feature = "dashboard")]
     dashboard_close_tx: Option<tokio::sync::watch::Sender<bool>>,
+    /// The dashboard HTTP server, stopped when the attack loop returns.
+    #[cfg(feature = "dashboard")]
+    dashboard_server: Option<dashboard::DashboardServer>,
     /// A flag tracking whether or not the header has been written when the metrics
     /// log is enabled.
     metrics_header_displayed: bool,
@@ -1451,12 +1454,13 @@ impl GooseAttack {
         Option<(
             flume::Receiver<dashboard::DashboardRequest>,
             tokio::sync::watch::Sender<bool>,
+            dashboard::DashboardServer,
         )>,
         GooseError,
     > {
         Ok(dashboard::setup_dashboard(&self.configuration)
             .await?
-            .map(|setup| (setup.request_rx, setup.close_tx)))
+            .map(|setup| (setup.request_rx, setup.close_tx, setup.server)))
     }
 
     /// Handle dashboard snapshot and control requests from the HTTP server task.
@@ -1786,10 +1790,11 @@ impl GooseAttack {
         // Optionally spawn the read-only live dashboard HTTP server.
         // Bind failure aborts attack init when --dashboard is set.
         #[cfg(feature = "dashboard")]
-        let (dashboard_channel_rx, dashboard_close_tx) = match self.setup_dashboard().await? {
-            Some((rx, close_tx)) => (Some(rx), Some(close_tx)),
-            None => (None, None),
-        };
+        let (dashboard_channel_rx, dashboard_close_tx, dashboard_server) =
+            match self.setup_dashboard().await? {
+                Some((rx, close_tx, server)) => (Some(rx), Some(close_tx), Some(server)),
+                None => (None, None, None),
+            };
 
         // Grab now() once from the standard library, used by multiple timers in
         // the run state.
@@ -1843,6 +1848,8 @@ impl GooseAttack {
             dashboard_channel_rx,
             #[cfg(feature = "dashboard")]
             dashboard_close_tx,
+            #[cfg(feature = "dashboard")]
+            dashboard_server,
             metrics_header_displayed: false,
             idle_status_displayed: false,
             users: Vec::new(),
@@ -2677,8 +2684,25 @@ impl GooseAttack {
         // should get a structured Result.
         let mut goose_attack_run_state = self.initialize_attack().await?;
 
-        // The Goose parent process GooseAttack loop runs until Goose shuts down. Goose enters
-        // the loop in AttackPhase::Idle, and exits in AttackPhase::Shutdown.
+        let result = self.run_attack(&mut goose_attack_run_state).await;
+
+        // Stop the dashboard server on every return path, including errors
+        // from the phase loop, and wait for it so the port is free when
+        // `execute()` returns.
+        #[cfg(feature = "dashboard")]
+        if let Some(server) = goose_attack_run_state.dashboard_server.take() {
+            server.shutdown().await;
+        }
+
+        result.map(|()| self)
+    }
+
+    /// The parent process GooseAttack loop: runs until Goose shuts down. Goose
+    /// enters the loop in AttackPhase::Idle, and exits in AttackPhase::Shutdown.
+    async fn run_attack(
+        &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+    ) -> Result<(), GooseError> {
         loop {
             match self.attack_phase {
                 // In the Idle phase the Goose configuration can be changed by a Controller,
@@ -2701,23 +2725,23 @@ impl GooseAttack {
                         }
                     } else {
                         // Prepare to start the load test, resetting timers and counters.
-                        self.reset_run_state(&mut goose_attack_run_state).await?;
+                        self.reset_run_state(goose_attack_run_state).await?;
                         self.metrics
                             .history
                             .push(TestPlanHistory::step(TestPlanStepAction::Increasing, 0));
                         //self.graph_data.set_starting(Utc::now());
-                        self.set_attack_phase(&mut goose_attack_run_state, AttackPhase::Increase);
+                        self.set_attack_phase(goose_attack_run_state, AttackPhase::Increase);
                     }
                 }
                 // In the Increase phase, Goose launches GooseUser threads.
                 AttackPhase::Increase => {
                     self.update_duration();
-                    self.increase_attack(&mut goose_attack_run_state).await?;
+                    self.increase_attack(goose_attack_run_state).await?;
                 }
                 // In the Maintain phase, Goose continues runnning all launched GooseUser threads.
                 AttackPhase::Maintain => {
                     self.update_duration();
-                    self.maintain_attack(&mut goose_attack_run_state).await?;
+                    self.maintain_attack(goose_attack_run_state).await?;
                 }
                 // In the Decrease phase, Goose stops GooseUser threads.
                 AttackPhase::Decrease => {
@@ -2725,7 +2749,7 @@ impl GooseAttack {
                     // has been running.
                     self.update_duration();
                     // Reduce the number of GooseUsers running.
-                    self.decrease_attack(&mut goose_attack_run_state).await?;
+                    self.decrease_attack(goose_attack_run_state).await?;
                 }
                 // By reaching the Shutdown phase, break out of the GooseAttack loop.
                 AttackPhase::Shutdown => {
@@ -2753,15 +2777,15 @@ impl GooseAttack {
 
             // Check if it's time to display running metrics, sending a command
             // to the dedicated metrics processor task if so.
-            self.sync_metrics(&mut goose_attack_run_state);
+            self.sync_metrics(goose_attack_run_state);
 
             // Check if a Controller has made a request.
-            self.handle_controller_requests(&mut goose_attack_run_state)
+            self.handle_controller_requests(goose_attack_run_state)
                 .await?;
 
             // Check if the dashboard has requested a snapshot.
             #[cfg(feature = "dashboard")]
-            self.handle_dashboard_requests(&mut goose_attack_run_state)
+            self.handle_dashboard_requests(goose_attack_run_state)
                 .await?;
 
             let mut message = goose_attack_run_state.shutdown_rx.try_recv();
@@ -2772,7 +2796,7 @@ impl GooseAttack {
 
                 // In Stand-alone mode, all users are started.
                 if goose_attack_run_state.users_shutdown.len() == self.test_plan.total_users() {
-                    self.cancel_attack(&mut goose_attack_run_state).await?;
+                    self.cancel_attack(goose_attack_run_state).await?;
                 }
 
                 message = goose_attack_run_state.shutdown_rx.try_recv();
@@ -2792,14 +2816,14 @@ impl GooseAttack {
                 }
 
                 // Cleanly stop the load test.
-                self.cancel_attack(&mut goose_attack_run_state).await?;
+                self.cancel_attack(goose_attack_run_state).await?;
 
                 // Load test is actively canceling.
                 goose_attack_run_state.canceling = true;
             }
         }
 
-        Ok(self)
+        Ok(())
     }
 }
 
