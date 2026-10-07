@@ -4,7 +4,9 @@
   "use strict";
 
   // ---------------------------------------------------------------------------
-  // API / snapshot types (mirror Rust DTOs in metrics/dashboard_snapshot.rs)
+  // API types. The snapshot types (DashboardSnapshot and the structs it
+  // holds) are global declarations in snapshot.d.ts, generated from
+  // src/metrics/dashboard_snapshot.rs; edit the Rust structs, not those types.
   // ---------------------------------------------------------------------------
 
   type ConnectionMode =
@@ -19,100 +21,50 @@
   type SortDir = "asc" | "desc";
   type SortType = "num" | "str";
 
-  interface SortState {
-    key: string;
+  interface SortState<K extends string> {
+    key: K;
     type: SortType;
     dir: SortDir;
   }
 
-  interface Percentiles {
-    p50?: number;
-    p95?: number;
-    p99?: number;
-  }
-
-  interface AggregateMetrics {
-    total_requests?: number;
-    total_failures?: number;
-    requests_per_second?: number;
-    failures_per_second?: number;
-    failure_rate?: number;
-    response_time_avg_ms?: number;
-    response_time_min_ms?: number;
-    response_time_max_ms?: number;
-    percentile_ms?: Percentiles;
-    co_active?: boolean;
-  }
-
-  interface RequestRowRaw {
-    method?: string;
-    name?: string;
-    request_count?: number;
-    failure_count?: number;
-    requests_per_second?: number;
-    failures_per_second?: number;
-    response_time_avg_ms?: number;
-    response_time_min_ms?: number;
-    response_time_max_ms?: number;
-    percentile_ms?: Percentiles;
-    status_codes?: Array<[number, number]>;
-  }
-
+  /** One row of the requests table: a RequestRow with its percentiles inlined. */
   interface FlatRequestRow {
-    method: string | undefined;
-    name: string | undefined;
-    request_count: number | undefined;
-    failure_count: number | undefined;
-    requests_per_second: number | undefined;
-    response_time_avg_ms: number | undefined;
-    p50: number | undefined;
-    p95: number | undefined;
-    p99: number | undefined;
-    [key: string]: string | number | undefined;
+    method: string;
+    name: string;
+    request_count: number;
+    failure_count: number;
+    requests_per_second: number;
+    response_time_avg_ms: number;
+    p50: number;
+    p95: number;
+    p99: number;
   }
 
-  interface ErrorRow {
-    method?: string;
-    name?: string;
-    error?: string;
-    occurrences?: number;
-    [key: string]: string | number | undefined;
-  }
+  type RequestSortKey = keyof FlatRequestRow;
+  type ErrorSortKey = keyof ErrorRow;
 
-  interface SeriesWindow {
-    start_second?: number;
-    rps?: number[];
-    fps?: number[];
-    users?: number[];
-    avg_latency_ms?: number[];
-  }
+  // Column keys a table header's data-sort attribute may name.
+  const REQUEST_SORT_KEYS: readonly RequestSortKey[] = [
+    "method",
+    "name",
+    "request_count",
+    "failure_count",
+    "requests_per_second",
+    "response_time_avg_ms",
+    "p50",
+    "p95",
+    "p99",
+  ];
+  const ERROR_SORT_KEYS: readonly ErrorSortKey[] = [
+    "method",
+    "name",
+    "error",
+    "occurrences",
+  ];
 
-  interface SnapshotFlags {
-    metrics_disabled?: boolean;
-    requests_truncated?: boolean;
-    errors_truncated?: boolean;
-    series_seconds?: number;
-  }
-
-  interface DashboardSnapshot {
-    version?: number;
-    generated_at?: string;
-    goose_version?: string;
-    phase?: string;
-    duration_secs?: number;
-    active_users?: number;
-    /** Peak concurrent users observed this run (high-water mark). */
-    maximum_users?: number;
-    /** Plan-step / control target the attack is ramping toward. */
-    target_users?: number;
-    total_users?: number;
-    hosts?: string[];
-    aggregate?: AggregateMetrics;
-    requests?: RequestRowRaw[];
-    errors?: ErrorRow[];
-    series?: SeriesWindow;
-    flags?: SnapshotFlags;
-  }
+  // Fails to compile when the Rust SNAPSHOT_VERSION changes, so a new wire
+  // format cannot ship without this client being reviewed against it.
+  const SNAPSHOT_VERSION: DashboardSnapshotVersion = 1;
 
   interface ControlResultBody {
     ok?: boolean;
@@ -244,9 +196,17 @@
   // Table state
   let requestRows: FlatRequestRow[] = [];
   let errorRows: ErrorRow[] = [];
-  let lastFlags: SnapshotFlags = {};
-  let reqSort: SortState = { key: "request_count", type: "num", dir: "desc" };
-  let errSort: SortState = { key: "occurrences", type: "num", dir: "desc" };
+  let lastFlags: SnapshotFlags | null = null;
+  let reqSort: SortState<RequestSortKey> = {
+    key: "request_count",
+    type: "num",
+    dir: "desc",
+  };
+  let errSort: SortState<ErrorSortKey> = {
+    key: "occurrences",
+    type: "num",
+    dir: "desc",
+  };
 
   // Charts
   let chartRps: DashboardChart | null = null;
@@ -845,19 +805,16 @@
     }
   }
 
-  function seriesHasData(series: SeriesWindow | null | undefined): boolean {
-    if (!series) return false;
-    const rps = series.rps || [];
-    const fps = series.fps || [];
-    const users = series.users || [];
-    const lat = series.avg_latency_ms || [];
+  function seriesHasData(series: SeriesWindow): boolean {
     return (
-      rps.length > 0 || fps.length > 0 || users.length > 0 || lat.length > 0
+      series.rps.length > 0 ||
+      series.fps.length > 0 ||
+      series.users.length > 0 ||
+      series.avg_latency_ms.length > 0
     );
   }
 
-  function updateCharts(series: SeriesWindow | null | undefined): void {
-    series = series || {};
+  function updateCharts(series: SeriesWindow): void {
     if (!chartsReady) {
       // One-shot warn when series data is present but Chart.js never loaded.
       if (!chartLoadWarned && seriesHasData(series)) {
@@ -867,12 +824,11 @@
       return;
     }
     ensureCharts();
-    const start =
-      typeof series.start_second === "number" ? series.start_second : 0;
-    const rps = series.rps || [];
-    const fps = series.fps || [];
-    const users = series.users || [];
-    const lat = series.avg_latency_ms || [];
+    const start = series.start_second;
+    const rps = series.rps;
+    const fps = series.fps;
+    const users = series.users;
+    const lat = series.avg_latency_ms;
     const len = Math.max(rps.length, fps.length, users.length, lat.length);
     const labels: string[] = [];
     for (let i = 0; i < len; i++) {
@@ -897,17 +853,17 @@
     }
   }
 
-  function sortRows<T extends Record<string, string | number | undefined>>(
+  function sortRows<T, K extends keyof T & string>(
     rows: T[],
-    sort: SortState
+    sort: SortState<K>
   ): T[] {
     const key = sort.key;
     const type = sort.type;
     const dir = sort.dir === "asc" ? 1 : -1;
     const copy = rows.slice();
     copy.sort((a, b) => {
-      let av: string | number | undefined = a[key];
-      let bv: string | number | undefined = b[key];
+      const av: unknown = a[key];
+      const bv: unknown = b[key];
       if (type === "num") {
         const an = typeof av === "number" ? av : 0;
         const bn = typeof bv === "number" ? bv : 0;
@@ -922,8 +878,8 @@
     return copy;
   }
 
-  function flattenRequest(r: RequestRowRaw): FlatRequestRow {
-    const p = r.percentile_ms || {};
+  function flattenRequest(r: RequestRow): FlatRequestRow {
+    const p = r.percentile_ms;
     return {
       method: r.method,
       name: r.name,
@@ -937,8 +893,7 @@
     };
   }
 
-  function renderRequestTable(flags?: SnapshotFlags): void {
-    flags = flags || lastFlags || {};
+  function renderRequestTable(flags: SnapshotFlags | null): void {
     const filter = (requestsFilter && requestsFilter.value
       ? requestsFilter.value
       : ""
@@ -961,7 +916,7 @@
       const td = document.createElement("td");
       td.colSpan = 9;
       td.className = "empty";
-      if (flags.metrics_disabled) {
+      if (flags && flags.metrics_disabled) {
         td.textContent =
           "Metrics disabled (--no-metrics). Charts and request tables are empty.";
       } else {
@@ -1023,10 +978,11 @@
     }
   }
 
-  function wireSort(
+  function wireSort<K extends string>(
     tableId: string,
-    getSort: () => SortState,
-    setSort: (s: SortState) => void,
+    keys: readonly K[],
+    getSort: () => SortState<K>,
+    setSort: (s: SortState<K>) => void,
     rerender: () => void
   ): void {
     const table = document.getElementById(tableId);
@@ -1037,8 +993,9 @@
     for (let i = 0; i < ths.length; i++) {
       const th = ths[i];
       th.addEventListener("click", () => {
-        const key = th.getAttribute("data-sort");
-        if (!key) return;
+        const attr = th.getAttribute("data-sort");
+        const key = keys.find((k) => k === attr);
+        if (key === undefined) return;
         const typeAttr = th.getAttribute("data-type") || "str";
         const type: SortType = typeAttr === "num" ? "num" : "str";
         const sort = getSort();
@@ -1066,7 +1023,7 @@
   ): void {
     if (!snap) return;
 
-    const flags = snap.flags || {};
+    const flags = snap.flags;
     lastFlags = flags;
     setPhase(snap.phase);
     hostsEl.textContent =
@@ -1080,10 +1037,10 @@
         : snap.maximum_users;
     kpiUsers.textContent =
       formatInt(snap.active_users) + " / " + formatInt(usersTarget);
-    const agg = snap.aggregate || {};
+    const agg = snap.aggregate;
     kpiRps.textContent = formatRate(agg.requests_per_second);
     kpiFail.textContent = formatPct(agg.failure_rate);
-    const p = agg.percentile_ms || {};
+    const p = agg.percentile_ms;
     kpiP95.textContent = formatInt(p.p95);
     kpiAvg.textContent = formatRate(agg.response_time_avg_ms);
 
@@ -1126,8 +1083,8 @@
       aggregateEl.appendChild(kv("Coordinated omission", "active"));
     }
 
-    requestRows = (snap.requests || []).map(flattenRequest);
-    errorRows = (snap.errors || []).slice();
+    requestRows = snap.requests.map(flattenRequest);
+    errorRows = snap.errors.slice();
     renderRequestTable(flags);
     renderErrorTable();
     updateCharts(snap.series);
@@ -1208,12 +1165,33 @@
     );
   }
 
+  // The JSON boundary: refuse a snapshot of another wire format version
+  // instead of rendering its fields as placeholders.
+  function checkSnapshot(data: unknown): DashboardSnapshot | null {
+    const version =
+      typeof data === "object" && data !== null
+        ? (data as { version?: unknown }).version
+        : undefined;
+    if (version !== SNAPSHOT_VERSION) {
+      setBanner(
+        "This page reads snapshot version " +
+          SNAPSHOT_VERSION +
+          " but the server sent " +
+          String(version) +
+          ". Reload the page.",
+        "error"
+      );
+      return null;
+    }
+    return data as DashboardSnapshot;
+  }
+
   function fetchSnapshotOnce(
     modeLabel?: string
   ): Promise<DashboardSnapshot | null> {
     if (authBlocked) return Promise.resolve(null);
     return fetch(snapshotUrl())
-      .then((res) => {
+      .then((res): Promise<unknown> | null => {
         if (res.status === 401) {
           showAuthMissing();
           return null;
@@ -1221,9 +1199,10 @@
         if (!res.ok) {
           throw new Error("HTTP " + res.status);
         }
-        return res.json() as Promise<DashboardSnapshot>;
+        return res.json();
       })
-      .then((snap) => {
+      .then((data) => {
+        const snap = data == null ? null : checkSnapshot(data);
         if (snap) {
           renderSnapshot(snap, modeLabel || "poll");
         }
@@ -1287,7 +1266,8 @@
 
     eventSource.addEventListener("snapshot", (ev: MessageEvent) => {
       try {
-        const snap = JSON.parse(ev.data) as DashboardSnapshot;
+        const snap = checkSnapshot(JSON.parse(ev.data));
+        if (!snap) return;
         sawSnapshot = true;
         sseErrorStreak = 0;
         usingPoll = false;
@@ -1363,6 +1343,7 @@
   // Wire UI controls
   wireSort(
     "requests-table",
+    REQUEST_SORT_KEYS,
     () => reqSort,
     (s) => {
       reqSort = s;
@@ -1373,6 +1354,7 @@
   );
   wireSort(
     "errors-table",
+    ERROR_SORT_KEYS,
     () => errSort,
     (s) => {
       errSort = s;

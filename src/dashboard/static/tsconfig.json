@@ -17,6 +17,6 @@
     "rootDir": ".",
     "newLine": "lf"
   },
-  "include": ["app.ts", "chart-global.d.ts"],
+  "include": ["app.ts", "chart-global.d.ts", "snapshot.d.ts"],
   "exclude": ["node_modules"]
 }

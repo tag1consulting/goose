@@ -72,3 +72,6 @@ httpmock = "0.8"
 nix = { version = "0.30", features = ["signal"] }
 rustls = "0.23"
 serial_test = "3.2"
+# Generates src/dashboard/static/snapshot.d.ts from the snapshot structs in a
+# unit test; a dev-dependency so no build gains it.
+ts-rs = { version = "12", features = ["chrono-impl"] }
