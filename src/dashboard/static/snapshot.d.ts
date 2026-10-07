@@ -12,7 +12,13 @@ type AggregateMetrics = { total_requests: number, total_failures: number, reques
  */
 co_active: boolean, };
 
-type DashboardSnapshot = { version: number, generated_at: string, goose_version: string, phase: string, duration_secs: number,
+type DashboardSnapshot = { version: number, generated_at: string, goose_version: string, phase: string,
+/**
+ * True while a cancel (Stop, `shutdown`, Ctrl-C) ramps the run down,
+ * until it reaches idle. A test plan's own ramp down leaves it false, so
+ * clients can tell the two `decrease` phases apart.
+ */
+stopping: boolean, duration_secs: number,
 /**
  * Users currently running (main-loop active count).
  */

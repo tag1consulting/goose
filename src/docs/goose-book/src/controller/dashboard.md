@@ -36,6 +36,8 @@ Defaults can also be set programmatically with `GooseDefault::Dashboard`, `Goose
 
 > **Feature flag:** the HTTP server is compiled behind the opt-in `dashboard` crate feature (not in default features, same pattern as `pdf-reports`). Enable it with `--features dashboard`. Builds without that feature reject `--dashboard` at startup with a clear rebuild hint.
 
+The server lives as long as the load test. When `GooseAttack::execute()` returns, whether the run finished or failed, connected browsers receive `event: closed`, open connections get up to one second to finish, and the listener and every connection are closed before `execute()` returns, so a program can run another `GooseAttack` on the same port right away.
+
 ### Observe vs control at a glance
 
 | Capability | Live Dashboard (observe) | Live Dashboard + control | Controllers (telnet / WebSocket) |
@@ -250,7 +252,9 @@ Logical rejections (wrong phase, prepare failure) return **HTTP 200** with `"ok"
 
 - **Stop** is disabled (cannot stop again mid-ramp)
 - **Start** stays disabled until phase is `idle` again
-- **Users** remains allowed (same as Controllers)
+- **Users** is refused until phase is `idle` again (the dashboard returns `"ok": false` with `invalid_phase`, a Controller replies false), so Users cannot turn a Stop back into a running load test
+
+The snapshot's `stopping` field is `true` from the Stop until `idle`; a Controller `shutdown` and Ctrl-C set it the same way. A test plan's own ramp down is also phase `decrease`, but `stopping` stays `false` and **Users** is accepted there.
 
 ### UI walkthrough (control panel)
 
@@ -259,7 +263,7 @@ When `health.control_enabled` is true and the SPA has a token:
 1. **Phase badge** still shows `idle` / `increase` / `maintain` / `decrease` / `shutdown`.
 2. **Start** is enabled only in `idle`.
 3. **Stop** is enabled in `increase` and `maintain` only.
-4. **Target users** — enter an absolute count and **Apply**, or use **−** / **+** with a configurable step (default 10). Active user count is a read-only label from the latest snapshot.
+4. **Target users**: enter an absolute count and **Apply**, or use **−** / **+** with a configurable step (default 10). Active user count is a read-only label from the latest snapshot. **Apply**, **−** and **+** are disabled while `stopping` is set.
 5. Status line shows server `message` on success, or an error banner on soft failure / 401 / 503.
 
 There is no process-shutdown button in the dashboard. Use a Controller `shutdown` command when you need to exit the Goose process.

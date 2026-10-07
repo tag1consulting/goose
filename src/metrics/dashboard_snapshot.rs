@@ -34,6 +34,10 @@ pub(crate) struct DashboardSnapshot {
     pub goose_version: String,
 
     pub phase: String,
+    /// True while a cancel (Stop, `shutdown`, Ctrl-C) ramps the run down,
+    /// until it reaches idle. A test plan's own ramp down leaves it false, so
+    /// clients can tell the two `decrease` phases apart.
+    pub stopping: bool,
     pub duration_secs: u64,
     /// Users currently running (main-loop active count).
     pub active_users: u64,
@@ -173,6 +177,8 @@ pub(crate) struct DashboardSnapshotInput<'a> {
     pub target_users: usize,
     pub total_users: usize,
     pub phase: String,
+    /// See [`DashboardSnapshot::stopping`].
+    pub stopping: bool,
     pub series_window_secs: u32,
     pub no_status_codes: bool,
     pub metrics_disabled: bool,
@@ -190,6 +196,7 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
             generated_at: Utc::now(),
             goose_version: env!("CARGO_PKG_VERSION").to_string(),
             phase: input.phase,
+            stopping: input.stopping,
             duration_secs: input.metrics.duration as u64,
             active_users: input.active_users as u64,
             maximum_users: input.maximum_users as u64,
@@ -302,6 +309,7 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
         generated_at: Utc::now(),
         goose_version: env!("CARGO_PKG_VERSION").to_string(),
         phase: input.phase,
+        stopping: input.stopping,
         duration_secs: duration as u64,
         active_users: input.active_users as u64,
         maximum_users: input.maximum_users as u64,
@@ -431,6 +439,7 @@ mod tests {
             target_users: 10,
             total_users: 10,
             phase: "idle".to_string(),
+            stopping: false,
             series_window_secs: SERIES_WINDOW_SECS,
             no_status_codes: false,
             metrics_disabled: false,
@@ -481,6 +490,7 @@ mod tests {
             target_users: 5,
             total_users: 5,
             phase: "maintain".to_string(),
+            stopping: false,
             series_window_secs: 60,
             no_status_codes: true,
             metrics_disabled: false,
@@ -515,6 +525,7 @@ mod tests {
             target_users: 0,
             total_users: 0,
             phase: "maintain".to_string(),
+            stopping: false,
             series_window_secs: 300,
             no_status_codes: false,
             metrics_disabled: false,
@@ -541,6 +552,7 @@ mod tests {
             target_users: 0,
             total_users: 0,
             phase: "maintain".to_string(),
+            stopping: false,
             series_window_secs: 300,
             no_status_codes: false,
             metrics_disabled: false,
@@ -567,6 +579,7 @@ mod tests {
             target_users: 10,
             total_users: 10,
             phase: "increase".to_string(),
+            stopping: false,
             series_window_secs: 300,
             no_status_codes: false,
             metrics_disabled: false,
@@ -618,6 +631,7 @@ mod tests {
             target_users: 10,
             total_users: 10,
             phase: "maintain".to_string(),
+            stopping: true,
             series_window_secs: 120,
             no_status_codes: false,
             metrics_disabled: true,
@@ -635,6 +649,7 @@ mod tests {
         assert!(!snap.aggregate.co_active);
         // Runtime context is still honest.
         assert_eq!(snap.phase, "maintain");
+        assert!(snap.stopping);
         assert_eq!(snap.duration_secs, 42);
         assert_eq!(snap.active_users, 7);
         assert_eq!(snap.target_users, 10);

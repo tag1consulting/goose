@@ -350,6 +350,8 @@ pub(crate) enum MetricsCommand {
         series_elapsed_secs: usize,
         /// String form of AttackPhase: "idle"|"increase"|"maintain"|"decrease"|"shutdown".
         phase: String,
+        /// `GooseAttackRunState.stopping`: a cancel is ramping the run down.
+        stopping: bool,
         series_window_secs: u32,
         respond: tokio::sync::oneshot::Sender<DashboardSnapshot>,
     },
@@ -3416,6 +3418,7 @@ impl MetricsProcessor {
                 target_users,
                 series_elapsed_secs,
                 phase,
+                stopping,
                 series_window_secs,
                 respond,
             } => {
@@ -3442,6 +3445,7 @@ impl MetricsProcessor {
                         target_users,
                         total_users,
                         phase,
+                        stopping,
                         series_window_secs,
                         no_status_codes: self.configuration.no_status_codes,
                         metrics_disabled: self.configuration.no_metrics,
@@ -5410,6 +5414,7 @@ mod test {
             // series clock "now" past the request sample at second 1
             series_elapsed_secs: 5,
             phase: "maintain".to_string(),
+            stopping: true,
             series_window_secs: dashboard_snapshot::SERIES_WINDOW_SECS,
             respond: respond_tx,
         });
@@ -5418,6 +5423,7 @@ mod test {
         let snapshot = respond_rx.await.expect("snapshot response");
         assert_eq!(snapshot.version, 1);
         assert_eq!(snapshot.phase, "maintain");
+        assert!(snapshot.stopping);
         assert_eq!(snapshot.duration_secs, 10);
         assert_eq!(snapshot.active_users, 3);
         assert_eq!(snapshot.maximum_users, 10);
