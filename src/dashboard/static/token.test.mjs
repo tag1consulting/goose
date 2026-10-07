@@ -88,7 +88,12 @@ function dump(storage) {
   return out;
 }
 
+// The storage a reload of this tab starts with, after the events a browser
+// fires on the page being unloaded.
 function reloadOf(window) {
+  for (const type of ["beforeunload", "pagehide", "unload"]) {
+    window.dispatchEvent(new window.Event(type));
+  }
   return { session: dump(window.sessionStorage), local: dump(window.localStorage) };
 }
 
@@ -179,6 +184,12 @@ test("the token survives a reload of the same tab", async () => {
     !bannerText(reload.window).includes(METRICS_BANNER),
     "no 401 banner after the reload: " + bannerText(reload.window)
   );
+
+  const second = await openPage("/", reloadOf(reload.window), "s3cret");
+  for (const t of snapshotTokens(second.requests)) {
+    assert.equal(t, "s3cret");
+  }
+  assert.deepEqual(Object.values(dump(second.window.sessionStorage)), ["s3cret"]);
 });
 
 test("a new tab does not get the token", async () => {
