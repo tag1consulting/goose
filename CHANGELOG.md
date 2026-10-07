@@ -1,6 +1,21 @@
 # Changelog
 
 ## 0.19.0-dev
+ - [#694](https://github.com/tag1consulting/goose/issues/694) refuse a Users change while a Stop, `shutdown` or Ctrl-C is ramping the load test down; Users was accepted during that ramp down and brought the load test back
+    o a Users request during a cancel gets `ok: false` with phase `decrease`; a test plan's own ramp down still accepts it
+    o the dashboard snapshot adds `stopping`, and the control panel disables the user controls while it is set
+ - [#695](https://github.com/tag1consulting/goose/issues/695) stop the dashboard HTTP server when `execute()` returns, on every return path; the server task was detached and held the port and its connections until the Tokio runtime shut down, so a second `GooseAttack` in the same runtime could not bind
+    o open connections get one second to finish before they are closed, and `execute()` returns after that
+    o the server speaks HTTP/1 only, so cleartext HTTP/2 (h2c) is no longer accepted
+ - [#697](https://github.com/tag1consulting/goose/issues/697) harden the dashboard HTTP server; it had no Host check, no header read timeout and no connection limit
+    o on a loopback bind, a request with a missing or non loopback `Host` gets 403
+    o a connection that does not finish sending request headers within 10 seconds is closed, which also closes keep alive connections idle for 10 seconds
+    o open connections are capped at twice `--dashboard-max-clients` plus 16; connections beyond the cap are closed unanswered
+    o every response carries `Cache-Control: no-store`, `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`
+ - [#702](https://github.com/tag1consulting/goose/issues/702) generate the dashboard's TypeScript snapshot types from the Rust structs with `ts-rs` in a unit test that fails on drift; the hand written types could drift with nothing failing
+    o the client refuses a snapshot with an unknown `version` and shows a banner
+ - [#705](https://github.com/tag1consulting/goose/issues/705) keep the dashboard token in the tab's sessionStorage so a reload keeps it; the client stored it nowhere after stripping `?token=` from the URL, so every reload got 401
+    o a 401 clears the stored token; a new tab still needs `?token=`
  - add opt-in read-only **live web dashboard** (crate feature `dashboard` + runtime `--dashboard`, default bind `127.0.0.1:5118`)
     o compile with `--features dashboard` (not in default features; avoids axum/tower-http on every build); without the feature, `--dashboard` fails at startup with a clear rebuild hint
     o streams coalesced metric snapshots over SSE (`/api/v1/events`) with poll fallback; one-shot `GET /api/v1/snapshot`
