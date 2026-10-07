@@ -19,7 +19,6 @@
     "report.html",
     "report.pdf",
     "*.rs.bk",
-    "sample_goosebot_*.md",
     "todo.md"
   ],
   "rules": [
