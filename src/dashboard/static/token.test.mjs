@@ -1,0 +1,205 @@
+// Browser token handling of the dashboard client (app.js), run in jsdom with
+// `npm test`. Each page load is a fresh jsdom window; a reload is simulated by
+// carrying the previous window's sessionStorage over (as a browser does for a
+// reload of the same tab), and a new tab starts with empty storage.
+
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { JSDOM } from "jsdom";
+
+const here = new URL(".", import.meta.url);
+const INDEX_HTML = readFileSync(new URL("index.html", here), "utf8");
+const APP_JS = readFileSync(new URL("app.js", here), "utf8");
+
+const ORIGIN = "http://127.0.0.1:5118";
+const METRICS_BANNER = "token required for metrics";
+const CONTROL_BANNER = "token required for control";
+
+function jsonResponse(status, body) {
+  return {
+    status,
+    ok: status >= 200 && status < 300,
+    json: () => Promise.resolve(body),
+  };
+}
+
+// A stub of the dashboard server: metric GETs need `?token=` (or Bearer) equal
+// to `serverToken`, control POSTs need Bearer only (equal to `controlToken`),
+// as in src/dashboard.rs.
+function stubServer(serverToken, controlEnabled, controlToken = serverToken) {
+  const requests = [];
+  function fetch(input, init) {
+    const url = new URL(String(input), ORIGIN);
+    const headers = (init && init.headers) || {};
+    const method = (init && init.method) || "GET";
+    const bearer = headers["Authorization"] || "";
+    requests.push({ method, path: url.pathname, url: url.href, bearer });
+    if (url.pathname === "/api/v1/health") {
+      return Promise.resolve(
+        jsonResponse(200, { status: "ok", control_enabled: controlEnabled })
+      );
+    }
+    if (url.pathname.startsWith("/api/v1/control/")) {
+      const ok = bearer === "Bearer " + controlToken;
+      return Promise.resolve(
+        ok
+          ? jsonResponse(200, { ok: true, phase: "increase" })
+          : jsonResponse(401, { error: "unauthorized" })
+      );
+    }
+    const ok =
+      url.searchParams.get("token") === serverToken ||
+      bearer === "Bearer " + serverToken;
+    if (!ok) return Promise.resolve(jsonResponse(401, {}));
+    return Promise.resolve(jsonResponse(200, { version: 1, phase: "idle" }));
+  }
+  return { fetch, requests };
+}
+
+const openPages = [];
+
+// Browser storage a page starts with. A reload of the same tab keeps both
+// stores; a new tab keeps localStorage (shared by the origin) and starts with
+// an empty sessionStorage.
+const FRESH = { session: {}, local: {} };
+
+function dump(storage) {
+  const out = {};
+  for (let i = 0; i < storage.length; i++) {
+    const key = storage.key(i);
+    out[key] = storage.getItem(key);
+  }
+  return out;
+}
+
+function reloadOf(window) {
+  return { session: dump(window.sessionStorage), local: dump(window.localStorage) };
+}
+
+function newTabOf(window) {
+  return { session: {}, local: dump(window.localStorage) };
+}
+
+// Load the dashboard at `path` with the browser storage `from` against a stub
+// server, and let its startup requests finish.
+async function openPage(path, from, serverToken, controlEnabled = false) {
+  const dom = new JSDOM(INDEX_HTML, {
+    url: ORIGIN + path,
+    runScripts: "outside-only",
+  });
+  openPages.push(dom);
+  const { window } = dom;
+  for (const [key, value] of Object.entries(from.session)) {
+    window.sessionStorage.setItem(key, value);
+  }
+  for (const [key, value] of Object.entries(from.local)) {
+    window.localStorage.setItem(key, value);
+  }
+  const server = stubServer(serverToken, controlEnabled);
+  window.fetch = server.fetch;
+  window.eval(APP_JS);
+  await settle(window);
+  return { window, requests: server.requests };
+}
+
+// Let the client's fetch promise chains run to completion.
+async function settle(window) {
+  for (let i = 0; i < 5; i++) {
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+  }
+}
+
+// The `token` query parameter of every snapshot request a page made.
+function snapshotTokens(requests) {
+  const tokens = requests
+    .filter((r) => r.path === "/api/v1/snapshot")
+    .map((r) => new URL(r.url).searchParams.get("token"));
+  assert.ok(tokens.length > 0, "the page asked for a snapshot");
+  return tokens;
+}
+
+function bannerText(window) {
+  const el = window.document.getElementById("banner");
+  return el.classList.contains("hidden") ? "" : el.textContent;
+}
+
+test.afterEach(() => {
+  while (openPages.length) openPages.pop().window.close();
+});
+
+test("the token survives a reload of the same tab", async () => {
+  const first = await openPage("/?token=s3cret", FRESH, "s3cret");
+  assert.equal(first.window.location.href, ORIGIN + "/");
+  assert.equal(bannerText(first.window), "");
+
+  const reload = await openPage("/", reloadOf(first.window), "s3cret");
+  for (const t of snapshotTokens(reload.requests)) {
+    assert.equal(t, "s3cret");
+  }
+  assert.ok(
+    !bannerText(reload.window).includes(METRICS_BANNER),
+    "no 401 banner after the reload: " + bannerText(reload.window)
+  );
+});
+
+test("a new tab does not get the token", async () => {
+  const first = await openPage("/?token=s3cret", FRESH, "s3cret");
+  assert.equal(bannerText(first.window), "");
+
+  const newTab = await openPage("/", newTabOf(first.window), "s3cret");
+  for (const t of snapshotTokens(newTab.requests)) {
+    assert.equal(t, null);
+  }
+  assert.ok(bannerText(newTab.window).includes(METRICS_BANNER));
+});
+
+test("the token is kept only in sessionStorage", async () => {
+  const first = await openPage("/?token=s3cret", FRESH, "s3cret");
+  assert.deepEqual(dump(first.window.localStorage), {});
+  assert.deepEqual(Object.values(dump(first.window.sessionStorage)), ["s3cret"]);
+});
+
+test("a token in the URL replaces the stored one", async () => {
+  const first = await openPage("/?token=old", FRESH, "old");
+  const next = await openPage("/?token=new", reloadOf(first.window), "new");
+  assert.deepEqual(Object.values(dump(next.window.sessionStorage)), ["new"]);
+  for (const t of snapshotTokens(next.requests)) {
+    assert.equal(t, "new");
+  }
+});
+
+test("a metrics 401 clears the stored token so a reload does not resend it", async () => {
+  const first = await openPage("/?token=s3cret", FRESH, "s3cret");
+
+  // Goose restarted with another token: the stored one is now stale.
+  const stale = await openPage("/", reloadOf(first.window), "rotated");
+  assert.equal(snapshotTokens(stale.requests)[0], "s3cret");
+  assert.ok(bannerText(stale.window).includes(METRICS_BANNER));
+  assert.deepEqual(dump(stale.window.sessionStorage), {});
+
+  const again = await openPage("/", reloadOf(stale.window), "rotated");
+  for (const t of snapshotTokens(again.requests)) {
+    assert.equal(t, null);
+  }
+});
+
+test("a control 401 clears the stored token", async () => {
+  const page = await openPage("/?token=s3cret", FRESH, "s3cret", true);
+  assert.ok(!bannerText(page.window).includes(CONTROL_BANNER));
+  assert.deepEqual(Object.values(dump(page.window.sessionStorage)), ["s3cret"]);
+
+  // Metrics still accept the token, so only the control 401 can clear it.
+  const start = page.window.document.getElementById("ctrl-start");
+  assert.equal(start.disabled, false, "Start is enabled with a token");
+  const server = stubServer("s3cret", true, "other");
+  page.window.fetch = server.fetch;
+  start.click();
+  await settle(page.window);
+  const posts = server.requests.filter((r) => r.method === "POST");
+  assert.deepEqual(
+    posts.map((r) => [r.path, r.bearer]),
+    [["/api/v1/control/start", "Bearer s3cret"]]
+  );
+  assert.deepEqual(dump(page.window.sessionStorage), {});
+});
