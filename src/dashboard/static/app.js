@@ -3,6 +3,30 @@
 // Source of truth: compile with `npm run build` in this directory to regenerate app.js.
 (function () {
     "use strict";
+    // Columns a table header's data-sort attribute may name. Records, so the
+    // compiler requires every row field to be listed.
+    const REQUEST_SORT_COLUMNS = {
+        method: true,
+        name: true,
+        request_count: true,
+        failure_count: true,
+        requests_per_second: true,
+        response_time_avg_ms: true,
+        p50: true,
+        p95: true,
+        p99: true,
+    };
+    const ERROR_SORT_COLUMNS = {
+        method: true,
+        name: true,
+        error: true,
+        occurrences: true,
+    };
+    const REQUEST_SORT_KEYS = Object.keys(REQUEST_SORT_COLUMNS);
+    const ERROR_SORT_KEYS = Object.keys(ERROR_SORT_COLUMNS);
+    // Fails to compile when the Rust SNAPSHOT_VERSION changes, so a new wire
+    // format cannot ship without this client being reviewed against it.
+    const SNAPSHOT_VERSION = 1;
     // ---------------------------------------------------------------------------
     // Auth bootstrap: read ?token= from the page URL, then strip it from the bar.
     // ---------------------------------------------------------------------------
@@ -75,9 +99,17 @@
     // Table state
     let requestRows = [];
     let errorRows = [];
-    let lastFlags = {};
-    let reqSort = { key: "request_count", type: "num", dir: "desc" };
-    let errSort = { key: "occurrences", type: "num", dir: "desc" };
+    let lastFlags = null;
+    let reqSort = {
+        key: "request_count",
+        type: "num",
+        dir: "desc",
+    };
+    let errSort = {
+        key: "occurrences",
+        type: "num",
+        dir: "desc",
+    };
     // Charts
     let chartRps = null;
     let chartUsers = null;
@@ -146,19 +178,13 @@
         // Prefer plan/control target over peak HWM (maximum_users) so the control
         // field matches the KPI "active / target" second number. Ignore 0 (stop /
         // cancel ramp) — control input and server only accept users >= 1.
-        if (typeof snap.target_users === "number" &&
-            isFinite(snap.target_users) &&
-            snap.target_users >= 1) {
+        if (snap.target_users >= 1) {
             return snap.target_users;
         }
-        if (typeof snap.maximum_users === "number" &&
-            isFinite(snap.maximum_users) &&
-            snap.maximum_users >= 1) {
+        if (snap.maximum_users >= 1) {
             return snap.maximum_users;
         }
-        if (typeof snap.active_users === "number" &&
-            isFinite(snap.active_users) &&
-            snap.active_users >= 1) {
+        if (snap.active_users >= 1) {
             return snap.active_users;
         }
         return null;
@@ -206,15 +232,12 @@
         }
     }
     function updateControlFromSnapshot(snap) {
-        if (!controlEnabled || !controlPanel || !snap)
+        if (!controlEnabled || !controlPanel)
             return;
         lastSnap = snap;
         stopping = snap.stopping === true;
         if (ctrlActive) {
-            ctrlActive.textContent =
-                typeof snap.active_users === "number"
-                    ? formatInt(snap.active_users)
-                    : "—";
+            ctrlActive.textContent = formatInt(snap.active_users);
         }
         if (!dirty && ctrlTarget) {
             const dt = displayTargetFromSnap(snap);
@@ -357,10 +380,7 @@
             base = fromSnap == null ? NaN : fromSnap;
         }
         if (!isFinite(base)) {
-            base =
-                lastSnap && typeof lastSnap.active_users === "number"
-                    ? lastSnap.active_users
-                    : 1;
+            base = lastSnap ? lastSnap.active_users : 1;
         }
         const next = Math.max(1, base + delta * step);
         if (ctrlTarget)
@@ -621,16 +641,12 @@
         }
     }
     function seriesHasData(series) {
-        if (!series)
-            return false;
-        const rps = series.rps || [];
-        const fps = series.fps || [];
-        const users = series.users || [];
-        const lat = series.avg_latency_ms || [];
-        return (rps.length > 0 || fps.length > 0 || users.length > 0 || lat.length > 0);
+        return (series.rps.length > 0 ||
+            series.fps.length > 0 ||
+            series.users.length > 0 ||
+            series.avg_latency_ms.length > 0);
     }
     function updateCharts(series) {
-        series = series || {};
         if (!chartsReady) {
             // One-shot warn when series data is present but Chart.js never loaded.
             if (!chartLoadWarned && seriesHasData(series)) {
@@ -640,11 +656,11 @@
             return;
         }
         ensureCharts();
-        const start = typeof series.start_second === "number" ? series.start_second : 0;
-        const rps = series.rps || [];
-        const fps = series.fps || [];
-        const users = series.users || [];
-        const lat = series.avg_latency_ms || [];
+        const start = series.start_second;
+        const rps = series.rps;
+        const fps = series.fps;
+        const users = series.users;
+        const lat = series.avg_latency_ms;
         const len = Math.max(rps.length, fps.length, users.length, lat.length);
         const labels = [];
         for (let i = 0; i < len; i++) {
@@ -673,8 +689,8 @@
         const dir = sort.dir === "asc" ? 1 : -1;
         const copy = rows.slice();
         copy.sort((a, b) => {
-            let av = a[key];
-            let bv = b[key];
+            const av = a[key];
+            const bv = b[key];
             if (type === "num") {
                 const an = typeof av === "number" ? av : 0;
                 const bn = typeof bv === "number" ? bv : 0;
@@ -691,7 +707,7 @@
         return copy;
     }
     function flattenRequest(r) {
-        const p = r.percentile_ms || {};
+        const p = r.percentile_ms;
         return {
             method: r.method,
             name: r.name,
@@ -705,7 +721,6 @@
         };
     }
     function renderRequestTable(flags) {
-        flags = flags || lastFlags || {};
         const filter = (requestsFilter && requestsFilter.value
             ? requestsFilter.value
             : "")
@@ -724,7 +739,7 @@
             const td = document.createElement("td");
             td.colSpan = 9;
             td.className = "empty";
-            if (flags.metrics_disabled) {
+            if (flags && flags.metrics_disabled) {
                 td.textContent =
                     "Metrics disabled (--no-metrics). Charts and request tables are empty.";
             }
@@ -783,7 +798,7 @@
             errorsBody.appendChild(etr);
         }
     }
-    function wireSort(tableId, getSort, setSort, rerender) {
+    function wireSort(tableId, keys, getSort, setSort, rerender) {
         const table = document.getElementById(tableId);
         if (!table)
             return;
@@ -791,8 +806,9 @@
         for (let i = 0; i < ths.length; i++) {
             const th = ths[i];
             th.addEventListener("click", () => {
-                const key = th.getAttribute("data-sort");
-                if (!key)
+                const attr = th.getAttribute("data-sort");
+                const key = keys.find((k) => k === attr);
+                if (key === undefined)
                     return;
                 const typeAttr = th.getAttribute("data-type") || "str";
                 const type = typeAttr === "num" ? "num" : "str";
@@ -816,33 +832,27 @@
         }
     }
     function renderSnapshot(snap, modeLabel) {
-        if (!snap)
-            return;
-        const flags = snap.flags || {};
+        const flags = snap.flags;
         lastFlags = flags;
         setPhase(snap.phase);
-        hostsEl.textContent =
-            snap.hosts && snap.hosts.length ? snap.hosts.join(", ") : "—";
+        hostsEl.textContent = snap.hosts.length ? snap.hosts.join(", ") : "—";
         durationEl.textContent = formatDuration(snap.duration_secs);
         // active / target (not peak maximum_users — that stays equal during ramp).
-        const usersTarget = typeof snap.target_users === "number" && isFinite(snap.target_users)
-            ? snap.target_users
-            : snap.maximum_users;
         kpiUsers.textContent =
-            formatInt(snap.active_users) + " / " + formatInt(usersTarget);
-        const agg = snap.aggregate || {};
+            formatInt(snap.active_users) + " / " + formatInt(snap.target_users);
+        const agg = snap.aggregate;
         kpiRps.textContent = formatRate(agg.requests_per_second);
         kpiFail.textContent = formatPct(agg.failure_rate);
-        const p = agg.percentile_ms || {};
+        const p = agg.percentile_ms;
         kpiP95.textContent = formatInt(p.p95);
         kpiAvg.textContent = formatRate(agg.response_time_avg_ms);
         summaryEl.textContent = "";
         summaryEl.appendChild(kv("Phase", snap.phase));
         summaryEl.appendChild(kv("Duration", formatDuration(snap.duration_secs)));
-        summaryEl.appendChild(kv("Users", formatInt(snap.active_users) + " / " + formatInt(usersTarget)));
+        summaryEl.appendChild(kv("Users", formatInt(snap.active_users) + " / " + formatInt(snap.target_users)));
         summaryEl.appendChild(kv("Total users", formatInt(snap.total_users)));
         summaryEl.appendChild(kv("Goose", snap.goose_version));
-        summaryEl.appendChild(kv("Hosts", snap.hosts && snap.hosts.length ? snap.hosts.join(", ") : "—"));
+        summaryEl.appendChild(kv("Hosts", snap.hosts.length ? snap.hosts.join(", ") : "—"));
         if (flags.series_seconds) {
             summaryEl.appendChild(kv("Series window", formatInt(flags.series_seconds) + "s"));
         }
@@ -856,8 +866,8 @@
         if (agg.co_active) {
             aggregateEl.appendChild(kv("Coordinated omission", "active"));
         }
-        requestRows = (snap.requests || []).map(flattenRequest);
-        errorRows = (snap.errors || []).slice();
+        requestRows = snap.requests.map(flattenRequest);
+        errorRows = snap.errors.slice();
         renderRequestTable(flags);
         renderErrorTable();
         updateCharts(snap.series);
@@ -931,6 +941,22 @@
         setConnection("disconnected");
         setBanner("Open this dashboard as http://host:port/?token=… (token required for metrics).", "error");
     }
+    // The JSON boundary: refuse a snapshot of another wire format version
+    // instead of rendering its fields as placeholders.
+    function checkSnapshot(data) {
+        const version = typeof data === "object" && data !== null
+            ? data.version
+            : undefined;
+        if (version !== SNAPSHOT_VERSION) {
+            setBanner("This page reads snapshot version " +
+                SNAPSHOT_VERSION +
+                " but the server sent " +
+                String(version) +
+                ". Reload the page.", "error");
+            return null;
+        }
+        return data;
+    }
     function fetchSnapshotOnce(modeLabel) {
         if (authBlocked)
             return Promise.resolve(null);
@@ -945,7 +971,8 @@
             }
             return res.json();
         })
-            .then((snap) => {
+            .then((data) => {
+            const snap = data == null ? null : checkSnapshot(data);
             if (snap) {
                 renderSnapshot(snap, modeLabel || "poll");
             }
@@ -1009,7 +1036,9 @@
         const SSE_ERROR_FALLBACK_THRESHOLD = 3;
         eventSource.addEventListener("snapshot", (ev) => {
             try {
-                const snap = JSON.parse(ev.data);
+                const snap = checkSnapshot(JSON.parse(ev.data));
+                if (!snap)
+                    return;
                 sawSnapshot = true;
                 sseErrorStreak = 0;
                 usingPoll = false;
@@ -1088,12 +1117,12 @@
         };
     }
     // Wire UI controls
-    wireSort("requests-table", () => reqSort, (s) => {
+    wireSort("requests-table", REQUEST_SORT_KEYS, () => reqSort, (s) => {
         reqSort = s;
     }, () => {
         renderRequestTable(lastFlags);
     });
-    wireSort("errors-table", () => errSort, (s) => {
+    wireSort("errors-table", ERROR_SORT_KEYS, () => errSort, (s) => {
         errSort = s;
     }, () => {
         renderErrorTable();

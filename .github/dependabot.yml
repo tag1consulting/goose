@@ -1,0 +1,12 @@
+version: 2
+updates:
+  # ts-rs is pinned exactly (see Cargo.toml) because a release can change the
+  # generated src/dashboard/static/snapshot.d.ts. This proposes each new
+  # release as its own pull request, where dashboard_types_match_rust shows
+  # whether the file needs regenerating.
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    allow:
+      - dependency-name: ts-rs

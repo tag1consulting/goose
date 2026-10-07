@@ -74,3 +74,11 @@ httpmock = "0.8"
 nix = { version = "0.30", features = ["signal"] }
 rustls = "0.23"
 serial_test = "3.2"
+# Generates src/dashboard/static/snapshot.d.ts from the snapshot structs in a
+# unit test; a dev-dependency, so normal builds do not depend on it.
+# Pinned exactly: dashboard_types_match_rust compares that file byte for byte
+# with ts-rs output, and Goose commits no Cargo.lock, so an unpinned release
+# that changes formatting would fail CI with no change here. To upgrade, bump
+# the pin, run `GOOSE_UPDATE_DASHBOARD_TYPES=1 cargo test --lib
+# dashboard_types_match_rust`, review the diff, and run `npm run check`.
+ts-rs = { version = "=12.0.1", features = ["chrono-impl"] }
