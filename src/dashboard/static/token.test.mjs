@@ -29,7 +29,8 @@ function jsonResponse(status, body) {
 // no `?token=`. Options: `controlEnabled` for /api/v1/health, `controlToken`
 // (default `token`; the real server has one token, this lets a test produce a
 // control 401 alone), and `controlStatus` / `snapshotStatus` to force an
-// authorized request to answer with that status instead of 200.
+// authorized request to answer with that status instead of 200 (`snapshotStatus`
+// "reject" makes the snapshot fetch fail as on a network error).
 function stubServer(token, options = {}) {
   const {
     controlEnabled = false,
@@ -64,6 +65,9 @@ function stubServer(token, options = {}) {
     const ok =
       url.searchParams.get("token") === token || bearer === "Bearer " + token;
     if (!ok) return Promise.resolve(jsonResponse(401, {}));
+    if (snapshotStatus === "reject") {
+      return Promise.reject(new TypeError("network error"));
+    }
     if (snapshotStatus !== 200) {
       return Promise.resolve(jsonResponse(snapshotStatus, {}));
     }
@@ -242,6 +246,22 @@ test("a 401 on the SSE path clears the stored token", async () => {
   assert.ok(bannerText(stale.window).includes(METRICS_BANNER));
   assert.deepEqual(dump(stale.window.sessionStorage), {});
 });
+
+for (const snapshotStatus of [200, "reject"]) {
+  test(`an SSE failure without a 401 keeps the stored token (probe ${snapshotStatus})`, async () => {
+    const page = await openPage("/?token=s3cret", FRESH, "s3cret", {
+      eventSource: true,
+      snapshotStatus,
+    });
+    assert.equal(snapshotTokens(page.requests)[0], "s3cret");
+    assert.deepEqual(Object.values(dump(page.window.sessionStorage)), ["s3cret"]);
+
+    const reload = await openPage("/", reloadOf(page.window), "s3cret");
+    for (const t of snapshotTokens(reload.requests)) {
+      assert.equal(t, "s3cret");
+    }
+  });
+}
 
 test("a control 401 clears the stored token", async () => {
   const page = await openPage("/?token=s3cret", FRESH, "s3cret", {
