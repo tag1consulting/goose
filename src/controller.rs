@@ -460,14 +460,14 @@ impl ControllerCommand {
             ControllerCommand::Users => ControllerCommandDetails {
                 help: ControllerHelp {
                     name: "users INT",
-                    description: "set number of simulated users\n",
+                    description: "set number of simulated users (1 to 100000)\n",
                 },
                 regex: r"(?i)^(users?) (\d+)$",
                 process_response: Box::new(|response| {
                     if let ControllerResponseMessage::Bool(true) = response {
                         Ok("users configured".to_string())
                     } else {
-                        Err("load test not idle, failed to reconfigure users".to_string())
+                        Err("failed to reconfigure users, be sure users is valid and load test is not stopping".to_string())
                     }
                 }),
             },

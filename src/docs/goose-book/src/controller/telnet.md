@@ -24,7 +24,7 @@ increaserate FLOAT set per-second rate users increase
 increase-time TIME set total time to take increasing users
 decreaserate FLOAT set per-second rate users decrease
 decrease-time TIME set total time to take decreasing users
-users INT          set number of simulated users
+users INT          set number of simulated users (1 to 100000)
 runtime TIME       set how long to run test, (ie 1h30m5s)
 test-plan PLAN     define or replace test-plan, (ie 10,5m;10,1h;0,30s)
 
