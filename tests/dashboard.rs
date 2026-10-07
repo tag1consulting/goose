@@ -71,6 +71,9 @@ struct ControlTestOpts {
     no_autostart: bool,
     control: bool,
     token: Option<&'static str>,
+    /// `--test-plan`; replaces `users`, `increase_rate`, `decrease_rate` and
+    /// `run_time`, which Goose refuses alongside a test plan.
+    test_plan: Option<&'static str>,
 }
 
 impl Default for ControlTestOpts {
@@ -86,6 +89,7 @@ impl Default for ControlTestOpts {
             no_autostart: true,
             control: true,
             token: Some(AUTH_TOKEN),
+            test_plan: None,
         }
     }
 }
@@ -134,13 +138,18 @@ fn build_control_config(
     port: u16,
     opts: ControlTestOpts,
 ) -> GooseConfiguration {
-    let mut owned: Vec<String> = vec![
-        "--users".into(),
-        opts.users.to_string(),
-        "--increase-rate".into(),
-        opts.increase_rate.into(),
-        "--run-time".into(),
-        opts.run_time.into(),
+    let mut owned: Vec<String> = match opts.test_plan {
+        Some(plan) => vec!["--test-plan".into(), plan.into()],
+        None => vec![
+            "--users".into(),
+            opts.users.to_string(),
+            "--increase-rate".into(),
+            opts.increase_rate.into(),
+            "--run-time".into(),
+            opts.run_time.into(),
+        ],
+    };
+    owned.extend([
         "--no-telnet".into(),
         "--no-websocket".into(),
         "--dashboard".into(),
@@ -153,7 +162,7 @@ fn build_control_config(
         "--quiet".into(),
         "--host".into(),
         server.base_url(),
-    ];
+    ]);
     if let Some(rate) = opts.decrease_rate {
         owned.push("--decrease-rate".into());
         owned.push(rate.into());
@@ -1151,7 +1160,11 @@ async fn test_control_stop_while_decreasing() {
     load.abort().await;
 }
 
-/// Case 8: Users during decrease succeeds (Controller parity).
+/// Case 8: Users sent right behind a Stop never turns the Stop back into a
+/// running load test. Either Users lands during the cancel ramp and is
+/// refused, or it lands once the run is idle and only reconfigures it; the run
+/// ends idle with no users both ways. The refusal itself is covered
+/// deterministically by `test_set_users_refused_while_stopping` in `lib.rs`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial]
 async fn test_control_users_while_decreasing() {
@@ -1180,11 +1193,14 @@ async fn test_control_users_while_decreasing() {
 
     let start = post_control(&client, &base, "/api/v1/control/start", Some("{}"), true).await;
     let start_body: serde_json::Value = start.json().await.expect("json");
-    assert_eq!(start_body["ok"], true);
+    assert_eq!(start_body["ok"], true, "start: {}", start_body);
 
     wait_for_active_users(&client, &base, token, 10, Duration::from_secs(30)).await;
 
-    // Pipeline Stop then Users so Users is handled while still decreasing.
+    // Send Users right behind Stop. Both usually reach the main loop in the
+    // same batch (it sleeps up to 500ms in Maintain), which exercises the
+    // refusal; when they do not, Users lands on an idle run. Both outcomes are
+    // valid, so the test does not depend on which one happens.
     let stop_client = client.clone();
     let users_client = client.clone();
     let stop_base = base.clone();
@@ -1203,25 +1219,131 @@ async fn test_control_users_while_decreasing() {
                 &users_client,
                 &users_base,
                 "/api/v1/control/users",
-                Some(r#"{"users":5}"#),
+                Some(r#"{"users":15}"#),
                 true,
             )
             .await
         }
     );
     let stop_body: serde_json::Value = stop.json().await.expect("json");
-    assert_eq!(stop_body["ok"], true);
+    assert_eq!(stop_body["ok"], true, "stop: {}", stop_body);
     assert_eq!(stop_body["phase"], "decrease");
 
     assert_eq!(users.status(), 200);
     let users_body: serde_json::Value = users.json().await.expect("json");
+    assert_eq!(users_body["command"], "users");
+    match users_body["phase"].as_str() {
+        Some("decrease") => {
+            assert_eq!(
+                users_body["ok"], false,
+                "users during a stop must be refused: {}",
+                users_body
+            );
+            assert_eq!(users_body["error"], "invalid_phase");
+            assert!(
+                users_body["message"]
+                    .as_str()
+                    .is_some_and(|m| m.contains("stopping")),
+                "message must say the load test is stopping: {}",
+                users_body
+            );
+            assert!(users_body["target_users"].is_null());
+        }
+        Some("idle") => {
+            assert_eq!(
+                users_body["ok"], true,
+                "users while idle reconfigures: {}",
+                users_body
+            );
+        }
+        _ => panic!("users must land in decrease or idle: {}", users_body),
+    }
+
+    // The cancel runs to completion either way: idle with no users. Before
+    // the fix, a Users during the cancel ended in maintain and this timed out.
+    let idle = wait_for_phase(&client, &base, token, &["idle"], Duration::from_secs(30)).await;
+    assert_eq!(idle["active_users"], 0);
+    assert_eq!(idle["stopping"], false, "idle ends the cancel: {}", idle);
+
+    load.abort().await;
+}
+
+/// Case 8b: a test plan's own ramp down is not a cancel. The snapshot does not
+/// report it as stopping, and Users is accepted and takes effect.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn test_control_users_during_plan_ramp_down() {
+    let server = MockServer::start();
+    let _mocks = setup_mock_endpoints(&server);
+    let port = reserve_port();
+    let base_v4 = format!("http://127.0.0.1:{port}");
+
+    // 10 users in 1s, hold 1s, then one user off every 3s.
+    let configuration = build_control_config(
+        &server,
+        "127.0.0.1",
+        port,
+        ControlTestOpts {
+            test_plan: Some("10,1s;10,1s;0,30s"),
+            ..ControlTestOpts::default()
+        },
+    );
+
+    let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
+    let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
+
+    let (base, _) = wait_for_health(&[&base_v4], 80).await;
+    let client = reqwest::Client::new();
+    let token = Some(AUTH_TOKEN);
+
+    let start = post_control(&client, &base, "/api/v1/control/start", Some("{}"), true).await;
+    let start_body: serde_json::Value = start.json().await.expect("json");
+    assert_eq!(start_body["ok"], true, "start: {}", start_body);
+
+    let ramp_down = wait_for_phase(
+        &client,
+        &base,
+        token,
+        &["decrease"],
+        Duration::from_secs(30),
+    )
+    .await;
+    assert_eq!(
+        ramp_down["stopping"], false,
+        "a plan's ramp down is not a cancel: {}",
+        ramp_down
+    );
+
+    let users = post_control(
+        &client,
+        &base,
+        "/api/v1/control/users",
+        Some(r#"{"users":4}"#),
+        true,
+    )
+    .await;
+    assert_eq!(users.status(), 200);
+    let users_body: serde_json::Value = users.json().await.expect("json");
     assert_eq!(
         users_body["ok"], true,
-        "users during decrease: {}",
+        "users during a plan ramp down: {}",
         users_body
     );
     assert_eq!(users_body["command"], "users");
-    assert_eq!(users_body["target_users"], 5);
+    assert_eq!(users_body["phase"], "decrease");
+    assert_eq!(users_body["target_users"], 4);
+
+    // The new count replaces the rest of the plan: hold 4 users.
+    let held = wait_for_phase(
+        &client,
+        &base,
+        token,
+        &["maintain"],
+        Duration::from_secs(30),
+    )
+    .await;
+    assert_eq!(held["target_users"], 4, "maintain after users: {}", held);
+    assert_eq!(held["stopping"], false);
 
     load.abort().await;
 }
@@ -1387,12 +1509,42 @@ async fn assert_dashboard_stopped(port: u16, keep_alive: &mut tokio::net::TcpStr
     );
 }
 
+/// The receiving end of the gate `wait_for_test_ready` waits on; installed
+/// fresh for each attack by `arm_test_ready`, so no state leaks between tests.
+static TEST_READY: std::sync::Mutex<Option<tokio::sync::oneshot::Receiver<()>>> =
+    std::sync::Mutex::new(None);
+
+/// Arm the gate for the next attack and return the sender that opens it.
+/// Pair with `transaction!(wait_for_test_ready)` as the attack's test_start.
+fn arm_test_ready() -> tokio::sync::oneshot::Sender<()> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    *TEST_READY.lock().expect("test ready gate") = Some(rx);
+    tx
+}
+
+/// test_start transaction that holds the attack until the test opens the
+/// gate, so the attack cannot finish (or fail) before the test has connected
+/// to the dashboard, however slow the runner. A dropped sender (the test
+/// panicked) also opens it.
+async fn wait_for_test_ready(_user: &mut GooseUser) -> TransactionResult {
+    let ready = TEST_READY
+        .lock()
+        .expect("test ready gate")
+        .take()
+        .expect("arm_test_ready() before the attack starts");
+    let _ = ready.await;
+    Ok(())
+}
+
 /// Run one short attack on `port`, open a keep-alive connection to the
 /// dashboard while it runs, and return that connection after `execute()`.
 async fn attack_with_keep_alive(server: &MockServer, port: u16) -> tokio::net::TcpStream {
     let mut configuration = build_dashboard_config(server, "127.0.0.1", port, None);
-    configuration.run_time = "2".to_string();
-    let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
+    configuration.run_time = "1".to_string();
+    let ready = arm_test_ready();
+    let start = transaction!(wait_for_test_ready);
+    let goose_attack =
+        common::build_load_test(configuration, vec![get_transactions()], Some(&start), None);
     let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
 
     let base = format!("http://127.0.0.1:{port}");
@@ -1405,6 +1557,7 @@ async fn attack_with_keep_alive(server: &MockServer, port: u16) -> tokio::net::T
         .expect("health answers during the attack");
     assert!(first.starts_with("HTTP/1.1 200"), "{}", first);
 
+    ready.send(()).expect("attack waits in test_start");
     let _metrics = load.join().await.expect("load test execute");
     keep_alive
 }
@@ -1447,14 +1600,28 @@ async fn stalled_request(port: u16) -> tokio::net::TcpStream {
     stalled
 }
 
-/// Assert `stalled` is already closed: `execute()` waited for the drain.
+/// Mirrors `SERVER_DRAIN_TIMEOUT` in src/dashboard.rs (crate private): how
+/// long the server gives a busy connection before closing it.
+const DASHBOARD_DRAIN_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// Assert `stalled` was closed before `execute()` returned, i.e. `execute()`
+/// waited for the drain.
+///
+/// If `execute()` returned without waiting, the server would close a busy
+/// connection only at the drain deadline, a full `DASHBOARD_DRAIN_TIMEOUT`
+/// after `execute()` returned, and a timer never fires early. If it waited,
+/// the close has already happened and the read only has to wake. So any
+/// bound below the deadline tells the two apart; half of it leaves a wide
+/// margin for a slow runner on both sides.
 async fn assert_closed_now(stalled: &mut tokio::net::TcpStream) {
     use tokio::io::AsyncReadExt;
+    let bound = DASHBOARD_DRAIN_TIMEOUT / 2;
     let mut chunk = [0u8; 64];
-    let read = tokio::time::timeout(Duration::from_millis(100), stalled.read(&mut chunk)).await;
+    let read = tokio::time::timeout(bound, stalled.read(&mut chunk)).await;
     assert!(
         matches!(read, Ok(Ok(0)) | Ok(Err(_))),
-        "busy connection must be closed within 100 ms of execute() returning, got {:?}",
+        "busy connection must be closed before execute() returns (checked for {:?}), got {:?}",
+        bound,
         read
     );
 }
@@ -1474,30 +1641,29 @@ async fn test_execute_waits_for_dashboard_drain() {
         ControlTestOpts {
             users: 1,
             increase_rate: "1",
-            run_time: "2",
+            run_time: "1",
             no_autostart: false,
             ..ControlTestOpts::default()
         },
     );
-    let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
+    let ready = arm_test_ready();
+    let start = transaction!(wait_for_test_ready);
+    let goose_attack =
+        common::build_load_test(configuration, vec![get_transactions()], Some(&start), None);
     let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
 
     let base = format!("http://127.0.0.1:{port}");
     let _ = wait_for_health(&[&base], 80).await;
     let mut stalled = stalled_request(port).await;
 
+    ready.send(()).expect("attack waits in test_start");
     let _metrics = load.join().await.expect("load test execute");
     assert_closed_now(&mut stalled).await;
 }
 
-async fn slow_test_start(_user: &mut GooseUser) -> TransactionResult {
-    tokio::time::sleep(Duration::from_millis(3000)).await;
-    Ok(())
-}
-
 /// The dashboard also stops when `execute()` returns an error from the phase
-/// loop: here the report file cannot be created, which fails after the
-/// (slow) test_start transaction, so the test can connect first.
+/// loop: here the report file cannot be created, which fails after
+/// test_start, and test_start waits until the test has connected.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial]
 async fn test_dashboard_stops_when_execute_fails() {
@@ -1515,7 +1681,8 @@ async fn test_dashboard_stops_when_execute_fails() {
         },
     );
     configuration.report_file = vec!["/nonexistent-goose-dir/report.html".to_string()];
-    let start = transaction!(slow_test_start);
+    let ready = arm_test_ready();
+    let start = transaction!(wait_for_test_ready);
     let goose_attack =
         common::build_load_test(configuration, vec![get_transactions()], Some(&start), None);
     let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
@@ -1528,6 +1695,7 @@ async fn test_dashboard_stops_when_execute_fails() {
     assert!(health_on(&mut keep_alive).await.is_some());
     let mut stalled = stalled_request(port).await;
 
+    ready.send(()).expect("attack waits in test_start");
     let result = load.join().await;
     assert!(
         matches!(result, Err(GooseError::InvalidOption { ref option, .. }) if option == "--report-file"),

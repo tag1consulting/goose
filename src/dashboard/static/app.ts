@@ -99,6 +99,8 @@
     generated_at?: string;
     goose_version?: string;
     phase?: string;
+    /** A Stop, shutdown or Ctrl-C is ramping the run down (until idle). */
+    stopping?: boolean;
     duration_secs?: number;
     active_users?: number;
     /** Peak concurrent users observed this run (high-water mark). */
@@ -239,6 +241,8 @@
   let lastSnap: DashboardSnapshot | null = null;
   let lastDisplayTarget: number | null = null;
   let currentPhase = "idle";
+  // A cancel is in progress: the server refuses Users until idle.
+  let stopping = false;
   let controlTokenMissing = false;
 
   // Table state
@@ -358,6 +362,7 @@
     const canUsers =
       hasToken &&
       !inFlight &&
+      !stopping &&
       (phase === "idle" ||
         phase === "increase" ||
         phase === "maintain" ||
@@ -381,6 +386,7 @@
   function updateControlFromSnapshot(snap: DashboardSnapshot): void {
     if (!controlEnabled || !controlPanel || !snap) return;
     lastSnap = snap;
+    stopping = snap.stopping === true;
 
     if (ctrlActive) {
       ctrlActive.textContent =
@@ -468,6 +474,10 @@
           setControlStatus(data.message || "OK", "ok");
           if (data.phase) {
             setPhase(data.phase);
+          }
+          // Lock the user controls now rather than at the next snapshot.
+          if (data.command === "stop") {
+            stopping = true;
           }
           if (
             typeof appliedUsers === "number" &&
@@ -578,7 +588,7 @@
     }
     if (footerNoteEl) {
       footerNoteEl.textContent = controlEnabled
-        ? "Start, stop, and adjust users from this panel (authenticated). Stop begins a cancel ramp (decrease) before idle. Advanced control remains on Controllers."
+        ? "Start, stop, and adjust users from this panel (authenticated). Stop begins a cancel ramp (decrease) before idle, and users cannot be changed until then. Advanced control remains on Controllers."
         : "Control this test via telnet :5116 or WebSocket :5117. This dashboard is read-only.";
     }
   }
