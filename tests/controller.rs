@@ -679,9 +679,16 @@ async fn run_standalone_test(test_type: TestType) {
                         0 => {
                             make_request(&mut test_state, "host http://localhost/\r\n").await;
                         }
-                        // Setting host fails, then reconfigure the number of users, increasing.
+                        // Setting host fails, then try a user count too large for a usize.
                         1 => {
                             assert!(response.starts_with("failed to reconfigure host"));
+
+                            make_request(&mut test_state, "users 99999999999999999999\r\n").await;
+                        }
+                        // The overflow is refused and the load test keeps running, then
+                        // reconfigure the number of users, increasing.
+                        2 => {
+                            assert!(response.starts_with("failed to reconfigure users"));
 
                             make_request(
                                 &mut test_state,
@@ -690,7 +697,7 @@ async fn run_standalone_test(test_type: TestType) {
                             .await;
                         }
                         // Setting users succeeds, reconfigure the number of users, decreasing.
-                        2 => {
+                        3 => {
                             assert!(response.starts_with("users configured"));
 
                             // Give Goose a second to increase users.
@@ -703,7 +710,7 @@ async fn run_standalone_test(test_type: TestType) {
                             .await;
                         }
                         // Confirm host can not be configured on a running load test.
-                        3 => {
+                        4 => {
                             assert!(response.starts_with("users configured"));
 
                             // Give Goose a second to decrease users.

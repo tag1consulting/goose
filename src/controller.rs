@@ -467,7 +467,7 @@ impl ControllerCommand {
                     if let ControllerResponseMessage::Bool(true) = response {
                         Ok("users configured".to_string())
                     } else {
-                        Err("load test not idle, failed to reconfigure users".to_string())
+                        Err("failed to reconfigure users, be sure users is valid and load test is not stopping".to_string())
                     }
                 }),
             },
@@ -673,13 +673,14 @@ impl GooseAttack {
                             }
                         }
                         ControllerCommand::Users => {
-                            // The controller uses a regular expression to validate that
-                            // this is a valid integer, so simply use it with further
-                            // validation.
-                            if let Some(users) = &message.request.value {
-                                // Use expect() as Controller uses regex to validate this is an integer.
-                                let new_users = usize::from_str(users)
-                                    .expect("failed to convert string to usize");
+                            // The controller's regular expression only guarantees digits,
+                            // which may not fit in a usize.
+                            if let Some(new_users) = message
+                                .request
+                                .value
+                                .as_deref()
+                                .and_then(|users| usize::from_str(users).ok())
+                            {
                                 let outcome =
                                     self.control_set_users(goose_attack_run_state, new_users)?;
                                 self.reply_to_controller(
@@ -687,7 +688,10 @@ impl GooseAttack {
                                     ControllerResponseMessage::Bool(outcome.ok),
                                 );
                             } else {
-                                warn!("[controller]: didn't provide users: {:#?}", message.request);
+                                warn!(
+                                    "[controller]: didn't provide valid users: {:#?}",
+                                    message.request
+                                );
                                 self.reply_to_controller(
                                     message,
                                     ControllerResponseMessage::Bool(false),
