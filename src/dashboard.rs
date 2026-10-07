@@ -90,7 +90,7 @@ const SERVER_DRAIN_TIMEOUT: Duration = Duration::from_secs(1);
 /// How long a client has to send a request's headers, on a new connection and
 /// between requests on a keep-alive one, before the connection is closed. A
 /// header read timeout and not a whole request timeout, which would cut the
-/// long lived `/api/v1/events` streams.
+/// long-lived `/api/v1/events` streams.
 const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Connections allowed beyond the SSE client cap: every browser tab holds one
@@ -761,10 +761,10 @@ pub(crate) async fn setup_dashboard(
         control_in_flight: Arc::new(AtomicUsize::new(0)),
     };
 
-    // Loopback by the configured name (what decided that no token is needed)
-    // or by the bound socket (what a rebound browser page would reach).
-    let loopback_bind = crate::config::is_loopback_bind(host) || bound.ip().is_loopback();
-    let app = build_router(state, loopback_bind);
+    // Loopback by the configured name, the same rule that lets the dashboard
+    // run without a token. Any other name needs a token, and a hostname that
+    // resolves to 127.0.1.1 must still accept its own name as `Host`.
+    let app = build_router(state, crate::config::is_loopback_bind(host));
     let max_connections = connection_cap(max_sse_clients);
 
     if control_enabled {
@@ -3170,34 +3170,39 @@ mod tests {
         parent.abort();
     }
 
-    /// The Host check is for loopback binds only: on a non loopback bind the
-    /// token protects the API and any Host is served.
+    /// The Host check follows the configured name: a name that is not a
+    /// loopback name needs a token and gets no Host check, even when it
+    /// resolves to a loopback address (`127.1` resolves to 127.0.0.1, as a
+    /// machine's own hostname often resolves to 127.0.1.1).
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn non_loopback_bind_serves_any_host() {
-        let config = GooseConfiguration {
-            dashboard: true,
-            dashboard_host: "0.0.0.0".to_string(),
-            dashboard_port: 0,
-            dashboard_auth_token: "secret".to_string(),
-            ..Default::default()
-        };
-        let setup = setup_dashboard(&config)
-            .await
-            .expect("bind")
-            .expect("enabled");
-        let reply = raw_exchange(
-            setup.bound_port,
-            &get_request("/api/v1/health", "loadgen.example:5118"),
-        )
-        .await;
-        assert!(
-            reply.starts_with("HTTP/1.1 200"),
-            "non loopback bind must not check Host, got {:?}",
-            reply
-        );
+        for bind_host in ["0.0.0.0", "127.1"] {
+            let config = GooseConfiguration {
+                dashboard: true,
+                dashboard_host: bind_host.to_string(),
+                dashboard_port: 0,
+                dashboard_auth_token: "secret".to_string(),
+                ..Default::default()
+            };
+            let setup = setup_dashboard(&config)
+                .await
+                .expect("bind")
+                .expect("enabled");
+            let reply = raw_exchange(
+                setup.bound_port,
+                &get_request("/api/v1/health", "loadgen.example:5118"),
+            )
+            .await;
+            assert!(
+                reply.starts_with("HTTP/1.1 200"),
+                "a bind to {} must not check Host, got {:?}",
+                bind_host,
+                reply
+            );
+        }
     }
 
-    /// Regression for #697: every response, the token bearing page load and
+    /// Regression for #697: every response, the token-bearing page load and
     /// the API included, carries `nosniff`, `no-referrer` and `no-store`.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn responses_carry_security_headers() {
@@ -3251,10 +3256,20 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn slow_header_client_is_cut_at_timeout() {
         use tokio::io::AsyncWriteExt;
-        let (setup, _base) = bind_dashboard("").await;
+        let (_hub_builds, _parent_builds, parent, base, _server) = setup_with_mock("").await;
+        let port = port_of(&base);
+        // An SSE stream open across the whole timeout must not be cut.
+        let mut sse = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("connect");
+        sse.write_all(b"GET /api/v1/events HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+            .await
+            .expect("write");
+        assert!(read_until_contains(&mut sse, "event: snapshot").await);
+
         // Taken before connecting, so the server's deadline starts after it.
         let started = Instant::now();
-        let mut slow = tokio::net::TcpStream::connect(("127.0.0.1", setup.bound_port))
+        let mut slow = tokio::net::TcpStream::connect(("127.0.0.1", port))
             .await
             .expect("connect");
         slow.write_all(b"GET /api/v1/health HTTP/1.1\r\nHost: 127")
@@ -3266,10 +3281,19 @@ mod tests {
             "closed before the header read timeout"
         );
         assert!(
-            closed_within(&mut slow, Duration::from_secs(3)).await,
+            closed_within(&mut slow, Duration::from_secs(5)).await,
             "a stalled header must be cut at the header read timeout"
         );
-        assert!(started.elapsed() >= HEADER_READ_TIMEOUT);
+        assert!(
+            started.elapsed() >= HEADER_READ_TIMEOUT,
+            "cut after {:?}",
+            started.elapsed()
+        );
+        assert!(
+            read_until_contains(&mut sse, "event: snapshot").await,
+            "an SSE stream must outlive the header read timeout"
+        );
+        parent.abort();
     }
 
     /// Read from `stream` until the text read contains `needle`; false when

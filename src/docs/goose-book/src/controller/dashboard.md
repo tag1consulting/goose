@@ -66,7 +66,7 @@ Goose treats a bind host as loopback when it is:
 
 If a token **is** configured, it is enforced on metric APIs even on loopback.
 
-On a loopback bind every request must carry a loopback `Host` header (`localhost`, an address in `127.0.0.0/8` or `[::1]`, with any port), whatever the token setting; anything else, a missing `Host` included, gets **403**. This stops DNS rebinding: a web page that points its own domain at 127.0.0.1 sends its own domain as `Host`, so it cannot read snapshots from a dashboard that has no token. A reverse proxy in front of a loopback bind must pass a loopback `Host` (nginx `proxy_pass http://127.0.0.1:5118` does by default). Non loopback binds do not check `Host`; the token protects them.
+On a loopback bind every request must carry a loopback `Host` header (`localhost`, an address in `127.0.0.0/8` or `[::1]`, with any port), whatever the token setting; anything else, a missing `Host` included, gets **403**. This stops DNS rebinding: a web page that points its own domain at 127.0.0.1 sends its own domain as `Host`, so it cannot read snapshots from a dashboard that has no token. A reverse proxy in front of a loopback bind must pass a loopback `Host` (nginx `proxy_pass http://127.0.0.1:5118` does by default). Loopback here means the configured `--dashboard-host` name, as in the list above, so a hostname that resolves to a loopback address is not checked; it needs a token like any other non-loopback bind.
 
 ### Security matrix (observe vs control)
 
@@ -402,7 +402,7 @@ If Goose is started with `--no-metrics`, the dashboard still serves the shell an
 - No session cookies and no permissive CORS; classic cross-site cookie CSRF does not apply.
 - Every response sends `Cache-Control: no-store` (the first page load carries `?token=` and the APIs carry metrics) and `X-Content-Type-Options: nosniff`.
 - On a loopback bind, requests whose `Host` is not loopback get 403 (DNS rebinding).
-- A client gets 10 seconds to send a request's headers, on a new connection and between requests on a keep-alive one, and the server holds at most `2 × --dashboard-max-clients + 16` connections, so a client that sends nothing is closed after 10 seconds and the number of open connections is bounded. Long lived SSE streams are not cut: the timeout covers headers only.
+- A client gets 10 seconds to send a request's headers, on a new connection and between requests on a keep-alive one, and the server holds at most `2 × --dashboard-max-clients + 16` connections, so a client that sends nothing is closed after 10 seconds and the number of open connections is bounded. Long-lived SSE streams are not cut: the timeout covers headers only.
 
 ## Relationship to Controllers
 
