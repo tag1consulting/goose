@@ -72,6 +72,9 @@ jobs:
           exit 1
         fi
 
+    - name: Client tests (jsdom)
+      run: npm test
+
   build:
     name: build and run tests
     runs-on: ubuntu-latest

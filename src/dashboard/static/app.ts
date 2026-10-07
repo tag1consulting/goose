@@ -94,7 +94,39 @@
 
   // ---------------------------------------------------------------------------
   // Auth bootstrap: read ?token= from the page URL, then strip it from the bar.
+  // The token is kept in sessionStorage, which belongs to this tab and origin
+  // only, so a reload keeps it and a new tab does not get it. Never
+  // localStorage: the token must not outlive the tab. A 401 clears the stored
+  // copy so a stale token is not sent again on the next reload.
   // ---------------------------------------------------------------------------
+
+  const TOKEN_STORAGE_KEY = "goose-dashboard-token";
+
+  // sessionStorage access throws when storage is blocked; the token then lives
+  // in memory only.
+  function readStoredToken(): string {
+    try {
+      return window.sessionStorage.getItem(TOKEN_STORAGE_KEY) || "";
+    } catch {
+      return "";
+    }
+  }
+
+  function storeToken(value: string): void {
+    try {
+      window.sessionStorage.setItem(TOKEN_STORAGE_KEY, value);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function forgetStoredToken(): void {
+    try {
+      window.sessionStorage.removeItem(TOKEN_STORAGE_KEY);
+    } catch {
+      /* ignore */
+    }
+  }
 
   const params = new URLSearchParams(window.location.search);
   let token = params.get("token") || "";
@@ -109,6 +141,9 @@
     } catch {
       /* ignore */
     }
+    storeToken(token);
+  } else {
+    token = readStoredToken();
   }
 
   // ---------------------------------------------------------------------------
@@ -375,6 +410,7 @@
     appliedUsers?: number
   ): Promise<ControlResultBody | null> {
     if (res.status === 401) {
+      forgetStoredToken();
       setBanner(
         "Open this dashboard as http://host:port/?token=… (token required for control).",
         "error"
@@ -1132,6 +1168,7 @@
   }
 
   function showAuthMissing(): void {
+    forgetStoredToken();
     authRequired = true;
     authBlocked = true;
     stopPoll();

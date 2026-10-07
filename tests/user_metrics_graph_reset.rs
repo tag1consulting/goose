@@ -30,9 +30,9 @@ async fn run_graph_test(
     html_file: &str,
     _no_reset: bool,
     test_description: &str,
-) -> (GooseMetrics, MockServer) {
+) -> (GooseMetrics, usize) {
     let server = MockServer::start();
-    let _mock = server.mock(|when, then| {
+    let mock = server.mock(|when, then| {
         when.method(GET).path("/");
         then.status(200).body("test response");
     });
@@ -67,7 +67,10 @@ async fn run_graph_test(
     // Verify both internal state and graph continuity
     verify_test_results(&goose_metrics, html_file, users, test_description);
 
-    (goose_metrics, server)
+    // Every request the attack sent, whether or not Goose kept it in its metrics.
+    let server_hits = mock.calls();
+
+    (goose_metrics, server_hits)
 }
 
 // Test 1: CORE - Comprehensive comparison of reset vs no-reset behavior
@@ -79,7 +82,7 @@ async fn test_reset_vs_no_reset_behavioral_differences() {
     common::cleanup_files(html_files.clone());
 
     // Run both scenarios to compare their behavior
-    let (with_reset_metrics, _server1) = run_graph_test(
+    let (with_reset_metrics, with_reset_hits) = run_graph_test(
         3,
         "TestScenario",
         "test_with_reset.html",
@@ -88,7 +91,7 @@ async fn test_reset_vs_no_reset_behavioral_differences() {
     )
     .await;
 
-    let (without_reset_metrics, _server2) = run_graph_test(
+    let (without_reset_metrics, without_reset_hits) = run_graph_test(
         3,
         "TestScenario",
         "test_without_reset.html",
@@ -100,7 +103,9 @@ async fn test_reset_vs_no_reset_behavioral_differences() {
     // Now validate the behavioral differences
     verify_reset_vs_no_reset_behavior(
         &with_reset_metrics,
+        with_reset_hits,
         &without_reset_metrics,
+        without_reset_hits,
         "test_with_reset.html",
         "test_without_reset.html",
     );
@@ -128,7 +133,7 @@ async fn test_reset_vs_no_reset_different_user_counts() {
     common::cleanup_files(html_files.clone());
 
     // Test with 2 users (minimum for startup time) - both reset and no-reset
-    let (with_reset_2_users, _server1) = run_graph_test(
+    let (with_reset_2_users, with_reset_2_users_hits) = run_graph_test(
         2,
         "MinimalUsers",
         "test_2users_with_reset.html",
@@ -137,7 +142,7 @@ async fn test_reset_vs_no_reset_different_user_counts() {
     )
     .await;
 
-    let (without_reset_2_users, _server2) = run_graph_test(
+    let (without_reset_2_users, without_reset_2_users_hits) = run_graph_test(
         2,
         "MinimalUsers",
         "test_2users_without_reset.html",
@@ -149,13 +154,15 @@ async fn test_reset_vs_no_reset_different_user_counts() {
     // Validate behavioral difference with 2 users (minimum for startup time)
     verify_reset_vs_no_reset_behavior(
         &with_reset_2_users,
+        with_reset_2_users_hits,
         &without_reset_2_users,
+        without_reset_2_users_hits,
         "test_2users_with_reset.html",
         "test_2users_without_reset.html",
     );
 
     // Test with 100 users (high count to exaggerate differences) - both reset and no-reset
-    let (with_reset_100_users, _server3) = run_graph_test(
+    let (with_reset_100_users, with_reset_100_users_hits) = run_graph_test(
         100,
         "HighVolumeUsers",
         "test_100users_with_reset.html",
@@ -164,7 +171,7 @@ async fn test_reset_vs_no_reset_different_user_counts() {
     )
     .await;
 
-    let (without_reset_100_users, _server4) = run_graph_test(
+    let (without_reset_100_users, without_reset_100_users_hits) = run_graph_test(
         100,
         "HighVolumeUsers",
         "test_100users_without_reset.html",
@@ -176,7 +183,9 @@ async fn test_reset_vs_no_reset_different_user_counts() {
     // Validate behavioral difference with 100 users (should show exaggerated differences)
     verify_reset_vs_no_reset_behavior(
         &with_reset_100_users,
+        with_reset_100_users_hits,
         &without_reset_100_users,
+        without_reset_100_users_hits,
         "test_100users_with_reset.html",
         "test_100users_without_reset.html",
     );
@@ -224,7 +233,9 @@ fn verify_test_results(
 /// This is the most comprehensive test that validates the core fix is working
 fn verify_reset_vs_no_reset_behavior(
     with_reset_metrics: &GooseMetrics,
+    with_reset_hits: usize,
     without_reset_metrics: &GooseMetrics,
+    without_reset_hits: usize,
     with_reset_html: &str,
     without_reset_html: &str,
 ) {
@@ -240,31 +251,42 @@ fn verify_reset_vs_no_reset_behavior(
         .sum();
 
     // 1. CORE BEHAVIORAL VALIDATION: Metrics accumulation vs reset
+    //
+    // Compare what Goose recorded with what the mock server received in the
+    // same run, rather than comparing request counts across two runs: how many
+    // requests fit in a second depends on the runner, but whether the requests
+    // sent during increase-time are kept does not.
     println!("Reset behavior validation:");
-    println!("  With reset: {} total requests", with_reset_requests);
-    println!("  Without reset: {} total requests", without_reset_requests);
-
-    assert!(
-        without_reset_requests > with_reset_requests,
-        "WITHOUT reset should have more total requests ({}) than WITH reset ({}). \
-         This indicates metrics are properly accumulating vs being reset.",
-        without_reset_requests,
-        with_reset_requests
+    println!(
+        "  With reset: {} recorded of {} sent",
+        with_reset_requests, with_reset_hits
+    );
+    println!(
+        "  Without reset: {} recorded of {} sent",
+        without_reset_requests, without_reset_hits
     );
 
-    // Validate the difference is significant (should be at least 50% more requests)
-    // With --increase-time=1s and --run-time=1s configuration:
-    // - Reset scenario: Only counts metrics during the 1s run-time (excludes increase phase)
-    // - No-reset scenario: Counts metrics during both 1s increase + 1s run-time = 2s total
-    // This creates approximately 100% duration difference, resulting in 50-100% more requests
-    let difference_percentage = ((without_reset_requests - with_reset_requests) as f64
-        / with_reset_requests as f64)
-        * 100.0;
-    assert!(difference_percentage >= 50.0,
-        "Difference between reset ({}) and no-reset ({}) should be at least 50%, but was {:.1}%. \
-         With increase-time=1s + run-time=1s, no-reset scenarios run ~2x longer (2s vs 1s), \
-         so we expect 50-100% more requests. This validates the increase time behavior works correctly.",
-        with_reset_requests, without_reset_requests, difference_percentage);
+    // Without reset, every request sent is in the metrics, including those sent
+    // while users were still launching.
+    assert_eq!(
+        without_reset_requests, without_reset_hits,
+        "WITHOUT reset, metrics should hold every request the server received: \
+         recorded {}, server received {}.",
+        without_reset_requests, without_reset_hits
+    );
+
+    // With reset, the requests sent during increase-time were dropped when all
+    // users had launched. The first user starts at once, so at least one request
+    // is always sent before the reset.
+    assert!(
+        with_reset_requests < with_reset_hits,
+        "WITH reset, metrics should exclude the requests sent during increase-time: \
+         recorded {}, server received {}.",
+        with_reset_requests,
+        with_reset_hits
+    );
+    let difference_percentage =
+        (with_reset_hits - with_reset_requests) as f64 / with_reset_hits as f64 * 100.0;
 
     // 2. USER COUNT VALIDATION: Both should have same max users (user graph continuity maintained)
     assert_eq!(
@@ -355,8 +377,8 @@ fn verify_reset_vs_no_reset_behavior(
 
     println!("✅ Comprehensive Reset vs No-Reset behavior validation passed:");
     println!(
-        "  - Metrics properly accumulate without reset ({} vs {} requests, {:.1}% difference)",
-        without_reset_requests, with_reset_requests, difference_percentage
+        "  - Reset dropped the {:.1}% of requests sent during increase-time; no-reset kept all {}",
+        difference_percentage, without_reset_requests
     );
     println!(
         "  - User counts properly maintained ({} users in both scenarios)",

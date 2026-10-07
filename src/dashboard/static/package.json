@@ -4,9 +4,11 @@
   "description": "TypeScript sources for the Goose live dashboard SPA (compiles to app.js, embedded via include_str!).",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "check": "tsc -p tsconfig.json --noEmit"
+    "check": "tsc -p tsconfig.json --noEmit && tsc --noEmit --strict --allowJs --checkJs --target ES2020 --module ES2020 --skipLibCheck snapshot.d.ts idle-snapshot.mjs",
+    "test": "node --test token.test.mjs"
   },
   "devDependencies": {
+    "jsdom": "^29.1.1",
     "typescript": "^5.8.0"
   }
 }
