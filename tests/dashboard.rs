@@ -1284,7 +1284,7 @@ async fn health_on(stream: &mut tokio::net::TcpStream) -> Option<String> {
     let mut buf = Vec::new();
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
-        let text = String::from_utf8_lossy(&buf).to_string();
+        let text = String::from_utf8_lossy(&buf).into_owned();
         if let Some((head, body)) = text.split_once("\r\n\r\n") {
             let length = head
                 .lines()
@@ -1372,8 +1372,12 @@ async fn stalled_request(port: u16) -> tokio::net::TcpStream {
         .expect("connect to dashboard");
     stalled
         .write_all(
-            b"POST /api/v1/control/users HTTP/1.1\r\nHost: 127.0.0.1\r\n\
-              Content-Length: 100\r\n\r\n{",
+            format!(
+                "POST /api/v1/control/users HTTP/1.1\r\nHost: 127.0.0.1\r\n\
+                 Authorization: {}\r\nContent-Length: 100\r\n\r\n{{",
+                bearer_header()
+            )
+            .as_bytes(),
         )
         .await
         .expect("write partial request");
@@ -1387,7 +1391,7 @@ async fn assert_closed_now(stalled: &mut tokio::net::TcpStream) {
     let read = tokio::time::timeout(Duration::from_millis(100), stalled.read(&mut chunk)).await;
     assert!(
         matches!(read, Ok(Ok(0)) | Ok(Err(_))),
-        "busy connection must be closed when execute() returns, got {:?}",
+        "busy connection must be closed within 100 ms of execute() returning, got {:?}",
         read
     );
 }
@@ -1424,7 +1428,7 @@ async fn test_execute_waits_for_dashboard_drain() {
 }
 
 async fn slow_test_start(_user: &mut GooseUser) -> TransactionResult {
-    tokio::time::sleep(Duration::from_millis(1500)).await;
+    tokio::time::sleep(Duration::from_millis(3000)).await;
     Ok(())
 }
 

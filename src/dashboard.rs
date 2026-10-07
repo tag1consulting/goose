@@ -1,9 +1,10 @@
 //! Live web dashboard HTTP server.
 //!
-//! Compiled only with the `dashboard` crate feature. Spawns an axum server that
-//! serves a minimal static shell, a one-shot metrics snapshot API, an SSE
-//! stream of coalesced snapshots, and (when `--dashboard-control` is set)
-//! authenticated Start/Stop/Users control endpoints.
+//! Compiled only with the `dashboard` crate feature. Runs an HTTP/1 accept
+//! loop over an axum router that serves a minimal static shell, a one-shot
+//! metrics snapshot API, an SSE stream of coalesced snapshots, and (when
+//! `--dashboard-control` is set) authenticated Start/Stop/Users control
+//! endpoints.
 //!
 //! The parent GooseAttack main loop answers [`DashboardRequest`]s via oneshot
 //! channels using [`MetricsCommand::GetDashboardSnapshot`] for snapshots and
@@ -759,7 +760,7 @@ pub(crate) async fn setup_dashboard(
     }
 
     let (stop_tx, stop_rx) = watch::channel(false);
-    let task = tokio::spawn(serve(listener, app, stop_rx));
+    let task = tokio::spawn(serve_dashboard(listener, app, stop_rx));
     let server = DashboardServer {
         stop_tx,
         close_tx: close_tx.clone(),
@@ -780,7 +781,9 @@ pub(crate) async fn setup_dashboard(
 /// [`DashboardServer::shutdown`] stops it and waits until the listener and
 /// every connection are closed, so the port is free when it returns. Dropping
 /// the handle instead (an attack future dropped mid run, or a panic) drops
-/// `stop_tx`, which stops the server the same way without waiting for it.
+/// `stop_tx`, which stops accepting and drains connections as `shutdown`
+/// does, but without sending `event: closed` and without waiting for the
+/// server task.
 #[derive(Debug)]
 pub(crate) struct DashboardServer {
     /// Tells the accept loop and every connection task to stop, by a send or
@@ -808,7 +811,12 @@ impl DashboardServer {
 
 /// Accept loop. Owns the listener and every connection task, so when it
 /// returns nothing of the server is left running.
-async fn serve(listener: tokio::net::TcpListener, app: Router, mut stop_rx: watch::Receiver<bool>) {
+async fn serve_dashboard(
+    listener: tokio::net::TcpListener,
+    app: Router,
+    mut stop_rx: watch::Receiver<bool>,
+) {
+    let builder = hyper::server::conn::http1::Builder::new();
     let mut connections = tokio::task::JoinSet::new();
     loop {
         tokio::select! {
@@ -816,7 +824,12 @@ async fn serve(listener: tokio::net::TcpListener, app: Router, mut stop_rx: watc
             _ = stop_rx.changed() => break,
             accepted = listener.accept() => match accepted {
                 Ok((stream, _)) => {
-                    connections.spawn(serve_connection(stream, app.clone(), stop_rx.clone()));
+                    connections.spawn(serve_connection(
+                        builder.clone(),
+                        stream,
+                        app.clone(),
+                        stop_rx.clone(),
+                    ));
                 }
                 Err(e) => {
                     if !is_connection_error(&e) {
@@ -855,13 +868,13 @@ async fn serve(listener: tokio::net::TcpListener, app: Router, mut stop_rx: watc
 /// Serve one HTTP/1 connection until it ends or the server stops; on stop,
 /// let an in flight response finish and then close.
 async fn serve_connection(
+    builder: hyper::server::conn::http1::Builder,
     stream: tokio::net::TcpStream,
     app: Router,
     mut stop_rx: watch::Receiver<bool>,
 ) {
     let service = hyper_util::service::TowerToHyperService::new(app);
-    let conn = hyper::server::conn::http1::Builder::new()
-        .serve_connection(hyper_util::rt::TokioIo::new(stream), service);
+    let conn = builder.serve_connection(hyper_util::rt::TokioIo::new(stream), service);
     let mut conn = std::pin::pin!(conn);
     let result = tokio::select! {
         result = conn.as_mut() => result,
@@ -2796,7 +2809,7 @@ mod tests {
         let mut buf = Vec::new();
         let deadline = Instant::now() + Duration::from_secs(2);
         loop {
-            let text = String::from_utf8_lossy(&buf).to_string();
+            let text = String::from_utf8_lossy(&buf).into_owned();
             if let Some((head, body)) = text.split_once("\r\n\r\n") {
                 let length = head
                     .lines()
@@ -2858,36 +2871,59 @@ mod tests {
             None,
             "keep-alive connection must not be served after shutdown"
         );
-        tokio::net::TcpListener::bind(("127.0.0.1", port))
-            .await
-            .expect("port must be free when shutdown returns");
+        drop(
+            tokio::net::TcpListener::bind(("127.0.0.1", port))
+                .await
+                .expect("port must be free when shutdown returns"),
+        );
     }
 
     /// A request that never completes cannot hold shutdown past the drain
-    /// deadline; its connection is closed.
+    /// deadline; the listener closes before the drain and the busy
+    /// connection is closed at the deadline.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn shutdown_drain_is_bounded() {
         use tokio::io::AsyncWriteExt;
         let (setup, _base) = bind_dashboard_with("s3cret", 0, true).await;
-        let mut stalled = tokio::net::TcpStream::connect(("127.0.0.1", setup.bound_port))
+        let port = setup.bound_port;
+        let mut stalled = tokio::net::TcpStream::connect(("127.0.0.1", port))
             .await
             .expect("connect");
-        // Headers complete, body promised but never sent: the handler waits
-        // for it, so the connection is busy rather than idle.
         stalled
             .write_all(
                 b"POST /api/v1/control/users HTTP/1.1\r\nHost: 127.0.0.1\r\n\
-                  Content-Length: 100\r\n\r\n{",
+                  Authorization: Bearer s3cret\r\nContent-Type: application/json\r\n\
+                  Content-Length: 11\r\n\r\n{\"users\":5}",
             )
             .await
-            .expect("write partial request");
-        // Let the server read the head before shutting down.
-        tokio::time::sleep(Duration::from_millis(200)).await;
+            .expect("write control request");
+        // Hold the request unanswered: its handler waits on the reply, so the
+        // connection is busy (not idle) when shutdown starts.
+        let _in_flight =
+            tokio::time::timeout(Duration::from_secs(5), setup.request_rx.recv_async())
+                .await
+                .expect("control request reaches the parent")
+                .expect("request channel open");
 
         let started = Instant::now();
-        tokio::time::timeout(SERVER_DRAIN_TIMEOUT * 3, setup.server.shutdown())
+        let shutdown = tokio::spawn(setup.server.shutdown());
+        loop {
+            if tokio::net::TcpStream::connect(("127.0.0.1", port))
+                .await
+                .is_err()
+            {
+                break;
+            }
+            assert!(
+                started.elapsed() < SERVER_DRAIN_TIMEOUT / 2,
+                "listener must close before the drain, not after it"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        tokio::time::timeout(SERVER_DRAIN_TIMEOUT * 3, shutdown)
             .await
-            .expect("shutdown must not wait on a stalled request");
+            .expect("shutdown must not wait on a stalled request")
+            .expect("shutdown task");
         assert!(
             started.elapsed() >= SERVER_DRAIN_TIMEOUT,
             "a busy connection gets the drain deadline before it is closed"
