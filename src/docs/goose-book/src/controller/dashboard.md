@@ -30,11 +30,13 @@ http://127.0.0.1:5118/
 | `--dashboard-host HOST` | `127.0.0.1` | Bind address |
 | `--dashboard-port PORT` | `5118` | Bind port. CLI value `0` means “unset” and is rewritten to `5118` when the dashboard is enabled (not an ephemeral OS port). |
 | `--dashboard-auth-token TOKEN` | empty | Shared secret for metric APIs when configured; **always required** when `--dashboard-control` is set (even on loopback). Visible in process listings (`ps`) like any CLI flag. |
-| `--dashboard-max-clients COUNT` | `32` | Max concurrent SSE clients (`GET /api/v1/events`); further clients receive HTTP 503. CLI value `0` means “unset” and becomes `32`. |
+| `--dashboard-max-clients COUNT` | `32` | Max concurrent SSE clients (`GET /api/v1/events`); further clients receive HTTP 503. CLI value `0` means “unset” and becomes `32`. The server also holds at most twice this many connections plus 16 (80 by default); a connection beyond that is closed as soon as it is accepted. |
 
 Defaults can also be set programmatically with `GooseDefault::Dashboard`, `GooseDefault::DashboardControl`, `GooseDefault::DashboardHost`, `GooseDefault::DashboardPort`, `GooseDefault::DashboardAuthToken`, and `GooseDefault::DashboardMaxClients`.
 
 > **Feature flag:** the HTTP server is compiled behind the opt-in `dashboard` crate feature (not in default features, same pattern as `pdf-reports`). Enable it with `--features dashboard`. Builds without that feature reject `--dashboard` at startup with a clear rebuild hint.
+
+The server lives as long as the load test. When `GooseAttack::execute()` returns, whether the run finished or failed, connected browsers receive `event: closed`, open connections get up to one second to finish, and the listener and every connection are closed before `execute()` returns, so a program can run another `GooseAttack` on the same port right away.
 
 ### Observe vs control at a glance
 
@@ -63,6 +65,8 @@ Goose treats a bind host as loopback when it is:
 **Non-loopback** binds — including unspecified addresses that listen on all interfaces (`0.0.0.0`, `::`) and LAN/hostnames — **require** `--dashboard-auth-token` at startup. Goose hard-fails with a clear error if the token is missing.
 
 If a token **is** configured, it is enforced on metric APIs even on loopback.
+
+On a loopback bind every request must carry a loopback `Host` header (`localhost`, an address in `127.0.0.0/8` or `[::1]`, with any port), whatever the token setting; anything else, a missing `Host` included, gets **403**. This stops DNS rebinding: a web page that points its own domain at 127.0.0.1 sends its own domain as `Host`, so it cannot read snapshots from a dashboard that has no token. A reverse proxy in front of a loopback bind must pass a loopback `Host` (nginx `proxy_pass http://127.0.0.1:5118` does by default). Loopback here means the configured `--dashboard-host` name, as in the list above, so a hostname that resolves to a loopback address is not checked; it needs a token like any other non-loopback bind.
 
 ### Security matrix (observe vs control)
 
@@ -252,7 +256,9 @@ Logical rejections (wrong phase, prepare failure) return **HTTP 200** with `"ok"
 
 - **Stop** is disabled (cannot stop again mid-ramp)
 - **Start** stays disabled until phase is `idle` again
-- **Users** remains allowed (same as Controllers)
+- **Users** is refused until phase is `idle` again (the dashboard returns `"ok": false` with `invalid_phase`, a Controller replies false), so Users cannot turn a Stop back into a running load test
+
+The snapshot's `stopping` field is `true` from the Stop until `idle`; a Controller `shutdown` and Ctrl-C set it the same way. A test plan's own ramp down is also phase `decrease`, but `stopping` stays `false` and **Users** is accepted there.
 
 ### UI walkthrough (control panel)
 
@@ -261,7 +267,7 @@ When `health.control_enabled` is true and the SPA has a token:
 1. **Phase badge** still shows `idle` / `increase` / `maintain` / `decrease` / `shutdown`.
 2. **Start** is enabled only in `idle`.
 3. **Stop** is enabled in `increase` and `maintain` only.
-4. **Target users** — enter an absolute count and **Apply**, or use **−** / **+** with a configurable step (default 10). Active user count is a read-only label from the latest snapshot.
+4. **Target users**: enter an absolute count and **Apply**, or use **−** / **+** with a configurable step (default 10). Active user count is a read-only label from the latest snapshot. **Apply**, **−** and **+** are disabled while `stopping` is set.
 5. Status line shows server `message` on success, or an error banner on soft failure / 401 / 503.
 
 There is no process-shutdown button in the dashboard. Use a Controller `shutdown` command when you need to exit the Goose process.
@@ -324,6 +330,7 @@ The browser SPA lives under `src/dashboard/static/`. **Edit TypeScript, not the 
 |------|------|
 | `app.ts` | Source of truth for dashboard client logic |
 | `chart-global.d.ts` | Ambient types for the vendored Chart.js UMD build |
+| `snapshot.d.ts` | **Generated** types of the snapshot JSON, from the Rust structs in `src/metrics/dashboard_snapshot.rs` |
 | `tsconfig.json` / `package.json` | TypeScript toolchain config |
 | `token.test.mjs` | Client tests run in jsdom against the compiled `app.js` (`npm test`) |
 | `app.js` | **Compiled output** embedded by the Rust server via `include_str!` |
@@ -353,6 +360,22 @@ cargo build
 # or exercise the dashboard:
 cargo run --release --features dashboard --example simple -- --dashboard ...
 ```
+
+### Snapshot types
+
+`snapshot.d.ts` declares `DashboardSnapshot` and every struct it holds, generated by [`ts-rs`](https://crates.io/crates/ts-rs) from the Rust structs, so `tsc` rejects a read of a field the structs do not have. Every `u64` is declared as `number`, which is what `JSON.parse` returns. After changing a snapshot struct, regenerate the file, then type check the client (and run `npm run build` if `app.ts` changed). `tsconfig.json` sets `skipLibCheck` to false so `tsc` also checks the generated file:
+
+```bash
+GOOSE_UPDATE_DASHBOARD_TYPES=1 cargo test --lib dashboard_types_match_rust
+cd src/dashboard/static
+npm run check
+```
+
+`ts-rs` is a dev dependency used only by unit tests, so crates that depend on Goose never pull it in. Without the environment variable, `dashboard_types_match_rust` compares the committed file with the structs and fails when they differ (a reordered field counts as a difference), so a struct change without a regenerated `snapshot.d.ts` fails `cargo test` in CI, and a client that reads a removed or renamed field then fails `npm run check`. A second test fails on any serde attribute or hand-written `Serialize` in the snapshot module, because `ts-rs` cannot see either, so the JSON could change without the types changing.
+
+`ts-rs` is pinned to an exact version in `Cargo.toml`. The committed file is compared byte for byte with its output, and Goose commits no `Cargo.lock`, so a new release that formats differently would otherwise fail CI with no change in Goose. Dependabot opens a pull request when a new `ts-rs` is released; if `dashboard_types_match_rust` fails on it, regenerate the file on that branch as above and review the diff.
+
+The client accepts only the snapshot `version` named in `snapshot.d.ts` (`SNAPSHOT_VERSION` in the Rust module) and shows an error banner for any other.
 
 ### Type-check without emitting
 
@@ -404,11 +427,14 @@ If Goose is started with `--no-metrics`, the dashboard still serves the shell an
 - Token protects **metric APIs** when configured; control POSTs **always** require the token when control is on.
 - Shell/static/health stay public and contain no load-test metrics.
 - Prefer `Authorization: Bearer` for scripts; browsers use `?token=` for metrics (EventSource limits) and **Bearer only** for control POSTs (server rejects query tokens on `/api/v1/control/*`).
-- Query tokens on metric URLs can appear in reverse-proxy access logs and `Referer` headers — prefer SSH tunnels or a local reverse proxy when that matters.
+- Query tokens on metric URLs can appear in reverse-proxy access logs; prefer SSH tunnels or a local reverse proxy when that matters. Every response sends `Referrer-Policy: no-referrer`, so the page does not pass its `?token=` URL on as a `Referer`.
 - `--dashboard-auth-token` is visible in process listings (`ps`) like any CLI argument; for shared hosts prefer a short-lived secret and restricted process visibility.
 - Goose never logs the token value; the startup line is only `listening on http://{host:port} (read-only|control enabled)` with no query secret.
 - The UI renders metric fields with `textContent` only (no `innerHTML`) and serves a strict Content-Security-Policy without `'unsafe-inline'` scripts.
 - No session cookies and no permissive CORS; classic cross-site cookie CSRF does not apply.
+- Every response sends `Cache-Control: no-store` (the first page load carries `?token=` and the APIs carry metrics) and `X-Content-Type-Options: nosniff`.
+- On a loopback bind, requests whose `Host` is not loopback get 403 (DNS rebinding).
+- A client gets 10 seconds to send a request's headers, on a new connection and between requests on a keep-alive one, and the server holds at most `2 × --dashboard-max-clients + 16` connections, so a client that sends nothing is closed after 10 seconds and the number of open connections is bounded. Long-lived SSE streams are not cut: the timeout covers headers only.
 
 ## Relationship to Controllers
 

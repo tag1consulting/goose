@@ -8,7 +8,7 @@
     "noUnusedParameters": true,
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
-    "skipLibCheck": true,
+    "skipLibCheck": false,
     "forceConsistentCasingInFileNames": true,
     "removeComments": false,
     "sourceMap": false,
@@ -17,6 +17,6 @@
     "rootDir": ".",
     "newLine": "lf"
   },
-  "include": ["app.ts", "chart-global.d.ts"],
+  "include": ["app.ts", "chart-global.d.ts", "snapshot.d.ts"],
   "exclude": ["node_modules"]
 }

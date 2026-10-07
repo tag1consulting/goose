@@ -21,14 +21,23 @@ pub(crate) const MAX_ERROR_ROWS: usize = 50;
 #[cfg_attr(not(feature = "dashboard"), allow(dead_code))]
 pub(crate) const SERIES_WINDOW_SECS: u32 = 300;
 
+/// Wire format version of [`DashboardSnapshot`]. The dashboard client refuses a
+/// snapshot with any other version; bump it on a breaking change to the shape.
+pub(crate) const SNAPSHOT_VERSION: u32 = 1;
+
 /// Wire format versioned so UI and server can evolve independently.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub(crate) struct DashboardSnapshot {
     pub version: u32,
     pub generated_at: DateTime<Utc>,
     pub goose_version: String,
 
     pub phase: String,
+    /// True while a cancel (Stop, `shutdown`, Ctrl-C) ramps the run down,
+    /// until it reaches idle. A test plan's own ramp down leaves it false, so
+    /// clients can tell the two `decrease` phases apart.
+    pub stopping: bool,
     pub duration_secs: u64,
     /// Users currently running (main-loop active count).
     pub active_users: u64,
@@ -49,6 +58,7 @@ pub(crate) struct DashboardSnapshot {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub(crate) struct AggregateMetrics {
     pub total_requests: u64,
     pub total_failures: u64,
@@ -65,6 +75,7 @@ pub(crate) struct AggregateMetrics {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub(crate) struct RequestRow {
     pub method: String,
     pub name: String,
@@ -80,6 +91,7 @@ pub(crate) struct RequestRow {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub(crate) struct ErrorRow {
     pub method: String,
     pub name: String,
@@ -89,6 +101,7 @@ pub(crate) struct ErrorRow {
 
 /// Trailing per-second aggregate series for dashboard charts.
 #[derive(Debug, Clone, Serialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub(crate) struct SeriesWindow {
     /// First exported bucket index in seconds-from-test-start.
     pub start_second: u64,
@@ -112,6 +125,7 @@ impl SeriesWindow {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub(crate) struct Percentiles {
     pub p50: u64,
     pub p95: u64,
@@ -145,6 +159,7 @@ impl Percentiles {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub(crate) struct SnapshotFlags {
     pub metrics_disabled: bool,
     pub requests_truncated: bool,
@@ -162,6 +177,8 @@ pub(crate) struct DashboardSnapshotInput<'a> {
     pub target_users: usize,
     pub total_users: usize,
     pub phase: String,
+    /// See [`DashboardSnapshot::stopping`].
+    pub stopping: bool,
     pub series_window_secs: u32,
     pub no_status_codes: bool,
     pub metrics_disabled: bool,
@@ -175,10 +192,11 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
         let mut hosts: Vec<String> = input.metrics.hosts.iter().cloned().collect();
         hosts.sort();
         return DashboardSnapshot {
-            version: 1,
+            version: SNAPSHOT_VERSION,
             generated_at: Utc::now(),
             goose_version: env!("CARGO_PKG_VERSION").to_string(),
             phase: input.phase,
+            stopping: input.stopping,
             duration_secs: input.metrics.duration as u64,
             active_users: input.active_users as u64,
             maximum_users: input.maximum_users as u64,
@@ -287,10 +305,11 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
     hosts.sort();
 
     DashboardSnapshot {
-        version: 1,
+        version: SNAPSHOT_VERSION,
         generated_at: Utc::now(),
         goose_version: env!("CARGO_PKG_VERSION").to_string(),
         phase: input.phase,
+        stopping: input.stopping,
         duration_secs: duration as u64,
         active_users: input.active_users as u64,
         maximum_users: input.maximum_users as u64,
@@ -420,6 +439,7 @@ mod tests {
             target_users: 10,
             total_users: 10,
             phase: "idle".to_string(),
+            stopping: false,
             series_window_secs: SERIES_WINDOW_SECS,
             no_status_codes: false,
             metrics_disabled: false,
@@ -470,6 +490,7 @@ mod tests {
             target_users: 5,
             total_users: 5,
             phase: "maintain".to_string(),
+            stopping: false,
             series_window_secs: 60,
             no_status_codes: true,
             metrics_disabled: false,
@@ -504,6 +525,7 @@ mod tests {
             target_users: 0,
             total_users: 0,
             phase: "maintain".to_string(),
+            stopping: false,
             series_window_secs: 300,
             no_status_codes: false,
             metrics_disabled: false,
@@ -530,6 +552,7 @@ mod tests {
             target_users: 0,
             total_users: 0,
             phase: "maintain".to_string(),
+            stopping: false,
             series_window_secs: 300,
             no_status_codes: false,
             metrics_disabled: false,
@@ -556,6 +579,7 @@ mod tests {
             target_users: 10,
             total_users: 10,
             phase: "increase".to_string(),
+            stopping: false,
             series_window_secs: 300,
             no_status_codes: false,
             metrics_disabled: false,
@@ -607,6 +631,7 @@ mod tests {
             target_users: 10,
             total_users: 10,
             phase: "maintain".to_string(),
+            stopping: true,
             series_window_secs: 120,
             no_status_codes: false,
             metrics_disabled: true,
@@ -624,9 +649,118 @@ mod tests {
         assert!(!snap.aggregate.co_active);
         // Runtime context is still honest.
         assert_eq!(snap.phase, "maintain");
+        assert!(snap.stopping);
         assert_eq!(snap.duration_secs, 42);
         assert_eq!(snap.active_users, 7);
         assert_eq!(snap.target_users, 10);
         assert_eq!(snap.hosts, vec!["https://example.com".to_string()]);
+    }
+
+    /// Committed TypeScript declarations of the snapshot structs, compiled
+    /// with the dashboard client (`src/dashboard/static/tsconfig.json`).
+    const DASHBOARD_TYPES_PATH: &str = "src/dashboard/static/snapshot.d.ts";
+
+    /// Set to rewrite [`DASHBOARD_TYPES_PATH`] instead of comparing against it.
+    const UPDATE_DASHBOARD_TYPES_ENV: &str = "GOOSE_UPDATE_DASHBOARD_TYPES";
+
+    /// TypeScript declarations for every struct in the snapshot, generated by
+    /// `ts-rs`. They are global `type` aliases because `app.ts` is a plain
+    /// script, not a module. Every `u64` is emitted as `number`, the type
+    /// `JSON.parse` yields, rather than `ts-rs`'s default `bigint`.
+    fn dashboard_types_ts() -> String {
+        use std::any::TypeId;
+        use ts_rs::{TypeVisitor, TS};
+
+        /// Collects the declaration of every struct reachable from the
+        /// snapshot, so a new nested struct cannot be left out of the file.
+        struct Declarations {
+            cfg: ts_rs::Config,
+            seen: Vec<TypeId>,
+            decls: Vec<String>,
+        }
+        impl TypeVisitor for Declarations {
+            fn visit<T: TS + 'static + ?Sized>(&mut self) {
+                // Primitives and std containers have no output path and no
+                // declaration of their own.
+                if T::output_path().is_none() || self.seen.contains(&TypeId::of::<T>()) {
+                    return;
+                }
+                self.seen.push(TypeId::of::<T>());
+                self.decls.push(T::decl(&self.cfg));
+                T::visit_dependencies(self);
+            }
+        }
+
+        let mut declarations = Declarations {
+            cfg: ts_rs::Config::new().with_large_int("number"),
+            seen: Vec::new(),
+            decls: Vec::new(),
+        };
+        declarations.visit::<DashboardSnapshot>();
+        // The derive's visiting order is not stable from one build to the
+        // next; sort by type name so the file is.
+        declarations.decls.sort();
+        let mut out = format!(
+            "// Generated from src/metrics/dashboard_snapshot.rs by the unit test\n\
+             // `dashboard_types_match_rust`. Do not edit. To regenerate, run:\n\
+             //   {UPDATE_DASHBOARD_TYPES_ENV}=1 cargo test --lib dashboard_types_match_rust\n\
+             \n\
+             /** The only `DashboardSnapshot.version` this client accepts. */\n\
+             type DashboardSnapshotVersion = {SNAPSHOT_VERSION};\n"
+        );
+        for decl in declarations.decls {
+            out.push('\n');
+            // `ts-rs` leaves a space after the comma ahead of a doc comment.
+            for line in decl.lines() {
+                out.push_str(line.trim_end());
+                out.push('\n');
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn dashboard_types_match_rust() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(DASHBOARD_TYPES_PATH);
+        let generated = dashboard_types_ts();
+        if std::env::var_os(UPDATE_DASHBOARD_TYPES_ENV).is_some() {
+            // Never let a stray variable turn the CI check into a rewrite.
+            assert!(
+                std::env::var_os("CI").is_none(),
+                "{} must not be set in CI",
+                UPDATE_DASHBOARD_TYPES_ENV
+            );
+            std::fs::write(&path, &generated).expect("write dashboard types");
+            return;
+        }
+        let committed = std::fs::read_to_string(&path).expect("read dashboard types");
+        assert!(
+            committed == generated,
+            "{} does not match the snapshot structs. Regenerate it with \
+             `{}=1 cargo test --lib dashboard_types_match_rust`, then type check \
+             the client (`npm run check` in src/dashboard/static).\n--- generated ---\n{}",
+            DASHBOARD_TYPES_PATH,
+            UPDATE_DASHBOARD_TYPES_ENV,
+            generated
+        );
+    }
+
+    #[test]
+    fn snapshot_json_comes_from_plain_derives() {
+        // snapshot.d.ts describes the JSON only while serde's derive writes it
+        // from the fields as declared. ts-rs does not model attributes such as
+        // `serialize_with`, and cannot see a hand-written `impl Serialize`, so
+        // either could change the JSON without changing the declarations.
+        // `serde(` also catches one inside `cfg_attr`.
+        let source = include_str!("dashboard_snapshot.rs");
+        let structs = source.split("\nmod tests {").next().expect("source");
+        for pattern in ["serde(", "impl Serialize", "impl serde::Serialize"] {
+            assert!(
+                !structs.contains(pattern),
+                "`{}` in dashboard_snapshot.rs: snapshot.d.ts may no longer \
+                 match the JSON; check the generated types by hand",
+                pattern
+            );
+        }
     }
 }
