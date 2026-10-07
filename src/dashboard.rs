@@ -87,6 +87,17 @@ const SNAPSHOT_BUILD_TIMEOUT: Duration = Duration::from_secs(4);
 /// them. Bounds the wait in `execute()` when a client never finishes a request.
 const SERVER_DRAIN_TIMEOUT: Duration = Duration::from_secs(1);
 
+/// How long a client has to send a request's headers, on a new connection and
+/// between requests on a keep alive one, before the connection is closed. A
+/// header read timeout and not a whole request timeout, which would cut the
+/// long lived `/api/v1/events` streams.
+const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Connections allowed beyond the SSE client cap: every browser tab holds one
+/// SSE stream plus keep alive connections for static assets, polls and
+/// control requests, and monitors and scripts need a few more.
+const EXTRA_CONNECTIONS: usize = 16;
+
 /// Max JSON body size for control POSTs (start/stop are tiny; users is one int).
 const CONTROL_BODY_LIMIT: usize = 16 * 1024;
 
@@ -750,7 +761,10 @@ pub(crate) async fn setup_dashboard(
         control_in_flight: Arc::new(AtomicUsize::new(0)),
     };
 
-    let app = build_router(state);
+    // Decide from the bound socket, not the configured name: that is the
+    // address a rebound browser page would actually reach.
+    let app = build_router(state, bound.ip().is_loopback());
+    let max_connections = connection_cap(max_sse_clients);
 
     if control_enabled {
         info!("[dashboard]: listening on http://{bound} (control enabled)");
@@ -760,7 +774,7 @@ pub(crate) async fn setup_dashboard(
     }
 
     let (stop_tx, stop_rx) = watch::channel(false);
-    let task = tokio::spawn(serve_dashboard(listener, app, stop_rx));
+    let task = tokio::spawn(serve_dashboard(listener, app, max_connections, stop_rx));
     let server = DashboardServer {
         stop_tx,
         close_tx: close_tx.clone(),
@@ -809,28 +823,58 @@ impl DashboardServer {
     }
 }
 
+/// Most connections the server holds open at once for a given SSE client cap:
+/// above the cap, so every allowed SSE stream fits with room for the page
+/// loads, polls and control requests beside it.
+fn connection_cap(max_sse_clients: usize) -> usize {
+    max_sse_clients
+        .saturating_mul(2)
+        .saturating_add(EXTRA_CONNECTIONS)
+        .min(tokio::sync::Semaphore::MAX_PERMITS)
+}
+
 /// Accept loop. Owns the listener and every connection task, so when it
 /// returns nothing of the server is left running.
+///
+/// At most `max_connections` connections are open at once; a connection
+/// accepted beyond that is closed at once, before any of it is read.
 async fn serve_dashboard(
     listener: tokio::net::TcpListener,
     app: Router,
+    max_connections: usize,
     mut stop_rx: watch::Receiver<bool>,
 ) {
-    let builder = hyper::server::conn::http1::Builder::new();
+    let mut builder = hyper::server::conn::http1::Builder::new();
+    // Without a timer hyper applies no header read timeout at all.
+    builder
+        .timer(hyper_util::rt::TokioTimer::new())
+        .header_read_timeout(HEADER_READ_TIMEOUT);
+    // Each connection task holds one permit until it ends, aborted or not, so
+    // the count does not wait for finished tasks to be reaped.
+    let open_connections = Arc::new(tokio::sync::Semaphore::new(max_connections));
     let mut connections = tokio::task::JoinSet::new();
     loop {
         tokio::select! {
             // A send or a dropped sender both mean stop.
             _ = stop_rx.changed() => break,
             accepted = listener.accept() => match accepted {
-                Ok((stream, _)) => {
-                    connections.spawn(serve_connection(
-                        builder.clone(),
-                        stream,
-                        app.clone(),
-                        stop_rx.clone(),
-                    ));
-                }
+                Ok((stream, peer)) => match Arc::clone(&open_connections).try_acquire_owned() {
+                    Ok(permit) => {
+                        connections.spawn(serve_connection(
+                            builder.clone(),
+                            stream,
+                            app.clone(),
+                            stop_rx.clone(),
+                            permit,
+                        ));
+                    }
+                    Err(_) => {
+                        debug!(
+                            "[dashboard]: closing connection from {peer}: {max_connections} connections already open"
+                        );
+                        drop(stream);
+                    }
+                },
                 Err(e) => {
                     if !is_connection_error(&e) {
                         // Usually EMFILE: back off as axum::serve does, but
@@ -866,12 +910,14 @@ async fn serve_dashboard(
 }
 
 /// Serve one HTTP/1 connection until it ends or the server stops; on stop,
-/// let an in flight response finish and then close.
+/// let an in flight response finish and then close. Holds its slot of the
+/// connection cap until it returns.
 async fn serve_connection(
     builder: hyper::server::conn::http1::Builder,
     stream: tokio::net::TcpStream,
     app: Router,
     mut stop_rx: watch::Receiver<bool>,
+    _permit: tokio::sync::OwnedSemaphorePermit,
 ) {
     let service = hyper_util::service::TowerToHyperService::new(app);
     let conn = builder.serve_connection(hyper_util::rt::TokioIo::new(stream), service);
@@ -901,8 +947,10 @@ fn is_connection_error(e: &std::io::Error) -> bool {
 /// Build the axum router with public shell/static/health and auth-gated metrics.
 ///
 /// Control routes are registered only when `state.control_enabled` is true
-/// (otherwise POST /api/v1/control/* → 404).
-fn build_router(state: DashboardState) -> Router {
+/// (otherwise POST /api/v1/control/* → 404). On a loopback bind every request
+/// must carry a loopback `Host`, so a page that rebinds its own domain to
+/// 127.0.0.1 cannot read the API.
+fn build_router(state: DashboardState, loopback_bind: bool) -> Router {
     let control_enabled = state.control_enabled;
     let mut router = Router::new()
         .route("/", get(index_handler))
@@ -924,16 +972,63 @@ fn build_router(state: DashboardState) -> Router {
         router = router.merge(control_routes);
     }
 
+    if loopback_bind {
+        // Added before the header layers so a refusal carries them too.
+        router = router.layer(axum::middleware::from_fn(require_loopback_host));
+    }
+
     router
         .layer(SetResponseHeaderLayer::overriding(
             header::CONTENT_SECURITY_POLICY,
             HeaderValue::from_static(CSP),
         ))
+        // `no-store`, not `no-cache`: the first page load carries `?token=`
+        // and the API responses carry metrics; neither belongs in a cache.
         .layer(SetResponseHeaderLayer::overriding(
             header::CACHE_CONTROL,
-            HeaderValue::from_static("no-cache"),
+            HeaderValue::from_static("no-store"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::X_CONTENT_TYPE_OPTIONS,
+            HeaderValue::from_static("nosniff"),
+        ))
+        // Keeps `?token=` out of the `Referer` of anything the page loads or
+        // links to.
+        .layer(SetResponseHeaderLayer::overriding(
+            header::REFERRER_POLICY,
+            HeaderValue::from_static("no-referrer"),
         ))
         .with_state(Arc::new(state))
+}
+
+/// Refuse a request whose `Host` is missing or not a loopback name or address
+/// (403). Used on loopback binds only, against DNS rebinding.
+async fn require_loopback_host(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response<Body> {
+    let allowed = request
+        .headers()
+        .get(header::HOST)
+        .and_then(|host| host.to_str().ok())
+        .is_some_and(is_loopback_host);
+    if allowed {
+        next.run(request).await
+    } else {
+        (StatusCode::FORBIDDEN, "host not allowed").into_response()
+    }
+}
+
+/// True when a `Host` header value names a loopback host: `localhost`, an
+/// address in `127.0.0.0/8` or `[::1]`, with or without a port.
+fn is_loopback_host(value: &str) -> bool {
+    // An authority also parses `user@host`, which is no valid `Host`.
+    if value.contains('@') {
+        return false;
+    }
+    value
+        .parse::<axum::http::uri::Authority>()
+        .is_ok_and(|authority| crate::config::is_loopback_bind(authority.host()))
 }
 
 async fn index_handler() -> Response<Body> {
@@ -2963,5 +3058,312 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
         assert!(refused, "listener must close after the handle is dropped");
+    }
+
+    /// Send `request` on a new connection and read until the server closes it
+    /// (the request should say `Connection: close`) or two seconds pass.
+    async fn raw_exchange(port: u16, request: &str) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("connect");
+        stream.write_all(request.as_bytes()).await.expect("write");
+        let mut buf = Vec::new();
+        let _ = tokio::time::timeout(Duration::from_secs(2), stream.read_to_end(&mut buf)).await;
+        String::from_utf8_lossy(&buf).into_owned()
+    }
+
+    fn get_with_host(path: &str, host: &str) -> String {
+        format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n")
+    }
+
+    /// Read from `stream`, discarding data, until the peer closes it (EOF or
+    /// reset). True when that happens within `within`.
+    async fn closed_within(stream: &mut tokio::net::TcpStream, within: Duration) -> bool {
+        use tokio::io::AsyncReadExt;
+        let deadline = tokio::time::Instant::now() + within;
+        let mut chunk = [0u8; 1024];
+        loop {
+            match tokio::time::timeout_at(deadline, stream.read(&mut chunk)).await {
+                Ok(Ok(0)) | Ok(Err(_)) => return true,
+                Ok(Ok(_)) => continue,
+                Err(_) => return false,
+            }
+        }
+    }
+
+    #[test]
+    fn is_loopback_host_rules() {
+        for host in [
+            "localhost",
+            "LOCALHOST:5118",
+            "127.0.0.1",
+            "127.0.0.1:5118",
+            "127.1.2.3:80",
+            "[::1]",
+            "[::1]:5118",
+        ] {
+            assert!(is_loopback_host(host), "{} is loopback", host);
+        }
+        for host in [
+            "",
+            "evil.example",
+            "evil.example:5118",
+            "localhost.evil.example",
+            "127.0.0.1.evil.example",
+            "0.0.0.0:5118",
+            "10.0.0.1:5118",
+            "[::]:5118",
+            "evil.example@127.0.0.1",
+            "127.0.0.1:5118/path",
+        ] {
+            assert!(!is_loopback_host(host), "{:?} is not loopback", host);
+        }
+    }
+
+    #[test]
+    fn connection_cap_is_above_sse_cap() {
+        assert_eq!(connection_cap(MAX_SSE_CLIENTS), 2 * MAX_SSE_CLIENTS + 16);
+        assert_eq!(connection_cap(1), 18);
+        assert_eq!(
+            connection_cap(usize::MAX),
+            tokio::sync::Semaphore::MAX_PERMITS
+        );
+    }
+
+    /// Regression for #697: on a loopback bind a request whose `Host` is not
+    /// loopback (a DNS rebinding page) is refused, before auth.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn loopback_bind_refuses_non_loopback_host() {
+        let (_hub_builds, _parent_builds, parent, base, _server) = setup_with_mock("").await;
+        let port: u16 = base.rsplit(':').next().unwrap().parse().unwrap();
+
+        for path in ["/", "/api/v1/health", "/api/v1/snapshot", "/api/v1/events"] {
+            let reply =
+                raw_exchange(port, &get_with_host(path, &format!("evil.example:{port}"))).await;
+            assert!(
+                reply.starts_with("HTTP/1.1 403"),
+                "{} with a rebound Host must get 403, got {:?}",
+                path,
+                reply
+            );
+        }
+        let reply = raw_exchange(port, "GET /api/v1/snapshot HTTP/1.0\r\n\r\n").await;
+        assert!(
+            reply.starts_with("HTTP/1.0 403"),
+            "a request with no Host must get 403, got {:?}",
+            reply
+        );
+
+        for host in [
+            format!("127.0.0.1:{port}"),
+            format!("localhost:{port}"),
+            format!("[::1]:{port}"),
+        ] {
+            let reply = raw_exchange(port, &get_with_host("/api/v1/snapshot", &host)).await;
+            assert!(
+                reply.starts_with("HTTP/1.1 200"),
+                "Host {} must be served, got {:?}",
+                host,
+                reply
+            );
+        }
+        parent.abort();
+    }
+
+    /// The Host check is for loopback binds only: on a non loopback bind the
+    /// token protects the API and any Host is served.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn non_loopback_bind_serves_any_host() {
+        let config = GooseConfiguration {
+            dashboard: true,
+            dashboard_host: "0.0.0.0".to_string(),
+            dashboard_port: 0,
+            dashboard_auth_token: "secret".to_string(),
+            ..Default::default()
+        };
+        let setup = setup_dashboard(&config)
+            .await
+            .expect("bind")
+            .expect("enabled");
+        let reply = raw_exchange(
+            setup.bound_port,
+            &get_with_host("/api/v1/health", "loadgen.example:5118"),
+        )
+        .await;
+        assert!(
+            reply.starts_with("HTTP/1.1 200"),
+            "non loopback bind must not check Host, got {:?}",
+            reply
+        );
+    }
+
+    /// Regression for #697: every response, the token bearing page load and
+    /// the API included, carries `nosniff`, `no-referrer` and `no-store`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn responses_carry_security_headers() {
+        let (_hub_builds, _parent_builds, parent, base, _server) = setup_with_mock("secret").await;
+        let port: u16 = base.rsplit(':').next().unwrap().parse().unwrap();
+        let client = reqwest::Client::new();
+
+        let mut responses = Vec::new();
+        for (path, status) in [
+            ("/?token=secret", 200),
+            ("/static/app.js", 200),
+            ("/api/v1/health", 200),
+            ("/api/v1/snapshot?token=secret", 200),
+            ("/api/v1/snapshot", 401),
+            ("/api/v1/events?token=secret", 200),
+            ("/no/such/page", 404),
+        ] {
+            let resp = client
+                .get(format!("{base}{path}"))
+                .send()
+                .await
+                .expect("request");
+            assert_eq!(resp.status(), status, "{path}");
+            responses.push((path.to_string(), resp.headers().clone()));
+        }
+        let refused = raw_exchange(port, &get_with_host("/", "evil.example")).await;
+        assert!(refused.starts_with("HTTP/1.1 403"), "{:?}", refused);
+
+        for (path, headers) in &responses {
+            assert_eq!(headers["cache-control"], "no-store", "{path}");
+            assert_eq!(headers["x-content-type-options"], "nosniff", "{path}");
+            assert_eq!(headers["referrer-policy"], "no-referrer", "{path}");
+        }
+        for line in [
+            "cache-control: no-store\r\n",
+            "x-content-type-options: nosniff\r\n",
+            "referrer-policy: no-referrer\r\n",
+        ] {
+            assert!(
+                refused.contains(line),
+                "403 must carry {:?}: {:?}",
+                line,
+                refused
+            );
+        }
+        parent.abort();
+    }
+
+    /// Regression for #697: a client that sends part of a request line and
+    /// stalls is closed at the header read timeout, not held open forever.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn slow_header_client_is_cut_at_timeout() {
+        use tokio::io::AsyncWriteExt;
+        let (_setup, base) = bind_dashboard("").await;
+        let port: u16 = base.rsplit(':').next().unwrap().parse().unwrap();
+        let mut slow = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("connect");
+        slow.write_all(b"GET /api/v1/health HTTP/1.1\r\nHost: 127")
+            .await
+            .expect("write");
+        let started = Instant::now();
+
+        assert!(
+            !closed_within(&mut slow, HEADER_READ_TIMEOUT - Duration::from_secs(1)).await,
+            "closed before the header read timeout"
+        );
+        assert!(
+            closed_within(&mut slow, Duration::from_secs(3)).await,
+            "a stalled header must be cut at the header read timeout"
+        );
+        assert!(started.elapsed() >= HEADER_READ_TIMEOUT);
+    }
+
+    /// Regression for #697: connections beyond the cap are closed on accept,
+    /// while every SSE stream up to `--dashboard-max-clients` keeps working,
+    /// and a closed connection frees its slot.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn connection_cap_refuses_extra_connections_and_keeps_sse() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let max_clients = 2u32;
+        let cap = connection_cap(max_clients as usize);
+        let (_hub_builds, _parent_builds, parent, base, _server) =
+            setup_with_mock_max("", max_clients).await;
+        let port: u16 = base.rsplit(':').next().unwrap().parse().unwrap();
+        // Let the setup's health check connection close on the server side.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        async fn read_until(stream: &mut tokio::net::TcpStream, needle: &str) -> bool {
+            let mut text = String::new();
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+            let mut chunk = [0u8; 4096];
+            while !text.contains(needle) {
+                match tokio::time::timeout_at(deadline, stream.read(&mut chunk)).await {
+                    Ok(Ok(n)) if n > 0 => text.push_str(&String::from_utf8_lossy(&chunk[..n])),
+                    _ => return false,
+                }
+            }
+            true
+        }
+
+        let mut sse = Vec::new();
+        for i in 0..max_clients {
+            let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+                .await
+                .expect("connect");
+            stream
+                .write_all(b"GET /api/v1/events HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+                .await
+                .expect("write");
+            assert!(
+                read_until(&mut stream, "event: snapshot").await,
+                "SSE client {} must get a snapshot",
+                i
+            );
+            sse.push(stream);
+        }
+
+        // Fill the remaining slots with served keep-alive connections; the
+        // first connection past the cap is closed without an answer.
+        let mut held = Vec::new();
+        let refused = loop {
+            assert!(
+                sse.len() + held.len() <= cap,
+                "more than {} connections served",
+                cap
+            );
+            let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+                .await
+                .expect("connect");
+            match health_on(&mut stream).await {
+                Some(_) => held.push(stream),
+                None => break stream,
+            }
+        };
+        drop(refused);
+        assert_eq!(
+            sse.len() + held.len(),
+            cap,
+            "the cap is reached at exactly {cap} open connections"
+        );
+
+        // The SSE streams up to the client cap still receive snapshots.
+        for (i, stream) in sse.iter_mut().enumerate() {
+            assert!(
+                read_until(stream, "event: snapshot").await,
+                "SSE client {} must keep receiving snapshots at the connection cap",
+                i
+            );
+        }
+
+        // Closing one connection frees its slot for a new one.
+        drop(held.pop());
+        let mut served = false;
+        for _ in 0..40 {
+            let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+                .await
+                .expect("connect");
+            if health_on(&mut stream).await.is_some() {
+                served = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert!(served, "a closed connection must free its slot");
+        parent.abort();
     }
 }

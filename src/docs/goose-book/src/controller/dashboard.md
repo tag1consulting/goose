@@ -30,7 +30,7 @@ http://127.0.0.1:5118/
 | `--dashboard-host HOST` | `127.0.0.1` | Bind address |
 | `--dashboard-port PORT` | `5118` | Bind port. CLI value `0` means “unset” and is rewritten to `5118` when the dashboard is enabled (not an ephemeral OS port). |
 | `--dashboard-auth-token TOKEN` | empty | Shared secret for metric APIs when configured; **always required** when `--dashboard-control` is set (even on loopback). Visible in process listings (`ps`) like any CLI flag. |
-| `--dashboard-max-clients COUNT` | `32` | Max concurrent SSE clients (`GET /api/v1/events`); further clients receive HTTP 503. CLI value `0` means “unset” and becomes `32`. |
+| `--dashboard-max-clients COUNT` | `32` | Max concurrent SSE clients (`GET /api/v1/events`); further clients receive HTTP 503. CLI value `0` means “unset” and becomes `32`. The server also holds at most twice this many connections plus 16 (80 by default); a connection beyond that is closed as soon as it is accepted. |
 
 Defaults can also be set programmatically with `GooseDefault::Dashboard`, `GooseDefault::DashboardControl`, `GooseDefault::DashboardHost`, `GooseDefault::DashboardPort`, `GooseDefault::DashboardAuthToken`, and `GooseDefault::DashboardMaxClients`.
 
@@ -65,6 +65,8 @@ Goose treats a bind host as loopback when it is:
 **Non-loopback** binds — including unspecified addresses that listen on all interfaces (`0.0.0.0`, `::`) and LAN/hostnames — **require** `--dashboard-auth-token` at startup. Goose hard-fails with a clear error if the token is missing.
 
 If a token **is** configured, it is enforced on metric APIs even on loopback.
+
+On a loopback bind every request must carry a loopback `Host` header (`localhost`, an address in `127.0.0.0/8` or `[::1]`, with any port), whatever the token setting; anything else, a missing `Host` included, gets **403**. This stops DNS rebinding: a web page that points its own domain at 127.0.0.1 sends its own domain as `Host`, so it cannot read snapshots from a dashboard that has no token. A reverse proxy in front of a loopback bind must pass a loopback `Host` (nginx `proxy_pass http://127.0.0.1:5118` does by default). Non loopback binds do not check `Host`; the token protects them.
 
 ### Security matrix (observe vs control)
 
@@ -393,11 +395,14 @@ If Goose is started with `--no-metrics`, the dashboard still serves the shell an
 - Token protects **metric APIs** when configured; control POSTs **always** require the token when control is on.
 - Shell/static/health stay public and contain no load-test metrics.
 - Prefer `Authorization: Bearer` for scripts; browsers use `?token=` for metrics (EventSource limits) and **Bearer only** for control POSTs (server rejects query tokens on `/api/v1/control/*`).
-- Query tokens on metric URLs can appear in reverse-proxy access logs and `Referer` headers — prefer SSH tunnels or a local reverse proxy when that matters.
+- Query tokens on metric URLs can appear in reverse-proxy access logs; prefer SSH tunnels or a local reverse proxy when that matters. Every response sends `Referrer-Policy: no-referrer`, so the page does not pass its `?token=` URL on as a `Referer`.
 - `--dashboard-auth-token` is visible in process listings (`ps`) like any CLI argument; for shared hosts prefer a short-lived secret and restricted process visibility.
 - Goose never logs the token value; the startup line is only `listening on http://{host:port} (read-only|control enabled)` with no query secret.
 - The UI renders metric fields with `textContent` only (no `innerHTML`) and serves a strict Content-Security-Policy without `'unsafe-inline'` scripts.
 - No session cookies and no permissive CORS; classic cross-site cookie CSRF does not apply.
+- Every response sends `Cache-Control: no-store` (the first page load carries `?token=` and the APIs carry metrics) and `X-Content-Type-Options: nosniff`.
+- On a loopback bind, requests whose `Host` is not loopback get 403 (DNS rebinding).
+- A client gets 10 seconds to send a request's headers, on a new connection and between requests on a keep-alive one, and the server holds at most `2 × --dashboard-max-clients + 16` connections, so a client that sends nothing is closed after 10 seconds and the number of open connections is bounded. Long lived SSE streams are not cut: the timeout covers headers only.
 
 ## Relationship to Controllers
 
