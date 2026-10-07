@@ -825,8 +825,9 @@ impl DashboardServer {
 }
 
 /// Most connections the server holds open at once for a given SSE client cap:
-/// above the cap, so every allowed SSE stream fits with room for the page
-/// loads, polls and control requests beside it.
+/// one SSE stream and about one keep-alive connection per client, plus
+/// [`EXTRA_CONNECTIONS`], so every allowed SSE stream fits with room for the
+/// page loads, polls and control requests beside it.
 fn connection_cap(max_sse_clients: usize) -> usize {
     max_sse_clients
         .saturating_mul(2)
@@ -3251,24 +3252,72 @@ mod tests {
         parent.abort();
     }
 
+    /// Read from `stream` until the text read contains `needle`; false when
+    /// the stream ends or five seconds pass first.
+    async fn read_until_contains(stream: &mut tokio::net::TcpStream, needle: &str) -> bool {
+        use tokio::io::AsyncReadExt;
+        let mut text = String::new();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        let mut chunk = [0u8; 4096];
+        while !text.contains(needle) {
+            match tokio::time::timeout_at(deadline, stream.read(&mut chunk)).await {
+                Ok(Ok(n)) if n > 0 => text.push_str(&String::from_utf8_lossy(&chunk[..n])),
+                _ => return false,
+            }
+        }
+        true
+    }
+
+    /// Open `GET /api/v1/events` on a new connection and wait for its first
+    /// snapshot.
+    async fn open_sse(port: u16) -> tokio::net::TcpStream {
+        use tokio::io::AsyncWriteExt;
+        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("connect");
+        stream
+            .write_all(b"GET /api/v1/events HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+            .await
+            .expect("write");
+        assert!(
+            read_until_contains(&mut stream, "event: snapshot").await,
+            "SSE stream must get a first snapshot"
+        );
+        stream
+    }
+
+    /// True when an SSE stream is still open and sends a snapshot after now:
+    /// what it sent earlier is read and dropped first (failing on EOF), so a
+    /// snapshot buffered before a close cannot pass for a live stream.
+    async fn sse_still_live(stream: &mut tokio::net::TcpStream) -> bool {
+        use tokio::io::AsyncReadExt;
+        let mut chunk = [0u8; 4096];
+        // Snapshots come about once a second, so a 300 ms gap ends the drain.
+        while let Ok(read) =
+            tokio::time::timeout(Duration::from_millis(300), stream.read(&mut chunk)).await
+        {
+            if !matches!(read, Ok(n) if n > 0) {
+                return false;
+            }
+        }
+        read_until_contains(stream, "event: snapshot").await
+    }
+
     /// Regression for #697: a client that sends part of a request line and
-    /// stalls is closed at the header read timeout, not held open forever.
+    /// stalls, and one that sends nothing, are closed at the header read
+    /// timeout, while an SSE stream open across the timeout is not cut.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn slow_header_client_is_cut_at_timeout() {
         use tokio::io::AsyncWriteExt;
         let (_hub_builds, _parent_builds, parent, base, _server) = setup_with_mock("").await;
         let port = port_of(&base);
-        // An SSE stream open across the whole timeout must not be cut.
-        let mut sse = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        let mut sse = open_sse(port).await;
+
+        // Taken before connecting, so the server's deadlines start after it.
+        let started = Instant::now();
+        let mut silent = tokio::net::TcpStream::connect(("127.0.0.1", port))
             .await
             .expect("connect");
-        sse.write_all(b"GET /api/v1/events HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
-            .await
-            .expect("write");
-        assert!(read_until_contains(&mut sse, "event: snapshot").await);
-
-        // Taken before connecting, so the server's deadline starts after it.
-        let started = Instant::now();
         let mut slow = tokio::net::TcpStream::connect(("127.0.0.1", port))
             .await
             .expect("connect");
@@ -3290,26 +3339,14 @@ mod tests {
             started.elapsed()
         );
         assert!(
-            read_until_contains(&mut sse, "event: snapshot").await,
+            closed_within(&mut silent, Duration::from_secs(1)).await,
+            "a connection that sends nothing must be cut at the header read timeout"
+        );
+        assert!(
+            sse_still_live(&mut sse).await,
             "an SSE stream must outlive the header read timeout"
         );
         parent.abort();
-    }
-
-    /// Read from `stream` until the text read contains `needle`; false when
-    /// the stream ends or five seconds pass first.
-    async fn read_until_contains(stream: &mut tokio::net::TcpStream, needle: &str) -> bool {
-        use tokio::io::AsyncReadExt;
-        let mut text = String::new();
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-        let mut chunk = [0u8; 4096];
-        while !text.contains(needle) {
-            match tokio::time::timeout_at(deadline, stream.read(&mut chunk)).await {
-                Ok(Ok(n)) if n > 0 => text.push_str(&String::from_utf8_lossy(&chunk[..n])),
-                _ => return false,
-            }
-        }
-        true
     }
 
     /// Regression for #697: connections beyond the cap are closed on accept,
@@ -3317,7 +3354,6 @@ mod tests {
     /// and a closed connection frees its slot.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn connection_cap_refuses_extra_connections_and_keeps_sse() {
-        use tokio::io::AsyncWriteExt;
         let max_clients = 2u32;
         let cap = connection_cap(max_clients as usize);
         let (_hub_builds, _parent_builds, parent, base, _server) =
@@ -3325,20 +3361,8 @@ mod tests {
         let port = port_of(&base);
 
         let mut sse = Vec::new();
-        for i in 0..max_clients {
-            let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
-                .await
-                .expect("connect");
-            stream
-                .write_all(b"GET /api/v1/events HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
-                .await
-                .expect("write");
-            assert!(
-                read_until_contains(&mut stream, "event: snapshot").await,
-                "SSE client {} must get a snapshot",
-                i
-            );
-            sse.push(stream);
+        for _ in 0..max_clients {
+            sse.push(open_sse(port).await);
         }
 
         // Fill the remaining slots with served keep-alive connections until
@@ -3377,7 +3401,7 @@ mod tests {
         // The SSE streams up to the client cap still receive snapshots.
         for (i, stream) in sse.iter_mut().enumerate() {
             assert!(
-                read_until_contains(stream, "event: snapshot").await,
+                sse_still_live(stream).await,
                 "SSE client {} must keep receiving snapshots at the connection cap",
                 i
             );
