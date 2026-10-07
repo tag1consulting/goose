@@ -27,7 +27,7 @@
     dir: SortDir;
   }
 
-  /** One row of the requests table: a RequestRow with its percentiles inlined. */
+  /** The RequestRow fields the requests table shows, percentiles inlined. */
   interface FlatRequestRow {
     method: string;
     name: string;

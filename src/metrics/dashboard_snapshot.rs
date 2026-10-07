@@ -397,6 +397,7 @@ mod tests {
     use crate::metrics::coordinated_omission::CoordinatedOmissionMetrics;
     use crate::metrics::GooseCoordinatedOmissionMitigation;
     use crate::metrics::GooseRequestMetricAggregate;
+    use std::collections::BTreeSet;
     use std::time::Duration;
 
     fn empty_metrics() -> GooseMetrics {
@@ -722,8 +723,8 @@ mod tests {
         assert!(
             committed == generated,
             "{} does not match the snapshot structs. Regenerate it with \
-             `{}=1 cargo test --lib dashboard_types_match_rust`, then rebuild \
-             app.js (`npm run build` in src/dashboard/static).\n--- generated ---\n{}",
+             `{}=1 cargo test --lib dashboard_types_match_rust`, then type check \
+             the client (`npm run check` in src/dashboard/static).\n--- generated ---\n{}",
             DASHBOARD_TYPES_PATH,
             UPDATE_DASHBOARD_TYPES_ENV,
             generated
@@ -801,7 +802,7 @@ mod tests {
         ty: &str,
         value: &serde_json::Value,
         at: &str,
-        reached: &mut std::collections::BTreeSet<String>,
+        reached: &mut BTreeSet<String>,
     ) {
         if let Some(inner) = ty.strip_suffix(" | null") {
             if !value.is_null() {
@@ -829,7 +830,7 @@ mod tests {
             let object = value.as_object().expect(at);
             for key in object.keys() {
                 assert!(
-                    fields.iter().any(|(k, _)| k.trim_end_matches('?') == key),
+                    fields.iter().any(|(k, _)| k == key),
                     "{}.{} is sent but not declared in {}",
                     at,
                     key,
@@ -837,18 +838,16 @@ mod tests {
                 );
             }
             for (key, field_ty) in fields {
-                let optional = key.ends_with('?');
-                let key = key.trim_end_matches('?');
-                match object.get(key) {
-                    Some(field) => assert_matches_declaration(
-                        types,
-                        field_ty,
-                        field,
-                        &format!("{}.{}", at, key),
-                        reached,
-                    ),
-                    None => assert!(optional, "{}.{} is declared but not sent", at, key),
-                }
+                let field = object
+                    .get(key)
+                    .unwrap_or_else(|| panic!("{}.{} is declared but not sent", at, key));
+                assert_matches_declaration(
+                    types,
+                    field_ty,
+                    field,
+                    &format!("{}.{}", at, key),
+                    reached,
+                );
             }
         } else {
             let matches = match ty {
@@ -863,14 +862,14 @@ mod tests {
 
     #[test]
     fn snapshot_structs_have_no_serde_attributes() {
-        // ts-rs ignores serde attributes such as `serialize_with`, or
-        // `skip_serializing_if` without `default`, so they could change the
-        // JSON without changing the generated types. The needle is split so
-        // this test's own source does not match it.
+        // ts-rs does not reflect serde attributes such as `serialize_with`, or
+        // `skip_serializing_if` without `default`, in the types it generates,
+        // so they could change the JSON without changing the declarations.
+        // `serde(` also catches one inside `cfg_attr`.
         let source = include_str!("dashboard_snapshot.rs");
-        let structs = source.split("#[cfg(test)]").next().expect("source");
+        let structs = source.split("\nmod tests {").next().expect("source");
         assert!(
-            !structs.contains(concat!("#[", "serde(")),
+            !structs.contains("serde("),
             "a serde attribute on a snapshot struct needs its generated type and \
              serialized_snapshot_matches_declarations checked by hand"
         );
@@ -910,7 +909,7 @@ mod tests {
         // Populated, the `--no-metrics` early return, and empty (so a field
         // serde skips when empty is caught too).
         let empty = empty_metrics();
-        let mut reached = std::collections::BTreeSet::new();
+        let mut reached = BTreeSet::new();
         let cases = [
             (&metrics, series.clone(), false),
             (&metrics, series, true),
@@ -946,7 +945,7 @@ mod tests {
         }
         // The populated case must reach every declared struct, so a new one
         // the fixture leaves empty does not go unchecked.
-        let declared: std::collections::BTreeSet<String> = types.keys().cloned().collect();
+        let declared: BTreeSet<String> = types.keys().cloned().collect();
         assert_eq!(reached, declared);
     }
 }
