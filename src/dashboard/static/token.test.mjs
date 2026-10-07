@@ -8,6 +8,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { JSDOM } from "jsdom";
+import { IDLE_SNAPSHOT } from "./idle-snapshot.mjs";
 
 const here = new URL(".", import.meta.url);
 const INDEX_HTML = readFileSync(new URL("index.html", here), "utf8");
@@ -24,42 +25,6 @@ function jsonResponse(status, body) {
     json: () => Promise.resolve(body),
   };
 }
-
-// An idle snapshot with every field app.ts reads; it must match snapshot.d.ts.
-const IDLE_SNAPSHOT = {
-  version: 1,
-  generated_at: "1970-01-01T00:00:00Z",
-  goose_version: "0.0.0",
-  phase: "idle",
-  stopping: false,
-  duration_secs: 0,
-  active_users: 0,
-  maximum_users: 0,
-  target_users: 0,
-  total_users: 0,
-  hosts: [],
-  aggregate: {
-    total_requests: 0,
-    total_failures: 0,
-    requests_per_second: 0,
-    failures_per_second: 0,
-    failure_rate: 0,
-    response_time_avg_ms: 0,
-    response_time_min_ms: 0,
-    response_time_max_ms: 0,
-    percentile_ms: { p50: 0, p95: 0, p99: 0 },
-    co_active: false,
-  },
-  requests: [],
-  errors: [],
-  series: { start_second: 0, rps: [], fps: [], users: [], avg_latency_ms: [] },
-  flags: {
-    metrics_disabled: false,
-    requests_truncated: false,
-    errors_truncated: false,
-    series_seconds: 0,
-  },
-};
 
 // A stub of the dashboard server, as in src/dashboard.rs: metric GETs need
 // `?token=` (or Bearer) equal to `token`; control POSTs need a Bearer token and
