@@ -24,10 +24,19 @@ function jsonResponse(status, body) {
   };
 }
 
-// A stub of the dashboard server: metric GETs need `?token=` (or Bearer) equal
-// to `serverToken`, control POSTs need Bearer only (equal to `controlToken`),
-// as in src/dashboard.rs.
-function stubServer(serverToken, controlEnabled, controlToken = serverToken) {
+// A stub of the dashboard server, as in src/dashboard.rs: metric GETs need
+// `?token=` (or Bearer) equal to `token`; control POSTs need a Bearer token and
+// no `?token=`. Options: `controlEnabled` for /api/v1/health, `controlToken`
+// (default `token`; the real server has one token, this lets a test produce a
+// control 401 alone), and `controlStatus` / `snapshotStatus` to force an
+// authorized request to answer with that status instead of 200.
+function stubServer(token, options = {}) {
+  const {
+    controlEnabled = false,
+    controlToken = token,
+    controlStatus = 200,
+    snapshotStatus = 200,
+  } = options;
   const requests = [];
   function fetch(input, init) {
     const url = new URL(String(input), ORIGIN);
@@ -41,17 +50,23 @@ function stubServer(serverToken, controlEnabled, controlToken = serverToken) {
       );
     }
     if (url.pathname.startsWith("/api/v1/control/")) {
-      const ok = bearer === "Bearer " + controlToken;
+      const ok =
+        !url.searchParams.has("token") && bearer === "Bearer " + controlToken;
+      if (!ok) {
+        return Promise.resolve(jsonResponse(401, { error: "unauthorized" }));
+      }
       return Promise.resolve(
-        ok
+        controlStatus === 200
           ? jsonResponse(200, { ok: true, phase: "increase" })
-          : jsonResponse(401, { error: "unauthorized" })
+          : jsonResponse(controlStatus, { error: "busy", message: "busy" })
       );
     }
     const ok =
-      url.searchParams.get("token") === serverToken ||
-      bearer === "Bearer " + serverToken;
+      url.searchParams.get("token") === token || bearer === "Bearer " + token;
     if (!ok) return Promise.resolve(jsonResponse(401, {}));
+    if (snapshotStatus !== 200) {
+      return Promise.resolve(jsonResponse(snapshotStatus, {}));
+    }
     return Promise.resolve(jsonResponse(200, { version: 1, phase: "idle" }));
   }
   return { fetch, requests };
@@ -82,8 +97,10 @@ function newTabOf(window) {
 }
 
 // Load the dashboard at `path` with the browser storage `from` against a stub
-// server, and let its startup requests finish.
-async function openPage(path, from, serverToken, controlEnabled = false) {
+// server (`serverToken` and `options` as in stubServer), and let its startup
+// requests finish. `blockStorage` makes every sessionStorage access throw, as a
+// browser does when site data is blocked.
+async function openPage(path, from, serverToken, options = {}) {
   const dom = new JSDOM(INDEX_HTML, {
     url: ORIGIN + path,
     runScripts: "outside-only",
@@ -96,14 +113,22 @@ async function openPage(path, from, serverToken, controlEnabled = false) {
   for (const [key, value] of Object.entries(from.local)) {
     window.localStorage.setItem(key, value);
   }
-  const server = stubServer(serverToken, controlEnabled);
+  if (options.blockStorage) {
+    Object.defineProperty(window, "sessionStorage", {
+      get() {
+        throw new window.DOMException("blocked", "SecurityError");
+      },
+    });
+  }
+  const server = stubServer(serverToken, options);
   window.fetch = server.fetch;
   window.eval(APP_JS);
   await settle(window);
   return { window, requests: server.requests };
 }
 
-// Let the client's fetch promise chains run to completion.
+// Let the client's fetch promise chains run to completion: health, then the
+// snapshot, then the work each response starts, with room to spare.
 async function settle(window) {
   for (let i = 0; i < 5; i++) {
     await new Promise((resolve) => window.setTimeout(resolve, 0));
@@ -185,14 +210,19 @@ test("a metrics 401 clears the stored token so a reload does not resend it", asy
 });
 
 test("a control 401 clears the stored token", async () => {
-  const page = await openPage("/?token=s3cret", FRESH, "s3cret", true);
+  const page = await openPage("/?token=s3cret", FRESH, "s3cret", {
+    controlEnabled: true,
+  });
   assert.ok(!bannerText(page.window).includes(CONTROL_BANNER));
   assert.deepEqual(Object.values(dump(page.window.sessionStorage)), ["s3cret"]);
 
   // Metrics still accept the token, so only the control 401 can clear it.
   const start = page.window.document.getElementById("ctrl-start");
   assert.equal(start.disabled, false, "Start is enabled with a token");
-  const server = stubServer("s3cret", true, "other");
+  const server = stubServer("s3cret", {
+    controlEnabled: true,
+    controlToken: "other",
+  });
   page.window.fetch = server.fetch;
   start.click();
   await settle(page.window);
@@ -202,4 +232,49 @@ test("a control 401 clears the stored token", async () => {
     [["/api/v1/control/start", "Bearer s3cret"]]
   );
   assert.deepEqual(dump(page.window.sessionStorage), {});
+});
+
+for (const status of [200, 503]) {
+  test(`a control ${status} keeps the stored token`, async () => {
+    const page = await openPage("/?token=s3cret", FRESH, "s3cret", {
+      controlEnabled: true,
+    });
+    const server = stubServer("s3cret", {
+      controlEnabled: true,
+      controlStatus: status,
+    });
+    page.window.fetch = server.fetch;
+    page.window.document.getElementById("ctrl-start").click();
+    await settle(page.window);
+    const posts = server.requests.filter((r) => r.method === "POST");
+    assert.deepEqual(
+      posts.map((r) => [r.path, r.bearer]),
+      [["/api/v1/control/start", "Bearer s3cret"]]
+    );
+    assert.deepEqual(Object.values(dump(page.window.sessionStorage)), ["s3cret"]);
+
+    const reload = await openPage("/", reloadOf(page.window), "s3cret");
+    for (const t of snapshotTokens(reload.requests)) {
+      assert.equal(t, "s3cret");
+    }
+  });
+}
+
+test("a metrics error other than 401 keeps the stored token", async () => {
+  const first = await openPage("/?token=s3cret", FRESH, "s3cret", {
+    snapshotStatus: 500,
+  });
+  assert.equal(snapshotTokens(first.requests)[0], "s3cret");
+  assert.deepEqual(Object.values(dump(first.window.sessionStorage)), ["s3cret"]);
+});
+
+test("blocked storage leaves the URL token working for this page", async () => {
+  const page = await openPage("/?token=s3cret", FRESH, "s3cret", {
+    blockStorage: true,
+  });
+  assert.equal(page.window.location.href, ORIGIN + "/");
+  for (const t of snapshotTokens(page.requests)) {
+    assert.equal(t, "s3cret");
+  }
+  assert.equal(bannerText(page.window), "");
 });

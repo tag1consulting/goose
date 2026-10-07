@@ -100,9 +100,9 @@ Browsers' `EventSource` cannot set `Authorization` headers. For remote or token-
 http://{host}:{port}/?token=SECRET
 ```
 
-The embedded UI reads `token` from the URL on first load, strips it from the address bar with `history.replaceState`, and attaches `?token=` to `/api/v1/snapshot` and `/api/v1/events` requests.
+The embedded UI reads `token` from the URL on load, strips it from the address bar with `history.replaceState`, and attaches `?token=` to `/api/v1/snapshot` and `/api/v1/events` requests.
 
-The UI keeps the token in the tab's `sessionStorage`, so reloading the page keeps it. A new tab or window opened on the bare URL does not get it and needs `?token=` again (a tab duplicated from the browser menu gets a copy, as browsers copy `sessionStorage` on duplicate), and the token is gone when the tab closes. It is never written to `localStorage`. A token in the URL replaces a stored one. When the server answers **401** to a metric or control request, the UI removes the stored token, so a stale token (for example after Goose restarts with a new one) is not sent again on the next reload.
+The UI keeps the token in the tab's `sessionStorage`, so reloading the page keeps it. A new tab or window opened on the bare URL does not get it and needs `?token=` again, and the token goes away with the tab. A tab duplicated from the browser menu gets a copy, since browsers copy `sessionStorage` when duplicating a tab, and a browser that restores closed tabs may restore it with the tab. It is never written to `localStorage`. A token in the URL replaces a stored one. When the server answers **401** to a metric or control request, the UI removes the stored token, so a stale token (for example after Goose restarts with a new one) is not sent again on the next reload.
 
 Control POSTs from the SPA use **`Authorization: Bearer` only** (never `?token=` on control routes), to avoid putting the secret on mutating URLs that may appear in proxy logs.
 

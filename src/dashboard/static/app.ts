@@ -148,7 +148,7 @@
   const TOKEN_STORAGE_KEY = "goose-dashboard-token";
 
   // sessionStorage access throws when storage is blocked; the token then lives
-  // in memory only, as before.
+  // in memory only.
   function readStoredToken(): string {
     try {
       return window.sessionStorage.getItem(TOKEN_STORAGE_KEY) || "";
