@@ -653,18 +653,38 @@ mod tests {
     /// script, not a module. Every `u64` is emitted as `number`, the type
     /// `JSON.parse` yields, rather than `ts-rs`'s default `bigint`.
     fn dashboard_types_ts() -> String {
-        use ts_rs::TS;
+        use std::any::TypeId;
+        use ts_rs::{TypeVisitor, TS};
 
-        let cfg = ts_rs::Config::new().with_large_int("number");
-        let decls = [
-            DashboardSnapshot::decl(&cfg),
-            AggregateMetrics::decl(&cfg),
-            Percentiles::decl(&cfg),
-            RequestRow::decl(&cfg),
-            ErrorRow::decl(&cfg),
-            SeriesWindow::decl(&cfg),
-            SnapshotFlags::decl(&cfg),
-        ];
+        /// Collects the declaration of every struct reachable from the
+        /// snapshot, so a new nested struct cannot be left out of the file.
+        struct Declarations {
+            cfg: ts_rs::Config,
+            seen: Vec<TypeId>,
+            decls: Vec<String>,
+        }
+        impl TypeVisitor for Declarations {
+            fn visit<T: TS + 'static + ?Sized>(&mut self) {
+                // Primitives and std containers have no output path and no
+                // declaration of their own.
+                if T::output_path().is_none() || self.seen.contains(&TypeId::of::<T>()) {
+                    return;
+                }
+                self.seen.push(TypeId::of::<T>());
+                self.decls.push(T::decl(&self.cfg));
+                T::visit_dependencies(self);
+            }
+        }
+
+        let mut declarations = Declarations {
+            cfg: ts_rs::Config::new().with_large_int("number"),
+            seen: Vec::new(),
+            decls: Vec::new(),
+        };
+        declarations.visit::<DashboardSnapshot>();
+        // The derive's visiting order is not stable from one build to the
+        // next; sort by type name so the file is.
+        declarations.decls.sort();
         let mut out = format!(
             "// Generated from src/metrics/dashboard_snapshot.rs by the unit test\n\
              // `dashboard_types_match_rust`. Do not edit. To regenerate, run:\n\
@@ -673,7 +693,7 @@ mod tests {
              /** The only `DashboardSnapshot.version` this client accepts. */\n\
              type DashboardSnapshotVersion = {SNAPSHOT_VERSION};\n"
         );
-        for decl in decls {
+        for decl in declarations.decls {
             out.push('\n');
             // `ts-rs` leaves a space after the comma ahead of a doc comment.
             for line in decl.lines() {
@@ -689,6 +709,12 @@ mod tests {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(DASHBOARD_TYPES_PATH);
         let generated = dashboard_types_ts();
         if std::env::var_os(UPDATE_DASHBOARD_TYPES_ENV).is_some() {
+            // Never let a stray variable turn the CI check into a rewrite.
+            assert!(
+                std::env::var_os("CI").is_none(),
+                "{} must not be set in CI",
+                UPDATE_DASHBOARD_TYPES_ENV
+            );
             std::fs::write(&path, &generated).expect("write dashboard types");
             return;
         }
@@ -720,5 +746,141 @@ mod tests {
             "{}",
             generated
         );
+    }
+
+    /// Field names and TypeScript types of every generated declaration, keyed
+    /// by type name, parsed back out of [`dashboard_types_ts`].
+    fn declared_fields() -> BTreeMap<String, Vec<(String, String)>> {
+        let generated = dashboard_types_ts();
+        // Drop doc comments, which may hold commas, braces and colons.
+        let mut text = String::new();
+        let mut rest = generated.as_str();
+        while let Some(start) = rest.find("/**") {
+            text.push_str(&rest[..start]);
+            let end = rest[start..].find("*/").expect("closed doc comment");
+            rest = &rest[start + end + 2..];
+        }
+        text.push_str(rest);
+
+        let mut types = BTreeMap::new();
+        for decl in text.split("\ntype ").skip(1) {
+            let (name, body) = decl.split_once(" = ").expect("type alias");
+            let Some(body) = body.trim().strip_prefix('{') else {
+                continue; // DashboardSnapshotVersion = 1
+            };
+            let body = body.trim_end().trim_end_matches(';').trim_end_matches('}');
+            let mut fields = Vec::new();
+            let mut depth = 0;
+            let mut field = String::new();
+            for c in body.chars() {
+                match c {
+                    '<' | '[' => depth += 1,
+                    '>' | ']' => depth -= 1,
+                    _ => {}
+                }
+                if c == ',' && depth == 0 {
+                    let (key, ty) = field.split_once(':').expect("field: type");
+                    fields.push((key.trim().to_string(), ty.trim().to_string()));
+                    field.clear();
+                } else {
+                    field.push(c);
+                }
+            }
+            assert!(field.trim().is_empty(), "trailing text {:?}", field);
+            types.insert(name.to_string(), fields);
+        }
+        types
+    }
+
+    /// Asserts that `value`, serialized by serde, has exactly the keys the
+    /// generated declaration `ty` names, recursing into nested structs.
+    fn assert_matches_declaration(
+        types: &BTreeMap<String, Vec<(String, String)>>,
+        ty: &str,
+        value: &serde_json::Value,
+        at: &str,
+    ) {
+        if let Some(item) = ty.strip_prefix("Array<").and_then(|t| t.strip_suffix('>')) {
+            for (i, element) in value.as_array().expect(at).iter().enumerate() {
+                assert_matches_declaration(types, item, element, &format!("{}[{}]", at, i));
+            }
+        } else if let Some(fields) = types.get(ty) {
+            let object = value.as_object().expect(at);
+            let sent: Vec<&str> = object.keys().map(String::as_str).collect();
+            let mut declared: Vec<&str> = fields.iter().map(|(k, _)| k.as_str()).collect();
+            declared.sort_unstable();
+            assert_eq!(sent, declared, "keys of {} ({})", at, ty);
+            for (key, field_ty) in fields {
+                assert_matches_declaration(
+                    types,
+                    field_ty,
+                    &object[key],
+                    &format!("{}.{}", at, key),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn serialized_snapshot_matches_declarations() {
+        let types = declared_fields();
+        assert!(
+            types.contains_key("DashboardSnapshot"),
+            "{:?}",
+            types.keys()
+        );
+
+        let mut metrics = empty_metrics();
+        metrics.duration = 10;
+        metrics.hosts.insert("https://example.com".to_string());
+        let mut request = make_request("/a", 8, 2, &[(20, 10)]);
+        request.status_code_counts.insert(200, 8);
+        metrics.requests.insert("GET /a".to_string(), request);
+        let mut err = GooseErrorMetricAggregate::new(
+            GooseMethod::Get,
+            "/a".to_string(),
+            "boom".to_string(),
+            "",
+        );
+        err.occurrences = 2;
+        metrics.errors.insert("boom".to_string(), err);
+        let series = SeriesWindow {
+            start_second: 3,
+            rps: vec![1.0],
+            fps: vec![0.0],
+            users: vec![1],
+            avg_latency_ms: vec![20.0],
+        };
+
+        // Populated, the `--no-metrics` early return, and empty (so a field
+        // serde skips when empty is caught too).
+        let empty = empty_metrics();
+        let cases = [
+            (&metrics, series.clone(), false),
+            (&metrics, series, true),
+            (&empty, SeriesWindow::empty(), false),
+        ];
+        for (metrics, series, metrics_disabled) in cases {
+            let snap = build_dashboard_snapshot(DashboardSnapshotInput {
+                metrics,
+                series,
+                active_users: 1,
+                maximum_users: 1,
+                target_users: 1,
+                total_users: 1,
+                phase: "maintain".to_string(),
+                series_window_secs: 60,
+                no_status_codes: false,
+                metrics_disabled,
+            });
+            assert_eq!(snap.version, SNAPSHOT_VERSION);
+            // The populated case reaches every nested struct and array.
+            let populated = !metrics_disabled && !metrics.requests.is_empty();
+            assert_eq!(!snap.requests.is_empty(), populated);
+            assert_eq!(!snap.errors.is_empty(), populated);
+            assert_eq!(!snap.series.rps.is_empty(), populated);
+            let value = serde_json::to_value(&snap).expect("serialize snapshot");
+            assert_matches_declaration(&types, "DashboardSnapshot", &value, "snapshot");
+        }
     }
 }

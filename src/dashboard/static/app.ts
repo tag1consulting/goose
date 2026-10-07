@@ -43,24 +43,27 @@
   type RequestSortKey = keyof FlatRequestRow;
   type ErrorSortKey = keyof ErrorRow;
 
-  // Column keys a table header's data-sort attribute may name.
-  const REQUEST_SORT_KEYS: readonly RequestSortKey[] = [
-    "method",
-    "name",
-    "request_count",
-    "failure_count",
-    "requests_per_second",
-    "response_time_avg_ms",
-    "p50",
-    "p95",
-    "p99",
-  ];
-  const ERROR_SORT_KEYS: readonly ErrorSortKey[] = [
-    "method",
-    "name",
-    "error",
-    "occurrences",
-  ];
+  // Columns a table header's data-sort attribute may name. Records, so the
+  // compiler requires every row field to be listed.
+  const REQUEST_SORT_COLUMNS: Record<RequestSortKey, true> = {
+    method: true,
+    name: true,
+    request_count: true,
+    failure_count: true,
+    requests_per_second: true,
+    response_time_avg_ms: true,
+    p50: true,
+    p95: true,
+    p99: true,
+  };
+  const ERROR_SORT_COLUMNS: Record<ErrorSortKey, true> = {
+    method: true,
+    name: true,
+    error: true,
+    occurrences: true,
+  };
+  const REQUEST_SORT_KEYS = Object.keys(REQUEST_SORT_COLUMNS) as RequestSortKey[];
+  const ERROR_SORT_KEYS = Object.keys(ERROR_SORT_COLUMNS) as ErrorSortKey[];
 
   // Fails to compile when the Rust SNAPSHOT_VERSION changes, so a new wire
   // format cannot ship without this client being reviewed against it.
@@ -276,25 +279,13 @@
     // Prefer plan/control target over peak HWM (maximum_users) so the control
     // field matches the KPI "active / target" second number. Ignore 0 (stop /
     // cancel ramp) — control input and server only accept users >= 1.
-    if (
-      typeof snap.target_users === "number" &&
-      isFinite(snap.target_users) &&
-      snap.target_users >= 1
-    ) {
+    if (snap.target_users >= 1) {
       return snap.target_users;
     }
-    if (
-      typeof snap.maximum_users === "number" &&
-      isFinite(snap.maximum_users) &&
-      snap.maximum_users >= 1
-    ) {
+    if (snap.maximum_users >= 1) {
       return snap.maximum_users;
     }
-    if (
-      typeof snap.active_users === "number" &&
-      isFinite(snap.active_users) &&
-      snap.active_users >= 1
-    ) {
+    if (snap.active_users >= 1) {
       return snap.active_users;
     }
     return null;
@@ -339,14 +330,11 @@
   }
 
   function updateControlFromSnapshot(snap: DashboardSnapshot): void {
-    if (!controlEnabled || !controlPanel || !snap) return;
+    if (!controlEnabled || !controlPanel) return;
     lastSnap = snap;
 
     if (ctrlActive) {
-      ctrlActive.textContent =
-        typeof snap.active_users === "number"
-          ? formatInt(snap.active_users)
-          : "—";
+      ctrlActive.textContent = formatInt(snap.active_users);
     }
 
     if (!dirty && ctrlTarget) {
@@ -519,10 +507,7 @@
       base = fromSnap == null ? NaN : fromSnap;
     }
     if (!isFinite(base)) {
-      base =
-        lastSnap && typeof lastSnap.active_users === "number"
-          ? lastSnap.active_users
-          : 1;
+      base = lastSnap ? lastSnap.active_users : 1;
     }
     const next = Math.max(1, base + delta * step);
     if (ctrlTarget) ctrlTarget.value = String(next);
@@ -1018,25 +1003,20 @@
   }
 
   function renderSnapshot(
-    snap: DashboardSnapshot | null | undefined,
+    snap: DashboardSnapshot,
     modeLabel?: ConnectionMode | string
   ): void {
-    if (!snap) return;
 
     const flags = snap.flags;
     lastFlags = flags;
     setPhase(snap.phase);
     hostsEl.textContent =
-      snap.hosts && snap.hosts.length ? snap.hosts.join(", ") : "—";
+      snap.hosts.length ? snap.hosts.join(", ") : "—";
     durationEl.textContent = formatDuration(snap.duration_secs);
 
     // active / target (not peak maximum_users — that stays equal during ramp).
-    const usersTarget =
-      typeof snap.target_users === "number" && isFinite(snap.target_users)
-        ? snap.target_users
-        : snap.maximum_users;
     kpiUsers.textContent =
-      formatInt(snap.active_users) + " / " + formatInt(usersTarget);
+      formatInt(snap.active_users) + " / " + formatInt(snap.target_users);
     const agg = snap.aggregate;
     kpiRps.textContent = formatRate(agg.requests_per_second);
     kpiFail.textContent = formatPct(agg.failure_rate);
@@ -1050,7 +1030,7 @@
     summaryEl.appendChild(
       kv(
         "Users",
-        formatInt(snap.active_users) + " / " + formatInt(usersTarget)
+        formatInt(snap.active_users) + " / " + formatInt(snap.target_users)
       )
     );
     summaryEl.appendChild(kv("Total users", formatInt(snap.total_users)));
@@ -1058,7 +1038,7 @@
     summaryEl.appendChild(
       kv(
         "Hosts",
-        snap.hosts && snap.hosts.length ? snap.hosts.join(", ") : "—"
+        snap.hosts.length ? snap.hosts.join(", ") : "—"
       )
     );
     if (flags.series_seconds) {

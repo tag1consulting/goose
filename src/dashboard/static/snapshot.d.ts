@@ -5,6 +5,13 @@
 /** The only `DashboardSnapshot.version` this client accepts. */
 type DashboardSnapshotVersion = 1;
 
+type AggregateMetrics = { total_requests: number, total_failures: number, requests_per_second: number, failures_per_second: number, failure_rate: number, response_time_avg_ms: number, response_time_min_ms: number, response_time_max_ms: number, percentile_ms: Percentiles,
+/**
+ * True iff coordinated-omission metrics object is present AND has recorded
+ * at least one CO event (or synthetic request).
+ */
+co_active: boolean, };
+
 type DashboardSnapshot = { version: number, generated_at: string, goose_version: string, phase: string, duration_secs: number,
 /**
  * Users currently running (main-loop active count).
@@ -20,18 +27,11 @@ maximum_users: number,
  */
 target_users: number, total_users: number, hosts: Array<string>, aggregate: AggregateMetrics, requests: Array<RequestRow>, errors: Array<ErrorRow>, series: SeriesWindow, flags: SnapshotFlags, };
 
-type AggregateMetrics = { total_requests: number, total_failures: number, requests_per_second: number, failures_per_second: number, failure_rate: number, response_time_avg_ms: number, response_time_min_ms: number, response_time_max_ms: number, percentile_ms: Percentiles,
-/**
- * True iff coordinated-omission metrics object is present AND has recorded
- * at least one CO event (or synthetic request).
- */
-co_active: boolean, };
+type ErrorRow = { method: string, name: string, error: string, occurrences: number, };
 
 type Percentiles = { p50: number, p95: number, p99: number, };
 
 type RequestRow = { method: string, name: string, request_count: number, failure_count: number, requests_per_second: number, failures_per_second: number, response_time_avg_ms: number, response_time_min_ms: number, response_time_max_ms: number, percentile_ms: Percentiles, status_codes: Array<[number, number]>, };
-
-type ErrorRow = { method: string, name: string, error: string, occurrences: number, };
 
 type SeriesWindow = {
 /**
