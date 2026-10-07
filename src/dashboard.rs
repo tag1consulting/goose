@@ -88,13 +88,13 @@ const SNAPSHOT_BUILD_TIMEOUT: Duration = Duration::from_secs(4);
 const SERVER_DRAIN_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// How long a client has to send a request's headers, on a new connection and
-/// between requests on a keep alive one, before the connection is closed. A
+/// between requests on a keep-alive one, before the connection is closed. A
 /// header read timeout and not a whole request timeout, which would cut the
 /// long lived `/api/v1/events` streams.
 const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Connections allowed beyond the SSE client cap: every browser tab holds one
-/// SSE stream plus keep alive connections for static assets, polls and
+/// SSE stream plus keep-alive connections for static assets, polls and
 /// control requests, and monitors and scripts need a few more.
 const EXTRA_CONNECTIONS: usize = 16;
 
@@ -761,9 +761,10 @@ pub(crate) async fn setup_dashboard(
         control_in_flight: Arc::new(AtomicUsize::new(0)),
     };
 
-    // Decide from the bound socket, not the configured name: that is the
-    // address a rebound browser page would actually reach.
-    let app = build_router(state, bound.ip().is_loopback());
+    // Loopback by the configured name (what decided that no token is needed)
+    // or by the bound socket (what a rebound browser page would reach).
+    let loopback_bind = crate::config::is_loopback_bind(host) || bound.ip().is_loopback();
+    let app = build_router(state, loopback_bind);
     let max_connections = connection_cap(max_sse_clients);
 
     if control_enabled {
@@ -2926,10 +2927,16 @@ mod tests {
     /// True when a read on `stream` reports the peer closed it (EOF or reset)
     /// within two seconds.
     async fn closed_by_peer(stream: &mut tokio::net::TcpStream) -> bool {
+        closed_within(stream, Duration::from_secs(2)).await
+    }
+
+    /// True when a read on `stream` reports the peer closed it (EOF or reset)
+    /// within `within`.
+    async fn closed_within(stream: &mut tokio::net::TcpStream, within: Duration) -> bool {
         use tokio::io::AsyncReadExt;
         let mut chunk = [0u8; 64];
         matches!(
-            tokio::time::timeout(Duration::from_secs(2), stream.read(&mut chunk)).await,
+            tokio::time::timeout(within, stream.read(&mut chunk)).await,
             Ok(Ok(0)) | Ok(Err(_))
         )
     }
@@ -3073,23 +3080,15 @@ mod tests {
         String::from_utf8_lossy(&buf).into_owned()
     }
 
-    fn get_with_host(path: &str, host: &str) -> String {
-        format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n")
+    /// Port of a `http://127.0.0.1:<port>` base URL from the setup helpers.
+    fn port_of(base: &str) -> u16 {
+        base.rsplit(':').next().unwrap().parse().unwrap()
     }
 
-    /// Read from `stream`, discarding data, until the peer closes it (EOF or
-    /// reset). True when that happens within `within`.
-    async fn closed_within(stream: &mut tokio::net::TcpStream, within: Duration) -> bool {
-        use tokio::io::AsyncReadExt;
-        let deadline = tokio::time::Instant::now() + within;
-        let mut chunk = [0u8; 1024];
-        loop {
-            match tokio::time::timeout_at(deadline, stream.read(&mut chunk)).await {
-                Ok(Ok(0)) | Ok(Err(_)) => return true,
-                Ok(Ok(_)) => continue,
-                Err(_) => return false,
-            }
-        }
+    /// A `GET path` request with the given `Host` that asks the server to
+    /// close the connection after answering.
+    fn get_request(path: &str, host: &str) -> String {
+        format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n")
     }
 
     #[test]
@@ -3136,11 +3135,11 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn loopback_bind_refuses_non_loopback_host() {
         let (_hub_builds, _parent_builds, parent, base, _server) = setup_with_mock("").await;
-        let port: u16 = base.rsplit(':').next().unwrap().parse().unwrap();
+        let port = port_of(&base);
 
         for path in ["/", "/api/v1/health", "/api/v1/snapshot", "/api/v1/events"] {
             let reply =
-                raw_exchange(port, &get_with_host(path, &format!("evil.example:{port}"))).await;
+                raw_exchange(port, &get_request(path, &format!("evil.example:{port}"))).await;
             assert!(
                 reply.starts_with("HTTP/1.1 403"),
                 "{} with a rebound Host must get 403, got {:?}",
@@ -3160,7 +3159,7 @@ mod tests {
             format!("localhost:{port}"),
             format!("[::1]:{port}"),
         ] {
-            let reply = raw_exchange(port, &get_with_host("/api/v1/snapshot", &host)).await;
+            let reply = raw_exchange(port, &get_request("/api/v1/snapshot", &host)).await;
             assert!(
                 reply.starts_with("HTTP/1.1 200"),
                 "Host {} must be served, got {:?}",
@@ -3188,7 +3187,7 @@ mod tests {
             .expect("enabled");
         let reply = raw_exchange(
             setup.bound_port,
-            &get_with_host("/api/v1/health", "loadgen.example:5118"),
+            &get_request("/api/v1/health", "loadgen.example:5118"),
         )
         .await;
         assert!(
@@ -3203,7 +3202,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn responses_carry_security_headers() {
         let (_hub_builds, _parent_builds, parent, base, _server) = setup_with_mock("secret").await;
-        let port: u16 = base.rsplit(':').next().unwrap().parse().unwrap();
+        let port = port_of(&base);
         let client = reqwest::Client::new();
 
         let mut responses = Vec::new();
@@ -3224,7 +3223,7 @@ mod tests {
             assert_eq!(resp.status(), status, "{path}");
             responses.push((path.to_string(), resp.headers().clone()));
         }
-        let refused = raw_exchange(port, &get_with_host("/", "evil.example")).await;
+        let refused = raw_exchange(port, &get_request("/", "evil.example")).await;
         assert!(refused.starts_with("HTTP/1.1 403"), "{:?}", refused);
 
         for (path, headers) in &responses {
@@ -3252,15 +3251,15 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn slow_header_client_is_cut_at_timeout() {
         use tokio::io::AsyncWriteExt;
-        let (_setup, base) = bind_dashboard("").await;
-        let port: u16 = base.rsplit(':').next().unwrap().parse().unwrap();
-        let mut slow = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        let (setup, _base) = bind_dashboard("").await;
+        // Taken before connecting, so the server's deadline starts after it.
+        let started = Instant::now();
+        let mut slow = tokio::net::TcpStream::connect(("127.0.0.1", setup.bound_port))
             .await
             .expect("connect");
         slow.write_all(b"GET /api/v1/health HTTP/1.1\r\nHost: 127")
             .await
             .expect("write");
-        let started = Instant::now();
 
         assert!(
             !closed_within(&mut slow, HEADER_READ_TIMEOUT - Duration::from_secs(1)).await,
@@ -3273,32 +3272,33 @@ mod tests {
         assert!(started.elapsed() >= HEADER_READ_TIMEOUT);
     }
 
+    /// Read from `stream` until the text read contains `needle`; false when
+    /// the stream ends or five seconds pass first.
+    async fn read_until_contains(stream: &mut tokio::net::TcpStream, needle: &str) -> bool {
+        use tokio::io::AsyncReadExt;
+        let mut text = String::new();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        let mut chunk = [0u8; 4096];
+        while !text.contains(needle) {
+            match tokio::time::timeout_at(deadline, stream.read(&mut chunk)).await {
+                Ok(Ok(n)) if n > 0 => text.push_str(&String::from_utf8_lossy(&chunk[..n])),
+                _ => return false,
+            }
+        }
+        true
+    }
+
     /// Regression for #697: connections beyond the cap are closed on accept,
     /// while every SSE stream up to `--dashboard-max-clients` keeps working,
     /// and a closed connection frees its slot.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn connection_cap_refuses_extra_connections_and_keeps_sse() {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::io::AsyncWriteExt;
         let max_clients = 2u32;
         let cap = connection_cap(max_clients as usize);
         let (_hub_builds, _parent_builds, parent, base, _server) =
             setup_with_mock_max("", max_clients).await;
-        let port: u16 = base.rsplit(':').next().unwrap().parse().unwrap();
-        // Let the setup's health check connection close on the server side.
-        tokio::time::sleep(Duration::from_millis(500)).await;
-
-        async fn read_until(stream: &mut tokio::net::TcpStream, needle: &str) -> bool {
-            let mut text = String::new();
-            let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-            let mut chunk = [0u8; 4096];
-            while !text.contains(needle) {
-                match tokio::time::timeout_at(deadline, stream.read(&mut chunk)).await {
-                    Ok(Ok(n)) if n > 0 => text.push_str(&String::from_utf8_lossy(&chunk[..n])),
-                    _ => return false,
-                }
-            }
-            true
-        }
+        let port = port_of(&base);
 
         let mut sse = Vec::new();
         for i in 0..max_clients {
@@ -3310,31 +3310,40 @@ mod tests {
                 .await
                 .expect("write");
             assert!(
-                read_until(&mut stream, "event: snapshot").await,
+                read_until_contains(&mut stream, "event: snapshot").await,
                 "SSE client {} must get a snapshot",
                 i
             );
             sse.push(stream);
         }
 
-        // Fill the remaining slots with served keep-alive connections; the
-        // first connection past the cap is closed without an answer.
+        // Fill the remaining slots with served keep-alive connections until
+        // one is closed without an answer. A connection the setup left open
+        // may still hold a slot when the first refusal comes, so after each
+        // refusal wait and try once more; the fill ends when a refusal holds.
         let mut held = Vec::new();
-        let refused = loop {
+        let mut after_refusal = false;
+        loop {
             assert!(
                 sse.len() + held.len() <= cap,
                 "more than {} connections served",
                 cap
             );
+            if after_refusal {
+                tokio::time::sleep(Duration::from_millis(300)).await;
+            }
             let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
                 .await
                 .expect("connect");
             match health_on(&mut stream).await {
-                Some(_) => held.push(stream),
-                None => break stream,
+                Some(_) => {
+                    held.push(stream);
+                    after_refusal = false;
+                }
+                None if after_refusal => break,
+                None => after_refusal = true,
             }
-        };
-        drop(refused);
+        }
         assert_eq!(
             sse.len() + held.len(),
             cap,
@@ -3344,7 +3353,7 @@ mod tests {
         // The SSE streams up to the client cap still receive snapshots.
         for (i, stream) in sse.iter_mut().enumerate() {
             assert!(
-                read_until(stream, "event: snapshot").await,
+                read_until_contains(stream, "event: snapshot").await,
                 "SSE client {} must keep receiving snapshots at the connection cap",
                 i
             );
