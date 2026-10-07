@@ -12,13 +12,16 @@
     o a connection that does not finish sending request headers within 10 seconds is closed, which also closes keep alive connections idle for 10 seconds
     o open connections are capped at twice `--dashboard-max-clients` plus 16; connections beyond the cap are closed unanswered
     o every response carries `Cache-Control: no-store`, `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`
+ - [#700](https://github.com/tag1consulting/goose/issues/700) bound the telnet and WebSocket `users` command to the dashboard's 1 to 100000 in the shared `control_set_users`; [#690](https://github.com/tag1consulting/goose/pull/690) checked the range only in the dashboard, and `users 0` followed by `start` hung the main loop
+    o the telnet and WebSocket Controller `users` command refuses 0 and anything above 100000, replying "failed to reconfigure users, be sure users is valid and load test is not stopping"; `users 0` on a running test used to ramp to zero users and end the test
  - [#702](https://github.com/tag1consulting/goose/issues/702) generate the dashboard's TypeScript snapshot types from the Rust structs with `ts-rs` in a unit test that fails on drift; the hand written types could drift with nothing failing
     o the client refuses a snapshot whose `version` is not the one it was built for, and shows an error banner
  - [#705](https://github.com/tag1consulting/goose/issues/705) keep the dashboard token in the tab's sessionStorage so a reload keeps it; the client stored it nowhere after stripping `?token=` from the URL, so every reload got 401
     o a 401 clears the stored token; a new tab still needs `?token=`
+ - [#719](https://github.com/tag1consulting/goose/issues/719) refuse a controller `users` value too large for a `usize` with an error reply instead of panicking the main loop, which assumed the command's regex guaranteed a valid integer
  - [#727](https://github.com/tag1consulting/goose/pull/727) make the `user_metrics_graph_reset` tests independent of runner throughput; they required a no-reset run to record at least 50% more requests than a separate reset run, about the expected difference since users launch gradually during increase-time, so they failed on runner variance
     o each run's recorded requests are now compared with what the mock server received in that run: equal without reset, fewer with reset
- - add opt-in read-only **live web dashboard** (crate feature `dashboard` + runtime `--dashboard`, default bind `127.0.0.1:5118`)
+ - [#690](https://github.com/tag1consulting/goose/pull/690) (EXPERIMENTAL) add opt-in read-only **live web dashboard** (crate feature `dashboard` + runtime `--dashboard`, default bind `127.0.0.1:5118`)
     o compile with `--features dashboard` (not in default features; avoids axum/tower-http on every build); without the feature, `--dashboard` fails at startup with a clear rebuild hint
     o streams coalesced metric snapshots over SSE (`/api/v1/events`) with poll fallback; one-shot `GET /api/v1/snapshot`
     o trailing series charts (RPS, failures/s, active users, average latency) via vendored Chart.js
@@ -28,12 +31,16 @@
     o enables GraphData series collection (same memory class as `--report-file`); documented in Goose Book “Live Dashboard”
     o tunable SSE client cap via `--dashboard-max-clients` / `GooseDefault::DashboardMaxClients` (default 32)
     o `/api/v1/health` exposes ops counters `last_build_ms`, `build_count`, and `active_sse_clients` (no load-test metrics)
- - add optional **dashboard runtime control** (`--dashboard-control`, requires `--dashboard` and `--dashboard-auth-token` even on loopback; same `dashboard` crate feature)
+ - [#690](https://github.com/tag1consulting/goose/pull/690) (EXPERIMENTAL) add optional **dashboard runtime control** (`--dashboard-control`, requires `--dashboard` and `--dashboard-auth-token` even on loopback; same `dashboard` crate feature)
     o authenticated `POST /api/v1/control/{start,stop,users}` with structured JSON success/error; routes unregistered (404) when control is off
     o phase-aware SPA control panel: Start, Stop, absolute target users with Apply and ± step buttons
     o Stop begins a cancel ramp through Decrease (not instantaneous Idle); Start success means entered Increase (not `test_start` complete)
     o `--no-autostart` allowed with dashboard control (no Controllers required); Controllers remain power-user path (host/rates/shutdown not in dashboard)
     o documented in Goose Book “Live Dashboard” (flags, auth matrix, curl examples, semantics)
+    o **behavior change**: the `--no-autostart` error when no Controller and no dashboard control is enabled now reads "`configuration.no_autostart` requires at least one Controller or dashboard control be enabled"
+ - [#690](https://github.com/tag1consulting/goose/pull/690) measure the active users graph and the logs' `elapsed` from the start of the load test, with or without `--dashboard`
+    o **behavior change**: with the default metrics reset, the HTML report's active users graph shows the increase ramp instead of the final user count from second 0
+    o **behavior change**: `GooseUser.started` is one clock shared by every user, set when the load test starts, so `elapsed` in the request, error, transaction and scenario logs counts milliseconds since the load test started instead of since that user's client was built
  - [#639](https://github.com/tag1consulting/goose/issues/639) only capture request headers when the request log, the debug log or the error log is enabled, skipping a string allocation per header on every request otherwise
     o **behavior change**: `GooseRawRequest.headers` (for example `goose.request.raw.headers`, or the `raw_request` in `TransactionError::RequestFailed`) is now empty unless one of these logs is enabled; log output is unchanged
  - [#468](https://github.com/tag1consulting/goose/issues/468) replace `--hatch-rate` and `--startup-time` with `--increase-rate`, `--increase-time`, `--decrease-rate`, and `--decrease-time`
