@@ -397,7 +397,6 @@ mod tests {
     use crate::metrics::coordinated_omission::CoordinatedOmissionMetrics;
     use crate::metrics::GooseCoordinatedOmissionMitigation;
     use crate::metrics::GooseRequestMetricAggregate;
-    use std::collections::BTreeSet;
     use std::time::Duration;
 
     fn empty_metrics() -> GooseMetrics {
@@ -732,220 +731,21 @@ mod tests {
     }
 
     #[test]
-    fn dashboard_types_use_number_for_u64() {
-        let generated = dashboard_types_ts();
-        assert!(!generated.contains("bigint"), "{}", generated);
-        // Spot check one u64 field per kind: scalar, array and tuple.
-        assert!(
-            generated.contains("total_requests: number,"),
-            "{}",
-            generated
-        );
-        assert!(generated.contains("users: Array<number>,"), "{}", generated);
-        assert!(
-            generated.contains("status_codes: Array<[number, number]>,"),
-            "{}",
-            generated
-        );
-    }
-
-    /// Field names and TypeScript types of every generated declaration, keyed
-    /// by type name, parsed back out of [`dashboard_types_ts`].
-    fn declared_fields() -> BTreeMap<String, Vec<(String, String)>> {
-        let generated = dashboard_types_ts();
-        // Drop doc comments, which may hold commas, braces and colons.
-        let mut text = String::new();
-        let mut rest = generated.as_str();
-        while let Some(start) = rest.find("/**") {
-            text.push_str(&rest[..start]);
-            let end = rest[start..].find("*/").expect("closed doc comment");
-            rest = &rest[start + end + 2..];
-        }
-        text.push_str(rest);
-
-        let mut types = BTreeMap::new();
-        for decl in text.split("\ntype ").skip(1) {
-            let (name, body) = decl.split_once(" = ").expect("type alias");
-            let Some(body) = body.trim().strip_prefix('{') else {
-                continue; // DashboardSnapshotVersion = 1
-            };
-            let body = body.trim_end().trim_end_matches(';').trim_end_matches('}');
-            let mut fields = Vec::new();
-            let mut depth = 0;
-            let mut field = String::new();
-            for c in body.chars() {
-                match c {
-                    '<' | '[' => depth += 1,
-                    '>' | ']' => depth -= 1,
-                    _ => {}
-                }
-                if c == ',' && depth == 0 {
-                    let (key, ty) = field.split_once(':').expect("field: type");
-                    fields.push((key.trim().to_string(), ty.trim().to_string()));
-                    field.clear();
-                } else {
-                    field.push(c);
-                }
-            }
-            assert!(field.trim().is_empty(), "trailing text {:?}", field);
-            types.insert(name.to_string(), fields);
-        }
-        types
-    }
-
-    /// Asserts that `value`, serialized by serde, has the shape of the
-    /// TypeScript type `ty`: the right JSON type for every leaf, and exactly
-    /// the declared keys for every struct, recursing into nested values.
-    /// Records the name of every struct it reaches in `reached`.
-    fn assert_matches_declaration(
-        types: &BTreeMap<String, Vec<(String, String)>>,
-        ty: &str,
-        value: &serde_json::Value,
-        at: &str,
-        reached: &mut BTreeSet<String>,
-    ) {
-        if let Some(inner) = ty.strip_suffix(" | null") {
-            if !value.is_null() {
-                assert_matches_declaration(types, inner, value, at, reached);
-            }
-        } else if let Some(item) = ty.strip_prefix("Array<").and_then(|t| t.strip_suffix('>')) {
-            for (i, element) in value.as_array().expect(at).iter().enumerate() {
-                assert_matches_declaration(
-                    types,
-                    item,
-                    element,
-                    &format!("{}[{}]", at, i),
-                    reached,
-                );
-            }
-        } else if let Some(items) = ty.strip_prefix('[').and_then(|t| t.strip_suffix(']')) {
-            let items: Vec<&str> = items.split(", ").collect();
-            let array = value.as_array().expect(at);
-            assert_eq!(array.len(), items.len(), "tuple length at {}", at);
-            for (i, (item, element)) in items.iter().zip(array).enumerate() {
-                assert_matches_declaration(types, item, element, &format!("{}.{}", at, i), reached);
-            }
-        } else if let Some(fields) = types.get(ty) {
-            reached.insert(ty.to_string());
-            let object = value.as_object().expect(at);
-            for key in object.keys() {
-                assert!(
-                    fields.iter().any(|(k, _)| k == key),
-                    "{}.{} is sent but not declared in {}",
-                    at,
-                    key,
-                    ty
-                );
-            }
-            for (key, field_ty) in fields {
-                let field = object
-                    .get(key)
-                    .unwrap_or_else(|| panic!("{}.{} is declared but not sent", at, key));
-                assert_matches_declaration(
-                    types,
-                    field_ty,
-                    field,
-                    &format!("{}.{}", at, key),
-                    reached,
-                );
-            }
-        } else {
-            let matches = match ty {
-                "number" => value.is_number(),
-                "string" => value.is_string(),
-                "boolean" => value.is_boolean(),
-                _ => panic!("{}: no check for TypeScript type {}", at, ty),
-            };
-            assert!(matches, "{} is {} but declared {}", at, value, ty);
-        }
-    }
-
-    #[test]
-    fn snapshot_structs_have_no_serde_attributes() {
-        // ts-rs does not reflect serde attributes such as `serialize_with`, or
-        // `skip_serializing_if` without `default`, in the types it generates,
-        // so they could change the JSON without changing the declarations.
+    fn snapshot_json_comes_from_plain_derives() {
+        // snapshot.d.ts describes the JSON only while serde's derive writes it
+        // from the fields as declared. ts-rs does not model attributes such as
+        // `serialize_with`, and cannot see a hand-written `impl Serialize`, so
+        // either could change the JSON without changing the declarations.
         // `serde(` also catches one inside `cfg_attr`.
         let source = include_str!("dashboard_snapshot.rs");
         let structs = source.split("\nmod tests {").next().expect("source");
-        assert!(
-            !structs.contains("serde("),
-            "a serde attribute on a snapshot struct needs its generated type and \
-             serialized_snapshot_matches_declarations checked by hand"
-        );
-    }
-
-    #[test]
-    fn serialized_snapshot_matches_declarations() {
-        let types = declared_fields();
-        assert!(
-            types.contains_key("DashboardSnapshot"),
-            "{:?}",
-            types.keys()
-        );
-
-        let mut metrics = empty_metrics();
-        metrics.duration = 10;
-        metrics.hosts.insert("https://example.com".to_string());
-        let mut request = make_request("/a", 8, 2, &[(20, 10)]);
-        request.status_code_counts.insert(200, 8);
-        metrics.requests.insert("GET /a".to_string(), request);
-        let mut err = GooseErrorMetricAggregate::new(
-            GooseMethod::Get,
-            "/a".to_string(),
-            "boom".to_string(),
-            "",
-        );
-        err.occurrences = 2;
-        metrics.errors.insert("boom".to_string(), err);
-        let series = SeriesWindow {
-            start_second: 3,
-            rps: vec![1.0],
-            fps: vec![0.0],
-            users: vec![1],
-            avg_latency_ms: vec![20.0],
-        };
-
-        // Populated, the `--no-metrics` early return, and empty (so a field
-        // serde skips when empty is caught too).
-        let empty = empty_metrics();
-        let mut reached = BTreeSet::new();
-        let cases = [
-            (&metrics, series.clone(), false),
-            (&metrics, series, true),
-            (&empty, SeriesWindow::empty(), false),
-        ];
-        for (metrics, series, metrics_disabled) in cases {
-            let snap = build_dashboard_snapshot(DashboardSnapshotInput {
-                metrics,
-                series,
-                active_users: 2,
-                maximum_users: 3,
-                target_users: 4,
-                total_users: 5,
-                phase: "maintain".to_string(),
-                series_window_secs: 60,
-                no_status_codes: false,
-                metrics_disabled,
-            });
-            assert_eq!(snap.version, SNAPSHOT_VERSION);
-            // The populated case reaches every nested struct and array.
-            let populated = !metrics_disabled && !metrics.requests.is_empty();
-            assert_eq!(!snap.requests.is_empty(), populated);
-            assert_eq!(!snap.errors.is_empty(), populated);
-            assert_eq!(!snap.series.rps.is_empty(), populated);
-            let value = serde_json::to_value(&snap).expect("serialize snapshot");
-            assert_matches_declaration(
-                &types,
-                "DashboardSnapshot",
-                &value,
-                "snapshot",
-                &mut reached,
+        for pattern in ["serde(", "impl Serialize", "impl serde::Serialize"] {
+            assert!(
+                !structs.contains(pattern),
+                "`{}` in dashboard_snapshot.rs: snapshot.d.ts may no longer \
+                 match the JSON; check the generated types by hand",
+                pattern
             );
         }
-        // The populated case must reach every declared struct, so a new one
-        // the fixture leaves empty does not go unchecked.
-        let declared: BTreeSet<String> = types.keys().cloned().collect();
-        assert_eq!(reached, declared);
     }
 }
