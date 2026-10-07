@@ -1,7 +1,8 @@
 // Browser token handling of the dashboard client (app.js), run in jsdom with
 // `npm test`. Each page load is a fresh jsdom window; a reload is simulated by
-// carrying the previous window's sessionStorage over (as a browser does for a
-// reload of the same tab), and a new tab starts with empty storage.
+// carrying the previous window's sessionStorage and localStorage over (as a
+// browser does for a reload of the same tab), and a new tab keeps only
+// localStorage.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
