@@ -446,12 +446,13 @@ struct GooseAttackRunState {
     users_shutdown: HashSet<usize>,
     /// Boolean flag indicating of Goose should shutdown after stopping a running load test.
     shutdown_after_stop: bool,
-    /// Whether or not the load test is currently canceling.
-    canceling: bool,
+    /// Whether Ctrl-C has already started a cancel, so the main loop starts
+    /// only one. Set once and never cleared: Ctrl-C always ends in Shutdown.
+    ctrlc_handled: bool,
     /// Whether a cancel (Stop, `shutdown`, Ctrl-C) is ramping this run down.
     /// Set in `cancel_attack` and cleared when the run reaches Idle, so a new
-    /// Start begins without it; `canceling` above is set only on the Ctrl-C
-    /// path and never cleared.
+    /// Start begins without it; `ctrlc_handled` above is set only on the
+    /// Ctrl-C path and never cleared.
     stopping: bool,
     /// Shared registry of atomic request counters, keyed by `"METHOD path"`.
     /// User threads increment these directly; the parent reads them at report time.
@@ -1870,7 +1871,7 @@ impl GooseAttack {
             users_shutdown: HashSet::new(),
             all_users_spawned: false,
             shutdown_after_stop: !self.configuration.no_autostart,
-            canceling: false,
+            ctrlc_handled: false,
             stopping: false,
             request_counter_registry,
             metrics_epoch,
@@ -2816,7 +2817,7 @@ impl GooseAttack {
 
             // Gracefully exit loop if ctrl-c is caught.
             if self.attack_phase != AttackPhase::Shutdown
-                && !goose_attack_run_state.canceling
+                && !goose_attack_run_state.ctrlc_handled
                 && is_killswitch_triggered()
             {
                 // Shutdown after stopping as the load test was canceled.
@@ -2830,8 +2831,8 @@ impl GooseAttack {
                 // Cleanly stop the load test.
                 self.cancel_attack(&mut goose_attack_run_state).await?;
 
-                // Load test is actively canceling.
-                goose_attack_run_state.canceling = true;
+                // Ctrl-C is handled; don't start a second cancel.
+                goose_attack_run_state.ctrlc_handled = true;
             }
         }
 
