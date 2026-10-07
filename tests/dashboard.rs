@@ -1097,8 +1097,11 @@ async fn test_control_stop_while_decreasing() {
     load.abort().await;
 }
 
-/// Case 8: Users during a Stop's cancel ramp is refused, and the run still
-/// ends in idle instead of maintaining the new count.
+/// Case 8: Users sent right behind a Stop never turns the Stop back into a
+/// running load test. Either Users lands during the cancel ramp and is
+/// refused, or it lands once the run is idle and only reconfigures it; the run
+/// ends idle with no users both ways. The refusal itself is covered
+/// deterministically by `test_set_users_refused_while_stopping` in `lib.rs`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial]
 async fn test_control_users_while_decreasing() {
@@ -1125,76 +1128,76 @@ async fn test_control_users_while_decreasing() {
     let client = reqwest::Client::new();
     let token = Some(AUTH_TOKEN);
 
-    // Pipeline Stop then Users during the Maintain sleep so the main loop
-    // dequeues both in one tick, with Users handled while the cancel is still
-    // decreasing. If the loop wakes between the two, Users lands after the run
-    // is idle (accepted, phase idle) and tests nothing, so start again. Users
-    // asks for 15 so a Users accepted while idle still starts 10 or more.
-    let mut users_body = serde_json::Value::Null;
-    for _ in 0..5 {
-        let start = post_control(&client, &base, "/api/v1/control/start", Some("{}"), true).await;
-        let start_body: serde_json::Value = start.json().await.expect("json");
-        assert_eq!(start_body["ok"], true, "start: {}", start_body);
+    let start = post_control(&client, &base, "/api/v1/control/start", Some("{}"), true).await;
+    let start_body: serde_json::Value = start.json().await.expect("json");
+    assert_eq!(start_body["ok"], true, "start: {}", start_body);
 
-        wait_for_active_users(&client, &base, token, 10, Duration::from_secs(30)).await;
+    wait_for_active_users(&client, &base, token, 10, Duration::from_secs(30)).await;
 
-        let stop_client = client.clone();
-        let users_client = client.clone();
-        let stop_base = base.clone();
-        let users_base = base.clone();
-        let (stop, users) = tokio::join!(
+    // Send Users right behind Stop. Both usually reach the main loop in the
+    // same batch (it sleeps up to 500ms in Maintain), which exercises the
+    // refusal; when they do not, Users lands on an idle run. Both outcomes are
+    // valid, so the test does not depend on which one happens.
+    let stop_client = client.clone();
+    let users_client = client.clone();
+    let stop_base = base.clone();
+    let users_base = base.clone();
+    let (stop, users) = tokio::join!(
+        post_control(
+            &stop_client,
+            &stop_base,
+            "/api/v1/control/stop",
+            Some("{}"),
+            true
+        ),
+        async {
+            tokio::time::sleep(Duration::from_millis(30)).await;
             post_control(
-                &stop_client,
-                &stop_base,
-                "/api/v1/control/stop",
-                Some("{}"),
-                true
-            ),
-            async {
-                tokio::time::sleep(Duration::from_millis(30)).await;
-                post_control(
-                    &users_client,
-                    &users_base,
-                    "/api/v1/control/users",
-                    Some(r#"{"users":15}"#),
-                    true,
-                )
-                .await
-            }
-        );
-        let stop_body: serde_json::Value = stop.json().await.expect("json");
-        assert_eq!(stop_body["ok"], true);
-        assert_eq!(stop_body["phase"], "decrease");
-
-        assert_eq!(users.status(), 200);
-        users_body = users.json().await.expect("json");
-        if users_body["phase"] != "idle" {
-            break;
+                &users_client,
+                &users_base,
+                "/api/v1/control/users",
+                Some(r#"{"users":15}"#),
+                true,
+            )
+            .await
         }
+    );
+    let stop_body: serde_json::Value = stop.json().await.expect("json");
+    assert_eq!(stop_body["ok"], true, "stop: {}", stop_body);
+    assert_eq!(stop_body["phase"], "decrease");
+
+    assert_eq!(users.status(), 200);
+    let users_body: serde_json::Value = users.json().await.expect("json");
+    assert_eq!(users_body["command"], "users");
+    match users_body["phase"].as_str() {
+        Some("decrease") => {
+            assert_eq!(
+                users_body["ok"], false,
+                "users during a stop must be refused: {}",
+                users_body
+            );
+            assert_eq!(users_body["error"], "invalid_phase");
+            assert!(
+                users_body["message"]
+                    .as_str()
+                    .is_some_and(|m| m.contains("stopping")),
+                "message must say the load test is stopping: {}",
+                users_body
+            );
+            assert!(users_body["target_users"].is_null());
+        }
+        Some("idle") => {
+            assert_eq!(
+                users_body["ok"], true,
+                "users while idle reconfigures: {}",
+                users_body
+            );
+        }
+        _ => panic!("users must land in decrease or idle: {}", users_body),
     }
 
-    assert_eq!(
-        users_body["phase"], "decrease",
-        "users must be handled during the cancel: {}",
-        users_body
-    );
-    assert_eq!(
-        users_body["ok"], false,
-        "users during a stop must be refused: {}",
-        users_body
-    );
-    assert_eq!(users_body["command"], "users");
-    assert_eq!(users_body["error"], "invalid_phase");
-    assert!(
-        users_body["message"]
-            .as_str()
-            .is_some_and(|m| m.contains("stopping")),
-        "message must say the load test is stopping: {}",
-        users_body
-    );
-    assert!(users_body["target_users"].is_null());
-
-    // The cancel runs to completion: idle with no users, never maintain.
+    // The cancel runs to completion either way: idle with no users. Before
+    // the fix, a Users during the cancel ended in maintain and this timed out.
     let idle = wait_for_phase(&client, &base, token, &["idle"], Duration::from_secs(30)).await;
     assert_eq!(idle["active_users"], 0);
     assert_eq!(idle["stopping"], false, "idle ends the cancel: {}", idle);
