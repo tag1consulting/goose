@@ -1,5 +1,7 @@
 # Live Dashboard
 
+> **Experimental:** the dashboard UI and the `/api/v1` endpoints may change before Goose 1.0.
+
 Goose can optionally serve a **live web dashboard** while a load test runs. The dashboard streams compact metric snapshots (including trailing RPS, users, and latency series) over Server-Sent Events (SSE), with a short poll fallback if SSE is unavailable.
 
 By default the dashboard is **observe-only**: start, stop, user counts, and other control remain on the [Telnet](telnet.md) and [WebSocket](websocket.md) Controllers. With an explicit opt-in (`--dashboard-control` plus a required auth token), the same browser can also **Start**, **Stop**, and **set the target user count**. Controllers remain the power-user path for host/test-plan changes, rate tuning, and process **shutdown** (not available from the dashboard).
@@ -20,6 +22,8 @@ Then open:
 ```text
 http://127.0.0.1:5118/
 ```
+
+The dashboard port opens when the Controllers' ports do, once Goose has built a client for every user: about 3.5 seconds after launch with 1,000 users on two cores. With `--no-autostart` users are built on Start, so the port opens at once.
 
 ### Related flags
 
@@ -123,6 +127,8 @@ curl -H "Authorization: Bearer SECRET" http://host:5118/api/v1/snapshot
 # or
 curl "http://host:5118/api/v1/snapshot?token=SECRET"
 ```
+
+`GET /api/v1/snapshot` returns **503** with an empty body when no snapshot arrives within five seconds, which happens while the main loop or the metrics processor is busy (for example building the users of a large `users` change), or when the dashboard is shutting down. Retry after a short wait.
 
 For **control**, the server accepts **`Authorization: Bearer` only** (query `?token=` is rejected on control routes):
 
@@ -246,7 +252,15 @@ Example success bodies:
 }
 ```
 
-Logical rejections (wrong phase, prepare failure) return **HTTP 200** with `"ok": false` and a stable `error` code (for example `invalid_phase`). Malformed bodies return **400**.
+Logical rejections (wrong phase, prepare failure) return **HTTP 200** with `"ok": false` and a stable `error` code (for example `invalid_phase`). A malformed body returns **400** with `error` set to `bad_request`, and a `users` value that is not an integer from 1 to 100000 returns **400** with `invalid_users`. A body larger than 16 KiB gets **413** with a plain text body, before the token is checked.
+
+When the main loop does not answer, a control POST returns **503** with `"ok": false`, an `error` code from this table, and `phase`, `active_users` and `target_users` set to `null`:
+
+| `error` | When | Client action |
+|---------|------|---------------|
+| `busy` | Four authenticated control requests are already waiting for the main loop | Wait and retry |
+| `unavailable` | The main loop no longer takes control requests, for example because the load test is exiting | Do not retry |
+| `timeout` | The main loop did not answer within 15 seconds | Re-read `phase` and `target_users` from a snapshot before retrying: a command still queued at the timeout is skipped, but one the main loop had started may still apply |
 
 ### Start and Stop semantics
 
@@ -409,9 +423,9 @@ Enabling `--dashboard` turns on the same per-second **GraphData** series collect
 - Memory scales with unique request names × run length (same class of cost as generating HTML graphs).
 - Snapshot tables truncate to the top rows (`flags.requests_truncated` / `flags.errors_truncated` when capped); series charts use a fixed trailing window (default 5 minutes).
 
-With zero connected clients the dashboard issues **no** snapshot builds (no extra metrics-processor work beyond GraphData recording). When clients are connected, snapshots are coalesced to about **1 Hz** for all viewers. Concurrent SSE clients are capped (default **32**, tunable with `--dashboard-max-clients`); further clients receive HTTP 503.
+With no SSE client connected and no `GET /api/v1/snapshot` in the last two seconds (`/api/v1/health` does not count), the dashboard issues **no** snapshot builds (no extra metrics-processor work beyond GraphData recording). When clients are connected, snapshots are coalesced to about **1 Hz** for all viewers. Concurrent SSE clients are capped (default **32**, tunable with `--dashboard-max-clients`); further clients receive HTTP 503.
 
-Each snapshot build (while clients are connected) runs on the **metrics processor** task: it drains pending metrics, exports the trailing series window, and builds percentile maps for the aggregate plus up to 100 request rows. That cost scales with unique request names and the timing histograms Goose already maintains — the attack main loop does **not** await the build. Under extreme cardinality, prefer fewer unique request names, a shorter test, or disable the dashboard if you need absolute minimal overhead (same trade-off as `--report-file`).
+Each snapshot build (while clients are connected or polling) runs on the **metrics processor** task: it drains pending metrics, exports the trailing series window, and builds percentile maps for the aggregate plus up to 100 request rows. That cost scales with unique request names and the timing histograms Goose already maintains; the attack main loop does **not** await the build. Under extreme cardinality, prefer fewer unique request names, a shorter test, or disable the dashboard if you need absolute minimal overhead (same trade-off as `--report-file`).
 
 For extreme runs with tens of thousands of unique request names, expect higher GraphData memory (same as `--report-file`). Disable the dashboard if you need absolute minimal overhead, just as you can disable Controllers with `--no-telnet --no-websocket`.
 

@@ -926,7 +926,10 @@ impl Clone for Box<dyn GooseUserData> {
 /// in a specific [`Scenario`](./struct.Scenario.html).
 #[derive(Debug)]
 pub struct GooseUser {
-    /// The Instant when this `GooseUser` client started.
+    /// The Instant the load test started, shared by every `GooseUser` and kept
+    /// across a metrics reset; `elapsed` in request, error, transaction and
+    /// scenario metrics counts from it. A `GooseUser` built outside a load test
+    /// keeps the Instant it was built.
     pub started: Instant,
     /// How many iterations of the scenario this GooseUser has run.
     pub(crate) iterations: usize,
