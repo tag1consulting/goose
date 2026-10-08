@@ -1856,15 +1856,6 @@ impl GooseUser {
             Err(e) => return Err(Box::new(e.into())),
         };
 
-        // Get a string version of request path for logging.
-        let path = match Url::parse(built_request.url().as_ref()) {
-            Ok(u) => u.path().to_string(),
-            Err(e) => {
-                error!("failed to parse url: {e}");
-                "".to_string()
-            }
-        };
-
         // Grab a copy of any headers set by this request, included in the request log,
         // the debug log and the error log. Skip the formatting when none of those logs
         // is enabled, as nothing else reads them.
@@ -1933,7 +1924,11 @@ impl GooseUser {
         match &response {
             Ok(r) => {
                 let status_code = r.status();
-                debug!("{:?}: status_code {}", path, status_code);
+                debug!(
+                    "{:?}: status_code {}",
+                    request_log_path(&request_metric.raw.url),
+                    status_code
+                );
 
                 // Update the request_metric object.
                 request_metric.set_status_code(Some(status_code));
@@ -1975,7 +1970,7 @@ impl GooseUser {
             }
             Err(e) => {
                 // @TODO: what can we learn from a reqwest error?
-                warn!("{:?}: {}", path, e);
+                warn!("{:?}: {}", request_log_path(&request_metric.raw.url), e);
                 request_metric.success = false;
                 request_metric.set_status_code(None);
                 request_metric.error = clean_reqwest_error(e, request_name);
@@ -2001,7 +1996,11 @@ impl GooseUser {
         }
 
         if request.error_on_fail && !request_metric.success {
-            error!("{:?} {}", path, request_metric.error);
+            error!(
+                "{:?} {}",
+                request_log_path(&request_metric.raw.url),
+                request_metric.error
+            );
             return Err(Box::new(TransactionError::RequestFailed {
                 raw_request: Box::new(request_metric),
             }));
@@ -3568,6 +3567,20 @@ fn clean_reqwest_error(e: &reqwest::Error, request_name: &str) -> String {
     }
 }
 
+/// Extract the path of a request URL for the request log lines in `request()`, or
+/// an empty path if the URL does not parse. Only called from inside the log macro
+/// arguments, which are evaluated after the level check, so the parse and the
+/// allocation are skipped when the line is filtered out.
+fn request_log_path(url: &str) -> String {
+    match Url::parse(url) {
+        Ok(u) => u.path().to_string(),
+        Err(e) => {
+            error!("failed to parse url: {e}");
+            "".to_string()
+        }
+    }
+}
+
 /// A helper to determine which host should be prepended to relative load test
 /// paths in this Scenario.
 ///
@@ -4751,6 +4764,30 @@ mod tests {
         assert!(
             rx.try_recv().is_err(),
             "no metric should be sent to the channel when no_metrics is true"
+        );
+    }
+
+    #[test]
+    fn request_log_path_extracts_path() {
+        // Plain path.
+        assert_eq!(request_log_path("http://10.0.0.1/foo"), "/foo");
+        // The query is not part of the path.
+        assert_eq!(request_log_path("http://example.com/foo?x=1&y=2"), "/foo");
+        // Nor is the port.
+        assert_eq!(request_log_path("http://10.0.0.1:8080/a/b/"), "/a/b/");
+        assert_eq!(request_log_path("http://10.0.0.1:8080"), "/");
+        // An unparsable URL gives an empty path, as before.
+        assert_eq!(request_log_path("not a url"), "");
+        assert_eq!(request_log_path(""), "");
+
+        // The status line built from it keeps its text, including the Debug quoting.
+        assert_eq!(
+            format!(
+                "{:?}: status_code {}",
+                request_log_path("http://127.0.0.1:8080/foo?x=1"),
+                reqwest::StatusCode::OK
+            ),
+            "\"/foo\": status_code 200 OK"
         );
     }
 }

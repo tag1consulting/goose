@@ -43,6 +43,8 @@
     o **behavior change**: `GooseUser.started` is one clock shared by every user, set when the load test starts, so `elapsed` in the request, error, transaction and scenario logs counts milliseconds since the load test started instead of since that user's client was built
  - [#639](https://github.com/tag1consulting/goose/issues/639) only capture request headers when the request log, the debug log or the error log is enabled, skipping a string allocation per header on every request otherwise
     o **behavior change**: `GooseRawRequest.headers` (for example `goose.request.raw.headers`, or the `raw_request` in `TransactionError::RequestFailed`) is now empty unless one of these logs is enabled; log output is unchanged
+ - [#731](https://github.com/tag1consulting/goose/pull/731) stop reparsing the request URL on every request; `request()` serialized the already parsed URL, parsed it again and allocated its path only for three log lines, and the `debug!` one is filtered out in normal runs
+    o the path is now derived only when one of those lines is emitted; log output is unchanged and there is no behavior change
  - [#468](https://github.com/tag1consulting/goose/issues/468) replace `--hatch-rate` and `--startup-time` with `--increase-rate`, `--increase-time`, `--decrease-rate`, and `--decrease-time`
     o **breaking**: `--hatch-rate` / `-r` is now `--increase-rate` / `-r` (sets per-second rate users are added)
     o **breaking**: `--startup-time` / `-s` is now `--increase-time` / `-s` (sets total time to launch all users)
