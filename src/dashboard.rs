@@ -19,7 +19,7 @@
 //! latency.
 
 use crate::metrics::DashboardSnapshot;
-use crate::{ControlOutcome, GooseConfiguration, GooseError};
+use crate::{ControlOutcome, GooseConfiguration, GooseError, INVALID_USERS_MSG, MAX_CONTROL_USERS};
 
 use axum::body::{Body, Bytes};
 use axum::extract::{Query, State};
@@ -100,13 +100,6 @@ const EXTRA_CONNECTIONS: usize = 16;
 
 /// Max JSON body size for control POSTs (start/stop are tiny; users is one int).
 const CONTROL_BODY_LIMIT: usize = 16 * 1024;
-
-/// HTTP-layer upper bound for `POST /api/v1/control/users`.
-///
-/// Controllers historically had no cap; the dashboard makes user changes one
-/// click/curl away, so a hard limit prevents accidental multi-GB client
-/// allocation from a single POST. Extreme values still require Controllers.
-const MAX_CONTROL_USERS: u64 = 100_000;
 
 /// Max concurrent control POSTs waiting on the main loop (admission control).
 /// Additional authenticated control requests receive 503 `busy` without
@@ -1304,9 +1297,9 @@ fn parse_empty_control_body(body: &[u8]) -> Result<(), (&'static str, &'static s
     }
 }
 
-/// Parse `{"users": N}` with integer N in 1..=[`MAX_CONTROL_USERS`].
+/// Parse `{"users": N}` with integer N in 1..=[`MAX_CONTROL_USERS`], the shared
+/// bound, refused here as a 400.
 fn parse_users_body(body: &[u8]) -> Result<usize, (&'static str, &'static str)> {
-    const USERS_MSG: &str = "users must be an integer between 1 and 100000";
     let trimmed = trim_ascii_whitespace(body);
     if trimmed.is_empty() {
         return Err(("bad_request", "request body required"));
@@ -1321,7 +1314,7 @@ fn parse_users_body(body: &[u8]) -> Result<usize, (&'static str, &'static str)> 
     };
     let users_val = match obj.get("users") {
         Some(v) => v,
-        None => return Err(("invalid_users", USERS_MSG)),
+        None => return Err(("invalid_users", INVALID_USERS_MSG)),
     };
     // Reject floats/strings: only JSON integers (i64/u64), not f64.
     let n = match users_val.as_u64() {
@@ -1329,13 +1322,13 @@ fn parse_users_body(body: &[u8]) -> Result<usize, (&'static str, &'static str)> 
         None => {
             // Negative integers arrive as i64; treat as invalid_users.
             if users_val.as_i64().is_some() || users_val.is_number() || users_val.is_string() {
-                return Err(("invalid_users", USERS_MSG));
+                return Err(("invalid_users", INVALID_USERS_MSG));
             }
-            return Err(("invalid_users", USERS_MSG));
+            return Err(("invalid_users", INVALID_USERS_MSG));
         }
     };
-    if !(1..=MAX_CONTROL_USERS).contains(&n) {
-        return Err(("invalid_users", USERS_MSG));
+    if !(1..=MAX_CONTROL_USERS as u64).contains(&n) {
+        return Err(("invalid_users", INVALID_USERS_MSG));
     }
     // Reject unknown extra fields? Design only requires deny_unknown on start/stop.
     // Users: only `users` is required; extra fields are tolerated for forward compat.

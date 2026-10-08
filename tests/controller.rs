@@ -344,6 +344,20 @@ async fn run_standalone_test(test_type: TestType) {
                         1 => {
                             assert!(response.starts_with("users configured"));
 
+                            // Attempt to configure zero users.
+                            make_request(&mut test_state, "users 0\r\n").await;
+                        }
+                        // Confirm zero users is refused.
+                        2 => {
+                            assert!(response.starts_with("failed to reconfigure users"));
+
+                            // Attempt to configure more than the maximum users.
+                            make_request(&mut test_state, "users 100001\r\n").await;
+                        }
+                        // Confirm more than the maximum is refused.
+                        3 => {
+                            assert!(response.starts_with("failed to reconfigure users"));
+
                             // Attempt to reconfigure users with bad data.
                             make_request(&mut test_state, "users 1.1\r\n").await;
                         }

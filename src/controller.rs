@@ -460,7 +460,7 @@ impl ControllerCommand {
             ControllerCommand::Users => ControllerCommandDetails {
                 help: ControllerHelp {
                     name: "users INT",
-                    description: "set number of simulated users\n",
+                    description: "set number of simulated users (1 to 100000)\n",
                 },
                 regex: r"(?i)^(users?) (\d+)$",
                 process_response: Box::new(|response| {

@@ -80,6 +80,14 @@ const DEFAULT_TELNET_PORT: &str = "5116";
 /// Constant defining Goose's default WebSocket Controller port.
 const DEFAULT_WEBSOCKET_PORT: &str = "5117";
 
+/// Most users the telnet and WebSocket `users` command or the dashboard can
+/// set. One command allocates the added users on the main loop, so a larger
+/// value can exhaust memory or overflow the user arithmetic.
+pub(crate) const MAX_CONTROL_USERS: usize = 100_000;
+
+/// Refusal for a user count outside 1 to [`MAX_CONTROL_USERS`].
+pub(crate) const INVALID_USERS_MSG: &str = "users must be an integer between 1 and 100000";
+
 lazy_static! {
     // WORKER_ID is used to identify different works when running a gaggle.
     static ref WORKER_ID: AtomicUsize = AtomicUsize::new(0);
@@ -338,7 +346,8 @@ pub(crate) fn attack_phase_str(phase: AttackPhase) -> &'static str {
 #[allow(dead_code)] // fields beyond `ok` reserved for dashboard control JSON
 pub(crate) struct ControlOutcome {
     pub ok: bool,
-    /// Stable code when !ok — soft failures only (`invalid_phase`, `prepare_failed`).
+    /// Stable code when !ok, soft failures only (`invalid_phase`, `invalid_users`,
+    /// `prepare_failed`).
     pub error: Option<&'static str>,
     /// Human message (Controller wire protocol still maps only `ok` → Bool).
     pub message: String,
@@ -2445,9 +2454,11 @@ impl GooseAttack {
 
     /// Set absolute target user count (Controller `users` command).
     ///
-    /// Does **not** reject `new_users == 0` (Controller parity). Soft failure:
-    /// `invalid_phase` while a cancel (Stop, `shutdown`, Ctrl-C) is in progress,
-    /// and in Shutdown (or any phase other than Idle/Increase/Decrease/Maintain).
+    /// Soft failure: `invalid_users` unless `new_users` is from 1 to
+    /// [`MAX_CONTROL_USERS`], the one bound for every front end's `users`
+    /// command; `invalid_phase` while a cancel (Stop, `shutdown`, Ctrl-C) is in
+    /// progress, and in Shutdown (or any phase other than
+    /// Idle/Increase/Decrease/Maintain).
     /// A test plan's own ramp down is not a cancel and still accepts a new count.
     /// Hard error: `weight_scenario_users` when increasing while running.
     pub(crate) fn control_set_users(
@@ -2455,6 +2466,17 @@ impl GooseAttack {
         goose_attack_run_state: &mut GooseAttackRunState,
         new_users: usize,
     ) -> Result<ControlOutcome, GooseError> {
+        // Zero users set while idle makes the next start weight users forever,
+        // and a huge count wraps the user difference below or exhausts memory.
+        if !(1..=MAX_CONTROL_USERS).contains(&new_users) {
+            return Ok(self.control_outcome(
+                goose_attack_run_state,
+                false,
+                Some("invalid_users"),
+                INVALID_USERS_MSG,
+                None,
+            ));
+        }
         // Rebuilding the plan during a cancel would replace its ramp to zero
         // and leave the load test running.
         if goose_attack_run_state.stopping {
@@ -3243,6 +3265,57 @@ mod tests {
         assert!(!run_state.stopping);
         let outcome = goose_attack.control_set_users(&mut run_state, 5).unwrap();
         assert!(outcome.ok, "idle must accept users: {:?}", outcome);
+    }
+
+    /// Users outside 1 to MAX_CONTROL_USERS is refused while idle and while
+    /// running, and leaves the configuration and test plan as they were.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_set_users_out_of_bounds_refused() {
+        let configuration = GooseConfiguration::parse_args_default(&[
+            "--no-telnet",
+            "--no-websocket",
+            "--test-plan",
+            "10,1s",
+        ])
+        .unwrap();
+        let mut goose_attack = GooseAttack::initialize_with_config(configuration).unwrap();
+        let mut run_state = goose_attack.initialize_attack().await.unwrap();
+        assert_eq!(
+            INVALID_USERS_MSG,
+            format!("users must be an integer between 1 and {MAX_CONTROL_USERS}")
+        );
+        let steps = goose_attack.test_plan.steps.clone();
+
+        for phase in [AttackPhase::Idle, AttackPhase::Maintain] {
+            goose_attack.set_attack_phase(&mut run_state, phase);
+            for users in [0, MAX_CONTROL_USERS + 1, usize::MAX] {
+                let outcome = goose_attack
+                    .control_set_users(&mut run_state, users)
+                    .unwrap();
+                assert!(!outcome.ok, "{:?} must refuse {} users", phase, users);
+                assert_eq!(outcome.error, Some("invalid_users"));
+                assert_eq!(outcome.message, INVALID_USERS_MSG);
+                assert_eq!(goose_attack.configuration.users, None);
+                // Accepting users clears the configured test plan.
+                assert!(goose_attack.configuration.test_plan.is_some());
+                assert_eq!(goose_attack.test_plan.steps, steps);
+            }
+        }
+
+        // The bounds themselves are accepted.
+        goose_attack.set_attack_phase(&mut run_state, AttackPhase::Idle);
+        for users in [1, MAX_CONTROL_USERS] {
+            let outcome = goose_attack
+                .control_set_users(&mut run_state, users)
+                .unwrap();
+            assert!(
+                outcome.ok,
+                "idle must accept {} users: {:?}",
+                users, outcome
+            );
+            assert_eq!(goose_attack.configuration.users, Some(users));
+        }
     }
 
     /// A controller `shutdown` while idle cancels nothing, but the run is
