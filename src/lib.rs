@@ -3293,6 +3293,46 @@ mod tests {
         assert_eq!(outcome.error, Some("invalid_phase"));
     }
 
+    /// A controller `users` value too large for a `usize` is refused with an
+    /// error reply instead of panicking the main loop.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_controller_users_overflow_refused() {
+        use crate::controller::{
+            ControllerCommand, ControllerRequestMessage, ControllerResponseMessage,
+        };
+
+        let configuration =
+            GooseConfiguration::parse_args_default(&["--no-telnet", "--no-websocket"]).unwrap();
+        let mut goose_attack = GooseAttack::initialize_with_config(configuration).unwrap();
+        let mut run_state = goose_attack.initialize_attack().await.unwrap();
+        let (controller_tx, controller_rx) = flume::unbounded();
+        run_state.controller_channel_rx = Some(controller_rx);
+        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+
+        controller_tx
+            .send(ControllerRequest {
+                response_channel: Some(response_tx),
+                client_id: 0,
+                request: ControllerRequestMessage {
+                    command: ControllerCommand::Users,
+                    value: Some("99999999999999999999".to_string()),
+                },
+            })
+            .unwrap();
+        goose_attack
+            .handle_controller_requests(&mut run_state)
+            .await
+            .unwrap();
+        let reply = response_rx.await.unwrap().response;
+        assert!(
+            matches!(reply, ControllerResponseMessage::Bool(false)),
+            "users overflow must be refused: {:?}",
+            reply
+        );
+        assert_eq!(goose_attack.configuration.users, None);
+    }
+
     /// Every snapshot the main loop serves carries the stopping flag: the one
     /// forwarded to the metrics processor, the local fallback when the
     /// processor is gone, and the one flushed before a control batch.
