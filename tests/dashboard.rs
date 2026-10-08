@@ -384,8 +384,8 @@ async fn test_dashboard_loopback_no_token() {
     assert!(index_body.contains("Goose"));
     assert!(index_body.contains("/static/app.js"));
     assert!(
-        index_body.contains("/static/chart.min.js"),
-        "UI must load vendored Chart.js"
+        !index_body.contains("/static/chart.min.js"),
+        "Chart.js is bundled into app.js, not loaded on its own"
     );
 
     let app_js = client
@@ -408,6 +408,10 @@ async fn test_dashboard_loopback_no_token() {
         js_body.contains("series"),
         "UI must render SeriesWindow charts"
     );
+    assert!(
+        js_body.contains("Chart.js v") && js_body.contains("Released under the MIT License"),
+        "app.js must bundle Chart.js with its license comment"
+    );
 
     let app_css = client
         .get(format!("{base}/static/app.css"))
@@ -421,11 +425,10 @@ async fn test_dashboard_loopback_no_token() {
         .send()
         .await
         .expect("GET /static/chart.min.js");
-    assert_eq!(chart_js.status(), 200);
-    let chart_body = chart_js.text().await.unwrap();
-    assert!(
-        chart_body.contains("Chart"),
-        "vendored chart.min.js must expose Chart"
+    assert_eq!(
+        chart_js.status(),
+        404,
+        "chart.min.js is no longer served; Chart.js is bundled into app.js"
     );
 
     // Snapshot without token on loopback → 200.
@@ -519,8 +522,8 @@ async fn test_dashboard_token_auth() {
             .await
             .unwrap()
             .status(),
-        200,
-        "chart.min.js must stay public when token is configured"
+        404,
+        "chart.min.js is not served, with or without a token"
     );
 
     // Snapshot without token → 401, no metrics body.
