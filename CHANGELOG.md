@@ -96,6 +96,10 @@
  - [#691](https://github.com/tag1consulting/goose/pull/691) fix clippy lints and deprecations reported by Rust 1.99
     o **breaking**: `TransactionError::RequestFailed { raw_request }` changes from `GooseRequestMetric` to `Box<GooseRequestMetric>`, and `TransactionError::LoggerFailed { source }` changes from `flume::SendError<Option<GooseLog>>` to `Box<flume::SendError<Option<GooseLog>>>`
  - [#690](https://github.com/tag1consulting/goose/pull/690), [#682](https://github.com/tag1consulting/goose/pull/682) fix empty or misplaced live dashboard charts without `--report-file`: batched metrics bypassed the dashboard's chart condition and series origin, so batched requests, transactions and scenarios were not charted and batched latency was indexed by absolute second after pruning
+ - [#703](https://github.com/tag1consulting/goose/issues/703) split the dashboard client into TypeScript modules bundled by esbuild, with Chart.js 4.4.7 and its types from npm
+    o chart configuration is now type checked against Chart.js's own types
+    o `app.js` is still committed, so Cargo builds need no Node.js, and CI fails if it differs from the esbuild bundle
+    o **behavior change**: `/static/chart.min.js` is no longer served (404); Chart.js is inside `app.js`
 
 ## 0.18.1 August 14, 2025
  - [#634](https://github.com/tag1consulting/goose/pull/634) add killswitch mechanism for programmatic test termination

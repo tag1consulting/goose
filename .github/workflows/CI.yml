@@ -38,8 +38,8 @@ jobs:
         command: clippy 
         args: --all-targets --all-features -- -D warnings
 
-  # TypeScript dashboard SPA: type-check and ensure committed app.js matches tsc output.
-  # Cargo embeds app.js via include_str!; it must not drift from app.ts.
+  # TypeScript dashboard SPA: type-check and ensure committed app.js matches the esbuild bundle.
+  # Cargo embeds app.js via include_str!; it must not drift from the sources in src/.
   dashboard-ui:
     name: dashboard UI (TypeScript)
     runs-on: ubuntu-latest
@@ -64,11 +64,11 @@ jobs:
     - name: Type-check (tsc --noEmit)
       run: npm run check
 
-    - name: Rebuild app.js and verify no drift
+    - name: Rebundle app.js with esbuild and verify no drift
       run: |
         npm run build
         if ! git diff --exit-code -- app.js; then
-          echo "::error::src/dashboard/static/app.js is out of date. Run: cd src/dashboard/static && npm ci && npm run build"
+          echo "::error::src/dashboard/static/app.js differs from the esbuild bundle of src/. Rebuild it: cd src/dashboard/static && npm ci && npm run build"
           exit 1
         fi
 
