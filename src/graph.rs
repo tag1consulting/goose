@@ -69,11 +69,6 @@ impl ItemsPerSecond {
     fn get(&self, key: &str) -> Option<TimeSeries<u32, u32>> {
         self.series.get(key).cloned()
     }
-
-    #[inline(always)]
-    fn get_map(&self) -> HashMap<String, TimeSeries<u32, u32>> {
-        self.series.clone()
-    }
 }
 
 /// Used to collect graph data during a load test.
@@ -454,7 +449,7 @@ impl GraphData {
             "graph-active-users",
             "Active users #",
             granular_data,
-            self.users_per_second.clone(),
+            &self.users_per_second,
         )
     }
 
@@ -464,7 +459,7 @@ impl GraphData {
             "graph-rps",
             "Requests #",
             granular_data,
-            self.requests_per_second.get_map(),
+            &self.requests_per_second.series,
         )
     }
 
@@ -477,7 +472,7 @@ impl GraphData {
             "graph-avg-response-time",
             "Response time [ms]",
             granular_data,
-            self.average_response_time_per_second.clone(),
+            &self.average_response_time_per_second,
         )
     }
 
@@ -490,7 +485,7 @@ impl GraphData {
             "graph-tps",
             "Transactions #",
             granular_data,
-            self.transactions_per_second.clone(),
+            &self.transactions_per_second,
         )
     }
 
@@ -503,7 +498,7 @@ impl GraphData {
             "graph-sps",
             "Scenarios #",
             granular_data,
-            self.scenarios_per_second.clone(),
+            &self.scenarios_per_second,
         )
     }
 
@@ -513,7 +508,7 @@ impl GraphData {
             "graph-eps",
             "Errors #",
             granular_data,
-            self.errors_per_second.get_map(),
+            &self.errors_per_second.series,
         )
     }
 
@@ -527,7 +522,7 @@ impl GraphData {
         html_id: &'a str,
         y_axis_label: &'a str,
         granular_data: bool,
-        data: HashMap<String, TimeSeries<T, U>>,
+        data: &'a HashMap<String, TimeSeries<T, U>>,
     ) -> Graph<'a, T, U> {
         Graph::new(html_id, y_axis_label, granular_data, data)
     }
@@ -542,12 +537,14 @@ impl GraphData {
         html_id: &'a str,
         y_axis_label: &'a str,
         granular_data: bool,
-        data: TimeSeries<T, U>,
+        data: &'a TimeSeries<T, U>,
     ) -> Graph<'a, T, U> {
-        let mut hash_map_data = HashMap::new();
-        hash_map_data.insert("Total".to_string(), data);
-
-        Graph::new(html_id, y_axis_label, granular_data, hash_map_data)
+        Graph {
+            html_id,
+            y_axis_label,
+            granular_data,
+            data: vec![("Total", data)],
+        }
     }
 }
 
@@ -560,8 +557,9 @@ pub(crate) struct Graph<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Cop
     y_axis_label: &'a str,
     /// Indicates whether the granular data should be displayed on graphs.
     granular_data: bool,
-    /// Graph data.
-    data: HashMap<String, TimeSeries<T, U>>,
+    /// Graph data, borrowed from [`GraphData`] in the iteration order of its
+    /// map, so rendering a report does not copy every series.
+    data: Vec<(&'a str, &'a TimeSeries<T, U>)>,
 }
 
 impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + PartialOrd>
@@ -573,14 +571,26 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
         html_id: &'a str,
         y_axis_label: &'a str,
         granular_data: bool,
-        data: HashMap<String, TimeSeries<T, U>>,
+        data: &'a HashMap<String, TimeSeries<T, U>>,
     ) -> Graph<'a, T, U> {
         Graph {
             html_id,
             y_axis_label,
             granular_data,
-            data,
+            data: data
+                .iter()
+                .map(|(label, series)| (label.as_str(), series))
+                .collect(),
         }
+    }
+
+    /// The series with this label, for tests.
+    #[cfg(test)]
+    fn series(&self, label: &str) -> Option<&TimeSeries<T, U>> {
+        self.data
+            .iter()
+            .find(|(l, _)| *l == label)
+            .map(|(_, series)| *series)
     }
 
     /// Helper function to build HTML charts powered by the
@@ -681,7 +691,7 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
         } else {
             let (legend, main_label, main_values, other_values) = if self.data.len() > 1 {
                 // If we are dealing with a metric with granular data we need to calculate totals.
-                for single_data in self.data.values() {
+                for (_, single_data) in &self.data {
                     total_values.add_time_series(single_data);
                 }
 
@@ -696,7 +706,7 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
                     for (sub_data, label) in self
                         .data
                         .iter()
-                        .map(|(label, sub_data)| (sub_data, label))
+                        .map(|&(label, sub_data)| (sub_data, label))
                         .sorted()
                         .rev()
                     {
@@ -744,8 +754,8 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
                 // If there is only one data series in the metric we simply display it.
                 (
                     "".to_string(),
-                    self.data.keys().next().unwrap().as_str(),
-                    self.data.values().next().unwrap(),
+                    self.data[0].0,
+                    self.data[0].1,
                     "".to_string(),
                 )
             };
@@ -1387,7 +1397,7 @@ mod test {
             total: 0,
         };
         assert_eq!(
-            rps_graph.data.get("GET /").unwrap().clone(),
+            rps_graph.series("GET /").unwrap().clone(),
             expected_time_series
         );
         assert_eq!(rps_graph.html_id, "graph-rps");
@@ -1401,7 +1411,7 @@ mod test {
             total: 0,
         };
         assert_eq!(
-            users_graph.data.get("Total").unwrap().clone(),
+            users_graph.series("Total").unwrap().clone(),
             expected_time_series
         );
         assert_eq!(users_graph.html_id, "graph-active-users");
@@ -1439,7 +1449,7 @@ mod test {
             },
         };
         assert_eq!(
-            avg_rt_graph.data.get("GET /").unwrap().clone(),
+            avg_rt_graph.series("GET /").unwrap().clone(),
             expected_time_series
         );
         assert_eq!(avg_rt_graph.html_id, "graph-avg-response-time");
@@ -1453,7 +1463,7 @@ mod test {
             total: 0,
         };
         assert_eq!(
-            transactions_graph.data.get("Total").unwrap().clone(),
+            transactions_graph.series("Total").unwrap().clone(),
             expected_time_series
         );
         assert_eq!(transactions_graph.html_id, "graph-tps");
@@ -1467,7 +1477,7 @@ mod test {
             total: 0,
         };
         assert_eq!(
-            scenarios_graph.data.get("Total").unwrap().clone(),
+            scenarios_graph.series("Total").unwrap().clone(),
             expected_time_series
         );
         assert_eq!(scenarios_graph.html_id, "graph-sps");
@@ -1482,7 +1492,7 @@ mod test {
         };
 
         assert_eq!(
-            errors_graph.data.get("GET /").unwrap().clone(),
+            errors_graph.series("GET /").unwrap().clone(),
             expected_time_series
         );
         assert_eq!(errors_graph.html_id, "graph-eps");
@@ -2447,7 +2457,8 @@ mod test {
     #[test]
     fn test_add_timestamp_to_html_graph_data() {
         let data = vec![Some(123), Some(234), Some(345), Some(456), Some(567)];
-        let graph: Graph<usize, usize> = Graph::new("html_id", "Label", true, HashMap::new());
+        let empty = HashMap::new();
+        let graph: Graph<usize, usize> = Graph::new("html_id", "Label", true, &empty);
 
         assert_eq!(
             graph.add_timestamp_to_html_graph_data(
@@ -2624,7 +2635,7 @@ mod test {
         ).as_str();
 
         assert_eq!(
-            Graph::new("graph-rps", "Requests #", true, graph.clone(),).get_markup(
+            Graph::new("graph-rps", "Requests #", true, &graph,).get_markup(
                 &Vec::new(),
                 Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32).unwrap()
             ),
@@ -2634,7 +2645,7 @@ mod test {
         // It should make no difference if we disable granular graphs, since we only have one
         // request.
         assert_eq!(
-            Graph::new("graph-rps", "Requests #", false, graph.clone(),).get_markup(
+            Graph::new("graph-rps", "Requests #", false, &graph,).get_markup(
                 &Vec::new(),
                 Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32).unwrap()
             ),
@@ -2778,7 +2789,7 @@ mod test {
         ];
 
         assert_eq!(
-            Graph::new("graph-rps", "Requests #", true, graph.clone(),).get_markup(
+            Graph::new("graph-rps", "Requests #", true, &graph,).get_markup(
                 &steps,
                 Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32).unwrap()
             ),
@@ -2788,7 +2799,7 @@ mod test {
         // It should make no difference if we disable granular graphs, since we only have one
         // request.
         assert_eq!(
-            Graph::new("graph-rps", "Requests #", false, graph.clone(),).get_markup(
+            Graph::new("graph-rps", "Requests #", false, &graph,).get_markup(
                 &steps,
                 Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32).unwrap()
             ),
@@ -2803,7 +2814,7 @@ mod test {
         };
         graph.insert("GET /user".to_string(), user_data);
 
-        let markup = Graph::new("graph-rps", "Requests #", true, graph.clone()).get_markup(
+        let markup = Graph::new("graph-rps", "Requests #", true, &graph).get_markup(
             &Vec::new(),
             Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32).unwrap(),
         );
@@ -2924,7 +2935,7 @@ mod test {
         ).as_str();
 
         assert_eq!(
-            Graph::new("graph-rps", "Requests #", false, graph.clone(),).get_markup(
+            Graph::new("graph-rps", "Requests #", false, &graph,).get_markup(
                 &Vec::new(),
                 Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32).unwrap()
             ),
@@ -2941,7 +2952,7 @@ mod test {
         graph.insert("GET /two".to_string(), more_data.clone());
         graph.insert("GET /three".to_string(), more_data);
 
-        let markup = Graph::new("graph-rps", "Requests #", true, graph.clone()).get_markup(
+        let markup = Graph::new("graph-rps", "Requests #", true, &graph).get_markup(
             &Vec::new(),
             Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32).unwrap(),
         );
@@ -3135,7 +3146,7 @@ mod test {
         ).as_str();
 
         assert_eq!(
-            Graph::new("graph-rps", "Requests #", false, graph.clone(),).get_markup(
+            Graph::new("graph-rps", "Requests #", false, &graph,).get_markup(
                 &Vec::new(),
                 Utc.with_ymd_and_hms(2021, 11, 21, 21, 20, 32).unwrap()
             ),
