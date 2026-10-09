@@ -2000,7 +2000,6 @@ impl GooseAttack {
             #[cfg(feature = "dashboard")]
             dashboard_url,
             #[cfg(feature = "dashboard")]
-            #[cfg(feature = "dashboard")]
             dashboard_server,
             metrics_header_displayed: false,
             idle_status_displayed: false,
@@ -2615,8 +2614,8 @@ impl GooseAttack {
 
     /// Shut Goose down from Idle (dashboard Quit), as Ctrl-C does there.
     ///
-    /// Soft failure: `invalid_phase` in any phase but Idle; a running load
-    /// test is stopped first.
+    /// Soft failure: `invalid_phase` in any phase but Idle, so a running load
+    /// test must be stopped first.
     #[cfg(feature = "dashboard")]
     pub(crate) fn control_quit(
         &mut self,
