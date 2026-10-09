@@ -2069,9 +2069,13 @@ async fn closed_event_carries_saved_run(server: &MockServer) {
     assert_eq!(sse.status(), 200);
     ready.send(()).expect("attack waits in test_start");
 
-    let data = read_closed_event(&mut sse, Duration::from_secs(30))
-        .await
-        .expect("closed event");
+    // With this tab connected, Goose waits after the run; once the run is
+    // saved, end the wait as Ctrl-C does.
+    wait_for_saved_runs(&runs, 1).await;
+    goose::trigger_killswitch("test: shut down after the run");
+    let data = read_closed_event(&mut sse, Duration::from_secs(30)).await;
+    goose::reset_killswitch();
+    let data = data.expect("closed event");
     drop(sse);
     load.join().await.expect("load test execute");
 
@@ -2098,4 +2102,122 @@ async fn test_closed_event_carries_saved_run() {
     for _ in 0..loops {
         closed_event_carries_saved_run(&server).await;
     }
+}
+
+/// Wait until `count` runs in `runs` have their run.json.
+async fn wait_for_saved_runs(runs: &std::path::Path, count: usize) {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let saved = saved_run_ids(runs)
+            .iter()
+            .filter(|id| runs.join(id).join("run.json").exists())
+            .count();
+        if saved >= count {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{} of {} runs saved",
+            saved,
+            count
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// Start an autostarted, saved dashboard run held at test_start; returns the
+/// load test, the base URL, and the gate that lets it run.
+async fn start_saved_dashboard_run(
+    server: &MockServer,
+    runs: &std::path::Path,
+) -> (LoadTestGuard, String, tokio::sync::oneshot::Sender<()>) {
+    let port = reserve_port();
+    let base_v4 = format!("http://127.0.0.1:{port}");
+    let mut configuration = build_dashboard_config(server, "127.0.0.1", port, Some(AUTH_TOKEN));
+    configuration.no_save = false;
+    configuration.runs_dir = runs.to_string_lossy().into_owned();
+    configuration.run_time = "2".to_string();
+    let ready = arm_test_ready();
+    let start = transaction!(wait_for_test_ready);
+    let goose_attack =
+        common::build_load_test(configuration, vec![get_transactions()], Some(&start), None);
+    let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
+    let (base, _) = wait_for_health(&[&base_v4], 80).await;
+    (load, base, ready)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn test_dashboard_waits_after_autostarted_run() {
+    let server = MockServer::start();
+    let _mocks = setup_mock_endpoints(&server);
+    let grace = Duration::from_millis(1500);
+    goose::DASHBOARD_EXIT_GRACE_MS.store(
+        grace.as_millis() as u64,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    let client = reqwest::Client::new();
+
+    // A tab connected when the run ends: Goose goes idle and the run can be
+    // downloaded; once the tab closes, Goose exits after the grace.
+    let runs = saved_runs_dir("wait");
+    let (load, base, ready) = start_saved_dashboard_run(&server, &runs).await;
+    let sse = client
+        .get(format!("{base}/api/v1/events"))
+        .header("Authorization", bearer_header())
+        .send()
+        .await
+        .expect("SSE connect");
+    assert_eq!(sse.status(), 200);
+    ready.send(()).expect("attack waits in test_start");
+    wait_for_saved_runs(&runs, 1).await;
+    let id = saved_run_ids(&runs).remove(0);
+    let snap = wait_for_phase(
+        &client,
+        &base,
+        Some(AUTH_TOKEN),
+        &["idle"],
+        Duration::from_secs(10),
+    )
+    .await;
+    assert_eq!(snap["save"]["last_run"], id.as_str());
+    // Still up well past the grace while the tab is connected.
+    tokio::time::sleep(grace * 2).await;
+    let download = client
+        .get(format!("{base}/api/v1/runs/{id}/report.html"))
+        .header("Authorization", bearer_header())
+        .send()
+        .await
+        .expect("download while waiting");
+    assert_eq!(download.status(), 200);
+    assert!(!download.bytes().await.unwrap().is_empty());
+
+    let closed_at = Instant::now();
+    drop(sse);
+    let metrics = tokio::time::timeout(Duration::from_secs(15), load.join())
+        .await
+        .expect("Goose exits after the last tab closes")
+        .expect("load test execute");
+    let waited = closed_at.elapsed();
+    assert!(waited >= grace, "exited {:?} after the tab closed", waited);
+    assert!(metrics.duration > 0);
+    // Nothing more was saved on the way out.
+    assert_eq!(saved_run_ids(&runs), vec![id]);
+    std::fs::remove_dir_all(&runs).ok();
+
+    // No tab connected when the run ends: Goose exits at once, as before.
+    goose::DASHBOARD_EXIT_GRACE_MS.store(30_000, std::sync::atomic::Ordering::Relaxed);
+    let runs = saved_runs_dir("nowait");
+    let (load, _base, ready) = start_saved_dashboard_run(&server, &runs).await;
+    let started = Instant::now();
+    ready.send(()).expect("attack waits in test_start");
+    tokio::time::timeout(Duration::from_secs(20), load.join())
+        .await
+        .expect("Goose exits without waiting")
+        .expect("load test execute");
+    assert!(started.elapsed() < Duration::from_secs(15));
+    assert_eq!(saved_run_ids(&runs).len(), 1);
+    std::fs::remove_dir_all(&runs).ok();
+
+    goose::DASHBOARD_EXIT_GRACE_MS.store(60_000, std::sync::atomic::Ordering::Relaxed);
 }

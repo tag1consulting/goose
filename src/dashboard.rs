@@ -125,13 +125,11 @@ pub(crate) struct DashboardSetup {
     pub build_count: Arc<AtomicU64>,
     /// Concurrent SSE clients, which the main loop reads to decide whether
     /// to wait for a dashboard tab after an autostarted run.
-    #[allow(dead_code)]
     pub active_sse: Arc<AtomicUsize>,
     /// The data of every `closed` event: the save state as JSON. The main
     /// loop keeps it current, so it is right before the close signal fires.
     pub closed_data: ClosedData,
     /// The address the dashboard listens on, as logged at startup.
-    #[allow(dead_code)]
     pub url: String,
     /// Signal SSE clients to emit `event: closed` and stop the hub loop.
     ///

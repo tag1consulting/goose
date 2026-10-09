@@ -503,3 +503,68 @@ async fn no_autostart_saves_each_start_and_not_the_idle_shutdown() {
     }
     std::fs::remove_dir_all(&runs).ok();
 }
+
+/// Regression: Ctrl-C (the killswitch) while Idle after a run used to cancel
+/// into a plan maintaining 0 users with no end, so Goose never exited.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn killswitch_while_idle_after_a_run_exits() {
+    let server = MockServer::start();
+    let _mock = setup_mock_server_endpoints(&server);
+    let runs = temp_dir("idlekill");
+    let runs_str = runs.to_string_lossy().into_owned();
+    let port = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.local_addr().unwrap().port().to_string()
+    };
+    let configuration = common::build_configuration(
+        &server,
+        vec![
+            "--runs-dir",
+            &runs_str,
+            "--no-autostart",
+            "--no-websocket",
+            "--telnet-host",
+            "127.0.0.1",
+            "--telnet-port",
+            &port,
+            "--run-time",
+            "0",
+        ],
+    );
+    let attack = common::build_load_test(
+        configuration,
+        vec![scenario(transaction!(get_index))],
+        None,
+        None,
+    );
+    let goose = tokio::spawn(attack.execute());
+    let address = format!("127.0.0.1:{port}");
+    let mut stream = {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            match TcpStream::connect(&address).await {
+                Ok(stream) => break stream,
+                Err(e) => {
+                    assert!(Instant::now() < deadline, "telnet controller: {}", e);
+                    sleep(Duration::from_millis(50)).await;
+                }
+            }
+        }
+    };
+    let mut buf = [0u8; 64];
+    let _ = stream.read(&mut buf).await.unwrap();
+    telnet_until(&mut stream, "start", "load test started").await;
+    sleep(Duration::from_millis(500)).await;
+    telnet_until(&mut stream, "stop", "load test stopped").await;
+    wait_for_complete_runs(&runs, 1).await;
+    // Idle now. Cancel as Ctrl-C does.
+    sleep(Duration::from_millis(500)).await;
+    goose::trigger_killswitch("SIGINT received");
+    let result = tokio::time::timeout(Duration::from_secs(15), goose).await;
+    goose::reset_killswitch();
+    let result = result.expect("Goose exits").unwrap();
+    assert!(result.is_ok(), "{:?}", result.err());
+    assert_eq!(run_dirs(&runs).len(), 1, "nothing more saved");
+    std::fs::remove_dir_all(&runs).ok();
+}
