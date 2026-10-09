@@ -418,6 +418,12 @@ body {
 }
 
 /* Tables */
+.table-note {
+  margin: 0 0 0.5rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
 .table-toolbar {
   margin-bottom: 0.5rem;
 }

@@ -6,6 +6,7 @@
 use super::{
     calculate_response_time_percentile, merge_times, per_second_calculations, update_max_time,
     update_min_time, GooseErrorMetricAggregate, GooseMetrics, GooseRequestMetricAggregate,
+    ScenarioMetricAggregate, TransactionMetricAggregate,
 };
 use chrono::prelude::*;
 use serde::Serialize;
@@ -52,6 +53,11 @@ pub(crate) struct DashboardSnapshot {
     pub aggregate: AggregateMetrics,
     pub requests: Vec<RequestRow>,
     pub errors: Vec<ErrorRow>,
+    /// One row per registered scenario, in registration order. Never truncated.
+    pub scenarios: Vec<ScenarioRow>,
+    /// One row per registered transaction, grouped by scenario, each group in
+    /// registration order. Never truncated.
+    pub transactions: Vec<TransactionRow>,
     pub series: SeriesWindow,
 
     pub flags: SnapshotFlags,
@@ -88,6 +94,50 @@ pub(crate) struct RequestRow {
     pub response_time_max_ms: u64,
     pub percentile_ms: Percentiles,
     pub status_codes: Vec<(u16, u64)>,
+}
+
+/// Metrics for one registered scenario.
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub(crate) struct ScenarioRow {
+    /// Goose's own scenario index, counted from 0 in registration order. The
+    /// dashboard shows it counted from 1.
+    pub scenario_index: u64,
+    pub scenario_name: String,
+    /// Distinct users that have finished at least one run of this scenario
+    /// since the last metrics reset; not the users running it now.
+    pub users: u64,
+    /// Completed passes through the scenario's weighted transactions.
+    pub run_count: u64,
+    pub runs_per_second: f64,
+    pub response_time_avg_ms: f64,
+    pub response_time_min_ms: u64,
+    pub response_time_max_ms: u64,
+    pub percentile_ms: Percentiles,
+}
+
+/// Metrics for one registered transaction.
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub(crate) struct TransactionRow {
+    /// Goose's own scenario index, counted from 0 in registration order. The
+    /// dashboard shows it counted from 1.
+    pub scenario_index: u64,
+    pub scenario_name: String,
+    /// Goose's own transaction index within its scenario, counted from 0 in
+    /// registration order. The dashboard shows it counted from 1.
+    pub transaction_index: u64,
+    /// Empty when the transaction has no name.
+    pub transaction_name: String,
+    /// Successful plus failed runs.
+    pub run_count: u64,
+    pub failure_count: u64,
+    pub runs_per_second: f64,
+    pub failures_per_second: f64,
+    pub response_time_avg_ms: f64,
+    pub response_time_min_ms: u64,
+    pub response_time_max_ms: u64,
+    pub percentile_ms: Percentiles,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -162,6 +212,12 @@ impl Percentiles {
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub(crate) struct SnapshotFlags {
     pub metrics_disabled: bool,
+    /// True under `--no-transaction-metrics`, and under `--no-metrics` too;
+    /// `transactions` is then empty.
+    pub transaction_metrics_disabled: bool,
+    /// True under `--no-scenario-metrics`, and under `--no-metrics` too;
+    /// `scenarios` is then empty.
+    pub scenario_metrics_disabled: bool,
     pub requests_truncated: bool,
     pub errors_truncated: bool,
     pub series_seconds: u32,
@@ -182,6 +238,10 @@ pub(crate) struct DashboardSnapshotInput<'a> {
     pub series_window_secs: u32,
     pub no_status_codes: bool,
     pub metrics_disabled: bool,
+    /// `--no-transaction-metrics`.
+    pub no_transaction_metrics: bool,
+    /// `--no-scenario-metrics`.
+    pub no_scenario_metrics: bool,
 }
 
 /// Build a compact [`DashboardSnapshot`] from live metrics + series window.
@@ -217,9 +277,13 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
             },
             requests: Vec::new(),
             errors: Vec::new(),
+            scenarios: Vec::new(),
+            transactions: Vec::new(),
             series: SeriesWindow::empty(),
             flags: SnapshotFlags {
                 metrics_disabled: true,
+                transaction_metrics_disabled: true,
+                scenario_metrics_disabled: true,
                 requests_truncated: false,
                 errors_truncated: false,
                 series_seconds: input.series_window_secs,
@@ -282,6 +346,30 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
         .map(error_row_from_aggregate)
         .collect();
 
+    // Every registered scenario and transaction gets a row: their number is
+    // fixed by the load test's code, so there is no cap.
+    let scenario_rows: Vec<ScenarioRow> = if input.no_scenario_metrics {
+        Vec::new()
+    } else {
+        input
+            .metrics
+            .scenarios
+            .iter()
+            .map(|scenario| scenario_row_from_aggregate(scenario, duration))
+            .collect()
+    };
+    let transaction_rows: Vec<TransactionRow> = if input.no_transaction_metrics {
+        Vec::new()
+    } else {
+        input
+            .metrics
+            .transactions
+            .iter()
+            .flatten()
+            .map(|transaction| transaction_row_from_aggregate(transaction, duration))
+            .collect()
+    };
+
     let (rps, fps) = per_second_calculations(duration, aggregate_total_count, aggregate_fail_count);
     let failure_rate = if aggregate_total_count > 0 {
         aggregate_fail_count as f64 / aggregate_total_count as f64
@@ -335,9 +423,13 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
         },
         requests: request_rows,
         errors: error_rows,
+        scenarios: scenario_rows,
+        transactions: transaction_rows,
         series: input.series,
         flags: SnapshotFlags {
             metrics_disabled: false,
+            transaction_metrics_disabled: input.no_transaction_metrics,
+            scenario_metrics_disabled: input.no_scenario_metrics,
             requests_truncated,
             errors_truncated,
             series_seconds: input.series_window_secs,
@@ -389,6 +481,66 @@ fn request_row_from_aggregate(
     }
 }
 
+/// Average time in milliseconds, or 0 when nothing has been timed.
+fn average_ms(total_time: usize, counter: usize) -> f64 {
+    if counter > 0 {
+        total_time as f64 / counter as f64
+    } else {
+        0.0
+    }
+}
+
+fn scenario_row_from_aggregate(scenario: &ScenarioMetricAggregate, duration: usize) -> ScenarioRow {
+    let (runs_per_second, _) = per_second_calculations(duration, scenario.counter, 0);
+    ScenarioRow {
+        scenario_index: scenario.index as u64,
+        scenario_name: scenario.name.to_string(),
+        users: scenario.users.len() as u64,
+        run_count: scenario.counter as u64,
+        runs_per_second: runs_per_second as f64,
+        response_time_avg_ms: average_ms(scenario.total_time, scenario.counter),
+        response_time_min_ms: scenario.min_time as u64,
+        response_time_max_ms: scenario.max_time as u64,
+        percentile_ms: Percentiles::from_times(
+            &scenario.times,
+            scenario.counter,
+            scenario.min_time,
+            scenario.max_time,
+        ),
+    }
+}
+
+fn transaction_row_from_aggregate(
+    transaction: &TransactionMetricAggregate,
+    duration: usize,
+) -> TransactionRow {
+    let run_count = transaction.success_count + transaction.fail_count;
+    let (runs_per_second, failures_per_second) =
+        per_second_calculations(duration, run_count, transaction.fail_count);
+    TransactionRow {
+        scenario_index: transaction.scenario_index as u64,
+        scenario_name: transaction.scenario_name.to_string(),
+        transaction_index: transaction.transaction_index as u64,
+        transaction_name: transaction
+            .transaction_name
+            .name_for_transaction()
+            .to_string(),
+        run_count: run_count as u64,
+        failure_count: transaction.fail_count as u64,
+        runs_per_second: runs_per_second as f64,
+        failures_per_second: failures_per_second as f64,
+        response_time_avg_ms: average_ms(transaction.total_time, transaction.counter),
+        response_time_min_ms: transaction.min_time as u64,
+        response_time_max_ms: transaction.max_time as u64,
+        percentile_ms: Percentiles::from_times(
+            &transaction.times,
+            transaction.counter,
+            transaction.min_time,
+            transaction.max_time,
+        ),
+    }
+}
+
 fn error_row_from_aggregate(error: &GooseErrorMetricAggregate) -> ErrorRow {
     ErrorRow {
         method: error.method_label().to_string(),
@@ -401,10 +553,11 @@ fn error_row_from_aggregate(error: &GooseErrorMetricAggregate) -> ErrorRow {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::goose::GooseMethod;
+    use crate::goose::{GooseMethod, TransactionName};
     use crate::metrics::coordinated_omission::CoordinatedOmissionMetrics;
     use crate::metrics::GooseCoordinatedOmissionMitigation;
     use crate::metrics::GooseRequestMetricAggregate;
+    use std::sync::Arc;
     use std::time::Duration;
 
     fn empty_metrics() -> GooseMetrics {
@@ -443,6 +596,8 @@ mod tests {
             series_window_secs: SERIES_WINDOW_SECS,
             no_status_codes: false,
             metrics_disabled: false,
+            no_transaction_metrics: false,
+            no_scenario_metrics: false,
         });
         assert_eq!(snap.version, 1);
         assert_eq!(snap.phase, "idle");
@@ -494,6 +649,8 @@ mod tests {
             series_window_secs: 60,
             no_status_codes: true,
             metrics_disabled: false,
+            no_transaction_metrics: false,
+            no_scenario_metrics: false,
         });
 
         assert_eq!(snap.requests.len(), MAX_REQUEST_ROWS);
@@ -529,6 +686,8 @@ mod tests {
             series_window_secs: 300,
             no_status_codes: false,
             metrics_disabled: false,
+            no_transaction_metrics: false,
+            no_scenario_metrics: false,
         });
         assert!(!snap.aggregate.co_active);
 
@@ -556,6 +715,8 @@ mod tests {
             series_window_secs: 300,
             no_status_codes: false,
             metrics_disabled: false,
+            no_transaction_metrics: false,
+            no_scenario_metrics: false,
         });
         assert!(snap.aggregate.co_active);
     }
@@ -583,6 +744,8 @@ mod tests {
             series_window_secs: 300,
             no_status_codes: false,
             metrics_disabled: false,
+            no_transaction_metrics: false,
+            no_scenario_metrics: false,
         });
 
         assert_eq!(snap.aggregate.total_requests, 15);
@@ -614,6 +777,7 @@ mod tests {
         );
         err.occurrences = 3;
         metrics.errors.insert("err".to_string(), err);
+        add_scenario_metrics(&mut metrics);
 
         let series = SeriesWindow {
             start_second: 10,
@@ -635,6 +799,8 @@ mod tests {
             series_window_secs: 120,
             no_status_codes: false,
             metrics_disabled: true,
+            no_transaction_metrics: false,
+            no_scenario_metrics: false,
         });
 
         assert!(snap.flags.metrics_disabled);
@@ -643,6 +809,10 @@ mod tests {
         assert_eq!(snap.flags.series_seconds, 120);
         assert!(snap.requests.is_empty());
         assert!(snap.errors.is_empty());
+        assert!(snap.scenarios.is_empty());
+        assert!(snap.transactions.is_empty());
+        assert!(snap.flags.transaction_metrics_disabled);
+        assert!(snap.flags.scenario_metrics_disabled);
         assert_eq!(snap.series, SeriesWindow::empty());
         assert_eq!(snap.aggregate.total_requests, 0);
         assert_eq!(snap.aggregate.total_failures, 0);
@@ -654,6 +824,202 @@ mod tests {
         assert_eq!(snap.active_users, 7);
         assert_eq!(snap.target_users, 10);
         assert_eq!(snap.hosts, vec!["https://example.com".to_string()]);
+    }
+
+    fn make_transaction(
+        scenario_index: usize,
+        scenario_name: &str,
+        transaction_index: usize,
+        transaction_name: &str,
+        times: &[(u64, bool)],
+    ) -> TransactionMetricAggregate {
+        let mut agg = TransactionMetricAggregate::new(
+            scenario_index,
+            Arc::from(scenario_name),
+            transaction_index,
+            TransactionName::TransactionOnly(Arc::from(transaction_name)),
+        );
+        for &(time, success) in times {
+            agg.set_time(time, success);
+        }
+        agg
+    }
+
+    fn make_scenario(index: usize, name: &str, runs: &[(u64, usize)]) -> ScenarioMetricAggregate {
+        let mut agg = ScenarioMetricAggregate::new(index, Arc::from(name));
+        for &(time, user) in runs {
+            agg.update(time, user);
+        }
+        agg
+    }
+
+    /// Two scenarios of two transactions each, the second transaction of the
+    /// first scenario with failures.
+    fn add_scenario_metrics(metrics: &mut GooseMetrics) {
+        metrics.scenarios = vec![
+            make_scenario(0, "Alpha", &[(100, 0), (200, 1), (300, 0), (400, 1)]),
+            make_scenario(1, "Beta", &[(50, 2), (70, 2)]),
+        ];
+        metrics.transactions = vec![
+            vec![
+                make_transaction(
+                    0,
+                    "Alpha",
+                    0,
+                    "login",
+                    &[(10, true), (20, true), (30, true)],
+                ),
+                make_transaction(
+                    0,
+                    "Alpha",
+                    1,
+                    "",
+                    &[(40, true), (60, false), (80, false), (100, true)],
+                ),
+            ],
+            vec![
+                make_transaction(1, "Beta", 0, "front", &[(5, true)]),
+                make_transaction(1, "Beta", 1, "about", &[]),
+            ],
+        ];
+    }
+
+    fn scenario_input(metrics: &GooseMetrics) -> DashboardSnapshotInput<'_> {
+        DashboardSnapshotInput {
+            metrics,
+            series: SeriesWindow::empty(),
+            active_users: 3,
+            maximum_users: 3,
+            target_users: 3,
+            total_users: 3,
+            phase: "maintain".to_string(),
+            stopping: false,
+            series_window_secs: SERIES_WINDOW_SECS,
+            no_status_codes: false,
+            metrics_disabled: false,
+            no_transaction_metrics: false,
+            no_scenario_metrics: false,
+        }
+    }
+
+    #[test]
+    fn builder_scenario_and_transaction_rows() {
+        let mut metrics = empty_metrics();
+        metrics.duration = 4;
+        add_scenario_metrics(&mut metrics);
+        let snap = build_dashboard_snapshot(scenario_input(&metrics));
+
+        assert!(!snap.flags.scenario_metrics_disabled);
+        assert!(!snap.flags.transaction_metrics_disabled);
+
+        let names: Vec<&str> = snap
+            .scenarios
+            .iter()
+            .map(|s| s.scenario_name.as_str())
+            .collect();
+        assert_eq!(names, vec!["Alpha", "Beta"]);
+        let alpha = &snap.scenarios[0];
+        assert_eq!(alpha.scenario_index, 0);
+        assert_eq!(alpha.users, 2);
+        assert_eq!(alpha.run_count, 4);
+        assert!((alpha.runs_per_second - 1.0).abs() < 1e-9);
+        assert!((alpha.response_time_avg_ms - 250.0).abs() < 1e-9);
+        assert_eq!(alpha.response_time_min_ms, 100);
+        assert_eq!(alpha.response_time_max_ms, 400);
+        assert_eq!(alpha.percentile_ms.p50, 200);
+        assert_eq!(alpha.percentile_ms.p95, 400);
+        assert_eq!(alpha.percentile_ms.p99, 400);
+        let beta = &snap.scenarios[1];
+        assert_eq!(beta.scenario_index, 1);
+        assert_eq!(beta.users, 1);
+        assert_eq!(beta.run_count, 2);
+        assert!((beta.response_time_avg_ms - 60.0).abs() < 1e-9);
+
+        let order: Vec<(u64, u64)> = snap
+            .transactions
+            .iter()
+            .map(|t| (t.scenario_index, t.transaction_index))
+            .collect();
+        assert_eq!(order, vec![(0, 0), (0, 1), (1, 0), (1, 1)]);
+
+        let login = &snap.transactions[0];
+        assert_eq!(login.scenario_name, "Alpha");
+        assert_eq!(login.transaction_name, "login");
+        assert_eq!(login.run_count, 3);
+        assert_eq!(login.failure_count, 0);
+        assert!((login.runs_per_second - 0.75).abs() < 1e-6);
+        assert_eq!(login.failures_per_second, 0.0);
+        assert!((login.response_time_avg_ms - 20.0).abs() < 1e-9);
+        assert_eq!(login.response_time_min_ms, 10);
+        assert_eq!(login.response_time_max_ms, 30);
+        assert_eq!(login.percentile_ms.p50, 20);
+        assert_eq!(login.percentile_ms.p99, 30);
+
+        let failing = &snap.transactions[1];
+        assert_eq!(failing.transaction_name, "");
+        assert_eq!(failing.run_count, 4);
+        assert_eq!(failing.failure_count, 2);
+        assert!((failing.runs_per_second - 1.0).abs() < 1e-6);
+        assert!((failing.failures_per_second - 0.5).abs() < 1e-6);
+        assert!((failing.response_time_avg_ms - 70.0).abs() < 1e-9);
+        assert_eq!(failing.response_time_min_ms, 40);
+        assert_eq!(failing.response_time_max_ms, 100);
+        assert_eq!(failing.percentile_ms.p50, 60);
+        assert_eq!(failing.percentile_ms.p95, 100);
+
+        let never_run = &snap.transactions[3];
+        assert_eq!(never_run.scenario_name, "Beta");
+        assert_eq!(never_run.transaction_name, "about");
+        assert_eq!(never_run.run_count, 0);
+        assert_eq!(never_run.response_time_avg_ms, 0.0);
+        assert_eq!(never_run.percentile_ms.p50, 0);
+    }
+
+    #[test]
+    fn never_run_scenario_serializes_without_null() {
+        let mut metrics = empty_metrics();
+        metrics.scenarios = vec![make_scenario(0, "Idle", &[])];
+        metrics.transactions = vec![vec![make_transaction(0, "Idle", 0, "t", &[])]];
+        let snap = build_dashboard_snapshot(scenario_input(&metrics));
+        let scenario = &snap.scenarios[0];
+        assert_eq!(scenario.run_count, 0);
+        assert_eq!(scenario.users, 0);
+        assert_eq!(scenario.runs_per_second, 0.0);
+        assert_eq!(scenario.response_time_avg_ms, 0.0);
+        assert_eq!(scenario.percentile_ms.p50, 0);
+        assert_eq!(snap.transactions[0].response_time_avg_ms, 0.0);
+        let json = serde_json::to_string(&snap).expect("serialize snapshot");
+        assert!(!json.contains("null"), "{}", json);
+    }
+
+    #[test]
+    fn no_transaction_metrics_empties_only_transactions() {
+        let mut metrics = empty_metrics();
+        metrics.duration = 4;
+        add_scenario_metrics(&mut metrics);
+        let mut input = scenario_input(&metrics);
+        input.no_transaction_metrics = true;
+        let snap = build_dashboard_snapshot(input);
+        assert!(snap.transactions.is_empty());
+        assert!(snap.flags.transaction_metrics_disabled);
+        assert!(!snap.flags.scenario_metrics_disabled);
+        assert!(!snap.flags.metrics_disabled);
+        assert_eq!(snap.scenarios.len(), 2);
+    }
+
+    #[test]
+    fn no_scenario_metrics_empties_only_scenarios() {
+        let mut metrics = empty_metrics();
+        metrics.duration = 4;
+        add_scenario_metrics(&mut metrics);
+        let mut input = scenario_input(&metrics);
+        input.no_scenario_metrics = true;
+        let snap = build_dashboard_snapshot(input);
+        assert!(snap.scenarios.is_empty());
+        assert!(snap.flags.scenario_metrics_disabled);
+        assert!(!snap.flags.transaction_metrics_disabled);
+        assert!(!snap.flags.metrics_disabled);
+        assert_eq!(snap.transactions.len(), 4);
     }
 
     /// Committed TypeScript declarations of the snapshot structs, compiled

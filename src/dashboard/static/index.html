@@ -98,6 +98,59 @@
     <div id="aggregate-body" class="grid">—</div>
   </section>
 
+  <section id="scenarios" class="card">
+    <h2>Scenarios</h2>
+    <p class="table-note">A scenario run is one full pass through the scenario's weighted transactions. Run times include the scenario's wait time, if it sets one. Users is the number of users that have finished at least one run.</p>
+    <div class="table-wrap">
+      <table id="scenarios-table">
+        <thead>
+          <tr>
+            <th data-sort="scenario_index" data-type="num" class="sorted asc">#</th>
+            <th data-sort="scenario_name" data-type="str">Scenario</th>
+            <th data-sort="users" data-type="num">Users</th>
+            <th data-sort="run_count" data-type="num">#runs</th>
+            <th data-sort="runs_per_second" data-type="num">runs/s</th>
+            <th data-sort="runs_per_user" data-type="num">runs/user</th>
+            <th data-sort="response_time_avg_ms" data-type="num">avg ms</th>
+            <th data-sort="p50" data-type="num">p50</th>
+            <th data-sort="p95" data-type="num">p95</th>
+            <th data-sort="p99" data-type="num">p99</th>
+          </tr>
+        </thead>
+        <tbody id="scenarios-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="transactions" class="card">
+    <h2>Transactions</h2>
+    <div class="table-toolbar">
+      <label class="filter-label">
+        Filter
+        <input id="transactions-filter" type="search" placeholder="scenario or transaction…" autocomplete="off">
+      </label>
+    </div>
+    <div class="table-wrap">
+      <table id="transactions-table">
+        <thead>
+          <tr>
+            <th data-sort="order" data-type="num" class="sorted asc">#</th>
+            <th data-sort="scenario_name" data-type="str">Scenario</th>
+            <th data-sort="transaction_name" data-type="str">Transaction</th>
+            <th data-sort="run_count" data-type="num">#runs</th>
+            <th data-sort="failure_count" data-type="num">#fails</th>
+            <th data-sort="runs_per_second" data-type="num">runs/s</th>
+            <th data-sort="response_time_avg_ms" data-type="num">avg ms</th>
+            <th data-sort="p50" data-type="num">p50</th>
+            <th data-sort="p95" data-type="num">p95</th>
+            <th data-sort="p99" data-type="num">p99</th>
+          </tr>
+        </thead>
+        <tbody id="transactions-body"></tbody>
+      </table>
+    </div>
+  </section>
+
   <section id="requests" class="card">
     <h2>Requests</h2>
     <div class="table-toolbar">

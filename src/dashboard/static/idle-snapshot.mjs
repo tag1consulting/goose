@@ -31,9 +31,13 @@ export const IDLE_SNAPSHOT = {
   },
   requests: [],
   errors: [],
+  scenarios: [],
+  transactions: [],
   series: { start_second: 0, rps: [], fps: [], users: [], avg_latency_ms: [] },
   flags: {
     metrics_disabled: false,
+    transaction_metrics_disabled: false,
+    scenario_metrics_disabled: false,
     requests_truncated: false,
     errors_truncated: false,
     series_seconds: 0,

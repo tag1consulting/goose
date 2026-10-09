@@ -1565,9 +1565,13 @@ mod tests {
             },
             requests: vec![],
             errors: vec![],
+            scenarios: vec![],
+            transactions: vec![],
             series: SeriesWindow::empty(),
             flags: SnapshotFlags {
                 metrics_disabled: false,
+                transaction_metrics_disabled: false,
+                scenario_metrics_disabled: false,
                 requests_truncated: false,
                 errors_truncated: false,
                 series_seconds: 300,

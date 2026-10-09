@@ -100,6 +100,9 @@
     o chart configuration is now type checked against Chart.js's own types
     o `app.js` is still committed, so Cargo builds need no Node.js, and CI fails if it differs from the esbuild bundle
     o **behavior change**: `/static/chart.min.js` is no longer served (404); Chart.js is inside `app.js`
+ - [#714](https://github.com/tag1consulting/goose/issues/714) add scenario and transaction tables to the live dashboard, read from the metrics Goose already keeps, with nothing added to the request path
+    o the snapshot adds `scenarios`, `transactions`, `flags.scenario_metrics_disabled` and `flags.transaction_metrics_disabled`
+    o with `--no-transaction-metrics` or `--no-scenario-metrics` the table says collection is off instead of showing no rows
 
 ## 0.18.1 August 14, 2025
  - [#634](https://github.com/tag1consulting/goose/pull/634) add killswitch mechanism for programmatic test termination
