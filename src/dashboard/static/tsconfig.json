@@ -1,7 +1,8 @@
 {
   "compilerOptions": {
     "target": "ES2018",
-    "module": "None",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
     "lib": ["ES2018", "DOM", "DOM.Iterable"],
     "strict": true,
     "noUnusedLocals": true,
@@ -10,13 +11,9 @@
     "noFallthroughCasesInSwitch": true,
     "skipLibCheck": false,
     "forceConsistentCasingInFileNames": true,
-    "removeComments": false,
-    "sourceMap": false,
-    "declaration": false,
-    "outDir": ".",
-    "rootDir": ".",
-    "newLine": "lf"
+    "isolatedModules": true,
+    "noEmit": true
   },
-  "include": ["app.ts", "chart-global.d.ts", "snapshot.d.ts"],
+  "include": ["src/**/*.ts", "snapshot.d.ts"],
   "exclude": ["node_modules"]
 }

@@ -1,13 +1,15 @@
 {
   "name": "goose-dashboard-ui",
   "private": true,
-  "description": "TypeScript sources for the Goose live dashboard SPA (compiles to app.js, embedded via include_str!).",
+  "description": "TypeScript sources for the Goose live dashboard SPA (bundled by esbuild to app.js, embedded via include_str!).",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "check": "tsc -p tsconfig.json --noEmit && tsc --noEmit --strict --allowJs --checkJs --target ES2020 --module ES2020 --skipLibCheck snapshot.d.ts idle-snapshot.mjs",
+    "build": "esbuild src/main.ts --bundle --format=iife --target=es2018 --minify --outfile=app.js",
+    "check": "tsc -p tsconfig.json && tsc --noEmit --strict --allowJs --checkJs --target ES2020 --module ES2020 --skipLibCheck snapshot.d.ts idle-snapshot.mjs",
     "test": "node --test token.test.mjs"
   },
   "devDependencies": {
+    "chart.js": "4.4.7",
+    "esbuild": "0.28.2",
     "jsdom": "^29.1.1",
     "typescript": "^5.8.0"
   }
