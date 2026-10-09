@@ -86,17 +86,6 @@ const DEFAULT_WEBSOCKET_PORT: &str = "5117";
 /// value can exhaust memory or overflow the user arithmetic.
 pub(crate) const MAX_CONTROL_USERS: usize = 100_000;
 
-/// How long Goose keeps running after an autostarted `--dashboard` run, once
-/// no dashboard tab is connected, so the saved run can still be downloaded.
-#[cfg(feature = "dashboard")]
-pub const DASHBOARD_EXIT_GRACE: Duration = Duration::from_secs(60);
-
-/// [`DASHBOARD_EXIT_GRACE`] in milliseconds. Tests shorten it.
-#[cfg(feature = "dashboard")]
-#[doc(hidden)]
-pub static DASHBOARD_EXIT_GRACE_MS: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(DASHBOARD_EXIT_GRACE.as_millis() as u64);
-
 /// Refusal for a user count outside 1 to [`MAX_CONTROL_USERS`].
 pub(crate) const INVALID_USERS_MSG: &str = "users must be an integer between 1 and 100000";
 
@@ -468,10 +457,6 @@ struct GooseAttackRunState {
     /// The address the dashboard listens on, as logged at startup.
     #[cfg(feature = "dashboard")]
     dashboard_url: Option<String>,
-    /// While Goose waits after an autostarted run for the dashboard: when a
-    /// dashboard tab was last connected.
-    #[cfg(feature = "dashboard")]
-    dashboard_wait: Option<std::time::Instant>,
     /// The dashboard HTTP server, stopped when the attack loop returns.
     #[cfg(feature = "dashboard")]
     dashboard_server: Option<dashboard::DashboardServer>,
@@ -1548,49 +1533,24 @@ impl GooseAttack {
     fn start_dashboard_wait(&mut self, goose_attack_run_state: &mut GooseAttackRunState) {
         self.configuration.no_autostart = true;
         goose_attack_run_state.shutdown_after_stop = false;
-        goose_attack_run_state.dashboard_wait = Some(std::time::Instant::now());
-        println!(
-            "Run finished. Download it from the dashboard at {}. Goose exits a minute after the last dashboard tab closes, or press Ctrl-C.",
-            goose_attack_run_state
-                .dashboard_url
-                .as_deref()
-                .unwrap_or_default()
-        );
-    }
-
-    /// While waiting for the dashboard after an autostarted run: once no tab
-    /// has been connected for [`DASHBOARD_EXIT_GRACE`], shut down the way a
-    /// Controller `shutdown` does while Idle, so nothing is saved or printed
-    /// again.
-    #[cfg(feature = "dashboard")]
-    fn check_dashboard_wait(&mut self, goose_attack_run_state: &mut GooseAttackRunState) {
-        let Some(last_connected) = goose_attack_run_state.dashboard_wait else {
-            return;
-        };
-        let connected = goose_attack_run_state
-            .dashboard_active_sse
-            .as_ref()
-            .is_some_and(|active| active.load(std::sync::atomic::Ordering::Relaxed) > 0);
-        if connected {
-            goose_attack_run_state.dashboard_wait = Some(std::time::Instant::now());
-            return;
-        }
-        let grace = Duration::from_millis(
-            DASHBOARD_EXIT_GRACE_MS.load(std::sync::atomic::Ordering::Relaxed),
-        );
-        if last_connected.elapsed() >= grace {
-            info!("no dashboard tab connected, exiting");
-            self.shutdown_from_idle(goose_attack_run_state);
+        let address = goose_attack_run_state
+            .dashboard_url
+            .as_deref()
+            .unwrap_or_default();
+        if self.configuration.dashboard_control {
+            println!(
+                "Run finished. Download it from the dashboard at {address}. Press Quit in the dashboard or Ctrl-C to exit."
+            );
+        } else {
+            println!(
+                "Run finished. Download it from the dashboard at {address}. Press Ctrl-C to exit."
+            );
         }
     }
 
     /// Shut down from Idle as a Controller `shutdown` does: no run to stop,
     /// so no metrics to print and nothing to save.
     fn shutdown_from_idle(&mut self, goose_attack_run_state: &mut GooseAttackRunState) {
-        #[cfg(feature = "dashboard")]
-        {
-            goose_attack_run_state.dashboard_wait = None;
-        }
         self.metrics.display_metrics = false;
         // Nothing to cancel, but the run is stopping all the same: refuse
         // Users until it shuts down.
@@ -1750,6 +1710,14 @@ impl GooseAttack {
                             return Err(e);
                         }
                     }
+                }
+                dashboard::DashboardRequest::Quit { respond } => {
+                    if respond.is_closed() {
+                        debug!("[dashboard]: quit skipped; client disconnected");
+                        continue;
+                    }
+                    let outcome = self.control_quit(goose_attack_run_state);
+                    let _ = respond.send(dashboard::ControlResult::from_outcome("quit", outcome));
                 }
                 dashboard::DashboardRequest::SetUsers { users, respond } => {
                     if respond.is_closed() {
@@ -2029,7 +1997,6 @@ impl GooseAttack {
             #[cfg(feature = "dashboard")]
             dashboard_url,
             #[cfg(feature = "dashboard")]
-            dashboard_wait: None,
             #[cfg(feature = "dashboard")]
             dashboard_server,
             metrics_header_displayed: false,
@@ -2635,6 +2602,35 @@ impl GooseAttack {
         ))
     }
 
+    /// Shut Goose down from Idle (dashboard Quit), as Ctrl-C does there.
+    ///
+    /// Soft failure: `invalid_phase` in any phase but Idle; a running load
+    /// test is stopped first.
+    #[cfg(feature = "dashboard")]
+    pub(crate) fn control_quit(
+        &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+    ) -> ControlOutcome {
+        if self.attack_phase != AttackPhase::Idle {
+            return self.control_outcome(
+                goose_attack_run_state,
+                false,
+                Some("invalid_phase"),
+                "unable to quit, be sure the load test is idle",
+                None,
+            );
+        }
+        info!("[dashboard]: quit, shutting down");
+        self.shutdown_from_idle(goose_attack_run_state);
+        self.control_outcome(
+            goose_attack_run_state,
+            true,
+            None,
+            "goose is shutting down",
+            None,
+        )
+    }
+
     /// Set absolute target user count (Controller `users` command).
     ///
     /// Soft failure: `invalid_users` unless `new_users` is from 1 to
@@ -2912,10 +2908,7 @@ impl GooseAttack {
         self.run_in_progress = true;
         self.ended_by = None;
         #[cfg(feature = "dashboard")]
-        {
-            goose_attack_run_state.dashboard_wait = None;
-            self.publish_save_state(goose_attack_run_state);
-        }
+        self.publish_save_state(goose_attack_run_state);
 
         // Record when the GooseAttack officially started. series_started is the
         // continuous graph clock and is not restarted on metrics reset.
@@ -2963,11 +2956,7 @@ impl GooseAttack {
                 // In the Idle phase the Goose configuration can be changed by a Controller,
                 // and otherwise nothing happens but sleeping an checking for messages.
                 AttackPhase::Idle => {
-                    #[cfg(feature = "dashboard")]
-                    self.check_dashboard_wait(goose_attack_run_state);
-                    if self.attack_phase != AttackPhase::Idle {
-                        // Waiting for the dashboard ended: shutting down.
-                    } else if self.configuration.no_autostart {
+                    if self.configuration.no_autostart {
                         // Sleep then check for further instructions.
                         if goose_attack_run_state.idle_status_displayed {
                             let sleep_duration = Duration::from_millis(250);

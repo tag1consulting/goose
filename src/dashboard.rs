@@ -155,6 +155,10 @@ pub(crate) enum DashboardRequest {
     Stop {
         respond: tokio::sync::oneshot::Sender<ControlResult>,
     },
+    /// Shut Goose down from Idle.
+    Quit {
+        respond: tokio::sync::oneshot::Sender<ControlResult>,
+    },
     /// Set absolute target user count.
     SetUsers {
         users: usize,
@@ -1033,6 +1037,7 @@ fn build_router(state: DashboardState, loopback_bind: bool) -> Router {
         let control_routes = Router::new()
             .route("/api/v1/control/start", post(control_start_handler))
             .route("/api/v1/control/stop", post(control_stop_handler))
+            .route("/api/v1/control/quit", post(control_quit_handler))
             .route("/api/v1/control/users", post(control_users_handler))
             .layer(axum::extract::DefaultBodyLimit::max(CONTROL_BODY_LIMIT));
         router = router.merge(control_routes);
@@ -1801,6 +1806,31 @@ async fn control_stop_handler(
     .await
 }
 
+async fn control_quit_handler(
+    State(state): State<Arc<DashboardState>>,
+    headers: HeaderMap,
+    Query(query): Query<TokenQuery>,
+    body: Bytes,
+) -> Response<Body> {
+    if !authorize_control(&state.auth_token, &headers, query.token.as_deref()) {
+        warn!("[dashboard]: control quit auth failure");
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    if let Err((code, msg)) = parse_empty_control_body(&body) {
+        return control_http_error(StatusCode::BAD_REQUEST, "quit", code, msg);
+    }
+    let (respond_tx, respond_rx) = oneshot::channel();
+    dispatch_control(
+        &state,
+        DashboardRequest::Quit {
+            respond: respond_tx,
+        },
+        respond_rx,
+        "quit",
+    )
+    .await
+}
+
 async fn control_users_handler(
     State(state): State<Arc<DashboardState>>,
     headers: HeaderMap,
@@ -1921,6 +1951,17 @@ mod tests {
                             target_users: Some(0),
                         });
                     }
+                    DashboardRequest::Quit { respond } => {
+                        let _ = respond.send(ControlResult {
+                            ok: true,
+                            command: "quit".into(),
+                            error: None,
+                            message: "goose is shutting down".into(),
+                            phase: "decrease".into(),
+                            active_users: 0,
+                            target_users: None,
+                        });
+                    }
                     DashboardRequest::SetUsers { users, respond } => {
                         let _ = respond.send(ControlResult {
                             ok: true,
@@ -1959,6 +2000,7 @@ mod tests {
                     // Control not exercised by blip tests.
                     DashboardRequest::Start { respond }
                     | DashboardRequest::Stop { respond }
+                    | DashboardRequest::Quit { respond }
                     | DashboardRequest::SetUsers { respond, .. } => {
                         let _ = respond.send(ControlResult::internal("unused", "idle", 0));
                     }
@@ -2593,6 +2635,9 @@ mod tests {
                             DashboardRequest::Stop { respond } => {
                                 let _ = respond.send(ControlResult::internal("stop", "idle", 0));
                             }
+                            DashboardRequest::Quit { respond } => {
+                                let _ = respond.send(ControlResult::internal("quit", "idle", 0));
+                            }
                             DashboardRequest::SetUsers { respond, .. } => {
                                 let _ = respond.send(ControlResult::internal("users", "idle", 0));
                             }
@@ -3023,6 +3068,7 @@ mod tests {
                     }
                     DashboardRequest::Start { respond }
                     | DashboardRequest::Stop { respond }
+                    | DashboardRequest::Quit { respond }
                     | DashboardRequest::SetUsers { respond, .. } => {
                         drop(respond);
                     }
@@ -3047,6 +3093,9 @@ mod tests {
                     DashboardRequest::Stop { respond } => {
                         let _ = respond.send(ControlResult::internal("stop", "maintain", 1));
                     }
+                    DashboardRequest::Quit { respond } => {
+                        let _ = respond.send(ControlResult::internal("quit", "maintain", 1));
+                    }
                     DashboardRequest::SetUsers { respond, .. } => {
                         let _ = respond.send(ControlResult::internal("users", "maintain", 1));
                     }
@@ -3068,6 +3117,7 @@ mod tests {
                     // Hold oneshots until task abort / channel drop — do not reply.
                     DashboardRequest::Start { respond }
                     | DashboardRequest::Stop { respond }
+                    | DashboardRequest::Quit { respond }
                     | DashboardRequest::SetUsers { respond, .. } => {
                         // Keep the oneshot Sender alive so the client hits CONTROL_TIMEOUT
                         // rather than an immediate oneshot-drop 503.

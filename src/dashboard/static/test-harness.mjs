@@ -92,9 +92,15 @@ export function stubServer(token, options = {}) {
       if (!ok) {
         return Promise.resolve(jsonResponse(401, { error: "unauthorized" }));
       }
+      // Quit leaves idle for decrease on its way out; the others run.
+      const command = url.pathname.split("/").pop();
       return Promise.resolve(
         controlStatus === 200
-          ? jsonResponse(200, { ok: true, phase: "increase" })
+          ? jsonResponse(200, {
+              ok: true,
+              command,
+              phase: command === "quit" ? "decrease" : "increase",
+            })
           : jsonResponse(controlStatus, { error: "busy", message: "busy" })
       );
     }

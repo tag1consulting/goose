@@ -730,6 +730,8 @@ async fn test_control_disabled_returns_404() {
         "control off must 404 start, got {}",
         resp.status()
     );
+    let resp = post_control(&client, &base, "/api/v1/control/quit", Some("{}"), true).await;
+    assert_eq!(resp.status(), 404, "control off must 404 quit");
 
     let _ = load.join().await.expect("execute");
 }
@@ -1017,6 +1019,79 @@ async fn test_control_start_when_running_fails() {
     assert_eq!(body["command"], "start");
 
     load.abort().await;
+}
+
+/// Quit needs the control token, is refused while a load test runs, and
+/// shuts Goose down from Idle.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn test_control_quit() {
+    let server = MockServer::start();
+    let _mocks = setup_mock_endpoints(&server);
+    let port = reserve_port();
+    let base_v4 = format!("http://127.0.0.1:{port}");
+
+    let configuration =
+        build_control_config(&server, "127.0.0.1", port, ControlTestOpts::default());
+    let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
+    let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
+
+    let (base, _) = wait_for_health(&[&base_v4], 80).await;
+    let client = reqwest::Client::new();
+    let token = Some(AUTH_TOKEN);
+
+    // No token, or the token in the URL: refused before the main loop.
+    let unauth = post_control(&client, &base, "/api/v1/control/quit", Some("{}"), false).await;
+    assert_eq!(unauth.status(), 401);
+    let in_url = client
+        .post(format!("{base}/api/v1/control/quit?token={AUTH_TOKEN}"))
+        .header("Authorization", bearer_header())
+        .body("{}")
+        .send()
+        .await
+        .expect("quit POST");
+    assert_eq!(in_url.status(), 401);
+    let bad_body = post_control(
+        &client,
+        &base,
+        "/api/v1/control/quit",
+        Some("{\"x\":1}"),
+        true,
+    )
+    .await;
+    assert_eq!(bad_body.status(), 400);
+
+    // Refused while the load test runs.
+    let start = post_control(&client, &base, "/api/v1/control/start", Some("{}"), true).await;
+    assert_eq!(start.status(), 200);
+    wait_for_phase(
+        &client,
+        &base,
+        token,
+        &["increase", "maintain"],
+        Duration::from_secs(30),
+    )
+    .await;
+    let refused = post_control(&client, &base, "/api/v1/control/quit", Some("{}"), true).await;
+    assert_eq!(refused.status(), 200);
+    let body: serde_json::Value = refused.json().await.expect("json");
+    assert_eq!(body["ok"], false);
+    assert_eq!(body["error"], "invalid_phase");
+    assert_eq!(body["command"], "quit");
+
+    // Accepted from Idle: Goose shuts down.
+    let stop = post_control(&client, &base, "/api/v1/control/stop", Some("{}"), true).await;
+    assert_eq!(stop.status(), 200);
+    wait_for_phase(&client, &base, token, &["idle"], Duration::from_secs(30)).await;
+    let quit = post_control(&client, &base, "/api/v1/control/quit", Some("{}"), true).await;
+    assert_eq!(quit.status(), 200);
+    let body: serde_json::Value = quit.json().await.expect("json");
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["command"], "quit");
+    tokio::time::timeout(Duration::from_secs(15), load.join())
+        .await
+        .expect("Goose exits on Quit")
+        .expect("load test execute");
 }
 
 /// Case 6: users validation — 0 / missing / non-integer → 400.
@@ -2125,16 +2200,19 @@ async fn wait_for_saved_runs(runs: &std::path::Path, count: usize) {
     }
 }
 
-/// Start an autostarted, saved dashboard run held at test_start; returns the
-/// load test, the base URL, and the gate that lets it run.
+/// Start an autostarted, saved dashboard run held at test_start, with
+/// dashboard control when `control`; returns the load test, the base URL,
+/// and the gate that lets it run.
 async fn start_saved_dashboard_run(
     server: &MockServer,
     runs: &std::path::Path,
     stop: Option<&Transaction>,
+    control: bool,
 ) -> (LoadTestGuard, String, tokio::sync::oneshot::Sender<()>) {
     let port = reserve_port();
     let base_v4 = format!("http://127.0.0.1:{port}");
     let mut configuration = build_dashboard_config(server, "127.0.0.1", port, Some(AUTH_TOKEN));
+    configuration.dashboard_control = control;
     configuration.no_save = false;
     configuration.runs_dir = runs.to_string_lossy().into_owned();
     configuration.run_time = "2".to_string();
@@ -2152,17 +2230,12 @@ async fn start_saved_dashboard_run(
 async fn test_dashboard_waits_after_autostarted_run() {
     let server = MockServer::start();
     let _mocks = setup_mock_endpoints(&server);
-    let grace = Duration::from_millis(1500);
-    goose::DASHBOARD_EXIT_GRACE_MS.store(
-        grace.as_millis() as u64,
-        std::sync::atomic::Ordering::Relaxed,
-    );
     let client = reqwest::Client::new();
 
     // A tab connected when the run ends: Goose goes idle and the run can be
-    // downloaded; once the tab closes, Goose exits after the grace.
+    // downloaded. It stays up after the tab closes, until Quit.
     let runs = saved_runs_dir("wait");
-    let (load, base, ready) = start_saved_dashboard_run(&server, &runs, None).await;
+    let (load, base, ready) = start_saved_dashboard_run(&server, &runs, None, true).await;
     let sse = client
         .get(format!("{base}/api/v1/events"))
         .header("Authorization", bearer_header())
@@ -2182,8 +2255,6 @@ async fn test_dashboard_waits_after_autostarted_run() {
     )
     .await;
     assert_eq!(snap["save"]["last_run"], id.as_str());
-    // Still up well past the grace while the tab is connected.
-    tokio::time::sleep(grace * 2).await;
     let download = client
         .get(format!("{base}/api/v1/runs/{id}/report.html"))
         .header("Authorization", bearer_header())
@@ -2193,23 +2264,32 @@ async fn test_dashboard_waits_after_autostarted_run() {
     assert_eq!(download.status(), 200);
     assert!(!download.bytes().await.unwrap().is_empty());
 
-    let closed_at = Instant::now();
+    // No exit timer: still up with no tab connected.
     drop(sse);
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let health = client
+        .get(format!("{base}/api/v1/health"))
+        .send()
+        .await
+        .expect("still up after the tab closed");
+    assert_eq!(health.status(), 200);
+
+    let quit = post_control(&client, &base, "/api/v1/control/quit", Some("{}"), true).await;
+    assert_eq!(quit.status(), 200);
+    let body: serde_json::Value = quit.json().await.expect("quit json");
+    assert_eq!(body["ok"], true);
     let metrics = tokio::time::timeout(Duration::from_secs(15), load.join())
         .await
-        .expect("Goose exits after the last tab closes")
+        .expect("Goose exits on Quit")
         .expect("load test execute");
-    let waited = closed_at.elapsed();
-    assert!(waited >= grace, "exited {:?} after the tab closed", waited);
     assert!(metrics.duration > 0);
     // Nothing more was saved on the way out.
     assert_eq!(saved_run_ids(&runs), vec![id]);
     std::fs::remove_dir_all(&runs).ok();
 
     // No tab connected when the run ends: Goose exits at once, as before.
-    goose::DASHBOARD_EXIT_GRACE_MS.store(30_000, std::sync::atomic::Ordering::Relaxed);
     let runs = saved_runs_dir("nowait");
-    let (load, _base, ready) = start_saved_dashboard_run(&server, &runs, None).await;
+    let (load, _base, ready) = start_saved_dashboard_run(&server, &runs, None, true).await;
     let started = Instant::now();
     ready.send(()).expect("attack waits in test_start");
     tokio::time::timeout(Duration::from_secs(20), load.join())
@@ -2219,8 +2299,6 @@ async fn test_dashboard_waits_after_autostarted_run() {
     assert!(started.elapsed() < Duration::from_secs(15));
     assert_eq!(saved_run_ids(&runs).len(), 1);
     std::fs::remove_dir_all(&runs).ok();
-
-    goose::DASHBOARD_EXIT_GRACE_MS.store(60_000, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// How many times test_stop ran since the counting test reset it.
@@ -2244,7 +2322,7 @@ async fn wait_after_counted_run(
 ) -> (LoadTestGuard, String, reqwest::Response) {
     TEST_STOP_RUNS.store(0, std::sync::atomic::Ordering::SeqCst);
     let stop = transaction!(count_test_stop);
-    let (load, base, ready) = start_saved_dashboard_run(server, runs, Some(&stop)).await;
+    let (load, base, ready) = start_saved_dashboard_run(server, runs, Some(&stop), true).await;
     let client = reqwest::Client::new();
     let sse = client
         .get(format!("{base}/api/v1/events"))
@@ -2284,5 +2362,19 @@ async fn test_test_stop_runs_once_when_exiting_from_idle() {
     drop(sse);
     result.expect("load test execute");
     assert_eq!(test_stop_runs(), 1, "test_stop ran again on exit from Idle");
+    std::fs::remove_dir_all(&runs).ok();
+
+    // Quit while waiting Idle after the run.
+    let runs = saved_runs_dir("test-stop-quit");
+    let (load, base, sse) = wait_after_counted_run(&server, &runs).await;
+    let client = reqwest::Client::new();
+    let quit = post_control(&client, &base, "/api/v1/control/quit", Some("{}"), true).await;
+    assert_eq!(quit.status(), 200);
+    tokio::time::timeout(Duration::from_secs(15), load.join())
+        .await
+        .expect("Goose exits on Quit")
+        .expect("load test execute");
+    drop(sse);
+    assert_eq!(test_stop_runs(), 1, "test_stop ran again on Quit");
     std::fs::remove_dir_all(&runs).ok();
 }

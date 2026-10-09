@@ -238,3 +238,29 @@ for (const [name, data, expected] of [
     assert.equal(bannerText(page.window), expected);
   });
 }
+
+test("Quit shows only with control on while idle and sends a Bearer POST", async () => {
+  const observe = await openPage("/?token=" + TOKEN, FRESH, TOKEN);
+  assert.equal(observe.window.document.getElementById("control-panel").classList.contains("hidden"), true);
+
+  const running = await openPage("/?token=" + TOKEN, FRESH, TOKEN, {
+    controlEnabled: true,
+    snapshot: { ...IDLE_SNAPSHOT, phase: "maintain" },
+  });
+  assert.equal(running.window.document.getElementById("ctrl-quit").hidden, true);
+
+  const page = await openPage("/?token=" + TOKEN, FRESH, TOKEN, { controlEnabled: true });
+  const doc = page.window.document;
+  const quit = doc.getElementById("ctrl-quit");
+  assert.equal(quit.hidden, false);
+  assert.equal(quit.disabled, false);
+  quit.click();
+  await settle(page.window);
+  const posts = page.requests.filter((r) => r.method === "POST");
+  assert.deepEqual(
+    posts.map((r) => [r.path, r.bearer, r.url.includes("token=")]),
+    [["/api/v1/control/quit", "Bearer " + TOKEN, false]]
+  );
+  assert.equal(doc.getElementById("ctrl-status").textContent, "Goose is shutting down.");
+  assert.equal(quit.hidden, true);
+});
