@@ -61,6 +61,38 @@ pub(crate) struct DashboardSnapshot {
     pub series: SeriesWindow,
 
     pub flags: SnapshotFlags,
+    /// Whether runs are saved, and the last run Goose saved or tried to save.
+    pub save: SnapshotSave,
+}
+
+/// Saving runs, as the dashboard shows it. Also the data of the SSE `closed`
+/// event, so a page learns where the last run was saved when Goose exits.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub(crate) struct SnapshotSave {
+    /// `on`, `off` (`--no-save` or `--no-metrics`), or `failed` (the runs
+    /// directory or the run's directory couldn't be created).
+    #[cfg_attr(test, ts(type = "\"on\" | \"off\" | \"failed\""))]
+    pub state: String,
+    /// Why the last run couldn't be saved, or why this run isn't saved.
+    pub reason: Option<String>,
+    /// The runs directory as given, never resolved to an absolute path.
+    pub dir: String,
+    /// The id of the last run Goose saved or tried to save.
+    pub last_run: Option<String>,
+}
+
+impl SnapshotSave {
+    /// Not saving, for a snapshot built where the save state is not known.
+    #[cfg(test)]
+    pub(crate) fn off(dir: &str) -> Self {
+        SnapshotSave {
+            state: "off".to_string(),
+            reason: None,
+            dir: dir.to_string(),
+            last_run: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -242,6 +274,8 @@ pub(crate) struct DashboardSnapshotInput<'a> {
     pub no_transaction_metrics: bool,
     /// `--no-scenario-metrics`.
     pub no_scenario_metrics: bool,
+    /// See [`DashboardSnapshot::save`].
+    pub save: SnapshotSave,
 }
 
 /// Build a compact [`DashboardSnapshot`] from live metrics + series window.
@@ -288,6 +322,7 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
                 errors_truncated: false,
                 series_seconds: input.series_window_secs,
             },
+            save: input.save,
         };
     }
 
@@ -434,6 +469,7 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
             errors_truncated,
             series_seconds: input.series_window_secs,
         },
+        save: input.save,
     }
 }
 
@@ -598,6 +634,7 @@ mod tests {
             metrics_disabled: false,
             no_transaction_metrics: false,
             no_scenario_metrics: false,
+            save: SnapshotSave::off("goose-runs"),
         });
         assert_eq!(snap.version, 1);
         assert_eq!(snap.phase, "idle");
@@ -651,6 +688,7 @@ mod tests {
             metrics_disabled: false,
             no_transaction_metrics: false,
             no_scenario_metrics: false,
+            save: SnapshotSave::off("goose-runs"),
         });
 
         assert_eq!(snap.requests.len(), MAX_REQUEST_ROWS);
@@ -688,6 +726,7 @@ mod tests {
             metrics_disabled: false,
             no_transaction_metrics: false,
             no_scenario_metrics: false,
+            save: SnapshotSave::off("goose-runs"),
         });
         assert!(!snap.aggregate.co_active);
 
@@ -717,6 +756,7 @@ mod tests {
             metrics_disabled: false,
             no_transaction_metrics: false,
             no_scenario_metrics: false,
+            save: SnapshotSave::off("goose-runs"),
         });
         assert!(snap.aggregate.co_active);
     }
@@ -746,6 +786,7 @@ mod tests {
             metrics_disabled: false,
             no_transaction_metrics: false,
             no_scenario_metrics: false,
+            save: SnapshotSave::off("goose-runs"),
         });
 
         assert_eq!(snap.aggregate.total_requests, 15);
@@ -801,6 +842,7 @@ mod tests {
             metrics_disabled: true,
             no_transaction_metrics: false,
             no_scenario_metrics: false,
+            save: SnapshotSave::off("goose-runs"),
         });
 
         assert!(snap.flags.metrics_disabled);
@@ -899,6 +941,7 @@ mod tests {
             metrics_disabled: false,
             no_transaction_metrics: false,
             no_scenario_metrics: false,
+            save: SnapshotSave::off("goose-runs"),
         }
     }
 
@@ -988,7 +1031,10 @@ mod tests {
         assert_eq!(scenario.response_time_avg_ms, 0.0);
         assert_eq!(scenario.percentile_ms.p50, 0);
         assert_eq!(snap.transactions[0].response_time_avg_ms, 0.0);
-        let json = serde_json::to_string(&snap).expect("serialize snapshot");
+        let mut value = serde_json::to_value(&snap).expect("serialize snapshot");
+        // `save` holds nulls on purpose: no reason, no last run.
+        value.as_object_mut().expect("object").remove("save");
+        let json = value.to_string();
         assert!(!json.contains("null"), "{}", json);
     }
 

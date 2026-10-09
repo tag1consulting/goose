@@ -6,6 +6,8 @@
 //! in the same second. It holds the HTML, JSON and Markdown reports, then
 //! `run.json`, written last, which marks the run complete.
 
+#[cfg(feature = "dashboard")]
+use crate::metrics::dashboard_snapshot::SnapshotSave;
 use crate::metrics::{load_baseline_file, ReportData, ReportSet};
 use crate::{GooseAttack, GooseError};
 use chrono::{DateTime, Local, SecondsFormat, Utc};
@@ -131,7 +133,7 @@ pub(crate) enum SaveState {
 }
 
 impl SaveState {
-    #[allow(dead_code)]
+    #[cfg_attr(not(feature = "dashboard"), allow(dead_code))]
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             SaveState::On => "on",
@@ -171,7 +173,7 @@ pub(crate) fn display_join(dir: &str, name: &str) -> String {
 /// True for a run id: `YYYY-MM-DD-HHMMSS`, optionally followed by `-` and a
 /// suffix of one to three digits. Nothing else, so an id is always safe to
 /// join to the runs directory.
-#[allow(dead_code)]
+#[cfg_attr(not(feature = "dashboard"), allow(dead_code))]
 pub(crate) fn is_valid_run_id(id: &str) -> bool {
     let bytes = id.as_bytes();
     // YYYY-MM-DD-HHMMSS is 17 bytes.
@@ -233,6 +235,91 @@ pub(crate) fn create_run_dir(runs_dir: &Path, base: &str) -> io::Result<(String,
         io::ErrorKind::AlreadyExists,
         format!("{base} and every suffix up to -{MAX_RUN_SUFFIX} already exist"),
     ))
+}
+
+/// The complete saved runs in a runs directory, as `GET /api/v1/runs` lists
+/// them.
+#[cfg_attr(not(feature = "dashboard"), allow(dead_code))]
+#[derive(Debug, Serialize)]
+pub(crate) struct RunsListing {
+    /// The runs directory as given.
+    pub dir: String,
+    /// Bytes in the listed runs' files.
+    pub total_bytes: u64,
+    /// Newest first, by `started`.
+    pub runs: Vec<RunInfo>,
+}
+
+/// The real directory or regular file at `path`, never following a symlink.
+#[cfg_attr(not(feature = "dashboard"), allow(dead_code))]
+pub(crate) fn is_real_dir(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_dir())
+}
+
+/// See [`is_real_dir`].
+#[cfg_attr(not(feature = "dashboard"), allow(dead_code))]
+pub(crate) fn is_regular_file(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_file())
+}
+
+/// Read a run's `run.json`, if the run is complete.
+#[cfg_attr(not(feature = "dashboard"), allow(dead_code))]
+pub(crate) fn read_run_info(run_dir: &Path) -> Option<RunInfo> {
+    let path = run_dir.join(RUN_JSON);
+    if !is_regular_file(&path) {
+        return None;
+    }
+    let text = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+/// List every complete run in `runs_dir`: a real directory named by a run
+/// id that holds a readable `run.json`. Anything else, symlinks included, is
+/// skipped. A runs directory that does not exist lists no runs.
+#[cfg_attr(not(feature = "dashboard"), allow(dead_code))]
+pub(crate) fn list_runs(runs_dir: &Path, display: &str) -> io::Result<RunsListing> {
+    let mut listing = RunsListing {
+        dir: display.to_string(),
+        total_bytes: 0,
+        runs: Vec::new(),
+    };
+    let entries = match std::fs::read_dir(runs_dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(listing),
+        Err(e) => return Err(e),
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let name = entry.file_name();
+        let Some(id) = name.to_str() else { continue };
+        if !is_valid_run_id(id) {
+            continue;
+        }
+        let run_dir = runs_dir.join(id);
+        if !is_real_dir(&run_dir) {
+            continue;
+        }
+        let Some(mut info) = read_run_info(&run_dir) else {
+            continue;
+        };
+        // The directory name is the id the routes take.
+        info.id = id.to_string();
+        if let Ok(files) = std::fs::read_dir(&run_dir) {
+            for file in files.filter_map(Result::ok) {
+                if let Ok(metadata) = std::fs::symlink_metadata(file.path()) {
+                    if metadata.file_type().is_file() {
+                        listing.total_bytes += metadata.len();
+                    }
+                }
+            }
+        }
+        listing.runs.push(info);
+    }
+    listing.runs.sort_by(|a, b| {
+        let started = |info: &RunInfo| DateTime::parse_from_rfc3339(&info.started).ok();
+        // Runs started in the same second sort by id: `-2` after the first.
+        started(b).cmp(&started(a)).then_with(|| b.id.cmp(&a.id))
+    });
+    Ok(listing)
 }
 
 /// Write `run.json` into the run directory through a temporary file and a
@@ -467,6 +554,17 @@ impl GooseAttack {
         }
     }
 
+    /// Saving runs, as the dashboard shows it.
+    #[cfg(feature = "dashboard")]
+    pub(crate) fn save_snapshot(&self) -> SnapshotSave {
+        SnapshotSave {
+            state: self.saving.state.as_str().to_string(),
+            reason: self.saving.reason.clone(),
+            dir: self.configuration.runs_dir_or_default().to_string(),
+            last_run: self.saving.last_run.clone(),
+        }
+    }
+
     /// Print what became of the saved run, once, after the final metrics.
     pub(crate) fn print_save_outcome(&mut self) {
         if let Some(outcome) = self.saving.outcome.take() {
@@ -609,6 +707,90 @@ mod tests {
         let back: RunInfo = serde_json::from_str(&text).unwrap();
         assert_eq!(back, info);
         std::fs::remove_dir_all(&run_dir).ok();
+    }
+
+    fn info(id: &str, started: &str) -> RunInfo {
+        RunInfo {
+            format: RUN_FORMAT,
+            id: id.to_string(),
+            goose_version: "0.19.0-dev".to_string(),
+            test: "loadtest".to_string(),
+            started: started.to_string(),
+            ended: started.to_string(),
+            duration_secs: 1,
+            max_users: 1,
+            hosts: Vec::new(),
+            requests: 1,
+            failed_requests: 0,
+            ended_by: EndedBy::Completed,
+            canceled_reason: None,
+            baseline: None,
+            files: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn list_runs_skips_what_is_not_a_complete_run_and_sorts_by_started() {
+        let runs = temp_dir("list");
+        // Listed. The names sort differently from the start times, which
+        // decide the order.
+        for (id, started) in [
+            ("2026-10-09-141203", "2026-10-09T12:12:03Z"),
+            ("2026-10-09-141203-2", "2026-10-09T12:12:03+00:00"),
+            ("2025-01-01-000000", "2026-12-31T00:00:00Z"),
+            ("2026-10-10-090000", "2026-10-10T07:00:00Z"),
+        ] {
+            std::fs::create_dir(runs.join(id)).unwrap();
+            write_run_json(&runs.join(id), &info(id, started)).unwrap();
+            std::fs::write(runs.join(id).join(REPORT_MD), "# report\n").unwrap();
+        }
+        // Not listed: no run.json, a name that is not an id, run.json that is
+        // not JSON, a file named like a run, and a symlink to a real run.
+        std::fs::create_dir(runs.join("2026-10-11-000000")).unwrap();
+        std::fs::create_dir(runs.join("latest")).unwrap();
+        write_run_json(
+            &runs.join("latest"),
+            &info("latest", "2027-01-01T00:00:00Z"),
+        )
+        .unwrap();
+        std::fs::create_dir(runs.join("2026-10-12-000000")).unwrap();
+        std::fs::write(runs.join("2026-10-12-000000").join(RUN_JSON), "{").unwrap();
+        std::fs::write(runs.join("2026-10-13-000000"), "not a directory").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(
+            runs.join("2026-10-10-090000"),
+            runs.join("2026-10-14-000000"),
+        )
+        .unwrap();
+
+        let listing = list_runs(&runs, "given/dir").unwrap();
+        let ids: Vec<&str> = listing.runs.iter().map(|run| run.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec![
+                "2025-01-01-000000",
+                "2026-10-10-090000",
+                "2026-10-09-141203-2",
+                "2026-10-09-141203",
+            ]
+        );
+        assert_eq!(listing.dir, "given/dir");
+        let expected: u64 = ids
+            .iter()
+            .map(|id| {
+                ["run.json", REPORT_MD]
+                    .iter()
+                    .map(|f| std::fs::metadata(runs.join(id).join(f)).unwrap().len())
+                    .sum::<u64>()
+            })
+            .sum();
+        assert_eq!(listing.total_bytes, expected);
+
+        // A runs directory that does not exist lists nothing.
+        let missing = list_runs(&runs.join("missing"), "missing").unwrap();
+        assert!(missing.runs.is_empty());
+        assert_eq!(missing.total_bytes, 0);
+        std::fs::remove_dir_all(&runs).ok();
     }
 
     #[test]

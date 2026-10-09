@@ -40,7 +40,11 @@ scenarios: Array<ScenarioRow>,
  * One row per registered transaction, grouped by scenario, each group in
  * registration order. Never truncated.
  */
-transactions: Array<TransactionRow>, series: SeriesWindow, flags: SnapshotFlags, };
+transactions: Array<TransactionRow>, series: SeriesWindow, flags: SnapshotFlags,
+/**
+ * Whether runs are saved, and the last run Goose saved or tried to save.
+ */
+save: SnapshotSave, };
 
 type ErrorRow = { method: string, name: string, error: string, occurrences: number, };
 
@@ -81,6 +85,25 @@ transaction_metrics_disabled: boolean,
  * `scenarios` is then empty.
  */
 scenario_metrics_disabled: boolean, requests_truncated: boolean, errors_truncated: boolean, series_seconds: number, };
+
+type SnapshotSave = {
+/**
+ * `on`, `off` (`--no-save` or `--no-metrics`), or `failed` (the runs
+ * directory or the run's directory couldn't be created).
+ */
+state: "on" | "off" | "failed",
+/**
+ * Why the last run couldn't be saved, or why this run isn't saved.
+ */
+reason: string | null,
+/**
+ * The runs directory as given, never resolved to an absolute path.
+ */
+dir: string,
+/**
+ * The id of the last run Goose saved or tried to save.
+ */
+last_run: string | null, };
 
 type TransactionRow = {
 /**

@@ -656,6 +656,44 @@ pub fn load_baseline_file<P: AsRef<Path>>(path: P) -> Result<ReportData<'static>
     Ok(baseline)
 }
 
+/// Compare two saved runs: the run's `report.json` with the baseline run's
+/// deltas applied, rendered by the Markdown report writer. An error is one
+/// line of plain text for the person who asked.
+#[cfg(feature = "dashboard")]
+pub(crate) fn compare_reports(
+    run: &Path,
+    run_id: &str,
+    baseline: &Path,
+    baseline_id: &str,
+) -> Result<Vec<u8>, String> {
+    let load = |path: &Path, id: &str| -> Result<ReportData<'static>, String> {
+        let reader =
+            BufReader::new(File::open(path).map_err(|e| format!("Can't read run {id}: {e}"))?);
+        let data: BaselineReportData = serde_json::from_reader(reader)
+            .map_err(|e| format!("Can't read the report of run {id}: {e}"))?;
+        let data = data.into_report_data();
+        let requests = data
+            .raw_request_metrics
+            .iter()
+            .filter(|r| !r.is_breakdown)
+            .count();
+        if requests == 0 {
+            return Err(format!("Run {id} has no requests to compare."));
+        }
+        if requests != data.raw_response_metrics.len() {
+            return Err(format!("The report of run {id} is inconsistent."));
+        }
+        Ok(data)
+    };
+    let mut current = load(run, run_id)?;
+    let previous = load(baseline, baseline_id)?;
+    apply_baseline_deltas(&mut current, &previous);
+    let mut out = Vec::new();
+    crate::report::write_markdown_report(&mut out, current)
+        .map_err(|e| format!("Can't compare run {run_id} with run {baseline_id}: {e}"))?;
+    Ok(out)
+}
+
 /// Intermediate structure for deserializing baseline data with plain values
 /// that need to be converted to Value<T> enum format
 #[derive(Debug, Deserialize)]

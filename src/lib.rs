@@ -448,6 +448,9 @@ struct GooseAttackRunState {
     /// Signals the dashboard SnapshotHub to emit SSE `event: closed` on final exit.
     #[cfg(feature = "dashboard")]
     dashboard_close_tx: Option<tokio::sync::watch::Sender<bool>>,
+    /// The save state the dashboard sends with `event: closed`.
+    #[cfg(feature = "dashboard")]
+    dashboard_closed_data: Option<dashboard::ClosedData>,
     /// The dashboard HTTP server, stopped when the attack loop returns.
     #[cfg(feature = "dashboard")]
     dashboard_server: Option<dashboard::DashboardServer>,
@@ -1497,19 +1500,16 @@ impl GooseAttack {
     /// Bind failure is a hard error when `--dashboard` is set (opt-in server
     /// must not silently disappear).
     #[cfg(feature = "dashboard")]
-    async fn setup_dashboard(
-        &mut self,
-    ) -> Result<
-        Option<(
-            flume::Receiver<dashboard::DashboardRequest>,
-            tokio::sync::watch::Sender<bool>,
-            dashboard::DashboardServer,
-        )>,
-        GooseError,
-    > {
-        Ok(dashboard::setup_dashboard(&self.configuration)
-            .await?
-            .map(|setup| (setup.request_rx, setup.close_tx, setup.server)))
+    async fn setup_dashboard(&mut self) -> Result<Option<dashboard::DashboardSetup>, GooseError> {
+        dashboard::setup_dashboard(&self.configuration).await
+    }
+
+    /// Give the dashboard the current save state, sent with `event: closed`.
+    #[cfg(feature = "dashboard")]
+    fn publish_save_state(&self, goose_attack_run_state: &GooseAttackRunState) {
+        if let Some(closed_data) = &goose_attack_run_state.dashboard_closed_data {
+            closed_data.set(&self.save_snapshot());
+        }
     }
 
     /// Handle dashboard snapshot and control requests from the HTTP server task.
@@ -1695,6 +1695,7 @@ impl GooseAttack {
                         phase: phase.clone(),
                         stopping: goose_attack_run_state.stopping,
                         series_window_secs: metrics::dashboard_snapshot::SERIES_WINDOW_SECS,
+                        save: self.save_snapshot(),
                         respond,
                     },
                 ) {
@@ -1780,6 +1781,7 @@ impl GooseAttack {
                 metrics_disabled: self.configuration.no_metrics,
                 no_transaction_metrics: self.configuration.no_transaction_metrics,
                 no_scenario_metrics: self.configuration.no_scenario_metrics,
+                save: self.save_snapshot(),
             },
         )
     }
@@ -1850,10 +1852,15 @@ impl GooseAttack {
         // Optionally spawn the read-only live dashboard HTTP server.
         // Bind failure aborts attack init when --dashboard is set.
         #[cfg(feature = "dashboard")]
-        let (dashboard_channel_rx, dashboard_close_tx, dashboard_server) =
+        let (dashboard_channel_rx, dashboard_close_tx, dashboard_closed_data, dashboard_server) =
             match self.setup_dashboard().await? {
-                Some((rx, close_tx, server)) => (Some(rx), Some(close_tx), Some(server)),
-                None => (None, None, None),
+                Some(setup) => (
+                    Some(setup.request_rx),
+                    Some(setup.close_tx),
+                    Some(setup.closed_data),
+                    Some(setup.server),
+                ),
+                None => (None, None, None, None),
             };
 
         // Grab now() once from the standard library, used by multiple timers in
@@ -1908,6 +1915,8 @@ impl GooseAttack {
             dashboard_channel_rx,
             #[cfg(feature = "dashboard")]
             dashboard_close_tx,
+            #[cfg(feature = "dashboard")]
+            dashboard_closed_data,
             #[cfg(feature = "dashboard")]
             dashboard_server,
             metrics_header_displayed: false,
@@ -2261,6 +2270,8 @@ impl GooseAttack {
                 Ok(())
             };
             self.run_in_progress = false;
+            #[cfg(feature = "dashboard")]
+            self.publish_save_state(goose_attack_run_state);
             if let Err(e) = reports {
                 // The run is saved; say so before failing on --report-file.
                 self.print_save_outcome();
@@ -2772,6 +2783,8 @@ impl GooseAttack {
         self.start_saved_run()?;
         self.run_in_progress = true;
         self.ended_by = None;
+        #[cfg(feature = "dashboard")]
+        self.publish_save_state(goose_attack_run_state);
 
         // Record when the GooseAttack officially started. series_started is the
         // continuous graph clock and is not restarted on metrics reset.
@@ -2868,6 +2881,8 @@ impl GooseAttack {
                     // without waiting for the next 1 Hz hub tick / flume disconnect.
                     #[cfg(feature = "dashboard")]
                     if let Some(close_tx) = goose_attack_run_state.dashboard_close_tx.take() {
+                        // The save state goes with `closed`: set it first.
+                        self.publish_save_state(goose_attack_run_state);
                         let _ = close_tx.send(true);
                     }
                     break;

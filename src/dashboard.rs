@@ -18,7 +18,9 @@
 //! request is dequeued. Tests assert multi-client coalescing, not sub-100 ms
 //! latency.
 
+use crate::metrics::dashboard_snapshot::SnapshotSave;
 use crate::metrics::DashboardSnapshot;
+use crate::runs;
 use crate::{ControlOutcome, GooseConfiguration, GooseError, INVALID_USERS_MSG, MAX_CONTROL_USERS};
 
 use axum::body::{Body, Bytes};
@@ -32,9 +34,11 @@ use futures::stream;
 use serde::Deserialize;
 use serde::Serialize;
 use std::convert::Infallible;
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tokio::io::AsyncReadExt;
 use tokio::sync::{oneshot, watch, Notify};
 use tower_http::set_header::SetResponseHeaderLayer;
 
@@ -119,6 +123,16 @@ pub(crate) struct DashboardSetup {
     /// Number of snapshots the hub has successfully built (tests / diagnostics).
     #[cfg_attr(not(test), allow(dead_code))]
     pub build_count: Arc<AtomicU64>,
+    /// Concurrent SSE clients, which the main loop reads to decide whether
+    /// to wait for a dashboard tab after an autostarted run.
+    #[allow(dead_code)]
+    pub active_sse: Arc<AtomicUsize>,
+    /// The data of every `closed` event: the save state as JSON. The main
+    /// loop keeps it current, so it is right before the close signal fires.
+    pub closed_data: ClosedData,
+    /// The address the dashboard listens on, as logged at startup.
+    #[allow(dead_code)]
+    pub url: String,
     /// Signal SSE clients to emit `event: closed` and stop the hub loop.
     ///
     /// Used on final process shutdown so browsers get a clean close without
@@ -220,6 +234,34 @@ impl ControlHttpErrorBody {
 
 /// Coalescing fan-out for dashboard snapshots.
 ///
+/// The data of the SSE `closed` event, shared by the hub and the main loop.
+#[derive(Clone, Debug)]
+pub(crate) struct ClosedData(Arc<RwLock<String>>);
+
+impl ClosedData {
+    fn new(save: &SnapshotSave) -> Self {
+        let data = ClosedData(Arc::new(RwLock::new(String::new())));
+        data.set(save);
+        data
+    }
+
+    /// Replace the save state sent with `closed`.
+    pub(crate) fn set(&self, save: &SnapshotSave) {
+        let json = serde_json::to_string(save).unwrap_or_else(|_| "{}".to_string());
+        match self.0.write() {
+            Ok(mut data) => *data = json,
+            Err(poisoned) => *poisoned.into_inner() = json,
+        }
+    }
+
+    fn get(&self) -> String {
+        match self.0.read() {
+            Ok(data) => data.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        }
+    }
+}
+
 /// One hub task builds at most ~1 snapshot/sec while `active_sse > 0` or a poll
 /// was recent. Idle (no clients, no recent poll) issues **no**
 /// `GetDashboardSnapshot` commands.
@@ -232,8 +274,10 @@ struct HubInner {
     request_tx: flume::Sender<DashboardRequest>,
     /// Latest pre-serialized snapshot JSON (`None` until the first build).
     latest_tx: watch::Sender<Option<Bytes>>,
-    /// Concurrent SSE subscribers.
-    active_sse: AtomicUsize,
+    /// Concurrent SSE subscribers (shared with [`DashboardSetup::active_sse`]).
+    active_sse: Arc<AtomicUsize>,
+    /// The data of the `closed` event.
+    closed_data: ClosedData,
     /// Configured concurrent SSE client cap (default [`MAX_SSE_CLIENTS`]).
     max_sse_clients: usize,
     /// Unix-ms of the most recent `/api/v1/snapshot` poll mark (0 = never).
@@ -280,6 +324,8 @@ impl SnapshotHub {
         build_count: Arc<AtomicU64>,
         shutdown_tx: watch::Sender<bool>,
         max_sse_clients: usize,
+        active_sse: Arc<AtomicUsize>,
+        closed_data: ClosedData,
     ) -> Self {
         let max_sse_clients = if max_sse_clients == 0 {
             MAX_SSE_CLIENTS
@@ -290,7 +336,8 @@ impl SnapshotHub {
         let inner = Arc::new(HubInner {
             request_tx,
             latest_tx,
-            active_sse: AtomicUsize::new(0),
+            active_sse,
+            closed_data,
             max_sse_clients,
             last_poll_ms: AtomicU64::new(0),
             last_build_at_ms: AtomicU64::new(0),
@@ -365,6 +412,11 @@ impl SnapshotHub {
     /// Duration of the last successful snapshot build in milliseconds (0 if none).
     fn last_build_ms(&self) -> u64 {
         self.inner.last_build_ms.load(Ordering::Relaxed)
+    }
+
+    /// The data to send with `closed`.
+    fn closed_data(&self) -> String {
+        self.inner.closed_data.get()
     }
 
     fn subscribe_latest(&self) -> watch::Receiver<Option<Bytes>> {
@@ -651,6 +703,9 @@ struct DashboardState {
     control_enabled: bool,
     /// Concurrent control POSTs currently waiting on the main loop.
     control_in_flight: Arc<AtomicUsize>,
+    /// The runs directory as given, or the default: the saved run routes
+    /// read it, and only them.
+    runs_dir: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -730,6 +785,19 @@ pub(crate) async fn setup_dashboard(
     let (request_tx, request_rx) = flume::unbounded();
     let build_count = Arc::new(AtomicU64::new(0));
     let (close_tx, _) = watch::channel(false);
+    let active_sse = Arc::new(AtomicUsize::new(0));
+    // Until the main loop sets it: what the configuration says.
+    let closed_data = ClosedData::new(&SnapshotSave {
+        state: if configuration.saves_runs() {
+            "on"
+        } else {
+            "off"
+        }
+        .to_string(),
+        reason: None,
+        dir: configuration.runs_dir_or_default().to_string(),
+        last_run: None,
+    });
     // 0 means unset (direct setup without configure); fall back to default cap.
     let max_sse_clients = if configuration.dashboard_max_clients == 0 {
         MAX_SSE_CLIENTS
@@ -742,6 +810,8 @@ pub(crate) async fn setup_dashboard(
         Arc::clone(&build_count),
         close_tx.clone(),
         max_sse_clients,
+        Arc::clone(&active_sse),
+        closed_data.clone(),
     );
     let control_enabled = configuration.dashboard_control;
     let state = DashboardState {
@@ -750,6 +820,7 @@ pub(crate) async fn setup_dashboard(
         auth_token: configuration.dashboard_auth_token.clone(),
         control_enabled,
         control_in_flight: Arc::new(AtomicUsize::new(0)),
+        runs_dir: configuration.runs_dir_or_default().to_string(),
     };
 
     // Loopback by the configured name, the same rule that lets the dashboard
@@ -777,6 +848,9 @@ pub(crate) async fn setup_dashboard(
         request_rx,
         bound_port: bound.port(),
         build_count,
+        active_sse,
+        closed_data,
+        url: format!("http://{bound}"),
         close_tx,
         server,
     }))
@@ -951,7 +1025,9 @@ fn build_router(state: DashboardState, loopback_bind: bool) -> Router {
         .route("/static/app.css", get(app_css_handler))
         .route("/api/v1/health", get(health_handler))
         .route("/api/v1/snapshot", get(snapshot_handler))
-        .route("/api/v1/events", get(events_handler));
+        .route("/api/v1/events", get(events_handler))
+        .route("/api/v1/runs", get(runs_handler))
+        .route("/api/v1/runs/{id}/{file}", get(run_file_handler));
 
     if control_enabled {
         // Bound control request bodies so a large POST cannot blow memory/CPU
@@ -970,7 +1046,10 @@ fn build_router(state: DashboardState, loopback_bind: bool) -> Router {
     }
 
     router
-        .layer(SetResponseHeaderLayer::overriding(
+        // `if_not_present`: a saved run download sets its own
+        // `Content-Security-Policy: sandbox`; every other route sets none and
+        // gets this one.
+        .layer(SetResponseHeaderLayer::if_not_present(
             header::CONTENT_SECURITY_POLICY,
             HeaderValue::from_static(CSP),
         ))
@@ -1077,13 +1156,13 @@ async fn events_handler(
 
     // Sticky shutdown: do not hold a client slot; emit `closed` immediately.
     if state.hub.is_closed() {
-        return closed_sse_response();
+        return closed_sse_response(&state.hub);
     }
 
     if !state.hub.try_acquire_sse() {
         // Distinguish full cap vs raced into shutdown.
         if state.hub.is_closed() {
-            return closed_sse_response();
+            return closed_sse_response(&state.hub);
         }
         return (StatusCode::SERVICE_UNAVAILABLE, "too many SSE clients").into_response();
     }
@@ -1103,14 +1182,13 @@ async fn events_handler(
                 self.0.release_sse();
             }
         }
-        let _guard = SseGuard(hub);
+        let guard = SseGuard(hub);
+        let hub = &guard.0;
 
         // watch does not notify for the value present at subscribe time — check
         // sticky shutdown before pushing a stale snapshot or blocking forever.
         if *shutdown_rx.borrow() {
-            let _ = event_tx
-                .send(Event::default().event("closed").data("1"))
-                .await;
+            let _ = event_tx.send(closed_event(hub)).await;
             return;
         }
 
@@ -1131,9 +1209,7 @@ async fn events_handler(
                     }
                     // Re-check shutdown in case both fired; prefer closed.
                     if *shutdown_rx.borrow() {
-                        let _ = event_tx
-                            .send(Event::default().event("closed").data("1"))
-                            .await;
+                        let _ = event_tx.send(closed_event(hub)).await;
                         break;
                     }
                     let next = snap_rx.borrow_and_update().clone();
@@ -1146,9 +1222,7 @@ async fn events_handler(
                 result = shutdown_rx.changed() => {
                     let closed = result.is_err() || *shutdown_rx.borrow();
                     if closed {
-                        let _ = event_tx
-                            .send(Event::default().event("closed").data("1"))
-                            .await;
+                        let _ = event_tx.send(closed_event(hub)).await;
                         break;
                     }
                 }
@@ -1169,15 +1243,249 @@ async fn events_handler(
 
 /// One-shot SSE body that only delivers `event: closed` (late subscribers after
 /// sticky shutdown, without consuming a client slot).
-fn closed_sse_response() -> Response<Body> {
-    let stream =
-        stream::once(async { Ok::<_, Infallible>(Event::default().event("closed").data("1")) });
+fn closed_sse_response(hub: &SnapshotHub) -> Response<Body> {
+    let event = closed_event(hub);
+    let stream = stream::once(async move { Ok::<_, Infallible>(event) });
     Sse::new(stream).into_response()
+}
+
+/// The terminal `closed` event; its data is the save state as JSON.
+fn closed_event(hub: &SnapshotHub) -> Event {
+    Event::default().event("closed").data(hub.closed_data())
 }
 
 fn snapshot_event(bytes: &Bytes) -> Event {
     let data = std::str::from_utf8(bytes).unwrap_or("{}");
     Event::default().event("snapshot").data(data)
+}
+
+/// Query of the saved run routes: the token, and for a comparison the
+/// baseline run.
+#[derive(Debug, Deserialize)]
+struct RunQuery {
+    token: Option<String>,
+    baseline: Option<String>,
+}
+
+/// The comparison a run route serves besides its report files.
+const COMPARE_MD: &str = "compare.md";
+
+/// `GET /api/v1/runs`: every complete saved run, newest first. Read from disk
+/// on each request, never on the snapshot path.
+async fn runs_handler(
+    State(state): State<Arc<DashboardState>>,
+    headers: HeaderMap,
+    Query(query): Query<TokenQuery>,
+) -> Response<Body> {
+    if !authorize(&state.auth_token, &headers, query.token.as_deref()) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let dir = state.runs_dir.clone();
+    let listed = tokio::task::spawn_blocking(move || runs::list_runs(Path::new(&dir), &dir)).await;
+    match listed {
+        Ok(Ok(listing)) => Json(listing).into_response(),
+        Ok(Err(e)) => {
+            warn!(
+                "[dashboard]: can't list saved runs in {}: {e}",
+                state.runs_dir
+            );
+            (StatusCode::INTERNAL_SERVER_ERROR, "can't list saved runs").into_response()
+        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "can't list saved runs").into_response(),
+    }
+}
+
+/// `GET /api/v1/runs/{id}/{file}`: one of a saved run's reports, or with
+/// `file` `compare.md` and `?baseline={id}`, the run compared to the baseline
+/// run as Markdown. Anything that is not a valid run id, a known file, a real
+/// directory and a regular file is a plain 404.
+async fn run_file_handler(
+    State(state): State<Arc<DashboardState>>,
+    headers: HeaderMap,
+    path: Result<axum::extract::Path<(String, String)>, axum::extract::rejection::PathRejection>,
+    Query(query): Query<RunQuery>,
+) -> Response<Body> {
+    if !authorize(&state.auth_token, &headers, query.token.as_deref()) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let Ok(axum::extract::Path((id, file))) = path else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if !runs::is_valid_run_id(&id) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    if file == COMPARE_MD {
+        return compare_response(&state.runs_dir, id, query.baseline).await;
+    }
+    let Some(&name) = runs::REPORT_FILES.iter().find(|&&name| name == file) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    report_file_response(&state.runs_dir, &id, name).await
+}
+
+/// The run directory for `id`, if it is a real directory holding `file` as a
+/// regular file. `id` must already be valid and `file` one of the fixed names.
+fn run_file_path(
+    runs_dir: &str,
+    id: &str,
+    file: &str,
+) -> Option<(std::path::PathBuf, std::path::PathBuf)> {
+    let run_dir = Path::new(runs_dir).join(id);
+    let path = run_dir.join(file);
+    if runs::is_real_dir(&run_dir) && runs::is_regular_file(&path) {
+        Some((run_dir, path))
+    } else {
+        None
+    }
+}
+
+/// `test` from a run's `run.json`, reduced to `[A-Za-z0-9_-]` for a file name.
+fn download_test_name(run_dir: &Path) -> String {
+    runs::read_run_info(run_dir)
+        .map(|info| {
+            info.test
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+                .collect::<String>()
+        })
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "run".to_string())
+}
+
+/// Headers of a report or comparison download: an attachment, never rendered
+/// by the browser, never cached, and sandboxed if it is opened anyway.
+fn download_response(
+    content_type: &'static str,
+    filename: &str,
+    body: Body,
+    length: Option<u64>,
+) -> Response<Body> {
+    let mut response = Response::new(body);
+    let headers = response.headers_mut();
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+    if let Some(length) = length {
+        headers.insert(header::CONTENT_LENGTH, HeaderValue::from(length));
+    }
+    // The name is built from [A-Za-z0-9_.-] only, so it is a valid header value.
+    if let Ok(value) = HeaderValue::from_str(&format!("attachment; filename=\"{filename}\"")) {
+        headers.insert(header::CONTENT_DISPOSITION, value);
+    }
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    headers.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static("sandbox"),
+    );
+    response
+}
+
+/// Stream a report file from disk.
+async fn report_file_response(runs_dir: &str, id: &str, name: &'static str) -> Response<Body> {
+    let Some((run_dir, path)) = run_file_path(runs_dir, id, name) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Ok(file) = tokio::fs::File::open(&path).await else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    // The file opened must be the regular file checked above, not something
+    // swapped in since.
+    let Ok(metadata) = file.metadata().await else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if !metadata.is_file() || !same_file(&path, &metadata) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let (content_type, ext) = match name {
+        runs::REPORT_HTML => ("text/html; charset=utf-8", "html"),
+        runs::REPORT_JSON => ("application/json", "json"),
+        _ => ("text/markdown; charset=utf-8", "md"),
+    };
+    let test = download_test_name(&run_dir);
+    download_response(
+        content_type,
+        &format!("goose-{test}-{id}.{ext}"),
+        Body::from_stream(file_stream(file)),
+        Some(metadata.len()),
+    )
+}
+
+/// True when the open file's metadata is that of the file at `path` now, by
+/// device and inode where the platform has them.
+fn same_file(path: &Path, opened: &std::fs::Metadata) -> bool {
+    let Ok(at_path) = std::fs::symlink_metadata(path) else {
+        return false;
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        at_path.dev() == opened.dev() && at_path.ino() == opened.ino()
+    }
+    #[cfg(not(unix))]
+    {
+        at_path.file_type().is_file() && at_path.len() == opened.len()
+    }
+}
+
+/// Chunks of an open file, read as the response is sent, so a report is never
+/// read into memory whole. `futures::stream::unfold` over `tokio::fs::File`
+/// needs no new dependency.
+fn file_stream(
+    file: tokio::fs::File,
+) -> impl futures::Stream<Item = Result<Bytes, std::io::Error>> + Send {
+    const CHUNK: usize = 64 * 1024;
+    stream::unfold(Some(file), |file| async move {
+        let mut file = file?;
+        let mut buf = vec![0u8; CHUNK];
+        match file.read(&mut buf).await {
+            Ok(0) => None,
+            Ok(n) => {
+                buf.truncate(n);
+                Some((Ok(Bytes::from(buf)), Some(file)))
+            }
+            // End the stream after an error.
+            Err(e) => Some((Err(e), None)),
+        }
+    })
+}
+
+/// The Markdown comparison of run `id` (the newer) to `baseline`.
+async fn compare_response(runs_dir: &str, id: String, baseline: Option<String>) -> Response<Body> {
+    let Some(baseline) = baseline.filter(|b| runs::is_valid_run_id(b)) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let (Some((run_dir, run_json)), Some((_, baseline_json))) = (
+        run_file_path(runs_dir, &id, runs::REPORT_JSON),
+        run_file_path(runs_dir, &baseline, runs::REPORT_JSON),
+    ) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let (run_id, baseline_id) = (id.clone(), baseline.clone());
+    let compared = tokio::task::spawn_blocking(move || {
+        crate::metrics::compare_reports(&run_json, &run_id, &baseline_json, &baseline_id)
+    })
+    .await;
+    match compared {
+        Ok(Ok(markdown)) => {
+            let test = download_test_name(&run_dir);
+            let length = markdown.len() as u64;
+            download_response(
+                "text/markdown; charset=utf-8",
+                &format!("goose-{test}-{id}-vs-{baseline}.md"),
+                Body::from(markdown),
+                Some(length),
+            )
+        }
+        Ok(Err(reason)) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+            reason,
+        )
+            .into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
 }
 
 /// Authorize a metric API request.
@@ -1576,6 +1884,7 @@ mod tests {
                 errors_truncated: false,
                 series_seconds: 300,
             },
+            save: SnapshotSave::off("goose-runs"),
         }
     }
 
@@ -2298,7 +2607,14 @@ mod tests {
 
         let build_count = Arc::new(AtomicU64::new(0));
         let (close_tx, _) = watch::channel(false);
-        let hub = SnapshotHub::new(tx, Arc::clone(&build_count), close_tx, MAX_SSE_CLIENTS);
+        let hub = SnapshotHub::new(
+            tx,
+            Arc::clone(&build_count),
+            close_tx,
+            MAX_SSE_CLIENTS,
+            Arc::new(AtomicUsize::new(0)),
+            ClosedData::new(&SnapshotSave::off("goose-runs")),
+        );
 
         // First poll.
         let b1 = hub.snapshot_bytes().await.expect("first");

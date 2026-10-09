@@ -1780,3 +1780,322 @@ async fn test_dashboard_stops_when_execute_fails() {
     assert_closed_now(&mut stalled).await;
     assert_dashboard_stopped(port, &mut keep_alive).await;
 }
+
+// ---------------------------------------------------------------------------
+// Saved runs: listing, downloads, comparisons and the `closed` event.
+// ---------------------------------------------------------------------------
+
+/// A new empty directory for one test.
+fn saved_runs_dir(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "goose-dashboard-runs-{name}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+/// Run one short load test saved into `runs` and return its run id.
+async fn save_one_run(server: &MockServer, runs: &std::path::Path, users: &str) -> String {
+    let runs_str = runs.to_string_lossy().into_owned();
+    let before: std::collections::HashSet<_> = saved_run_ids(runs).into_iter().collect();
+    let configuration = common::build_configuration(
+        server,
+        vec![
+            "--runs-dir",
+            &runs_str,
+            "--users",
+            users,
+            "--increase-rate",
+            "10",
+        ],
+    );
+    common::run_load_test(
+        common::build_load_test(configuration, vec![get_transactions()], None, None),
+        None,
+    )
+    .await;
+    let new: Vec<String> = saved_run_ids(runs)
+        .into_iter()
+        .filter(|id| !before.contains(id))
+        .collect();
+    assert_eq!(new.len(), 1, "one new run: {:?}", new);
+    new.into_iter().next().unwrap()
+}
+
+/// Run ids in `runs`, sorted.
+fn saved_run_ids(runs: &std::path::Path) -> Vec<String> {
+    let mut ids: Vec<String> = std::fs::read_dir(runs)
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .filter(|e| e.path().is_dir())
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    ids.sort();
+    ids
+}
+
+fn header<'a>(resp: &'a reqwest::Response, name: &str) -> &'a str {
+    resp.headers()
+        .get(name)
+        .unwrap_or_else(|| panic!("missing header {}", name))
+        .to_str()
+        .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn test_saved_runs_routes() {
+    let server = MockServer::start();
+    let _mocks = setup_mock_endpoints(&server);
+    let runs = saved_runs_dir("routes");
+    let older = save_one_run(&server, &runs, "1").await;
+    let newer = save_one_run(&server, &runs, "3").await;
+    assert!(newer > older);
+
+    // A complete run with no requests, to compare against.
+    let empty = "2001-01-01-000000";
+    std::fs::create_dir(runs.join(empty)).unwrap();
+    let mut report: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(runs.join(&older).join("report.json")).unwrap(),
+    )
+    .unwrap();
+    report["raw_request_metrics"] = serde_json::json!([]);
+    report["raw_response_metrics"] = serde_json::json!([]);
+    std::fs::write(
+        runs.join(empty).join("report.json"),
+        serde_json::to_string(&report).unwrap(),
+    )
+    .unwrap();
+    let mut run_json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(runs.join(&older).join("run.json")).unwrap())
+            .unwrap();
+    run_json["id"] = serde_json::json!(empty);
+    run_json["started"] = serde_json::json!("2001-01-01T00:00:00Z");
+    run_json["requests"] = serde_json::json!(0);
+    std::fs::write(
+        runs.join(empty).join("run.json"),
+        serde_json::to_string(&run_json).unwrap(),
+    )
+    .unwrap();
+    // Not listed and not served: an incomplete run, a name that is not an
+    // id, and a symlink to a real run.
+    std::fs::create_dir(runs.join("2002-02-02-000000")).unwrap();
+    std::fs::create_dir(runs.join("not-a-run")).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(runs.join(&older), runs.join("2003-03-03-000000")).unwrap();
+
+    let port = reserve_port();
+    let base_v4 = format!("http://127.0.0.1:{port}");
+    let mut configuration =
+        build_control_config(&server, "127.0.0.1", port, ControlTestOpts::default());
+    configuration.runs_dir = runs.to_string_lossy().into_owned();
+    let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
+    let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
+    let (base, _) = wait_for_health(&[&base_v4], 80).await;
+    let client = reqwest::Client::new();
+    let get = |path: String, auth: bool| {
+        let mut req = client.get(format!("{base}{path}"));
+        if auth {
+            req = req.header("Authorization", bearer_header());
+        }
+        req.send()
+    };
+
+    // The listing.
+    assert_eq!(
+        get("/api/v1/runs".into(), false).await.unwrap().status(),
+        401
+    );
+    let listing = get("/api/v1/runs".into(), true).await.unwrap();
+    assert_eq!(listing.status(), 200);
+    assert!(header(&listing, "content-security-policy").contains("default-src 'self'"));
+    let listing: serde_json::Value = listing.json().await.unwrap();
+    assert_eq!(listing["dir"], runs.to_string_lossy().as_ref());
+    let ids: Vec<&str> = listing["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|run| run["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, vec![newer.as_str(), older.as_str(), empty]);
+    assert!(listing["total_bytes"].as_u64().unwrap() > 0);
+
+    // A report download.
+    let path = format!("/api/v1/runs/{newer}/report.html");
+    assert_eq!(get(path.clone(), false).await.unwrap().status(), 401);
+    let download = get(path, true).await.unwrap();
+    assert_eq!(download.status(), 200);
+    let disposition = header(&download, "content-disposition").to_string();
+    assert!(
+        disposition.starts_with("attachment; filename=\"goose-")
+            && disposition.ends_with(&format!("-{newer}.html\"")),
+        "{}",
+        disposition
+    );
+    assert_eq!(header(&download, "x-content-type-options"), "nosniff");
+    assert_eq!(header(&download, "cache-control"), "no-store");
+    assert_eq!(header(&download, "content-security-policy"), "sandbox");
+    assert!(header(&download, "content-type").starts_with("text/html"));
+    let body = download.bytes().await.unwrap();
+    assert_eq!(
+        body.as_ref(),
+        std::fs::read(runs.join(&newer).join("report.html")).unwrap()
+    );
+    for (file, kind) in [
+        ("report.json", "application/json"),
+        ("report.md", "text/markdown"),
+    ] {
+        let resp = get(format!("/api/v1/runs/{older}/{file}"), true)
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200, "{}", file);
+        assert!(header(&resp, "content-type").starts_with(kind));
+        assert_eq!(header(&resp, "content-security-policy"), "sandbox");
+    }
+
+    // The dashboard page keeps its own policy.
+    let page = client.get(format!("{base}/")).send().await.unwrap();
+    assert_eq!(page.status(), 200);
+    assert!(header(&page, "content-security-policy").contains("frame-ancestors 'none'"));
+
+    // A comparison.
+    let path = format!("/api/v1/runs/{newer}/compare.md?baseline={older}");
+    assert_eq!(get(path.clone(), false).await.unwrap().status(), 401);
+    let compare = get(path, true).await.unwrap();
+    assert_eq!(compare.status(), 200);
+    assert!(header(&compare, "content-disposition").ends_with(&format!("-{newer}-vs-{older}.md\"")));
+    assert_eq!(header(&compare, "content-security-policy"), "sandbox");
+    assert_eq!(header(&compare, "cache-control"), "no-store");
+    assert_eq!(header(&compare, "x-content-type-options"), "nosniff");
+    let markdown = compare.text().await.unwrap();
+    let delta = regex::Regex::new(r"\([+-]\d").unwrap();
+    assert!(delta.is_match(&markdown), "{}", markdown);
+
+    // A run with no requests can't be compared.
+    let resp = get(
+        format!("/api/v1/runs/{newer}/compare.md?baseline={empty}"),
+        true,
+    )
+    .await
+    .unwrap();
+    assert_eq!(resp.status(), 422);
+    let reason = resp.text().await.unwrap();
+    assert_eq!(reason, format!("Run {empty} has no requests to compare."));
+
+    // Bad ids, files and traversal attempts are plain 404s.
+    for path in [
+        "/api/v1/runs/2026-10-09-141203/report.html".to_string(),
+        format!("/api/v1/runs/{newer}/run.json"),
+        format!("/api/v1/runs/{newer}/report.pdf"),
+        format!("/api/v1/runs/{newer}/..%2Frun.json"),
+        "/api/v1/runs/..%2F..%2Fetc/report.html".to_string(),
+        "/api/v1/runs/%2Fetc%2Fpasswd/report.html".to_string(),
+        "/api/v1/runs/../report.html".to_string(),
+        format!("/api/v1/runs/{newer}%2F/report.html"),
+        format!("/api/v1/runs/{newer}/compare.md"),
+        format!("/api/v1/runs/{newer}/compare.md?baseline=..%2F{older}"),
+        format!("/api/v1/runs/{newer}/compare.md?baseline=2002-02-02-000000"),
+        "/api/v1/runs/2002-02-02-000000/report.html".to_string(),
+        "/api/v1/runs/not-a-run/report.html".to_string(),
+        "/api/v1/runs/2003-03-03-000000/report.html".to_string(),
+    ] {
+        let resp = get(path.clone(), true).await.unwrap();
+        assert_eq!(resp.status(), 404, "{}", path);
+    }
+
+    load.abort().await;
+    std::fs::remove_dir_all(&runs).ok();
+}
+
+/// Read SSE from `resp` until `event: closed` and return its data.
+async fn read_closed_event(resp: &mut reqwest::Response, timeout: Duration) -> Option<String> {
+    let deadline = Instant::now() + timeout;
+    let mut text = String::new();
+    while Instant::now() < deadline {
+        match tokio::time::timeout(Duration::from_millis(500), resp.chunk()).await {
+            Ok(Ok(Some(chunk))) => {
+                text.push_str(&String::from_utf8_lossy(&chunk));
+                if let Some(at) = text.find("event: closed") {
+                    let rest = &text[at..];
+                    if let Some(end) = rest.find("\n\n") {
+                        let data = rest[..end]
+                            .lines()
+                            .filter_map(|line| line.strip_prefix("data: "))
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        return Some(data);
+                    }
+                }
+            }
+            Ok(Ok(None)) | Ok(Err(_)) => break,
+            Err(_) => continue,
+        }
+    }
+    None
+}
+
+/// One autostarted dashboard run with an SSE client: the `closed` event
+/// carries the saved run's id.
+async fn closed_event_carries_saved_run(server: &MockServer) {
+    let runs = saved_runs_dir("closed");
+    let port = reserve_port();
+    let base_v4 = format!("http://127.0.0.1:{port}");
+    let mut configuration = build_dashboard_config(server, "127.0.0.1", port, Some(AUTH_TOKEN));
+    configuration.no_save = false;
+    configuration.runs_dir = runs.to_string_lossy().into_owned();
+    configuration.run_time = "2".to_string();
+    let ready = arm_test_ready();
+    let start = transaction!(wait_for_test_ready);
+    let goose_attack =
+        common::build_load_test(configuration, vec![get_transactions()], Some(&start), None);
+    let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
+    let (base, _) = wait_for_health(&[&base_v4], 80).await;
+
+    let client = reqwest::Client::new();
+    let mut sse = client
+        .get(format!("{base}/api/v1/events"))
+        .header("Authorization", bearer_header())
+        .send()
+        .await
+        .expect("SSE connect");
+    assert_eq!(sse.status(), 200);
+    ready.send(()).expect("attack waits in test_start");
+
+    let data = read_closed_event(&mut sse, Duration::from_secs(30))
+        .await
+        .expect("closed event");
+    drop(sse);
+    load.join().await.expect("load test execute");
+
+    let ids = saved_run_ids(&runs);
+    assert_eq!(ids.len(), 1);
+    let save: serde_json::Value = serde_json::from_str(&data).expect("closed data is JSON");
+    assert_eq!(save["state"], "on");
+    assert_eq!(save["last_run"], ids[0].as_str());
+    assert!(save["reason"].is_null());
+    assert_eq!(save["dir"], runs.to_string_lossy().as_ref());
+    std::fs::remove_dir_all(&runs).ok();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn test_closed_event_carries_saved_run() {
+    let server = MockServer::start();
+    let _mocks = setup_mock_endpoints(&server);
+    // GOOSE_CLOSED_EVENT_LOOPS repeats the body, to check it never flakes.
+    let loops: usize = std::env::var("GOOSE_CLOSED_EVENT_LOOPS")
+        .ok()
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(1);
+    for _ in 0..loops {
+        closed_event_carries_saved_run(&server).await;
+    }
+}

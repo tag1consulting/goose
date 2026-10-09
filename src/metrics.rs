@@ -14,6 +14,8 @@ pub(crate) mod dashboard_snapshot;
 mod delta;
 mod nullable;
 
+#[cfg(feature = "dashboard")]
+pub(crate) use common::compare_reports;
 pub(crate) use common::{load_baseline_file, ReportData};
 pub use coordinated_omission::{CadenceCalculator, CoMetricsSummary, CoordinatedOmissionMetrics};
 pub(crate) use dashboard_snapshot::DashboardSnapshot;
@@ -353,6 +355,8 @@ pub(crate) enum MetricsCommand {
         /// `GooseAttackRunState.stopping`: a cancel is ramping the run down.
         stopping: bool,
         series_window_secs: u32,
+        /// Saving runs, which only the main loop knows.
+        save: dashboard_snapshot::SnapshotSave,
         respond: tokio::sync::oneshot::Sender<DashboardSnapshot>,
     },
 }
@@ -3421,6 +3425,7 @@ impl MetricsProcessor {
                 phase,
                 stopping,
                 series_window_secs,
+                save,
                 respond,
             } => {
                 self.drain_pending();
@@ -3452,6 +3457,7 @@ impl MetricsProcessor {
                         metrics_disabled: self.configuration.no_metrics,
                         no_transaction_metrics: self.configuration.no_transaction_metrics,
                         no_scenario_metrics: self.configuration.no_scenario_metrics,
+                        save,
                     },
                 );
                 let _ = respond.send(snapshot);
@@ -5507,6 +5513,7 @@ mod test {
             phase: "maintain".to_string(),
             stopping: true,
             series_window_secs: dashboard_snapshot::SERIES_WINDOW_SECS,
+            save: dashboard_snapshot::SnapshotSave::off("goose-runs"),
             respond: respond_tx,
         });
         assert!(!shutdown);

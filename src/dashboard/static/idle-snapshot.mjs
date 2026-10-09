@@ -42,4 +42,5 @@ export const IDLE_SNAPSHOT = {
     errors_truncated: false,
     series_seconds: 0,
   },
+  save: { state: "on", reason: null, dir: "goose-runs", last_run: null },
 };
