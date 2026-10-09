@@ -3,8 +3,8 @@
 //! Compiled only with the `dashboard` crate feature. Runs an HTTP/1 accept
 //! loop over an axum router that serves a minimal static shell, a one-shot
 //! metrics snapshot API, an SSE stream of coalesced snapshots, and (when
-//! `--dashboard-control` is set) authenticated Start/Stop/Users control
-//! endpoints.
+//! `--dashboard-control` is set) authenticated Start/Stop/Users/Quit control
+//! endpoints and saved run deletion.
 //!
 //! The parent GooseAttack main loop answers [`DashboardRequest`]s via oneshot
 //! channels using [`MetricsCommand::GetDashboardSnapshot`] for snapshots and
@@ -734,7 +734,7 @@ struct HealthResponse {
     build_count: u64,
     /// Concurrent SSE clients currently holding a slot.
     active_sse_clients: usize,
-    /// Whether Start/Stop/Users control endpoints are registered.
+    /// Whether the Start/Stop/Users/Quit control and Delete endpoints are registered.
     control_enabled: bool,
 }
 
@@ -1020,7 +1020,7 @@ fn is_connection_error(e: &std::io::Error) -> bool {
 /// Build the axum router with public shell/static/health and auth-gated metrics.
 ///
 /// Control routes are registered only when `state.control_enabled` is true
-/// (otherwise POST /api/v1/control/* → 404). On a loopback bind every request
+/// (otherwise POST /api/v1/control/* and DELETE /api/v1/runs/{id} → 404). On a loopback bind every request
 /// must carry a loopback `Host`, so a page that rebinds its own domain to
 /// 127.0.0.1 cannot read the API.
 fn build_router(state: DashboardState, loopback_bind: bool) -> Router {
