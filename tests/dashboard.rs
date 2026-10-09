@@ -2067,6 +2067,12 @@ async fn test_saved_runs_routes() {
     let markdown = compare.text().await.unwrap();
     let delta = regex::Regex::new(r"\([+-]\d").unwrap();
     assert!(delta.is_match(&markdown), "{}", markdown);
+    // The first line names the run and the baseline, with when each started.
+    let named = regex::Regex::new(&format!(
+        r"^Run {newer} \(started \d{{4}}-\d{{2}}-\d{{2}} \d{{2}}:\d{{2}}:\d{{2}} UTC\) compared to baseline {older} \(started \d{{4}}-\d{{2}}-\d{{2}} \d{{2}}:\d{{2}}:\d{{2}} UTC\)\.\n\n"
+    ))
+    .unwrap();
+    assert!(named.is_match(&markdown), "{}", markdown);
 
     // A run with no requests can't be compared.
     let resp = get(

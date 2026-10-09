@@ -1469,15 +1469,22 @@ async fn compare_response(runs_dir: &str, id: String, baseline: Option<String>) 
     let Some(baseline) = baseline.filter(|b| runs::is_valid_run_id(b)) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let (Some((run_dir, run_json)), Some((_, baseline_json))) = (
+    let (Some((run_dir, run_json)), Some((baseline_dir, baseline_json))) = (
         run_file_path(runs_dir, &id, runs::REPORT_JSON),
         run_file_path(runs_dir, &baseline, runs::REPORT_JSON),
     ) else {
         return StatusCode::NOT_FOUND.into_response();
     };
     let (run_id, baseline_id) = (id.clone(), baseline.clone());
+    let run_dir_for_names = run_dir.clone();
     let compared = tokio::task::spawn_blocking(move || {
-        crate::metrics::compare_reports(&run_json, &run_id, &baseline_json, &baseline_id)
+        let report =
+            crate::metrics::compare_reports(&run_json, &run_id, &baseline_json, &baseline_id)?;
+        let mut out = compared_runs_line(&run_dir_for_names, &run_id, &baseline_dir, &baseline_id)
+            .into_bytes();
+        out.extend_from_slice(b"\n\n");
+        out.extend(report);
+        Ok::<_, String>(out)
     })
     .await;
     match compared {
@@ -1499,6 +1506,34 @@ async fn compare_response(runs_dir: &str, id: String, baseline: Option<String>) 
             .into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
+}
+
+/// The first line of a comparison: which run is compared to which baseline,
+/// with when each started, from their `run.json`.
+fn compared_runs_line(
+    run_dir: &Path,
+    run_id: &str,
+    baseline_dir: &Path,
+    baseline_id: &str,
+) -> String {
+    let started = |dir: &Path| {
+        runs::read_run_info(dir)
+            .map(|info| {
+                chrono::DateTime::parse_from_rfc3339(&info.started)
+                    .map(|time| {
+                        time.with_timezone(&chrono::Utc)
+                            .format("%Y-%m-%d %H:%M:%S UTC")
+                            .to_string()
+                    })
+                    .unwrap_or(info.started)
+            })
+            .unwrap_or_else(|| "at an unknown time".to_string())
+    };
+    format!(
+        "Run {run_id} (started {}) compared to baseline {baseline_id} (started {}).",
+        started(run_dir),
+        started(baseline_dir)
+    )
 }
 
 /// Authorize a metric API request.
