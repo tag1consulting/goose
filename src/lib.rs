@@ -91,15 +91,18 @@ pub(crate) const INVALID_USERS_MSG: &str = "users must be an integer between 1 a
 lazy_static! {
     // WORKER_ID is used to identify different works when running a gaggle.
     static ref WORKER_ID: AtomicUsize = AtomicUsize::new(0);
-    // Global used to count how many times ctrl-c has been pressed, reset each time a
-    // load test starts.
-    static ref CANCELED: Arc<RwLock<bool>> = Arc::new(RwLock::new(false));
+    // The reason the killswitch was first triggered (by Ctrl-C or by
+    // `trigger_killswitch`), or None while it is not triggered. Reset each
+    // time a load test starts.
+    static ref CANCELED: Arc<RwLock<Option<String>>> = Arc::new(RwLock::new(None));
 }
 
 /// Trigger the killswitch to stop the load test run.
 ///
-/// This function sets the global CANCELED flag to true, which will cause
-/// the test to stop gracefully at the next check point.
+/// This function records the reason and marks the killswitch as triggered,
+/// which will cause the test to stop gracefully at the next check point. Only
+/// the first reason is kept; later calls change nothing until the killswitch
+/// is reset when the next load test starts.
 ///
 /// # Arguments
 ///
@@ -114,32 +117,37 @@ lazy_static! {
 /// trigger_killswitch("Error rate exceeded 50% threshold");
 /// ```
 pub fn trigger_killswitch(reason: &str) {
-    match CANCELED.write() {
-        Ok(mut canceled) => {
-            if !*canceled {
-                info!("Killswitch triggered: {reason}");
-            }
-            *canceled = true;
-        }
-        Err(poisoned) => {
-            // If the lock is poisoned, we can still write to it
-            let mut canceled = poisoned.into_inner();
-            if !*canceled {
-                info!("Killswitch triggered: {reason}");
-            }
-            *canceled = true;
-        }
+    let mut canceled = match CANCELED.write() {
+        Ok(canceled) => canceled,
+        // If the lock is poisoned, we can still write to it
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    if canceled.is_none() {
+        info!("Killswitch triggered: {reason}");
+        *canceled = Some(reason.to_string());
     }
 }
 
 /// Check if the killswitch has been triggered.
 pub fn is_killswitch_triggered() -> bool {
+    killswitch_reason().is_some()
+}
+
+/// The reason the killswitch was first triggered, if it has been.
+pub(crate) fn killswitch_reason() -> Option<String> {
     match CANCELED.read() {
-        Ok(canceled) => *canceled,
-        Err(poisoned) => {
-            // If the lock is poisoned, we can still read from it
-            *poisoned.into_inner()
-        }
+        Ok(canceled) => canceled.clone(),
+        // If the lock is poisoned, we can still read from it
+        Err(poisoned) => poisoned.into_inner().clone(),
+    }
+}
+
+/// Clear the killswitch, so a new load test starts without the previous one's
+/// cancel.
+pub(crate) fn reset_killswitch() {
+    match CANCELED.write() {
+        Ok(mut canceled) => *canceled = None,
+        Err(poisoned) => *poisoned.into_inner() = None,
     }
 }
 
@@ -2640,6 +2648,9 @@ impl GooseAttack {
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> Result<(), GooseError> {
+        // A new run starts without the previous run's cancel.
+        reset_killswitch();
+
         // Run any configured test_start() functions.
         self.run_test_start().await.unwrap();
 
@@ -3190,7 +3201,7 @@ mod tests {
     #[serial_test::serial]
     async fn test_killswitch_functions() {
         // Reset the killswitch state for testing
-        *CANCELED.write().unwrap() = false;
+        reset_killswitch();
 
         // Initially, killswitch should not be triggered
         assert!(
@@ -3213,8 +3224,14 @@ mod tests {
         // Verify it's still triggered
         assert!(is_killswitch_triggered(), "Killswitch should remain true");
 
+        // Only the first reason is kept.
+        assert_eq!(
+            killswitch_reason().as_deref(),
+            Some("Test reason: threshold exceeded")
+        );
+
         // Reset for other tests
-        *CANCELED.write().unwrap() = false;
+        reset_killswitch();
 
         assert!(
             !is_killswitch_triggered(),
