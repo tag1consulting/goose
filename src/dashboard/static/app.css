@@ -519,8 +519,13 @@ footer {
   gap: 0.5rem 0.75rem;
 }
 
+/* Empty, it stays rendered with no box, so it stays in the accessibility
+   tree and screen readers announce what is written into it. */
 .run-banner:empty {
-  display: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
 }
 
 .run-banner.error {
