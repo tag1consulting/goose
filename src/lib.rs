@@ -2360,7 +2360,15 @@ impl GooseAttack {
             #[cfg(feature = "dashboard")]
             self.publish_save_state(goose_attack_run_state);
             if let Err(e) = reports {
-                // The run is saved; say so before failing on --report-file.
+                // Print the final metrics, and say the run is saved, before
+                // failing on --report-file.
+                if self.metrics.display_metrics {
+                    info!(
+                        "printing final metrics after {} seconds...",
+                        self.metrics.duration
+                    );
+                    print!("{}", self.metrics);
+                }
                 self.print_save_outcome();
                 return Err(e);
             }

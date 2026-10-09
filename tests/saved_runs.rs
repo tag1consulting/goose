@@ -235,6 +235,55 @@ async fn no_print_metrics_still_writes_report_file() {
     std::fs::remove_dir_all(&runs).ok();
 }
 
+/// The directory `get_index_then_remove_reports` removes, once.
+static REPORTS_DIR: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
+pub async fn get_index_then_remove_reports(user: &mut GooseUser) -> TransactionResult {
+    let _goose = user.get(INDEX_PATH).await?;
+    if let Some(dir) = REPORTS_DIR.lock().unwrap().take() {
+        std::fs::remove_dir_all(dir).ok();
+    }
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
+async fn report_file_error_after_the_run_is_returned_and_the_run_saved() {
+    let server = MockServer::start();
+    let _mock = setup_mock_server_endpoints(&server);
+    let runs = temp_dir("report-error");
+    let runs_str = runs.to_string_lossy().into_owned();
+    // --report-file in a directory the load test removes once it runs, so
+    // the report can be created at start but not written at the end.
+    let reports = temp_dir("report-error-out");
+    let report_str = reports.join("report.html").to_string_lossy().into_owned();
+    *REPORTS_DIR.lock().unwrap() = Some(reports.clone());
+
+    let configuration = common::build_configuration(
+        &server,
+        vec!["--runs-dir", &runs_str, "--report-file", &report_str],
+    );
+    let result = common::build_load_test(
+        configuration,
+        vec![scenario(transaction!(get_index_then_remove_reports))],
+        None,
+        None,
+    )
+    .execute()
+    .await;
+
+    assert!(
+        !reports.exists(),
+        "the transaction removed the reports directory"
+    );
+    assert!(result.is_err(), "the --report-file error is returned");
+    // The saved run is written all the same.
+    let dirs = run_dirs(&runs);
+    assert_eq!(dirs.len(), 1);
+    assert!(dirs[0].join("run.json").exists());
+    std::fs::remove_dir_all(&runs).ok();
+}
+
 #[cfg(unix)]
 #[tokio::test]
 #[serial]
