@@ -166,7 +166,34 @@ export async function openPage(path, from, serverToken, options = {}) {
       },
     });
   }
-  if (options.closedData !== undefined) {
+  // `eventStream`: an event stream the test drives, as `page.events.emit`.
+  const events = {
+    emit(type, payload) {
+      if (this.source) this.source.emit(type, payload);
+    },
+    source: null,
+  };
+  if (options.eventStream) {
+    window.EventSource = class {
+      static CLOSED = 2;
+      constructor() {
+        this.readyState = 1;
+        this.listeners = {};
+        events.source = this;
+      }
+      emit(type, payload) {
+        for (const listener of this.listeners[type] || []) {
+          listener(new window.MessageEvent(type, { data: payload }));
+        }
+      }
+      addEventListener(type, listener) {
+        (this.listeners[type] = this.listeners[type] || []).push(listener);
+      }
+      close() {
+        this.readyState = 2;
+      }
+    };
+  } else if (options.closedData !== undefined) {
     // An event stream that delivers one snapshot, then `closed` with this data.
     const data = options.closedData;
     window.EventSource = class {
@@ -214,7 +241,7 @@ export async function openPage(path, from, serverToken, options = {}) {
   };
   window.eval(APP_JS);
   await settle(window);
-  return { window, requests: server.requests, downloads };
+  return { window, requests: server.requests, downloads, events };
 }
 
 // Let the client's fetch promise chains run to completion: health, then the

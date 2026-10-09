@@ -60,8 +60,11 @@ const runsDeleteCol = optionalElement("runs-delete-col", HTMLElement);
 let listing: RunsListing | null = null;
 let showAll = false;
 const checked = new Set<string>();
-let lastPhase: string | null = null;
+// The last `save.last_run` seen; undefined until the first snapshot.
+let lastRunSeen: string | null | undefined = undefined;
 let loading = false;
+// A reload was asked for while a load was in flight.
+let reloadAgain = false;
 // Control is on: each run gets a Delete button.
 let controlEnabled = false;
 
@@ -242,11 +245,12 @@ export function updateSaveFromSnapshot(snap: DashboardSnapshot): void {
     saveStatusEl.className = "meta-item save-status save-" + save.state;
   }
   setRunBanner(save, snap.phase);
-  // A run has just ended: list it.
-  if (lastPhase !== null && lastPhase !== "idle" && snap.phase === "idle") {
+  // List the runs on the first snapshot, and again whenever another run has
+  // ended, however short it was: a poll every 2 s can miss its phases.
+  if (save.last_run !== lastRunSeen) {
+    lastRunSeen = save.last_run;
     loadRuns();
   }
-  lastPhase = snap.phase;
 }
 
 /**
@@ -411,7 +415,11 @@ function onCompareClick(): void {
 
 /** Fetch the saved runs and render them. Never on a timer. */
 export function loadRuns(): void {
-  if (!runsPanel || loading) return;
+  if (!runsPanel) return;
+  if (loading) {
+    reloadAgain = true;
+    return;
+  }
   loading = true;
   fetch("/api/v1/runs", { headers: authHeaders() })
     .then((res) => {
@@ -431,6 +439,10 @@ export function loadRuns(): void {
     })
     .then(() => {
       loading = false;
+      if (reloadAgain) {
+        reloadAgain = false;
+        loadRuns();
+      }
     });
 }
 
@@ -449,5 +461,4 @@ export function initRunsPanel(): void {
     });
   }
   if (runsCompare) runsCompare.addEventListener("click", onCompareClick);
-  loadRuns();
 }

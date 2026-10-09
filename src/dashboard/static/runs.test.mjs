@@ -315,3 +315,30 @@ test("Delete shows only with control on, confirms, and sends DELETE with the Bea
   assert.equal(listed(), before + 1);
   assert.equal(doc.getElementById("runs-error").hidden, true);
 });
+
+test("the list reloads whenever the last saved run changes, with no phase change", async () => {
+  const page = await openPage("/?token=" + TOKEN, FRESH, TOKEN, {
+    runs: LISTING,
+    eventStream: true,
+  });
+  const listed = () => page.requests.filter((r) => r.path === "/api/v1/runs").length;
+  const snapshot = (lastRun) =>
+    JSON.stringify({
+      ...IDLE_SNAPSHOT,
+      phase: "idle",
+      save: { state: "on", reason: null, dir: "goose-runs", last_run: lastRun },
+    });
+
+  // The first snapshot lists the runs.
+  page.events.emit("snapshot", snapshot("2026-10-09-141203"));
+  await settle(page.window);
+  assert.equal(listed(), 1);
+  page.events.emit("snapshot", snapshot("2026-10-09-141203"));
+  await settle(page.window);
+  assert.equal(listed(), 1, "the same last run lists nothing");
+
+  // A short run started and ended between two snapshots: both idle.
+  page.events.emit("snapshot", snapshot("2026-10-09-141203-2"));
+  await settle(page.window);
+  assert.equal(listed(), 2);
+});
