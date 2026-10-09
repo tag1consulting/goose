@@ -1900,7 +1900,9 @@ async fn delete_run_handler(
     match active_run(&state).await {
         Ok(Some(active)) if active == id => return StatusCode::CONFLICT.into_response(),
         Ok(_) => {}
-        Err(response) => return response,
+        Err((code, msg)) => {
+            return control_http_error(StatusCode::SERVICE_UNAVAILABLE, "delete", code, msg);
+        }
     }
     let run_dir = Path::new(&state.runs_dir).join(&id);
     // `remove_dir_all` removes a symlink inside the run directory, never
@@ -1926,21 +1928,14 @@ async fn delete_run_handler(
     }
 }
 
-/// Ask the main loop which run it is writing now. An error is the response
-/// to send instead, as for a control request the main loop can't answer.
-async fn active_run(state: &DashboardState) -> Result<Option<String>, Response<Body>> {
-    let unavailable = || {
-        control_http_error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "delete",
-            "unavailable",
-            "control unavailable",
-        )
-    };
+/// Ask the main loop which run it is writing now. An error is the code and
+/// message of a 503, as for a control request the main loop can't answer.
+async fn active_run(
+    state: &DashboardState,
+) -> Result<Option<String>, (&'static str, &'static str)> {
+    const UNAVAILABLE: (&str, &str) = ("unavailable", "control unavailable");
     let Some(_slot) = try_acquire_control_slot(state) else {
-        return Err(control_http_error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "delete",
+        return Err((
             "busy",
             "too many control requests in flight, wait and retry",
         ));
@@ -1951,11 +1946,11 @@ async fn active_run(state: &DashboardState) -> Result<Option<String>, Response<B
         .send(DashboardRequest::ActiveRun { respond })
         .is_err()
     {
-        return Err(unavailable());
+        return Err(UNAVAILABLE);
     }
     match tokio::time::timeout(CONTROL_TIMEOUT, respond_rx).await {
         Ok(Ok(active)) => Ok(active),
-        _ => Err(unavailable()),
+        _ => Err(UNAVAILABLE),
     }
 }
 
