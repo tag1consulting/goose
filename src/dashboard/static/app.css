@@ -501,3 +501,72 @@ footer {
   color: var(--muted);
   font-size: 0.85rem;
 }
+
+/* Saved runs */
+.save-status.save-failed {
+  color: var(--err);
+}
+
+.run-banner {
+  margin: 0.75rem 0 0;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+}
+
+.run-banner:empty {
+  display: none;
+}
+
+.run-banner.error {
+  border-color: color-mix(in srgb, var(--err) 50%, var(--border));
+  color: var(--err);
+}
+
+.run-downloads {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.run-download {
+  padding: 0.2rem 0.55rem;
+  font-size: 0.8rem;
+}
+
+.run-id {
+  font-variant-numeric: tabular-nums;
+  user-select: text;
+  white-space: nowrap;
+}
+
+.runs-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin-top: 0.65rem;
+}
+
+.runs-compare-note {
+  margin: 0;
+  color: var(--warn);
+  font-size: 0.9rem;
+}
+
+.runs-error {
+  color: var(--err);
+  font-size: 0.9rem;
+}
+
+#runs-panel button:focus-visible,
+#runs-panel input:focus-visible,
+.run-banner button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

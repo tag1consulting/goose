@@ -3,6 +3,12 @@
 
 import { setBanner, setConnection, type ConnectionMode } from "./status";
 
+/**
+ * Called once when Goose exits, with the `closed` event's data: the save
+ * state as JSON, or `1` from an older Goose.
+ */
+export type ClosedHandler = (data: string) => void;
+
 /** Renders one snapshot; the mode says which transport delivered it. */
 export type SnapshotHandler = (
   snap: DashboardSnapshot,
@@ -32,6 +38,7 @@ let authRequired = false;
 let authBlocked = false;
 let finished = false;
 let onSnapshot: SnapshotHandler | null = null;
+let onClosed: ClosedHandler | null = null;
 
 // sessionStorage access throws when storage is blocked; the token then lives
 // in memory only.
@@ -218,9 +225,13 @@ function startPollFallback(reason?: string): void {
   }
 }
 
-/** Opens the SSE stream, falling back to polling; `handler` renders. */
-export function startSse(handler: SnapshotHandler): void {
+/**
+ * Opens the SSE stream, falling back to polling; `handler` renders, and
+ * `closed` is told when Goose exits.
+ */
+export function startSse(handler: SnapshotHandler, closed?: ClosedHandler): void {
   onSnapshot = handler;
+  onClosed = closed || null;
   if (typeof EventSource === "undefined") {
     startPollFallback("SSE unavailable");
     return;
@@ -254,7 +265,8 @@ export function startSse(handler: SnapshotHandler): void {
     }
   });
 
-  eventSource.addEventListener("closed", () => {
+  eventSource.addEventListener("closed", (ev: MessageEvent) => {
+    if (finished) return;
     finished = true;
     try {
       if (eventSource) eventSource.close();
@@ -264,7 +276,11 @@ export function startSse(handler: SnapshotHandler): void {
     eventSource = null;
     stopPoll();
     setConnection("closed");
-    setBanner("Load test finished.", "info");
+    if (onClosed) {
+      onClosed(typeof ev.data === "string" ? ev.data : "");
+    } else {
+      setBanner("Goose has exited.", "info");
+    }
   });
 
   eventSource.onerror = () => {

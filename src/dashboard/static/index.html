@@ -16,6 +16,7 @@
       <span id="phase-badge" class="phase-badge phase-idle">idle</span>
       <span id="hosts" class="meta-item" title="Target hosts">—</span>
       <span id="duration" class="meta-item" title="Test duration">0s</span>
+      <span id="save-status" class="meta-item save-status" title="Saved runs"></span>
       <span id="connection" class="connection disconnected" title="Connection status">
         <span class="dot" aria-hidden="true"></span>
         <span id="connection-label">connecting</span>
@@ -24,6 +25,8 @@
   </header>
 
   <section id="banner" class="banner hidden" role="status"></section>
+
+  <div id="run-banner" class="run-banner" aria-live="polite"></div>
 
   <section id="control-panel" class="card control-panel hidden" aria-label="Load test control">
     <h2>Control</h2>
@@ -194,6 +197,37 @@
         <tbody id="errors-body"></tbody>
       </table>
     </div>
+  </section>
+
+  <section id="runs-panel" class="card" aria-labelledby="runs-heading">
+    <h2 id="runs-heading">Saved runs</h2>
+    <div class="table-wrap">
+      <table id="runs-table">
+        <thead>
+          <tr>
+            <th scope="col">Run</th>
+            <th scope="col">Started</th>
+            <th scope="col">Duration</th>
+            <th scope="col">Users</th>
+            <th scope="col">Requests</th>
+            <th scope="col">Failed</th>
+            <th scope="col">Ended</th>
+            <th scope="col">Test</th>
+            <th scope="col">Downloads</th>
+            <th scope="col">Compare</th>
+          </tr>
+        </thead>
+        <tbody id="runs-body"></tbody>
+      </table>
+    </div>
+    <p id="runs-empty" class="table-note">No saved runs yet.</p>
+    <div class="runs-actions">
+      <button type="button" id="runs-show-all" class="ctrl-btn" hidden>Show all</button>
+      <p id="runs-compare-note" class="runs-compare-note" hidden></p>
+      <button type="button" id="runs-compare" class="ctrl-btn" hidden>Download comparison</button>
+    </div>
+    <p id="runs-error" class="runs-error" role="status" hidden></p>
+    <p id="runs-footer" class="table-note"></p>
   </section>
 
   <footer>
