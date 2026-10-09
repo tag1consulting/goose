@@ -1072,7 +1072,7 @@ impl GooseUser {
             }
         };
 
-        let record_graph_data = !configuration.report_file.is_empty() || configuration.dashboard;
+        let record_graph_data = configuration.records_graph_data();
 
         Ok(GooseUser {
             started: Instant::now(),
@@ -3169,6 +3169,7 @@ impl GooseUser {
     ///         )
     ///         // Set a default run time so this test runs to completion.
     ///         .set_default(GooseDefault::RunTime, 1)?
+    ///         .set_default(GooseDefault::NoSave, true)?
     ///         .execute()
     ///         .await?;
     ///

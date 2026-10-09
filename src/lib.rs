@@ -143,9 +143,13 @@ pub(crate) fn killswitch_reason() -> Option<String> {
     }
 }
 
-/// Clear the killswitch, so a new load test starts without the previous one's
-/// cancel.
-pub(crate) fn reset_killswitch() {
+/// Clear the killswitch.
+///
+/// Goose clears it itself each time a load test starts, so a new run does not
+/// inherit the previous run's cancel. A test that triggers the killswitch can
+/// call this when it is done, so tests running after it in the same process
+/// are not canceled.
+pub fn reset_killswitch() {
     match CANCELED.write() {
         Ok(mut canceled) => *canceled = None,
         Err(poisoned) => *poisoned.into_inner() = None,
@@ -524,6 +528,14 @@ pub struct GooseAttack {
     metrics: GooseMetrics,
     /// All data for report graphs.
     graph_data: GraphData,
+    /// Set when a run starts and cleared once its reports are written, so a
+    /// shutdown with no run since the last one writes nothing.
+    run_in_progress: bool,
+    /// How the current run ended, and the killswitch reason when canceled.
+    /// The first cause recorded wins; unset means the plan completed.
+    ended_by: Option<(runs::EndedBy, Option<String>)>,
+    /// Saving runs to the runs directory.
+    saving: runs::Saving,
 }
 
 /// Match a pattern containing `*` wildcards against text.
@@ -588,6 +600,9 @@ impl GooseAttack {
             step_started: None,
             metrics: GooseMetrics::default(),
             graph_data: GraphData::new(),
+            run_in_progress: false,
+            ended_by: None,
+            saving: runs::Saving::default(),
         })
     }
 
@@ -625,6 +640,9 @@ impl GooseAttack {
             step_started: None,
             metrics: GooseMetrics::default(),
             graph_data: GraphData::new(),
+            run_in_progress: false,
+            ended_by: None,
+            saving: runs::Saving::default(),
         })
     }
 
@@ -1138,6 +1156,7 @@ impl GooseAttack {
     ///         )
     ///         // Exit after one second so test doesn't run forever.
     ///         .set_default(GooseDefault::RunTime, 1)?
+    ///         .set_default(GooseDefault::NoSave, true)?
     ///         .execute()
     ///         .await?;
     ///
@@ -1191,6 +1210,9 @@ impl GooseAttack {
 
         // Validate GooseConfiguration.
         self.configuration.validate()?;
+
+        // Check the runs directory, before any load.
+        self.check_runs_dir()?;
 
         // Display scenarios, then exit.
         if self.configuration.scenarios_list {
@@ -1251,10 +1273,8 @@ impl GooseAttack {
                 self.metrics.duration
             );
             print!("{}", self.metrics);
-
-            // Write reports
-            self.write_reports().await?;
         }
+        self.print_save_outcome();
 
         Ok(self.metrics)
     }
@@ -2233,16 +2253,28 @@ impl GooseAttack {
             self.metrics
                 .history
                 .push(TestPlanHistory::step(TestPlanStepAction::Finished, 0));
+            // Write the --report-file reports and save the run, only when a
+            // run happened since the last time (not on a shutdown from Idle).
+            let reports = if self.run_in_progress {
+                self.write_end_of_run().await
+            } else {
+                Ok(())
+            };
+            self.run_in_progress = false;
+            if let Err(e) = reports {
+                // The run is saved; say so before failing on --report-file.
+                self.print_save_outcome();
+                return Err(e);
+            }
             // Shutdown Goose or go into an idle waiting state.
             if goose_attack_run_state.shutdown_after_stop {
                 self.set_attack_phase(goose_attack_run_state, AttackPhase::Shutdown);
             } else {
                 // Print metrics, if enabled.
-                if !self.configuration.no_metrics {
+                if self.metrics.display_metrics {
                     println!("{}", self.metrics);
                 }
-                // Write reports, if enabled.
-                self.write_reports().await?;
+                self.print_save_outcome();
                 // Return to an Idle state.
                 self.set_attack_phase(goose_attack_run_state, AttackPhase::Idle);
             }
@@ -2452,6 +2484,7 @@ impl GooseAttack {
         goose_attack_run_state.shutdown_after_stop = false;
         // Don't automatically restart the load test.
         self.configuration.no_autostart = true;
+        self.set_ended_by(runs::EndedBy::Stopped, None);
         self.cancel_attack(goose_attack_run_state).await?;
 
         Ok(self.control_outcome(
@@ -2735,6 +2768,11 @@ impl GooseAttack {
         // Try to create the requested report files, to confirm access.
         self.create_reports().await?;
 
+        // Choose and create this run's directory, if saving runs.
+        self.start_saved_run()?;
+        self.run_in_progress = true;
+        self.ended_by = None;
+
         // Record when the GooseAttack officially started. series_started is the
         // continuous graph clock and is not restarted on metrics reset.
         let now = time::Instant::now();
@@ -2869,6 +2907,7 @@ impl GooseAttack {
 
                 // In Stand-alone mode, all users are started.
                 if goose_attack_run_state.users_shutdown.len() == self.test_plan.total_users() {
+                    self.set_ended_by(runs::EndedBy::UsersExited, None);
                     self.cancel_attack(goose_attack_run_state).await?;
                 }
 
@@ -2886,6 +2925,8 @@ impl GooseAttack {
                 // No metrics to display when sitting idle, so disable.
                 if self.attack_phase == AttackPhase::Idle {
                     self.metrics.display_metrics = false;
+                } else {
+                    self.set_ended_by(runs::EndedBy::Canceled, killswitch_reason());
                 }
 
                 // Cleanly stop the load test.
@@ -3246,7 +3287,8 @@ mod tests {
     #[serial_test::serial]
     async fn test_set_users_refused_while_stopping() {
         let configuration =
-            GooseConfiguration::parse_args_default(&["--no-telnet", "--no-websocket"]).unwrap();
+            GooseConfiguration::parse_args_default(&["--no-telnet", "--no-websocket", "--no-save"])
+                .unwrap();
         let mut goose_attack = GooseAttack::initialize_with_config(configuration).unwrap();
         let mut run_state = goose_attack.initialize_attack().await.unwrap();
 
@@ -3293,6 +3335,7 @@ mod tests {
     #[serial_test::serial]
     async fn test_set_users_out_of_bounds_refused() {
         let configuration = GooseConfiguration::parse_args_default(&[
+            "--no-save",
             "--no-telnet",
             "--no-websocket",
             "--test-plan",
@@ -3352,6 +3395,7 @@ mod tests {
         // A scenario and host let a Users that wrongly gets through launch
         // users and fail the assertion, rather than loop with nothing to weight.
         let configuration = GooseConfiguration::parse_args_default(&[
+            "--no-save",
             "--no-telnet",
             "--no-websocket",
             "--host",
@@ -3396,7 +3440,8 @@ mod tests {
         };
 
         let configuration =
-            GooseConfiguration::parse_args_default(&["--no-telnet", "--no-websocket"]).unwrap();
+            GooseConfiguration::parse_args_default(&["--no-telnet", "--no-websocket", "--no-save"])
+                .unwrap();
         let mut goose_attack = GooseAttack::initialize_with_config(configuration).unwrap();
         let mut run_state = goose_attack.initialize_attack().await.unwrap();
         let (controller_tx, controller_rx) = flume::unbounded();
@@ -3434,7 +3479,8 @@ mod tests {
     #[serial_test::serial]
     async fn test_dashboard_snapshot_carries_stopping() {
         let configuration =
-            GooseConfiguration::parse_args_default(&["--no-telnet", "--no-websocket"]).unwrap();
+            GooseConfiguration::parse_args_default(&["--no-telnet", "--no-websocket", "--no-save"])
+                .unwrap();
         let mut goose_attack = GooseAttack::initialize_with_config(configuration).unwrap();
         let mut run_state = goose_attack.initialize_attack().await.unwrap();
         let (dashboard_tx, dashboard_rx) = flume::unbounded();

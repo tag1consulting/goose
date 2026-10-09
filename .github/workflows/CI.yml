@@ -158,3 +158,12 @@ jobs:
       with:
         command: test 
         args: --verbose --all-features graph
+
+    # Goose saves every run to goose-runs/ by default; its own tests must not.
+    - name: 🔎 Tests wrote no saved runs
+      run: |
+        if [ -e goose-runs ]; then
+          echo "::error::the tests wrote goose-runs/ in the checkout; set --no-save or GooseDefault::NoSave where they build a configuration"
+          find goose-runs | head -50
+          exit 1
+        fi

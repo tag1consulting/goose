@@ -55,7 +55,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::OsStr;
 use std::fmt;
 use std::fmt::Write;
-use std::io::BufWriter;
+use std::io::{BufWriter, Write as _};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
@@ -1419,6 +1419,7 @@ impl ScenarioMetricAggregate {
 ///         .set_default(GooseDefault::Host, "http://localhost/")?
 ///         // Set a default run time so this test runs to completion.
 ///         .set_default(GooseDefault::RunTime, 1)?
+///         .set_default(GooseDefault::NoSave, true)?
 ///         .execute()
 ///         .await?;
 ///
@@ -3464,14 +3465,14 @@ impl MetricsProcessor {
 
     /// Prune GraphData to a trailing window when only the live dashboard needs series.
     ///
-    /// HTML/markdown reports need full-run history; when `report_file` is set we
-    /// never prune. Dashboard export uses at most [`dashboard_snapshot::SERIES_WINDOW_SECS`];
+    /// HTML/markdown reports need full-run history; when a run is saved or
+    /// `report_file` is set we never prune. Dashboard export uses at most [`dashboard_snapshot::SERIES_WINDOW_SECS`];
     /// we keep 2× that as a small buffer against edge flicker at the window boundary.
     ///
     /// Call only from low-frequency paths (`RecordUsers`, `GetDashboardSnapshot`),
     /// not from per-request/transaction/scenario handlers.
     fn maybe_prune_dashboard_graph(&mut self) {
-        if self.configuration.dashboard && self.configuration.report_file.is_empty() {
+        if self.configuration.dashboard && !self.configuration.keeps_full_graph() {
             let keep = dashboard_snapshot::SERIES_WINDOW_SECS.saturating_mul(2);
             self.graph_data.prune_to_window(keep);
         }
@@ -3610,7 +3611,7 @@ impl MetricsProcessor {
 
             self.record_request_metric(request_metric);
 
-            if !self.configuration.report_file.is_empty() || self.configuration.dashboard {
+            if self.configuration.records_graph_data() {
                 let seconds_since_start = (request_metric.elapsed / 1000) as usize;
 
                 let key = format!(
@@ -3643,7 +3644,7 @@ impl MetricsProcessor {
             [raw_transaction.transaction_index]
             .set_time(raw_transaction.run_time, raw_transaction.success);
 
-        if !self.configuration.report_file.is_empty() || self.configuration.dashboard {
+        if self.configuration.records_graph_data() {
             self.graph_data
                 .record_transactions_per_second((raw_transaction.elapsed / 1000) as usize);
         }
@@ -3653,7 +3654,7 @@ impl MetricsProcessor {
     fn process_scenario_metric(&mut self, raw_scenario: &ScenarioMetric) {
         self.metrics.scenarios[raw_scenario.index].update(raw_scenario.run_time, raw_scenario.user);
 
-        if !self.configuration.report_file.is_empty() || self.configuration.dashboard {
+        if self.configuration.records_graph_data() {
             self.graph_data
                 .record_scenarios_per_second((raw_scenario.elapsed / 1000) as usize);
         }
@@ -3825,7 +3826,7 @@ impl MetricsProcessor {
         }
 
         // 5. Apply graph data if a report file is configured or the dashboard is on.
-        if !self.configuration.report_file.is_empty() || self.configuration.dashboard {
+        if self.configuration.records_graph_data() {
             for ((key, second), entry) in batch.graph_request_data {
                 self.graph_data
                     .record_requests_per_second_batch(&key, second, entry.count);
@@ -3950,44 +3951,49 @@ impl GooseAttack {
         };
     }
 
-    /// Process all requested reports.
+    /// Process a set of reports: the `--report-file` reports or a saved run's.
     ///
     /// If `write` is true, then also write the data. Otherwise just create the files to ensure
-    /// we have access.
-    async fn process_reports(
+    /// we have access. `html` caches the HTML report so it is generated once
+    /// however many sets name an HTML file.
+    pub(crate) async fn process_reports(
         &self,
+        reports: &[String],
+        set: ReportSet,
         write: bool,
         baseline: Option<&ReportData<'static>>,
+        html: &mut Option<String>,
     ) -> Result<(), GooseError> {
         let create = |path: PathBuf| async move {
             File::create(&path)
                 .await
-                .map_err(|err| GooseError::InvalidOption {
-                    option: "--report-file".to_string(),
-                    value: path.to_string_lossy().to_string(),
-                    detail: format!("Failed to create report file: {err}"),
-                })
+                .map_err(|err| set.io_error(&path.to_string_lossy(), err))
         };
 
-        for report in &self.configuration.report_file {
+        for report in reports {
             let path = PathBuf::from(report);
             match path.extension().map(OsStr::to_string_lossy).as_deref() {
                 Some("html" | "htm") => {
                     let file = create(path).await?;
                     if write {
-                        self.write_html_report(file, report, baseline).await?;
+                        let content = match html {
+                            Some(content) => content,
+                            None => html.insert(self.generate_html_report_content(baseline)?),
+                        };
+                        self.write_html_report(file, report, set, content).await?;
                     }
                 }
                 Some("json") => {
                     let file = create(path).await?;
                     if write {
-                        self.write_json_report(file, report, baseline).await?;
+                        self.write_json_report(file, report, set, baseline).await?;
                     }
                 }
                 Some("md") => {
                     let file = create(path).await?;
                     if write {
-                        self.write_markdown_report(file, report, baseline).await?;
+                        self.write_markdown_report(file, report, set, baseline)
+                            .await?;
                     }
                 }
                 #[cfg(feature = "pdf-reports")]
@@ -4028,22 +4034,33 @@ impl GooseAttack {
 
     /// Create all requested reports, to ensure we have access.
     pub(crate) async fn create_reports(&self) -> Result<(), GooseError> {
-        self.process_reports(false, None).await
+        self.process_reports(
+            &self.configuration.report_file,
+            ReportSet::ReportFiles,
+            false,
+            None,
+            &mut None,
+        )
+        .await
     }
 
-    /// Write all requested reports.
-    pub(crate) async fn write_reports(&self) -> Result<(), GooseError> {
-        // Load baseline once for all report writers.
-        let baseline = match &self.configuration.baseline_file {
-            Some(baseline_file) => Some(common::load_baseline_file(baseline_file)?),
-            None => None,
-        };
-
-        self.process_reports(true, baseline.as_ref()).await?;
+    /// Write all `--report-file` reports, and `--pdf-print-html` if set.
+    pub(crate) async fn write_report_files(
+        &self,
+        baseline: Option<&ReportData<'static>>,
+        html: &mut Option<String>,
+    ) -> Result<(), GooseError> {
+        self.process_reports(
+            &self.configuration.report_file,
+            ReportSet::ReportFiles,
+            true,
+            baseline,
+            html,
+        )
+        .await?;
 
         // Write PDF-optimized HTML if configured (always available)
-        self.write_print_html_if_configured(baseline.as_ref())
-            .await?;
+        self.write_print_html_if_configured(baseline).await?;
 
         Ok(())
     }
@@ -4328,13 +4345,17 @@ impl GooseAttack {
         &self,
         report_file: File,
         path: &str,
+        set: ReportSet,
         baseline: Option<&ReportData<'static>>,
     ) -> Result<(), GooseError> {
         let data = self.prepare_report_data(baseline)?;
 
-        serde_json::to_writer_pretty(BufWriter::new(report_file.into_std().await), &data)?;
+        let mut writer = BufWriter::new(report_file.into_std().await);
+        serde_json::to_writer_pretty(&mut writer, &data)?;
+        // Flush here: an error on drop would be lost.
+        writer.flush().map_err(|err| set.io_error(path, err))?;
 
-        info!("json report file written to: {path}");
+        set.log_written("json", path);
 
         Ok(())
     }
@@ -4344,13 +4365,17 @@ impl GooseAttack {
         &self,
         report_file: File,
         path: &str,
+        set: ReportSet,
         baseline: Option<&ReportData<'static>>,
     ) -> Result<(), GooseError> {
         let data = self.prepare_report_data(baseline)?;
 
-        report::write_markdown_report(&mut BufWriter::new(report_file.into_std().await), data)?;
+        let mut writer = BufWriter::new(report_file.into_std().await);
+        report::write_markdown_report(&mut writer, data)?;
+        // Flush here: an error on drop would be lost.
+        writer.flush().map_err(|err| set.io_error(path, err))?;
 
-        info!("markdown report file written to: {path}");
+        set.log_written("markdown", path);
 
         Ok(())
     }
@@ -4360,23 +4385,20 @@ impl GooseAttack {
         &self,
         mut report_file: File,
         path: &str,
-        baseline: Option<&ReportData<'static>>,
+        set: ReportSet,
+        report: &str,
     ) -> Result<(), GooseError> {
-        // Generate HTML report content using the shared function
-        let report = self.generate_html_report_content(baseline)?;
-
         // Write the report to file.
         if let Err(e) = report_file.write_all(report.as_ref()).await {
-            return Err(GooseError::InvalidOption {
-                option: "--report-file".to_string(),
-                value: path.to_string(),
-                detail: format!("Failed to create report file: {e}"),
-            });
+            return Err(set.io_error(path, e));
         };
         // Be sure the file flushes to disk.
-        report_file.flush().await?;
+        report_file
+            .flush()
+            .await
+            .map_err(|err| set.io_error(path, err))?;
 
-        info!("html report file written to: {path}");
+        set.log_written("html", path);
 
         Ok(())
     }
@@ -4447,6 +4469,38 @@ impl GooseAttack {
             value: path.to_string(),
             detail: "PDF reports require compiling with the 'pdf-reports' feature flag".to_string(),
         })
+    }
+}
+
+/// Which reports [`GooseAttack::process_reports`] writes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ReportSet {
+    /// The `--report-file` reports: a failure is an invalid option.
+    ReportFiles,
+    /// A saved run's reports: a failure is the I/O error alone, reported as
+    /// a warning by the caller.
+    SavedRun,
+}
+
+impl ReportSet {
+    /// The error for an I/O failure on the report at `path`.
+    fn io_error(self, path: &str, err: std::io::Error) -> GooseError {
+        match self {
+            ReportSet::ReportFiles => GooseError::InvalidOption {
+                option: "--report-file".to_string(),
+                value: path.to_string(),
+                detail: format!("Failed to create report file: {err}"),
+            },
+            ReportSet::SavedRun => GooseError::Io(err),
+        }
+    }
+
+    /// Log a written report; a saved run's are listed together when it ends.
+    fn log_written(self, kind: &str, path: &str) {
+        match self {
+            ReportSet::ReportFiles => info!("{kind} report file written to: {path}"),
+            ReportSet::SavedRun => debug!("{kind} report file written to: {path}"),
+        }
     }
 }
 
@@ -5285,6 +5339,7 @@ mod test {
         let configuration = GooseConfiguration {
             dashboard: false,
             report_file: Vec::new(),
+            no_save: true,
             ..Default::default()
         };
 
@@ -5297,7 +5352,7 @@ mod test {
         let window = processor.graph_data.export_series_window(300);
         assert!(
             window.rps.is_empty(),
-            "series must stay empty when neither report_file nor dashboard is set"
+            "series must stay empty when no run is saved and neither report_file nor dashboard is set"
         );
     }
 
@@ -5306,9 +5361,11 @@ mod test {
         // Multi-hour soaks with --dashboard (no --report-file) must not retain
         // unbounded per-second series; keep 2× SERIES_WINDOW_SECS max.
         // Pruning runs from low-frequency RecordUsers / snapshot, not per request.
+        // A saved run keeps the full series, so this needs --no-save.
         let configuration = GooseConfiguration {
             dashboard: true,
             report_file: Vec::new(),
+            no_save: true,
             ..Default::default()
         };
         let mut processor = make_dashboard_test_processor(configuration);
@@ -5361,6 +5418,7 @@ mod test {
         let configuration = GooseConfiguration {
             dashboard: true,
             report_file: vec!["report.html".to_string()],
+            no_save: true,
             ..Default::default()
         };
         let mut processor = make_dashboard_test_processor(configuration);
@@ -5377,6 +5435,37 @@ mod test {
         assert!(
             processor.graph_data.max_series_len_for_test() > far_second,
             "report_file path must retain full series, got len {}",
+            processor.graph_data.max_series_len_for_test()
+        );
+    }
+
+    #[test]
+    fn graph_data_not_pruned_when_saving_runs() {
+        // The default: the dashboard is on and the run is saved, so the saved
+        // report needs every second even without --report-file.
+        let configuration = GooseConfiguration {
+            dashboard: true,
+            report_file: Vec::new(),
+            ..Default::default()
+        };
+        assert!(configuration.saves_runs());
+        let mut processor = make_dashboard_test_processor(configuration);
+
+        let far_second = dashboard_snapshot::SERIES_WINDOW_SECS as usize * 2 + 200;
+        for sec in 0..=far_second {
+            let mut request = make_test_request_metric();
+            request.elapsed = (sec as u64) * 1000;
+            request.response_time = 5;
+            processor.process_request_metric(&request);
+        }
+        let shutdown = processor.handle_command(MetricsCommand::RecordUsers {
+            active_users: 1,
+            elapsed_secs: far_second,
+        });
+        assert!(!shutdown);
+        assert!(
+            processor.graph_data.max_series_len_for_test() > far_second,
+            "a saved run must retain the full series, got len {}",
             processor.graph_data.max_series_len_for_test()
         );
     }

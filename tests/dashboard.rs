@@ -119,6 +119,7 @@ fn build_dashboard_config(
         "--co-mitigation".into(),
         "disabled".into(),
         "--quiet".into(),
+        "--no-save".into(),
         "--host".into(),
         server.base_url(),
     ];
@@ -160,6 +161,7 @@ fn build_control_config(
         "--co-mitigation".into(),
         "disabled".into(),
         "--quiet".into(),
+        "--no-save".into(),
         "--host".into(),
         server.base_url(),
     ]);

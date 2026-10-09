@@ -30,6 +30,12 @@ pub fn build_configuration(server: &MockServer, custom: Vec<&str>) -> GooseConfi
     // Merge in all custom options first.
     configuration.extend_from_slice(&custom);
 
+    // Goose's own tests never save runs to `goose-runs/` in the repository;
+    // a test that saves passes its own temporary `--runs-dir`.
+    if !configuration.contains(&"--runs-dir") {
+        configuration.push("--no-save");
+    }
+
     // If not building a Worker configuration, set some defaults.
     if !configuration.contains(&"--worker") {
         // Default to using mock server if not otherwise configured.
