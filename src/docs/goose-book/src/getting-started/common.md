@@ -242,7 +242,7 @@ GooseAttack::initialize()?
     .set_default(GooseDefault::NoSave, true)?
 ```
 
-A saved run's HTML report graphs every second of the run, so Goose keeps per second data for the whole run in memory, as it does with an HTML `--report-file`. It costs about 12 bytes per request name per second at steady state, and up to 4 times that while the report is written:
+A saved run's HTML report graphs every second of the run, so every saved run records per second graph data and keeps all of it for the whole run in memory, as an HTML `--report-file` does. That includes runs without `--dashboard` or `--report-file`, which recorded none before saving became the default. It costs about 12 bytes per request name per second at steady state, and up to 4 times that while the report is written:
 
 | run length | 20 request names | 100 request names |
 |-|-|-|
@@ -251,7 +251,7 @@ A saved run's HTML report graphs every second of the run, so Goose keeps per sec
 | 24 hours | 21 MB | 100 MB |
 | 7 days | 145 MB | 730 MB |
 
-On long soak tests, use `--no-save` (without `--report-file`) to keep memory flat.
+On long soak tests, use `--no-save` (without `--report-file`) to keep memory flat. `--no-save` restores the earlier behaviour: no per second graph data is recorded without `--dashboard` or `--report-file`, and a `--dashboard` run keeps only the dashboard's 10 minute window.
 
 ```bash
 cargo run --release -- --run-time 7d --no-save
