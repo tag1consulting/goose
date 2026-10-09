@@ -1331,8 +1331,10 @@ async fn run_file_handler(
     report_file_response(&state.runs_dir, &id, name).await
 }
 
-/// The run directory for `id`, if it is a real directory holding `file` as a
-/// regular file. `id` must already be valid and `file` one of the fixed names.
+/// The run directory for `id`, if it is a real directory holding `file` and
+/// `run.json` as regular files: a run still being written, or whose save
+/// failed, has no `run.json` and is not served. `id` must already be valid
+/// and `file` one of the fixed names.
 fn run_file_path(
     runs_dir: &str,
     id: &str,
@@ -1340,7 +1342,10 @@ fn run_file_path(
 ) -> Option<(std::path::PathBuf, std::path::PathBuf)> {
     let run_dir = Path::new(runs_dir).join(id);
     let path = run_dir.join(file);
-    if runs::is_real_dir(&run_dir) && runs::is_regular_file(&path) {
+    if runs::is_real_dir(&run_dir)
+        && runs::is_regular_file(&run_dir.join(runs::RUN_JSON))
+        && runs::is_regular_file(&path)
+    {
         Some((run_dir, path))
     } else {
         None

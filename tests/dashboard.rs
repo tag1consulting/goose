@@ -1967,9 +1967,16 @@ async fn test_saved_runs_routes() {
         serde_json::to_string(&run_json).unwrap(),
     )
     .unwrap();
-    // Not listed and not served: an incomplete run, a name that is not an
-    // id, and a symlink to a real run.
+    // Not listed and not served: an incomplete run (its reports but no
+    // run.json), a name that is not an id, and a symlink to a real run.
     std::fs::create_dir(runs.join("2002-02-02-000000")).unwrap();
+    for file in ["report.html", "report.json", "report.md"] {
+        std::fs::copy(
+            runs.join(&older).join(file),
+            runs.join("2002-02-02-000000").join(file),
+        )
+        .unwrap();
+    }
     std::fs::create_dir(runs.join("not-a-run")).unwrap();
     #[cfg(unix)]
     std::os::unix::fs::symlink(runs.join(&older), runs.join("2003-03-03-000000")).unwrap();
@@ -2072,6 +2079,25 @@ async fn test_saved_runs_routes() {
     let reason = resp.text().await.unwrap();
     assert_eq!(reason, format!("Run {empty} has no requests to compare."));
 
+    // Added after the listing: a real run directory whose report.html is a
+    // symlink to a file outside the runs directory.
+    let outside = saved_runs_dir("outside");
+    std::fs::write(outside.join("secret.html"), "outside the runs directory").unwrap();
+    std::fs::create_dir(runs.join("2004-04-04-000000")).unwrap();
+    for file in ["run.json", "report.json", "report.md"] {
+        std::fs::copy(
+            runs.join(&older).join(file),
+            runs.join("2004-04-04-000000").join(file),
+        )
+        .unwrap();
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(
+        outside.join("secret.html"),
+        runs.join("2004-04-04-000000").join("report.html"),
+    )
+    .unwrap();
+
     // Bad ids, files and traversal attempts are plain 404s.
     for path in [
         "/api/v1/runs/2026-10-09-141203/report.html".to_string(),
@@ -2086,8 +2112,10 @@ async fn test_saved_runs_routes() {
         format!("/api/v1/runs/{newer}/compare.md?baseline=..%2F{older}"),
         format!("/api/v1/runs/{newer}/compare.md?baseline=2002-02-02-000000"),
         "/api/v1/runs/2002-02-02-000000/report.html".to_string(),
+        "/api/v1/runs/2002-02-02-000000/report.json".to_string(),
         "/api/v1/runs/not-a-run/report.html".to_string(),
         "/api/v1/runs/2003-03-03-000000/report.html".to_string(),
+        "/api/v1/runs/2004-04-04-000000/report.html".to_string(),
     ] {
         let resp = get(path.clone(), true).await.unwrap();
         assert_eq!(resp.status(), 404, "{}", path);
@@ -2095,6 +2123,7 @@ async fn test_saved_runs_routes() {
 
     load.abort().await;
     std::fs::remove_dir_all(&runs).ok();
+    std::fs::remove_dir_all(&outside).ok();
 }
 
 /// Read SSE from `resp` until `event: closed` and return its data.
