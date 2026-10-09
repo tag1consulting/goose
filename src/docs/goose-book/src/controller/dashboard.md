@@ -331,8 +331,10 @@ These counters are ops-safe (timing and client counts only). The response does *
 - **Connection indicator** — green for SSE, yellow for poll fallback, red when disconnected
 - **KPI strip** — users, RPS, fail %, p95, average latency
 - **Charts** — trailing series window (default 300 seconds) for RPS + failures/s, active users, and average latency
-- **Sortable tables** — top request and error rows (truncated server-side for large runs)
+- **Sortable tables** — Scenarios, Transactions, Requests and Errors. The scenario and transaction tables list every registered scenario and transaction and are never truncated; the request and error tables show the top rows (truncated server-side for large runs)
 - **Control panel** (only when `--dashboard-control`) — Start / Stop / target users; see [Controlling a load test from the dashboard](#controlling-a-load-test-from-the-dashboard)
+
+Transaction times cover the whole transaction function, so they include `--throttle-requests` delays and any sleep inside it, and scenario times include the wait after each transaction. Every registered scenario and transaction has a row, so a scenario excluded by `--scenarios`, or one no user was assigned to, stays at 0 runs.
 
 When control is off there are **no control buttons**. Use the Controllers (or enable dashboard control) to change the running test.
 
@@ -346,13 +348,15 @@ The browser SPA lives under `src/dashboard/static/`. **Edit the TypeScript modul
 | `src/connection.ts` | Access token handling, SSE stream, poll fallback, snapshot fetch and version check |
 | `src/control.ts` | Control panel, its POSTs, and the phase badge |
 | `src/charts.ts` | Chart.js setup and chart updates |
-| `src/tables.ts` | Sorting, filtering, and the requests and errors tables |
+| `src/tables.ts` | The shared sortable table (sorting, filtering, empty states) and the scenarios, transactions, requests and errors tables |
 | `src/format.ts` | Number and duration formatting, and the small DOM builders the summary and tables share |
 | `src/status.ts` | Banner and connection indicator |
 | `src/dom.ts` | Element lookup that checks each element's type |
 | `snapshot.d.ts` | **Generated** types of the snapshot JSON, from the Rust structs in `src/metrics/dashboard_snapshot.rs` |
 | `tsconfig.json` / `package.json` | TypeScript type check and esbuild bundle config |
-| `token.test.mjs` | Client tests run in jsdom against the bundled `app.js` (`npm test`) |
+| `token.test.mjs` | Client tests of access token handling, run in jsdom against the bundled `app.js` (`npm test`) |
+| `tables.test.mjs` | Client tests of the four tables, run in jsdom against the bundled `app.js` (`npm test`) |
+| `test-harness.mjs` | The jsdom page loader and stub server both client test files share |
 | `app.js` | **Bundled output** (the modules plus Chart.js), embedded by the Rust server via `include_str!` |
 | `index.html`, `app.css` | Shell and styles (not generated) |
 
@@ -431,17 +435,24 @@ Enabling `--dashboard` turns on the same per-second **GraphData** series collect
 
 - Per-second counters for requests, errors, users, and average latency are retained for the duration of the test.
 - Memory scales with unique request names × run length (same class of cost as generating HTML graphs).
-- Snapshot tables truncate to the top rows (`flags.requests_truncated` / `flags.errors_truncated` when capped); series charts use a fixed trailing window (default 5 minutes).
+- Request and error tables truncate to the top rows (`flags.requests_truncated` / `flags.errors_truncated` when capped); series charts use a fixed trailing window (default 5 minutes).
 
 With no SSE client connected and no `GET /api/v1/snapshot` in the last two seconds (`/api/v1/health` does not count), the dashboard issues **no** snapshot builds (no extra metrics-processor work beyond GraphData recording). When clients are connected, snapshots are coalesced to about **1 Hz** for all viewers. Concurrent SSE clients are capped (default **32**, tunable with `--dashboard-max-clients`); further clients receive HTTP 503.
 
-Each snapshot build (while clients are connected or polling) runs on the **metrics processor** task: it drains pending metrics, exports the trailing series window, and builds percentile maps for the aggregate plus up to 100 request rows. That cost scales with unique request names and the timing histograms Goose already maintains; the attack main loop does **not** await the build. Under extreme cardinality, prefer fewer unique request names, a shorter test, or disable the dashboard if you need absolute minimal overhead (same trade-off as `--report-file`).
+Each snapshot build (while clients are connected or polling) runs on the **metrics processor** task: it drains pending metrics, exports the trailing series window, and builds percentile maps for the aggregate, up to 100 request rows, and one row per scenario and transaction, a number fixed by the load test's code. That cost scales with unique request names and the timing histograms Goose already maintains; the attack main loop does **not** await the build. Under extreme cardinality, prefer fewer unique request names, a shorter test, or disable the dashboard if you need absolute minimal overhead (same trade-off as `--report-file`).
 
 For extreme runs with tens of thousands of unique request names, expect higher GraphData memory (same as `--report-file`). Disable the dashboard if you need absolute minimal overhead, just as you can disable Controllers with `--no-telnet --no-websocket`.
 
 ## Metrics disabled
 
 If Goose is started with `--no-metrics`, the dashboard still serves the shell and health endpoint, but snapshots report `flags.metrics_disabled: true` with empty request/error tables and empty series. The UI surfaces an honest empty state rather than fabricating data.
+
+Scenario and transaction metrics can also be turned off on their own:
+
+- `--no-transaction-metrics` sets `flags.transaction_metrics_disabled: true`; `transactions` is empty and the Transactions table says transaction metrics are disabled.
+- `--no-scenario-metrics` sets `flags.scenario_metrics_disabled: true`; `scenarios` is empty and the Scenarios table says scenario metrics are disabled.
+
+Both flags are also true under `--no-metrics`, where both tables say metrics are disabled.
 
 ## Security notes (summary)
 

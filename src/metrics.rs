@@ -3449,6 +3449,8 @@ impl MetricsProcessor {
                         series_window_secs,
                         no_status_codes: self.configuration.no_status_codes,
                         metrics_disabled: self.configuration.no_metrics,
+                        no_transaction_metrics: self.configuration.no_transaction_metrics,
+                        no_scenario_metrics: self.configuration.no_scenario_metrics,
                     },
                 );
                 let _ = respond.send(snapshot);

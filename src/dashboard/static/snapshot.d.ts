@@ -31,7 +31,16 @@ maximum_users: number,
  * Current test-plan step target — users the attack is increasing or
  * decreasing toward (not the historical peak).
  */
-target_users: number, total_users: number, hosts: Array<string>, aggregate: AggregateMetrics, requests: Array<RequestRow>, errors: Array<ErrorRow>, series: SeriesWindow, flags: SnapshotFlags, };
+target_users: number, total_users: number, hosts: Array<string>, aggregate: AggregateMetrics, requests: Array<RequestRow>, errors: Array<ErrorRow>,
+/**
+ * One row per registered scenario, in registration order. Never truncated.
+ */
+scenarios: Array<ScenarioRow>,
+/**
+ * One row per registered transaction, grouped by scenario, each group in
+ * registration order. Never truncated.
+ */
+transactions: Array<TransactionRow>, series: SeriesWindow, flags: SnapshotFlags, };
 
 type ErrorRow = { method: string, name: string, error: string, occurrences: number, };
 
@@ -39,10 +48,56 @@ type Percentiles = { p50: number, p95: number, p99: number, };
 
 type RequestRow = { method: string, name: string, request_count: number, failure_count: number, requests_per_second: number, failures_per_second: number, response_time_avg_ms: number, response_time_min_ms: number, response_time_max_ms: number, percentile_ms: Percentiles, status_codes: Array<[number, number]>, };
 
+type ScenarioRow = {
+/**
+ * Goose's own scenario index, counted from 0 in registration order. The
+ * dashboard shows it counted from 1.
+ */
+scenario_index: number, scenario_name: string,
+/**
+ * Distinct users that have finished at least one run of this scenario
+ * since the last metrics reset; not the users running it now.
+ */
+users: number,
+/**
+ * Completed passes through the scenario's weighted transactions.
+ */
+run_count: number, runs_per_second: number, response_time_avg_ms: number, response_time_min_ms: number, response_time_max_ms: number, percentile_ms: Percentiles, };
+
 type SeriesWindow = {
 /**
  * First exported bucket index in seconds-from-test-start.
  */
 start_second: number, rps: Array<number>, fps: Array<number>, users: Array<number>, avg_latency_ms: Array<number>, };
 
-type SnapshotFlags = { metrics_disabled: boolean, requests_truncated: boolean, errors_truncated: boolean, series_seconds: number, };
+type SnapshotFlags = { metrics_disabled: boolean,
+/**
+ * True under `--no-transaction-metrics`, and under `--no-metrics` too;
+ * `transactions` is then empty.
+ */
+transaction_metrics_disabled: boolean,
+/**
+ * True under `--no-scenario-metrics`, and under `--no-metrics` too;
+ * `scenarios` is then empty.
+ */
+scenario_metrics_disabled: boolean, requests_truncated: boolean, errors_truncated: boolean, series_seconds: number, };
+
+type TransactionRow = {
+/**
+ * Goose's own scenario index, counted from 0 in registration order. The
+ * dashboard shows it counted from 1.
+ */
+scenario_index: number, scenario_name: string,
+/**
+ * Goose's own transaction index within its scenario, counted from 0 in
+ * registration order. The dashboard shows it counted from 1.
+ */
+transaction_index: number,
+/**
+ * Empty when the transaction has no name.
+ */
+transaction_name: string,
+/**
+ * Successful plus failed runs.
+ */
+run_count: number, failure_count: number, runs_per_second: number, failures_per_second: number, response_time_avg_ms: number, response_time_min_ms: number, response_time_max_ms: number, percentile_ms: Percentiles, };

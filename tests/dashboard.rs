@@ -57,7 +57,7 @@ async fn get_index(user: &mut GooseUser) -> TransactionResult {
 }
 
 fn get_transactions() -> Scenario {
-    scenario!("DashboardLoad").register_transaction(transaction!(get_index))
+    scenario!("DashboardLoad").register_transaction(transaction!(get_index).set_name("index"))
 }
 
 /// Options for control-enabled dashboard load tests.
@@ -1458,6 +1458,76 @@ async fn test_dashboard_series_without_report_file() {
         rps_sum > 0.0,
         "requests per second series must have nonzero samples without --report-file"
     );
+
+    // The transactions table fills from the metrics Goose already keeps.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut transaction = serde_json::Value::Null;
+    let mut flags = serde_json::Value::Null;
+    while Instant::now() < deadline {
+        if let Ok(snap) = get_snapshot_json(&client, &base, None).await {
+            if snap["transactions"][0]["run_count"].as_u64().unwrap_or(0) > 0 {
+                transaction = snap["transactions"][0].clone();
+                flags = snap["flags"].clone();
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    assert!(
+        transaction["run_count"].as_u64().unwrap_or(0) > 0,
+        "transactions[0] must record runs: {}",
+        transaction
+    );
+    assert_eq!(transaction["scenario_name"], "DashboardLoad");
+    assert_eq!(transaction["transaction_name"], "index");
+    assert_eq!(flags["transaction_metrics_disabled"], false);
+    assert_eq!(flags["scenario_metrics_disabled"], false);
+
+    let _metrics = load.join().await.expect("load test execute");
+}
+
+/// With `--no-transaction-metrics --no-scenario-metrics` the snapshot says
+/// both tables are off, while request metrics still flow.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn test_dashboard_scenario_and_transaction_metrics_disabled() {
+    let server = MockServer::start();
+    let _mocks = setup_mock_endpoints(&server);
+    let port = reserve_port();
+    let base_v4 = format!("http://127.0.0.1:{port}");
+
+    let mut configuration = build_dashboard_config(&server, "127.0.0.1", port, None);
+    configuration.run_time = "5".to_string();
+    configuration.no_transaction_metrics = true;
+    configuration.no_scenario_metrics = true;
+
+    let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
+    let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
+
+    let (base, _health) = wait_for_health(&[&base_v4], 80).await;
+    let client = reqwest::Client::new();
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut snap = serde_json::Value::Null;
+    while Instant::now() < deadline {
+        if let Ok(s) = get_snapshot_json(&client, &base, None).await {
+            if s["requests"].as_array().is_some_and(|r| !r.is_empty()) {
+                snap = s;
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    assert!(
+        snap["requests"].as_array().is_some_and(|r| !r.is_empty()),
+        "request rows must appear: {}",
+        snap
+    );
+    assert_eq!(snap["scenarios"], serde_json::json!([]));
+    assert_eq!(snap["transactions"], serde_json::json!([]));
+    assert_eq!(snap["flags"]["transaction_metrics_disabled"], true);
+    assert_eq!(snap["flags"]["scenario_metrics_disabled"], true);
+    assert_eq!(snap["flags"]["metrics_disabled"], false);
 
     let _metrics = load.join().await.expect("load test execute");
 }
