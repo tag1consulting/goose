@@ -2321,8 +2321,12 @@ impl GooseAttack {
                 let _ = tokio::join!(logger.unwrap());
             }
 
-            // Stop any running GooseUser threads.
-            self.stop_attack().await?;
+            // Run test_stop and mark the metrics final, only when a run
+            // happened since the last time: leaving Idle has nothing to stop,
+            // and test_stop already ran when the run itself ended.
+            if self.run_in_progress {
+                self.stop_attack().await?;
+            }
 
             // Record final users for the users-per-second graph before shutting
             // down the metrics processor. Use the continuous series clock so

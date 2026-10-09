@@ -2130,6 +2130,7 @@ async fn wait_for_saved_runs(runs: &std::path::Path, count: usize) {
 async fn start_saved_dashboard_run(
     server: &MockServer,
     runs: &std::path::Path,
+    stop: Option<&Transaction>,
 ) -> (LoadTestGuard, String, tokio::sync::oneshot::Sender<()>) {
     let port = reserve_port();
     let base_v4 = format!("http://127.0.0.1:{port}");
@@ -2140,7 +2141,7 @@ async fn start_saved_dashboard_run(
     let ready = arm_test_ready();
     let start = transaction!(wait_for_test_ready);
     let goose_attack =
-        common::build_load_test(configuration, vec![get_transactions()], Some(&start), None);
+        common::build_load_test(configuration, vec![get_transactions()], Some(&start), stop);
     let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
     let (base, _) = wait_for_health(&[&base_v4], 80).await;
     (load, base, ready)
@@ -2161,7 +2162,7 @@ async fn test_dashboard_waits_after_autostarted_run() {
     // A tab connected when the run ends: Goose goes idle and the run can be
     // downloaded; once the tab closes, Goose exits after the grace.
     let runs = saved_runs_dir("wait");
-    let (load, base, ready) = start_saved_dashboard_run(&server, &runs).await;
+    let (load, base, ready) = start_saved_dashboard_run(&server, &runs, None).await;
     let sse = client
         .get(format!("{base}/api/v1/events"))
         .header("Authorization", bearer_header())
@@ -2208,7 +2209,7 @@ async fn test_dashboard_waits_after_autostarted_run() {
     // No tab connected when the run ends: Goose exits at once, as before.
     goose::DASHBOARD_EXIT_GRACE_MS.store(30_000, std::sync::atomic::Ordering::Relaxed);
     let runs = saved_runs_dir("nowait");
-    let (load, _base, ready) = start_saved_dashboard_run(&server, &runs).await;
+    let (load, _base, ready) = start_saved_dashboard_run(&server, &runs, None).await;
     let started = Instant::now();
     ready.send(()).expect("attack waits in test_start");
     tokio::time::timeout(Duration::from_secs(20), load.join())
@@ -2220,4 +2221,68 @@ async fn test_dashboard_waits_after_autostarted_run() {
     std::fs::remove_dir_all(&runs).ok();
 
     goose::DASHBOARD_EXIT_GRACE_MS.store(60_000, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// How many times test_stop ran since the counting test reset it.
+static TEST_STOP_RUNS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+async fn count_test_stop(_user: &mut GooseUser) -> TransactionResult {
+    TEST_STOP_RUNS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    Ok(())
+}
+
+fn test_stop_runs() -> usize {
+    TEST_STOP_RUNS.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Run an autostarted, saved dashboard run that counts test_stop, with an
+/// SSE client connected, until Goose waits Idle after it. Returns the load
+/// test, the base URL and the SSE response that keeps the wait going.
+async fn wait_after_counted_run(
+    server: &MockServer,
+    runs: &std::path::Path,
+) -> (LoadTestGuard, String, reqwest::Response) {
+    TEST_STOP_RUNS.store(0, std::sync::atomic::Ordering::SeqCst);
+    let stop = transaction!(count_test_stop);
+    let (load, base, ready) = start_saved_dashboard_run(server, runs, Some(&stop)).await;
+    let client = reqwest::Client::new();
+    let sse = client
+        .get(format!("{base}/api/v1/events"))
+        .header("Authorization", bearer_header())
+        .send()
+        .await
+        .expect("SSE connect");
+    assert_eq!(sse.status(), 200);
+    ready.send(()).expect("attack waits in test_start");
+    wait_for_saved_runs(runs, 1).await;
+    wait_for_phase(
+        &client,
+        &base,
+        Some(AUTH_TOKEN),
+        &["idle"],
+        Duration::from_secs(10),
+    )
+    .await;
+    assert_eq!(test_stop_runs(), 1, "test_stop ran once when the run ended");
+    (load, base, sse)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn test_test_stop_runs_once_when_exiting_from_idle() {
+    let server = MockServer::start();
+    let _mocks = setup_mock_endpoints(&server);
+
+    // Ctrl-C while waiting Idle after the run.
+    let runs = saved_runs_dir("test-stop-ctrl-c");
+    let (load, _base, sse) = wait_after_counted_run(&server, &runs).await;
+    goose::trigger_killswitch("test: exit from Idle");
+    let result = tokio::time::timeout(Duration::from_secs(15), load.join())
+        .await
+        .expect("Goose exits on Ctrl-C");
+    goose::reset_killswitch();
+    drop(sse);
+    result.expect("load test execute");
+    assert_eq!(test_stop_runs(), 1, "test_stop ran again on exit from Idle");
+    std::fs::remove_dir_all(&runs).ok();
 }
