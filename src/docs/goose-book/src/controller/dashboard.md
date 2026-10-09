@@ -40,7 +40,7 @@ Defaults can also be set programmatically with `GooseDefault::Dashboard`, `Goose
 
 > **Feature flag:** the HTTP server is compiled behind the opt-in `dashboard` crate feature (not in default features, same pattern as `pdf-reports`). Enable it with `--features dashboard`. Builds without that feature reject `--dashboard` at startup with a clear rebuild hint.
 
-The server lives as long as the load test. When `GooseAttack::execute()` returns, whether the run finished or failed, connected browsers receive `event: closed`, open connections get up to one second to finish, and the listener and every connection are closed before `execute()` returns, so a program can run another `GooseAttack` on the same port right away.
+The server lives as long as the load test, with one exception: see [Waiting after an autostarted run](#waiting-after-an-autostarted-run). When `GooseAttack::execute()` returns, whether the run finished or failed, connected browsers receive `event: closed`, open connections get up to one second to finish, and the listener and every connection are closed before `execute()` returns, so a program can run another `GooseAttack` on the same port right away.
 
 ### Observe vs control at a glance
 
@@ -336,7 +336,56 @@ These counters are ops-safe (timing and client counts only). The response does *
 
 Transaction times cover the whole transaction function, so they include `--throttle-requests` delays and any sleep inside it, and scenario times include the wait after each transaction. Every registered scenario and transaction has a row, so a scenario excluded by `--scenarios`, or one no user was assigned to, stays at 0 runs.
 
+- **Save state** in the header — `Saving to goose-runs`, `Not saving (turned off)`, or `Not saving: can't create goose-runs (reason)`; see [Saved runs](#saved-runs)
+- **Saved runs panel** — every saved run, with downloads and comparisons
+
 When control is off there are **no control buttons**. Use the Controllers (or enable dashboard control) to change the running test.
+
+## Saved runs
+
+Goose [saves every run](../getting-started/common.md#saved-runs) by default, and the dashboard serves the saved runs in its runs directory (`goose-runs`, or `--runs-dir`).
+
+When a run ends, a banner reads `Run 2026-10-09-141203 saved. Download HTML, JSON or Markdown.` with a button for each report, or says why the run couldn't be saved. When Goose exits, the closed banner says where the last run was saved on the machine running Goose.
+
+The **Saved runs** panel lists every complete run, newest first: the run id, when it started (in the viewer's local time), how long it ran, its users, requests and failures, how it ended (`Finished`, `Stopped`, `Ctrl-C`, `Canceled: <reason>`, `Users exited`), the test, and buttons to download each report. The first 50 runs are shown; `Show all` lists the rest. The list is read when the page opens and after each run ends, never on a timer.
+
+Check **Compare** on exactly two runs and `Download comparison` downloads a Markdown report of the newer run with the older as its baseline: every number shows its change, as with [`--baseline-file`](../getting-started/common.md#comparing-against-a-baseline). Runs with no requests can't be compared. When the two runs are from different tests the panel warns that the comparison may not mean much.
+
+Downloads are fetched with the token in an `Authorization` header and saved from the response, so the token never goes into a URL. Reports are always downloaded, never shown in the browser.
+
+### Saved run endpoints
+
+All three need the token when one is configured, as `GET /api/v1/snapshot` does. Each reads the disk on request only.
+
+| Endpoint | Returns |
+|----------|---------|
+| `GET /api/v1/runs` | `{ "dir": "goose-runs", "total_bytes": n, "runs": [ ... ] }`: the `run.json` of every complete run (a directory named by a run id that holds `run.json`), newest first |
+| `GET /api/v1/runs/{id}/{file}` | `report.html`, `report.json` or `report.md` of run `{id}`, as an attachment named `goose-<test>-<id>.<ext>` |
+| `GET /api/v1/runs/{id}/compare.md?baseline={id}` | Run `{id}` compared to the baseline run, as Markdown, named `goose-<test>-<id>-vs-<baseline id>.md`. `422` with a one line reason when a run has no requests |
+
+An id that is not a run id, any other file, and anything that is not a real directory holding a regular file (a symlink included) is a plain `404`. Reports and comparisons are sent with `Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, `Cache-Control: no-store` and `Content-Security-Policy: sandbox`, so a report opened anyway runs no script with the dashboard's origin.
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:5118/api/v1/runs
+curl -s -OJ -H "Authorization: Bearer $TOKEN" \
+  http://127.0.0.1:5118/api/v1/runs/2026-10-09-141203/report.html
+curl -s -OJ -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:5118/api/v1/runs/2026-10-09-151500/compare.md?baseline=2026-10-09-141203"
+```
+
+With no token, which only a loopback bind allows, every user on this machine can list and download every saved run while the dashboard is up, even if the files themselves are readable only by their owner. On a shared machine, set --dashboard-auth-token.
+
+The SSE `closed` event carries the save state as its data, the same object as the snapshot's `save`: `{"state":"on","reason":null,"dir":"goose-runs","last_run":"2026-10-09-141203"}`. Earlier 0.19.0-dev builds sent `1`; the dashboard page accepts both.
+
+### Waiting after an autostarted run
+
+When an autostarted `--dashboard` run (one without `--no-autostart`) ends, the run was saved, and a dashboard tab is connected, Goose stays up instead of exiting, so the run can still be downloaded:
+
+```
+Run finished. Download it from the dashboard at http://127.0.0.1:5118. Goose exits a minute after the last dashboard tab closes, or press Ctrl-C.
+```
+
+The phase goes back to `idle`, and the test does not start again. Goose exits once no tab has been connected for a minute, on Ctrl-C, or on a Controller `shutdown`; nothing is saved or printed again. With no tab connected when the run ends, Goose exits at once, as before. A run stopped from the dashboard or a Controller, or canceled with Ctrl-C, never waits.
 
 ## Building the dashboard UI (TypeScript)
 
@@ -431,7 +480,7 @@ The tests load the bundled `app.js` into a jsdom page with a stubbed `fetch`, so
 
 ## GraphData memory cost
 
-Enabling `--dashboard` turns on the same per-second **GraphData** series collection used for HTML report graphs (also enabled by `--report-file`). That cost applies for the whole run even when no browser is connected:
+Enabling `--dashboard` turns on the same per-second **GraphData** series collection used for HTML report graphs (also enabled by `--report-file` and by [saving runs](../getting-started/common.md#saved-runs), the default). When the run is saved or `--report-file` is set, every second of the run is kept for the report. With `--no-save` and no `--report-file`, the dashboard keeps only twice its chart window (10 minutes). That cost applies for the whole run even when no browser is connected:
 
 - Per-second counters for requests, errors, users, and average latency are retained for the duration of the test.
 - Memory scales with unique request names × run length (same class of cost as generating HTML graphs).

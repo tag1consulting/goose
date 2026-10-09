@@ -36,10 +36,13 @@ Metrics:
   --no-print-metrics          Doesn't display metrics at end of load test
   --no-error-summary          Doesn't display an error summary
   --report-file NAME          Create reports, can be used multiple times (supports .html, .htm, .md, .json, .pdf)
+  --no-save                   Doesn't save this run to the runs directory (--report-file still works)
+  --runs-dir DIR              Sets the runs directory (default: goose-runs)
+  --baseline-file FILE        Compare against a previous JSON report or saved run directory, showing deltas in all reports
   --no-granular-report        Disable granular graphs in report file
-  --pdf-print-html PATH       path to generate PDF-optimized HTML
-  --pdf-scale SCALE           Sets PDF scale factor (0.1-2.0)
-  --pdf-timeout SECONDS       Chrome timeout for PDF gen (10-300s)
+  --pdf-print-html PATH       Generate printer-friendly HTML for PDF conversion
+  --pdf-scale SCALE           Sets PDF scale factor (0.1-2.0) (default: 0.8)
+  --pdf-timeout SECONDS       PDF generation timeout (10-600s)   (default: 60)
   -R, --request-log NAME      Sets request log file name
   --request-format FORMAT     Sets request log format (csv, json, raw, pretty)
   --request-body              Include the request body in the request log
@@ -65,12 +68,12 @@ Advanced:
   --no-websocket              Doesn't enable WebSocket Controller
   --websocket-host HOST       Sets WebSocket Controller host (default: 0.0.0.0)
   --websocket-port PORT       Sets WebSocket Controller TCP port (default: 5117)
-  --dashboard                 Enables the live web dashboard (requires --features dashboard)
-  --dashboard-control         Enables dashboard Start/Stop/Users control (requires --dashboard and --dashboard-auth-token)
+  --dashboard                 Enables the live web dashboard
+  --dashboard-control         Enable dashboard control endpoints (requires --dashboard and --dashboard-auth-token).
   --dashboard-host HOST       Sets dashboard bind host (default: 127.0.0.1)
   --dashboard-port PORT       Sets dashboard bind port (default: 5118)
   --dashboard-auth-token TOKEN
-                              Sets dashboard auth token (required if host is not loopback; always required with --dashboard-control)
+                              Sets dashboard auth token (required for non-loopback binds, and always required with --dashboard-control)
   --dashboard-max-clients COUNT
                               Sets max concurrent dashboard SSE clients (default: 32)
   --no-autostart              Doesn't automatically start load test

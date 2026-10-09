@@ -1,6 +1,22 @@
 # Changelog
 
 ## 0.19.0-dev
+ - [#715](https://github.com/tag1consulting/goose/issues/715) save every run, and download saved runs from the dashboard
+    o **behavior change**: every run now writes `goose-runs/` in the working directory (the HTML, JSON and Markdown reports and `run.json`), including runs started from library code and test suites; `--no-save` or `GooseDefault::NoSave` turns it off
+    o **behavior change**: `--report-file` is written even with `--no-print-metrics`; the reports were skipped with the printed metrics
+    o **behavior change**: a `--dashboard` run keeps all per second data for the saved report instead of the dashboard's 10 minute window; use `--no-save` on long soak tests to keep memory flat
+    o **behavior change**: `report.json` and the controller's `metricsjson` include the test plan history, so a Markdown report rendered from the JSON has its plan overview
+    o **behavior change**: `--no-granular-report` works without `--report-file` when runs are saved
+    o **behavior change**: an autostarted `--dashboard` run with a dashboard tab open when it ends stays up until a minute after the last tab closes, or Ctrl-C, so the run can be downloaded
+    o **behavior change**: the metrics printed when a run under `--no-autostart` returns to Idle respect `--no-print-metrics`
+    o each run is saved to its own directory named from its local start time (`goose-runs/2026-10-09-141203`, then `-2` for a second run in the same second), so a Start under `--no-autostart` no longer overwrites the previous run; `--runs-dir` saves elsewhere, and a runs directory Goose creates gets a `.gitignore`
+    o a default runs directory that can't be created warns once and the run goes unsaved; an explicit `--runs-dir` that can't be created is an error before load starts
+    o `run.json` records how the run ended: `completed`, `stopped`, `canceled` with the killswitch reason, or `users_exited`; the killswitch now keeps its first reason and is cleared when a run starts, and `reset_killswitch()` is public
+    o `--baseline-file` accepts a saved run directory
+    o the dashboard snapshot adds `save`, and the SSE `closed` event carries it instead of `1`; the header shows whether the run is saved, a banner offers the downloads when a run ends, and a saved runs panel lists, downloads and compares saved runs
+    o new dashboard routes `GET /api/v1/runs`, `GET /api/v1/runs/{id}/{report.html,report.json,report.md}` and `GET /api/v1/runs/{id}/compare.md?baseline={id}`, behind the snapshot's token check
+    o Ctrl-C while Idle after a run now exits; it canceled into a plan maintaining 0 users with no end
+    o report graphs render from the recorded series instead of a copy of them
  - [#694](https://github.com/tag1consulting/goose/issues/694) refuse a Users change while a Stop, `shutdown` or Ctrl-C is ramping the load test down; Users was accepted during that ramp down and brought the load test back
     o a Users request during a cancel gets `ok: false` with phase `decrease`; a test plan's own ramp down still accepts it
     o the telnet and WebSocket Controller `users` command is refused the same way during a cancel
