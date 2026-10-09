@@ -294,6 +294,12 @@ async fn unwritable_explicit_runs_dir_is_an_error_before_load() {
     let mock = setup_mock_server_endpoints(&server);
     let parent = temp_dir("readonly");
     std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o555)).unwrap();
+    if std::fs::write(parent.join("probe"), "").is_ok() {
+        eprintln!("skipping: running as root, permissions are not enforced");
+        std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::remove_dir_all(&parent).ok();
+        return;
+    }
     let runs = parent.join("runs");
     let runs_str = runs.to_string_lossy().into_owned();
 

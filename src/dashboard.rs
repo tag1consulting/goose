@@ -238,8 +238,6 @@ impl ControlHttpErrorBody {
     }
 }
 
-/// Coalescing fan-out for dashboard snapshots.
-///
 /// The data of the SSE `closed` event, shared by the hub and the main loop.
 #[derive(Clone, Debug)]
 pub(crate) struct ClosedData(Arc<RwLock<String>>);
@@ -268,6 +266,8 @@ impl ClosedData {
     }
 }
 
+/// Coalescing fan-out for dashboard snapshots.
+///
 /// One hub task builds at most ~1 snapshot/sec while `active_sse > 0` or a poll
 /// was recent. Idle (no clients, no recent poll) issues **no**
 /// `GetDashboardSnapshot` commands.

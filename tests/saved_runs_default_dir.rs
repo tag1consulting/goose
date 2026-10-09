@@ -35,6 +35,12 @@ async fn unwritable_default_runs_dir_warns_and_the_run_completes() {
     let runs = work.join("goose-runs");
     std::fs::create_dir_all(&runs).unwrap();
     std::fs::set_permissions(&runs, std::fs::Permissions::from_mode(0o555)).unwrap();
+    if std::fs::write(runs.join("probe"), "").is_ok() {
+        eprintln!("skipping: running as root, permissions are not enforced");
+        std::fs::set_permissions(&runs, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::remove_dir_all(&work).ok();
+        return;
+    }
     let previous = std::env::current_dir().unwrap();
     std::env::set_current_dir(&work).unwrap();
 
