@@ -352,10 +352,11 @@ function applyControlChrome(): void {
   }
 }
 
-export function initControlPanel(): void {
-  if (!controlPanel) return;
+/** Set up the panel; resolves to whether control is on. */
+export function initControlPanel(): Promise<boolean> {
+  if (!controlPanel) return Promise.resolve(false);
 
-  fetch("/api/v1/health")
+  const enabled = fetch("/api/v1/health")
     .then((res) => {
       if (!res.ok) throw new Error("HTTP " + res.status);
       return res.json() as Promise<HealthBody>;
@@ -365,7 +366,7 @@ export function initControlPanel(): void {
       applyControlChrome();
       if (!controlEnabled) {
         controlPanel.classList.add("hidden");
-        return;
+        return false;
       }
       controlPanel.classList.remove("hidden");
       if (!getToken()) {
@@ -376,12 +377,14 @@ export function initControlPanel(): void {
         );
       }
       updateControlEnablement();
+      return true;
     })
     .catch(() => {
       // Health probe failed — leave panel hidden (observe-only fallback).
       controlEnabled = false;
       applyControlChrome();
       controlPanel.classList.add("hidden");
+      return false;
     });
 
   if (ctrlStart) ctrlStart.addEventListener("click", onStartClick);
@@ -419,4 +422,5 @@ export function initControlPanel(): void {
       }
     });
   }
+  return enabled;
 }

@@ -67,6 +67,12 @@ export function stubServer(token, options = {}) {
     const method = (init && init.method) || "GET";
     const bearer = headers["Authorization"] || "";
     requests.push({ method, path: url.pathname, url: url.href, bearer });
+    if (url.pathname.startsWith("/api/v1/runs") && method === "DELETE") {
+      // Deletes are control: a Bearer token and no `?token=`.
+      const ok =
+        !url.searchParams.has("token") && bearer === "Bearer " + controlToken;
+      return Promise.resolve(fileResponse(ok ? 204 : 401, ""));
+    }
     if (url.pathname.startsWith("/api/v1/runs")) {
       const ok =
         url.searchParams.get("token") === token || bearer === "Bearer " + token;

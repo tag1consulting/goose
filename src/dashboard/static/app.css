@@ -539,6 +539,13 @@ footer {
   font-size: 0.8rem;
 }
 
+.ctrl-btn.run-delete {
+  padding: 0.2rem 0.55rem;
+  font-size: 0.8rem;
+  border-color: color-mix(in srgb, var(--err) 55%, var(--border));
+  color: var(--err);
+}
+
 .run-id {
   font-variant-numeric: tabular-nums;
   user-select: text;

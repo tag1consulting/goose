@@ -1,9 +1,10 @@
 // Saved runs: the header line saying whether this run is saved, the banner
 // when a run ends, the closed banner, and the saved runs panel with its
-// downloads and comparisons.
+// downloads, comparisons and, with control on, deletes.
 //
 // Downloads go through fetch with the token in an Authorization header, then
 // a blob and a temporary object URL, so the token never goes into a URL.
+// Deletes send the token the same way.
 
 import { getToken } from "./connection";
 import { optionalElement } from "./dom";
@@ -54,12 +55,15 @@ const runsShowAll = optionalElement("runs-show-all", HTMLButtonElement);
 const runsCompare = optionalElement("runs-compare", HTMLButtonElement);
 const runsCompareNote = optionalElement("runs-compare-note", HTMLElement);
 const runsError = optionalElement("runs-error", HTMLElement);
+const runsDeleteCol = optionalElement("runs-delete-col", HTMLElement);
 
 let listing: RunsListing | null = null;
 let showAll = false;
 const checked = new Set<string>();
 let lastPhase: string | null = null;
 let loading = false;
+// Control is on: each run gets a Delete button.
+let controlEnabled = false;
 
 // ---------------------------------------------------------------------------
 // Downloads
@@ -118,9 +122,45 @@ function downloadReport(id: string, file: string): void {
 }
 
 function showError(message: string | null): void {
+  showRunsError(message ? "Download failed: " + message : null);
+}
+
+function showRunsError(text: string | null): void {
   if (!runsError) return;
-  runsError.textContent = message ? "Download failed: " + message : "";
-  runsError.hidden = !message;
+  runsError.textContent = text || "";
+  runsError.hidden = !text;
+}
+
+/** Ask, then delete a saved run from disk and list the runs again. */
+function deleteRun(id: string): void {
+  if (!window.confirm("Delete run " + id + "? This removes its reports from disk.")) return;
+  fetch("/api/v1/runs/" + encodeURIComponent(id), {
+    method: "DELETE",
+    headers: authHeaders(),
+  })
+    .then(
+      (res) => {
+        if (res.status === 204) return null;
+        if (res.status === 409) return "the run is still being written";
+        return "HTTP " + res.status;
+      },
+      (err: unknown) => String(err)
+    )
+    .then((message) => {
+      showRunsError(message ? "Delete failed: " + message : null);
+      checked.delete(id);
+      loadRuns();
+    });
+}
+
+function deleteButton(id: string): HTMLElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "ctrl-btn run-delete";
+  button.textContent = "Delete";
+  button.setAttribute("aria-label", "Delete run " + id);
+  button.addEventListener("click", () => deleteRun(id));
+  return button;
 }
 
 function downloadButtons(id: string): HTMLElement {
@@ -305,6 +345,11 @@ function renderRuns(): void {
     });
     compare.appendChild(box);
     tr.appendChild(compare);
+    if (controlEnabled) {
+      const remove = document.createElement("td");
+      remove.appendChild(deleteButton(run.id));
+      tr.appendChild(remove);
+    }
     runsBody.appendChild(tr);
   }
   if (runsEmpty) runsEmpty.hidden = runs.length > 0;
@@ -373,6 +418,13 @@ export function loadRuns(): void {
     .then(() => {
       loading = false;
     });
+}
+
+/** Show Delete buttons when control is on. */
+export function setRunsControl(enabled: boolean): void {
+  controlEnabled = enabled;
+  if (runsDeleteCol) runsDeleteCol.hidden = !enabled;
+  renderRuns();
 }
 
 export function initRunsPanel(): void {

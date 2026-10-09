@@ -264,3 +264,44 @@ test("Quit shows only with control on while idle and sends a Bearer POST", async
   assert.equal(doc.getElementById("ctrl-status").textContent, "Goose is shutting down.");
   assert.equal(quit.hidden, true);
 });
+
+test("Delete shows only with control on, confirms, and sends DELETE with the Bearer header", async () => {
+  const observe = await openPage("/?token=" + TOKEN, FRESH, TOKEN, { runs: LISTING });
+  assert.equal(observe.window.document.querySelectorAll("button.run-delete").length, 0);
+  assert.equal(observe.window.document.getElementById("runs-delete-col").hidden, true);
+
+  const page = await openPage("/?token=" + TOKEN, FRESH, TOKEN, {
+    runs: LISTING,
+    controlEnabled: true,
+  });
+  const doc = page.window.document;
+  assert.equal(doc.getElementById("runs-delete-col").hidden, false);
+  const buttons = Array.from(doc.querySelectorAll("button.run-delete"));
+  assert.equal(buttons.length, LISTING.runs.length);
+  const asked = [];
+  let answer = false;
+  page.window.confirm = (text) => {
+    asked.push(text);
+    return answer;
+  };
+  const listed = () => page.requests.filter((r) => r.path === "/api/v1/runs").length;
+  const before = listed();
+
+  // Declined: nothing is sent.
+  buttons[1].click();
+  await settle(page.window);
+  assert.deepEqual(asked, ["Delete run 2026-10-09-141203? This removes its reports from disk."]);
+  assert.equal(page.requests.filter((r) => r.method === "DELETE").length, 0);
+
+  answer = true;
+  buttons[1].click();
+  await settle(page.window);
+  const deletes = page.requests.filter((r) => r.method === "DELETE");
+  assert.deepEqual(
+    deletes.map((r) => [r.path, r.bearer, r.url.includes("token=")]),
+    [["/api/v1/runs/2026-10-09-141203", "Bearer " + TOKEN, false]]
+  );
+  // The list is fetched again after the delete.
+  assert.equal(listed(), before + 1);
+  assert.equal(doc.getElementById("runs-error").hidden, true);
+});

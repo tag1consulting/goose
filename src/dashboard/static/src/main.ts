@@ -24,6 +24,7 @@ import { formatDuration, formatInt, formatPct, formatRate, kv } from "./format";
 import {
   closedBannerText,
   initRunsPanel,
+  setRunsControl,
   updateSaveFromSnapshot,
 } from "./runs";
 import { setBanner, setConnection, type ConnectionMode } from "./status";
@@ -137,6 +138,6 @@ function renderSnapshot(
 initToken();
 initTables();
 ensureCharts();
-initControlPanel();
 initRunsPanel();
+void initControlPanel().then(setRunsControl);
 startSse(renderSnapshot, (data) => setBanner(closedBannerText(data), "info"));

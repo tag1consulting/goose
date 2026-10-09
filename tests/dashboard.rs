@@ -732,6 +732,13 @@ async fn test_control_disabled_returns_404() {
     );
     let resp = post_control(&client, &base, "/api/v1/control/quit", Some("{}"), true).await;
     assert_eq!(resp.status(), 404, "control off must 404 quit");
+    let resp = client
+        .delete(format!("{base}/api/v1/runs/2026-10-09-141203"))
+        .header("Authorization", bearer_header())
+        .send()
+        .await
+        .expect("DELETE");
+    assert_eq!(resp.status(), 404, "control off must 404 delete");
 
     let _ = load.join().await.expect("execute");
 }
@@ -2376,5 +2383,111 @@ async fn test_test_stop_runs_once_when_exiting_from_idle() {
         .expect("load test execute");
     drop(sse);
     assert_eq!(test_stop_runs(), 1, "test_stop ran again on Quit");
+    std::fs::remove_dir_all(&runs).ok();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn test_delete_saved_run() {
+    let server = MockServer::start();
+    let _mocks = setup_mock_endpoints(&server);
+    let runs = saved_runs_dir("delete");
+    let older = save_one_run(&server, &runs, "1").await;
+    // Not deletable: an incomplete run, and a symlink to a real run.
+    std::fs::create_dir(runs.join("2002-02-02-000000")).unwrap();
+    std::fs::write(runs.join("2002-02-02-000000").join("report.html"), "x").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(runs.join(&older), runs.join("2003-03-03-000000")).unwrap();
+
+    let port = reserve_port();
+    let base_v4 = format!("http://127.0.0.1:{port}");
+    let mut configuration =
+        build_control_config(&server, "127.0.0.1", port, ControlTestOpts::default());
+    configuration.no_save = false;
+    configuration.runs_dir = runs.to_string_lossy().into_owned();
+    let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
+    let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
+    let (base, _) = wait_for_health(&[&base_v4], 80).await;
+    let client = reqwest::Client::new();
+    let delete = |id: String, auth: bool, token_in_url: bool| {
+        let mut url = format!("{base}/api/v1/runs/{id}");
+        if token_in_url {
+            url.push_str(&format!("?token={AUTH_TOKEN}"));
+        }
+        let mut req = client.delete(url);
+        if auth {
+            req = req.header("Authorization", bearer_header());
+        }
+        req.send()
+    };
+
+    // The control token, in the Authorization header only.
+    assert_eq!(
+        delete(older.clone(), false, false).await.unwrap().status(),
+        401
+    );
+    assert_eq!(
+        delete(older.clone(), false, true).await.unwrap().status(),
+        401
+    );
+    assert_eq!(
+        delete(older.clone(), true, true).await.unwrap().status(),
+        401
+    );
+    for id in [
+        "not-a-run",
+        "..%2F..%2Fetc",
+        "2026-10-09-141203",
+        "2002-02-02-000000",
+        "2003-03-03-000000",
+    ] {
+        let resp = delete(id.to_string(), true, false).await.unwrap();
+        assert_eq!(resp.status(), 404, "{}", id);
+    }
+    assert!(runs.join("2002-02-02-000000").join("report.html").exists());
+    assert!(runs.join(&older).join("run.json").exists());
+
+    // The run being written now can't be deleted.
+    let start = post_control(&client, &base, "/api/v1/control/start", Some("{}"), true).await;
+    assert_eq!(start.status(), 200);
+    wait_for_phase(
+        &client,
+        &base,
+        Some(AUTH_TOKEN),
+        &["increase", "maintain"],
+        Duration::from_secs(30),
+    )
+    .await;
+    let active: Vec<String> = saved_run_ids(&runs)
+        .into_iter()
+        .filter(|id| !runs.join(id).join("run.json").exists() && id != "2002-02-02-000000")
+        .collect();
+    assert_eq!(active.len(), 1, "{:?}", active);
+    let resp = delete(active[0].clone(), true, false).await.unwrap();
+    assert_eq!(resp.status(), 409);
+    assert!(runs.join(&active[0]).is_dir());
+    let stop = post_control(&client, &base, "/api/v1/control/stop", Some("{}"), true).await;
+    assert_eq!(stop.status(), 200);
+    wait_for_phase(
+        &client,
+        &base,
+        Some(AUTH_TOKEN),
+        &["idle"],
+        Duration::from_secs(30),
+    )
+    .await;
+
+    // A complete run is removed.
+    let resp = delete(older.clone(), true, false).await.unwrap();
+    assert_eq!(resp.status(), 204);
+    assert!(!runs.join(&older).exists());
+    let resp = delete(older.clone(), true, false).await.unwrap();
+    assert_eq!(resp.status(), 404);
+    // Once saved, the run that was active can be deleted too.
+    assert!(runs.join(&active[0]).join("run.json").exists());
+    let resp = delete(active[0].clone(), true, false).await.unwrap();
+    assert_eq!(resp.status(), 204);
+
+    load.abort().await;
     std::fs::remove_dir_all(&runs).ok();
 }

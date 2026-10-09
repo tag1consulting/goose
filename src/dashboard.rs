@@ -28,7 +28,7 @@ use axum::extract::{Query, State};
 use axum::http::{header, HeaderMap, HeaderValue, Response, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::IntoResponse;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use futures::stream;
 use serde::Deserialize;
@@ -158,6 +158,10 @@ pub(crate) enum DashboardRequest {
     /// Shut Goose down from Idle.
     Quit {
         respond: tokio::sync::oneshot::Sender<ControlResult>,
+    },
+    /// The id of the run being written now, if any.
+    ActiveRun {
+        respond: tokio::sync::oneshot::Sender<Option<String>>,
     },
     /// Set absolute target user count.
     SetUsers {
@@ -1038,6 +1042,7 @@ fn build_router(state: DashboardState, loopback_bind: bool) -> Router {
             .route("/api/v1/control/start", post(control_start_handler))
             .route("/api/v1/control/stop", post(control_stop_handler))
             .route("/api/v1/control/quit", post(control_quit_handler))
+            .route("/api/v1/runs/{id}", delete(delete_run_handler))
             .route("/api/v1/control/users", post(control_users_handler))
             .layer(axum::extract::DefaultBodyLimit::max(CONTROL_BODY_LIMIT));
         router = router.merge(control_routes);
@@ -1831,6 +1836,89 @@ async fn control_quit_handler(
     .await
 }
 
+/// `DELETE /api/v1/runs/{id}`: remove a complete saved run from disk.
+/// Registered only with `--dashboard-control`, and authorized like the
+/// control routes. 204 when removed; 409 for the run being written now; a
+/// plain 404 for anything that is not a valid run id naming a real directory
+/// that holds a regular `run.json`.
+async fn delete_run_handler(
+    State(state): State<Arc<DashboardState>>,
+    headers: HeaderMap,
+    path: Result<axum::extract::Path<String>, axum::extract::rejection::PathRejection>,
+    Query(query): Query<TokenQuery>,
+) -> Response<Body> {
+    if !authorize_control(&state.auth_token, &headers, query.token.as_deref()) {
+        warn!("[dashboard]: delete run auth failure");
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let Ok(axum::extract::Path(id)) = path else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if !runs::is_valid_run_id(&id) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    match active_run(&state).await {
+        Ok(Some(active)) if active == id => return StatusCode::CONFLICT.into_response(),
+        Ok(_) => {}
+        Err(response) => return response,
+    }
+    let run_dir = Path::new(&state.runs_dir).join(&id);
+    // `remove_dir_all` removes a symlink inside the run directory, never
+    // what it points to.
+    let removed = tokio::task::spawn_blocking(move || {
+        if !runs::is_real_dir(&run_dir) || !runs::is_regular_file(&run_dir.join(runs::RUN_JSON)) {
+            return Ok(false);
+        }
+        std::fs::remove_dir_all(&run_dir).map(|()| true)
+    })
+    .await;
+    match removed {
+        Ok(Ok(true)) => {
+            info!("[dashboard]: deleted saved run {id}");
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Ok(Ok(false)) => StatusCode::NOT_FOUND.into_response(),
+        Ok(Err(e)) => {
+            warn!("[dashboard]: can't delete saved run {id}: {e}");
+            (StatusCode::INTERNAL_SERVER_ERROR, "can't delete the run").into_response()
+        }
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+/// Ask the main loop which run it is writing now. An error is the response
+/// to send instead, as for a control request the main loop can't answer.
+async fn active_run(state: &DashboardState) -> Result<Option<String>, Response<Body>> {
+    let unavailable = || {
+        control_http_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "delete",
+            "unavailable",
+            "control unavailable",
+        )
+    };
+    let Some(_slot) = try_acquire_control_slot(state) else {
+        return Err(control_http_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "delete",
+            "busy",
+            "too many control requests in flight, wait and retry",
+        ));
+    };
+    let (respond, respond_rx) = oneshot::channel();
+    if state
+        .request_tx
+        .send(DashboardRequest::ActiveRun { respond })
+        .is_err()
+    {
+        return Err(unavailable());
+    }
+    match tokio::time::timeout(CONTROL_TIMEOUT, respond_rx).await {
+        Ok(Ok(active)) => Ok(active),
+        _ => Err(unavailable()),
+    }
+}
+
 async fn control_users_handler(
     State(state): State<Arc<DashboardState>>,
     headers: HeaderMap,
@@ -1962,6 +2050,9 @@ mod tests {
                             target_users: None,
                         });
                     }
+                    DashboardRequest::ActiveRun { respond } => {
+                        let _ = respond.send(None);
+                    }
                     DashboardRequest::SetUsers { users, respond } => {
                         let _ = respond.send(ControlResult {
                             ok: true,
@@ -2003,6 +2094,9 @@ mod tests {
                     | DashboardRequest::Quit { respond }
                     | DashboardRequest::SetUsers { respond, .. } => {
                         let _ = respond.send(ControlResult::internal("unused", "idle", 0));
+                    }
+                    DashboardRequest::ActiveRun { respond } => {
+                        let _ = respond.send(None);
                     }
                 }
             }
@@ -2638,6 +2732,9 @@ mod tests {
                             DashboardRequest::Quit { respond } => {
                                 let _ = respond.send(ControlResult::internal("quit", "idle", 0));
                             }
+                            DashboardRequest::ActiveRun { respond } => {
+                                let _ = respond.send(None);
+                            }
                             DashboardRequest::SetUsers { respond, .. } => {
                                 let _ = respond.send(ControlResult::internal("users", "idle", 0));
                             }
@@ -3072,6 +3169,9 @@ mod tests {
                     | DashboardRequest::SetUsers { respond, .. } => {
                         drop(respond);
                     }
+                    DashboardRequest::ActiveRun { respond } => {
+                        drop(respond);
+                    }
                 }
             }
         })
@@ -3095,6 +3195,9 @@ mod tests {
                     }
                     DashboardRequest::Quit { respond } => {
                         let _ = respond.send(ControlResult::internal("quit", "maintain", 1));
+                    }
+                    DashboardRequest::ActiveRun { respond } => {
+                        let _ = respond.send(None);
                     }
                     DashboardRequest::SetUsers { respond, .. } => {
                         let _ = respond.send(ControlResult::internal("users", "maintain", 1));
@@ -3121,6 +3224,11 @@ mod tests {
                     | DashboardRequest::SetUsers { respond, .. } => {
                         // Keep the oneshot Sender alive so the client hits CONTROL_TIMEOUT
                         // rather than an immediate oneshot-drop 503.
+                        let _hold = respond;
+                        futures::future::pending::<()>().await;
+                        drop(_hold);
+                    }
+                    DashboardRequest::ActiveRun { respond } => {
                         let _hold = respond;
                         futures::future::pending::<()>().await;
                         drop(_hold);

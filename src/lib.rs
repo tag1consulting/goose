@@ -1719,6 +1719,9 @@ impl GooseAttack {
                     let outcome = self.control_quit(goose_attack_run_state);
                     let _ = respond.send(dashboard::ControlResult::from_outcome("quit", outcome));
                 }
+                dashboard::DashboardRequest::ActiveRun { respond } => {
+                    let _ = respond.send(self.saving.active.as_ref().map(|run| run.id.clone()));
+                }
                 dashboard::DashboardRequest::SetUsers { users, respond } => {
                     if respond.is_closed() {
                         debug!("[dashboard]: set users skipped; client disconnected");
