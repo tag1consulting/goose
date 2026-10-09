@@ -617,12 +617,18 @@ fn apply_baseline_deltas(current: &mut ReportData, baseline: &ReportData) {
     }
 }
 
-/// Load baseline data from a JSON file.
+/// Load baseline data from a JSON report, or from the `report.json` of a
+/// saved run when `path` is a directory.
 pub fn load_baseline_file<P: AsRef<Path>>(path: P) -> Result<ReportData<'static>, GooseError> {
     let path_str = path.as_ref().to_string_lossy();
+    let file_path = if path.as_ref().is_dir() {
+        path.as_ref().join(crate::runs::REPORT_JSON)
+    } else {
+        path.as_ref().to_path_buf()
+    };
 
     // Open and read the baseline file
-    let file = File::open(&path).map_err(|err| GooseError::InvalidOption {
+    let file = File::open(&file_path).map_err(|err| GooseError::InvalidOption {
         option: "--baseline-file".to_string(),
         value: path_str.to_string(),
         detail: format!("Failed to open baseline file: {err}"),
@@ -1348,8 +1354,15 @@ mod test {
         use crate::report::ResponseMetric;
 
         // Build a ReportData, serialize to JSON, load as baseline
+        let mut metrics = GooseMetrics::default();
+        metrics
+            .history
+            .push(crate::test_plan::TestPlanHistory::step(
+                crate::test_plan::TestPlanStepAction::Increasing,
+                0,
+            ));
         let original = ReportData {
-            raw_metrics: Cow::Owned(GooseMetrics::default()),
+            raw_metrics: Cow::Owned(metrics),
             raw_request_metrics: vec![RequestMetric {
                 method: "POST".into(),
                 name: "/api/submit".into(),
@@ -1396,6 +1409,28 @@ mod test {
         assert_eq!(data.raw_request_metrics[0].name, "/api/submit");
         assert_eq!(data.raw_request_metrics[0].number_of_requests.value(), 1000);
         assert_eq!(data.raw_response_metrics[0].percentile_99.value(), 1500);
+        // The test plan history is kept, so a report rendered from the JSON
+        // has a plan overview.
+        assert_eq!(data.raw_metrics.history.len(), 1);
+    }
+
+    #[test]
+    fn load_baseline_file_from_run_directory() {
+        let dir = std::env::temp_dir().join(format!(
+            "goose_test_baseline_run_dir_{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join(crate::runs::REPORT_JSON),
+            minimal_baseline_json(500, 10, 45.5, 5, 200),
+        )
+        .unwrap();
+        let result = load_baseline_file(&dir);
+        std::fs::remove_dir_all(&dir).ok();
+
+        let data = result.expect("should load report.json from the run directory");
+        assert_eq!(data.raw_request_metrics[0].number_of_requests.value(), 500);
     }
 
     #[test]

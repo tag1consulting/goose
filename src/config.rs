@@ -109,7 +109,7 @@ pub struct GooseConfiguration {
     /// Create reports, can be used multiple times (supports .html, .htm, .md, .json, .pdf)
     #[options(no_short, meta = "NAME")]
     pub report_file: Vec<String>,
-    /// Compare against a previous JSON report, showing deltas in all reports
+    /// Compare against a previous JSON report or saved run directory, showing deltas in all reports
     #[options(no_short, meta = "FILE")]
     pub baseline_file: Option<String>,
     /// Disable granular graphs in report file

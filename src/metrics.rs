@@ -1507,7 +1507,7 @@ pub struct GooseMetrics {
     /// are running the same load test.
     pub hash: u64,
     /// A vector recording the history of each load test step.
-    #[serde(skip)]
+    #[serde(default)]
     pub history: Vec<TestPlanHistory>,
     /// Total number of seconds the load test ran.
     pub duration: usize,
