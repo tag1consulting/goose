@@ -193,10 +193,16 @@ export function saveStatusText(save: SnapshotSave): string {
 
 let bannerRun: string | null = null;
 
+/** True when the last run's directory couldn't be created: it has no id. */
+function unsavedRun(save: Partial<SnapshotSave>): boolean {
+  return save.state === "failed" && !save.last_run && !!save.reason;
+}
+
 function setRunBanner(save: SnapshotSave | null, phase: string): void {
   if (!runBannerEl) return;
-  const show = save !== null && phase === "idle" && save.last_run !== null;
-  if (!show || save === null || save.last_run === null) {
+  const show =
+    save !== null && phase === "idle" && (save.last_run !== null || unsavedRun(save));
+  if (!show || save === null) {
     if (bannerRun !== null) {
       runBannerEl.textContent = "";
       runBannerEl.className = "run-banner";
@@ -204,13 +210,18 @@ function setRunBanner(save: SnapshotSave | null, phase: string): void {
     }
     return;
   }
-  const key = save.last_run + "|" + (save.reason || "");
+  const key = (save.last_run || "") + "|" + (save.reason || "");
   if (bannerRun === key) return;
   bannerRun = key;
   // The element stays in the page, empty when there is nothing to say, so
   // screen readers announce what is written into it (aria-live).
   runBannerEl.textContent = "";
   const id = save.last_run;
+  if (id === null) {
+    runBannerEl.className = "run-banner error";
+    runBannerEl.textContent = "Couldn't save this run: " + save.reason + ".";
+    return;
+  }
   if (save.reason) {
     runBannerEl.className = "run-banner error";
     runBannerEl.textContent = "Couldn't save run " + id + ": " + save.reason + ".";
@@ -253,6 +264,9 @@ export function closedBannerText(data: unknown): string {
     } catch {
       save = null;
     }
+  }
+  if (save && unsavedRun(save)) {
+    return "Goose has exited. Couldn't save this run: " + save.reason + ".";
   }
   if (!save || typeof save.last_run !== "string" || !save.last_run) {
     return "Goose has exited.";

@@ -428,6 +428,8 @@ impl GooseAttack {
                 }
                 self.saving.state = SaveState::Failed;
                 self.saving.reason = Some(e.to_string());
+                // This run has no id; the last saved run is not the one that failed.
+                self.saving.last_run = None;
                 Ok(())
             }
         }

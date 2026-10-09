@@ -195,6 +195,11 @@ test("the header and the end of run banner show the save state", async () => {
     other.window.document.getElementById("save-status").textContent,
     "Not saving: can't create goose-runs (Permission denied (os error 13))"
   );
+  // The run's directory couldn't be created: no id to blame.
+  assert.equal(
+    other.window.document.getElementById("run-banner").textContent,
+    "Couldn't save this run: Permission denied (os error 13)."
+  );
   const off = await openPage("/?token=" + TOKEN, FRESH, TOKEN, {
     snapshot: { ...IDLE_SNAPSHOT, save: { ...IDLE_SNAPSHOT.save, state: "off" } },
   });
@@ -224,6 +229,11 @@ for (const [name, data, expected] of [
     "a run that couldn't be saved",
     JSON.stringify({ state: "on", reason: "Permission denied (os error 13)", dir: "goose-runs", last_run: "2026-10-09-141203" }),
     "Goose has exited. Couldn't save run 2026-10-09-141203: Permission denied (os error 13).",
+  ],
+  [
+    "a run whose directory couldn't be created",
+    JSON.stringify({ state: "failed", reason: "Permission denied (os error 13)", dir: "goose-runs", last_run: null }),
+    "Goose has exited. Couldn't save this run: Permission denied (os error 13).",
   ],
   [
     "no run",
