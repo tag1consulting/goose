@@ -8,9 +8,10 @@ use super::{
     update_min_time, GooseErrorMetricAggregate, GooseMetrics, GooseRequestMetricAggregate,
     GooseRequestMetricTimingData, ScenarioMetricAggregate, TransactionMetricAggregate,
 };
+use crate::graph::SecondHistogram;
 use chrono::prelude::*;
 use serde::Serialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 /// Maximum per-request rows included in a snapshot table.
 pub(crate) const MAX_REQUEST_ROWS: usize = 100;
@@ -128,6 +129,9 @@ pub(crate) struct RequestRow {
     pub percentile_ms: Percentiles,
     pub status_codes: Vec<(u16, u64)>,
     pub co_adjusted: Option<CoAdjusted>,
+    /// True when the latency chart can show this request alone: trends are
+    /// kept for the first 100 request names seen since metrics were last reset.
+    pub has_series: bool,
 }
 
 /// Metrics for one registered scenario.
@@ -193,6 +197,13 @@ pub(crate) struct SeriesWindow {
     pub fps: Vec<f64>,
     pub users: Vec<u64>,
     pub avg_latency_ms: Vec<f64>,
+    /// Measured response times of all requests, for each second of the window.
+    /// Every vector is empty when percentiles over time are off.
+    pub latency_ms: LatencySeries,
+    /// Response times of all requests including the synthetic times
+    /// coordinated omission mitigation adds. An empty series means absent:
+    /// every vector is empty unless mitigation is on and has recorded an event.
+    pub latency_co_adjusted_ms: LatencySeries,
 }
 
 impl SeriesWindow {
@@ -204,8 +215,83 @@ impl SeriesWindow {
             fps: Vec::new(),
             users: Vec::new(),
             avg_latency_ms: Vec::new(),
+            latency_ms: LatencySeries::default(),
+            latency_co_adjusted_ms: LatencySeries::default(),
         }
     }
+}
+
+/// Response times for each second of the window. Percentiles are null for a second with no requests and for the two newest seconds while a test runs; count tells them apart.
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub(crate) struct LatencySeries {
+    pub count: Vec<u64>,
+    pub avg: Vec<Option<f64>>,
+    pub p50: Vec<Option<u64>>,
+    pub p95: Vec<Option<u64>>,
+    pub p99: Vec<Option<u64>>,
+    pub max: Vec<Option<u64>>,
+}
+
+impl LatencySeries {
+    /// An empty series with room for `len` seconds.
+    pub(crate) fn with_capacity(len: usize) -> Self {
+        LatencySeries {
+            count: Vec::with_capacity(len),
+            avg: Vec::with_capacity(len),
+            p50: Vec::with_capacity(len),
+            p95: Vec::with_capacity(len),
+            p99: Vec::with_capacity(len),
+            max: Vec::with_capacity(len),
+        }
+    }
+
+    /// Append one second. `data` is that second's response times, if any;
+    /// `hold` withholds its percentiles because slower requests may still
+    /// arrive for it.
+    pub(crate) fn push(&mut self, data: Option<&SecondHistogram>, hold: bool) {
+        match data.filter(|data| data.counter > 0) {
+            None => {
+                self.count.push(0);
+                self.avg.push(None);
+                self.p50.push(None);
+                self.p95.push(None);
+                self.p99.push(None);
+                self.max.push(None);
+            }
+            Some(data) => {
+                self.count.push(data.counter as u64);
+                self.avg
+                    .push(Some(data.total_time as f64 / data.counter as f64));
+                self.max.push(Some(data.maximum_time as u64));
+                if hold {
+                    self.p50.push(None);
+                    self.p95.push(None);
+                    self.p99.push(None);
+                } else {
+                    let percentile = |p: f32| Some(data.percentile(p) as u64);
+                    self.p50.push(percentile(0.5));
+                    self.p95.push(percentile(0.95));
+                    self.p99.push(percentile(0.99));
+                }
+            }
+        }
+    }
+}
+
+/// One request's trailing per-second series, the body of `GET /api/v1/series`.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub(crate) struct RequestSeries {
+    pub method: String,
+    pub name: String,
+    /// First exported bucket index in seconds-from-test-start.
+    pub start_second: u64,
+    pub rps: Vec<f64>,
+    pub latency_ms: LatencySeries,
+    /// Empty unless coordinated omission mitigation is on and has recorded an
+    /// event, as in [`SeriesWindow::latency_co_adjusted_ms`].
+    pub latency_co_adjusted_ms: LatencySeries,
 }
 
 /// Response times including the synthetic times coordinated omission mitigation adds. Present only when mitigation has recorded at least one event.
@@ -279,6 +365,9 @@ pub(crate) struct SnapshotFlags {
     pub requests_truncated: bool,
     pub errors_truncated: bool,
     pub series_seconds: u32,
+    /// True when the dashboard tracks p50, p95 and p99 by second: on with
+    /// `--dashboard` unless `--no-percentiles-over-time` or `--no-metrics`.
+    pub percentiles_over_time: bool,
 }
 
 /// Inputs supplied by the metrics processor / main loop when building a snapshot.
@@ -302,6 +391,11 @@ pub(crate) struct DashboardSnapshotInput<'a> {
     pub no_scenario_metrics: bool,
     /// See [`DashboardSnapshot::save`].
     pub save: SnapshotSave,
+    /// See [`SnapshotFlags::percentiles_over_time`].
+    pub percentiles_over_time: bool,
+    /// Keys (`"METHOD name"`) of the requests that have their own latency
+    /// series; see [`RequestRow::has_series`].
+    pub series_keys: HashSet<&'a str>,
 }
 
 /// Build a compact [`DashboardSnapshot`] from live metrics + series window.
@@ -348,6 +442,7 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
                 requests_truncated: false,
                 errors_truncated: false,
                 series_seconds: input.series_window_secs,
+                percentiles_over_time: false,
             },
             save: input.save,
         };
@@ -379,9 +474,9 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
     // Rank by count first; only materialize full table rows for the top N so
     // high request-name cardinality does not pay percentile/status work ~1 Hz
     // for rows the UI never shows.
-    let mut request_rank: Vec<(&GooseRequestMetricAggregate, usize)> =
+    let mut request_rank: Vec<(&str, &GooseRequestMetricAggregate, usize)> =
         Vec::with_capacity(input.metrics.requests.len());
-    for request in input.metrics.requests.values() {
+    for (key, request) in &input.metrics.requests {
         let total_count = request.success_count + request.fail_count;
         aggregate_total_count += total_count;
         aggregate_fail_count += request.fail_count;
@@ -398,10 +493,10 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
                     .unwrap_or(&request.raw_data),
             );
         }
-        request_rank.push((request, total_count));
+        request_rank.push((key.as_str(), request, total_count));
     }
 
-    request_rank.sort_by(|(a, a_count), (b, b_count)| {
+    request_rank.sort_by(|(_, a, a_count), (_, b, b_count)| {
         b_count
             .cmp(a_count)
             .then_with(|| a.method_label().cmp(b.method_label()))
@@ -411,8 +506,14 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
     request_rank.truncate(MAX_REQUEST_ROWS);
     let request_rows: Vec<RequestRow> = request_rank
         .into_iter()
-        .map(|(request, _)| {
-            request_row_from_aggregate(request, duration, input.no_status_codes, co_active)
+        .map(|(key, request, _)| {
+            request_row_from_aggregate(
+                request,
+                duration,
+                input.no_status_codes,
+                co_active,
+                input.series_keys.contains(key),
+            )
         })
         .collect();
 
@@ -512,6 +613,7 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
             requests_truncated,
             errors_truncated,
             series_seconds: input.series_window_secs,
+            percentiles_over_time: input.percentiles_over_time,
         },
         save: input.save,
     }
@@ -522,6 +624,7 @@ fn request_row_from_aggregate(
     duration: usize,
     no_status_codes: bool,
     co_active: bool,
+    has_series: bool,
 ) -> RequestRow {
     let total_count = request.success_count + request.fail_count;
     let (rps, fps) = per_second_calculations(duration, total_count, request.fail_count);
@@ -567,6 +670,7 @@ fn request_row_from_aggregate(
         } else {
             None
         },
+        has_series,
     }
 }
 
@@ -688,6 +792,8 @@ mod tests {
             no_transaction_metrics: false,
             no_scenario_metrics: false,
             save: SnapshotSave::off("goose-runs"),
+            percentiles_over_time: false,
+            series_keys: HashSet::new(),
         });
         assert_eq!(snap.version, 1);
         assert_eq!(snap.phase, "idle");
@@ -742,6 +848,8 @@ mod tests {
             no_transaction_metrics: false,
             no_scenario_metrics: false,
             save: SnapshotSave::off("goose-runs"),
+            percentiles_over_time: false,
+            series_keys: HashSet::new(),
         });
 
         assert_eq!(snap.requests.len(), MAX_REQUEST_ROWS);
@@ -780,6 +888,8 @@ mod tests {
             no_transaction_metrics: false,
             no_scenario_metrics: false,
             save: SnapshotSave::off("goose-runs"),
+            percentiles_over_time: false,
+            series_keys: HashSet::new(),
         });
         assert!(!snap.aggregate.co_active);
 
@@ -810,6 +920,8 @@ mod tests {
             no_transaction_metrics: false,
             no_scenario_metrics: false,
             save: SnapshotSave::off("goose-runs"),
+            percentiles_over_time: false,
+            series_keys: HashSet::new(),
         });
         assert!(snap.aggregate.co_active);
     }
@@ -830,6 +942,8 @@ mod tests {
             no_transaction_metrics: false,
             no_scenario_metrics: false,
             save: SnapshotSave::off("goose-runs"),
+            percentiles_over_time: false,
+            series_keys: HashSet::new(),
         }
     }
 
@@ -949,6 +1063,8 @@ mod tests {
             no_transaction_metrics: false,
             no_scenario_metrics: false,
             save: SnapshotSave::off("goose-runs"),
+            percentiles_over_time: false,
+            series_keys: HashSet::new(),
         });
 
         assert_eq!(snap.aggregate.total_requests, 15);
@@ -988,6 +1104,8 @@ mod tests {
             fps: vec![0.0, 0.5],
             users: vec![1, 2],
             avg_latency_ms: vec![10.0, 20.0],
+            latency_ms: LatencySeries::default(),
+            latency_co_adjusted_ms: LatencySeries::default(),
         };
 
         let snap = build_dashboard_snapshot(DashboardSnapshotInput {
@@ -1005,6 +1123,8 @@ mod tests {
             no_transaction_metrics: false,
             no_scenario_metrics: false,
             save: SnapshotSave::off("goose-runs"),
+            percentiles_over_time: false,
+            series_keys: HashSet::new(),
         });
 
         assert!(snap.flags.metrics_disabled);
@@ -1104,6 +1224,8 @@ mod tests {
             no_transaction_metrics: false,
             no_scenario_metrics: false,
             save: SnapshotSave::off("goose-runs"),
+            percentiles_over_time: false,
+            series_keys: HashSet::new(),
         }
     }
 
@@ -1274,6 +1396,7 @@ mod tests {
             decls: Vec::new(),
         };
         declarations.visit::<DashboardSnapshot>();
+        declarations.visit::<RequestSeries>();
         // The derive's visiting order is not stable from one build to the
         // next; sort by type name so the file is.
         declarations.decls.sort();

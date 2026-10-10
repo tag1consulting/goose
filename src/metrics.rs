@@ -177,6 +177,9 @@ pub(crate) struct RequestGraphBatchData {
     pub(crate) count: u32,
     /// Sum of response times in this second (for computing weighted average).
     pub(crate) total_time: f64,
+    /// Bucketed response times in this second, for the dashboard's latency
+    /// chart. Empty unless the dashboard tracks percentiles over time.
+    pub(crate) times: GooseRequestMetricTimingData,
 }
 
 /// Pre-aggregated request timing and status-code data for a single
@@ -358,6 +361,19 @@ pub(crate) enum MetricsCommand {
         /// Saving runs, which only the main loop knows.
         save: dashboard_snapshot::SnapshotSave,
         respond: tokio::sync::oneshot::Sender<DashboardSnapshot>,
+    },
+    /// One request's series for the dashboard's latency chart (`GET
+    /// /api/v1/series`), or `None` when the request has no series of its own.
+    #[cfg_attr(not(feature = "dashboard"), allow(dead_code))]
+    GetRequestSeries {
+        /// The request's method label, as in the snapshot's request rows.
+        method: String,
+        /// The request's name.
+        name: String,
+        /// Seconds since the continuous series clock started, as for
+        /// [`MetricsCommand::GetDashboardSnapshot`].
+        series_elapsed_secs: usize,
+        respond: tokio::sync::oneshot::Sender<Option<dashboard_snapshot::RequestSeries>>,
     },
 }
 
@@ -1091,6 +1107,12 @@ pub struct GooseRequestMetricTimingData {
     ///
     /// A count of how many requests have been tracked for this method-path pair.
     pub counter: usize,
+}
+impl Default for GooseRequestMetricTimingData {
+    /// Empty timing data.
+    fn default() -> Self {
+        GooseRequestMetricTimingData::new(None)
+    }
 }
 impl GooseRequestMetricTimingData {
     /// Create a new GooseRequestMetricAggregate object.
@@ -3457,9 +3479,11 @@ impl MetricsProcessor {
                 // the right edge so the chart matches the KPI active_users.
                 self.graph_data
                     .record_users_monotonic(active_users, series_elapsed_secs);
-                let series = self
-                    .graph_data
-                    .export_series_window_until(series_window_secs, Some(series_elapsed_secs));
+                let series = self.graph_data.export_series_window_with_latency(
+                    series_window_secs,
+                    Some(series_elapsed_secs),
+                    self.co_active(),
+                );
                 let snapshot = dashboard_snapshot::build_dashboard_snapshot(
                     dashboard_snapshot::DashboardSnapshotInput {
                         metrics: &self.metrics,
@@ -3476,6 +3500,8 @@ impl MetricsProcessor {
                         no_transaction_metrics: self.configuration.no_transaction_metrics,
                         no_scenario_metrics: self.configuration.no_scenario_metrics,
                         save,
+                        percentiles_over_time: self.configuration.records_latency_series(),
+                        series_keys: self.graph_data.latency_series_keys(),
                     },
                 );
                 let _ = respond.send(snapshot);
@@ -3484,7 +3510,45 @@ impl MetricsProcessor {
                 self.maybe_prune_dashboard_graph();
                 false
             }
+            MetricsCommand::GetRequestSeries {
+                method,
+                name,
+                series_elapsed_secs,
+                respond,
+            } => {
+                self.drain_pending();
+                let series = self.graph_data.export_request_series(
+                    method,
+                    name,
+                    dashboard_snapshot::SERIES_WINDOW_SECS,
+                    Some(series_elapsed_secs),
+                    self.co_active(),
+                );
+                let _ = respond.send(series);
+                false
+            }
         }
+    }
+
+    /// [`Self::process_request_metric`], for unit tests in other modules.
+    #[cfg(test)]
+    pub(crate) fn process_request_metric_for_test(&mut self, request_metric: &GooseRequestMetric) {
+        self.process_request_metric(request_metric);
+    }
+
+    /// The processor's graph data, for unit tests in other modules.
+    #[cfg(test)]
+    pub(crate) fn graph_data_for_test(&self) -> &GraphData {
+        &self.graph_data
+    }
+
+    /// Whether coordinated omission mitigation has recorded an event, so the
+    /// dashboard shows adjusted values.
+    fn co_active(&self) -> bool {
+        self.metrics
+            .coordinated_omission_metrics
+            .as_ref()
+            .is_some_and(|m| m.has_events())
     }
 
     /// Prune GraphData to a trailing window when only the live dashboard needs series.
@@ -3613,10 +3677,41 @@ impl MetricsProcessor {
                 - request_metric.user_cadence as i64
                 - request_metric.response_time as i64;
 
+            // Synthetic times also go to the dashboard's latency chart, each in
+            // the second its synthetic request would have started. This copy
+            // was sent because the previous scenario iteration took
+            // `coordinated_omission_elapsed` (E) ms, more than twice the
+            // cadence (c). That iteration is the stall, and it ended at or
+            // just before this request started, at `elapsed` (s) ms since the
+            // start. The loop below records t_k = E - k*c - r for k = 1, 2, ...
+            // while t_k > r, where r is this request's own response time; a
+            // request that took t_k and ended at s started at s - t_k. This
+            // is exact for the first request of an iteration and slightly late
+            // for later ones, and with wait times the seconds compress toward
+            // the end of the stall.
+            let latency_key = self.graph_data.records_synthetic_latency().then(|| {
+                format!(
+                    "{} {}",
+                    request_metric.raw.method_label(),
+                    request_metric.name
+                )
+            });
+
             loop {
                 if response_time > request_metric.response_time as i64 {
                     co_metric.response_time = response_time as u64;
                     self.record_request_metric(&co_metric);
+                    if let Some(key) = latency_key.as_deref() {
+                        let second = (request_metric
+                            .elapsed
+                            .saturating_sub(co_metric.response_time)
+                            / 1000) as usize;
+                        self.graph_data.record_synthetic_latency(
+                            key,
+                            second,
+                            co_metric.response_time,
+                        );
+                    }
                     let co_key = format!("{} {}", co_metric.raw.method, co_metric.name);
                     Self::increment_registry_counter(
                         &self.request_counter_registry,
@@ -3645,6 +3740,15 @@ impl MetricsProcessor {
                 );
                 self.graph_data
                     .record_requests_per_second(&key, seconds_since_start);
+                // Coordinated omission copies and updates are not new
+                // measurements, so they stay out of the latency chart.
+                if !request_metric.update && request_metric.coordinated_omission_elapsed == 0 {
+                    self.graph_data.record_latency(
+                        &key,
+                        seconds_since_start,
+                        request_metric.response_time,
+                    );
+                }
                 self.graph_data.record_average_response_time_per_second(
                     key.clone(),
                     seconds_since_start,
@@ -3855,6 +3959,9 @@ impl MetricsProcessor {
                             entry.total_time,
                             entry.count,
                         );
+                }
+                if entry.times.counter > 0 {
+                    self.graph_data.merge_latency(&key, second, &entry.times);
                 }
             }
             for (second, count) in batch.graph_tps {
@@ -4610,6 +4717,26 @@ pub(crate) fn calculate_response_time_percentile(
     max: usize,
     percent: f32,
 ) -> usize {
+    response_time_percentile(
+        response_times
+            .iter()
+            .map(|(value, counter)| (*value, *counter)),
+        total_requests,
+        min,
+        max,
+        percent,
+    )
+}
+
+/// [`calculate_response_time_percentile`] over any `(response time, count)`
+/// buckets in ascending order.
+pub(crate) fn response_time_percentile(
+    response_times: impl IntoIterator<Item = (usize, usize)>,
+    total_requests: usize,
+    min: usize,
+    max: usize,
+    percent: f32,
+) -> usize {
     let percentile_request = (total_requests as f32 * percent).round() as usize;
     debug!("percentile: {percent}, request {percentile_request} of total {total_requests}");
 
@@ -4618,12 +4745,12 @@ pub(crate) fn calculate_response_time_percentile(
     for (value, counter) in response_times {
         total_count += counter;
         if total_count >= percentile_request {
-            if *value < min {
+            if value < min {
                 return min;
-            } else if *value > max {
+            } else if value > max {
                 return max;
             } else {
-                return *value;
+                return value;
             }
         }
     }
@@ -6166,6 +6293,7 @@ mod test {
             RequestGraphBatchData {
                 count: response_times.len() as u32,
                 total_time,
+                times: GooseRequestMetricTimingData::default(),
             },
         );
         // Pre-aggregate request timing data too, so both paths match.
@@ -6327,6 +6455,261 @@ mod test {
             scenario.times.keys().copied().collect::<Vec<_>>(),
             vec![800, 1000],
             "scenario times must bucket 750ms to 800 and 1499ms to 1000, not 80 and 10: {GUARD}"
+        );
+    }
+
+    // --- Latency by second (#713) ---
+
+    /// A dashboard processor with the latency histograms on, as the attack
+    /// creates it for `mitigation`.
+    fn make_latency_test_processor(
+        mitigation: GooseCoordinatedOmissionMitigation,
+    ) -> MetricsProcessor {
+        let configuration = GooseConfiguration {
+            dashboard: true,
+            co_mitigation: Some(mitigation.clone()),
+            ..Default::default()
+        };
+        let mut processor = make_dashboard_test_processor(configuration.clone());
+        processor.graph_data = GraphData::for_metrics_processor(
+            configuration.records_latency_series(),
+            configuration.records_synthetic_latency(),
+        );
+        if mitigation != GooseCoordinatedOmissionMitigation::Disabled {
+            processor.metrics.coordinated_omission_metrics =
+                Some(CoordinatedOmissionMetrics::new(mitigation));
+        }
+        processor
+    }
+
+    /// Count of measured times in second `second` of the all requests series.
+    fn measured_count(processor: &MetricsProcessor, second: usize) -> u64 {
+        let window = processor
+            .graph_data
+            .export_series_window_until(dashboard_snapshot::SERIES_WINDOW_SECS, Some(second + 2));
+        window.latency_ms.count[second - window.start_second as usize]
+    }
+
+    fn request_series(
+        processor: &MetricsProcessor,
+        name: &str,
+        co_active: bool,
+    ) -> Option<dashboard_snapshot::RequestSeries> {
+        processor.graph_data.export_request_series(
+            "GET".to_string(),
+            name.to_string(),
+            dashboard_snapshot::SERIES_WINDOW_SECS,
+            Some(10),
+            co_active,
+        )
+    }
+
+    #[test]
+    fn latency_records_failures_but_not_updates_or_co_copies() {
+        let mut processor =
+            make_latency_test_processor(GooseCoordinatedOmissionMitigation::Average);
+
+        // A failed request lands in all requests and in its own series.
+        let mut failed = make_request_metric("/fail", 250, 500, 2_100);
+        failed.success = false;
+        failed.error = "500 Internal Server Error".to_string();
+        processor.process_request_metric(&failed);
+        assert_eq!(measured_count(&processor, 2), 1);
+        let series = request_series(&processor, "/fail", false).expect("series");
+        assert_eq!(series.latency_ms.count[2], 1);
+        assert_eq!(series.latency_ms.max[2], Some(250));
+
+        // An update is not a new measurement.
+        let mut update = make_request_metric("/fail", 300, 200, 2_200);
+        update.update = true;
+        processor.process_request_metric(&update);
+        assert_eq!(measured_count(&processor, 2), 1);
+
+        // Coordinated omission copies never reach the measured series, with
+        // or without a cadence.
+        for user_cadence in [0, 100] {
+            let mut copy = make_request_metric("/fail", 20, 200, 2_300);
+            copy.coordinated_omission_elapsed = 1_000;
+            copy.user_cadence = user_cadence;
+            processor.process_request_metric(&copy);
+            assert_eq!(measured_count(&processor, 2), 1, "cadence {user_cadence}");
+            let series = request_series(&processor, "/fail", false).unwrap();
+            assert_eq!(series.latency_ms.count[2], 1, "cadence {user_cadence}");
+        }
+    }
+
+    #[test]
+    fn latency_batch_times_reach_the_rings() {
+        let mut processor =
+            make_latency_test_processor(GooseCoordinatedOmissionMitigation::Disabled);
+        let mut batch = GooseMetricBatch::new(0);
+        for (second, time) in [(3usize, 10u64), (3, 30), (4, 1400)] {
+            let entry = batch
+                .graph_request_data
+                .entry(("GET /".to_string(), second))
+                .or_default();
+            entry.count += 1;
+            entry.total_time += time as f64;
+            entry.times.record_time(time);
+        }
+        processor.process_batch(batch);
+        assert_eq!(measured_count(&processor, 3), 2);
+        assert_eq!(measured_count(&processor, 4), 1);
+        let series = request_series(&processor, "/", false).unwrap();
+        assert_eq!(series.latency_ms.count[3..5], [2, 1]);
+        assert_eq!(series.latency_ms.p99[4], Some(1400));
+        assert_eq!(series.rps[3..5], [2.0, 1.0]);
+    }
+
+    #[tokio::test]
+    async fn latency_has_series_marks_first_hundred_names() {
+        let mut processor =
+            make_latency_test_processor(GooseCoordinatedOmissionMitigation::Disabled);
+        for i in 0..dashboard_snapshot::MAX_REQUEST_ROWS {
+            processor.process_request_metric(&make_request_metric(
+                &format!("/{i}"),
+                10,
+                200,
+                1_000,
+            ));
+        }
+        // The 101st name, requested most so its row is in the snapshot.
+        for _ in 0..5 {
+            processor.process_request_metric(&make_request_metric("/late", 10, 200, 1_000));
+        }
+        // Counts come from the atomic counters, which this test has none of.
+        for request in processor.metrics.requests.values_mut() {
+            request.success_count = request.raw_data.counter;
+        }
+        let (respond, respond_rx) = tokio::sync::oneshot::channel();
+        processor.handle_command(MetricsCommand::GetDashboardSnapshot {
+            duration: 2,
+            total_users: 1,
+            maximum_users: 1,
+            active_users: 1,
+            target_users: 1,
+            series_elapsed_secs: 2,
+            phase: "maintain".to_string(),
+            stopping: false,
+            series_window_secs: dashboard_snapshot::SERIES_WINDOW_SECS,
+            save: dashboard_snapshot::SnapshotSave::off("goose-runs"),
+            respond,
+        });
+        let snapshot = respond_rx.await.unwrap();
+        assert!(snapshot.flags.percentiles_over_time);
+        let late = snapshot
+            .requests
+            .iter()
+            .find(|r| r.name == "/late")
+            .unwrap();
+        assert!(!late.has_series);
+        assert!(snapshot
+            .requests
+            .iter()
+            .filter(|r| r.name != "/late")
+            .all(|r| r.has_series));
+        // Its times still count toward all requests.
+        assert_eq!(snapshot.series.latency_ms.count[1], 105);
+    }
+
+    #[tokio::test]
+    async fn latency_off_snapshot_is_empty() {
+        let configuration = GooseConfiguration {
+            dashboard: true,
+            no_percentiles_over_time: true,
+            ..Default::default()
+        };
+        assert!(!configuration.records_latency_series());
+        let mut processor = make_dashboard_test_processor(configuration.clone());
+        processor.graph_data = GraphData::for_metrics_processor(
+            configuration.records_latency_series(),
+            configuration.records_synthetic_latency(),
+        );
+        processor.process_request_metric(&make_request_metric("/", 10, 200, 1_000));
+        let (respond, respond_rx) = tokio::sync::oneshot::channel();
+        processor.handle_command(MetricsCommand::GetDashboardSnapshot {
+            duration: 2,
+            total_users: 1,
+            maximum_users: 1,
+            active_users: 1,
+            target_users: 1,
+            series_elapsed_secs: 2,
+            phase: "maintain".to_string(),
+            stopping: false,
+            series_window_secs: dashboard_snapshot::SERIES_WINDOW_SECS,
+            save: dashboard_snapshot::SnapshotSave::off("goose-runs"),
+            respond,
+        });
+        let snapshot = respond_rx.await.unwrap();
+        assert!(!snapshot.flags.percentiles_over_time);
+        assert!(!snapshot.series.rps.is_empty());
+        assert_eq!(
+            snapshot.series.latency_ms,
+            dashboard_snapshot::LatencySeries::default()
+        );
+        assert_eq!(
+            snapshot.series.latency_co_adjusted_ms,
+            dashboard_snapshot::LatencySeries::default()
+        );
+        assert!(snapshot.requests.iter().all(|r| !r.has_series));
+
+        let (respond, respond_rx) = tokio::sync::oneshot::channel();
+        processor.handle_command(MetricsCommand::GetRequestSeries {
+            method: "GET".to_string(),
+            name: "/".to_string(),
+            series_elapsed_secs: 2,
+            respond,
+        });
+        assert!(respond_rx.await.unwrap().is_none());
+    }
+
+    #[test]
+    fn latency_gate() {
+        let on = GooseConfiguration {
+            dashboard: true,
+            ..Default::default()
+        };
+        assert!(on.records_latency_series());
+        for off in [
+            GooseConfiguration::default(),
+            GooseConfiguration {
+                dashboard: true,
+                no_percentiles_over_time: true,
+                ..Default::default()
+            },
+            GooseConfiguration {
+                dashboard: true,
+                no_metrics: true,
+                ..Default::default()
+            },
+        ] {
+            assert!(!off.records_latency_series());
+            assert!(!off.records_synthetic_latency());
+        }
+        let mitigated = GooseConfiguration {
+            dashboard: true,
+            co_mitigation: Some(GooseCoordinatedOmissionMitigation::Average),
+            ..Default::default()
+        };
+        assert!(mitigated.records_synthetic_latency());
+        let disabled = GooseConfiguration {
+            dashboard: true,
+            co_mitigation: Some(GooseCoordinatedOmissionMitigation::Disabled),
+            ..Default::default()
+        };
+        assert!(!disabled.records_synthetic_latency());
+    }
+
+    #[test]
+    fn latency_synthetic_off_with_mitigation_disabled() {
+        let processor = make_latency_test_processor(GooseCoordinatedOmissionMitigation::Disabled);
+        assert!(!processor.graph_data.records_synthetic_latency());
+        let window = processor
+            .graph_data
+            .export_series_window_with_latency(300, Some(5), true);
+        assert_eq!(
+            window.latency_co_adjusted_ms,
+            dashboard_snapshot::LatencySeries::default()
         );
     }
 }

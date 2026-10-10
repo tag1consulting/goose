@@ -50,9 +50,27 @@ save: SnapshotSave, };
 
 type ErrorRow = { method: string, name: string, error: string, occurrences: number, };
 
+type LatencySeries = { count: Array<number>, avg: Array<number | null>, p50: Array<number | null>, p95: Array<number | null>, p99: Array<number | null>, max: Array<number | null>, };
+
 type Percentiles = { p50: number, p95: number, p99: number, };
 
-type RequestRow = { method: string, name: string, request_count: number, failure_count: number, requests_per_second: number, failures_per_second: number, response_time_avg_ms: number, response_time_min_ms: number, response_time_max_ms: number, percentile_ms: Percentiles, status_codes: Array<[number, number]>, co_adjusted: CoAdjusted | null, };
+type RequestRow = { method: string, name: string, request_count: number, failure_count: number, requests_per_second: number, failures_per_second: number, response_time_avg_ms: number, response_time_min_ms: number, response_time_max_ms: number, percentile_ms: Percentiles, status_codes: Array<[number, number]>, co_adjusted: CoAdjusted | null,
+/**
+ * True when the latency chart can show this request alone: trends are
+ * kept for the first 100 request names seen since metrics were last reset.
+ */
+has_series: boolean, };
+
+type RequestSeries = { method: string, name: string,
+/**
+ * First exported bucket index in seconds-from-test-start.
+ */
+start_second: number, rps: Array<number>, latency_ms: LatencySeries,
+/**
+ * Empty unless coordinated omission mitigation is on and has recorded an
+ * event, as in [`SeriesWindow::latency_co_adjusted_ms`].
+ */
+latency_co_adjusted_ms: LatencySeries, };
 
 type ScenarioRow = {
 /**
@@ -74,7 +92,18 @@ type SeriesWindow = {
 /**
  * First exported bucket index in seconds-from-test-start.
  */
-start_second: number, rps: Array<number>, fps: Array<number>, users: Array<number>, avg_latency_ms: Array<number>, };
+start_second: number, rps: Array<number>, fps: Array<number>, users: Array<number>, avg_latency_ms: Array<number>,
+/**
+ * Measured response times of all requests, for each second of the window.
+ * Every vector is empty when percentiles over time are off.
+ */
+latency_ms: LatencySeries,
+/**
+ * Response times of all requests including the synthetic times
+ * coordinated omission mitigation adds. An empty series means absent:
+ * every vector is empty unless mitigation is on and has recorded an event.
+ */
+latency_co_adjusted_ms: LatencySeries, };
 
 type SnapshotFlags = { metrics_disabled: boolean,
 /**
@@ -86,7 +115,12 @@ transaction_metrics_disabled: boolean,
  * True under `--no-scenario-metrics`, and under `--no-metrics` too;
  * `scenarios` is then empty.
  */
-scenario_metrics_disabled: boolean, requests_truncated: boolean, errors_truncated: boolean, series_seconds: number, };
+scenario_metrics_disabled: boolean, requests_truncated: boolean, errors_truncated: boolean, series_seconds: number,
+/**
+ * True when the dashboard tracks p50, p95 and p99 by second: on with
+ * `--dashboard` unless `--no-percentiles-over-time` or `--no-metrics`.
+ */
+percentiles_over_time: boolean, };
 
 type SnapshotSave = {
 /**

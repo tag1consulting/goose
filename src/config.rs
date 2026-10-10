@@ -225,6 +225,9 @@ pub struct GooseConfiguration {
     /// Sets max concurrent dashboard SSE clients (default: 32)
     #[options(no_short, meta = "COUNT")]
     pub dashboard_max_clients: u32,
+    /// Doesn't track p50, p95 and p99 by second (requires --dashboard)
+    #[options(no_short)]
+    pub no_percentiles_over_time: bool,
     /// Doesn't automatically start load test
     #[options(no_short)]
     pub no_autostart: bool,
@@ -406,6 +409,8 @@ pub(crate) struct GooseDefaults {
     pub dashboard_auth_token: Option<String>,
     /// An optional default for max concurrent dashboard SSE clients.
     pub dashboard_max_clients: Option<u32>,
+    /// An optional default for not tracking p50, p95 and p99 by second.
+    pub no_percentiles_over_time: Option<bool>,
     /// An optional default for not validating https certificates.
     pub accept_invalid_certs: Option<bool>,
     /// An optional default for PDF generation timeout (seconds).
@@ -533,6 +538,8 @@ pub enum GooseDefault {
     DashboardAuthToken,
     /// An optional default for max concurrent dashboard SSE clients.
     DashboardMaxClients,
+    /// An optional default for not tracking p50, p95 and p99 by second in the dashboard.
+    NoPercentilesOverTime,
     /// An optional default for not validating https certificates.
     AcceptInvalidCerts,
     /// An optional default for PDF generation timeout (seconds).
@@ -627,6 +634,7 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::NoSave`]
 ///  - [`GooseDefault::Dashboard`]
 ///  - [`GooseDefault::DashboardControl`]
+///  - [`GooseDefault::NoPercentilesOverTime`]
 ///
 /// The following run-time flags can be configured with a custom default using a
 /// [`GooseLogFormat`].
@@ -739,6 +747,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::NoSave
             | GooseDefault::Dashboard
             | GooseDefault::DashboardControl
+            | GooseDefault::NoPercentilesOverTime
             | GooseDefault::AcceptInvalidCerts => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
@@ -855,6 +864,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::NoSave
             | GooseDefault::Dashboard
             | GooseDefault::DashboardControl
+            | GooseDefault::NoPercentilesOverTime
             | GooseDefault::AcceptInvalidCerts => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
@@ -915,6 +925,9 @@ impl GooseDefaultType<bool> for GooseAttack {
             GooseDefault::NoSave => self.defaults.no_save = Some(value),
             GooseDefault::Dashboard => self.defaults.dashboard = Some(value),
             GooseDefault::DashboardControl => self.defaults.dashboard_control = Some(value),
+            GooseDefault::NoPercentilesOverTime => {
+                self.defaults.no_percentiles_over_time = Some(value)
+            }
             // Otherwise display a helpful and explicit error.
             GooseDefault::DebugLog
             | GooseDefault::ErrorLog
@@ -1030,6 +1043,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::NoSave
             | GooseDefault::Dashboard
             | GooseDefault::DashboardControl
+            | GooseDefault::NoPercentilesOverTime
             | GooseDefault::AcceptInvalidCerts
             => {
                 return Err(GooseError::InvalidOption {
@@ -1150,6 +1164,7 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::NoSave
             | GooseDefault::Dashboard
             | GooseDefault::DashboardControl
+            | GooseDefault::NoPercentilesOverTime
             | GooseDefault::AcceptInvalidCerts
             => {
                 return Err(GooseError::InvalidOption {
@@ -2189,6 +2204,24 @@ impl GooseConfiguration {
             ])
             .unwrap_or(if self.dashboard { 32 } else { 0 });
 
+        // Configure `no_percentiles_over_time`.
+        self.no_percentiles_over_time = self
+            .get_value(vec![
+                // Use --no-percentiles-over-time if set.
+                GooseValue {
+                    value: Some(self.no_percentiles_over_time),
+                    filter: !self.no_percentiles_over_time,
+                    message: "no_percentiles_over_time",
+                },
+                // Otherwise use GooseDefault if set.
+                GooseValue {
+                    value: defaults.no_percentiles_over_time,
+                    filter: defaults.no_percentiles_over_time.is_none(),
+                    message: "no_percentiles_over_time",
+                },
+            ])
+            .unwrap_or(false);
+
         // Configure `no_autostart`.
         self.no_autostart = self
             .get_value(vec![
@@ -2348,6 +2381,22 @@ impl GooseConfiguration {
     /// reports need. When only the dashboard records it, older data is pruned.
     pub(crate) fn keeps_full_graph(&self) -> bool {
         self.saves_runs() || !self.report_file.is_empty()
+    }
+
+    /// Whether response time histograms are kept for each second, for the
+    /// dashboard's latency chart. Implies [`Self::records_graph_data`].
+    pub(crate) fn records_latency_series(&self) -> bool {
+        self.dashboard && !self.no_percentiles_over_time && !self.no_metrics
+    }
+
+    /// Whether the latency chart also keeps coordinated omission mitigation's
+    /// synthetic times: it tracks percentiles and mitigation is not disabled.
+    pub(crate) fn records_synthetic_latency(&self) -> bool {
+        self.records_latency_series()
+            && self
+                .co_mitigation
+                .as_ref()
+                .is_some_and(|m| m != &GooseCoordinatedOmissionMitigation::Disabled)
     }
 
     pub(crate) fn validate(&self) -> Result<(), GooseError> {
@@ -2619,6 +2668,16 @@ impl GooseConfiguration {
                 value: true.to_string(),
                 detail:
                     "`configuration.no_granular_report` can not be set without `configuration.report_file` when runs are not saved."
+                        .to_string(),
+            });
+        }
+
+        if !self.dashboard && self.no_percentiles_over_time {
+            return Err(GooseError::InvalidOption {
+                option: "`configuration.no_percentiles_over_time`".to_string(),
+                value: true.to_string(),
+                detail:
+                    "`configuration.no_percentiles_over_time` can not be set without `configuration.dashboard`."
                         .to_string(),
             });
         }
@@ -3338,5 +3397,38 @@ mod test {
         config.dashboard = false;
         config.dashboard_control = false;
         assert!(config.validate_dashboard_config().is_ok());
+    }
+
+    #[test]
+    fn no_percentiles_over_time_requires_dashboard() {
+        let config = GooseConfiguration {
+            no_percentiles_over_time: true,
+            ..Default::default()
+        };
+        match config.validate() {
+            Err(GooseError::InvalidOption { option, detail, .. }) => {
+                assert_eq!(option, "`configuration.no_percentiles_over_time`");
+                assert_eq!(
+                    detail,
+                    "`configuration.no_percentiles_over_time` can not be set without `configuration.dashboard`."
+                );
+            }
+            other => panic!("expected InvalidOption, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn no_percentiles_over_time_from_default() {
+        let goose_attack = GooseAttack::initialize_with_config(GooseConfiguration::default())
+            .unwrap()
+            .set_default(GooseDefault::NoPercentilesOverTime, true)
+            .unwrap();
+        assert_eq!(goose_attack.defaults.no_percentiles_over_time, Some(true));
+        let mut config = GooseConfiguration {
+            dashboard: true,
+            ..Default::default()
+        };
+        config.configure(&goose_attack.defaults);
+        assert!(config.no_percentiles_over_time);
     }
 }

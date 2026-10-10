@@ -1598,6 +1598,9 @@ impl GooseAttack {
         const MAX_DRAIN: usize = 16;
 
         let mut control_batch: Vec<dashboard::DashboardRequest> = Vec::new();
+        // Kept apart from `control_batch`: a non empty control batch answers
+        // pending snapshots locally, which polling a series must not cause.
+        let mut series_requests: Vec<dashboard::DashboardRequest> = Vec::new();
         let mut pending_snapshot: Option<tokio::sync::oneshot::Sender<metrics::DashboardSnapshot>> =
             None;
         let mut disconnected = false;
@@ -1614,6 +1617,9 @@ impl GooseAttack {
                         if let Some(stale) = pending_snapshot.replace(respond) {
                             drop(stale);
                         }
+                    }
+                    Ok(series_req @ dashboard::DashboardRequest::GetRequestSeries { .. }) => {
+                        series_requests.push(series_req);
                     }
                     Ok(control_req) => {
                         control_batch.push(control_req);
@@ -1656,6 +1662,9 @@ impl GooseAttack {
                 dashboard::DashboardRequest::GetSnapshot { .. } => {
                     // GetSnapshot is coalesced above; should not appear here.
                     unreachable!("snapshot requests are not pushed into control_batch");
+                }
+                dashboard::DashboardRequest::GetRequestSeries { .. } => {
+                    unreachable!("series requests are not pushed into control_batch");
                 }
                 dashboard::DashboardRequest::Start { respond } => {
                     // Client already gone (HTTP timeout dropped the oneshot) — do not
@@ -1791,6 +1800,55 @@ impl GooseAttack {
             }
         }
 
+        // Then each series request, also without waiting for the processor.
+        for req in series_requests {
+            let dashboard::DashboardRequest::GetRequestSeries {
+                method,
+                name,
+                respond,
+            } = req
+            else {
+                unreachable!("only series requests are pushed into series_requests");
+            };
+            if respond.is_closed() {
+                continue;
+            }
+            match goose_attack_run_state
+                .metrics_cmd_tx
+                .send(MetricsCommand::GetRequestSeries {
+                    method,
+                    name,
+                    series_elapsed_secs: self.series_elapsed_secs(),
+                    respond,
+                }) {
+                Ok(()) => {}
+                // Processor gone (e.g. Idle after control Stop): answer from
+                // main-loop state, as for snapshots.
+                Err(flume::SendError(MetricsCommand::GetRequestSeries {
+                    method,
+                    name,
+                    series_elapsed_secs,
+                    respond,
+                })) => {
+                    let series = self.graph_data.export_request_series(
+                        method,
+                        name,
+                        metrics::dashboard_snapshot::SERIES_WINDOW_SECS,
+                        Some(series_elapsed_secs),
+                        self.metrics
+                            .coordinated_omission_metrics
+                            .as_ref()
+                            .is_some_and(|m| m.has_events()),
+                    );
+                    let _ = respond.send(series);
+                }
+                Err(_) => {
+                    // Other command variants cannot appear here.
+                    debug!("[dashboard]: metrics processor unavailable");
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -1829,9 +1887,13 @@ impl GooseAttack {
     ) -> metrics::DashboardSnapshot {
         // Main-loop graph_data is usually empty until Shutdown merge. Export with
         // series-clock "now" so any retained users level holds to the right edge.
-        let series = self.graph_data.export_series_window_until(
+        let series = self.graph_data.export_series_window_with_latency(
             metrics::dashboard_snapshot::SERIES_WINDOW_SECS,
             Some(self.series_elapsed_secs()),
+            self.metrics
+                .coordinated_omission_metrics
+                .as_ref()
+                .is_some_and(|m| m.has_events()),
         );
         metrics::dashboard_snapshot::build_dashboard_snapshot(
             metrics::dashboard_snapshot::DashboardSnapshotInput {
@@ -1849,6 +1911,8 @@ impl GooseAttack {
                 no_transaction_metrics: self.configuration.no_transaction_metrics,
                 no_scenario_metrics: self.configuration.no_scenario_metrics,
                 save: self.save_snapshot(),
+                percentiles_over_time: self.configuration.records_latency_series(),
+                series_keys: self.graph_data.latency_series_keys(),
             },
         )
     }
@@ -1956,7 +2020,10 @@ impl GooseAttack {
             metrics_rx,
             metrics_cmd_rx,
             self.metrics.clone(),
-            GraphData::new(),
+            GraphData::for_metrics_processor(
+                self.configuration.records_latency_series(),
+                self.configuration.records_synthetic_latency(),
+            ),
             self.configuration.clone(),
             self.scenarios.clone(),
             self.defaults.clone(),
@@ -2893,7 +2960,10 @@ impl GooseAttack {
             metrics_rx,
             metrics_cmd_rx,
             self.metrics.clone(),
-            GraphData::new(),
+            GraphData::for_metrics_processor(
+                self.configuration.records_latency_series(),
+                self.configuration.records_synthetic_latency(),
+            ),
             self.configuration.clone(),
             self.scenarios.clone(),
             self.defaults.clone(),
@@ -3717,5 +3787,26 @@ mod tests {
         assert!(wildcard_match("put1024bytes", "put1024bytes"));
         assert!(!wildcard_match("put1024bytes", "getput1024bytes"));
         assert!(!wildcard_match("put1024bytes", "put1024bytesextra"));
+    }
+
+    /// Before the first Start no metrics processor has run, and the snapshot
+    /// built from the main loop still says percentiles over time are on.
+    #[cfg(feature = "dashboard")]
+    #[test]
+    fn local_dashboard_snapshot_reports_percentiles_over_time() {
+        for (args, expected) in [
+            (vec!["--dashboard"], true),
+            (vec!["--dashboard", "--no-percentiles-over-time"], false),
+        ] {
+            let configuration = GooseConfiguration::parse_args_default(&args).unwrap();
+            let goose_attack = GooseAttack::initialize_with_config(configuration).unwrap();
+            let snapshot =
+                goose_attack.build_local_dashboard_snapshot("idle".to_string(), false, 0);
+            assert_eq!(snapshot.flags.percentiles_over_time, expected, "{args:?}");
+            assert_eq!(
+                snapshot.series.latency_ms,
+                metrics::dashboard_snapshot::LatencySeries::default()
+            );
+        }
     }
 }

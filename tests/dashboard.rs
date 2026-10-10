@@ -1570,6 +1570,153 @@ async fn test_dashboard_series_without_report_file() {
     let _metrics = load.join().await.expect("load test execute");
 }
 
+/// `GET /api/v1/series` with these query parameters, encoded.
+fn series_url(base: &str, params: &[(&str, &str)]) -> reqwest::Url {
+    reqwest::Url::parse_with_params(&format!("{base}/api/v1/series"), params).expect("series url")
+}
+
+/// Sum of a JSON array of numbers.
+fn json_sum(value: &serde_json::Value) -> f64 {
+    value
+        .as_array()
+        .map(|values| values.iter().filter_map(|v| v.as_f64()).sum())
+        .unwrap_or(0.0)
+}
+
+/// The latency chart's series: per second counts match the requests per
+/// second series, percentiles fill in for complete seconds, and
+/// `GET /api/v1/series` returns one request's series.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn test_dashboard_latency_by_second() {
+    let server = MockServer::start();
+    let _mocks = setup_mock_endpoints(&server);
+    let port = reserve_port();
+    let base_v4 = format!("http://127.0.0.1:{port}");
+
+    let mut configuration = build_dashboard_config(&server, "127.0.0.1", port, None);
+    configuration.run_time = "7".to_string();
+
+    let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
+    let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
+    let started = Instant::now();
+
+    let (base, _health) = wait_for_health(&[&base_v4], 80).await;
+    let client = reqwest::Client::new();
+
+    let wait = Duration::from_secs(4).saturating_sub(started.elapsed());
+    tokio::time::sleep(wait).await;
+    let snap = get_snapshot_json(&client, &base, None)
+        .await
+        .expect("snapshot");
+    assert_eq!(snap["flags"]["percentiles_over_time"], true);
+    let series = &snap["series"];
+    let latency = &series["latency_ms"];
+    let rps_len = series["rps"].as_array().expect("rps").len();
+    for field in ["count", "avg", "p50", "p95", "p99", "max"] {
+        assert_eq!(
+            latency[field].as_array().expect(field).len(),
+            rps_len,
+            "latency_ms.{field}"
+        );
+    }
+    assert!(json_sum(&series["rps"]) > 0.0);
+    assert_eq!(json_sum(&latency["count"]), json_sum(&series["rps"]));
+    let complete =
+        (0..rps_len).any(
+            |i| match (latency["p50"][i].as_u64(), latency["p99"][i].as_u64()) {
+                (Some(p50), Some(p99)) => p99 >= p50,
+                _ => false,
+            },
+        );
+    assert!(complete, "some second must have p50 and p99: {}", latency);
+    // Mitigation is disabled: no adjusted series.
+    assert_eq!(
+        series["latency_co_adjusted_ms"]["count"],
+        serde_json::json!([])
+    );
+
+    let row = &snap["requests"][0];
+    assert_eq!(row["has_series"], true);
+    let method = row["method"].as_str().expect("method").to_string();
+    let name = row["name"].as_str().expect("name").to_string();
+
+    let resp = client
+        .get(series_url(
+            &base,
+            &[("method", method.as_str()), ("name", name.as_str())],
+        ))
+        .send()
+        .await
+        .expect("series GET");
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.headers()["content-type"].to_str().unwrap(),
+        "application/json"
+    );
+    let one: serde_json::Value = resp.json().await.expect("series json");
+    assert_eq!(one["method"], method.as_str());
+    assert_eq!(one["name"], name.as_str());
+    assert_eq!(json_sum(&one["latency_ms"]["count"]), json_sum(&one["rps"]));
+    // The only request: its complete seconds match the snapshot's.
+    let snap_start = series["start_second"].as_u64().unwrap() as usize;
+    let one_start = one["start_second"].as_u64().unwrap() as usize;
+    assert_eq!(snap_start, one_start);
+    for i in 0..rps_len.saturating_sub(2) {
+        assert_eq!(
+            one["latency_ms"]["count"][i],
+            latency["count"][i],
+            "second {}",
+            snap_start + i
+        );
+    }
+
+    let status_and_error = |resp: reqwest::Response| async move {
+        let status = resp.status().as_u16();
+        let body: serde_json::Value = resp.json().await.expect("error json");
+        (
+            status,
+            body["error"].as_str().unwrap_or_default().to_string(),
+        )
+    };
+    let unknown = client
+        .get(series_url(
+            &base,
+            &[("method", "GET"), ("name", "/nothing-here")],
+        ))
+        .send()
+        .await
+        .expect("series GET");
+    assert_eq!(
+        status_and_error(unknown).await,
+        (404, "not_found".to_string())
+    );
+    let missing = client
+        .get(series_url(&base, &[("method", "GET")]))
+        .send()
+        .await
+        .expect("series GET");
+    assert_eq!(
+        status_and_error(missing).await,
+        (400, "bad_request".to_string())
+    );
+    let long_name = "x".repeat(2_048);
+    let too_long = client
+        .get(series_url(
+            &base,
+            &[("method", "GET"), ("name", long_name.as_str())],
+        ))
+        .send()
+        .await
+        .expect("series GET");
+    assert_eq!(
+        status_and_error(too_long).await,
+        (400, "bad_request".to_string())
+    );
+
+    let _metrics = load.join().await.expect("load test execute");
+}
+
 /// With `--no-transaction-metrics --no-scenario-metrics` the snapshot says
 /// both tables are off, while request metrics still flow.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

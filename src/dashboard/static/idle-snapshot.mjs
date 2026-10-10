@@ -34,7 +34,15 @@ export const IDLE_SNAPSHOT = {
   errors: [],
   scenarios: [],
   transactions: [],
-  series: { start_second: 0, rps: [], fps: [], users: [], avg_latency_ms: [] },
+  series: {
+    start_second: 0,
+    rps: [],
+    fps: [],
+    users: [],
+    avg_latency_ms: [],
+    latency_ms: { count: [], avg: [], p50: [], p95: [], p99: [], max: [] },
+    latency_co_adjusted_ms: { count: [], avg: [], p50: [], p95: [], p99: [], max: [] },
+  },
   flags: {
     metrics_disabled: false,
     transaction_metrics_disabled: false,
@@ -42,6 +50,7 @@ export const IDLE_SNAPSHOT = {
     requests_truncated: false,
     errors_truncated: false,
     series_seconds: 0,
+    percentiles_over_time: true,
   },
   save: { state: "on", reason: null, dir: "goose-runs", last_run: null },
 };

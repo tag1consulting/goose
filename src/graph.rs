@@ -5,14 +5,18 @@
 //! this data is converted into [`Graph`] structures and HTML markup is generated
 //! based on them.
 
-use crate::metrics::dashboard_snapshot::SeriesWindow;
+use crate::metrics::dashboard_snapshot::{
+    LatencySeries, RequestSeries, SeriesWindow, SERIES_WINDOW_SECS,
+};
+use crate::metrics::{response_time_percentile, round_metric_time, GooseRequestMetricTimingData};
 use crate::test_plan::{TestPlanHistory, TestPlanStepAction};
 use chrono::prelude::*;
 use itertools::Itertools;
 use serde::Serialize;
 use serde_json::json;
 use std::cmp::Ordering;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::convert::TryFrom;
 use std::fmt::Write;
 use std::marker::PhantomData;
 
@@ -71,6 +75,410 @@ impl ItemsPerSecond {
     }
 }
 
+/// Most request names that get their own latency series. Later names still
+/// count toward the all requests series.
+pub(crate) const MAX_REQUEST_SERIES: usize = 100;
+
+/// Rounded response times up to the default 60 second timeout each have a
+/// fixed index: every millisecond to 100 ms, then 110 to 500 ms by 10, 600
+/// to 1000 ms by 100 and 2 to 60 seconds by 1000.
+const FIXED_BUCKETS: usize = 205;
+
+/// The fixed index of a rounded response time, if it has one.
+fn dense_index(rounded: usize) -> Option<usize> {
+    match rounded {
+        0..=100 => Some(rounded),
+        101..=500 => Some(100 + (rounded - 100) / 10),
+        501..=1000 => Some(140 + (rounded - 500) / 100),
+        1001..=60_000 => Some(145 + (rounded - 1000) / 1000),
+        _ => None,
+    }
+}
+
+/// The rounded response time a fixed index stands for.
+fn dense_value(index: usize) -> usize {
+    match index {
+        0..=100 => index,
+        101..=140 => 100 + (index - 100) * 10,
+        141..=145 => 500 + (index - 140) * 100,
+        _ => 1000 + (index - 145) * 1000,
+    }
+}
+
+/// Bits of a [`SecondHistogram`] entry that hold the count; the bucket index
+/// is in the top 8 bits.
+const COUNT_BITS: u32 = 24;
+/// Most one entry counts. A bucket that fills an entry continues in the next.
+const COUNT_MAX: u32 = (1 << COUNT_BITS) - 1;
+
+/// One second's response times, in the same buckets as
+/// [`GooseRequestMetricTimingData`] but held compactly: a sorted list with 4
+/// bytes for each bucket the second has seen (its index and its count), so a
+/// quiet name costs little and a busy one at most about 1 KB a second.
+/// Rounded times above 60 seconds, possible with a longer `--timeout`, go to
+/// a short sorted overflow list.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct SecondHistogram {
+    entries: Vec<u32>,
+    overflow: Vec<(usize, u32)>,
+    /// The fastest response, ignoring 0, not rounded.
+    pub(crate) minimum_time: usize,
+    /// The slowest response, not rounded.
+    pub(crate) maximum_time: usize,
+    /// Sum of all response times.
+    pub(crate) total_time: usize,
+    /// Number of responses.
+    pub(crate) counter: usize,
+}
+
+impl SecondHistogram {
+    /// Add `count` to the bucket with fixed index `index`, searching from
+    /// entry `from` on. Returns where the search for a higher index can
+    /// start.
+    fn add_indexed(&mut self, from: usize, index: usize, mut count: usize) -> usize {
+        debug_assert!(index < FIXED_BUCKETS && FIXED_BUCKETS <= 1 << (32 - COUNT_BITS));
+        let bucket = index as u32;
+        let key = bucket << COUNT_BITS;
+        let mut at = from + self.entries[from..].partition_point(|&entry| entry < key);
+        while count > 0 {
+            if at < self.entries.len() && self.entries[at] >> COUNT_BITS == bucket {
+                let room = (COUNT_MAX - (self.entries[at] & COUNT_MAX)) as usize;
+                let add = room.min(count);
+                self.entries[at] += add as u32;
+                count -= add;
+            } else {
+                let add = count.min(COUNT_MAX as usize);
+                self.entries.insert(at, key | add as u32);
+                count -= add;
+            }
+            at += 1;
+        }
+        at
+    }
+
+    fn add_bucket(&mut self, rounded: usize, count: usize) {
+        if let Some(index) = dense_index(rounded) {
+            self.add_indexed(0, index, count);
+            return;
+        }
+        let count = u32::try_from(count).unwrap_or(u32::MAX);
+        match self
+            .overflow
+            .binary_search_by_key(&rounded, |&(bucket, _)| bucket)
+        {
+            Ok(at) => self.overflow[at].1 = self.overflow[at].1.saturating_add(count),
+            Err(at) => self.overflow.insert(at, (rounded, count)),
+        }
+    }
+
+    fn add_totals(&mut self, minimum: usize, maximum: usize, total: usize, counter: usize) {
+        if minimum > 0 && (self.minimum_time == 0 || minimum < self.minimum_time) {
+            self.minimum_time = minimum;
+        }
+        if maximum > self.maximum_time {
+            self.maximum_time = maximum;
+        }
+        self.total_time += total;
+        self.counter += counter;
+    }
+
+    /// Record one response time, as [`GooseRequestMetricTimingData::record_time`] does.
+    pub(crate) fn record(&mut self, time: u64) {
+        let time_ms = time as usize;
+        self.add_totals(time_ms, time_ms, time_ms, 1);
+        self.add_bucket(round_metric_time(time), 1);
+    }
+
+    /// Add a batch's response times, as [`GooseRequestMetricTimingData::merge`] does.
+    pub(crate) fn merge_timing_data(&mut self, other: &GooseRequestMetricTimingData) {
+        // Both are sorted, so each search starts where the last one ended.
+        let mut from = 0;
+        for (&bucket, &count) in &other.times {
+            match dense_index(bucket) {
+                Some(index) => from = self.add_indexed(from, index, count),
+                None => self.add_bucket(bucket, count),
+            }
+        }
+        self.add_totals(
+            other.minimum_time,
+            other.maximum_time,
+            other.total_time,
+            other.counter,
+        );
+    }
+
+    /// Add another second's response times.
+    pub(crate) fn merge(&mut self, other: &SecondHistogram) {
+        let mut from = 0;
+        for &entry in &other.entries {
+            let index = (entry >> COUNT_BITS) as usize;
+            from = self.add_indexed(from, index, (entry & COUNT_MAX) as usize);
+        }
+        for &(bucket, count) in &other.overflow {
+            self.add_bucket(bucket, count as usize);
+        }
+        self.add_totals(
+            other.minimum_time,
+            other.maximum_time,
+            other.total_time,
+            other.counter,
+        );
+    }
+
+    /// Release spare capacity once the second is unlikely to grow.
+    fn shrink_to_fit(&mut self) {
+        self.entries.shrink_to_fit();
+        self.overflow.shrink_to_fit();
+    }
+
+    /// Non empty buckets as `(rounded time, count)`, fastest first. A bucket
+    /// past [`COUNT_MAX`] appears more than once, consecutively.
+    fn buckets(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
+        self.entries
+            .iter()
+            .map(|&entry| {
+                (
+                    dense_value((entry >> COUNT_BITS) as usize),
+                    (entry & COUNT_MAX) as usize,
+                )
+            })
+            .chain(
+                self.overflow
+                    .iter()
+                    .map(|&(bucket, count)| (bucket, count as usize)),
+            )
+    }
+
+    /// The response time `percent` of these requests finished within,
+    /// computed as for the whole run's percentiles.
+    pub(crate) fn percentile(&self, percent: f32) -> usize {
+        response_time_percentile(
+            self.buckets(),
+            self.counter,
+            self.minimum_time,
+            self.maximum_time,
+            percent,
+        )
+    }
+}
+
+/// One response time histogram for each of the last [`SERIES_WINDOW_SECS`]
+/// seconds. Second `s` lives in slot `s % len`, tagged with `s` so a slot that
+/// still holds an older second is recognized and reused.
+#[derive(Clone)]
+pub(crate) struct LatencyRing {
+    slots: Vec<Option<(usize, SecondHistogram)>>,
+}
+
+impl LatencyRing {
+    pub(crate) fn new() -> Self {
+        LatencyRing {
+            slots: (0..SERIES_WINDOW_SECS).map(|_| None).collect(),
+        }
+    }
+
+    /// The histogram for `second`, replacing an older second's. `None` when
+    /// the slot already holds a newer second: the sample is too old to show.
+    fn slot_mut(&mut self, second: usize) -> Option<&mut SecondHistogram> {
+        let len = self.slots.len();
+        match &self.slots[second % len] {
+            Some((held, _)) if *held > second => return None,
+            Some((held, _)) if *held == second => {}
+            _ => {
+                self.slots[second % len] = Some((second, SecondHistogram::default()));
+                // A new second has begun: the one two seconds back has all
+                // but its slowest requests, so give back its spare capacity.
+                if let Some(older) = second.checked_sub(2) {
+                    if let Some((held, data)) = &mut self.slots[older % len] {
+                        if *held == older {
+                            data.shrink_to_fit();
+                        }
+                    }
+                }
+            }
+        }
+        self.slots[second % len].as_mut().map(|(_, data)| data)
+    }
+
+    /// Record one response time in `second`.
+    pub(crate) fn record(&mut self, second: usize, time: u64) {
+        if let Some(data) = self.slot_mut(second) {
+            data.record(time);
+        }
+    }
+
+    /// Add a histogram of response times to `second`.
+    pub(crate) fn merge(&mut self, second: usize, other: &GooseRequestMetricTimingData) {
+        if let Some(data) = self.slot_mut(second) {
+            data.merge_timing_data(other);
+        }
+    }
+
+    /// Forget every second.
+    pub(crate) fn clear(&mut self) {
+        for slot in self.slots.iter_mut() {
+            *slot = None;
+        }
+    }
+
+    /// The histogram for `second`, if the ring still holds it.
+    pub(crate) fn get(&self, second: usize) -> Option<&SecondHistogram> {
+        match &self.slots[second % self.slots.len()] {
+            Some((held, data)) if *held == second => Some(data),
+            _ => None,
+        }
+    }
+}
+
+/// Per second response time histograms for the dashboard's latency chart:
+/// all requests, each of the first [`MAX_REQUEST_SERIES`] request names, and
+/// the same for synthetic times while coordinated omission mitigation is on.
+pub(crate) struct LatencyHistograms {
+    all: LatencyRing,
+    by_request: HashMap<String, LatencyRing>,
+    synthetic: Option<(LatencyRing, HashMap<String, LatencyRing>)>,
+}
+
+impl LatencyHistograms {
+    /// `synthetic` keeps rings for coordinated omission mitigation's
+    /// synthetic times too; pass it when mitigation is not `disabled`.
+    pub(crate) fn new(synthetic: bool) -> Self {
+        LatencyHistograms {
+            all: LatencyRing::new(),
+            by_request: HashMap::new(),
+            synthetic: synthetic.then(|| (LatencyRing::new(), HashMap::new())),
+        }
+    }
+
+    /// The ring for `key`, admitting the name while there is room.
+    fn request_ring(&mut self, key: &str) -> Option<&mut LatencyRing> {
+        if !self.by_request.contains_key(key) {
+            if self.by_request.len() >= MAX_REQUEST_SERIES {
+                return None;
+            }
+            self.by_request.insert(key.to_string(), LatencyRing::new());
+        }
+        self.by_request.get_mut(key)
+    }
+
+    fn record(&mut self, key: &str, second: usize, time: u64) {
+        self.all.record(second, time);
+        if let Some(ring) = self.request_ring(key) {
+            ring.record(second, time);
+        }
+    }
+
+    fn merge(&mut self, key: &str, second: usize, data: &GooseRequestMetricTimingData) {
+        self.all.merge(second, data);
+        if let Some(ring) = self.request_ring(key) {
+            ring.merge(second, data);
+        }
+    }
+
+    /// Record a synthetic time. A name gets a synthetic ring only if it has a
+    /// measured one.
+    fn record_synthetic(&mut self, key: &str, second: usize, time: u64) {
+        let Some((all, by_request)) = self.synthetic.as_mut() else {
+            return;
+        };
+        all.record(second, time);
+        if !self.by_request.contains_key(key) {
+            return;
+        }
+        if let Some(ring) = by_request.get_mut(key) {
+            ring.record(second, time);
+        } else {
+            let mut ring = LatencyRing::new();
+            ring.record(second, time);
+            by_request.insert(key.to_string(), ring);
+        }
+    }
+
+    /// Clear every ring and forget every name, so names are admitted again.
+    fn clear(&mut self) {
+        self.all.clear();
+        self.by_request.clear();
+        if let Some((all, by_request)) = self.synthetic.as_mut() {
+            all.clear();
+            by_request.clear();
+        }
+    }
+
+    /// Measured and adjusted series over `start..=end` for one ring and its
+    /// synthetic counterpart. The adjusted series is empty unless `co_active`
+    /// and synthetic rings are kept.
+    fn export(
+        &self,
+        measured: &LatencyRing,
+        synthetic: Option<&LatencyRing>,
+        start: usize,
+        end: usize,
+        hold_from: usize,
+        co_active: bool,
+    ) -> (LatencySeries, LatencySeries) {
+        let measured_series = latency_series(measured, None, start, end, hold_from);
+        let adjusted = if co_active && self.synthetic.is_some() {
+            latency_series(measured, synthetic, start, end, hold_from)
+        } else {
+            LatencySeries::default()
+        };
+        (measured_series, adjusted)
+    }
+
+    fn export_all(
+        &self,
+        start: usize,
+        end: usize,
+        hold_from: usize,
+        co_active: bool,
+    ) -> (LatencySeries, LatencySeries) {
+        let synthetic = self.synthetic.as_ref().map(|(all, _)| all);
+        self.export(&self.all, synthetic, start, end, hold_from, co_active)
+    }
+
+    fn export_request(
+        &self,
+        key: &str,
+        start: usize,
+        end: usize,
+        hold_from: usize,
+        co_active: bool,
+    ) -> Option<(LatencySeries, LatencySeries)> {
+        let measured = self.by_request.get(key)?;
+        let synthetic = self
+            .synthetic
+            .as_ref()
+            .and_then(|(_, by_request)| by_request.get(key));
+        Some(self.export(measured, synthetic, start, end, hold_from, co_active))
+    }
+}
+
+/// Builds a [`LatencySeries`] over `start..=end` from a measured ring, merged
+/// with a synthetic ring when given (the adjusted series). Seconds at or after
+/// `hold_from` keep their count, average and maximum but no percentiles.
+fn latency_series(
+    measured: &LatencyRing,
+    synthetic: Option<&LatencyRing>,
+    start: usize,
+    end: usize,
+    hold_from: usize,
+) -> LatencySeries {
+    let mut series = LatencySeries::with_capacity(end + 1 - start);
+    for second in start..=end {
+        let hold = second >= hold_from;
+        let real = measured.get(second);
+        match synthetic.and_then(|ring| ring.get(second)) {
+            None => series.push(real, hold),
+            Some(added) => {
+                let mut combined = real.cloned().unwrap_or_default();
+                combined.merge(added);
+                series.push(Some(&combined), hold);
+            }
+        }
+    }
+    series
+}
+
 /// Used to collect graph data during a load test.
 pub(crate) struct GraphData {
     /// Counts requests per second for each request type.
@@ -85,6 +493,10 @@ pub(crate) struct GraphData {
     scenarios_per_second: TimeSeries<usize, usize>,
     /// Number of users at the end of each second of the test.
     users_per_second: TimeSeries<usize, usize>,
+    /// Response time histograms by second for the dashboard's latency chart.
+    /// Only the metrics processor's copy has them, and only while the
+    /// dashboard tracks percentiles over time.
+    latency: Option<LatencyHistograms>,
 }
 
 impl GraphData {
@@ -98,7 +510,19 @@ impl GraphData {
             transactions_per_second: TimeSeries::new(),
             scenarios_per_second: TimeSeries::new(),
             users_per_second: TimeSeries::new(),
+            latency: None,
         }
+    }
+
+    /// Create GraphData for the metrics processor: with latency histograms
+    /// when `latency_series` is set, and synthetic ones too when
+    /// `synthetic_latency` (coordinated omission mitigation is on).
+    pub(crate) fn for_metrics_processor(latency_series: bool, synthetic_latency: bool) -> Self {
+        let mut graph_data = GraphData::new();
+        if latency_series {
+            graph_data.latency = Some(LatencyHistograms::new(synthetic_latency));
+        }
+        graph_data
     }
 
     /// Reset per-second *rate* series after the increase→maintain metrics reset.
@@ -122,6 +546,57 @@ impl GraphData {
         self.average_response_time_per_second = HashMap::new();
         self.transactions_per_second = TimeSeries::with_origin(origin);
         self.scenarios_per_second = TimeSeries::with_origin(origin);
+        if let Some(latency) = self.latency.as_mut() {
+            latency.clear();
+        }
+    }
+
+    /// Record one measured response time for the latency chart.
+    pub(crate) fn record_latency(&mut self, key: &str, second: usize, time: u64) {
+        if let Some(latency) = self.latency.as_mut() {
+            latency.record(key, second, time);
+        }
+    }
+
+    /// Merge a batch's measured response times for one second.
+    pub(crate) fn merge_latency(
+        &mut self,
+        key: &str,
+        second: usize,
+        data: &GooseRequestMetricTimingData,
+    ) {
+        if let Some(latency) = self.latency.as_mut() {
+            latency.merge(key, second, data);
+        }
+    }
+
+    /// Record one synthetic response time from coordinated omission
+    /// mitigation, when synthetic histograms are kept.
+    pub(crate) fn record_synthetic_latency(&mut self, key: &str, second: usize, time: u64) {
+        if let Some(latency) = self.latency.as_mut() {
+            latency.record_synthetic(key, second, time);
+        }
+    }
+
+    /// Whether synthetic response times are kept for the latency chart.
+    pub(crate) fn records_synthetic_latency(&self) -> bool {
+        self.latency
+            .as_ref()
+            .is_some_and(|latency| latency.synthetic.is_some())
+    }
+
+    /// Keys (`"METHOD name"`) of the requests with their own latency series.
+    pub(crate) fn latency_series_keys(&self) -> HashSet<&str> {
+        self.latency
+            .as_ref()
+            .map(|latency| latency.by_request.keys().map(String::as_str).collect())
+            .unwrap_or_default()
+    }
+
+    /// The latency histograms, if kept (unit tests).
+    #[cfg(test)]
+    pub(crate) fn latency_histograms(&self) -> Option<&LatencyHistograms> {
+        self.latency.as_ref()
     }
 
     /// Last absolute second with a users sample, if any.
@@ -265,6 +740,50 @@ impl GraphData {
         self.export_series_window_until(window_secs, None)
     }
 
+    /// [`Self::export_series_window_with_latency`] without the adjusted
+    /// latency series (unit tests).
+    #[cfg(test)]
+    pub(crate) fn export_series_window_until(
+        &self,
+        window_secs: u32,
+        end_second_hint: Option<usize>,
+    ) -> SeriesWindow {
+        self.export_series_window_with_latency(window_secs, end_second_hint, false)
+    }
+
+    /// The trailing window's first and last second, as
+    /// [`Self::export_series_window_with_latency`] defines them, or `None`
+    /// before anything is recorded.
+    fn series_window_bounds(
+        &self,
+        window_secs: u32,
+        end_second_hint: Option<usize>,
+    ) -> Option<(usize, usize)> {
+        if window_secs == 0 {
+            return None;
+        }
+        let mut end_second: Option<usize> = end_second_hint;
+        for series in self.requests_per_second.series.values() {
+            if let Some(last) = series.last_absolute_second() {
+                end_second = Some(end_second.map_or(last, |e| e.max(last)));
+            }
+        }
+        if let Some(last) = self.users_per_second.last_absolute_second() {
+            end_second = Some(end_second.map_or(last, |e| e.max(last)));
+        }
+        let end_second = end_second?;
+        Some((
+            end_second.saturating_sub(window_secs as usize - 1),
+            end_second,
+        ))
+    }
+
+    /// First second whose percentiles are withheld: the newest seconds may
+    /// still be missing their slowest requests.
+    fn latency_hold_from(end_second: usize, end_second_hint: Option<usize>) -> usize {
+        end_second_hint.unwrap_or(end_second).saturating_sub(1)
+    }
+
     /// Export a trailing aggregate series window for the live dashboard.
     ///
     /// Normative algorithm:
@@ -279,35 +798,25 @@ impl GraphData {
     ///    seconds where request metrics advanced past the last `RecordUsers`)
     ///    hold the last known active-user count — never drop to 0 solely because
     ///    the users series lags RPS by a few seconds.
+    /// 6. With latency histograms kept, `latency_ms` covers the same seconds;
+    ///    `latency_co_adjusted_ms` too, but only when `co_active` (coordinated
+    ///    omission mitigation has recorded an event) and synthetic histograms
+    ///    are kept. Otherwise their vectors are empty.
     ///
     /// `end_second_hint` extends the window through series-clock "now" when the
     /// last stored sample is a few seconds older (main-loop cadence / no recent
     /// requests).
-    pub(crate) fn export_series_window_until(
+    pub(crate) fn export_series_window_with_latency(
         &self,
         window_secs: u32,
         end_second_hint: Option<usize>,
+        co_active: bool,
     ) -> SeriesWindow {
-        if window_secs == 0 {
+        let Some((start_second, end_second)) =
+            self.series_window_bounds(window_secs, end_second_hint)
+        else {
             return SeriesWindow::empty();
-        }
-
-        let mut end_second: Option<usize> = end_second_hint;
-        for series in self.requests_per_second.series.values() {
-            if let Some(last) = series.last_absolute_second() {
-                end_second = Some(end_second.map_or(last, |e| e.max(last)));
-            }
-        }
-        if let Some(last) = self.users_per_second.last_absolute_second() {
-            end_second = Some(end_second.map_or(last, |e| e.max(last)));
-        }
-
-        let end_second = match end_second {
-            Some(end) => end,
-            None => return SeriesWindow::empty(),
         };
-
-        let start_second = end_second.saturating_sub(window_secs as usize - 1);
         let len = end_second - start_second + 1;
 
         // Allocate fixed-length outputs once, then accumulate per key into the
@@ -370,13 +879,66 @@ impl GraphData {
             users.push(self.users_per_second.get_held(s) as u64);
         }
 
+        let (latency_ms, latency_co_adjusted_ms) = match self.latency.as_ref() {
+            Some(latency) => latency.export_all(
+                start_second,
+                end_second,
+                Self::latency_hold_from(end_second, end_second_hint),
+                co_active,
+            ),
+            None => (LatencySeries::default(), LatencySeries::default()),
+        };
+
         SeriesWindow {
             start_second: start_second as u64,
             rps,
             fps,
             users,
             avg_latency_ms,
+            latency_ms,
+            latency_co_adjusted_ms,
         }
+    }
+
+    /// One request's trailing window for `GET /api/v1/series`, over the same
+    /// seconds as [`Self::export_series_window_with_latency`]. `None` when the
+    /// request has no latency series of its own.
+    pub(crate) fn export_request_series(
+        &self,
+        method: String,
+        name: String,
+        window_secs: u32,
+        end_second_hint: Option<usize>,
+        co_active: bool,
+    ) -> Option<RequestSeries> {
+        let latency = self.latency.as_ref()?;
+        let key = format!("{method} {name}");
+        let key = key.as_str();
+        if !latency.by_request.contains_key(key) {
+            return None;
+        }
+        let (start_second, end_second) = self
+            .series_window_bounds(window_secs, end_second_hint)
+            .unwrap_or((0, 0));
+        let mut rps = vec![0.0f64; end_second - start_second + 1];
+        if let Some(series) = self.requests_per_second.series.get(key) {
+            accumulate_rate_series_into_window(series, start_second, end_second, &mut rps);
+        }
+        let (latency_ms, latency_co_adjusted_ms) = latency.export_request(
+            key,
+            start_second,
+            end_second,
+            Self::latency_hold_from(end_second, end_second_hint),
+            co_active,
+        )?;
+        Some(RequestSeries {
+            method,
+            name,
+            start_second: start_second as u64,
+            rps,
+            latency_ms,
+            latency_co_adjusted_ms,
+        })
     }
 
     /// Drop series samples older than the trailing `keep_secs` window.
@@ -2360,6 +2922,294 @@ mod test {
         for s in 3..=8 {
             assert_eq!(window.users[s], 7, "hold users[{s}]");
         }
+    }
+
+    /// GraphData with latency histograms, synthetic ones too when `synthetic`.
+    fn latency_graph(synthetic: bool) -> GraphData {
+        GraphData::for_metrics_processor(true, synthetic)
+    }
+
+    fn histograms(graph: &GraphData) -> &LatencyHistograms {
+        graph.latency_histograms().expect("latency histograms")
+    }
+
+    #[test]
+    fn latency_batch_merge_equals_direct_recording() {
+        let times: [(usize, u64); 6] = [(3, 12), (3, 140), (3, 1400), (4, 7), (4, 90), (4, 2600)];
+        let mut batch: HashMap<usize, GooseRequestMetricTimingData> = HashMap::new();
+        for &(second, time) in &times {
+            batch.entry(second).or_default().record_time(time);
+        }
+        let mut merged = latency_graph(false);
+        for (second, data) in &batch {
+            merged.merge_latency("GET /a", *second, data);
+        }
+        let mut direct = latency_graph(false);
+        for &(second, time) in &times {
+            direct.record_latency("GET /a", second, time);
+        }
+        for second in [3, 4] {
+            let merged = histograms(&merged);
+            let direct = histograms(&direct);
+            assert_eq!(merged.all.get(second), direct.all.get(second));
+            assert_eq!(
+                merged.by_request["GET /a"].get(second),
+                direct.by_request["GET /a"].get(second)
+            );
+            let mut expected = SecondHistogram::default();
+            expected.merge_timing_data(&batch[&second]);
+            assert_eq!(merged.all.get(second), Some(&expected));
+        }
+    }
+
+    #[test]
+    fn second_histogram_matches_timing_data() {
+        // Every rounded time maps to its own counter and back.
+        let mut rounded: Vec<usize> = (0..=100).collect();
+        rounded.extend((110..=500).step_by(10));
+        rounded.extend((600..=1000).step_by(100));
+        rounded.extend((2000..=60_000).step_by(1000));
+        assert_eq!(rounded.len(), FIXED_BUCKETS);
+        for (index, &value) in rounded.iter().enumerate() {
+            assert_eq!(dense_index(value), Some(index));
+            assert_eq!(dense_value(index), value);
+        }
+        assert_eq!(dense_index(61_000), None);
+
+        // Same buckets, totals and percentiles as the whole run histogram,
+        // including times past 60 seconds (a longer --timeout).
+        let mut times: Vec<u64> = Vec::new();
+        let mut seed: u64 = 7;
+        for _ in 0..5000 {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            times.push((seed >> 33) % 90_000 / (1 + (seed >> 60)));
+        }
+        let mut reference = GooseRequestMetricTimingData::default();
+        let mut histogram = SecondHistogram::default();
+        for &time in &times {
+            reference.record_time(time);
+            histogram.record(time);
+        }
+        assert!(!histogram.overflow.is_empty());
+        let buckets: Vec<(usize, usize)> = histogram.buckets().collect();
+        let expected: Vec<(usize, usize)> = reference.times.iter().map(|(&t, &c)| (t, c)).collect();
+        assert_eq!(buckets, expected);
+        assert_eq!(histogram.counter, reference.counter);
+        assert_eq!(histogram.total_time, reference.total_time);
+        assert_eq!(histogram.minimum_time, reference.minimum_time);
+        assert_eq!(histogram.maximum_time, reference.maximum_time);
+        for percent in [0.0, 0.5, 0.95, 0.99, 1.0] {
+            assert_eq!(
+                histogram.percentile(percent),
+                crate::metrics::calculate_response_time_percentile(
+                    &reference.times,
+                    reference.counter,
+                    reference.minimum_time,
+                    reference.maximum_time,
+                    percent,
+                )
+            );
+        }
+
+        // A batch merged in one pass gives the same histogram.
+        let mut via_batch = SecondHistogram::default();
+        via_batch.merge_timing_data(&reference);
+        assert_eq!(via_batch, histogram);
+
+        // A bucket past the most one entry holds continues in the next.
+        let mut full = SecondHistogram::default();
+        full.add_indexed(0, 5, COUNT_MAX as usize + 10);
+        full.add_indexed(0, 5, 3);
+        full.add_indexed(0, 4, 1);
+        assert_eq!(
+            full.buckets().collect::<Vec<_>>(),
+            vec![(4, 1), (5, COUNT_MAX as usize), (5, 13)]
+        );
+
+        // Merging two halves equals recording everything.
+        let (first, second) = times.split_at(times.len() / 2);
+        let mut a = SecondHistogram::default();
+        first.iter().for_each(|&time| a.record(time));
+        let mut b = SecondHistogram::default();
+        second.iter().for_each(|&time| b.record(time));
+        a.merge(&b);
+        assert_eq!(a, histogram);
+    }
+
+    #[test]
+    fn latency_ring_drops_samples_older_than_its_slot() {
+        let mut ring = LatencyRing::new();
+        ring.record(400, 25);
+        // Second 100 maps to the same slot as 400 (300 slots).
+        ring.record(100, 10);
+        ring.merge(100, &{
+            let mut data = GooseRequestMetricTimingData::default();
+            data.record_time(10);
+            data
+        });
+        assert!(ring.get(100).is_none());
+        let held = ring.get(400).expect("slot keeps second 400");
+        assert_eq!(held.counter, 1);
+        assert_eq!(held.maximum_time, 25);
+        // A newer second replaces the older one.
+        ring.record(700, 5);
+        assert!(ring.get(400).is_none());
+        assert_eq!(ring.get(700).map(|d| d.counter), Some(1));
+    }
+
+    #[test]
+    fn latency_export_slow_second() {
+        let mut graph = latency_graph(false);
+        for _ in 0..10 {
+            graph.record_requests_per_second("GET /slow", 5);
+            graph.record_latency("GET /slow", 5, 1400);
+        }
+        let window = graph.export_series_window_until(300, Some(7));
+        let latency = &window.latency_ms;
+        assert_eq!(latency.count[5], 10);
+        assert_eq!(latency.p50[5], Some(1400));
+        assert_eq!(latency.p95[5], Some(1400));
+        assert_eq!(latency.p99[5], Some(1400));
+        assert_eq!(latency.max[5], Some(1400));
+        assert_eq!(latency.avg[5], Some(1400.0));
+    }
+
+    #[test]
+    fn latency_export_gaps_and_held_seconds() {
+        let mut graph = latency_graph(false);
+        for second in [2, 4, 9, 10] {
+            graph.record_requests_per_second("GET /", second);
+            graph.record_latency("GET /", second, 20);
+        }
+        let window = graph.export_series_window_until(300, Some(10));
+        let latency = &window.latency_ms;
+        for series_len in [
+            latency.count.len(),
+            latency.avg.len(),
+            latency.p50.len(),
+            latency.p95.len(),
+            latency.p99.len(),
+            latency.max.len(),
+        ] {
+            assert_eq!(series_len, window.rps.len());
+        }
+        // Second 3 had no requests.
+        assert_eq!(latency.count[3], 0);
+        assert_eq!(latency.avg[3], None);
+        assert_eq!(latency.p50[3], None);
+        assert_eq!(latency.max[3], None);
+        assert_eq!(latency.p99[4], Some(20));
+        // Seconds at or after hint - 1 (9) keep their count but no percentiles.
+        for second in [9, 10] {
+            assert_eq!(latency.count[second], 1);
+            assert_eq!(latency.avg[second], Some(20.0));
+            assert_eq!(latency.max[second], Some(20));
+            assert_eq!(latency.p50[second], None);
+            assert_eq!(latency.p95[second], None);
+            assert_eq!(latency.p99[second], None);
+        }
+        // A request filed one second past the hint extends the window; the
+        // hold still starts at hint - 1.
+        graph.record_requests_per_second("GET /", 11);
+        graph.record_latency("GET /", 11, 20);
+        let window = graph.export_series_window_until(300, Some(10));
+        let latency = &window.latency_ms;
+        assert_eq!(latency.count.len(), window.rps.len());
+        assert_eq!(latency.p99[8], None, "no requests in second 8");
+        for second in [9, 10, 11] {
+            assert_eq!(latency.count[second], 1);
+            assert_eq!(latency.p99[second], None);
+        }
+    }
+
+    #[test]
+    fn latency_keeps_first_hundred_names() {
+        let mut graph = latency_graph(true);
+        for i in 0..=MAX_REQUEST_SERIES {
+            graph.record_latency(&format!("GET /{i}"), 1, 10);
+        }
+        let latency = histograms(&graph);
+        assert_eq!(latency.by_request.len(), MAX_REQUEST_SERIES);
+        assert!(!latency.by_request.contains_key("GET /100"));
+        // The 101st name still counts toward all requests.
+        assert_eq!(
+            latency.all.get(1).map(|d| d.counter),
+            Some(MAX_REQUEST_SERIES + 1)
+        );
+        // No synthetic ring for a name without a measured one.
+        graph.record_synthetic_latency("GET /100", 1, 500);
+        graph.record_synthetic_latency("GET /0", 1, 500);
+        let (all, by_request) = histograms(&graph).synthetic.as_ref().unwrap();
+        assert_eq!(all.get(1).map(|d| d.counter), Some(2));
+        assert!(by_request.contains_key("GET /0"));
+        assert!(!by_request.contains_key("GET /100"));
+
+        let keys = graph.latency_series_keys();
+        assert_eq!(keys.len(), MAX_REQUEST_SERIES);
+        assert!(keys.contains("GET /99"));
+        assert!(!keys.contains("GET /100"));
+
+        // A metrics reset empties both maps and every ring, so names are
+        // admitted again.
+        graph.reset_rate_series();
+        let latency = histograms(&graph);
+        assert!(latency.by_request.is_empty());
+        assert!(latency.all.get(1).is_none());
+        let (all, by_request) = latency.synthetic.as_ref().unwrap();
+        assert!(by_request.is_empty());
+        assert!(all.get(1).is_none());
+        graph.record_latency("GET /100", 2, 10);
+        assert!(graph.latency_series_keys().contains("GET /100"));
+    }
+
+    #[test]
+    fn latency_off_exports_empty_series() {
+        let mut graph = GraphData::new();
+        graph.record_requests_per_second("GET /", 1);
+        graph.record_latency("GET /", 1, 10);
+        let window = graph.export_series_window_with_latency(300, Some(3), true);
+        assert_eq!(window.rps.len(), 4);
+        assert_eq!(window.latency_ms, LatencySeries::default());
+        assert_eq!(window.latency_co_adjusted_ms, LatencySeries::default());
+        assert!(graph.latency_series_keys().is_empty());
+        assert!(graph
+            .export_request_series("GET".into(), "/".into(), 300, Some(3), true)
+            .is_none());
+    }
+
+    #[test]
+    fn latency_request_series_export() {
+        let mut graph = latency_graph(true);
+        for second in [1, 2] {
+            for _ in 0..3 {
+                graph.record_requests_per_second("GET /a", second);
+                graph.record_latency("GET /a", second, 30);
+            }
+            graph.record_requests_per_second("GET /b", second);
+            graph.record_latency("GET /b", second, 900);
+        }
+        graph.record_synthetic_latency("GET /a", 1, 4000);
+        let series = graph
+            .export_request_series("GET".into(), "/a".into(), 300, Some(5), true)
+            .expect("series for /a");
+        assert_eq!(series.method, "GET");
+        assert_eq!(series.name, "/a");
+        assert_eq!(series.start_second, 0);
+        assert_eq!(series.rps, vec![0.0, 3.0, 3.0, 0.0, 0.0, 0.0]);
+        assert_eq!(series.latency_ms.count, vec![0, 3, 3, 0, 0, 0]);
+        assert_eq!(series.latency_ms.p99[1], Some(30));
+        assert_eq!(series.latency_co_adjusted_ms.count, vec![0, 4, 3, 0, 0, 0]);
+        assert_eq!(series.latency_co_adjusted_ms.p99[1], Some(4000));
+        // Not co_active: the adjusted series is absent.
+        let series = graph
+            .export_request_series("GET".into(), "/a".into(), 300, Some(5), false)
+            .unwrap();
+        assert_eq!(series.latency_co_adjusted_ms, LatencySeries::default());
+        assert!(graph
+            .export_request_series("GET".into(), "/missing".into(), 300, Some(5), true)
+            .is_none());
     }
 
     #[test]

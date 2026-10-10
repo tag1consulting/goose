@@ -18,7 +18,7 @@
 //! request is dequeued. Tests assert multi-client coalescing, not sub-100 ms
 //! latency.
 
-use crate::metrics::dashboard_snapshot::SnapshotSave;
+use crate::metrics::dashboard_snapshot::{RequestSeries, SnapshotSave};
 use crate::metrics::DashboardSnapshot;
 use crate::runs;
 use crate::{ControlOutcome, GooseConfiguration, GooseError, INVALID_USERS_MSG, MAX_CONTROL_USERS};
@@ -33,10 +33,11 @@ use axum::{Json, Router};
 use futures::stream;
 use serde::Deserialize;
 use serde::Serialize;
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::io::AsyncReadExt;
 use tokio::sync::{oneshot, watch, Notify};
@@ -108,6 +109,19 @@ const CONTROL_BODY_LIMIT: usize = 16 * 1024;
 /// enqueueing unbounded flume work.
 const MAX_CONTROL_IN_FLIGHT: usize = 4;
 
+/// Max concurrent `GET /api/v1/series` requests waiting on the main loop.
+/// Counted apart from control requests, so polling a series can never make
+/// Start or Stop answer `busy`.
+const MAX_SERIES_IN_FLIGHT: usize = 4;
+
+/// Longest combined length, in bytes, of the `method` and `name` parameters
+/// of `GET /api/v1/series`.
+const MAX_SERIES_QUERY_LEN: usize = 2048;
+
+/// How long a `GET /api/v1/series` answer is served from the cache, so
+/// several viewers polling one request cost one export a second.
+const SERIES_CACHE_TTL: Duration = Duration::from_secs(1);
+
 /// Result of a successful dashboard server spawn.
 #[derive(Debug)]
 pub(crate) struct DashboardSetup {
@@ -163,6 +177,13 @@ pub(crate) enum DashboardRequest {
     SetUsers {
         users: usize,
         respond: tokio::sync::oneshot::Sender<ControlResult>,
+    },
+    /// One request's series for the latency chart (`GET /api/v1/series`);
+    /// `None` when it has no series of its own.
+    GetRequestSeries {
+        method: String,
+        name: String,
+        respond: tokio::sync::oneshot::Sender<Option<RequestSeries>>,
     },
 }
 
@@ -705,6 +726,11 @@ struct DashboardState {
     control_enabled: bool,
     /// Concurrent control POSTs currently waiting on the main loop.
     control_in_flight: Arc<AtomicUsize>,
+    /// Concurrent `GET /api/v1/series` requests waiting on the main loop.
+    series_in_flight: Arc<AtomicUsize>,
+    /// Recent `GET /api/v1/series` 200 answers by method and name, with when
+    /// each was built.
+    series_cache: Arc<Mutex<SeriesCache>>,
     /// The runs directory as given, or the default: the saved run routes
     /// read it, and only them.
     runs_dir: String,
@@ -714,6 +740,18 @@ struct DashboardState {
 struct TokenQuery {
     token: Option<String>,
 }
+
+/// Query of `GET /api/v1/series`. Every field is optional so a missing one
+/// is answered by the handler, as JSON, not by the extractor.
+#[derive(Debug, Deserialize)]
+struct SeriesQuery {
+    method: Option<String>,
+    name: Option<String>,
+    token: Option<String>,
+}
+
+/// Cached `GET /api/v1/series` bodies, keyed by method and name.
+type SeriesCache = HashMap<(String, String), (Instant, Bytes)>;
 
 /// Liveness plus lightweight operational counters (no load-test metrics).
 ///
@@ -822,6 +860,8 @@ pub(crate) async fn setup_dashboard(
         auth_token: configuration.dashboard_auth_token.clone(),
         control_enabled,
         control_in_flight: Arc::new(AtomicUsize::new(0)),
+        series_in_flight: Arc::new(AtomicUsize::new(0)),
+        series_cache: Arc::new(Mutex::new(HashMap::new())),
         runs_dir: configuration.runs_dir_or_default().to_string(),
     };
 
@@ -1027,6 +1067,7 @@ fn build_router(state: DashboardState, loopback_bind: bool) -> Router {
         .route("/static/app.css", get(app_css_handler))
         .route("/api/v1/health", get(health_handler))
         .route("/api/v1/snapshot", get(snapshot_handler))
+        .route("/api/v1/series", get(series_handler))
         .route("/api/v1/events", get(events_handler))
         .route("/api/v1/runs", get(runs_handler))
         .route("/api/v1/runs/{id}/{file}", get(run_file_handler));
@@ -1145,6 +1186,107 @@ async fn snapshot_handler(
 
     let bytes = state.hub.snapshot_bytes().await?;
     Ok(([(header::CONTENT_TYPE, "application/json")], bytes))
+}
+
+/// A `GET /api/v1/series` error: the status and `{"error":"<code>"}`.
+fn series_error(status: StatusCode, error: &'static str) -> Response<Body> {
+    (status, Json(serde_json::json!({ "error": error }))).into_response()
+}
+
+/// RAII guard that decrements `series_in_flight` on drop.
+struct SeriesInFlightGuard {
+    counter: Arc<AtomicUsize>,
+}
+
+impl Drop for SeriesInFlightGuard {
+    fn drop(&mut self) {
+        self.counter.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+/// Try to reserve a series slot. Returns `None` when at cap.
+fn try_acquire_series_slot(state: &DashboardState) -> Option<SeriesInFlightGuard> {
+    let prev = state.series_in_flight.fetch_add(1, Ordering::AcqRel);
+    if prev >= MAX_SERIES_IN_FLIGHT {
+        state.series_in_flight.fetch_sub(1, Ordering::AcqRel);
+        return None;
+    }
+    Some(SeriesInFlightGuard {
+        counter: Arc::clone(&state.series_in_flight),
+    })
+}
+
+/// A cached series body for this method and name, if built within
+/// [`SERIES_CACHE_TTL`].
+fn cached_series(state: &DashboardState, key: &(String, String)) -> Option<Bytes> {
+    let cache = state.series_cache.lock().unwrap_or_else(|e| e.into_inner());
+    cache
+        .get(key)
+        .filter(|(built, _)| built.elapsed() < SERIES_CACHE_TTL)
+        .map(|(_, body)| body.clone())
+}
+
+/// Cache a series body, dropping every entry older than [`SERIES_CACHE_TTL`].
+/// Only 200 answers are cached, so it holds at most one entry per request
+/// with a series of its own.
+fn cache_series(state: &DashboardState, key: (String, String), body: Bytes) {
+    let mut cache = state.series_cache.lock().unwrap_or_else(|e| e.into_inner());
+    cache.retain(|_, (built, _)| built.elapsed() < SERIES_CACHE_TTL);
+    cache.insert(key, (Instant::now(), body));
+}
+
+/// `GET /api/v1/series?method=&name=`: one request's per second series for
+/// the latency chart. 400 `bad_request` without both parameters or when they
+/// are too long together, 404 `not_found` when the request has no series of
+/// its own (or percentiles over time are off), 503 `busy`, `timeout` or
+/// `unavailable` when the main loop cannot answer.
+async fn series_handler(
+    State(state): State<Arc<DashboardState>>,
+    headers: HeaderMap,
+    Query(query): Query<SeriesQuery>,
+) -> Response<Body> {
+    if !authorize(&state.auth_token, &headers, query.token.as_deref()) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let (Some(method), Some(name)) = (query.method, query.name) else {
+        return series_error(StatusCode::BAD_REQUEST, "bad_request");
+    };
+    if method.len() + name.len() > MAX_SERIES_QUERY_LEN {
+        return series_error(StatusCode::BAD_REQUEST, "bad_request");
+    }
+    let key = (method, name);
+    if let Some(body) = cached_series(&state, &key) {
+        return ([(header::CONTENT_TYPE, "application/json")], body).into_response();
+    }
+
+    let Some(_slot) = try_acquire_series_slot(&state) else {
+        return series_error(StatusCode::SERVICE_UNAVAILABLE, "busy");
+    };
+    let (respond, respond_rx) = oneshot::channel();
+    let request = DashboardRequest::GetRequestSeries {
+        method: key.0.clone(),
+        name: key.1.clone(),
+        respond,
+    };
+    if state.request_tx.send(request).is_err() {
+        return series_error(StatusCode::SERVICE_UNAVAILABLE, "unavailable");
+    }
+    match tokio::time::timeout(CONTROL_TIMEOUT, respond_rx).await {
+        Ok(Ok(Some(series))) => match serde_json::to_vec(&series) {
+            Ok(body) => {
+                let body = Bytes::from(body);
+                cache_series(&state, key, body.clone());
+                ([(header::CONTENT_TYPE, "application/json")], body).into_response()
+            }
+            Err(e) => {
+                error!("[dashboard]: failed to serialize series: {e}");
+                StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            }
+        },
+        Ok(Ok(None)) => series_error(StatusCode::NOT_FOUND, "not_found"),
+        Ok(Err(_)) => series_error(StatusCode::SERVICE_UNAVAILABLE, "unavailable"),
+        Err(_) => series_error(StatusCode::SERVICE_UNAVAILABLE, "timeout"),
+    }
 }
 
 /// SSE stream of coalesced `snapshot` events, with `: ping` heartbeats and a
@@ -1999,6 +2141,7 @@ mod tests {
                 requests_truncated: false,
                 errors_truncated: false,
                 series_seconds: 300,
+                percentiles_over_time: false,
             },
             save: SnapshotSave::off("goose-runs"),
         }
@@ -2061,6 +2204,9 @@ mod tests {
                             target_users: Some(users as u64),
                         });
                     }
+                    DashboardRequest::GetRequestSeries { respond, .. } => {
+                        let _ = respond.send(None);
+                    }
                 }
             }
         })
@@ -2091,6 +2237,9 @@ mod tests {
                     | DashboardRequest::Quit { respond }
                     | DashboardRequest::SetUsers { respond, .. } => {
                         let _ = respond.send(ControlResult::internal("unused", "idle", 0));
+                    }
+                    DashboardRequest::GetRequestSeries { respond, .. } => {
+                        let _ = respond.send(None);
                     }
                 }
             }
@@ -2729,6 +2878,9 @@ mod tests {
                             DashboardRequest::SetUsers { respond, .. } => {
                                 let _ = respond.send(ControlResult::internal("users", "idle", 0));
                             }
+                            DashboardRequest::GetRequestSeries { respond, .. } => {
+                                let _ = respond.send(None);
+                            }
                             DashboardRequest::GetSnapshot { .. } => unreachable!(),
                         }
                     }
@@ -3144,6 +3296,69 @@ mod tests {
         parent.abort();
     }
 
+    /// A fifth series request while four wait on a main loop that never
+    /// answers gets 503 `busy`, and control requests are still admitted.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn series_admission_caps_in_flight() {
+        let (setup, base) = bind_dashboard_with("s3cret", 0, true).await;
+        // Nobody drains the request channel: admitted requests wait in it.
+        let request_rx = setup.request_rx;
+        let client = reqwest::Client::new();
+        let wait_for_queue = |len: usize| {
+            let request_rx = request_rx.clone();
+            async move {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                while request_rx.len() < len && Instant::now() < deadline {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                request_rx.len()
+            }
+        };
+        let mut waiting = Vec::new();
+        for i in 0..MAX_SERIES_IN_FLIGHT {
+            let client = client.clone();
+            let url = format!("{base}/api/v1/series?method=GET&name=/{i}&token=s3cret");
+            waiting.push(tokio::spawn(async move { client.get(url).send().await }));
+        }
+        assert_eq!(
+            wait_for_queue(MAX_SERIES_IN_FLIGHT).await,
+            MAX_SERIES_IN_FLIGHT
+        );
+
+        let resp = client
+            .get(format!(
+                "{base}/api/v1/series?method=GET&name=/{MAX_SERIES_IN_FLIGHT}&token=s3cret"
+            ))
+            .send()
+            .await
+            .expect("fifth series GET");
+        assert_eq!(resp.status(), 503);
+        let body: serde_json::Value = resp.json().await.expect("json");
+        assert_eq!(body, serde_json::json!({ "error": "busy" }));
+        assert_eq!(request_rx.len(), MAX_SERIES_IN_FLIGHT);
+
+        // Series polls never take control slots: Start still reaches the
+        // main loop.
+        let start_client = client.clone();
+        let start_url = format!("{base}/api/v1/control/start");
+        waiting.push(tokio::spawn(async move {
+            start_client
+                .post(start_url)
+                .header(header::AUTHORIZATION, "Bearer s3cret")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body("{}")
+                .send()
+                .await
+        }));
+        assert_eq!(
+            wait_for_queue(MAX_SERIES_IN_FLIGHT + 1).await,
+            MAX_SERIES_IN_FLIGHT + 1
+        );
+        for task in waiting {
+            task.abort();
+        }
+    }
+
     /// Parent that drops control oneshots (simulates main-loop disconnect mid-command).
     fn spawn_control_drop_parent(
         request_rx: flume::Receiver<DashboardRequest>,
@@ -3158,6 +3373,9 @@ mod tests {
                     | DashboardRequest::Stop { respond }
                     | DashboardRequest::Quit { respond }
                     | DashboardRequest::SetUsers { respond, .. } => {
+                        drop(respond);
+                    }
+                    DashboardRequest::GetRequestSeries { respond, .. } => {
                         drop(respond);
                     }
                 }
@@ -3187,6 +3405,9 @@ mod tests {
                     DashboardRequest::SetUsers { respond, .. } => {
                         let _ = respond.send(ControlResult::internal("users", "maintain", 1));
                     }
+                    DashboardRequest::GetRequestSeries { respond, .. } => {
+                        let _ = respond.send(None);
+                    }
                 }
             }
         })
@@ -3209,6 +3430,11 @@ mod tests {
                     | DashboardRequest::SetUsers { respond, .. } => {
                         // Keep the oneshot Sender alive so the client hits CONTROL_TIMEOUT
                         // rather than an immediate oneshot-drop 503.
+                        let _hold = respond;
+                        futures::future::pending::<()>().await;
+                        drop(_hold);
+                    }
+                    DashboardRequest::GetRequestSeries { respond, .. } => {
                         let _hold = respond;
                         futures::future::pending::<()>().await;
                         drop(_hold);

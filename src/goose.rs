@@ -989,6 +989,10 @@ pub struct GooseUser {
     /// Whether graph data is collected: `--report-file` is set or `--dashboard` is on
     /// (cached to avoid repeated string checks).
     pub(crate) record_graph_data: bool,
+    /// Whether each request's response time is also bucketed by second for the
+    /// dashboard's latency chart (`--dashboard` without
+    /// `--no-percentiles-over-time` or `--no-metrics`). Implies `record_graph_data`.
+    pub(crate) record_latency_series: bool,
     /// Shared epoch counter for batch validity across metrics resets.
     pub(crate) metrics_epoch: Option<MetricsEpoch>,
     /// Optional per-user session data of a generic type implementing the
@@ -1036,6 +1040,7 @@ impl Clone for GooseUser {
             batch_item_count: 0,
             batch_start: None,
             record_graph_data: self.record_graph_data,
+            record_latency_series: self.record_latency_series,
             metrics_epoch: self.metrics_epoch.clone(),
             session_data: self.session_data.clone(),
             request_counters: self.request_counters.clone(),
@@ -1073,6 +1078,7 @@ impl GooseUser {
         };
 
         let record_graph_data = configuration.records_graph_data();
+        let record_latency_series = configuration.records_latency_series();
 
         Ok(GooseUser {
             started: Instant::now(),
@@ -1100,6 +1106,7 @@ impl GooseUser {
             batch_item_count: 0,
             batch_start: None,
             record_graph_data,
+            record_latency_series,
             metrics_epoch: None,
             session_data: None,
             request_counters: None,
@@ -2396,6 +2403,9 @@ impl GooseUser {
                 .or_default();
             graph_entry.count += 1;
             graph_entry.total_time += request_metric.response_time as f64;
+            if self.record_latency_series {
+                graph_entry.times.record_time(request_metric.response_time);
+            }
         }
 
         self.batch_item_count += 1;
@@ -4790,5 +4800,170 @@ mod tests {
             ),
             "\"/foo\": status_code 200 OK"
         );
+    }
+
+    // --- Latency by second (#713) ---
+
+    /// A successful request for `name` that started `elapsed` ms into the run.
+    fn latency_request_metric(name: &str, elapsed: u64, response_time: u64) -> GooseRequestMetric {
+        let raw = GooseRawRequest::new(GooseMethod::Get, "http://localhost/", vec![], "");
+        let mut metric = GooseRequestMetric::new(
+            raw,
+            TransactionDetail {
+                scenario_index: 0,
+                scenario_name: Arc::from("LatencyScenario"),
+                transaction_index: Some(0),
+                transaction_name: TransactionName::InheritNameByRequests(Arc::from("tx")),
+            },
+            name,
+            elapsed as u128,
+            0,
+        );
+        metric.response_time = response_time;
+        metric.status_code = 200;
+        metric.success = true;
+        metric
+    }
+
+    /// Batches `metric` through `accumulate_request` for a user configured
+    /// with `args`, returning its per second graph entry.
+    fn accumulated_times(
+        args: &[&str],
+        metric: &GooseRequestMetric,
+    ) -> GooseRequestMetricTimingData {
+        let configuration = GooseConfiguration::parse_args_default(args).unwrap();
+        let mut user =
+            GooseUser::single("http://localhost:8080".parse().unwrap(), &configuration).unwrap();
+        user.metrics_batch = Some(GooseMetricBatch::new(0));
+        user.accumulate_request(metric);
+        let batch = user.metrics_batch.take().unwrap();
+        batch
+            .graph_request_data
+            .get(&("GET /x".to_string(), (metric.elapsed / 1000) as usize))
+            .map(|entry| entry.times.clone())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn accumulate_request_buckets_times_by_second_when_gated_on() {
+        let metric = latency_request_metric("/x", 3_400, 77);
+        let times = accumulated_times(&["--dashboard"], &metric);
+        assert_eq!(times.counter, 1);
+        assert_eq!(times.maximum_time, 77);
+        assert_eq!(times.times.get(&77), Some(&1));
+
+        for args in [
+            vec![],
+            vec!["--report-file", "report.html"],
+            vec!["--dashboard", "--no-percentiles-over-time"],
+        ] {
+            let times = accumulated_times(&args, &metric);
+            assert_eq!(times, GooseRequestMetricTimingData::default(), "{args:?}");
+        }
+    }
+
+    /// A real stall, no wait time: the copy coordinated omission mitigation
+    /// sends puts each synthetic time in the second its request would have
+    /// started, inside the stall.
+    #[tokio::test]
+    async fn synthetic_latency_lands_in_the_stall() {
+        let mut configuration = GooseConfiguration::parse_args_default(&["--dashboard"]).unwrap();
+        configuration.co_mitigation = Some(GooseCoordinatedOmissionMitigation::Average);
+        let mut user =
+            GooseUser::single("http://localhost:8080".parse().unwrap(), &configuration).unwrap();
+        let (tx, rx) = flume::unbounded();
+        user.metrics_channel = Some(tx);
+
+        // Four quick iterations set the cadence, then one stalls.
+        for _ in 0..4 {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            user.update_request_cadence(0).await;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(2_500)).await;
+        user.update_request_cadence(0).await;
+
+        // The first request of the iteration after the stall.
+        let s = user.started.elapsed().as_millis() as u64;
+        let request = latency_request_metric("/x", s, 5);
+        user.coordinated_omission_mitigation(&request)
+            .await
+            .unwrap();
+        user.flush_pending_request().unwrap();
+        let copy = match rx.try_recv().expect("coordinated omission copy") {
+            GooseMetric::Request(copy) => *copy,
+            other => panic!("expected a request metric, got {:?}", other),
+        };
+        let stall = copy.coordinated_omission_elapsed;
+        let cadence = copy.user_cadence;
+        assert!(stall >= 2_500, "stall {}", stall);
+        assert!(cadence > 0 && stall > 2 * cadence);
+
+        let (_metrics_tx, metrics_rx) = flume::unbounded();
+        let (_cmd_tx, cmd_rx) = flume::unbounded();
+        let mut metrics = crate::metrics::GooseMetrics::default();
+        metrics.coordinated_omission_metrics =
+            Some(crate::metrics::CoordinatedOmissionMetrics::new(
+                GooseCoordinatedOmissionMitigation::Average,
+            ));
+        let mut processor = crate::metrics::MetricsProcessor::new(
+            metrics_rx,
+            cmd_rx,
+            metrics,
+            crate::graph::GraphData::for_metrics_processor(
+                configuration.records_latency_series(),
+                configuration.records_synthetic_latency(),
+            ),
+            configuration.clone(),
+            Vec::new(),
+            crate::config::GooseDefaults::default(),
+            Arc::new(std::sync::Mutex::new(HashMap::new())),
+            None,
+            Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        );
+        processor.process_request_metric_for_test(&request);
+        processor.process_request_metric_for_test(&copy);
+
+        // Expected: t_k = E - k*c - r while t_k > r, in second (s - t_k) / 1000.
+        let r = request.response_time;
+        let mut expected: HashMap<usize, u64> = HashMap::new();
+        let mut k = 1;
+        while stall as i64 - (k * cadence) as i64 - r as i64 > r as i64 {
+            let t = stall - k * cadence - r;
+            assert!(s - t >= s.saturating_sub(stall) && s - t <= s);
+            *expected.entry(((s - t) / 1000) as usize).or_default() += 1;
+            k += 1;
+        }
+        assert!(
+            !expected.is_empty(),
+            "the stall must produce synthetic times"
+        );
+
+        let end = (s / 1000) as usize + 3;
+        let window = processor
+            .graph_data_for_test()
+            .export_series_window_with_latency(300, Some(end), true);
+        let series = processor
+            .graph_data_for_test()
+            .export_request_series("GET".into(), "/x".into(), 300, Some(end), true)
+            .expect("series for /x");
+        for (latency_ms, adjusted) in [
+            (&window.latency_ms, &window.latency_co_adjusted_ms),
+            (&series.latency_ms, &series.latency_co_adjusted_ms),
+        ] {
+            for second in 0..adjusted.count.len() {
+                let synthetic = adjusted.count[second] - latency_ms.count[second];
+                assert_eq!(
+                    synthetic,
+                    expected.get(&second).copied().unwrap_or(0),
+                    "second {second}"
+                );
+                if synthetic > 0 {
+                    assert_ne!(adjusted.max[second], latency_ms.max[second]);
+                }
+            }
+        }
+        // The request itself is measured in its own second, and only there.
+        assert_eq!(window.latency_ms.count.iter().sum::<u64>(), 1);
+        assert_eq!(window.latency_ms.count[(s / 1000) as usize], 1);
     }
 }
