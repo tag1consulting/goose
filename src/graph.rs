@@ -8,7 +8,7 @@
 use crate::metrics::dashboard_snapshot::{
     LatencySeries, RequestSeries, SeriesWindow, SERIES_WINDOW_SECS,
 };
-use crate::metrics::{response_time_percentile, round_metric_time, GooseRequestMetricTimingData};
+use crate::metrics::{response_time_percentile, round_metric_time};
 use crate::test_plan::{TestPlanHistory, TestPlanStepAction};
 use chrono::prelude::*;
 use itertools::Itertools;
@@ -20,9 +20,36 @@ use std::convert::TryFrom;
 use std::fmt::Write;
 use std::marker::PhantomData;
 
+/// One key's counts by second, and for requests, which latency ring holds the
+/// request's own response times.
+#[derive(Clone)]
+struct KeySeries {
+    counts: TimeSeries<u32, u32>,
+    /// `None` until the request's latency is first recorded through this
+    /// entry, then the index of its ring in [`LatencyHistograms`], or
+    /// `Some(None)` when it has no ring of its own. Caching it here lets a
+    /// batch merge find the ring with the same lookup that counts the
+    /// request. Unused for errors. Reset with the latency histograms, by
+    /// [`GraphData::reset_rate_series`].
+    latency_ring: Option<Option<usize>>,
+}
+
+impl std::ops::Deref for KeySeries {
+    type Target = TimeSeries<u32, u32>;
+    fn deref(&self) -> &Self::Target {
+        &self.counts
+    }
+}
+
+impl std::ops::DerefMut for KeySeries {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.counts
+    }
+}
+
 #[derive(Clone)]
 struct ItemsPerSecond {
-    series: HashMap<String, TimeSeries<u32, u32>>,
+    series: HashMap<String, KeySeries>,
     /// Absolute second used as `origin` for newly inserted keys.
     ///
     /// After dashboard pruning / rate-series reset this tracks the retained window
@@ -47,19 +74,54 @@ impl ItemsPerSecond {
 
     #[inline(always)]
     fn initialize_or_increment(&mut self, key: &str, second: usize, value: u32) -> u32 {
+        let data = self.increment(key, second, value);
+        data.get(second)
+    }
+
+    /// Add `value` to `key`'s count for `second`, returning the key's entry.
+    #[inline(always)]
+    fn increment(&mut self, key: &str, second: usize, value: u32) -> &mut KeySeries {
         let origin = self.origin;
         let data = self
             .series
             .entry(key.to_string())
-            .or_insert_with(|| TimeSeries::with_origin(origin));
+            .or_insert_with(|| KeySeries {
+                counts: TimeSeries::with_origin(origin),
+                latency_ring: None,
+            });
         data.increase_value(second, value);
-        data.get(second)
+        data
+    }
+
+    /// A report graph of every key's counts, in the map's iteration order.
+    fn graph<'a>(
+        &'a self,
+        html_id: &'a str,
+        y_axis_label: &'a str,
+        granular_data: bool,
+    ) -> Graph<'a, u32, u32> {
+        Graph {
+            html_id,
+            y_axis_label,
+            granular_data,
+            data: self
+                .series
+                .iter()
+                .map(|(label, series)| (label.as_str(), &series.counts))
+                .collect(),
+        }
     }
 
     #[cfg(test)]
     #[inline(always)]
     fn insert(&mut self, key: &str, time_series: TimeSeries<u32, u32>) {
-        self.series.insert(key.to_string(), time_series);
+        self.series.insert(
+            key.to_string(),
+            KeySeries {
+                counts: time_series,
+                latency_ring: None,
+            },
+        );
     }
 
     #[cfg(test)]
@@ -71,7 +133,7 @@ impl ItemsPerSecond {
     #[cfg(test)]
     #[inline(always)]
     fn get(&self, key: &str) -> Option<TimeSeries<u32, u32>> {
-        self.series.get(key).cloned()
+        self.series.get(key).map(|data| data.counts.clone())
     }
 }
 
@@ -112,12 +174,14 @@ const COUNT_BITS: u32 = 24;
 const COUNT_MAX: u32 = (1 << COUNT_BITS) - 1;
 
 /// One second's response times, in the same buckets as
-/// [`GooseRequestMetricTimingData`] but held compactly: a sorted list with 4
+/// [`GooseRequestMetricTimingData`](crate::metrics::GooseRequestMetricTimingData) but held compactly: a sorted list with 4
 /// bytes for each bucket the second has seen (its index and its count), so a
 /// quiet name costs little and a busy one at most about 1 KB a second.
 /// Rounded times above 60 seconds, possible with a longer `--timeout`, go to
-/// a short sorted overflow list.
-#[derive(Clone, Debug, Default, PartialEq)]
+/// a short sorted overflow list. User threads fill one for each request name
+/// and second in their metrics batches, which the metrics processor merges
+/// into the rings.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, serde::Deserialize)]
 pub(crate) struct SecondHistogram {
     entries: Vec<u32>,
     overflow: Vec<(usize, u32)>,
@@ -182,33 +246,18 @@ impl SecondHistogram {
         self.counter += counter;
     }
 
-    /// Record one response time, as [`GooseRequestMetricTimingData::record_time`] does.
+    /// Record one response time, as
+    /// [`GooseRequestMetricTimingData::record_time`](crate::metrics::GooseRequestMetricTimingData::record_time)
+    /// does.
     pub(crate) fn record(&mut self, time: u64) {
         let time_ms = time as usize;
         self.add_totals(time_ms, time_ms, time_ms, 1);
         self.add_bucket(round_metric_time(time), 1);
     }
 
-    /// Add a batch's response times, as [`GooseRequestMetricTimingData::merge`] does.
-    pub(crate) fn merge_timing_data(&mut self, other: &GooseRequestMetricTimingData) {
-        // Both are sorted, so each search starts where the last one ended.
-        let mut from = 0;
-        for (&bucket, &count) in &other.times {
-            match dense_index(bucket) {
-                Some(index) => from = self.add_indexed(from, index, count),
-                None => self.add_bucket(bucket, count),
-            }
-        }
-        self.add_totals(
-            other.minimum_time,
-            other.maximum_time,
-            other.total_time,
-            other.counter,
-        );
-    }
-
     /// Add another second's response times.
     pub(crate) fn merge(&mut self, other: &SecondHistogram) {
+        // Both are sorted, so each search starts where the last one ended.
         let mut from = 0;
         for &entry in &other.entries {
             let index = (entry >> COUNT_BITS) as usize;
@@ -308,9 +357,9 @@ impl LatencyRing {
     }
 
     /// Add a histogram of response times to `second`.
-    pub(crate) fn merge(&mut self, second: usize, other: &GooseRequestMetricTimingData) {
+    pub(crate) fn merge(&mut self, second: usize, other: &SecondHistogram) {
         if let Some(data) = self.slot_mut(second) {
-            data.merge_timing_data(other);
+            data.merge(other);
         }
     }
 
@@ -335,7 +384,10 @@ impl LatencyRing {
 /// the same for synthetic times while coordinated omission mitigation is on.
 pub(crate) struct LatencyHistograms {
     all: LatencyRing,
-    by_request: HashMap<String, LatencyRing>,
+    /// Each admitted request name's ring, in the order names were admitted.
+    rings: Vec<LatencyRing>,
+    /// Admitted request names and the index of their ring in `rings`.
+    by_request: HashMap<String, usize>,
     synthetic: Option<(LatencyRing, HashMap<String, LatencyRing>)>,
 }
 
@@ -345,32 +397,74 @@ impl LatencyHistograms {
     pub(crate) fn new(synthetic: bool) -> Self {
         LatencyHistograms {
             all: LatencyRing::new(),
+            rings: Vec::new(),
             by_request: HashMap::new(),
             synthetic: synthetic.then(|| (LatencyRing::new(), HashMap::new())),
         }
     }
 
-    /// The ring for `key`, admitting the name while there is room.
-    fn request_ring(&mut self, key: &str) -> Option<&mut LatencyRing> {
-        if !self.by_request.contains_key(key) {
-            if self.by_request.len() >= MAX_REQUEST_SERIES {
-                return None;
-            }
-            self.by_request.insert(key.to_string(), LatencyRing::new());
+    /// The index of `key`'s ring, admitting the name while there is room.
+    fn ring_index(&mut self, key: &str) -> Option<usize> {
+        if let Some(&index) = self.by_request.get(key) {
+            return Some(index);
         }
-        self.by_request.get_mut(key)
+        if self.rings.len() >= MAX_REQUEST_SERIES {
+            return None;
+        }
+        self.rings.push(LatencyRing::new());
+        self.by_request
+            .insert(key.to_string(), self.rings.len() - 1);
+        Some(self.rings.len() - 1)
     }
 
+    /// `key`'s ring, looked up through `cached` (a [`KeySeries`]'s
+    /// `latency_ring`) and only by name the first time.
+    fn cached_ring(
+        &mut self,
+        key: &str,
+        cached: &mut Option<Option<usize>>,
+    ) -> Option<&mut LatencyRing> {
+        let index = match *cached {
+            Some(index) => index,
+            None => {
+                let index = self.ring_index(key);
+                *cached = Some(index);
+                index
+            }
+        };
+        self.rings.get_mut(index?)
+    }
+
+    #[cfg(test)]
     fn record(&mut self, key: &str, second: usize, time: u64) {
         self.all.record(second, time);
-        if let Some(ring) = self.request_ring(key) {
+        if let Some(index) = self.ring_index(key) {
+            self.rings[index].record(second, time);
+        }
+    }
+
+    fn record_cached(
+        &mut self,
+        key: &str,
+        cached: &mut Option<Option<usize>>,
+        second: usize,
+        time: u64,
+    ) {
+        self.all.record(second, time);
+        if let Some(ring) = self.cached_ring(key, cached) {
             ring.record(second, time);
         }
     }
 
-    fn merge(&mut self, key: &str, second: usize, data: &GooseRequestMetricTimingData) {
+    fn merge_cached(
+        &mut self,
+        key: &str,
+        cached: &mut Option<Option<usize>>,
+        second: usize,
+        data: &SecondHistogram,
+    ) {
         self.all.merge(second, data);
-        if let Some(ring) = self.request_ring(key) {
+        if let Some(ring) = self.cached_ring(key, cached) {
             ring.merge(second, data);
         }
     }
@@ -397,6 +491,7 @@ impl LatencyHistograms {
     /// Clear every ring and forget every name, so names are admitted again.
     fn clear(&mut self) {
         self.all.clear();
+        self.rings.clear();
         self.by_request.clear();
         if let Some((all, by_request)) = self.synthetic.as_mut() {
             all.clear();
@@ -444,7 +539,7 @@ impl LatencyHistograms {
         hold_from: usize,
         co_active: bool,
     ) -> Option<(LatencySeries, LatencySeries)> {
-        let measured = self.by_request.get(key)?;
+        let measured = &self.rings[*self.by_request.get(key)?];
         let synthetic = self
             .synthetic
             .as_ref()
@@ -551,22 +646,48 @@ impl GraphData {
         }
     }
 
-    /// Record one measured response time for the latency chart.
+    /// Record one measured response time for the latency chart, without
+    /// counting a request (unit tests).
+    #[cfg(test)]
     pub(crate) fn record_latency(&mut self, key: &str, second: usize, time: u64) {
         if let Some(latency) = self.latency.as_mut() {
             latency.record(key, second, time);
         }
     }
 
-    /// Merge a batch's measured response times for one second.
-    pub(crate) fn merge_latency(
+    /// Count one request in `second` and, when `latency` is given and the
+    /// histograms are kept, record its response time for the latency chart.
+    pub(crate) fn record_request_per_second_and_latency(
         &mut self,
         key: &str,
         second: usize,
-        data: &GooseRequestMetricTimingData,
+        latency: Option<u64>,
     ) {
-        if let Some(latency) = self.latency.as_mut() {
-            latency.merge(key, second, data);
+        let data = self.requests_per_second.increment(key, second, 1);
+        debug!(
+            "incremented second {second} for requests per second counter: {}",
+            data.get(second)
+        );
+        if let (Some(time), Some(histograms)) = (latency, self.latency.as_mut()) {
+            histograms.record_cached(key, &mut data.latency_ring, second, time);
+        }
+    }
+
+    /// Merge a batch's count of requests in `second` and, when the
+    /// histograms are kept, their response times, finding the request's ring
+    /// through the same lookup that counts them.
+    pub(crate) fn record_requests_per_second_and_latency_batch(
+        &mut self,
+        key: &str,
+        second: usize,
+        count: u32,
+        times: &SecondHistogram,
+    ) {
+        let data = self.requests_per_second.increment(key, second, count);
+        if times.counter > 0 {
+            if let Some(histograms) = self.latency.as_mut() {
+                histograms.merge_cached(key, &mut data.latency_ring, second, times);
+            }
         }
     }
 
@@ -604,7 +725,8 @@ impl GraphData {
         self.users_per_second.last_absolute_second()
     }
 
-    /// Record requests per second metric.
+    /// Record requests per second metric, without latency (unit tests).
+    #[cfg(test)]
     pub(crate) fn record_requests_per_second(&mut self, key: &str, second: usize) {
         let value = self
             .requests_per_second
@@ -662,17 +784,6 @@ impl GraphData {
             second,
             self.scenarios_per_second.get(second)
         );
-    }
-
-    /// Record multiple requests per second for batch merging.
-    pub(crate) fn record_requests_per_second_batch(
-        &mut self,
-        key: &str,
-        second: usize,
-        count: u32,
-    ) {
-        self.requests_per_second
-            .initialize_or_increment(key, second, count);
     }
 
     /// Record pre-aggregated average response time for batch merging.
@@ -1017,12 +1128,8 @@ impl GraphData {
 
     /// Generate requests per second graph.
     pub(crate) fn get_requests_per_second_graph(&self, granular_data: bool) -> Graph<'_, u32, u32> {
-        self.create_graph_from_data(
-            "graph-rps",
-            "Requests #",
-            granular_data,
-            &self.requests_per_second.series,
-        )
+        self.requests_per_second
+            .graph("graph-rps", "Requests #", granular_data)
     }
 
     /// Generate average response time graph.
@@ -1066,12 +1173,8 @@ impl GraphData {
 
     /// Generate errors per second graph.
     pub(crate) fn get_errors_per_second_graph(&self, granular_data: bool) -> Graph<'_, u32, u32> {
-        self.create_graph_from_data(
-            "graph-eps",
-            "Errors #",
-            granular_data,
-            &self.errors_per_second.series,
-        )
+        self.errors_per_second
+            .graph("graph-eps", "Errors #", granular_data)
     }
 
     /// Creates a Graph from granular data.
@@ -2936,28 +3039,43 @@ mod test {
     #[test]
     fn latency_batch_merge_equals_direct_recording() {
         let times: [(usize, u64); 6] = [(3, 12), (3, 140), (3, 1400), (4, 7), (4, 90), (4, 2600)];
-        let mut batch: HashMap<usize, GooseRequestMetricTimingData> = HashMap::new();
-        for &(second, time) in &times {
-            batch.entry(second).or_default().record_time(time);
+        // Two batches, so the second finds the request's ring through the
+        // index cached on its requests per second entry.
+        let mut batches: [HashMap<usize, SecondHistogram>; 2] = Default::default();
+        for (i, &(second, time)) in times.iter().enumerate() {
+            batches[i % 2].entry(second).or_default().record(time);
         }
         let mut merged = latency_graph(false);
-        for (second, data) in &batch {
-            merged.merge_latency("GET /a", *second, data);
+        for batch in &batches {
+            for (second, data) in batch {
+                merged.record_requests_per_second_and_latency_batch(
+                    "GET /a",
+                    *second,
+                    data.counter as u32,
+                    data,
+                );
+            }
         }
         let mut direct = latency_graph(false);
         for &(second, time) in &times {
-            direct.record_latency("GET /a", second, time);
+            direct.record_request_per_second_and_latency("GET /a", second, Some(time));
         }
+        assert_eq!(
+            merged.requests_per_second.get("GET /a").unwrap().data,
+            direct.requests_per_second.get("GET /a").unwrap().data
+        );
         for second in [3, 4] {
             let merged = histograms(&merged);
             let direct = histograms(&direct);
             assert_eq!(merged.all.get(second), direct.all.get(second));
             assert_eq!(
-                merged.by_request["GET /a"].get(second),
-                direct.by_request["GET /a"].get(second)
+                merged.rings[merged.by_request["GET /a"]].get(second),
+                direct.rings[direct.by_request["GET /a"]].get(second)
             );
             let mut expected = SecondHistogram::default();
-            expected.merge_timing_data(&batch[&second]);
+            for &(_, time) in times.iter().filter(|(s, _)| *s == second) {
+                expected.record(time);
+            }
             assert_eq!(merged.all.get(second), Some(&expected));
         }
     }
@@ -2986,7 +3104,7 @@ mod test {
                 .wrapping_add(1442695040888963407);
             times.push((seed >> 33) % 90_000 / (1 + (seed >> 60)));
         }
-        let mut reference = GooseRequestMetricTimingData::default();
+        let mut reference = crate::metrics::GooseRequestMetricTimingData::default();
         let mut histogram = SecondHistogram::default();
         for &time in &times {
             reference.record_time(time);
@@ -3013,9 +3131,16 @@ mod test {
             );
         }
 
-        // A batch merged in one pass gives the same histogram.
+        // Batches merged into an empty histogram give the same histogram.
+        let (first, second) = times.split_at(times.len() / 3);
         let mut via_batch = SecondHistogram::default();
-        via_batch.merge_timing_data(&reference);
+        for part in [first, second] {
+            let mut batch = SecondHistogram::default();
+            for &time in part {
+                batch.record(time);
+            }
+            via_batch.merge(&batch);
+        }
         assert_eq!(via_batch, histogram);
 
         // A bucket past the most one entry holds continues in the next.
@@ -3045,8 +3170,8 @@ mod test {
         // Second 100 maps to the same slot as 400 (300 slots).
         ring.record(100, 10);
         ring.merge(100, &{
-            let mut data = GooseRequestMetricTimingData::default();
-            data.record_time(10);
+            let mut data = SecondHistogram::default();
+            data.record(10);
             data
         });
         assert!(ring.get(100).is_none());

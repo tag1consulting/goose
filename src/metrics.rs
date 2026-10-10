@@ -24,7 +24,7 @@ pub(crate) use nullable::NullableFloat;
 
 use crate::config::GooseDefaults;
 use crate::goose::{get_base_url, GooseMethod, Scenario, TransactionName};
-use crate::graph::GraphData;
+use crate::graph::{GraphData, SecondHistogram};
 use crate::logger::{GooseLog, GooseLoggerTx};
 use crate::metrics::common::ReportOptions;
 use crate::report;
@@ -179,7 +179,7 @@ pub(crate) struct RequestGraphBatchData {
     pub(crate) total_time: f64,
     /// Bucketed response times in this second, for the dashboard's latency
     /// chart. Empty unless the dashboard tracks percentiles over time.
-    pub(crate) times: GooseRequestMetricTimingData,
+    pub(crate) times: SecondHistogram,
 }
 
 /// Pre-aggregated request timing and status-code data for a single
@@ -3738,17 +3738,16 @@ impl MetricsProcessor {
                     request_metric.raw.method_label(),
                     request_metric.name
                 );
-                self.graph_data
-                    .record_requests_per_second(&key, seconds_since_start);
                 // Coordinated omission copies and updates are not new
                 // measurements, so they stay out of the latency chart.
-                if !request_metric.update && request_metric.coordinated_omission_elapsed == 0 {
-                    self.graph_data.record_latency(
-                        &key,
-                        seconds_since_start,
-                        request_metric.response_time,
-                    );
-                }
+                let latency = (!request_metric.update
+                    && request_metric.coordinated_omission_elapsed == 0)
+                    .then_some(request_metric.response_time);
+                self.graph_data.record_request_per_second_and_latency(
+                    &key,
+                    seconds_since_start,
+                    latency,
+                );
                 self.graph_data.record_average_response_time_per_second(
                     key.clone(),
                     seconds_since_start,
@@ -3949,8 +3948,15 @@ impl MetricsProcessor {
         // 5. Apply graph data if a report file is configured or the dashboard is on.
         if self.configuration.records_graph_data() {
             for ((key, second), entry) in batch.graph_request_data {
+                // One lookup by name counts the requests and finds the
+                // request's latency ring.
                 self.graph_data
-                    .record_requests_per_second_batch(&key, second, entry.count);
+                    .record_requests_per_second_and_latency_batch(
+                        &key,
+                        second,
+                        entry.count,
+                        &entry.times,
+                    );
                 if entry.count > 0 {
                     self.graph_data
                         .record_average_response_time_per_second_batch(
@@ -3959,9 +3965,6 @@ impl MetricsProcessor {
                             entry.total_time,
                             entry.count,
                         );
-                }
-                if entry.times.counter > 0 {
-                    self.graph_data.merge_latency(&key, second, &entry.times);
                 }
             }
             for (second, count) in batch.graph_tps {
@@ -6293,7 +6296,7 @@ mod test {
             RequestGraphBatchData {
                 count: response_times.len() as u32,
                 total_time,
-                times: GooseRequestMetricTimingData::default(),
+                times: SecondHistogram::default(),
             },
         );
         // Pre-aggregate request timing data too, so both paths match.
@@ -6550,7 +6553,7 @@ mod test {
                 .or_default();
             entry.count += 1;
             entry.total_time += time as f64;
-            entry.times.record_time(time);
+            entry.times.record(time);
         }
         processor.process_batch(batch);
         assert_eq!(measured_count(&processor, 3), 2);

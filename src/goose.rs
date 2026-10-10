@@ -2404,7 +2404,7 @@ impl GooseUser {
             graph_entry.count += 1;
             graph_entry.total_time += request_metric.response_time as f64;
             if self.record_latency_series {
-                graph_entry.times.record_time(request_metric.response_time);
+                graph_entry.times.record(request_metric.response_time);
             }
         }
 
@@ -4830,7 +4830,7 @@ mod tests {
     fn accumulated_times(
         args: &[&str],
         metric: &GooseRequestMetric,
-    ) -> GooseRequestMetricTimingData {
+    ) -> crate::graph::SecondHistogram {
         let configuration = GooseConfiguration::parse_args_default(args).unwrap();
         let mut user =
             GooseUser::single("http://localhost:8080".parse().unwrap(), &configuration).unwrap();
@@ -4848,9 +4848,11 @@ mod tests {
     fn accumulate_request_buckets_times_by_second_when_gated_on() {
         let metric = latency_request_metric("/x", 3_400, 77);
         let times = accumulated_times(&["--dashboard"], &metric);
+        let mut expected = crate::graph::SecondHistogram::default();
+        expected.record(77);
+        assert_eq!(times, expected);
         assert_eq!(times.counter, 1);
         assert_eq!(times.maximum_time, 77);
-        assert_eq!(times.times.get(&77), Some(&1));
 
         for args in [
             vec![],
@@ -4858,7 +4860,7 @@ mod tests {
             vec!["--dashboard", "--no-percentiles-over-time"],
         ] {
             let times = accumulated_times(&args, &metric);
-            assert_eq!(times, GooseRequestMetricTimingData::default(), "{args:?}");
+            assert_eq!(times, crate::graph::SecondHistogram::default(), "{args:?}");
         }
     }
 
