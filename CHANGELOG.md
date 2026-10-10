@@ -35,6 +35,12 @@
     o the client refuses a snapshot whose `version` is not the one it was built for, and shows an error banner
  - [#705](https://github.com/tag1consulting/goose/issues/705) keep the dashboard token in the tab's sessionStorage so a reload keeps it; the client stored it nowhere after stripping `?token=` from the URL, so every reload got 401
     o a 401 clears the stored token; a new tab still needs `?token=`
+ - [#713](https://github.com/tag1consulting/goose/issues/713) show p50, p95 and p99 by second in the dashboard's latency chart, for all requests or one selected request; the chart had only the average, which hides tails
+    o the card is renamed "Latency by second (ms)"; clicking a request name in the table charts that request alone, for the first 100 request names; the maximum is one legend click away, and a second with no requests is a gap instead of 0
+    o with coordinated omission mitigation active the chart shows adjusted values, as the KPIs and tables do since #716
+    o on by default with `--dashboard`; `--no-percentiles-over-time` (or `GooseDefault::NoPercentilesOverTime`) turns it off and is an error without `--dashboard`
+    o memory is bounded: one histogram per second for the 300 second chart window, for all requests and for up to 100 request names
+    o the snapshot adds `series.latency_ms`, `series.latency_co_adjusted_ms` (`count`, `avg`, `p50`, `p95`, `p99` and `max` for each second; percentiles are `null` for a second with no requests and for the two newest seconds while a test runs), `flags.percentiles_over_time` and `requests[].has_series`; new endpoint `GET /api/v1/series?method=&name=` returns one request's series
  - [#716](https://github.com/tag1consulting/goose/issues/716) show coordinated omission adjusted response times in the dashboard once mitigation has recorded an event; the dashboard showed measured percentiles beside "Coordinated omission: active", which read as adjusted
     o the KPI strip, aggregate panel and requests table label adjusted values and show the measured value on hover; the aggregate panel shows both
     o the snapshot adds `co_adjusted` (average, maximum and percentiles) to `aggregate` and to each request row, present only while mitigation has events; `percentile_ms` stays measured

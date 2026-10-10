@@ -146,6 +146,34 @@ function showAuthMissing(): void {
   );
 }
 
+/**
+ * One request's series from `GET /api/v1/series`, with the token handling of
+ * the snapshot: a 401 shows the missing token banner. Resolves null for a 404
+ * (no series for that request) and on any other failure.
+ */
+export function fetchRequestSeries(
+  method: string,
+  name: string
+): Promise<RequestSeries | null> {
+  if (authBlocked) return Promise.resolve(null);
+  const path =
+    "/api/v1/series?method=" +
+    encodeURIComponent(method) +
+    "&name=" +
+    encodeURIComponent(name);
+  return fetch(withToken(path))
+    .then((res): Promise<unknown> | null => {
+      if (res.status === 401) {
+        showAuthMissing();
+        return null;
+      }
+      if (!res.ok) return null;
+      return res.json();
+    })
+    .then((data) => (data == null ? null : (data as RequestSeries)))
+    .catch(() => null);
+}
+
 // The JSON boundary: refuse a snapshot of another wire format version
 // instead of rendering its fields as placeholders.
 function checkSnapshot(data: unknown): DashboardSnapshot | null {

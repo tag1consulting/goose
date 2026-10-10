@@ -86,9 +86,13 @@
       <h2>Active users</h2>
       <canvas id="chart-users" aria-label="Active users chart"></canvas>
     </div>
-    <div class="card chart-card chart-wide">
-      <h2>Average latency (ms)</h2>
-      <canvas id="chart-latency" aria-label="Average latency chart"></canvas>
+    <div id="chart-latency-card" class="card chart-card chart-wide">
+      <div class="chart-head">
+        <h2 id="chart-latency-title">Latency by second (ms)</h2>
+        <button id="chart-latency-all" type="button" hidden>All requests</button>
+      </div>
+      <p id="chart-latency-note" class="note" hidden></p>
+      <canvas id="chart-latency" aria-label="Latency by second: p50, p95, p99 and average"></canvas>
     </div>
   </section>
 

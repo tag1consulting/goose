@@ -35,8 +35,9 @@ The dashboard port opens when the Controllers' ports do, once Goose has built a 
 | `--dashboard-port PORT` | `5118` | Bind port. CLI value `0` means “unset” and is rewritten to `5118` when the dashboard is enabled (not an ephemeral OS port). |
 | `--dashboard-auth-token TOKEN` | empty | Shared secret for metric APIs when configured; **always required** when `--dashboard-control` is set (even on loopback). Visible in process listings (`ps`) like any CLI flag. |
 | `--dashboard-max-clients COUNT` | `32` | Max concurrent SSE clients (`GET /api/v1/events`); further clients receive HTTP 503. CLI value `0` means “unset” and becomes `32`. The server also holds at most twice this many connections plus 16 (80 by default); a connection beyond that is closed as soon as it is accepted. |
+| `--no-percentiles-over-time` | off | Turn off the p50, p95 and p99 lines in the latency chart and the histograms behind them (requires --dashboard). See [The latency chart](#the-latency-chart). |
 
-Defaults can also be set programmatically with `GooseDefault::Dashboard`, `GooseDefault::DashboardControl`, `GooseDefault::DashboardHost`, `GooseDefault::DashboardPort`, `GooseDefault::DashboardAuthToken`, and `GooseDefault::DashboardMaxClients`.
+Defaults can also be set programmatically with `GooseDefault::Dashboard`, `GooseDefault::DashboardControl`, `GooseDefault::DashboardHost`, `GooseDefault::DashboardPort`, `GooseDefault::DashboardAuthToken`, `GooseDefault::DashboardMaxClients`, and `GooseDefault::NoPercentilesOverTime`.
 
 > **Feature flag:** the HTTP server is compiled behind the opt-in `dashboard` crate feature (not in default features, same pattern as `pdf-reports`). Enable it with `--features dashboard`. Builds without that feature reject `--dashboard` at startup with a clear rebuild hint.
 
@@ -96,6 +97,7 @@ Additional control rules:
 | `GET /api/v1/health` | **Public** | Liveness + ops counters; includes `control_enabled` (no load-test metrics) |
 | `GET /api/v1/snapshot` | **Required** | |
 | `GET /api/v1/events` (SSE) | **Required** | |
+| `GET /api/v1/series` | **Required** | One request's per second series; see [Request series endpoint](#request-series-endpoint) |
 | `POST /api/v1/control/*` | **Always required** when control is enabled | Even on loopback; **404** when control is off |
 | `DELETE /api/v1/runs/{id}` | **Always required** when control is enabled | Control token, as for `POST /api/v1/control/*`; **404** when control is off |
 
@@ -341,7 +343,7 @@ These counters are ops-safe (timing and client counts only). The response does *
 - **Phase badge** — `idle` (gray), `increase` (blue), `maintain` (green), `decrease` (orange), `shutdown` (red)
 - **Connection indicator** — green for SSE, yellow for poll fallback, red when disconnected
 - **KPI strip** — users, RPS, fail %, p95, average latency
-- **Charts** — trailing series window (default 300 seconds) for RPS + failures/s, active users, and average latency
+- **Charts**: trailing series window (default 300 seconds) for RPS and failures per second, active users, and latency by second (p50, p95, p99, average and maximum); see [The latency chart](#the-latency-chart).
 - **Sortable tables** — Scenarios, Transactions, Requests and Errors. The scenario and transaction tables list every registered scenario and transaction and are never truncated; the request and error tables show the top rows (truncated server-side for large runs)
 - **Control panel** (only when `--dashboard-control`): Start / Stop / Quit / target users; see [Controlling a load test from the dashboard](#controlling-a-load-test-from-the-dashboard)
 - **Save state** in the header: `Saving to goose-runs`, `Not saving (turned off)`, or `Not saving: can't create goose-runs (reason)`; see [Saved runs](#saved-runs)
@@ -352,6 +354,33 @@ Transaction times cover the whole transaction function, so they include `--throt
 When control is off there are **no control buttons**. Use the Controllers (or enable dashboard control) to change the running test.
 
 When coordinated omission mitigation is on (`--co-mitigation`) and has recorded at least one event, the KPI strip, the aggregate panel and the requests table show adjusted response times, which include the synthetic times mitigation adds for requests a stalled user could not send. They are labelled "adjusted", and hovering a value shows the measured one. The aggregate panel shows both. The adjusted aggregate includes every request, using measured times for requests that never needed backfill, so it can differ from the report's adjusted aggregate, which leaves those requests out.
+
+### The latency chart
+
+Each point covers only the requests in that second, so it moves much more than the p95 in the KPI strip and the Requests table, which cover the whole run since metrics were last reset. Percentiles use the same buckets as the tables, so values above one second are rounded to the nearest second, clamped to that second's fastest and slowest response. While a test runs, the two newest seconds show no percentiles yet, because their slowest requests are still arriving. A second with no requests is a gap. The maximum is hidden until you click it in the legend.
+
+Click a request's name in the Requests table to chart that request alone, and **All requests** to go back. Trends are kept for the first 100 request names Goose sees, counting again from each metrics reset; a name seen later shows in the table but cannot be charted on its own.
+
+When coordinated omission mitigation is on and has recorded an event, the chart shows adjusted values, which include the synthetic times mitigation adds, and the tooltip also gives the measured p99 and how many requests in that second were synthetic. Synthetic times belong to the seconds of the stall, which Goose only learns about when it ends, so adjusted values for seconds already drawn can rise. Turn the percentile lines off with `--no-percentiles-over-time`; the average still draws.
+
+#### Request series endpoint
+
+`GET /api/v1/series?method=<method>&name=<request name>` returns one request's series over the same trailing window as the snapshot's `series`, as the chart uses it when a request is selected. `method` is the method as the Requests table shows it (`GET`, `POST`, ...) and `name` is the request name; URL encode both. It needs the token when one is configured, as `GET /api/v1/snapshot` does.
+
+| Status | Body |
+|--------|------|
+| `200` | `{ "method", "name", "start_second", "rps": [...], "latency_ms": {...}, "latency_co_adjusted_ms": {...} }`; the two latency series have the shape of `series.latency_ms` in the snapshot, and the adjusted one is empty unless coordinated omission mitigation has recorded an event |
+| `400` | `{"error":"bad_request"}`: `method` or `name` is missing, or the two together are longer than 2,048 bytes |
+| `401` | Empty: the token is missing or wrong, as for `GET /api/v1/snapshot` |
+| `404` | `{"error":"not_found"}`: the request has no series (not one of the first 100 names, or `--no-percentiles-over-time`) |
+| `503` | `{"error":"busy"}` with four series requests already in flight, `{"error":"timeout"}` when no answer arrives within 15 seconds, or `{"error":"unavailable"}` when Goose is no longer taking dashboard requests (shutting down) |
+
+Answers are cached for one second, so several viewers polling one request cost one export a second.
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:5118/api/v1/series?method=GET&name=%2F"
+```
 
 ## Saved runs
 
@@ -510,6 +539,8 @@ Enabling `--dashboard` turns on the same per-second **GraphData** series collect
 With no SSE client connected and no `GET /api/v1/snapshot` in the last two seconds (`/api/v1/health` does not count), the dashboard issues **no** snapshot builds (no extra metrics-processor work beyond GraphData recording). When clients are connected, snapshots are coalesced to about **1 Hz** for all viewers. Concurrent SSE clients are capped (default **32**, tunable with `--dashboard-max-clients`); further clients receive HTTP 503.
 
 Each snapshot build (while clients are connected or polling) runs on the **metrics processor** task: it drains pending metrics, exports the trailing series window, and builds percentile maps for the aggregate, up to 100 request rows, and one row per scenario and transaction, a number fixed by the load test's code. That cost scales with unique request names and the timing histograms Goose already maintains; the attack main loop does **not** await the build. Under extreme cardinality, prefer fewer unique request names, a shorter test, or disable the dashboard if you need absolute minimal overhead (same trade-off as `--report-file`).
+
+With `--dashboard`, Goose also keeps one response time histogram per second for the last 300 seconds, for all requests together and for each of the first 100 request names, plus the same for synthetic times while coordinated omission mitigation is on. It does not grow with run length. Its size depends on how many request names there are and how many distinct response times occur: about 0.2 MB for all requests and 10 MB for 100 names with typical response times, and up to 30 MB in the worst case at the default 60 second timeout, more with a longer `--timeout`. `--no-percentiles-over-time` turns all of it off, along with the small per request cost of filling it.
 
 For extreme runs with tens of thousands of unique request names, expect higher GraphData memory (same as `--report-file`). Disable the dashboard if you need absolute minimal overhead, just as you can disable Controllers with `--no-telnet --no-websocket`.
 

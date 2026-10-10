@@ -407,6 +407,40 @@ body {
   grid-column: 1 / -1;
 }
 
+/* A chart's title with a button beside it. */
+.chart-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+/* A request name that charts that request when clicked. */
+.link-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.link-button:hover,
+.link-button[aria-pressed="true"] {
+  text-decoration: underline;
+}
+
+.link-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+tr[aria-selected="true"] td {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
 @media (max-width: 720px) {
   .charts-grid {
     grid-template-columns: 1fr;

@@ -46,6 +46,9 @@ function fileResponse(status, body, filename) {
 // `snapshot` for the snapshot an authorized request gets (default
 // IDLE_SNAPSHOT).
 //
+// Request series: `GET /api/v1/series` answers `seriesStatus` (default 200)
+// with the `series` body (default: an empty series for the requested name).
+//
 // Saved runs: `runs` is the listing `GET /api/v1/runs` answers (default: no
 // runs); a report or comparison under /api/v1/runs/ answers with a small body
 // and a Content-Disposition naming it, or `runFileStatus` with a one line
@@ -59,6 +62,8 @@ export function stubServer(token, options = {}) {
     snapshot = IDLE_SNAPSHOT,
     runs = { dir: "goose-runs", total_bytes: 0, runs: [] },
     runFileStatus = 200,
+    seriesStatus = 200,
+    series = null,
   } = options;
   const requests = [];
   function fetch(input, init) {
@@ -113,6 +118,25 @@ export function stubServer(token, options = {}) {
     const ok =
       url.searchParams.get("token") === token || bearer === "Bearer " + token;
     if (!ok) return Promise.resolve(jsonResponse(401, {}));
+    if (url.pathname === "/api/v1/series") {
+      if (seriesStatus !== 200) {
+        return Promise.resolve(jsonResponse(seriesStatus, { error: "not_found" }));
+      }
+      const empty = { count: [], avg: [], p50: [], p95: [], p99: [], max: [] };
+      return Promise.resolve(
+        jsonResponse(
+          200,
+          series || {
+            method: url.searchParams.get("method"),
+            name: url.searchParams.get("name"),
+            start_second: 0,
+            rps: [],
+            latency_ms: empty,
+            latency_co_adjusted_ms: empty,
+          }
+        )
+      );
+    }
     if (snapshotStatus === "reject") {
       return Promise.reject(new TypeError("network error"));
     }

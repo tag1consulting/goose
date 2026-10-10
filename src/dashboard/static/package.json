@@ -5,8 +5,8 @@
   "scripts": {
     "build": "esbuild src/main.ts --bundle --format=iife --target=es2018 --minify --outfile=app.js",
     "check": "tsc -p tsconfig.json && tsc --noEmit --strict --allowJs --checkJs --target ES2020 --module ES2020 --skipLibCheck snapshot.d.ts idle-snapshot.mjs",
-    "pretest": "esbuild src/coadjust.ts --format=esm --outdir=test-build --out-extension:.js=.mjs",
-    "test": "node --test token.test.mjs tables.test.mjs runs.test.mjs coadjust.test.mjs"
+    "pretest": "esbuild src/coadjust.ts src/latency.ts --format=esm --outdir=test-build --out-extension:.js=.mjs",
+    "test": "node --test token.test.mjs tables.test.mjs runs.test.mjs coadjust.test.mjs latency.test.mjs"
   },
   "devDependencies": {
     "chart.js": "4.4.7",
