@@ -374,7 +374,7 @@ The three `GET` routes need the token when one is configured, as `GET /api/v1/sn
 | `GET /api/v1/runs` | `{ "dir": "goose-runs", "total_bytes": n, "runs": [ ... ] }`: the `run.json` of every complete run (a directory named by a run id that holds `run.json`), newest first |
 | `GET /api/v1/runs/{id}/{file}` | `report.html`, `report.json` or `report.md` of run `{id}`, as an attachment named `goose-<test>-<id>.<ext>` |
 | `GET /api/v1/runs/{id}/compare.md?baseline={id}` | Run `{id}` compared to the baseline run, as Markdown, named `goose-<test>-<id>-vs-<baseline id>.md`, starting with a line naming the run and the baseline and when each started. `422` with a one line reason when a run has no requests, or its `report.json` can't be read or is inconsistent |
-| `DELETE /api/v1/runs/{id}` | `204` once the run directory is deleted; `409` for the run being written now |
+| `DELETE /api/v1/runs/{id}` | `204` once the run directory is deleted; the run being written now has no `run.json` until it ends, so it is a `404` like any incomplete run |
 
 An id that is not a run id, any other file, and anything that is not a real directory holding a regular `run.json` and a regular file (a symlink included) is a plain `404`, so a run still being written, or whose save failed, is not served. Reports and comparisons are sent with `Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, `Cache-Control: no-store` and `Content-Security-Policy: sandbox`, so a report opened anyway runs no script with the dashboard's origin.
 

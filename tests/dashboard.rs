@@ -2482,7 +2482,7 @@ async fn test_delete_saved_run() {
     assert!(runs.join("2002-02-02-000000").join("report.html").exists());
     assert!(runs.join(&older).join("run.json").exists());
 
-    // The run being written now can't be deleted.
+    // The run being written now has no run.json yet, so it is a 404.
     let start = post_control(&client, &base, "/api/v1/control/start", Some("{}"), true).await;
     assert_eq!(start.status(), 200);
     wait_for_phase(
@@ -2499,7 +2499,7 @@ async fn test_delete_saved_run() {
         .collect();
     assert_eq!(active.len(), 1, "{:?}", active);
     let resp = delete(active[0].clone(), true, false).await.unwrap();
-    assert_eq!(resp.status(), 409);
+    assert_eq!(resp.status(), 404);
     assert!(runs.join(&active[0]).is_dir());
     let stop = post_control(&client, &base, "/api/v1/control/stop", Some("{}"), true).await;
     assert_eq!(stop.status(), 200);

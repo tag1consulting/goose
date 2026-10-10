@@ -159,10 +159,6 @@ pub(crate) enum DashboardRequest {
     Quit {
         respond: tokio::sync::oneshot::Sender<ControlResult>,
     },
-    /// The id of the run being written now, if any.
-    ActiveRun {
-        respond: tokio::sync::oneshot::Sender<Option<String>>,
-    },
     /// Set absolute target user count.
     SetUsers {
         users: usize,
@@ -1878,9 +1874,10 @@ async fn control_quit_handler(
 
 /// `DELETE /api/v1/runs/{id}`: remove a complete saved run from disk.
 /// Registered only with `--dashboard-control`, and authorized like the
-/// control routes. 204 when removed; 409 for the run being written now; a
-/// plain 404 for anything that is not a valid run id naming a real directory
-/// that holds a regular `run.json`.
+/// control routes. 204 when removed; a plain 404 for anything that is not a
+/// valid run id naming a real directory that holds a regular `run.json`,
+/// which includes the run being written now: it has no `run.json` until it
+/// ends.
 async fn delete_run_handler(
     State(state): State<Arc<DashboardState>>,
     headers: HeaderMap,
@@ -1896,13 +1893,6 @@ async fn delete_run_handler(
     };
     if !runs::is_valid_run_id(&id) {
         return StatusCode::NOT_FOUND.into_response();
-    }
-    match active_run(&state).await {
-        Ok(Some(active)) if active == id => return StatusCode::CONFLICT.into_response(),
-        Ok(_) => {}
-        Err((code, msg)) => {
-            return control_http_error(StatusCode::SERVICE_UNAVAILABLE, "delete", code, msg);
-        }
     }
     let run_dir = Path::new(&state.runs_dir).join(&id);
     // `remove_dir_all` removes a symlink inside the run directory, never
@@ -1925,32 +1915,6 @@ async fn delete_run_handler(
             (StatusCode::INTERNAL_SERVER_ERROR, "can't delete the run").into_response()
         }
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    }
-}
-
-/// Ask the main loop which run it is writing now. An error is the code and
-/// message of a 503, as for a control request the main loop can't answer.
-async fn active_run(
-    state: &DashboardState,
-) -> Result<Option<String>, (&'static str, &'static str)> {
-    const UNAVAILABLE: (&str, &str) = ("unavailable", "control unavailable");
-    let Some(_slot) = try_acquire_control_slot(state) else {
-        return Err((
-            "busy",
-            "too many control requests in flight, wait and retry",
-        ));
-    };
-    let (respond, respond_rx) = oneshot::channel();
-    if state
-        .request_tx
-        .send(DashboardRequest::ActiveRun { respond })
-        .is_err()
-    {
-        return Err(UNAVAILABLE);
-    }
-    match tokio::time::timeout(CONTROL_TIMEOUT, respond_rx).await {
-        Ok(Ok(active)) => Ok(active),
-        _ => Err(UNAVAILABLE),
     }
 }
 
@@ -2085,9 +2049,6 @@ mod tests {
                             target_users: None,
                         });
                     }
-                    DashboardRequest::ActiveRun { respond } => {
-                        let _ = respond.send(None);
-                    }
                     DashboardRequest::SetUsers { users, respond } => {
                         let _ = respond.send(ControlResult {
                             ok: true,
@@ -2129,9 +2090,6 @@ mod tests {
                     | DashboardRequest::Quit { respond }
                     | DashboardRequest::SetUsers { respond, .. } => {
                         let _ = respond.send(ControlResult::internal("unused", "idle", 0));
-                    }
-                    DashboardRequest::ActiveRun { respond } => {
-                        let _ = respond.send(None);
                     }
                 }
             }
@@ -2767,9 +2725,6 @@ mod tests {
                             DashboardRequest::Quit { respond } => {
                                 let _ = respond.send(ControlResult::internal("quit", "idle", 0));
                             }
-                            DashboardRequest::ActiveRun { respond } => {
-                                let _ = respond.send(None);
-                            }
                             DashboardRequest::SetUsers { respond, .. } => {
                                 let _ = respond.send(ControlResult::internal("users", "idle", 0));
                             }
@@ -3204,9 +3159,6 @@ mod tests {
                     | DashboardRequest::SetUsers { respond, .. } => {
                         drop(respond);
                     }
-                    DashboardRequest::ActiveRun { respond } => {
-                        drop(respond);
-                    }
                 }
             }
         })
@@ -3230,9 +3182,6 @@ mod tests {
                     }
                     DashboardRequest::Quit { respond } => {
                         let _ = respond.send(ControlResult::internal("quit", "maintain", 1));
-                    }
-                    DashboardRequest::ActiveRun { respond } => {
-                        let _ = respond.send(None);
                     }
                     DashboardRequest::SetUsers { respond, .. } => {
                         let _ = respond.send(ControlResult::internal("users", "maintain", 1));
@@ -3259,11 +3208,6 @@ mod tests {
                     | DashboardRequest::SetUsers { respond, .. } => {
                         // Keep the oneshot Sender alive so the client hits CONTROL_TIMEOUT
                         // rather than an immediate oneshot-drop 503.
-                        let _hold = respond;
-                        futures::future::pending::<()>().await;
-                        drop(_hold);
-                    }
-                    DashboardRequest::ActiveRun { respond } => {
                         let _hold = respond;
                         futures::future::pending::<()>().await;
                         drop(_hold);
