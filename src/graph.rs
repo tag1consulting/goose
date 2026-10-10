@@ -180,11 +180,17 @@ const COUNT_MAX: u32 = (1 << COUNT_BITS) - 1;
 /// Rounded times above 60 seconds, possible with a longer `--timeout`, go to
 /// a short sorted overflow list. User threads fill one for each request name
 /// and second in their metrics batches, which the metrics processor merges
-/// into the rings.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, serde::Deserialize)]
+/// into the rings. A ring counts its newest seconds in a flat array instead
+/// (see [`LatencyRing`]), so merging a batch is an addition per bucket rather
+/// than a search, and packs each second once it stops filling.
+#[derive(Clone, Debug, Default, Serialize, serde::Deserialize)]
 pub(crate) struct SecondHistogram {
     entries: Vec<u32>,
     overflow: Vec<(usize, u32)>,
+    /// While a ring's second is still filling: its count for each fixed
+    /// index, with `entries` empty. Rings are never serialized.
+    #[serde(skip)]
+    open: Option<Box<[usize; FIXED_BUCKETS]>>,
     /// The fastest response, ignoring 0, not rounded.
     pub(crate) minimum_time: usize,
     /// The slowest response, not rounded.
@@ -195,7 +201,43 @@ pub(crate) struct SecondHistogram {
     pub(crate) counter: usize,
 }
 
+/// Two histograms are equal when they hold the same response times, however
+/// each holds them.
+impl PartialEq for SecondHistogram {
+    fn eq(&self, other: &Self) -> bool {
+        self.minimum_time == other.minimum_time
+            && self.maximum_time == other.maximum_time
+            && self.total_time == other.total_time
+            && self.counter == other.counter
+            && self
+                .buckets()
+                .coalesce(merge_bucket)
+                .eq(other.buckets().coalesce(merge_bucket))
+    }
+}
+
+/// A bucket as `(rounded time, count)`.
+type Bucket = (usize, usize);
+
+/// Join consecutive pieces of one bucket (a bucket past [`COUNT_MAX`]).
+fn merge_bucket(a: Bucket, b: Bucket) -> Result<Bucket, (Bucket, Bucket)> {
+    if a.0 == b.0 {
+        Ok((a.0, a.1 + b.1))
+    } else {
+        Err((a, b))
+    }
+}
+
 impl SecondHistogram {
+    /// An empty histogram for a ring's newest second, counted by fixed index
+    /// until [`pack`](Self::pack).
+    fn open() -> Self {
+        SecondHistogram {
+            open: Some(Box::new([0; FIXED_BUCKETS])),
+            ..Default::default()
+        }
+    }
+
     /// Add `count` to the bucket with fixed index `index`, searching from
     /// entry `from` on. Returns where the search for a higher index can
     /// start.
@@ -222,7 +264,12 @@ impl SecondHistogram {
 
     fn add_bucket(&mut self, rounded: usize, count: usize) {
         if let Some(index) = dense_index(rounded) {
-            self.add_indexed(0, index, count);
+            match self.open.as_mut() {
+                Some(open) => open[index] += count,
+                None => {
+                    self.add_indexed(0, index, count);
+                }
+            }
             return;
         }
         let count = u32::try_from(count).unwrap_or(u32::MAX);
@@ -257,11 +304,16 @@ impl SecondHistogram {
 
     /// Add another second's response times.
     pub(crate) fn merge(&mut self, other: &SecondHistogram) {
-        // Both are sorted, so each search starts where the last one ended.
-        let mut from = 0;
-        for &entry in &other.entries {
-            let index = (entry >> COUNT_BITS) as usize;
-            from = self.add_indexed(from, index, (entry & COUNT_MAX) as usize);
+        if let Some(open) = self.open.as_mut() {
+            for (index, count) in other.indexed() {
+                open[index] += count;
+            }
+        } else {
+            // Both are sorted, so each search starts where the last one ended.
+            let mut from = 0;
+            for (index, count) in other.indexed() {
+                from = self.add_indexed(from, index, count);
+            }
         }
         for &(bucket, count) in &other.overflow {
             self.add_bucket(bucket, count as usize);
@@ -274,23 +326,43 @@ impl SecondHistogram {
         );
     }
 
-    /// Release spare capacity once the second is unlikely to grow.
-    fn shrink_to_fit(&mut self) {
+    /// Once the second is unlikely to grow: move the counts of an open
+    /// second into the compact list, and release spare capacity.
+    fn pack(&mut self) {
+        if let Some(open) = self.open.take() {
+            let mut from = 0;
+            for (index, &count) in open.iter().enumerate() {
+                if count > 0 {
+                    from = self.add_indexed(from, index, count);
+                }
+            }
+        }
         self.entries.shrink_to_fit();
         self.overflow.shrink_to_fit();
     }
 
-    /// Non empty buckets as `(rounded time, count)`, fastest first. A bucket
-    /// past [`COUNT_MAX`] appears more than once, consecutively.
-    fn buckets(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
-        self.entries
+    /// Non empty buckets with a fixed index as `(index, count)`, fastest
+    /// first. A bucket past [`COUNT_MAX`] appears more than once,
+    /// consecutively, unless the second is open.
+    fn indexed(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
+        let open = self.open.iter().flat_map(|open| {
+            open.iter()
+                .enumerate()
+                .filter(|&(_, &count)| count > 0)
+                .map(|(index, &count)| (index, count))
+        });
+        let packed = self
+            .entries
             .iter()
-            .map(|&entry| {
-                (
-                    dense_value((entry >> COUNT_BITS) as usize),
-                    (entry & COUNT_MAX) as usize,
-                )
-            })
+            .map(|&entry| ((entry >> COUNT_BITS) as usize, (entry & COUNT_MAX) as usize));
+        open.chain(packed)
+    }
+
+    /// Non empty buckets as `(rounded time, count)`, fastest first. A bucket
+    /// past [`COUNT_MAX`] may appear more than once, consecutively.
+    fn buckets(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
+        self.indexed()
+            .map(|(index, count)| (dense_value(index), count))
             .chain(
                 self.overflow
                     .iter()
@@ -313,16 +385,20 @@ impl SecondHistogram {
 
 /// One response time histogram for each of the last [`SERIES_WINDOW_SECS`]
 /// seconds. Second `s` lives in slot `s % len`, tagged with `s` so a slot that
-/// still holds an older second is recognized and reused.
+/// still holds an older second is recognized and reused. The newest seconds
+/// stay open, counted by fixed index, until a second two later begins.
 #[derive(Clone)]
 pub(crate) struct LatencyRing {
     slots: Vec<Option<(usize, SecondHistogram)>>,
+    /// Seconds whose histograms are still open.
+    open: Vec<usize>,
 }
 
 impl LatencyRing {
     pub(crate) fn new() -> Self {
         LatencyRing {
             slots: (0..SERIES_WINDOW_SECS).map(|_| None).collect(),
+            open: Vec::new(),
         }
     }
 
@@ -330,23 +406,30 @@ impl LatencyRing {
     /// the slot already holds a newer second: the sample is too old to show.
     fn slot_mut(&mut self, second: usize) -> Option<&mut SecondHistogram> {
         let len = self.slots.len();
-        match &self.slots[second % len] {
+        let at = second % len;
+        match &self.slots[at] {
             Some((held, _)) if *held > second => return None,
             Some((held, _)) if *held == second => {}
             _ => {
-                self.slots[second % len] = Some((second, SecondHistogram::default()));
-                // A new second has begun: the one two seconds back has all
-                // but its slowest requests, so give back its spare capacity.
-                if let Some(older) = second.checked_sub(2) {
-                    if let Some((held, data)) = &mut self.slots[older % len] {
+                self.slots[at] = Some((second, SecondHistogram::open()));
+                // A new second has begun: those two or more seconds back
+                // have all but their slowest requests, so pack them.
+                let slots = &mut self.slots;
+                self.open.retain(|&older| {
+                    if older + 2 > second {
+                        return true;
+                    }
+                    if let Some((held, data)) = &mut slots[older % len] {
                         if *held == older {
-                            data.shrink_to_fit();
+                            data.pack();
                         }
                     }
-                }
+                    false
+                });
+                self.open.push(second);
             }
         }
-        self.slots[second % len].as_mut().map(|(_, data)| data)
+        self.slots[at].as_mut().map(|(_, data)| data)
     }
 
     /// Record one response time in `second`.
@@ -368,6 +451,7 @@ impl LatencyRing {
         for slot in self.slots.iter_mut() {
             *slot = None;
         }
+        self.open.clear();
     }
 
     /// The histogram for `second`, if the ring still holds it.
@@ -3161,6 +3245,77 @@ mod test {
         second.iter().for_each(|&time| b.record(time));
         a.merge(&b);
         assert_eq!(a, histogram);
+    }
+
+    #[test]
+    fn open_second_equals_packed_second() {
+        let mut times: Vec<u64> = Vec::new();
+        let mut seed: u64 = 11;
+        for _ in 0..3000 {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            times.push((seed >> 33) % 90_000 / (1 + (seed >> 60)));
+        }
+        let mut packed = SecondHistogram::default();
+        times.iter().for_each(|&time| packed.record(time));
+
+        // Recorded and merged into an open second, read open and packed.
+        let mut open = SecondHistogram::open();
+        let (first, second) = times.split_at(times.len() / 2);
+        first.iter().for_each(|&time| open.record(time));
+        let mut batch = SecondHistogram::default();
+        second.iter().for_each(|&time| batch.record(time));
+        open.merge(&batch);
+        assert!(open.entries.is_empty());
+        assert_eq!(open, packed);
+        assert_eq!(
+            open.buckets().collect::<Vec<_>>(),
+            packed.buckets().collect::<Vec<_>>()
+        );
+        for percent in [0.0, 0.5, 0.95, 0.99, 1.0] {
+            assert_eq!(open.percentile(percent), packed.percentile(percent));
+        }
+        open.pack();
+        assert!(open.open.is_none());
+        assert_eq!(open.entries, packed.entries);
+        assert_eq!(open.overflow, packed.overflow);
+
+        // A packed second keeps taking late responses.
+        open.record(7);
+        packed.record(7);
+        assert_eq!(open.entries, packed.entries);
+
+        // An open bucket past the most one entry holds packs into two.
+        let mut full = SecondHistogram::open();
+        full.add_bucket(5, COUNT_MAX as usize + 10);
+        full.add_bucket(4, 1);
+        full.pack();
+        assert_eq!(
+            full.buckets().collect::<Vec<_>>(),
+            vec![(4, 1), (5, COUNT_MAX as usize), (5, 10)]
+        );
+    }
+
+    #[test]
+    fn latency_ring_packs_seconds_two_back() {
+        let mut ring = LatencyRing::new();
+        ring.record(10, 20);
+        ring.record(11, 20);
+        let is_open = |ring: &LatencyRing, second| ring.get(second).unwrap().open.is_some();
+        assert!(is_open(&ring, 10) && is_open(&ring, 11));
+        ring.record(12, 20);
+        assert!(!is_open(&ring, 10));
+        assert!(is_open(&ring, 11) && is_open(&ring, 12));
+        // A late response to a packed second still counts.
+        ring.record(10, 30);
+        assert_eq!(ring.get(10).unwrap().counter, 2);
+        // After a gap every older open second is packed.
+        ring.record(40, 20);
+        assert!(!is_open(&ring, 11) && !is_open(&ring, 12));
+        assert_eq!(ring.open, vec![40]);
+        ring.clear();
+        assert!(ring.open.is_empty());
     }
 
     #[test]
