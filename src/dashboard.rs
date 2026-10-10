@@ -1985,6 +1985,7 @@ mod tests {
                     p99: 1,
                 },
                 co_active: false,
+                co_adjusted: None,
             },
             requests: vec![],
             errors: vec![],

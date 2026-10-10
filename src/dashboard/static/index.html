@@ -68,11 +68,11 @@
       <span id="kpi-fail" class="v">—</span>
     </div>
     <div class="kpi card">
-      <span class="k">p95 ms</span>
+      <span id="kpi-p95-label" class="k">p95 ms</span>
       <span id="kpi-p95" class="v">—</span>
     </div>
     <div class="kpi card">
-      <span class="k">Avg ms</span>
+      <span id="kpi-avg-label" class="k">Avg ms</span>
       <span id="kpi-avg" class="v">—</span>
     </div>
   </section>
@@ -157,6 +157,7 @@
 
   <section id="requests" class="card">
     <h2>Requests</h2>
+    <p id="requests-co-note" class="note" hidden>Response times include the synthetic times coordinated omission mitigation adds. Hover a value to see the measured one.</p>
     <div class="table-toolbar">
       <label class="filter-label">
         Filter

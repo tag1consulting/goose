@@ -11,6 +11,7 @@
 
 # Dashboard TypeScript toolchain
 src/dashboard/static/node_modules/
+src/dashboard/static/test-build/
 
 
 # Saved runs (`goose-runs/` is the default runs directory)

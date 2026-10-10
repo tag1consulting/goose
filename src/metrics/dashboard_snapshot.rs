@@ -6,7 +6,7 @@
 use super::{
     calculate_response_time_percentile, merge_times, per_second_calculations, update_max_time,
     update_min_time, GooseErrorMetricAggregate, GooseMetrics, GooseRequestMetricAggregate,
-    ScenarioMetricAggregate, TransactionMetricAggregate,
+    GooseRequestMetricTimingData, ScenarioMetricAggregate, TransactionMetricAggregate,
 };
 use chrono::prelude::*;
 use serde::Serialize;
@@ -110,6 +110,7 @@ pub(crate) struct AggregateMetrics {
     /// True iff coordinated-omission metrics object is present AND has recorded
     /// at least one CO event (or synthetic request).
     pub co_active: bool,
+    pub co_adjusted: Option<CoAdjusted>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -126,6 +127,7 @@ pub(crate) struct RequestRow {
     pub response_time_max_ms: u64,
     pub percentile_ms: Percentiles,
     pub status_codes: Vec<(u16, u64)>,
+    pub co_adjusted: Option<CoAdjusted>,
 }
 
 /// Metrics for one registered scenario.
@@ -202,6 +204,30 @@ impl SeriesWindow {
             fps: Vec::new(),
             users: Vec::new(),
             avg_latency_ms: Vec::new(),
+        }
+    }
+}
+
+/// Response times including the synthetic times coordinated omission mitigation adds. Present only when mitigation has recorded at least one event.
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub(crate) struct CoAdjusted {
+    pub response_time_avg_ms: f64,
+    pub response_time_max_ms: u64,
+    pub percentile_ms: Percentiles,
+}
+
+impl CoAdjusted {
+    fn from_timing_data(data: &GooseRequestMetricTimingData) -> Self {
+        CoAdjusted {
+            response_time_avg_ms: average_ms(data.total_time, data.counter),
+            response_time_max_ms: data.maximum_time as u64,
+            percentile_ms: Percentiles::from_times(
+                &data.times,
+                data.counter,
+                data.minimum_time,
+                data.maximum_time,
+            ),
         }
     }
 }
@@ -308,6 +334,7 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
                 response_time_max_ms: 0,
                 percentile_ms: Percentiles::zero(),
                 co_active: false,
+                co_adjusted: None,
             },
             requests: Vec::new(),
             errors: Vec::new(),
@@ -336,6 +363,19 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
     let mut aggregate_max: usize = 0;
     let mut aggregate_times: BTreeMap<usize, usize> = BTreeMap::new();
 
+    let co_active = input
+        .metrics
+        .coordinated_omission_metrics
+        .as_ref()
+        .map(|m| m.has_events())
+        .unwrap_or(false);
+    // Adjusted times across every request, built only while mitigation has
+    // events. A request without adjusted data contributes its measured times,
+    // which for it are the same thing. This deliberately differs from the
+    // report's adjusted aggregate, which leaves such requests out.
+    let mut co_aggregate: Option<GooseRequestMetricTimingData> =
+        co_active.then(|| GooseRequestMetricTimingData::new(None));
+
     // Rank by count first; only materialize full table rows for the top N so
     // high request-name cardinality does not pay percentile/status work ~1 Hz
     // for rows the UI never shows.
@@ -350,6 +390,14 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
         aggregate_min = update_min_time(aggregate_min, request.raw_data.minimum_time);
         aggregate_max = update_max_time(aggregate_max, request.raw_data.maximum_time);
         aggregate_times = merge_times(aggregate_times, &request.raw_data.times);
+        if let Some(co_aggregate) = co_aggregate.as_mut() {
+            co_aggregate.merge(
+                request
+                    .coordinated_omission_data
+                    .as_ref()
+                    .unwrap_or(&request.raw_data),
+            );
+        }
         request_rank.push((request, total_count));
     }
 
@@ -363,7 +411,9 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
     request_rank.truncate(MAX_REQUEST_ROWS);
     let request_rows: Vec<RequestRow> = request_rank
         .into_iter()
-        .map(|(request, _)| request_row_from_aggregate(request, duration, input.no_status_codes))
+        .map(|(request, _)| {
+            request_row_from_aggregate(request, duration, input.no_status_codes, co_active)
+        })
         .collect();
 
     let mut error_rank: Vec<&GooseErrorMetricAggregate> = input.metrics.errors.values().collect();
@@ -417,13 +467,6 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
         0.0
     };
 
-    let co_active = input
-        .metrics
-        .coordinated_omission_metrics
-        .as_ref()
-        .map(|m| m.has_events())
-        .unwrap_or(false);
-
     let mut hosts: Vec<String> = input.metrics.hosts.iter().cloned().collect();
     hosts.sort();
 
@@ -455,6 +498,7 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
                 aggregate_max,
             ),
             co_active,
+            co_adjusted: co_aggregate.as_ref().map(CoAdjusted::from_timing_data),
         },
         requests: request_rows,
         errors: error_rows,
@@ -477,6 +521,7 @@ fn request_row_from_aggregate(
     request: &GooseRequestMetricAggregate,
     duration: usize,
     no_status_codes: bool,
+    co_active: bool,
 ) -> RequestRow {
     let total_count = request.success_count + request.fail_count;
     let (rps, fps) = per_second_calculations(duration, total_count, request.fail_count);
@@ -514,6 +559,14 @@ fn request_row_from_aggregate(
             request.raw_data.maximum_time,
         ),
         status_codes,
+        co_adjusted: if co_active {
+            request
+                .coordinated_omission_data
+                .as_ref()
+                .map(CoAdjusted::from_timing_data)
+        } else {
+            None
+        },
     }
 }
 
@@ -759,6 +812,115 @@ mod tests {
             save: SnapshotSave::off("goose-runs"),
         });
         assert!(snap.aggregate.co_active);
+    }
+
+    fn co_input(metrics: &GooseMetrics) -> DashboardSnapshotInput<'_> {
+        DashboardSnapshotInput {
+            metrics,
+            series: SeriesWindow::empty(),
+            active_users: 0,
+            maximum_users: 0,
+            target_users: 0,
+            total_users: 0,
+            phase: "maintain".to_string(),
+            stopping: false,
+            series_window_secs: 300,
+            no_status_codes: false,
+            metrics_disabled: false,
+            no_transaction_metrics: false,
+            no_scenario_metrics: false,
+            save: SnapshotSave::off("goose-runs"),
+        }
+    }
+
+    /// "/a" has 20 real times of 10 ms and 2 synthetic times of 5000 ms; "/b"
+    /// has 10 real times of 20 ms and never needed backfill.
+    fn add_co_requests(metrics: &mut GooseMetrics) {
+        let mut a = GooseRequestMetricAggregate::new("/a", GooseMethod::Get, 0, "");
+        a.success_count = 20;
+        for _ in 0..20 {
+            a.record_time(10, false);
+        }
+        a.record_time(5000, true);
+        a.record_time(5000, true);
+        metrics.requests.insert("GET /a".to_string(), a);
+        metrics
+            .requests
+            .insert("GET /b".to_string(), make_request("/b", 10, 0, &[(20, 10)]));
+    }
+
+    fn record_one_co_event(metrics: &mut GooseMetrics) {
+        metrics
+            .coordinated_omission_metrics
+            .as_mut()
+            .unwrap()
+            .record_co_event(
+                Duration::from_millis(100),
+                Duration::from_millis(1000),
+                5,
+                0,
+                "scenario".to_string(),
+            );
+    }
+
+    #[test]
+    fn co_adjusted_carries_synthetic_times_and_percentile_ms_stays_measured() {
+        let mut metrics = empty_metrics();
+        metrics.coordinated_omission_metrics = Some(CoordinatedOmissionMetrics::new(
+            GooseCoordinatedOmissionMitigation::Average,
+        ));
+        record_one_co_event(&mut metrics);
+        add_co_requests(&mut metrics);
+        let snap = build_dashboard_snapshot(co_input(&metrics));
+        assert!(snap.aggregate.co_active);
+
+        // Row "/a": adjusted includes the synthetic times, measured does not.
+        let a = snap.requests.iter().find(|r| r.name == "/a").unwrap();
+        assert_eq!(a.percentile_ms.p95, 10);
+        assert_eq!(a.percentile_ms.p99, 10);
+        assert_eq!(a.response_time_avg_ms, 10.0);
+        assert_eq!(a.response_time_max_ms, 10);
+        let a_co = a.co_adjusted.as_ref().expect("/a has adjusted data");
+        assert_eq!(a_co.percentile_ms.p50, 10);
+        assert_eq!(a_co.percentile_ms.p95, 5000);
+        assert_eq!(a_co.percentile_ms.p99, 5000);
+        assert_eq!(a_co.response_time_max_ms, 5000);
+        assert!((a_co.response_time_avg_ms - 10_200.0 / 22.0).abs() < 1e-9);
+
+        // Row "/b" never needed backfill, so it has no adjusted values.
+        let b = snap.requests.iter().find(|r| r.name == "/b").unwrap();
+        assert!(b.co_adjusted.is_none());
+
+        // The aggregate: measured percentiles stay measured.
+        assert_eq!(snap.aggregate.percentile_ms.p99, 20);
+        assert_eq!(snap.aggregate.response_time_max_ms, 20);
+        // Adjusted aggregate: "/a" adjusted times plus "/b" raw times (the
+        // fallback), 32 times totalling 10400 ms.
+        let agg_co = snap.aggregate.co_adjusted.as_ref().expect("adjusted");
+        assert_eq!(agg_co.percentile_ms.p50, 10);
+        assert_eq!(agg_co.percentile_ms.p95, 20);
+        assert_eq!(agg_co.percentile_ms.p99, 5000);
+        assert_eq!(agg_co.response_time_max_ms, 5000);
+        assert!((agg_co.response_time_avg_ms - 10_400.0 / 32.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn co_adjusted_absent_without_mitigation_events() {
+        // Mitigation off.
+        let mut metrics = empty_metrics();
+        add_co_requests(&mut metrics);
+        let snap = build_dashboard_snapshot(co_input(&metrics));
+        assert!(snap.aggregate.co_adjusted.is_none());
+        assert!(snap.requests.iter().all(|r| r.co_adjusted.is_none()));
+
+        // Mitigation on, no events recorded.
+        metrics.coordinated_omission_metrics = Some(CoordinatedOmissionMetrics::new(
+            GooseCoordinatedOmissionMitigation::Average,
+        ));
+        let snap = build_dashboard_snapshot(co_input(&metrics));
+        assert!(!snap.aggregate.co_active);
+        assert!(snap.aggregate.co_adjusted.is_none());
+        assert!(snap.requests.iter().all(|r| r.co_adjusted.is_none()));
     }
 
     #[test]
@@ -1031,11 +1193,13 @@ mod tests {
         assert_eq!(scenario.response_time_avg_ms, 0.0);
         assert_eq!(scenario.percentile_ms.p50, 0);
         assert_eq!(snap.transactions[0].response_time_avg_ms, 0.0);
-        let mut value = serde_json::to_value(&snap).expect("serialize snapshot");
-        // `save` holds nulls on purpose: no reason, no last run.
-        value.as_object_mut().expect("object").remove("save");
-        let json = value.to_string();
-        assert!(!json.contains("null"), "{}", json);
+        // Only the scenario and transaction rows: other parts of the snapshot
+        // hold nulls on purpose (`save`, and `co_adjusted` without events).
+        let value = serde_json::to_value(&snap).expect("serialize snapshot");
+        for rows in ["scenarios", "transactions"] {
+            let json = value[rows].to_string();
+            assert!(!json.contains("null"), "{}: {}", rows, json);
+        }
     }
 
     #[test]

@@ -1111,6 +1111,24 @@ impl GooseRequestMetricTimingData {
         }
     }
 
+    /// Merge another set of timing data into this one: combine the buckets and
+    /// update the minimum (ignoring 0), maximum, total and counter.
+    pub(crate) fn merge(&mut self, other: &GooseRequestMetricTimingData) {
+        for (time_bucket, count) in &other.times {
+            *self.times.entry(*time_bucket).or_insert(0) += count;
+        }
+        self.counter += other.counter;
+        self.total_time += other.total_time;
+        if other.minimum_time > 0
+            && (self.minimum_time == 0 || other.minimum_time < self.minimum_time)
+        {
+            self.minimum_time = other.minimum_time;
+        }
+        if other.maximum_time > self.maximum_time {
+            self.maximum_time = other.maximum_time;
+        }
+    }
+
     /// Record a new time.
     pub(crate) fn record_time(&mut self, time_elapsed: u64) {
         // Perform this conversin only once, then re-use throughout this funciton.
@@ -3748,19 +3766,12 @@ impl MetricsProcessor {
             });
 
             // Merge timing data: combine BTreeMaps, update min/max/total/counter.
-            for (time_bucket, count) in &entry.raw_data.times {
-                *aggregate.raw_data.times.entry(*time_bucket).or_insert(0) += count;
-            }
-            aggregate.raw_data.counter += entry.raw_data.counter;
-            aggregate.raw_data.total_time += entry.raw_data.total_time;
-            if entry.raw_data.minimum_time > 0
-                && (aggregate.raw_data.minimum_time == 0
-                    || entry.raw_data.minimum_time < aggregate.raw_data.minimum_time)
-            {
-                aggregate.raw_data.minimum_time = entry.raw_data.minimum_time;
-            }
-            if entry.raw_data.maximum_time > aggregate.raw_data.maximum_time {
-                aggregate.raw_data.maximum_time = entry.raw_data.maximum_time;
+            aggregate.raw_data.merge(&entry.raw_data);
+            // Once a request has coordinated omission adjusted times they must
+            // include every later real time too, batched ones included, or the
+            // adjusted values drift toward the synthetic times (#739).
+            if let Some(co_data) = aggregate.coordinated_omission_data.as_mut() {
+                co_data.merge(&entry.raw_data);
             }
 
             // Merge status-code counts.
@@ -5764,6 +5775,60 @@ mod test {
         assert_eq!(agg.status_code_timings[&200].total_time, 30);
         assert_eq!(agg.status_code_timings[&200].min_time, 5);
         assert_eq!(agg.status_code_timings[&200].max_time, 15);
+    }
+
+    #[test]
+    fn process_batch_merges_batched_requests_into_co_adjusted_times() {
+        let mut processor = make_test_processor(0);
+
+        // Ten real times of 10 ms, then one synthetic time of 5000 ms, which
+        // starts the coordinated omission adjusted data.
+        let mut aggregate = GooseRequestMetricAggregate::new("/", GooseMethod::Get, 0, "");
+        for _ in 0..10 {
+            aggregate.record_time(10, false);
+        }
+        aggregate.record_time(5000, true);
+        processor
+            .metrics
+            .requests
+            .insert("GET /".to_string(), aggregate);
+
+        // Then a batch of 100 successful requests at 10 ms.
+        let mut raw_data = GooseRequestMetricTimingData::new(None);
+        for _ in 0..100 {
+            raw_data.record_time(10);
+        }
+        let mut batch = GooseMetricBatch::new(0);
+        batch.requests.insert(
+            "GET /".to_string(),
+            RequestBatchEntry {
+                path: "/".to_string(),
+                method: GooseMethod::Get,
+                custom_method: String::new(),
+                raw_data,
+                status_code_counts: HashMap::from([(200, 100)]),
+                status_code_timings: HashMap::new(),
+            },
+        );
+        processor.process_batch(batch);
+
+        let agg = &processor.metrics.requests["GET /"];
+        assert_eq!(agg.raw_data.counter, 110);
+        let co_data = agg.coordinated_omission_data.as_ref().unwrap();
+        // Before #739 was fixed the batch never reached the adjusted data: 11.
+        assert_eq!(co_data.counter, 111);
+        assert_eq!(co_data.total_time, 110 * 10 + 5000);
+        assert_eq!(co_data.minimum_time, 10);
+        assert_eq!(co_data.maximum_time, 5000);
+        // Before the fix the adjusted p99 was the synthetic 5000 ms.
+        let p99 = calculate_response_time_percentile(
+            &co_data.times,
+            co_data.counter,
+            co_data.minimum_time,
+            co_data.maximum_time,
+            0.99,
+        );
+        assert_eq!(p99, 10);
     }
 
     #[test]

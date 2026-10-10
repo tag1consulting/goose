@@ -7,6 +7,7 @@
 // src/metrics/dashboard_snapshot.rs; edit the Rust structs, not those types.
 
 import { ensureCharts, updateCharts } from "./charts";
+import { shownTime } from "./coadjust";
 import {
   clearAuthRequired,
   initToken,
@@ -39,6 +40,23 @@ const kpiRps = requireElement("kpi-rps", HTMLElement);
 const kpiFail = requireElement("kpi-fail", HTMLElement);
 const kpiP95 = requireElement("kpi-p95", HTMLElement);
 const kpiAvg = requireElement("kpi-avg", HTMLElement);
+const kpiP95Label = requireElement("kpi-p95-label", HTMLElement);
+const kpiAvgLabel = requireElement("kpi-avg-label", HTMLElement);
+const requestsCoNote = requireElement("requests-co-note", HTMLElement);
+
+function percentileText(p: Percentiles): string {
+  return formatInt(p.p50) + " / " + formatInt(p.p95) + " / " + formatInt(p.p99);
+}
+
+/** Sets a KPI's text, and its hover only while it shows an adjusted value. */
+function setKpi(el: HTMLElement, text: string, title: string | null): void {
+  el.textContent = text;
+  if (title === null) {
+    el.removeAttribute("title");
+  } else {
+    el.title = title;
+  }
+}
 
 function renderSnapshot(
   snap: DashboardSnapshot,
@@ -56,8 +74,21 @@ function renderSnapshot(
   kpiRps.textContent = formatRate(agg.requests_per_second);
   kpiFail.textContent = formatPct(agg.failure_rate);
   const p = agg.percentile_ms;
-  kpiP95.textContent = formatInt(p.p95);
-  kpiAvg.textContent = formatRate(agg.response_time_avg_ms);
+  // Once coordinated omission mitigation has events, response times are
+  // shown adjusted, labelled so, with the measured value on hover.
+  const co = agg.co_adjusted != null ? agg.co_adjusted : null;
+  const suffix = co ? " (adjusted)" : "";
+  const p95 = shownTime(p.p95, co ? co.percentile_ms.p95 : null, formatInt);
+  const avg = shownTime(
+    agg.response_time_avg_ms,
+    co ? co.response_time_avg_ms : null,
+    formatRate
+  );
+  kpiP95Label.textContent = "p95 ms" + suffix;
+  kpiAvgLabel.textContent = "Avg ms" + suffix;
+  setKpi(kpiP95, formatInt(p95.value), p95.title);
+  setKpi(kpiAvg, formatRate(avg.value), avg.title);
+  requestsCoNote.hidden = co === null;
 
   summaryEl.textContent = "";
   summaryEl.appendChild(kv("Phase", snap.phase));
@@ -87,13 +118,21 @@ function renderSnapshot(
   aggregateEl.appendChild(kv("Failures", formatInt(agg.total_failures)));
   aggregateEl.appendChild(kv("RPS", formatRate(agg.requests_per_second)));
   aggregateEl.appendChild(kv("Fail %", formatPct(agg.failure_rate)));
-  aggregateEl.appendChild(kv("Avg ms", formatRate(agg.response_time_avg_ms)));
-  aggregateEl.appendChild(
-    kv(
-      "p50 / p95 / p99",
-      formatInt(p.p50) + " / " + formatInt(p.p95) + " / " + formatInt(p.p99)
-    )
-  );
+  if (co) {
+    aggregateEl.appendChild(
+      kv("Avg ms (adjusted)", formatRate(co.response_time_avg_ms))
+    );
+    aggregateEl.appendChild(
+      kv("p50 / p95 / p99 (adjusted)", percentileText(co.percentile_ms))
+    );
+    aggregateEl.appendChild(
+      kv("Avg ms (measured)", formatRate(agg.response_time_avg_ms))
+    );
+    aggregateEl.appendChild(kv("p50 / p95 / p99 (measured)", percentileText(p)));
+  } else {
+    aggregateEl.appendChild(kv("Avg ms", formatRate(agg.response_time_avg_ms)));
+    aggregateEl.appendChild(kv("p50 / p95 / p99", percentileText(p)));
+  }
   if (agg.co_active) {
     aggregateEl.appendChild(kv("Coordinated omission", "active"));
   }

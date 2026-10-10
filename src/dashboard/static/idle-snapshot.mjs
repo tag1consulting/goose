@@ -28,6 +28,7 @@ export const IDLE_SNAPSHOT = {
     response_time_max_ms: 0,
     percentile_ms: { p50: 0, p95: 0, p99: 0 },
     co_active: false,
+    co_adjusted: null,
   },
   requests: [],
   errors: [],
