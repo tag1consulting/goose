@@ -50,6 +50,7 @@ pub mod logger;
 pub mod metrics;
 pub mod prelude;
 mod report;
+mod runs;
 pub mod test_plan;
 mod throttle;
 mod user;
@@ -91,15 +92,18 @@ pub(crate) const INVALID_USERS_MSG: &str = "users must be an integer between 1 a
 lazy_static! {
     // WORKER_ID is used to identify different works when running a gaggle.
     static ref WORKER_ID: AtomicUsize = AtomicUsize::new(0);
-    // Global used to count how many times ctrl-c has been pressed, reset each time a
-    // load test starts.
-    static ref CANCELED: Arc<RwLock<bool>> = Arc::new(RwLock::new(false));
+    // The reason the killswitch was first triggered (by Ctrl-C or by
+    // `trigger_killswitch`), or None while it is not triggered. Reset each
+    // time a load test starts.
+    static ref CANCELED: Arc<RwLock<Option<String>>> = Arc::new(RwLock::new(None));
 }
 
 /// Trigger the killswitch to stop the load test run.
 ///
-/// This function sets the global CANCELED flag to true, which will cause
-/// the test to stop gracefully at the next check point.
+/// This function records the reason and marks the killswitch as triggered,
+/// which will cause the test to stop gracefully at the next check point. Only
+/// the first reason is kept; later calls change nothing until the killswitch
+/// is reset when the next load test starts.
 ///
 /// # Arguments
 ///
@@ -114,32 +118,41 @@ lazy_static! {
 /// trigger_killswitch("Error rate exceeded 50% threshold");
 /// ```
 pub fn trigger_killswitch(reason: &str) {
-    match CANCELED.write() {
-        Ok(mut canceled) => {
-            if !*canceled {
-                info!("Killswitch triggered: {reason}");
-            }
-            *canceled = true;
-        }
-        Err(poisoned) => {
-            // If the lock is poisoned, we can still write to it
-            let mut canceled = poisoned.into_inner();
-            if !*canceled {
-                info!("Killswitch triggered: {reason}");
-            }
-            *canceled = true;
-        }
+    let mut canceled = match CANCELED.write() {
+        Ok(canceled) => canceled,
+        // If the lock is poisoned, we can still write to it
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    if canceled.is_none() {
+        info!("Killswitch triggered: {reason}");
+        *canceled = Some(reason.to_string());
     }
 }
 
 /// Check if the killswitch has been triggered.
 pub fn is_killswitch_triggered() -> bool {
+    killswitch_reason().is_some()
+}
+
+/// The reason the killswitch was first triggered, if it has been.
+pub(crate) fn killswitch_reason() -> Option<String> {
     match CANCELED.read() {
-        Ok(canceled) => *canceled,
-        Err(poisoned) => {
-            // If the lock is poisoned, we can still read from it
-            *poisoned.into_inner()
-        }
+        Ok(canceled) => canceled.clone(),
+        // If the lock is poisoned, we can still read from it
+        Err(poisoned) => poisoned.into_inner().clone(),
+    }
+}
+
+/// Clear the killswitch.
+///
+/// Goose clears it itself each time a load test starts, so a new run does not
+/// inherit the previous run's cancel. A test that triggers the killswitch can
+/// call this when it is done, so tests running after it in the same process
+/// are not canceled.
+pub fn reset_killswitch() {
+    match CANCELED.write() {
+        Ok(mut canceled) => *canceled = None,
+        Err(poisoned) => *poisoned.into_inner() = None,
     }
 }
 
@@ -435,6 +448,15 @@ struct GooseAttackRunState {
     /// Signals the dashboard SnapshotHub to emit SSE `event: closed` on final exit.
     #[cfg(feature = "dashboard")]
     dashboard_close_tx: Option<tokio::sync::watch::Sender<bool>>,
+    /// The save state the dashboard sends with `event: closed`.
+    #[cfg(feature = "dashboard")]
+    dashboard_closed_data: Option<dashboard::ClosedData>,
+    /// Dashboard tabs connected to the event stream.
+    #[cfg(feature = "dashboard")]
+    dashboard_active_sse: Option<Arc<AtomicUsize>>,
+    /// The address the dashboard listens on, as logged at startup.
+    #[cfg(feature = "dashboard")]
+    dashboard_url: Option<String>,
     /// The dashboard HTTP server, stopped when the attack loop returns.
     #[cfg(feature = "dashboard")]
     dashboard_server: Option<dashboard::DashboardServer>,
@@ -515,6 +537,14 @@ pub struct GooseAttack {
     metrics: GooseMetrics,
     /// All data for report graphs.
     graph_data: GraphData,
+    /// Set when a run starts and cleared once its reports are written, so a
+    /// shutdown with no run since the last one writes nothing.
+    run_in_progress: bool,
+    /// How the current run ended, and the killswitch reason when canceled.
+    /// The first cause recorded wins; unset means the plan completed.
+    ended_by: Option<(runs::EndedBy, Option<String>)>,
+    /// Saving runs to the runs directory.
+    saving: runs::Saving,
 }
 
 /// Match a pattern containing `*` wildcards against text.
@@ -579,6 +609,9 @@ impl GooseAttack {
             step_started: None,
             metrics: GooseMetrics::default(),
             graph_data: GraphData::new(),
+            run_in_progress: false,
+            ended_by: None,
+            saving: runs::Saving::default(),
         })
     }
 
@@ -616,6 +649,9 @@ impl GooseAttack {
             step_started: None,
             metrics: GooseMetrics::default(),
             graph_data: GraphData::new(),
+            run_in_progress: false,
+            ended_by: None,
+            saving: runs::Saving::default(),
         })
     }
 
@@ -1129,6 +1165,7 @@ impl GooseAttack {
     ///         )
     ///         // Exit after one second so test doesn't run forever.
     ///         .set_default(GooseDefault::RunTime, 1)?
+    ///         .set_default(GooseDefault::NoSave, true)?
     ///         .execute()
     ///         .await?;
     ///
@@ -1182,6 +1219,9 @@ impl GooseAttack {
 
         // Validate GooseConfiguration.
         self.configuration.validate()?;
+
+        // Check the runs directory, before any load.
+        self.check_runs_dir()?;
 
         // Display scenarios, then exit.
         if self.configuration.scenarios_list {
@@ -1242,10 +1282,8 @@ impl GooseAttack {
                 self.metrics.duration
             );
             print!("{}", self.metrics);
-
-            // Write reports
-            self.write_reports().await?;
         }
+        self.print_save_outcome();
 
         Ok(self.metrics)
     }
@@ -1468,19 +1506,69 @@ impl GooseAttack {
     /// Bind failure is a hard error when `--dashboard` is set (opt-in server
     /// must not silently disappear).
     #[cfg(feature = "dashboard")]
-    async fn setup_dashboard(
-        &mut self,
-    ) -> Result<
-        Option<(
-            flume::Receiver<dashboard::DashboardRequest>,
-            tokio::sync::watch::Sender<bool>,
-            dashboard::DashboardServer,
-        )>,
-        GooseError,
-    > {
-        Ok(dashboard::setup_dashboard(&self.configuration)
-            .await?
-            .map(|setup| (setup.request_rx, setup.close_tx, setup.server)))
+    async fn setup_dashboard(&mut self) -> Result<Option<dashboard::DashboardSetup>, GooseError> {
+        dashboard::setup_dashboard(&self.configuration).await
+    }
+
+    /// After an autostarted run, whether to stay up for the dashboard: the
+    /// run was saved, it was not stopped or canceled on purpose, and a
+    /// dashboard tab is connected to the event stream.
+    #[cfg(feature = "dashboard")]
+    fn should_wait_for_dashboard(&self, goose_attack_run_state: &GooseAttackRunState) -> bool {
+        let saved = matches!(self.saving.outcome, Some(runs::SaveOutcome::Saved { .. }));
+        let ended_on_its_own = matches!(
+            self.ended_by,
+            None | Some((runs::EndedBy::Completed, _)) | Some((runs::EndedBy::UsersExited, _))
+        );
+        let tab_open = goose_attack_run_state
+            .dashboard_active_sse
+            .as_ref()
+            .is_some_and(|active| active.load(std::sync::atomic::Ordering::Relaxed) > 0);
+        saved && ended_on_its_own && tab_open
+    }
+
+    /// Go Idle after an autostarted run instead of shutting down, as a
+    /// dashboard Stop does, so Idle does not start the test again.
+    #[cfg(feature = "dashboard")]
+    fn start_dashboard_wait(&mut self, goose_attack_run_state: &mut GooseAttackRunState) {
+        self.configuration.no_autostart = true;
+        goose_attack_run_state.shutdown_after_stop = false;
+        let address = goose_attack_run_state
+            .dashboard_url
+            .as_deref()
+            .unwrap_or_default();
+        if self.configuration.dashboard_control {
+            println!(
+                "Run finished. Download it from the dashboard at {address}. Press Quit in the dashboard or Ctrl-C to exit."
+            );
+        } else {
+            println!(
+                "Run finished. Download it from the dashboard at {address}. Press Ctrl-C to exit."
+            );
+        }
+    }
+
+    /// Shut down from Idle as a Controller `shutdown` does: no run to stop,
+    /// so no metrics to print and nothing to save.
+    fn shutdown_from_idle(&mut self, goose_attack_run_state: &mut GooseAttackRunState) {
+        self.metrics.display_metrics = false;
+        // Nothing to cancel, but the run is stopping all the same: refuse
+        // Users until it shuts down.
+        goose_attack_run_state.stopping = true;
+        goose_attack_run_state.shutdown_after_stop = true;
+        // A plan with nothing left to run, so the Decrease phase finds the
+        // load test fully stopped and shuts down.
+        self.test_plan.steps = vec![(0, 0)];
+        self.test_plan.current = 0;
+        self.set_attack_phase(goose_attack_run_state, AttackPhase::Decrease);
+    }
+
+    /// Give the dashboard the current save state, sent with `event: closed`.
+    #[cfg(feature = "dashboard")]
+    fn publish_save_state(&self, goose_attack_run_state: &GooseAttackRunState) {
+        if let Some(closed_data) = &goose_attack_run_state.dashboard_closed_data {
+            closed_data.set(&self.save_snapshot());
+        }
     }
 
     /// Handle dashboard snapshot and control requests from the HTTP server task.
@@ -1623,6 +1711,14 @@ impl GooseAttack {
                         }
                     }
                 }
+                dashboard::DashboardRequest::Quit { respond } => {
+                    if respond.is_closed() {
+                        debug!("[dashboard]: quit skipped; client disconnected");
+                        continue;
+                    }
+                    let outcome = self.control_quit(goose_attack_run_state);
+                    let _ = respond.send(dashboard::ControlResult::from_outcome("quit", outcome));
+                }
                 dashboard::DashboardRequest::SetUsers { users, respond } => {
                     if respond.is_closed() {
                         debug!("[dashboard]: set users skipped; client disconnected");
@@ -1666,6 +1762,7 @@ impl GooseAttack {
                         phase: phase.clone(),
                         stopping: goose_attack_run_state.stopping,
                         series_window_secs: metrics::dashboard_snapshot::SERIES_WINDOW_SECS,
+                        save: self.save_snapshot(),
                         respond,
                     },
                 ) {
@@ -1751,6 +1848,7 @@ impl GooseAttack {
                 metrics_disabled: self.configuration.no_metrics,
                 no_transaction_metrics: self.configuration.no_transaction_metrics,
                 no_scenario_metrics: self.configuration.no_scenario_metrics,
+                save: self.save_snapshot(),
             },
         )
     }
@@ -1821,11 +1919,24 @@ impl GooseAttack {
         // Optionally spawn the read-only live dashboard HTTP server.
         // Bind failure aborts attack init when --dashboard is set.
         #[cfg(feature = "dashboard")]
-        let (dashboard_channel_rx, dashboard_close_tx, dashboard_server) =
-            match self.setup_dashboard().await? {
-                Some((rx, close_tx, server)) => (Some(rx), Some(close_tx), Some(server)),
-                None => (None, None, None),
-            };
+        let (
+            dashboard_channel_rx,
+            dashboard_close_tx,
+            dashboard_closed_data,
+            dashboard_active_sse,
+            dashboard_url,
+            dashboard_server,
+        ) = match self.setup_dashboard().await? {
+            Some(setup) => (
+                Some(setup.request_rx),
+                Some(setup.close_tx),
+                Some(setup.closed_data),
+                Some(setup.active_sse),
+                Some(setup.url),
+                Some(setup.server),
+            ),
+            None => (None, None, None, None, None, None),
+        };
 
         // Grab now() once from the standard library, used by multiple timers in
         // the run state.
@@ -1879,6 +1990,12 @@ impl GooseAttack {
             dashboard_channel_rx,
             #[cfg(feature = "dashboard")]
             dashboard_close_tx,
+            #[cfg(feature = "dashboard")]
+            dashboard_closed_data,
+            #[cfg(feature = "dashboard")]
+            dashboard_active_sse,
+            #[cfg(feature = "dashboard")]
+            dashboard_url,
             #[cfg(feature = "dashboard")]
             dashboard_server,
             metrics_header_displayed: false,
@@ -2170,8 +2287,12 @@ impl GooseAttack {
                 let _ = tokio::join!(logger.unwrap());
             }
 
-            // Stop any running GooseUser threads.
-            self.stop_attack().await?;
+            // Run test_stop and mark the metrics final, only when a run
+            // happened since the last time: leaving Idle has nothing to stop,
+            // and test_stop already ran when the run itself ended.
+            if self.run_in_progress {
+                self.stop_attack().await?;
+            }
 
             // Record final users for the users-per-second graph before shutting
             // down the metrics processor. Use the continuous series clock so
@@ -2224,16 +2345,49 @@ impl GooseAttack {
             self.metrics
                 .history
                 .push(TestPlanHistory::step(TestPlanStepAction::Finished, 0));
+            // Write the --report-file reports and save the run, only when a
+            // run happened since the last time (not on a shutdown from Idle).
+            let reports = if self.run_in_progress {
+                self.write_end_of_run().await
+            } else {
+                Ok(())
+            };
+            self.run_in_progress = false;
+            #[cfg(feature = "dashboard")]
+            self.publish_save_state(goose_attack_run_state);
+            if let Err(e) = reports {
+                // Print the final metrics, and say the run is saved, before
+                // failing on --report-file.
+                if self.metrics.display_metrics {
+                    info!(
+                        "printing final metrics after {} seconds...",
+                        self.metrics.duration
+                    );
+                    print!("{}", self.metrics);
+                }
+                self.print_save_outcome();
+                return Err(e);
+            }
+            // After an autostarted run, wait for a dashboard tab that is
+            // open so the saved run can still be downloaded from it.
+            #[cfg(feature = "dashboard")]
+            let wait_for_dashboard = goose_attack_run_state.shutdown_after_stop
+                && self.should_wait_for_dashboard(goose_attack_run_state);
+            #[cfg(not(feature = "dashboard"))]
+            let wait_for_dashboard = false;
             // Shutdown Goose or go into an idle waiting state.
-            if goose_attack_run_state.shutdown_after_stop {
+            if goose_attack_run_state.shutdown_after_stop && !wait_for_dashboard {
                 self.set_attack_phase(goose_attack_run_state, AttackPhase::Shutdown);
             } else {
                 // Print metrics, if enabled.
-                if !self.configuration.no_metrics {
+                if self.metrics.display_metrics {
                     println!("{}", self.metrics);
                 }
-                // Write reports, if enabled.
-                self.write_reports().await?;
+                self.print_save_outcome();
+                #[cfg(feature = "dashboard")]
+                if wait_for_dashboard {
+                    self.start_dashboard_wait(goose_attack_run_state);
+                }
                 // Return to an Idle state.
                 self.set_attack_phase(goose_attack_run_state, AttackPhase::Idle);
             }
@@ -2443,6 +2597,7 @@ impl GooseAttack {
         goose_attack_run_state.shutdown_after_stop = false;
         // Don't automatically restart the load test.
         self.configuration.no_autostart = true;
+        self.set_ended_by(runs::EndedBy::Stopped, None);
         self.cancel_attack(goose_attack_run_state).await?;
 
         Ok(self.control_outcome(
@@ -2452,6 +2607,35 @@ impl GooseAttack {
             "load test stopped",
             Some(0),
         ))
+    }
+
+    /// Shut Goose down from Idle (dashboard Quit), as Ctrl-C does there.
+    ///
+    /// Soft failure: `invalid_phase` in any phase but Idle, so a running load
+    /// test must be stopped first.
+    #[cfg(feature = "dashboard")]
+    pub(crate) fn control_quit(
+        &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+    ) -> ControlOutcome {
+        if self.attack_phase != AttackPhase::Idle {
+            return self.control_outcome(
+                goose_attack_run_state,
+                false,
+                Some("invalid_phase"),
+                "unable to quit, be sure the load test is idle",
+                None,
+            );
+        }
+        info!("[dashboard]: quit, shutting down");
+        self.shutdown_from_idle(goose_attack_run_state);
+        self.control_outcome(
+            goose_attack_run_state,
+            true,
+            None,
+            "goose is shutting down",
+            None,
+        )
     }
 
     /// Set absolute target user count (Controller `users` command).
@@ -2640,6 +2824,9 @@ impl GooseAttack {
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> Result<(), GooseError> {
+        // A new run starts without the previous run's cancel.
+        reset_killswitch();
+
         // Run any configured test_start() functions.
         self.run_test_start().await.unwrap();
 
@@ -2722,6 +2909,13 @@ impl GooseAttack {
 
         // Try to create the requested report files, to confirm access.
         self.create_reports().await?;
+
+        // Choose and create this run's directory, if saving runs.
+        self.start_saved_run()?;
+        self.run_in_progress = true;
+        self.ended_by = None;
+        #[cfg(feature = "dashboard")]
+        self.publish_save_state(goose_attack_run_state);
 
         // Record when the GooseAttack officially started. series_started is the
         // continuous graph clock and is not restarted on metrics reset.
@@ -2818,6 +3012,8 @@ impl GooseAttack {
                     // without waiting for the next 1 Hz hub tick / flume disconnect.
                     #[cfg(feature = "dashboard")]
                     if let Some(close_tx) = goose_attack_run_state.dashboard_close_tx.take() {
+                        // The save state goes with `closed`: set it first.
+                        self.publish_save_state(goose_attack_run_state);
                         let _ = close_tx.send(true);
                     }
                     break;
@@ -2857,6 +3053,7 @@ impl GooseAttack {
 
                 // In Stand-alone mode, all users are started.
                 if goose_attack_run_state.users_shutdown.len() == self.test_plan.total_users() {
+                    self.set_ended_by(runs::EndedBy::UsersExited, None);
                     self.cancel_attack(goose_attack_run_state).await?;
                 }
 
@@ -2871,13 +3068,15 @@ impl GooseAttack {
                 // Shutdown after stopping as the load test was canceled.
                 goose_attack_run_state.shutdown_after_stop = true;
 
-                // No metrics to display when sitting idle, so disable.
                 if self.attack_phase == AttackPhase::Idle {
-                    self.metrics.display_metrics = false;
+                    // Nothing to cancel: canceling from Idle would leave a
+                    // plan maintaining 0 users with no end.
+                    self.shutdown_from_idle(goose_attack_run_state);
+                } else {
+                    self.set_ended_by(runs::EndedBy::Canceled, killswitch_reason());
+                    // Cleanly stop the load test.
+                    self.cancel_attack(goose_attack_run_state).await?;
                 }
-
-                // Cleanly stop the load test.
-                self.cancel_attack(goose_attack_run_state).await?;
 
                 // Load test is actively canceling.
                 goose_attack_run_state.canceling = true;
@@ -3190,7 +3389,7 @@ mod tests {
     #[serial_test::serial]
     async fn test_killswitch_functions() {
         // Reset the killswitch state for testing
-        *CANCELED.write().unwrap() = false;
+        reset_killswitch();
 
         // Initially, killswitch should not be triggered
         assert!(
@@ -3213,8 +3412,14 @@ mod tests {
         // Verify it's still triggered
         assert!(is_killswitch_triggered(), "Killswitch should remain true");
 
+        // Only the first reason is kept.
+        assert_eq!(
+            killswitch_reason().as_deref(),
+            Some("Test reason: threshold exceeded")
+        );
+
         // Reset for other tests
-        *CANCELED.write().unwrap() = false;
+        reset_killswitch();
 
         assert!(
             !is_killswitch_triggered(),
@@ -3228,7 +3433,8 @@ mod tests {
     #[serial_test::serial]
     async fn test_set_users_refused_while_stopping() {
         let configuration =
-            GooseConfiguration::parse_args_default(&["--no-telnet", "--no-websocket"]).unwrap();
+            GooseConfiguration::parse_args_default(&["--no-telnet", "--no-websocket", "--no-save"])
+                .unwrap();
         let mut goose_attack = GooseAttack::initialize_with_config(configuration).unwrap();
         let mut run_state = goose_attack.initialize_attack().await.unwrap();
 
@@ -3275,6 +3481,7 @@ mod tests {
     #[serial_test::serial]
     async fn test_set_users_out_of_bounds_refused() {
         let configuration = GooseConfiguration::parse_args_default(&[
+            "--no-save",
             "--no-telnet",
             "--no-websocket",
             "--test-plan",
@@ -3334,6 +3541,7 @@ mod tests {
         // A scenario and host let a Users that wrongly gets through launch
         // users and fail the assertion, rather than loop with nothing to weight.
         let configuration = GooseConfiguration::parse_args_default(&[
+            "--no-save",
             "--no-telnet",
             "--no-websocket",
             "--host",
@@ -3378,7 +3586,8 @@ mod tests {
         };
 
         let configuration =
-            GooseConfiguration::parse_args_default(&["--no-telnet", "--no-websocket"]).unwrap();
+            GooseConfiguration::parse_args_default(&["--no-telnet", "--no-websocket", "--no-save"])
+                .unwrap();
         let mut goose_attack = GooseAttack::initialize_with_config(configuration).unwrap();
         let mut run_state = goose_attack.initialize_attack().await.unwrap();
         let (controller_tx, controller_rx) = flume::unbounded();
@@ -3416,7 +3625,8 @@ mod tests {
     #[serial_test::serial]
     async fn test_dashboard_snapshot_carries_stopping() {
         let configuration =
-            GooseConfiguration::parse_args_default(&["--no-telnet", "--no-websocket"]).unwrap();
+            GooseConfiguration::parse_args_default(&["--no-telnet", "--no-websocket", "--no-save"])
+                .unwrap();
         let mut goose_attack = GooseAttack::initialize_with_config(configuration).unwrap();
         let mut run_state = goose_attack.initialize_attack().await.unwrap();
         let (dashboard_tx, dashboard_rx) = flume::unbounded();

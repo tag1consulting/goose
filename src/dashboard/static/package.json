@@ -5,7 +5,7 @@
   "scripts": {
     "build": "esbuild src/main.ts --bundle --format=iife --target=es2018 --minify --outfile=app.js",
     "check": "tsc -p tsconfig.json && tsc --noEmit --strict --allowJs --checkJs --target ES2020 --module ES2020 --skipLibCheck snapshot.d.ts idle-snapshot.mjs",
-    "test": "node --test token.test.mjs tables.test.mjs"
+    "test": "node --test token.test.mjs tables.test.mjs runs.test.mjs"
   },
   "devDependencies": {
     "chart.js": "4.4.7",

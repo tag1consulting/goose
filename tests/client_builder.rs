@@ -65,7 +65,10 @@ fn test_client_strategy_shared() {
 #[tokio::test]
 async fn test_default_behavior_unchanged() {
     // Test that default behavior is unchanged when no client builder is set
-    let _attack = GooseAttack::initialize().expect("Failed to initialize GooseAttack");
+    let _attack = GooseAttack::initialize()
+        .expect("Failed to initialize GooseAttack")
+        .set_default(GooseDefault::NoSave, true)
+        .expect("Failed to set no save");
 
     // If we get here without panicking, the default initialization worked
 }
@@ -75,7 +78,7 @@ fn test_client_config_from_goose_configuration() {
     use goose::config::GooseConfiguration;
     use gumdrop::Options;
 
-    let args: Vec<&str> = vec![];
+    let args: Vec<&str> = vec!["--no-save"];
     let goose_config =
         GooseConfiguration::parse_args_default(&args).expect("Failed to parse configuration");
 
@@ -127,7 +130,9 @@ async fn test_functional_load_test_with_cookies_enabled() {
         .set_default(GooseDefault::Users, 1)
         .expect("Failed to set users")
         .set_default(GooseDefault::RunTime, 1)
-        .expect("Failed to set runtime");
+        .expect("Failed to set runtime")
+        .set_default(GooseDefault::NoSave, true)
+        .expect("Failed to set no save");
 
     // If we get here without panicking, the setup worked
 }
@@ -152,7 +157,9 @@ async fn test_functional_load_test_with_cookies_disabled() {
         .set_default(GooseDefault::Users, 1)
         .expect("Failed to set users")
         .set_default(GooseDefault::RunTime, 1)
-        .expect("Failed to set runtime");
+        .expect("Failed to set runtime")
+        .set_default(GooseDefault::NoSave, true)
+        .expect("Failed to set no save");
 
     // If we get here without panicking, the setup worked
 }

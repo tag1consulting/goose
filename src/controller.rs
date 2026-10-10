@@ -626,6 +626,7 @@ impl GooseAttack {
                                     AttackPhase::Decrease,
                                 );
                             } else {
+                                self.set_ended_by(crate::runs::EndedBy::Stopped, None);
                                 self.cancel_attack(goose_attack_run_state).await?;
                             }
 

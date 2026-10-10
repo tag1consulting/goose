@@ -3,8 +3,8 @@
 //! Compiled only with the `dashboard` crate feature. Runs an HTTP/1 accept
 //! loop over an axum router that serves a minimal static shell, a one-shot
 //! metrics snapshot API, an SSE stream of coalesced snapshots, and (when
-//! `--dashboard-control` is set) authenticated Start/Stop/Users control
-//! endpoints.
+//! `--dashboard-control` is set) authenticated Start/Stop/Users/Quit control
+//! endpoints and saved run deletion.
 //!
 //! The parent GooseAttack main loop answers [`DashboardRequest`]s via oneshot
 //! channels using [`MetricsCommand::GetDashboardSnapshot`] for snapshots and
@@ -18,7 +18,9 @@
 //! request is dequeued. Tests assert multi-client coalescing, not sub-100 ms
 //! latency.
 
+use crate::metrics::dashboard_snapshot::SnapshotSave;
 use crate::metrics::DashboardSnapshot;
+use crate::runs;
 use crate::{ControlOutcome, GooseConfiguration, GooseError, INVALID_USERS_MSG, MAX_CONTROL_USERS};
 
 use axum::body::{Body, Bytes};
@@ -26,15 +28,17 @@ use axum::extract::{Query, State};
 use axum::http::{header, HeaderMap, HeaderValue, Response, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::IntoResponse;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use futures::stream;
 use serde::Deserialize;
 use serde::Serialize;
 use std::convert::Infallible;
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tokio::io::AsyncReadExt;
 use tokio::sync::{oneshot, watch, Notify};
 use tower_http::set_header::SetResponseHeaderLayer;
 
@@ -119,6 +123,14 @@ pub(crate) struct DashboardSetup {
     /// Number of snapshots the hub has successfully built (tests / diagnostics).
     #[cfg_attr(not(test), allow(dead_code))]
     pub build_count: Arc<AtomicU64>,
+    /// Concurrent SSE clients, which the main loop reads to decide whether
+    /// to wait for a dashboard tab after an autostarted run.
+    pub active_sse: Arc<AtomicUsize>,
+    /// The data of every `closed` event: the save state as JSON. The main
+    /// loop keeps it current, so it is right before the close signal fires.
+    pub closed_data: ClosedData,
+    /// The address the dashboard listens on, as logged at startup.
+    pub url: String,
     /// Signal SSE clients to emit `event: closed` and stop the hub loop.
     ///
     /// Used on final process shutdown so browsers get a clean close without
@@ -141,6 +153,10 @@ pub(crate) enum DashboardRequest {
     },
     /// Begin cancel ramp (Increase/Maintain → Decrease).
     Stop {
+        respond: tokio::sync::oneshot::Sender<ControlResult>,
+    },
+    /// Shut Goose down from Idle.
+    Quit {
         respond: tokio::sync::oneshot::Sender<ControlResult>,
     },
     /// Set absolute target user count.
@@ -218,6 +234,34 @@ impl ControlHttpErrorBody {
     }
 }
 
+/// The data of the SSE `closed` event, shared by the hub and the main loop.
+#[derive(Clone, Debug)]
+pub(crate) struct ClosedData(Arc<RwLock<String>>);
+
+impl ClosedData {
+    fn new(save: &SnapshotSave) -> Self {
+        let data = ClosedData(Arc::new(RwLock::new(String::new())));
+        data.set(save);
+        data
+    }
+
+    /// Replace the save state sent with `closed`.
+    pub(crate) fn set(&self, save: &SnapshotSave) {
+        let json = serde_json::to_string(save).unwrap_or_else(|_| "{}".to_string());
+        match self.0.write() {
+            Ok(mut data) => *data = json,
+            Err(poisoned) => *poisoned.into_inner() = json,
+        }
+    }
+
+    fn get(&self) -> String {
+        match self.0.read() {
+            Ok(data) => data.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        }
+    }
+}
+
 /// Coalescing fan-out for dashboard snapshots.
 ///
 /// One hub task builds at most ~1 snapshot/sec while `active_sse > 0` or a poll
@@ -232,8 +276,10 @@ struct HubInner {
     request_tx: flume::Sender<DashboardRequest>,
     /// Latest pre-serialized snapshot JSON (`None` until the first build).
     latest_tx: watch::Sender<Option<Bytes>>,
-    /// Concurrent SSE subscribers.
-    active_sse: AtomicUsize,
+    /// Concurrent SSE subscribers (shared with [`DashboardSetup::active_sse`]).
+    active_sse: Arc<AtomicUsize>,
+    /// The data of the `closed` event.
+    closed_data: ClosedData,
     /// Configured concurrent SSE client cap (default [`MAX_SSE_CLIENTS`]).
     max_sse_clients: usize,
     /// Unix-ms of the most recent `/api/v1/snapshot` poll mark (0 = never).
@@ -280,6 +326,8 @@ impl SnapshotHub {
         build_count: Arc<AtomicU64>,
         shutdown_tx: watch::Sender<bool>,
         max_sse_clients: usize,
+        active_sse: Arc<AtomicUsize>,
+        closed_data: ClosedData,
     ) -> Self {
         let max_sse_clients = if max_sse_clients == 0 {
             MAX_SSE_CLIENTS
@@ -290,7 +338,8 @@ impl SnapshotHub {
         let inner = Arc::new(HubInner {
             request_tx,
             latest_tx,
-            active_sse: AtomicUsize::new(0),
+            active_sse,
+            closed_data,
             max_sse_clients,
             last_poll_ms: AtomicU64::new(0),
             last_build_at_ms: AtomicU64::new(0),
@@ -365,6 +414,11 @@ impl SnapshotHub {
     /// Duration of the last successful snapshot build in milliseconds (0 if none).
     fn last_build_ms(&self) -> u64 {
         self.inner.last_build_ms.load(Ordering::Relaxed)
+    }
+
+    /// The data to send with `closed`.
+    fn closed_data(&self) -> String {
+        self.inner.closed_data.get()
     }
 
     fn subscribe_latest(&self) -> watch::Receiver<Option<Bytes>> {
@@ -651,6 +705,9 @@ struct DashboardState {
     control_enabled: bool,
     /// Concurrent control POSTs currently waiting on the main loop.
     control_in_flight: Arc<AtomicUsize>,
+    /// The runs directory as given, or the default: the saved run routes
+    /// read it, and only them.
+    runs_dir: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -673,7 +730,7 @@ struct HealthResponse {
     build_count: u64,
     /// Concurrent SSE clients currently holding a slot.
     active_sse_clients: usize,
-    /// Whether Start/Stop/Users control endpoints are registered.
+    /// Whether the Start/Stop/Users/Quit control and Delete endpoints are registered.
     control_enabled: bool,
 }
 
@@ -730,6 +787,19 @@ pub(crate) async fn setup_dashboard(
     let (request_tx, request_rx) = flume::unbounded();
     let build_count = Arc::new(AtomicU64::new(0));
     let (close_tx, _) = watch::channel(false);
+    let active_sse = Arc::new(AtomicUsize::new(0));
+    // Until the main loop sets it: what the configuration says.
+    let closed_data = ClosedData::new(&SnapshotSave {
+        state: if configuration.saves_runs() {
+            "on"
+        } else {
+            "off"
+        }
+        .to_string(),
+        reason: None,
+        dir: configuration.runs_dir_or_default().to_string(),
+        last_run: None,
+    });
     // 0 means unset (direct setup without configure); fall back to default cap.
     let max_sse_clients = if configuration.dashboard_max_clients == 0 {
         MAX_SSE_CLIENTS
@@ -742,6 +812,8 @@ pub(crate) async fn setup_dashboard(
         Arc::clone(&build_count),
         close_tx.clone(),
         max_sse_clients,
+        Arc::clone(&active_sse),
+        closed_data.clone(),
     );
     let control_enabled = configuration.dashboard_control;
     let state = DashboardState {
@@ -750,6 +822,7 @@ pub(crate) async fn setup_dashboard(
         auth_token: configuration.dashboard_auth_token.clone(),
         control_enabled,
         control_in_flight: Arc::new(AtomicUsize::new(0)),
+        runs_dir: configuration.runs_dir_or_default().to_string(),
     };
 
     // Loopback by the configured name, the same rule that lets the dashboard
@@ -777,6 +850,9 @@ pub(crate) async fn setup_dashboard(
         request_rx,
         bound_port: bound.port(),
         build_count,
+        active_sse,
+        closed_data,
+        url: format!("http://{bound}"),
         close_tx,
         server,
     }))
@@ -940,7 +1016,7 @@ fn is_connection_error(e: &std::io::Error) -> bool {
 /// Build the axum router with public shell/static/health and auth-gated metrics.
 ///
 /// Control routes are registered only when `state.control_enabled` is true
-/// (otherwise POST /api/v1/control/* → 404). On a loopback bind every request
+/// (otherwise POST /api/v1/control/* and DELETE /api/v1/runs/{id} → 404). On a loopback bind every request
 /// must carry a loopback `Host`, so a page that rebinds its own domain to
 /// 127.0.0.1 cannot read the API.
 fn build_router(state: DashboardState, loopback_bind: bool) -> Router {
@@ -951,7 +1027,9 @@ fn build_router(state: DashboardState, loopback_bind: bool) -> Router {
         .route("/static/app.css", get(app_css_handler))
         .route("/api/v1/health", get(health_handler))
         .route("/api/v1/snapshot", get(snapshot_handler))
-        .route("/api/v1/events", get(events_handler));
+        .route("/api/v1/events", get(events_handler))
+        .route("/api/v1/runs", get(runs_handler))
+        .route("/api/v1/runs/{id}/{file}", get(run_file_handler));
 
     if control_enabled {
         // Bound control request bodies so a large POST cannot blow memory/CPU
@@ -959,6 +1037,8 @@ fn build_router(state: DashboardState, loopback_bind: bool) -> Router {
         let control_routes = Router::new()
             .route("/api/v1/control/start", post(control_start_handler))
             .route("/api/v1/control/stop", post(control_stop_handler))
+            .route("/api/v1/control/quit", post(control_quit_handler))
+            .route("/api/v1/runs/{id}", delete(delete_run_handler))
             .route("/api/v1/control/users", post(control_users_handler))
             .layer(axum::extract::DefaultBodyLimit::max(CONTROL_BODY_LIMIT));
         router = router.merge(control_routes);
@@ -970,7 +1050,10 @@ fn build_router(state: DashboardState, loopback_bind: bool) -> Router {
     }
 
     router
-        .layer(SetResponseHeaderLayer::overriding(
+        // `if_not_present`: a saved run download sets its own
+        // `Content-Security-Policy: sandbox`; every other route sets none and
+        // gets this one.
+        .layer(SetResponseHeaderLayer::if_not_present(
             header::CONTENT_SECURITY_POLICY,
             HeaderValue::from_static(CSP),
         ))
@@ -1077,13 +1160,13 @@ async fn events_handler(
 
     // Sticky shutdown: do not hold a client slot; emit `closed` immediately.
     if state.hub.is_closed() {
-        return closed_sse_response();
+        return closed_sse_response(&state.hub);
     }
 
     if !state.hub.try_acquire_sse() {
         // Distinguish full cap vs raced into shutdown.
         if state.hub.is_closed() {
-            return closed_sse_response();
+            return closed_sse_response(&state.hub);
         }
         return (StatusCode::SERVICE_UNAVAILABLE, "too many SSE clients").into_response();
     }
@@ -1103,14 +1186,13 @@ async fn events_handler(
                 self.0.release_sse();
             }
         }
-        let _guard = SseGuard(hub);
+        let guard = SseGuard(hub);
+        let hub = &guard.0;
 
         // watch does not notify for the value present at subscribe time — check
         // sticky shutdown before pushing a stale snapshot or blocking forever.
         if *shutdown_rx.borrow() {
-            let _ = event_tx
-                .send(Event::default().event("closed").data("1"))
-                .await;
+            let _ = event_tx.send(closed_event(hub)).await;
             return;
         }
 
@@ -1131,9 +1213,7 @@ async fn events_handler(
                     }
                     // Re-check shutdown in case both fired; prefer closed.
                     if *shutdown_rx.borrow() {
-                        let _ = event_tx
-                            .send(Event::default().event("closed").data("1"))
-                            .await;
+                        let _ = event_tx.send(closed_event(hub)).await;
                         break;
                     }
                     let next = snap_rx.borrow_and_update().clone();
@@ -1146,9 +1226,7 @@ async fn events_handler(
                 result = shutdown_rx.changed() => {
                     let closed = result.is_err() || *shutdown_rx.borrow();
                     if closed {
-                        let _ = event_tx
-                            .send(Event::default().event("closed").data("1"))
-                            .await;
+                        let _ = event_tx.send(closed_event(hub)).await;
                         break;
                     }
                 }
@@ -1169,15 +1247,289 @@ async fn events_handler(
 
 /// One-shot SSE body that only delivers `event: closed` (late subscribers after
 /// sticky shutdown, without consuming a client slot).
-fn closed_sse_response() -> Response<Body> {
-    let stream =
-        stream::once(async { Ok::<_, Infallible>(Event::default().event("closed").data("1")) });
+fn closed_sse_response(hub: &SnapshotHub) -> Response<Body> {
+    let event = closed_event(hub);
+    let stream = stream::once(async move { Ok::<_, Infallible>(event) });
     Sse::new(stream).into_response()
+}
+
+/// The terminal `closed` event; its data is the save state as JSON.
+fn closed_event(hub: &SnapshotHub) -> Event {
+    Event::default().event("closed").data(hub.closed_data())
 }
 
 fn snapshot_event(bytes: &Bytes) -> Event {
     let data = std::str::from_utf8(bytes).unwrap_or("{}");
     Event::default().event("snapshot").data(data)
+}
+
+/// Query of the saved run routes: the token, and for a comparison the
+/// baseline run.
+#[derive(Debug, Deserialize)]
+struct RunQuery {
+    token: Option<String>,
+    baseline: Option<String>,
+}
+
+/// The comparison a run route serves besides its report files.
+const COMPARE_MD: &str = "compare.md";
+
+/// `GET /api/v1/runs`: every complete saved run, newest first. Read from disk
+/// on each request, never on the snapshot path.
+async fn runs_handler(
+    State(state): State<Arc<DashboardState>>,
+    headers: HeaderMap,
+    Query(query): Query<TokenQuery>,
+) -> Response<Body> {
+    if !authorize(&state.auth_token, &headers, query.token.as_deref()) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let dir = state.runs_dir.clone();
+    let listed = tokio::task::spawn_blocking(move || runs::list_runs(Path::new(&dir), &dir)).await;
+    match listed {
+        Ok(Ok(listing)) => Json(listing).into_response(),
+        Ok(Err(e)) => {
+            warn!(
+                "[dashboard]: can't list saved runs in {}: {e}",
+                state.runs_dir
+            );
+            (StatusCode::INTERNAL_SERVER_ERROR, "can't list saved runs").into_response()
+        }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "can't list saved runs").into_response(),
+    }
+}
+
+/// `GET /api/v1/runs/{id}/{file}`: one of a saved run's reports, or with
+/// `file` `compare.md` and `?baseline={id}`, the run compared to the baseline
+/// run as Markdown. Anything that is not a valid run id, a known file, a real
+/// directory and a regular file is a plain 404.
+async fn run_file_handler(
+    State(state): State<Arc<DashboardState>>,
+    headers: HeaderMap,
+    path: Result<axum::extract::Path<(String, String)>, axum::extract::rejection::PathRejection>,
+    Query(query): Query<RunQuery>,
+) -> Response<Body> {
+    if !authorize(&state.auth_token, &headers, query.token.as_deref()) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let Ok(axum::extract::Path((id, file))) = path else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if !runs::is_valid_run_id(&id) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    if file == COMPARE_MD {
+        return compare_response(&state.runs_dir, id, query.baseline).await;
+    }
+    let Some(&name) = runs::REPORT_FILES.iter().find(|&&name| name == file) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    report_file_response(&state.runs_dir, &id, name).await
+}
+
+/// The run directory for `id`, if it is a real directory holding `file` and
+/// `run.json` as regular files: a run still being written, or whose save
+/// failed, has no `run.json` and is not served. `id` must already be valid
+/// and `file` one of the fixed names.
+fn run_file_path(
+    runs_dir: &str,
+    id: &str,
+    file: &str,
+) -> Option<(std::path::PathBuf, std::path::PathBuf)> {
+    let run_dir = Path::new(runs_dir).join(id);
+    let path = run_dir.join(file);
+    if runs::is_real_dir(&run_dir)
+        && runs::is_regular_file(&run_dir.join(runs::RUN_JSON))
+        && runs::is_regular_file(&path)
+    {
+        Some((run_dir, path))
+    } else {
+        None
+    }
+}
+
+/// `test` from a run's `run.json`, reduced to `[A-Za-z0-9_-]` for a file name.
+fn download_test_name(run_dir: &Path) -> String {
+    runs::read_run_info(run_dir)
+        .map(|info| {
+            info.test
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+                .collect::<String>()
+        })
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "run".to_string())
+}
+
+/// Headers of a report or comparison download: an attachment, never rendered
+/// by the browser, never cached, and sandboxed if it is opened anyway.
+fn download_response(
+    content_type: &'static str,
+    filename: &str,
+    body: Body,
+    length: Option<u64>,
+) -> Response<Body> {
+    let mut response = Response::new(body);
+    let headers = response.headers_mut();
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+    if let Some(length) = length {
+        headers.insert(header::CONTENT_LENGTH, HeaderValue::from(length));
+    }
+    // The name is built from [A-Za-z0-9_.-] only, so it is a valid header value.
+    if let Ok(value) = HeaderValue::from_str(&format!("attachment; filename=\"{filename}\"")) {
+        headers.insert(header::CONTENT_DISPOSITION, value);
+    }
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    headers.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static("sandbox"),
+    );
+    response
+}
+
+/// Stream a report file from disk.
+async fn report_file_response(runs_dir: &str, id: &str, name: &'static str) -> Response<Body> {
+    let Some((run_dir, path)) = run_file_path(runs_dir, id, name) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Ok(file) = tokio::fs::File::open(&path).await else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    // The file opened must be the regular file checked above, not something
+    // swapped in since.
+    let Ok(metadata) = file.metadata().await else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if !metadata.is_file() || !same_file(&path, &metadata) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let (content_type, ext) = match name {
+        runs::REPORT_HTML => ("text/html; charset=utf-8", "html"),
+        runs::REPORT_JSON => ("application/json", "json"),
+        _ => ("text/markdown; charset=utf-8", "md"),
+    };
+    let test = download_test_name(&run_dir);
+    download_response(
+        content_type,
+        &format!("goose-{test}-{id}.{ext}"),
+        Body::from_stream(file_stream(file)),
+        Some(metadata.len()),
+    )
+}
+
+/// True when the open file's metadata is that of the file at `path` now, by
+/// device and inode where the platform has them.
+fn same_file(path: &Path, opened: &std::fs::Metadata) -> bool {
+    let Ok(at_path) = std::fs::symlink_metadata(path) else {
+        return false;
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        at_path.dev() == opened.dev() && at_path.ino() == opened.ino()
+    }
+    #[cfg(not(unix))]
+    {
+        at_path.file_type().is_file() && at_path.len() == opened.len()
+    }
+}
+
+/// Chunks of an open file, read as the response is sent, so a report is never
+/// read into memory whole. `futures::stream::unfold` over `tokio::fs::File`
+/// needs no new dependency.
+fn file_stream(
+    file: tokio::fs::File,
+) -> impl futures::Stream<Item = Result<Bytes, std::io::Error>> + Send {
+    const CHUNK: usize = 64 * 1024;
+    stream::unfold(Some(file), |file| async move {
+        let mut file = file?;
+        let mut buf = vec![0u8; CHUNK];
+        match file.read(&mut buf).await {
+            Ok(0) => None,
+            Ok(n) => {
+                buf.truncate(n);
+                Some((Ok(Bytes::from(buf)), Some(file)))
+            }
+            // End the stream after an error.
+            Err(e) => Some((Err(e), None)),
+        }
+    })
+}
+
+/// The Markdown comparison of run `id` (the newer) to `baseline`.
+async fn compare_response(runs_dir: &str, id: String, baseline: Option<String>) -> Response<Body> {
+    let Some(baseline) = baseline.filter(|b| runs::is_valid_run_id(b)) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let (Some((run_dir, run_json)), Some((baseline_dir, baseline_json))) = (
+        run_file_path(runs_dir, &id, runs::REPORT_JSON),
+        run_file_path(runs_dir, &baseline, runs::REPORT_JSON),
+    ) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let (run_id, baseline_id) = (id.clone(), baseline.clone());
+    let run_dir_for_names = run_dir.clone();
+    let compared = tokio::task::spawn_blocking(move || {
+        let report =
+            crate::metrics::compare_reports(&run_json, &run_id, &baseline_json, &baseline_id)?;
+        let mut out = compared_runs_line(&run_dir_for_names, &run_id, &baseline_dir, &baseline_id)
+            .into_bytes();
+        out.extend_from_slice(b"\n\n");
+        out.extend(report);
+        Ok::<_, String>(out)
+    })
+    .await;
+    match compared {
+        Ok(Ok(markdown)) => {
+            let test = download_test_name(&run_dir);
+            let length = markdown.len() as u64;
+            download_response(
+                "text/markdown; charset=utf-8",
+                &format!("goose-{test}-{id}-vs-{baseline}.md"),
+                Body::from(markdown),
+                Some(length),
+            )
+        }
+        Ok(Err(reason)) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+            reason,
+        )
+            .into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+/// The first line of a comparison: which run is compared to which baseline,
+/// with when each started, from their `run.json`.
+fn compared_runs_line(
+    run_dir: &Path,
+    run_id: &str,
+    baseline_dir: &Path,
+    baseline_id: &str,
+) -> String {
+    let started = |dir: &Path| {
+        runs::read_run_info(dir)
+            .map(|info| {
+                chrono::DateTime::parse_from_rfc3339(&info.started)
+                    .map(|time| {
+                        time.with_timezone(&chrono::Utc)
+                            .format("%Y-%m-%d %H:%M:%S UTC")
+                            .to_string()
+                    })
+                    .unwrap_or(info.started)
+            })
+            .unwrap_or_else(|| "at an unknown time".to_string())
+    };
+    format!(
+        "Run {run_id} (started {}) compared to baseline {baseline_id} (started {}).",
+        started(run_dir),
+        started(baseline_dir)
+    )
 }
 
 /// Authorize a metric API request.
@@ -1495,6 +1847,77 @@ async fn control_stop_handler(
     .await
 }
 
+async fn control_quit_handler(
+    State(state): State<Arc<DashboardState>>,
+    headers: HeaderMap,
+    Query(query): Query<TokenQuery>,
+    body: Bytes,
+) -> Response<Body> {
+    if !authorize_control(&state.auth_token, &headers, query.token.as_deref()) {
+        warn!("[dashboard]: control quit auth failure");
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    if let Err((code, msg)) = parse_empty_control_body(&body) {
+        return control_http_error(StatusCode::BAD_REQUEST, "quit", code, msg);
+    }
+    let (respond_tx, respond_rx) = oneshot::channel();
+    dispatch_control(
+        &state,
+        DashboardRequest::Quit {
+            respond: respond_tx,
+        },
+        respond_rx,
+        "quit",
+    )
+    .await
+}
+
+/// `DELETE /api/v1/runs/{id}`: remove a complete saved run from disk.
+/// Registered only with `--dashboard-control`, and authorized like the
+/// control routes. 204 when removed; a plain 404 for anything that is not a
+/// valid run id naming a real directory that holds a regular `run.json`,
+/// which includes the run being written now: it has no `run.json` until it
+/// ends.
+async fn delete_run_handler(
+    State(state): State<Arc<DashboardState>>,
+    headers: HeaderMap,
+    path: Result<axum::extract::Path<String>, axum::extract::rejection::PathRejection>,
+    Query(query): Query<TokenQuery>,
+) -> Response<Body> {
+    if !authorize_control(&state.auth_token, &headers, query.token.as_deref()) {
+        warn!("[dashboard]: delete run auth failure");
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let Ok(axum::extract::Path(id)) = path else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if !runs::is_valid_run_id(&id) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let run_dir = Path::new(&state.runs_dir).join(&id);
+    // `remove_dir_all` removes a symlink inside the run directory, never
+    // what it points to.
+    let removed = tokio::task::spawn_blocking(move || {
+        if !runs::is_real_dir(&run_dir) || !runs::is_regular_file(&run_dir.join(runs::RUN_JSON)) {
+            return Ok(false);
+        }
+        std::fs::remove_dir_all(&run_dir).map(|()| true)
+    })
+    .await;
+    match removed {
+        Ok(Ok(true)) => {
+            info!("[dashboard]: deleted saved run {id}");
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Ok(Ok(false)) => StatusCode::NOT_FOUND.into_response(),
+        Ok(Err(e)) => {
+            warn!("[dashboard]: can't delete saved run {id}: {e}");
+            (StatusCode::INTERNAL_SERVER_ERROR, "can't delete the run").into_response()
+        }
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
 async fn control_users_handler(
     State(state): State<Arc<DashboardState>>,
     headers: HeaderMap,
@@ -1576,6 +1999,7 @@ mod tests {
                 errors_truncated: false,
                 series_seconds: 300,
             },
+            save: SnapshotSave::off("goose-runs"),
         }
     }
 
@@ -1612,6 +2036,17 @@ mod tests {
                             phase: "decrease".into(),
                             active_users: 1,
                             target_users: Some(0),
+                        });
+                    }
+                    DashboardRequest::Quit { respond } => {
+                        let _ = respond.send(ControlResult {
+                            ok: true,
+                            command: "quit".into(),
+                            error: None,
+                            message: "goose is shutting down".into(),
+                            phase: "decrease".into(),
+                            active_users: 0,
+                            target_users: None,
                         });
                     }
                     DashboardRequest::SetUsers { users, respond } => {
@@ -1652,6 +2087,7 @@ mod tests {
                     // Control not exercised by blip tests.
                     DashboardRequest::Start { respond }
                     | DashboardRequest::Stop { respond }
+                    | DashboardRequest::Quit { respond }
                     | DashboardRequest::SetUsers { respond, .. } => {
                         let _ = respond.send(ControlResult::internal("unused", "idle", 0));
                     }
@@ -2286,6 +2722,9 @@ mod tests {
                             DashboardRequest::Stop { respond } => {
                                 let _ = respond.send(ControlResult::internal("stop", "idle", 0));
                             }
+                            DashboardRequest::Quit { respond } => {
+                                let _ = respond.send(ControlResult::internal("quit", "idle", 0));
+                            }
                             DashboardRequest::SetUsers { respond, .. } => {
                                 let _ = respond.send(ControlResult::internal("users", "idle", 0));
                             }
@@ -2298,7 +2737,14 @@ mod tests {
 
         let build_count = Arc::new(AtomicU64::new(0));
         let (close_tx, _) = watch::channel(false);
-        let hub = SnapshotHub::new(tx, Arc::clone(&build_count), close_tx, MAX_SSE_CLIENTS);
+        let hub = SnapshotHub::new(
+            tx,
+            Arc::clone(&build_count),
+            close_tx,
+            MAX_SSE_CLIENTS,
+            Arc::new(AtomicUsize::new(0)),
+            ClosedData::new(&SnapshotSave::off("goose-runs")),
+        );
 
         // First poll.
         let b1 = hub.snapshot_bytes().await.expect("first");
@@ -2709,6 +3155,7 @@ mod tests {
                     }
                     DashboardRequest::Start { respond }
                     | DashboardRequest::Stop { respond }
+                    | DashboardRequest::Quit { respond }
                     | DashboardRequest::SetUsers { respond, .. } => {
                         drop(respond);
                     }
@@ -2733,6 +3180,9 @@ mod tests {
                     DashboardRequest::Stop { respond } => {
                         let _ = respond.send(ControlResult::internal("stop", "maintain", 1));
                     }
+                    DashboardRequest::Quit { respond } => {
+                        let _ = respond.send(ControlResult::internal("quit", "maintain", 1));
+                    }
                     DashboardRequest::SetUsers { respond, .. } => {
                         let _ = respond.send(ControlResult::internal("users", "maintain", 1));
                     }
@@ -2754,6 +3204,7 @@ mod tests {
                     // Hold oneshots until task abort / channel drop — do not reply.
                     DashboardRequest::Start { respond }
                     | DashboardRequest::Stop { respond }
+                    | DashboardRequest::Quit { respond }
                     | DashboardRequest::SetUsers { respond, .. } => {
                         // Keep the oneshot Sender alive so the client hits CONTROL_TIMEOUT
                         // rather than an immediate oneshot-drop 503.

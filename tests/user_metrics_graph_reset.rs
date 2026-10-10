@@ -41,6 +41,8 @@ async fn run_graph_test(
     let configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
     let mut goose_attack = GooseAttack::initialize_with_config(configuration)
         .unwrap()
+        .set_default(GooseDefault::NoSave, true)
+        .unwrap()
         .register_scenario(
             scenario!(scenario_name)
                 .register_transaction(transaction!(simple_loadtest_transaction)),

@@ -1,4 +1,4 @@
-// The control panel: Start, Stop and the users target, sent as
+// The control panel: Start, Stop, Quit and the users target, sent as
 // authenticated POSTs, plus the phase badge whose phase gates them.
 
 import { forgetStoredToken, getToken } from "./connection";
@@ -28,6 +28,7 @@ const footerNoteEl = optionalElement("footer-note", HTMLElement);
 const controlPanel = optionalElement("control-panel", HTMLElement);
 const ctrlStart = optionalElement("ctrl-start", HTMLButtonElement);
 const ctrlStop = optionalElement("ctrl-stop", HTMLButtonElement);
+const ctrlQuit = optionalElement("ctrl-quit", HTMLButtonElement);
 const ctrlActive = optionalElement("ctrl-active", HTMLElement);
 const ctrlTarget = optionalElement("ctrl-target", HTMLInputElement);
 const ctrlApply = optionalElement("ctrl-apply", HTMLButtonElement);
@@ -119,6 +120,11 @@ function updateControlEnablement(): void {
 
   if (ctrlStart) ctrlStart.disabled = !canStart;
   if (ctrlStop) ctrlStop.disabled = !canStop;
+  // Quit only shuts Goose down from idle, so it shows only then.
+  if (ctrlQuit) {
+    ctrlQuit.hidden = phase !== "idle";
+    ctrlQuit.disabled = !hasToken || inFlight;
+  }
   if (ctrlApply) ctrlApply.disabled = !canUsers;
   if (ctrlMinus) ctrlMinus.disabled = !canUsers;
   if (ctrlPlus) ctrlPlus.disabled = !canUsers;
@@ -218,7 +224,12 @@ function handleControlResponse(
         return null;
       }
       if (data.ok) {
-        setControlStatus(data.message || "OK", "ok");
+        setControlStatus(
+          data.command === "quit"
+            ? "Goose is shutting down."
+            : data.message || "OK",
+          "ok"
+        );
         if (data.phase) {
           setPhase(data.phase);
         }
@@ -294,6 +305,10 @@ function onStopClick(): void {
   runControl("/api/v1/control/stop");
 }
 
+function onQuitClick(): void {
+  runControl("/api/v1/control/quit");
+}
+
 function onApplyClick(): void {
   const n = parseInt(ctrlTarget && ctrlTarget.value ? ctrlTarget.value : "", 10);
   if (!isFinite(n) || n < 1) {
@@ -337,10 +352,11 @@ function applyControlChrome(): void {
   }
 }
 
-export function initControlPanel(): void {
-  if (!controlPanel) return;
+/** Set up the panel; resolves to whether control is on. */
+export function initControlPanel(): Promise<boolean> {
+  if (!controlPanel) return Promise.resolve(false);
 
-  fetch("/api/v1/health")
+  const enabled = fetch("/api/v1/health")
     .then((res) => {
       if (!res.ok) throw new Error("HTTP " + res.status);
       return res.json() as Promise<HealthBody>;
@@ -350,7 +366,7 @@ export function initControlPanel(): void {
       applyControlChrome();
       if (!controlEnabled) {
         controlPanel.classList.add("hidden");
-        return;
+        return false;
       }
       controlPanel.classList.remove("hidden");
       if (!getToken()) {
@@ -361,16 +377,19 @@ export function initControlPanel(): void {
         );
       }
       updateControlEnablement();
+      return true;
     })
     .catch(() => {
       // Health probe failed — leave panel hidden (observe-only fallback).
       controlEnabled = false;
       applyControlChrome();
       controlPanel.classList.add("hidden");
+      return false;
     });
 
   if (ctrlStart) ctrlStart.addEventListener("click", onStartClick);
   if (ctrlStop) ctrlStop.addEventListener("click", onStopClick);
+  if (ctrlQuit) ctrlQuit.addEventListener("click", onQuitClick);
   if (ctrlApply) ctrlApply.addEventListener("click", onApplyClick);
   if (ctrlMinus)
     ctrlMinus.addEventListener("click", () => {
@@ -403,4 +422,5 @@ export function initControlPanel(): void {
       }
     });
   }
+  return enabled;
 }

@@ -21,6 +21,12 @@ import {
 } from "./control";
 import { requireElement } from "./dom";
 import { formatDuration, formatInt, formatPct, formatRate, kv } from "./format";
+import {
+  closedBannerText,
+  initRunsPanel,
+  setRunsControl,
+  updateSaveFromSnapshot,
+} from "./runs";
 import { setBanner, setConnection, type ConnectionMode } from "./status";
 import { initTables, setTableData } from "./tables";
 
@@ -92,6 +98,7 @@ function renderSnapshot(
     aggregateEl.appendChild(kv("Coordinated omission", "active"));
   }
 
+  updateSaveFromSnapshot(snap);
   setTableData(snap);
   updateCharts(snap.series);
   updateControlFromSnapshot(snap);
@@ -131,5 +138,6 @@ function renderSnapshot(
 initToken();
 initTables();
 ensureCharts();
-initControlPanel();
-startSse(renderSnapshot);
+initRunsPanel();
+void initControlPanel().then(setRunsControl);
+startSse(renderSnapshot, (data) => setBanner(closedBannerText(data), "info"));

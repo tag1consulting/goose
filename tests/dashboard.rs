@@ -119,6 +119,7 @@ fn build_dashboard_config(
         "--co-mitigation".into(),
         "disabled".into(),
         "--quiet".into(),
+        "--no-save".into(),
         "--host".into(),
         server.base_url(),
     ];
@@ -160,6 +161,7 @@ fn build_control_config(
         "--co-mitigation".into(),
         "disabled".into(),
         "--quiet".into(),
+        "--no-save".into(),
         "--host".into(),
         server.base_url(),
     ]);
@@ -728,6 +730,15 @@ async fn test_control_disabled_returns_404() {
         "control off must 404 start, got {}",
         resp.status()
     );
+    let resp = post_control(&client, &base, "/api/v1/control/quit", Some("{}"), true).await;
+    assert_eq!(resp.status(), 404, "control off must 404 quit");
+    let resp = client
+        .delete(format!("{base}/api/v1/runs/2026-10-09-141203"))
+        .header("Authorization", bearer_header())
+        .send()
+        .await
+        .expect("DELETE");
+    assert_eq!(resp.status(), 404, "control off must 404 delete");
 
     let _ = load.join().await.expect("execute");
 }
@@ -1015,6 +1026,79 @@ async fn test_control_start_when_running_fails() {
     assert_eq!(body["command"], "start");
 
     load.abort().await;
+}
+
+/// Quit needs the control token, is refused while a load test runs, and
+/// shuts Goose down from Idle.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn test_control_quit() {
+    let server = MockServer::start();
+    let _mocks = setup_mock_endpoints(&server);
+    let port = reserve_port();
+    let base_v4 = format!("http://127.0.0.1:{port}");
+
+    let configuration =
+        build_control_config(&server, "127.0.0.1", port, ControlTestOpts::default());
+    let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
+    let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
+
+    let (base, _) = wait_for_health(&[&base_v4], 80).await;
+    let client = reqwest::Client::new();
+    let token = Some(AUTH_TOKEN);
+
+    // No token, or the token in the URL: refused before the main loop.
+    let unauth = post_control(&client, &base, "/api/v1/control/quit", Some("{}"), false).await;
+    assert_eq!(unauth.status(), 401);
+    let in_url = client
+        .post(format!("{base}/api/v1/control/quit?token={AUTH_TOKEN}"))
+        .header("Authorization", bearer_header())
+        .body("{}")
+        .send()
+        .await
+        .expect("quit POST");
+    assert_eq!(in_url.status(), 401);
+    let bad_body = post_control(
+        &client,
+        &base,
+        "/api/v1/control/quit",
+        Some("{\"x\":1}"),
+        true,
+    )
+    .await;
+    assert_eq!(bad_body.status(), 400);
+
+    // Refused while the load test runs.
+    let start = post_control(&client, &base, "/api/v1/control/start", Some("{}"), true).await;
+    assert_eq!(start.status(), 200);
+    wait_for_phase(
+        &client,
+        &base,
+        token,
+        &["increase", "maintain"],
+        Duration::from_secs(30),
+    )
+    .await;
+    let refused = post_control(&client, &base, "/api/v1/control/quit", Some("{}"), true).await;
+    assert_eq!(refused.status(), 200);
+    let body: serde_json::Value = refused.json().await.expect("json");
+    assert_eq!(body["ok"], false);
+    assert_eq!(body["error"], "invalid_phase");
+    assert_eq!(body["command"], "quit");
+
+    // Accepted from Idle: Goose shuts down.
+    let stop = post_control(&client, &base, "/api/v1/control/stop", Some("{}"), true).await;
+    assert_eq!(stop.status(), 200);
+    wait_for_phase(&client, &base, token, &["idle"], Duration::from_secs(30)).await;
+    let quit = post_control(&client, &base, "/api/v1/control/quit", Some("{}"), true).await;
+    assert_eq!(quit.status(), 200);
+    let body: serde_json::Value = quit.json().await.expect("json");
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["command"], "quit");
+    tokio::time::timeout(Duration::from_secs(15), load.join())
+        .await
+        .expect("Goose exits on Quit")
+        .expect("load test execute");
 }
 
 /// Case 6: users validation — 0 / missing / non-integer → 400.
@@ -1777,4 +1861,668 @@ async fn test_dashboard_stops_when_execute_fails() {
     );
     assert_closed_now(&mut stalled).await;
     assert_dashboard_stopped(port, &mut keep_alive).await;
+}
+
+// ---------------------------------------------------------------------------
+// Saved runs: listing, downloads, comparisons and the `closed` event.
+// ---------------------------------------------------------------------------
+
+/// A new empty directory for one test.
+fn saved_runs_dir(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "goose-dashboard-runs-{name}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+/// Run one short load test saved into `runs` and return its run id.
+async fn save_one_run(server: &MockServer, runs: &std::path::Path, users: &str) -> String {
+    let runs_str = runs.to_string_lossy().into_owned();
+    let before: std::collections::HashSet<_> = saved_run_ids(runs).into_iter().collect();
+    let configuration = common::build_configuration(
+        server,
+        vec![
+            "--runs-dir",
+            &runs_str,
+            "--users",
+            users,
+            "--increase-rate",
+            "10",
+        ],
+    );
+    common::run_load_test(
+        common::build_load_test(configuration, vec![get_transactions()], None, None),
+        None,
+    )
+    .await;
+    let new: Vec<String> = saved_run_ids(runs)
+        .into_iter()
+        .filter(|id| !before.contains(id))
+        .collect();
+    assert_eq!(new.len(), 1, "one new run: {:?}", new);
+    new.into_iter().next().unwrap()
+}
+
+/// Run ids in `runs`, sorted.
+fn saved_run_ids(runs: &std::path::Path) -> Vec<String> {
+    let mut ids: Vec<String> = std::fs::read_dir(runs)
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .filter(|e| e.path().is_dir())
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    ids.sort();
+    ids
+}
+
+fn header<'a>(resp: &'a reqwest::Response, name: &str) -> &'a str {
+    resp.headers()
+        .get(name)
+        .unwrap_or_else(|| panic!("missing header {}", name))
+        .to_str()
+        .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn test_saved_runs_routes() {
+    let server = MockServer::start();
+    let _mocks = setup_mock_endpoints(&server);
+    let runs = saved_runs_dir("routes");
+    let older = save_one_run(&server, &runs, "1").await;
+    let newer = save_one_run(&server, &runs, "3").await;
+    assert!(newer > older);
+
+    // A complete run with no requests, to compare against.
+    let empty = "2001-01-01-000000";
+    std::fs::create_dir(runs.join(empty)).unwrap();
+    let mut report: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(runs.join(&older).join("report.json")).unwrap(),
+    )
+    .unwrap();
+    report["raw_request_metrics"] = serde_json::json!([]);
+    report["raw_response_metrics"] = serde_json::json!([]);
+    std::fs::write(
+        runs.join(empty).join("report.json"),
+        serde_json::to_string(&report).unwrap(),
+    )
+    .unwrap();
+    let mut run_json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(runs.join(&older).join("run.json")).unwrap())
+            .unwrap();
+    run_json["id"] = serde_json::json!(empty);
+    run_json["started"] = serde_json::json!("2001-01-01T00:00:00Z");
+    run_json["requests"] = serde_json::json!(0);
+    std::fs::write(
+        runs.join(empty).join("run.json"),
+        serde_json::to_string(&run_json).unwrap(),
+    )
+    .unwrap();
+    // Not listed and not served: an incomplete run (its reports but no
+    // run.json), a name that is not an id, and a symlink to a real run.
+    std::fs::create_dir(runs.join("2002-02-02-000000")).unwrap();
+    for file in ["report.html", "report.json", "report.md"] {
+        std::fs::copy(
+            runs.join(&older).join(file),
+            runs.join("2002-02-02-000000").join(file),
+        )
+        .unwrap();
+    }
+    std::fs::create_dir(runs.join("not-a-run")).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(runs.join(&older), runs.join("2003-03-03-000000")).unwrap();
+
+    let port = reserve_port();
+    let base_v4 = format!("http://127.0.0.1:{port}");
+    let mut configuration =
+        build_control_config(&server, "127.0.0.1", port, ControlTestOpts::default());
+    configuration.runs_dir = runs.to_string_lossy().into_owned();
+    let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
+    let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
+    let (base, _) = wait_for_health(&[&base_v4], 80).await;
+    let client = reqwest::Client::new();
+    let get = |path: String, auth: bool| {
+        let mut req = client.get(format!("{base}{path}"));
+        if auth {
+            req = req.header("Authorization", bearer_header());
+        }
+        req.send()
+    };
+
+    // The listing.
+    assert_eq!(
+        get("/api/v1/runs".into(), false).await.unwrap().status(),
+        401
+    );
+    let listing = get("/api/v1/runs".into(), true).await.unwrap();
+    assert_eq!(listing.status(), 200);
+    assert!(header(&listing, "content-security-policy").contains("default-src 'self'"));
+    let listing: serde_json::Value = listing.json().await.unwrap();
+    assert_eq!(listing["dir"], runs.to_string_lossy().as_ref());
+    let ids: Vec<&str> = listing["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|run| run["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, vec![newer.as_str(), older.as_str(), empty]);
+    assert!(listing["total_bytes"].as_u64().unwrap() > 0);
+
+    // A report download.
+    let path = format!("/api/v1/runs/{newer}/report.html");
+    assert_eq!(get(path.clone(), false).await.unwrap().status(), 401);
+    let download = get(path, true).await.unwrap();
+    assert_eq!(download.status(), 200);
+    let disposition = header(&download, "content-disposition").to_string();
+    assert!(
+        disposition.starts_with("attachment; filename=\"goose-")
+            && disposition.ends_with(&format!("-{newer}.html\"")),
+        "{}",
+        disposition
+    );
+    assert_eq!(header(&download, "x-content-type-options"), "nosniff");
+    assert_eq!(header(&download, "cache-control"), "no-store");
+    assert_eq!(header(&download, "content-security-policy"), "sandbox");
+    assert!(header(&download, "content-type").starts_with("text/html"));
+    let body = download.bytes().await.unwrap();
+    assert_eq!(
+        body.as_ref(),
+        std::fs::read(runs.join(&newer).join("report.html")).unwrap()
+    );
+    for (file, kind) in [
+        ("report.json", "application/json"),
+        ("report.md", "text/markdown"),
+    ] {
+        let resp = get(format!("/api/v1/runs/{older}/{file}"), true)
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200, "{}", file);
+        assert!(header(&resp, "content-type").starts_with(kind));
+        assert_eq!(header(&resp, "content-security-policy"), "sandbox");
+    }
+
+    // The dashboard page keeps its own policy.
+    let page = client.get(format!("{base}/")).send().await.unwrap();
+    assert_eq!(page.status(), 200);
+    assert!(header(&page, "content-security-policy").contains("frame-ancestors 'none'"));
+
+    // A comparison.
+    let path = format!("/api/v1/runs/{newer}/compare.md?baseline={older}");
+    assert_eq!(get(path.clone(), false).await.unwrap().status(), 401);
+    let compare = get(path, true).await.unwrap();
+    assert_eq!(compare.status(), 200);
+    assert!(header(&compare, "content-disposition").ends_with(&format!("-{newer}-vs-{older}.md\"")));
+    assert_eq!(header(&compare, "content-security-policy"), "sandbox");
+    assert_eq!(header(&compare, "cache-control"), "no-store");
+    assert_eq!(header(&compare, "x-content-type-options"), "nosniff");
+    let markdown = compare.text().await.unwrap();
+    let delta = regex::Regex::new(r"\([+-]\d").unwrap();
+    assert!(delta.is_match(&markdown), "{}", markdown);
+    // The first line names the run and the baseline, with when each started.
+    let named = regex::Regex::new(&format!(
+        r"^Run {newer} \(started \d{{4}}-\d{{2}}-\d{{2}} \d{{2}}:\d{{2}}:\d{{2}} UTC\) compared to baseline {older} \(started \d{{4}}-\d{{2}}-\d{{2}} \d{{2}}:\d{{2}}:\d{{2}} UTC\)\.\n\n"
+    ))
+    .unwrap();
+    assert!(named.is_match(&markdown), "{}", markdown);
+
+    // A run with no requests can't be compared.
+    let resp = get(
+        format!("/api/v1/runs/{newer}/compare.md?baseline={empty}"),
+        true,
+    )
+    .await
+    .unwrap();
+    assert_eq!(resp.status(), 422);
+    let reason = resp.text().await.unwrap();
+    assert_eq!(reason, format!("Run {empty} has no requests to compare."));
+
+    // Added after the listing: a real run directory whose report.html is a
+    // symlink to a file outside the runs directory.
+    let outside = saved_runs_dir("outside");
+    std::fs::write(outside.join("secret.html"), "outside the runs directory").unwrap();
+    std::fs::create_dir(runs.join("2004-04-04-000000")).unwrap();
+    for file in ["run.json", "report.json", "report.md"] {
+        std::fs::copy(
+            runs.join(&older).join(file),
+            runs.join("2004-04-04-000000").join(file),
+        )
+        .unwrap();
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(
+        outside.join("secret.html"),
+        runs.join("2004-04-04-000000").join("report.html"),
+    )
+    .unwrap();
+
+    // Bad ids, files and traversal attempts are plain 404s.
+    for path in [
+        "/api/v1/runs/2026-10-09-141203/report.html".to_string(),
+        format!("/api/v1/runs/{newer}/run.json"),
+        format!("/api/v1/runs/{newer}/report.pdf"),
+        format!("/api/v1/runs/{newer}/..%2Frun.json"),
+        "/api/v1/runs/..%2F..%2Fetc/report.html".to_string(),
+        "/api/v1/runs/%2Fetc%2Fpasswd/report.html".to_string(),
+        "/api/v1/runs/../report.html".to_string(),
+        format!("/api/v1/runs/{newer}%2F/report.html"),
+        format!("/api/v1/runs/{newer}/compare.md"),
+        format!("/api/v1/runs/{newer}/compare.md?baseline=..%2F{older}"),
+        format!("/api/v1/runs/{newer}/compare.md?baseline=2002-02-02-000000"),
+        "/api/v1/runs/2002-02-02-000000/report.html".to_string(),
+        "/api/v1/runs/2002-02-02-000000/report.json".to_string(),
+        "/api/v1/runs/not-a-run/report.html".to_string(),
+        "/api/v1/runs/2003-03-03-000000/report.html".to_string(),
+        "/api/v1/runs/2004-04-04-000000/report.html".to_string(),
+    ] {
+        let resp = get(path.clone(), true).await.unwrap();
+        assert_eq!(resp.status(), 404, "{}", path);
+    }
+
+    load.abort().await;
+    std::fs::remove_dir_all(&runs).ok();
+    std::fs::remove_dir_all(&outside).ok();
+}
+
+/// Read SSE from `resp` until `event: closed` and return its data.
+async fn read_closed_event(resp: &mut reqwest::Response, timeout: Duration) -> Option<String> {
+    let deadline = Instant::now() + timeout;
+    let mut text = String::new();
+    while Instant::now() < deadline {
+        match tokio::time::timeout(Duration::from_millis(500), resp.chunk()).await {
+            Ok(Ok(Some(chunk))) => {
+                text.push_str(&String::from_utf8_lossy(&chunk));
+                if let Some(at) = text.find("event: closed") {
+                    let rest = &text[at..];
+                    if let Some(end) = rest.find("\n\n") {
+                        let data = rest[..end]
+                            .lines()
+                            .filter_map(|line| line.strip_prefix("data: "))
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        return Some(data);
+                    }
+                }
+            }
+            Ok(Ok(None)) | Ok(Err(_)) => break,
+            Err(_) => continue,
+        }
+    }
+    None
+}
+
+/// One autostarted dashboard run with an SSE client: the `closed` event
+/// carries the saved run's id.
+async fn closed_event_carries_saved_run(server: &MockServer) {
+    let runs = saved_runs_dir("closed");
+    let port = reserve_port();
+    let base_v4 = format!("http://127.0.0.1:{port}");
+    let mut configuration = build_dashboard_config(server, "127.0.0.1", port, Some(AUTH_TOKEN));
+    configuration.no_save = false;
+    configuration.runs_dir = runs.to_string_lossy().into_owned();
+    configuration.run_time = "2".to_string();
+    let ready = arm_test_ready();
+    let start = transaction!(wait_for_test_ready);
+    let goose_attack =
+        common::build_load_test(configuration, vec![get_transactions()], Some(&start), None);
+    let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
+    let (base, _) = wait_for_health(&[&base_v4], 80).await;
+
+    let client = reqwest::Client::new();
+    let mut sse = client
+        .get(format!("{base}/api/v1/events"))
+        .header("Authorization", bearer_header())
+        .send()
+        .await
+        .expect("SSE connect");
+    assert_eq!(sse.status(), 200);
+    ready.send(()).expect("attack waits in test_start");
+
+    // With this tab connected, Goose waits after the run; once the run is
+    // saved, end the wait as Ctrl-C does.
+    wait_for_saved_runs(&runs, 1).await;
+    goose::trigger_killswitch("test: shut down after the run");
+    let data = read_closed_event(&mut sse, Duration::from_secs(30)).await;
+    goose::reset_killswitch();
+    let data = data.expect("closed event");
+    drop(sse);
+    load.join().await.expect("load test execute");
+
+    let ids = saved_run_ids(&runs);
+    assert_eq!(ids.len(), 1);
+    let save: serde_json::Value = serde_json::from_str(&data).expect("closed data is JSON");
+    assert_eq!(save["state"], "on");
+    assert_eq!(save["last_run"], ids[0].as_str());
+    assert!(save["reason"].is_null());
+    assert_eq!(save["dir"], runs.to_string_lossy().as_ref());
+    std::fs::remove_dir_all(&runs).ok();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn test_closed_event_carries_saved_run() {
+    let server = MockServer::start();
+    let _mocks = setup_mock_endpoints(&server);
+    // GOOSE_CLOSED_EVENT_LOOPS repeats the body, to check it never flakes.
+    let loops: usize = std::env::var("GOOSE_CLOSED_EVENT_LOOPS")
+        .ok()
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(1);
+    for _ in 0..loops {
+        closed_event_carries_saved_run(&server).await;
+    }
+}
+
+/// Wait until `count` runs in `runs` have their run.json.
+async fn wait_for_saved_runs(runs: &std::path::Path, count: usize) {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let saved = saved_run_ids(runs)
+            .iter()
+            .filter(|id| runs.join(id).join("run.json").exists())
+            .count();
+        if saved >= count {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{} of {} runs saved",
+            saved,
+            count
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// Start an autostarted, saved dashboard run held at test_start, with
+/// dashboard control when `control`; returns the load test, the base URL,
+/// and the gate that lets it run.
+async fn start_saved_dashboard_run(
+    server: &MockServer,
+    runs: &std::path::Path,
+    stop: Option<&Transaction>,
+    control: bool,
+) -> (LoadTestGuard, String, tokio::sync::oneshot::Sender<()>) {
+    let port = reserve_port();
+    let base_v4 = format!("http://127.0.0.1:{port}");
+    let mut configuration = build_dashboard_config(server, "127.0.0.1", port, Some(AUTH_TOKEN));
+    configuration.dashboard_control = control;
+    configuration.no_save = false;
+    configuration.runs_dir = runs.to_string_lossy().into_owned();
+    configuration.run_time = "2".to_string();
+    let ready = arm_test_ready();
+    let start = transaction!(wait_for_test_ready);
+    let goose_attack =
+        common::build_load_test(configuration, vec![get_transactions()], Some(&start), stop);
+    let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
+    let (base, _) = wait_for_health(&[&base_v4], 80).await;
+    (load, base, ready)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn test_dashboard_waits_after_autostarted_run() {
+    let server = MockServer::start();
+    let _mocks = setup_mock_endpoints(&server);
+    let client = reqwest::Client::new();
+
+    // A tab connected when the run ends: Goose goes idle and the run can be
+    // downloaded. It stays up after the tab closes, until Quit.
+    let runs = saved_runs_dir("wait");
+    let (load, base, ready) = start_saved_dashboard_run(&server, &runs, None, true).await;
+    let sse = client
+        .get(format!("{base}/api/v1/events"))
+        .header("Authorization", bearer_header())
+        .send()
+        .await
+        .expect("SSE connect");
+    assert_eq!(sse.status(), 200);
+    ready.send(()).expect("attack waits in test_start");
+    wait_for_saved_runs(&runs, 1).await;
+    let id = saved_run_ids(&runs).remove(0);
+    let snap = wait_for_phase(
+        &client,
+        &base,
+        Some(AUTH_TOKEN),
+        &["idle"],
+        Duration::from_secs(10),
+    )
+    .await;
+    assert_eq!(snap["save"]["last_run"], id.as_str());
+    let download = client
+        .get(format!("{base}/api/v1/runs/{id}/report.html"))
+        .header("Authorization", bearer_header())
+        .send()
+        .await
+        .expect("download while waiting");
+    assert_eq!(download.status(), 200);
+    assert!(!download.bytes().await.unwrap().is_empty());
+
+    // No exit timer: still up with no tab connected.
+    drop(sse);
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let health = client
+        .get(format!("{base}/api/v1/health"))
+        .send()
+        .await
+        .expect("still up after the tab closed");
+    assert_eq!(health.status(), 200);
+
+    let quit = post_control(&client, &base, "/api/v1/control/quit", Some("{}"), true).await;
+    assert_eq!(quit.status(), 200);
+    let body: serde_json::Value = quit.json().await.expect("quit json");
+    assert_eq!(body["ok"], true);
+    let metrics = tokio::time::timeout(Duration::from_secs(15), load.join())
+        .await
+        .expect("Goose exits on Quit")
+        .expect("load test execute");
+    assert!(metrics.duration > 0);
+    // Nothing more was saved on the way out.
+    assert_eq!(saved_run_ids(&runs), vec![id]);
+    std::fs::remove_dir_all(&runs).ok();
+
+    // No tab connected when the run ends: Goose exits at once, as before.
+    let runs = saved_runs_dir("nowait");
+    let (load, _base, ready) = start_saved_dashboard_run(&server, &runs, None, true).await;
+    let started = Instant::now();
+    ready.send(()).expect("attack waits in test_start");
+    tokio::time::timeout(Duration::from_secs(20), load.join())
+        .await
+        .expect("Goose exits without waiting")
+        .expect("load test execute");
+    assert!(started.elapsed() < Duration::from_secs(15));
+    assert_eq!(saved_run_ids(&runs).len(), 1);
+    std::fs::remove_dir_all(&runs).ok();
+}
+
+/// How many times test_stop ran since the counting test reset it.
+static TEST_STOP_RUNS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+async fn count_test_stop(_user: &mut GooseUser) -> TransactionResult {
+    TEST_STOP_RUNS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    Ok(())
+}
+
+fn test_stop_runs() -> usize {
+    TEST_STOP_RUNS.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Run an autostarted, saved dashboard run that counts test_stop, with an
+/// SSE client connected, until Goose waits Idle after it. Returns the load
+/// test, the base URL and the SSE response that keeps the wait going.
+async fn wait_after_counted_run(
+    server: &MockServer,
+    runs: &std::path::Path,
+) -> (LoadTestGuard, String, reqwest::Response) {
+    TEST_STOP_RUNS.store(0, std::sync::atomic::Ordering::SeqCst);
+    let stop = transaction!(count_test_stop);
+    let (load, base, ready) = start_saved_dashboard_run(server, runs, Some(&stop), true).await;
+    let client = reqwest::Client::new();
+    let sse = client
+        .get(format!("{base}/api/v1/events"))
+        .header("Authorization", bearer_header())
+        .send()
+        .await
+        .expect("SSE connect");
+    assert_eq!(sse.status(), 200);
+    ready.send(()).expect("attack waits in test_start");
+    wait_for_saved_runs(runs, 1).await;
+    wait_for_phase(
+        &client,
+        &base,
+        Some(AUTH_TOKEN),
+        &["idle"],
+        Duration::from_secs(10),
+    )
+    .await;
+    assert_eq!(test_stop_runs(), 1, "test_stop ran once when the run ended");
+    (load, base, sse)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn test_test_stop_runs_once_when_exiting_from_idle() {
+    let server = MockServer::start();
+    let _mocks = setup_mock_endpoints(&server);
+
+    // Ctrl-C while waiting Idle after the run.
+    let runs = saved_runs_dir("test-stop-ctrl-c");
+    let (load, _base, sse) = wait_after_counted_run(&server, &runs).await;
+    goose::trigger_killswitch("test: exit from Idle");
+    let result = tokio::time::timeout(Duration::from_secs(15), load.join())
+        .await
+        .expect("Goose exits on Ctrl-C");
+    goose::reset_killswitch();
+    drop(sse);
+    result.expect("load test execute");
+    assert_eq!(test_stop_runs(), 1, "test_stop ran again on exit from Idle");
+    std::fs::remove_dir_all(&runs).ok();
+
+    // Quit while waiting Idle after the run.
+    let runs = saved_runs_dir("test-stop-quit");
+    let (load, base, sse) = wait_after_counted_run(&server, &runs).await;
+    let client = reqwest::Client::new();
+    let quit = post_control(&client, &base, "/api/v1/control/quit", Some("{}"), true).await;
+    assert_eq!(quit.status(), 200);
+    tokio::time::timeout(Duration::from_secs(15), load.join())
+        .await
+        .expect("Goose exits on Quit")
+        .expect("load test execute");
+    drop(sse);
+    assert_eq!(test_stop_runs(), 1, "test_stop ran again on Quit");
+    std::fs::remove_dir_all(&runs).ok();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn test_delete_saved_run() {
+    let server = MockServer::start();
+    let _mocks = setup_mock_endpoints(&server);
+    let runs = saved_runs_dir("delete");
+    let older = save_one_run(&server, &runs, "1").await;
+    // Not deletable: an incomplete run, and a symlink to a real run.
+    std::fs::create_dir(runs.join("2002-02-02-000000")).unwrap();
+    std::fs::write(runs.join("2002-02-02-000000").join("report.html"), "x").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(runs.join(&older), runs.join("2003-03-03-000000")).unwrap();
+
+    let port = reserve_port();
+    let base_v4 = format!("http://127.0.0.1:{port}");
+    let mut configuration =
+        build_control_config(&server, "127.0.0.1", port, ControlTestOpts::default());
+    configuration.no_save = false;
+    configuration.runs_dir = runs.to_string_lossy().into_owned();
+    let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
+    let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
+    let (base, _) = wait_for_health(&[&base_v4], 80).await;
+    let client = reqwest::Client::new();
+    let delete = |id: String, auth: bool, token_in_url: bool| {
+        let mut url = format!("{base}/api/v1/runs/{id}");
+        if token_in_url {
+            url.push_str(&format!("?token={AUTH_TOKEN}"));
+        }
+        let mut req = client.delete(url);
+        if auth {
+            req = req.header("Authorization", bearer_header());
+        }
+        req.send()
+    };
+
+    // The control token, in the Authorization header only.
+    assert_eq!(
+        delete(older.clone(), false, false).await.unwrap().status(),
+        401
+    );
+    assert_eq!(
+        delete(older.clone(), false, true).await.unwrap().status(),
+        401
+    );
+    assert_eq!(
+        delete(older.clone(), true, true).await.unwrap().status(),
+        401
+    );
+    for id in [
+        "not-a-run",
+        "..%2F..%2Fetc",
+        "2026-10-09-141203",
+        "2002-02-02-000000",
+        "2003-03-03-000000",
+    ] {
+        let resp = delete(id.to_string(), true, false).await.unwrap();
+        assert_eq!(resp.status(), 404, "{}", id);
+    }
+    assert!(runs.join("2002-02-02-000000").join("report.html").exists());
+    assert!(runs.join(&older).join("run.json").exists());
+
+    // The run being written now has no run.json yet, so it is a 404.
+    let start = post_control(&client, &base, "/api/v1/control/start", Some("{}"), true).await;
+    assert_eq!(start.status(), 200);
+    wait_for_phase(
+        &client,
+        &base,
+        Some(AUTH_TOKEN),
+        &["increase", "maintain"],
+        Duration::from_secs(30),
+    )
+    .await;
+    let active: Vec<String> = saved_run_ids(&runs)
+        .into_iter()
+        .filter(|id| !runs.join(id).join("run.json").exists() && id != "2002-02-02-000000")
+        .collect();
+    assert_eq!(active.len(), 1, "{:?}", active);
+    let resp = delete(active[0].clone(), true, false).await.unwrap();
+    assert_eq!(resp.status(), 404);
+    assert!(runs.join(&active[0]).is_dir());
+    let stop = post_control(&client, &base, "/api/v1/control/stop", Some("{}"), true).await;
+    assert_eq!(stop.status(), 200);
+    wait_for_phase(
+        &client,
+        &base,
+        Some(AUTH_TOKEN),
+        &["idle"],
+        Duration::from_secs(30),
+    )
+    .await;
+
+    // A complete run is removed.
+    let resp = delete(older.clone(), true, false).await.unwrap();
+    assert_eq!(resp.status(), 204);
+    assert!(!runs.join(&older).exists());
+    let resp = delete(older.clone(), true, false).await.unwrap();
+    assert_eq!(resp.status(), 404);
+    // Once saved, the run that was active can be deleted too.
+    assert!(runs.join(&active[0]).join("run.json").exists());
+    let resp = delete(active[0].clone(), true, false).await.unwrap();
+    assert_eq!(resp.status(), 204);
+
+    load.abort().await;
+    std::fs::remove_dir_all(&runs).ok();
 }

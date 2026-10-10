@@ -7,7 +7,7 @@ use std::str::FromStr;
 use std::time;
 use url::Url;
 
-use crate::{is_killswitch_triggered, trigger_killswitch, GooseError, CANCELED};
+use crate::{is_killswitch_triggered, reset_killswitch, trigger_killswitch, GooseError};
 
 /// Parse a string representing a time span and return the number of seconds.
 ///
@@ -431,8 +431,7 @@ pub(crate) fn setup_ctrlc_handler() {
         Err(e) => {
             // When running in tests, reset CANCELED with each new test allowing testing
             // of the ctrl-c handler.
-            let mut canceled = CANCELED.write().unwrap();
-            *canceled = false;
+            reset_killswitch();
             info!("reset ctrl-c handler: {e}");
         }
     }
