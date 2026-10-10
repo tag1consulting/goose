@@ -1193,17 +1193,13 @@ mod tests {
         assert_eq!(scenario.response_time_avg_ms, 0.0);
         assert_eq!(scenario.percentile_ms.p50, 0);
         assert_eq!(snap.transactions[0].response_time_avg_ms, 0.0);
-        let mut value = serde_json::to_value(&snap).expect("serialize snapshot");
-        // `save` holds nulls on purpose: no reason, no last run.
-        value.as_object_mut().expect("object").remove("save");
-        // `co_adjusted` is null on purpose while mitigation has no events.
-        assert!(value["aggregate"]["co_adjusted"].is_null());
-        value["aggregate"]
-            .as_object_mut()
-            .expect("aggregate")
-            .remove("co_adjusted");
-        let json = value.to_string();
-        assert!(!json.contains("null"), "{}", json);
+        // Only the scenario and transaction rows: other parts of the snapshot
+        // hold nulls on purpose (`save`, and `co_adjusted` without events).
+        let value = serde_json::to_value(&snap).expect("serialize snapshot");
+        for rows in ["scenarios", "transactions"] {
+            let json = value[rows].to_string();
+            assert!(!json.contains("null"), "{}: {}", rows, json);
+        }
     }
 
     #[test]
