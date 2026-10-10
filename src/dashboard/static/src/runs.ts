@@ -67,6 +67,8 @@ let loading = false;
 let reloadAgain = false;
 // Control is on: each run gets a Delete button.
 let controlEnabled = false;
+// The error of the last delete, shown once the list it reloads has loaded.
+let deleteError: string | null = null;
 
 // ---------------------------------------------------------------------------
 // Downloads
@@ -144,13 +146,12 @@ function deleteRun(id: string): void {
     .then(
       (res) => {
         if (res.status === 204) return null;
-        if (res.status === 409) return "the run is still being written";
         return "HTTP " + res.status;
       },
       (err: unknown) => String(err)
     )
     .then((message) => {
-      showRunsError(message ? "Delete failed: " + message : null);
+      deleteError = message ? "Delete failed: " + message : null;
       checked.delete(id);
       loadRuns();
     });
@@ -429,7 +430,7 @@ export function loadRuns(): void {
     .then((data) => {
       listing = data;
       renderRuns();
-      showError(null);
+      showRunsError(deleteError);
     })
     .catch((err: unknown) => {
       if (runsError) {
@@ -442,6 +443,8 @@ export function loadRuns(): void {
       if (reloadAgain) {
         reloadAgain = false;
         loadRuns();
+      } else {
+        deleteError = null;
       }
     });
 }

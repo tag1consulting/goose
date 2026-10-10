@@ -316,6 +316,25 @@ test("Delete shows only with control on, confirms, and sends DELETE with the Bea
   assert.equal(doc.getElementById("runs-error").hidden, true);
 });
 
+test("a failed Delete shows its error after the list reloads", async () => {
+  const page = await openPage("/?token=" + TOKEN, FRESH, TOKEN, {
+    runs: LISTING,
+    controlEnabled: true,
+    controlToken: "other",
+  });
+  const doc = page.window.document;
+  page.window.confirm = () => true;
+  const listed = () => page.requests.filter((r) => r.path === "/api/v1/runs").length;
+  const before = listed();
+  doc.querySelectorAll("button.run-delete")[1].click();
+  await settle(page.window);
+  assert.equal(page.requests.filter((r) => r.method === "DELETE").length, 1);
+  assert.equal(listed(), before + 1);
+  const error = doc.getElementById("runs-error");
+  assert.equal(error.hidden, false);
+  assert.equal(error.textContent, "Delete failed: HTTP 401");
+});
+
 test("the list reloads whenever the last saved run changes, with no phase change", async () => {
   const page = await openPage("/?token=" + TOKEN, FRESH, TOKEN, {
     runs: LISTING,
