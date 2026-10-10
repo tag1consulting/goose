@@ -38,6 +38,7 @@
  - [#719](https://github.com/tag1consulting/goose/issues/719) refuse a controller `users` value too large for a `usize` with an error reply instead of panicking the main loop, which assumed the command's regex guaranteed a valid integer
  - [#727](https://github.com/tag1consulting/goose/pull/727) make the `user_metrics_graph_reset` tests independent of runner throughput; they required a no-reset run to record at least 50% more requests than a separate reset run, about the expected difference since users launch gradually during increase-time, so they failed on runner variance
     o each run's recorded requests are now compared with what the mock server received in that run: equal without reset, fewer with reset
+ - [#739](https://github.com/tag1consulting/goose/issues/739) include batched requests in coordinated omission adjusted times; since per user batching, only failures, coordinated omission copies and unbatched requests were added to them, which pulled adjusted averages and percentiles toward the synthetic times
  - [#690](https://github.com/tag1consulting/goose/pull/690) (EXPERIMENTAL) add opt-in read-only **live web dashboard** (crate feature `dashboard` + runtime `--dashboard`, default bind `127.0.0.1:5118`)
     o compile with `--features dashboard` (not in default features; avoids axum/tower-http on every build); without the feature, `--dashboard` fails at startup with a clear rebuild hint
     o streams coalesced metric snapshots over SSE (`/api/v1/events`) with poll fallback; one-shot `GET /api/v1/snapshot`
