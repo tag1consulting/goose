@@ -417,6 +417,13 @@ body {
   }
 }
 
+/* A muted line of explanation above a panel's content. */
+.note {
+  margin: 0 0 0.5rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
 /* Tables */
 .table-note {
   margin: 0 0 0.5rem;

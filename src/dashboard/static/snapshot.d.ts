@@ -10,7 +10,9 @@ type AggregateMetrics = { total_requests: number, total_failures: number, reques
  * True iff coordinated-omission metrics object is present AND has recorded
  * at least one CO event (or synthetic request).
  */
-co_active: boolean, };
+co_active: boolean, co_adjusted: CoAdjusted | null, };
+
+type CoAdjusted = { response_time_avg_ms: number, response_time_max_ms: number, percentile_ms: Percentiles, };
 
 type DashboardSnapshot = { version: number, generated_at: string, goose_version: string, phase: string,
 /**
@@ -50,7 +52,7 @@ type ErrorRow = { method: string, name: string, error: string, occurrences: numb
 
 type Percentiles = { p50: number, p95: number, p99: number, };
 
-type RequestRow = { method: string, name: string, request_count: number, failure_count: number, requests_per_second: number, failures_per_second: number, response_time_avg_ms: number, response_time_min_ms: number, response_time_max_ms: number, percentile_ms: Percentiles, status_codes: Array<[number, number]>, };
+type RequestRow = { method: string, name: string, request_count: number, failure_count: number, requests_per_second: number, failures_per_second: number, response_time_avg_ms: number, response_time_min_ms: number, response_time_max_ms: number, percentile_ms: Percentiles, status_codes: Array<[number, number]>, co_adjusted: CoAdjusted | null, };
 
 type ScenarioRow = {
 /**

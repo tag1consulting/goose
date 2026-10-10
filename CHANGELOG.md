@@ -35,6 +35,9 @@
     o the client refuses a snapshot whose `version` is not the one it was built for, and shows an error banner
  - [#705](https://github.com/tag1consulting/goose/issues/705) keep the dashboard token in the tab's sessionStorage so a reload keeps it; the client stored it nowhere after stripping `?token=` from the URL, so every reload got 401
     o a 401 clears the stored token; a new tab still needs `?token=`
+ - [#716](https://github.com/tag1consulting/goose/issues/716) show coordinated omission adjusted response times in the dashboard once mitigation has recorded an event; the dashboard showed measured percentiles beside "Coordinated omission: active", which read as adjusted
+    o the KPI strip, aggregate panel and requests table label adjusted values and show the measured value on hover; the aggregate panel shows both
+    o the snapshot adds `co_adjusted` (average, maximum and percentiles) to `aggregate` and to each request row, present only while mitigation has events; `percentile_ms` stays measured
  - [#719](https://github.com/tag1consulting/goose/issues/719) refuse a controller `users` value too large for a `usize` with an error reply instead of panicking the main loop, which assumed the command's regex guaranteed a valid integer
  - [#727](https://github.com/tag1consulting/goose/pull/727) make the `user_metrics_graph_reset` tests independent of runner throughput; they required a no-reset run to record at least 50% more requests than a separate reset run, about the expected difference since users launch gradually during increase-time, so they failed on runner variance
     o each run's recorded requests are now compared with what the mock server received in that run: equal without reset, fewer with reset

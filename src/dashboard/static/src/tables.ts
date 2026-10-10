@@ -2,6 +2,7 @@
 // sortable table (sorting, optional filter, empty states, render) and the
 // column definitions of each.
 
+import { shownTime } from "./coadjust";
 import { optionalElement, requireElement } from "./dom";
 import { formatInt, formatRate, textCell } from "./format";
 
@@ -19,6 +20,8 @@ interface Column<R> {
   key: keyof R & string;
   type: SortType;
   format: (row: R) => string;
+  /** The cell's hover text, or null for none. */
+  title?: (row: R) => string | null;
 }
 
 interface TableFilter<R> {
@@ -115,7 +118,11 @@ function sortableTable<R>(options: TableOptions<R>): SortableTable<R> {
       const row = shown[i];
       const tr = document.createElement("tr");
       for (let c = 0; c < columns.length; c++) {
-        tr.appendChild(textCell(columns[c].format(row)));
+        const column = columns[c];
+        const td = textCell(column.format(row));
+        const title = column.title ? column.title(row) : null;
+        if (title !== null) td.title = title;
+        tr.appendChild(td);
       }
       body.appendChild(tr);
     }
@@ -207,7 +214,11 @@ interface FlatTransactionRow {
   p99: number;
 }
 
-/** The RequestRow fields the requests table shows, percentiles inlined. */
+/**
+ * The RequestRow fields the requests table shows, percentiles inlined. The
+ * response times are the adjusted ones when the row has them, so the table
+ * sorts on what it shows, and `measured` holds each one's hover text.
+ */
 interface FlatRequestRow {
   method: string;
   name: string;
@@ -218,6 +229,12 @@ interface FlatRequestRow {
   p50: number;
   p95: number;
   p99: number;
+  measured: {
+    response_time_avg_ms: string | null;
+    p50: string | null;
+    p95: string | null;
+    p99: string | null;
+  };
 }
 
 function flattenScenario(r: ScenarioRow): FlatScenarioRow {
@@ -256,16 +273,32 @@ function flattenTransaction(r: TransactionRow): FlatTransactionRow {
 
 function flattenRequest(r: RequestRow): FlatRequestRow {
   const p = r.percentile_ms;
+  const co = r.co_adjusted != null ? r.co_adjusted : null;
+  const cp = co ? co.percentile_ms : null;
+  const avg = shownTime(
+    r.response_time_avg_ms,
+    co ? co.response_time_avg_ms : null,
+    formatRate
+  );
+  const p50 = shownTime(p.p50, cp ? cp.p50 : null, formatInt);
+  const p95 = shownTime(p.p95, cp ? cp.p95 : null, formatInt);
+  const p99 = shownTime(p.p99, cp ? cp.p99 : null, formatInt);
   return {
     method: r.method,
     name: r.name,
     request_count: r.request_count,
     failure_count: r.failure_count,
     requests_per_second: r.requests_per_second,
-    response_time_avg_ms: r.response_time_avg_ms,
-    p50: p.p50,
-    p95: p.p95,
-    p99: p.p99,
+    response_time_avg_ms: avg.value,
+    p50: p50.value,
+    p95: p95.value,
+    p99: p99.value,
+    measured: {
+      response_time_avg_ms: avg.title,
+      p50: p50.title,
+      p95: p95.title,
+      p99: p99.title,
+    },
   };
 }
 
@@ -372,10 +405,26 @@ const requestsTable = sortableTable<FlatRequestRow>({
       key: "response_time_avg_ms",
       type: "num",
       format: (r) => formatRate(r.response_time_avg_ms),
+      title: (r) => r.measured.response_time_avg_ms,
     },
-    { key: "p50", type: "num", format: (r) => formatInt(r.p50) },
-    { key: "p95", type: "num", format: (r) => formatInt(r.p95) },
-    { key: "p99", type: "num", format: (r) => formatInt(r.p99) },
+    {
+      key: "p50",
+      type: "num",
+      format: (r) => formatInt(r.p50),
+      title: (r) => r.measured.p50,
+    },
+    {
+      key: "p95",
+      type: "num",
+      format: (r) => formatInt(r.p95),
+      title: (r) => r.measured.p95,
+    },
+    {
+      key: "p99",
+      type: "num",
+      format: (r) => formatInt(r.p99),
+      title: (r) => r.measured.p99,
+    },
   ],
   sort: { key: "request_count", type: "num", dir: "desc" },
   emptyText: "No requests yet",
