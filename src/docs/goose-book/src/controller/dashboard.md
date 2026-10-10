@@ -343,9 +343,9 @@ These counters are ops-safe (timing and client counts only). The response does *
 - **KPI strip** — users, RPS, fail %, p95, average latency
 - **Charts** — trailing series window (default 300 seconds) for RPS + failures/s, active users, and average latency
 - **Sortable tables** — Scenarios, Transactions, Requests and Errors. The scenario and transaction tables list every registered scenario and transaction and are never truncated; the request and error tables show the top rows (truncated server-side for large runs)
-- **Control panel** (only when `--dashboard-control`) — Start / Stop / Quit / target users; see [Controlling a load test from the dashboard](#controlling-a-load-test-from-the-dashboard)
-- **Save state** in the header — `Saving to goose-runs`, `Not saving (turned off)`, or `Not saving: can't create goose-runs (reason)`; see [Saved runs](#saved-runs)
-- **Saved runs panel** — every saved run, with downloads and comparisons, and with `--dashboard-control` a Delete button for each
+- **Control panel** (only when `--dashboard-control`): Start / Stop / Quit / target users; see [Controlling a load test from the dashboard](#controlling-a-load-test-from-the-dashboard)
+- **Save state** in the header: `Saving to goose-runs`, `Not saving (turned off)`, or `Not saving: can't create goose-runs (reason)`; see [Saved runs](#saved-runs)
+- **Saved runs panel**: every saved run, with downloads and comparisons, and with `--dashboard-control` a Delete button for each
 
 Transaction times cover the whole transaction function, so they include `--throttle-requests` delays and any sleep inside it, and scenario times include the wait after each transaction. Every registered scenario and transaction has a row, so a scenario excluded by `--scenarios`, or one no user was assigned to, stays at 0 runs.
 
