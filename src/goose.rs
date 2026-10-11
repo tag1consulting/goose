@@ -4813,12 +4813,24 @@ mod tests {
         configuration: &GooseConfiguration,
         count: usize,
     ) -> (Vec<GooseUser>, flume::Receiver<GooseMetric>) {
+        // Building a client loads the root certificates, which on Linux dominated the audit,
+        // and the audit never sends a request, so every user shares one client.
+        static CLIENT: std::sync::OnceLock<Client> = std::sync::OnceLock::new();
+        let client = CLIENT.get_or_init(Client::new);
         let (tx, rx) = flume::unbounded();
         let users = (0..count)
             .map(|_| {
-                let mut user =
-                    GooseUser::single("http://localhost:8080".parse().unwrap(), configuration)
-                        .unwrap();
+                let mut user = GooseUser::new(
+                    0,
+                    Arc::from(""),
+                    "http://localhost:8080".parse().unwrap(),
+                    configuration,
+                    0,
+                    Some(client.clone()),
+                )
+                .unwrap();
+                user.weighted_users_index = 0;
+                user.is_throttled = false;
                 user.metrics_channel = Some(tx.clone());
                 user.metrics_batch = Some(GooseMetricBatch::new(0));
                 user
