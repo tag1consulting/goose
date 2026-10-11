@@ -845,7 +845,7 @@ pub(crate) struct GraphData {
     scenarios_per_second: TimeSeries<usize, usize>,
     /// Number of users at the end of each second of the test.
     users_per_second: TimeSeries<usize, usize>,
-    /// Response time histograms by second for the dashboard's latency chart.
+    /// Response time histograms by second for the dashboard's heatmap.
     /// Only the metrics processor's copy has them, and only while the
     /// dashboard tracks percentiles over time.
     latency: Option<LatencyHistograms>,
@@ -903,7 +903,7 @@ impl GraphData {
         }
     }
 
-    /// Record one measured response time for the latency chart, without
+    /// Record one measured response time for the heatmap, without
     /// counting a request (unit tests).
     #[cfg(test)]
     pub(crate) fn record_latency(&mut self, key: &str, second: usize, time: u64) {
@@ -913,7 +913,7 @@ impl GraphData {
     }
 
     /// Count one request in `second` and, when `latency` is given and the
-    /// histograms are kept, record its response time for the latency chart.
+    /// histograms are kept, record its response time for the heatmap.
     pub(crate) fn record_request_per_second_and_latency(
         &mut self,
         key: &str,
@@ -962,7 +962,7 @@ impl GraphData {
         }
     }
 
-    /// Whether synthetic response times are kept for the latency chart.
+    /// Whether synthetic response times are kept for the heatmap.
     pub(crate) fn records_synthetic_latency(&self) -> bool {
         self.latency
             .as_ref()

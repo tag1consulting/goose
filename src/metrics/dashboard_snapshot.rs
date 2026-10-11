@@ -376,8 +376,9 @@ pub(crate) struct SnapshotFlags {
     pub requests_truncated: bool,
     pub errors_truncated: bool,
     pub series_seconds: u32,
-    /// True when the dashboard tracks p50, p95 and p99 by second: on with
-    /// `--dashboard` unless `--no-percentiles-over-time` or `--no-metrics`.
+    /// True when the dashboard tracks response times by second for its
+    /// heatmap: on with `--dashboard` unless `--no-percentiles-over-time` or
+    /// `--no-metrics`.
     pub percentiles_over_time: bool,
 }
 

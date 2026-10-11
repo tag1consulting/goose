@@ -225,7 +225,7 @@ pub struct GooseConfiguration {
     /// Sets max concurrent dashboard SSE clients (default: 32)
     #[options(no_short, meta = "COUNT")]
     pub dashboard_max_clients: u32,
-    /// Doesn't track p50, p95 and p99 by second (requires --dashboard)
+    /// Doesn't track response times by second (requires --dashboard)
     #[options(no_short)]
     pub no_percentiles_over_time: bool,
     /// Doesn't automatically start load test
@@ -409,7 +409,7 @@ pub(crate) struct GooseDefaults {
     pub dashboard_auth_token: Option<String>,
     /// An optional default for max concurrent dashboard SSE clients.
     pub dashboard_max_clients: Option<u32>,
-    /// An optional default for not tracking p50, p95 and p99 by second.
+    /// An optional default for not tracking response times by second.
     pub no_percentiles_over_time: Option<bool>,
     /// An optional default for not validating https certificates.
     pub accept_invalid_certs: Option<bool>,
@@ -538,7 +538,7 @@ pub enum GooseDefault {
     DashboardAuthToken,
     /// An optional default for max concurrent dashboard SSE clients.
     DashboardMaxClients,
-    /// An optional default for not tracking p50, p95 and p99 by second in the dashboard.
+    /// An optional default for not tracking response times by second in the dashboard.
     NoPercentilesOverTime,
     /// An optional default for not validating https certificates.
     AcceptInvalidCerts,
@@ -2384,12 +2384,12 @@ impl GooseConfiguration {
     }
 
     /// Whether response time histograms are kept for each second, for the
-    /// dashboard's latency chart. Implies [`Self::records_graph_data`].
+    /// dashboard's response time heatmap. Implies [`Self::records_graph_data`].
     pub(crate) fn records_latency_series(&self) -> bool {
         self.dashboard && !self.no_percentiles_over_time && !self.no_metrics
     }
 
-    /// Whether the latency chart also keeps coordinated omission mitigation's
+    /// Whether the heatmap also keeps coordinated omission mitigation's
     /// synthetic times: it tracks percentiles and mitigation is not disabled.
     pub(crate) fn records_synthetic_latency(&self) -> bool {
         self.records_latency_series()

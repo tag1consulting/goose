@@ -35,7 +35,7 @@ The dashboard port opens when the Controllers' ports do, once Goose has built a 
 | `--dashboard-port PORT` | `5118` | Bind port. CLI value `0` means “unset” and is rewritten to `5118` when the dashboard is enabled (not an ephemeral OS port). |
 | `--dashboard-auth-token TOKEN` | empty | Shared secret for metric APIs when configured; **always required** when `--dashboard-control` is set (even on loopback). Visible in process listings (`ps`) like any CLI flag. |
 | `--dashboard-max-clients COUNT` | `32` | Max concurrent SSE clients (`GET /api/v1/events`); further clients receive HTTP 503. CLI value `0` means “unset” and becomes `32`. The server also holds at most twice this many connections plus 16 (80 by default); a connection beyond that is closed as soon as it is accepted. |
-| `--no-percentiles-over-time` | off | Turn off the p50, p95 and p99 lines in the latency chart and the histograms behind them (requires --dashboard). See [The latency chart](#the-latency-chart). |
+| `--no-percentiles-over-time` | off | Turn off the response time heatmap and the histograms behind it; the card shows the average latency chart instead (requires --dashboard). See [The response time heatmap](#the-response-time-heatmap). |
 
 Defaults can also be set programmatically with `GooseDefault::Dashboard`, `GooseDefault::DashboardControl`, `GooseDefault::DashboardHost`, `GooseDefault::DashboardPort`, `GooseDefault::DashboardAuthToken`, `GooseDefault::DashboardMaxClients`, and `GooseDefault::NoPercentilesOverTime`.
 
@@ -97,7 +97,7 @@ Additional control rules:
 | `GET /api/v1/health` | **Public** | Liveness + ops counters; includes `control_enabled` (no load-test metrics) |
 | `GET /api/v1/snapshot` | **Required** | |
 | `GET /api/v1/events` (SSE) | **Required** | |
-| `GET /api/v1/series` | **Required** | One request's per second series; see [Request series endpoint](#request-series-endpoint) |
+| `GET /api/v1/series` | **Required** | One request's response time heatmap; see [Request heatmap endpoint](#request-heatmap-endpoint) |
 | `POST /api/v1/control/*` | **Always required** when control is enabled | Even on loopback; **404** when control is off |
 | `DELETE /api/v1/runs/{id}` | **Always required** when control is enabled | Control token, as for `POST /api/v1/control/*`; **404** when control is off |
 
@@ -342,40 +342,67 @@ These counters are ops-safe (timing and client counts only). The response does *
 
 - **Phase badge** — `idle` (gray), `increase` (blue), `maintain` (green), `decrease` (orange), `shutdown` (red)
 - **Connection indicator** — green for SSE, yellow for poll fallback, red when disconnected
-- **KPI strip** — users, RPS, fail %, p95, average latency
-- **Charts**: trailing series window (default 300 seconds) for RPS and failures per second, active users, and latency by second (p50, p95, p99, average and maximum); see [The latency chart](#the-latency-chart).
+- **KPI strip**: users, RPS, fail %, and the whole run p95 and average latency
+- **Charts**: trailing series window (default 300 seconds) for RPS and failures per second and active users, and the response time heatmap; see [The response time heatmap](#the-response-time-heatmap).
+- **Whole run** card: requests, failures, RPS, fail %, average and p50, p95 and p99 response times
 - **Sortable tables** — Scenarios, Transactions, Requests and Errors. The scenario and transaction tables list every registered scenario and transaction and are never truncated; the request and error tables show the top rows (truncated server-side for large runs)
 - **Control panel** (only when `--dashboard-control`): Start / Stop / Quit / target users; see [Controlling a load test from the dashboard](#controlling-a-load-test-from-the-dashboard)
 - **Save state** in the header: `Saving to goose-runs`, `Not saving (turned off)`, or `Not saving: can't create goose-runs (reason)`; see [Saved runs](#saved-runs)
 - **Saved runs panel**: every saved run, with downloads and comparisons, and with `--dashboard-control` a Delete button for each
 
+Every figure in the KPI strip, the **Whole run** card and the tables covers the whole run, since the test started or since metrics were last reset; the labels say so, and hovering a table's `avg ms`, `p50`, `p95` or `p99` heading says "Whole run". Only the charts and the heatmap are by second. Goose measures response times in whole milliseconds, so a response under a millisecond counts as 0 ms.
+
 Transaction times cover the whole transaction function, so they include `--throttle-requests` delays and any sleep inside it, and scenario times include the wait after each transaction. Every registered scenario and transaction has a row, so a scenario excluded by `--scenarios`, or one no user was assigned to, stays at 0 runs.
 
 When control is off there are **no control buttons**. Use the Controllers (or enable dashboard control) to change the running test.
 
-When coordinated omission mitigation is on (`--co-mitigation`) and has recorded at least one event, the KPI strip, the aggregate panel and the requests table show adjusted response times, which include the synthetic times mitigation adds for requests a stalled user could not send. They are labelled "adjusted", and hovering a value shows the measured one. The aggregate panel shows both. The adjusted aggregate includes every request, using measured times for requests that never needed backfill, so it can differ from the report's adjusted aggregate, which leaves those requests out.
+When coordinated omission mitigation is on (`--co-mitigation`) and has recorded at least one event, the KPI strip, the **Whole run** card and the requests table show adjusted response times, which include the synthetic times mitigation adds for requests a stalled user could not send. They are labelled "adjusted", and hovering a value shows the measured one. The **Whole run** card shows both. The adjusted aggregate includes every request, using measured times for requests that never needed backfill, so it can differ from the report's adjusted aggregate, which leaves those requests out.
 
-### The latency chart
+### The response time heatmap
 
-Each point covers only the requests in that second, so it moves much more than the p95 in the KPI strip and the Requests table, which cover the whole run since metrics were last reset. Percentiles use the same buckets as the tables, so values above one second are rounded to the nearest second, clamped to that second's fastest and slowest response. While a test runs, the two newest seconds show no percentiles yet, because their slowest requests are still arriving. A second with no requests is a gap. The maximum is hidden until you click it in the legend.
+The response time card shows how long requests took, second by second, over the trailing window (300 seconds). Each column is one second, the oldest on the left. Each row is one of the buckets Goose keeps response times in: one for every millisecond up to 100 ms, then 10 ms buckets up to 500 ms, 100 ms buckets up to 1 second, and 1 second buckets above that. A bucket holds every measured time that rounds to it, so the 110 ms row holds 105 to 114 ms and the 1 s row 950 to 1,499 ms; the bottom row holds responses under a millisecond. The rows sit on a logarithmic latency axis, so each row is as tall as the range of times it holds, and the axis is marked at 1, 2, 5, 10, 20, 50, 100, 200 and 500 ms and 1, 2, 5, 10, 20 and 60 s, as far as the data reaches.
 
-Click a request's name in the Requests table to chart that request alone, and **All requests** to go back. Trends are kept for the first 100 request names Goose sees, counting again from each metrics reset; a name seen later shows in the table but cannot be charted on its own.
+The colour of a cell shows how many requests in that second took that long, on a logarithmic scale running from the fewest to the most any cell holds, which the legend under the chart shows with its lowest and highest counts. In the light theme more requests are darker, in the dark theme brighter. A second with no requests is empty. Hover a cell for its second, its bucket, how many requests it holds and their share of the second's requests.
 
-When coordinated omission mitigation is on and has recorded an event, the chart shows adjusted values, which include the synthetic times mitigation adds, and the tooltip also gives the measured p99 and how many requests in that second were synthetic. Synthetic times belong to the seconds of the stall, which Goose only learns about when it ends, so adjusted values for seconds already drawn can rise. Turn the percentile lines off with `--no-percentiles-over-time`; the average still draws.
+Each column covers only the requests that started in that second. The KPI strip, the **Whole run** card and the tables cover the whole run instead, since the test started or since metrics were last reset, and say so. While a test runs, the two newest seconds are not drawn yet, because their slowest requests are still arriving.
 
-#### Request series endpoint
+Choose a request in the select at the top of the card to see that request alone, and **All requests** to go back; the select lists requests in the Requests table's current order. Response times are kept by second for the first 100 request names Goose sees, counting again from each metrics reset; a name seen later counts toward all requests but is not in the select.
 
-`GET /api/v1/series?method=<method>&name=<request name>` returns one request's series over the same trailing window as the snapshot's `series`, as the chart uses it when a request is selected. `method` is the method as the Requests table shows it (`GET`, `POST`, ...) and `name` is the request name; URL encode both. It needs the token when one is configured, as `GET /api/v1/snapshot` does.
+When coordinated omission mitigation is on and has recorded an event, two buttons choose what the heatmap counts: **Adjusted**, the default, as in the KPI strip and the tables, adds the synthetic times mitigation adds for requests a stalled user could not send, and **Measured** leaves them out. Synthetic times belong to the seconds of the stall, which Goose only learns about when it ends, so cells in seconds already drawn can change.
+
+`--no-percentiles-over-time` turns the heatmap and the histograms behind it off, and the card shows the average latency chart instead.
+
+#### Heatmap data
+
+The snapshot's `series.heatmap` carries the heatmap, or `null` when percentiles over time are off:
+
+| Field | Meaning |
+|-------|---------|
+| `generation` | Which set of histograms the columns come from. It changes when they are cleared, by a metrics reset or a new test, and a client then starts over. |
+| `rev` | The newest change the columns include. |
+| `since` | The `rev` these columns follow on from, or `0` for every column of the window. |
+| `start_second`, `end_second` | The window, in seconds from the start of the test. Columns before `start_second` are dropped. |
+| `hold_from` | Seconds from this one on are still filling and not drawn. |
+| `buckets` | `[time, lowest, highest]` in milliseconds for each bucket index: the rounded time Goose stores and the range of measured times that round to it. A longer table replaces a shorter one; entries never change. |
+| `columns` | The columns that changed: `{ "second", "measured": [index, count, ...], "synthetic": [index, count, ...] }`, each non empty bucket as an index and a count, `synthetic` empty unless mitigation has recorded an event. |
+
+Only the columns that changed are sent. Every SSE client gets the same snapshot, whose heatmap holds the columns changed since the previous one; a client holding another `rev`, for example after it reconnects, asks `GET /api/v1/snapshot?heatmap_generation=<generation>&heatmap_since=<rev>` for the columns it lacks. Without those parameters `GET /api/v1/snapshot` returns every column of the window. The dashboard does all of this itself.
+
+How big this is depends on how widely response times spread. In a test of 1,000 users at about 21,000 requests a second, each SSE snapshot's heatmap held two columns most of the time and took about 4.5 KB (6 KB at most), 2.9 KB of it the bucket table, and a whole window of 90 seconds took 64 KB. Times spread over every bucket are the worst case: then a second's changes take about 9 KB, 60 seconds of them about 190 KB, and a whole window of 300 seconds about 600 KB.
+
+#### Request heatmap endpoint
+
+`GET /api/v1/series?method=<method>&name=<request name>` returns one request's heatmap over the same window, as the card uses it when a request is chosen, in the same shape: `{ "method", "name", "heatmap" }`. `method` is the method as the Requests table shows it (`GET`, `POST`, ...) and `name` is the request name; URL encode both. Add `heatmap_generation` and `heatmap_since` to get only the columns changed since the heatmap you hold. It needs the token when one is configured, as `GET /api/v1/snapshot` does.
 
 | Status | Body |
 |--------|------|
-| `200` | `{ "method", "name", "start_second", "rps": [...], "latency_ms": {...}, "latency_co_adjusted_ms": {...} }`; the two latency series have the shape of `series.latency_ms` in the snapshot, and the adjusted one is empty unless coordinated omission mitigation has recorded an event |
+| `200` | `{ "method", "name", "heatmap": {...} }`, the heatmap in the shape of the snapshot's `series.heatmap` |
 | `400` | `{"error":"bad_request"}`: `method` or `name` is missing, or the two together are longer than 2,048 bytes |
 | `401` | Empty: the token is missing or wrong, as for `GET /api/v1/snapshot` |
-| `404` | `{"error":"not_found"}`: the request has no series (not one of the first 100 names, or `--no-percentiles-over-time`) |
+| `404` | `{"error":"not_found"}`: the request has no heatmap of its own (not one of the first 100 names, or `--no-percentiles-over-time`) |
 | `503` | `{"error":"busy"}` with four series requests already in flight, `{"error":"timeout"}` when no answer arrives within 15 seconds, or `{"error":"unavailable"}` when Goose is no longer taking dashboard requests (shutting down) |
 
-Answers are cached for one second, so several viewers polling one request cost one export a second.
+Answers are cached for one second for each request and heatmap held, so several viewers polling one request cost about one export a second.
 
 ```bash
 curl -s -H "Authorization: Bearer $TOKEN" \

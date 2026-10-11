@@ -3707,7 +3707,7 @@ impl MetricsProcessor {
                 - request_metric.user_cadence as i64
                 - request_metric.response_time as i64;
 
-            // Synthetic times also go to the dashboard's latency chart, each in
+            // Synthetic times also go to the dashboard's heatmap, each in
             // the second its synthetic request would have started. This copy
             // was sent because the previous scenario iteration took
             // `coordinated_omission_elapsed` (E) ms, more than twice the
@@ -3769,7 +3769,7 @@ impl MetricsProcessor {
                     request_metric.name
                 );
                 // Coordinated omission copies and updates are not new
-                // measurements, so they stay out of the latency chart.
+                // measurements, so they stay out of the heatmap.
                 let latency = (!request_metric.update
                     && request_metric.coordinated_omission_elapsed == 0)
                     .then_some(request_metric.response_time);
