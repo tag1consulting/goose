@@ -24,7 +24,7 @@ pub(crate) use nullable::NullableFloat;
 
 use crate::config::GooseDefaults;
 use crate::goose::{get_base_url, GooseMethod, Scenario, TransactionName};
-use crate::graph::{GraphData, SecondHistogram};
+use crate::graph::GraphData;
 use crate::logger::{GooseLog, GooseLoggerTx};
 use crate::metrics::common::ReportOptions;
 use crate::report;
@@ -103,8 +103,17 @@ pub enum GooseMetric {
 
 /// Maximum number of request metrics to accumulate before flushing a batch.
 pub(crate) const METRICS_BATCH_SIZE: usize = 100;
-/// Maximum age of a batch before it is flushed, regardless of size.
-pub(crate) const METRICS_BATCH_MAX_AGE: std::time::Duration = std::time::Duration::from_millis(250);
+/// Spans each second of the request clock (`GooseRequestMetric::elapsed`) is
+/// divided into for batching. A batch holds requests that started in one
+/// span, [`metrics_batch_span`], so never in two seconds. Three spans a
+/// second send about as many batches as the 250 ms age rule they replaced,
+/// which measured about 3 a second for a busy user.
+pub(crate) const METRICS_BATCH_SPANS_PER_SECOND: u64 = 3;
+
+/// The batching span of a time on the request clock, in milliseconds.
+pub(crate) fn metrics_batch_span(elapsed: u64) -> u64 {
+    elapsed * METRICS_BATCH_SPANS_PER_SECOND / 1000
+}
 
 /// Shared epoch counter for coordinating batch validity across metrics resets.
 ///
@@ -118,7 +127,9 @@ pub(crate) type MetricsEpoch = Arc<AtomicU64>;
 ///
 /// Instead of sending one channel message per request, each user thread
 /// accumulates metrics locally into this struct and flushes it when the batch
-/// reaches 100 requests or 250 milliseconds have elapsed. The metrics
+/// reaches 100 requests or a request from a later third of a second of the
+/// request clock than its first request comes, so every request in it
+/// started in the same second. The metrics
 /// processor merges pre-aggregated entries into the global [`GooseMetrics`]
 /// using the same aggregation logic.
 ///
@@ -141,10 +152,11 @@ pub struct GooseMetricBatch {
     pub(crate) transactions: HashMap<(usize, usize), TransactionBatchEntry>,
     /// Pre-aggregated scenario timing data, keyed by `scenario_index`.
     pub(crate) scenarios: HashMap<usize, ScenarioBatchEntry>,
-    /// Per-second request graph data (RPS count and average response time),
-    /// keyed by `(request_key, second)`. Only populated when `--report-file`
-    /// is configured.
-    pub(crate) graph_request_data: HashMap<(String, usize), RequestGraphBatchData>,
+    /// The second, from the start of the test, that every request in
+    /// `requests` started in (`None` before the first). A batch never holds
+    /// two (see [`metrics_batch_span`]), so each request's timing data is its
+    /// requests per second and response times for that second's graphs.
+    pub(crate) second: Option<usize>,
     /// Per-second transaction counters for graph data.
     /// Only populated when `--report-file` is configured.
     pub(crate) graph_tps: HashMap<usize, u32>,
@@ -162,24 +174,11 @@ impl GooseMetricBatch {
             individual_requests: Vec::new(),
             transactions: HashMap::new(),
             scenarios: HashMap::new(),
-            graph_request_data: HashMap::new(),
+            second: None,
             graph_tps: HashMap::new(),
             graph_sps: HashMap::new(),
         }
     }
-}
-
-/// Per-second graph data for a single request endpoint within a batch,
-/// combining RPS count and average response time accumulator.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub(crate) struct RequestGraphBatchData {
-    /// Number of requests in this second.
-    pub(crate) count: u32,
-    /// Sum of response times in this second (for computing weighted average).
-    pub(crate) total_time: f64,
-    /// Bucketed response times in this second, for the dashboard's latency
-    /// chart. Empty unless the dashboard tracks percentiles over time.
-    pub(crate) times: SecondHistogram,
 }
 
 /// Pre-aggregated request timing and status-code data for a single
@@ -3542,6 +3541,18 @@ impl MetricsProcessor {
         &self.graph_data
     }
 
+    /// [`Self::process_batch`], for unit tests in other modules.
+    #[cfg(test)]
+    pub(crate) fn process_batch_for_test(&mut self, batch: GooseMetricBatch) {
+        self.process_batch(batch);
+    }
+
+    /// The processor's aggregated metrics, for unit tests in other modules.
+    #[cfg(test)]
+    pub(crate) fn metrics_for_test(&self) -> &GooseMetrics {
+        &self.metrics
+    }
+
     /// Whether coordinated omission mitigation has recorded an event, so the
     /// dashboard shows adjusted values.
     fn co_active(&self) -> bool {
@@ -3851,7 +3862,48 @@ impl MetricsProcessor {
             self.process_request_metric(request_metric);
         }
 
-        // 2. Merge pre-aggregated request timing and status-code data.
+        // 2. Apply graph data if a report file is configured or the dashboard
+        //    is on, before step 3 consumes the request entries.
+        if self.configuration.records_graph_data() {
+            // Every request in a batch started in the same second (see
+            // `metrics_batch_span`), so a request's timing data in the
+            // batch is its requests and response times for that second.
+            if let Some(second) = batch.second {
+                let latency = self.graph_data.records_latency();
+                for (key, entry) in &batch.requests {
+                    let data = &entry.raw_data;
+                    let count = data.counter as u32;
+                    // One lookup by name counts the requests and finds the
+                    // request's latency ring.
+                    self.graph_data
+                        .record_requests_per_second_and_latency_batch(
+                            key,
+                            second,
+                            count,
+                            latency.then_some(data),
+                        );
+                    if count > 0 {
+                        self.graph_data
+                            .record_average_response_time_per_second_batch(
+                                key,
+                                second,
+                                data.total_time as f64,
+                                count,
+                            );
+                    }
+                }
+            }
+            for (&second, &count) in &batch.graph_tps {
+                self.graph_data
+                    .record_transactions_per_second_batch(second, count as usize);
+            }
+            for (&second, &count) in &batch.graph_sps {
+                self.graph_data
+                    .record_scenarios_per_second_batch(second, count as usize);
+            }
+        }
+
+        // 3. Merge pre-aggregated request timing and status-code data.
         //    Pre-aggregated requests are all non-CO successful requests, so they
         //    count as actual requests for coordinated omission tracking.
         if let Some(co_metrics) = &mut self.metrics.coordinated_omission_metrics {
@@ -3900,7 +3952,7 @@ impl MetricsProcessor {
             }
         }
 
-        // 3. Merge pre-aggregated transaction timing data.
+        // 4. Merge pre-aggregated transaction timing data.
         for ((si, ti), entry) in batch.transactions {
             let Some(scenario_txns) = self.metrics.transactions.get_mut(si) else {
                 // Invalid scenario index (possible in Gaggle mode with mismatched configs).
@@ -3925,7 +3977,7 @@ impl MetricsProcessor {
             }
         }
 
-        // 4. Merge pre-aggregated scenario timing data.
+        // 5. Merge pre-aggregated scenario timing data.
         for (index, entry) in batch.scenarios {
             let Some(agg) = self.metrics.scenarios.get_mut(index) else {
                 // Invalid scenario index (possible in Gaggle mode with mismatched configs).
@@ -3942,38 +3994,6 @@ impl MetricsProcessor {
             }
             if entry.max_time > agg.max_time {
                 agg.max_time = entry.max_time;
-            }
-        }
-
-        // 5. Apply graph data if a report file is configured or the dashboard is on.
-        if self.configuration.records_graph_data() {
-            for ((key, second), entry) in batch.graph_request_data {
-                // One lookup by name counts the requests and finds the
-                // request's latency ring.
-                self.graph_data
-                    .record_requests_per_second_and_latency_batch(
-                        &key,
-                        second,
-                        entry.count,
-                        &entry.times,
-                    );
-                if entry.count > 0 {
-                    self.graph_data
-                        .record_average_response_time_per_second_batch(
-                            &key,
-                            second,
-                            entry.total_time,
-                            entry.count,
-                        );
-                }
-            }
-            for (second, count) in batch.graph_tps {
-                self.graph_data
-                    .record_transactions_per_second_batch(second, count as usize);
-            }
-            for (second, count) in batch.graph_sps {
-                self.graph_data
-                    .record_scenarios_per_second_batch(second, count as usize);
             }
         }
     }
@@ -5823,7 +5843,7 @@ mod test {
         assert!(batch.individual_requests.is_empty());
         assert!(batch.transactions.is_empty());
         assert!(batch.scenarios.is_empty());
-        assert!(batch.graph_request_data.is_empty());
+        assert!(batch.second.is_none());
         assert!(batch.graph_tps.is_empty());
         assert!(batch.graph_sps.is_empty());
     }
@@ -6290,15 +6310,7 @@ mod test {
             Arc::new(std::sync::atomic::AtomicU64::new(0)),
         );
         let mut batch = GooseMetricBatch::new(0);
-        let total_time: f64 = response_times.iter().map(|&rt| rt as f64).sum();
-        batch.graph_request_data.insert(
-            ("GET /".to_string(), 5),
-            RequestGraphBatchData {
-                count: response_times.len() as u32,
-                total_time,
-                times: SecondHistogram::default(),
-            },
-        );
+        batch.second = Some(5);
         // Pre-aggregate request timing data too, so both paths match.
         let mut raw_data = GooseRequestMetricTimingData::new(None);
         for &rt in &response_times {
@@ -6403,8 +6415,20 @@ mod test {
     fn batch_constants_are_sensible() {
         const { assert!(METRICS_BATCH_SIZE > 0) };
         const { assert!(METRICS_BATCH_SIZE <= 1000) };
-        const { assert!(METRICS_BATCH_MAX_AGE.as_millis() > 0) };
-        const { assert!(METRICS_BATCH_MAX_AGE.as_millis() <= 1000) };
+        const { assert!(METRICS_BATCH_SPANS_PER_SECOND > 0) };
+        const { assert!(METRICS_BATCH_SPANS_PER_SECOND <= 1000) };
+        // Spans divide each second: the last millisecond of a second and the
+        // first of the next are in different spans.
+        for second in [1, 7, 59, 3_600] {
+            assert_ne!(
+                metrics_batch_span(second * 1000 - 1),
+                metrics_batch_span(second * 1000)
+            );
+            assert_eq!(
+                metrics_batch_span(second * 1000) / METRICS_BATCH_SPANS_PER_SECOND,
+                second
+            );
+        }
     }
 
     #[test]
@@ -6541,21 +6565,35 @@ mod test {
         }
     }
 
+    /// A batch of successful `GET /` requests, all from `second`, as a user
+    /// thread builds it.
+    fn latency_batch(second: usize, times: &[u64]) -> GooseMetricBatch {
+        let mut batch = GooseMetricBatch::new(0);
+        batch.second = Some(second);
+        let mut raw_data = GooseRequestMetricTimingData::new(None);
+        for &time in times {
+            raw_data.record_time(time);
+        }
+        batch.requests.insert(
+            "GET /".to_string(),
+            RequestBatchEntry {
+                path: "/".to_string(),
+                method: GooseMethod::Get,
+                custom_method: String::new(),
+                raw_data,
+                status_code_counts: HashMap::from([(200, times.len())]),
+                status_code_timings: HashMap::new(),
+            },
+        );
+        batch
+    }
+
     #[test]
     fn latency_batch_times_reach_the_rings() {
         let mut processor =
             make_latency_test_processor(GooseCoordinatedOmissionMitigation::Disabled);
-        let mut batch = GooseMetricBatch::new(0);
-        for (second, time) in [(3usize, 10u64), (3, 30), (4, 1400)] {
-            let entry = batch
-                .graph_request_data
-                .entry(("GET /".to_string(), second))
-                .or_default();
-            entry.count += 1;
-            entry.total_time += time as f64;
-            entry.times.record(time);
-        }
-        processor.process_batch(batch);
+        processor.process_batch(latency_batch(3, &[10, 30]));
+        processor.process_batch(latency_batch(4, &[1400]));
         assert_eq!(measured_count(&processor, 3), 2);
         assert_eq!(measured_count(&processor, 4), 1);
         let series = request_series(&processor, "/", false).unwrap();
