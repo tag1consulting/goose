@@ -32,6 +32,9 @@ use crate::test_plan::{TestPlanHistory, TestPlanStepAction};
 use crate::util;
 use crate::{GooseAttack, GooseAttackRunState, GooseConfiguration, GooseError};
 use chrono::prelude::*;
+/// The report data builder, for the whole run audit in `goose.rs`.
+#[cfg(test)]
+pub(crate) use common::{prepare_data_with_baseline, ReportOptions as AuditReportOptions};
 use itertools::Itertools;
 use num_format::{Locale, ToFormattedString};
 use regex::RegexSet;
@@ -3561,6 +3564,12 @@ impl MetricsProcessor {
     #[cfg(test)]
     pub(crate) fn metrics_for_test(&self) -> &GooseMetrics {
         &self.metrics
+    }
+
+    /// [`Self::sync_atomic_counters`], for unit tests in other modules.
+    #[cfg(test)]
+    pub(crate) fn sync_atomic_counters_for_test(&mut self) {
+        self.sync_atomic_counters();
     }
 
     /// Whether coordinated omission mitigation has recorded an event, so the

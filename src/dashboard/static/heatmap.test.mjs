@@ -559,3 +559,35 @@ test("with percentiles off the card is the average latency chart, with no heatma
   });
   assert.equal(el(off, "chart-latency-note").hidden, true);
 });
+
+// --- Whole run labels ---------------------------------------------------------
+
+test("the KPIs, the Whole run card and the tables say they cover the whole run", async () => {
+  const page = await openPage("/?token=" + TOKEN, FRESH, TOKEN, {
+    snapshot: snapshotWith([requestRow("/a", true)]),
+  });
+  const { document } = page.window;
+  assert.equal(el(page, "kpi-p95-label").textContent, "p95 ms (whole run)");
+  assert.equal(el(page, "kpi-avg-label").textContent, "Avg ms (whole run)");
+  const aggregate = document.getElementById("aggregate");
+  assert.equal(aggregate.querySelector("h2").textContent, "Whole run");
+  assert.equal(
+    aggregate.querySelector("p.note").textContent,
+    "Since the test started, or since metrics were last reset. Goose measures response times in whole milliseconds."
+  );
+  for (const table of ["scenarios-table", "transactions-table", "requests-table"]) {
+    const titled = Array.from(
+      document.querySelectorAll("#" + table + " thead th[title]")
+    ).map((th) => [th.textContent, th.title]);
+    assert.deepEqual(
+      titled,
+      [
+        ["avg ms", "Whole run"],
+        ["p50", "Whole run"],
+        ["p95", "Whole run"],
+        ["p99", "Whole run"],
+      ],
+      table
+    );
+  }
+});

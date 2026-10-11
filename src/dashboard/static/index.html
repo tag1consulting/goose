@@ -68,11 +68,11 @@
       <span id="kpi-fail" class="v">—</span>
     </div>
     <div class="kpi card">
-      <span id="kpi-p95-label" class="k">p95 ms</span>
+      <span id="kpi-p95-label" class="k">p95 ms (whole run)</span>
       <span id="kpi-p95" class="v">—</span>
     </div>
     <div class="kpi card">
-      <span id="kpi-avg-label" class="k">Avg ms</span>
+      <span id="kpi-avg-label" class="k">Avg ms (whole run)</span>
       <span id="kpi-avg" class="v">—</span>
     </div>
   </section>
@@ -124,7 +124,8 @@
   </section>
 
   <section id="aggregate" class="card">
-    <h2>Aggregate</h2>
+    <h2>Whole run</h2>
+    <p class="note">Since the test started, or since metrics were last reset. Goose measures response times in whole milliseconds.</p>
     <div id="aggregate-body" class="grid">—</div>
   </section>
 
@@ -141,10 +142,10 @@
             <th data-sort="run_count" data-type="num">#runs</th>
             <th data-sort="runs_per_second" data-type="num">runs/s</th>
             <th data-sort="runs_per_user" data-type="num">runs/user</th>
-            <th data-sort="response_time_avg_ms" data-type="num">avg ms</th>
-            <th data-sort="p50" data-type="num">p50</th>
-            <th data-sort="p95" data-type="num">p95</th>
-            <th data-sort="p99" data-type="num">p99</th>
+            <th data-sort="response_time_avg_ms" data-type="num" title="Whole run">avg ms</th>
+            <th data-sort="p50" data-type="num" title="Whole run">p50</th>
+            <th data-sort="p95" data-type="num" title="Whole run">p95</th>
+            <th data-sort="p99" data-type="num" title="Whole run">p99</th>
           </tr>
         </thead>
         <tbody id="scenarios-body"></tbody>
@@ -170,10 +171,10 @@
             <th data-sort="run_count" data-type="num">#runs</th>
             <th data-sort="failure_count" data-type="num">#fails</th>
             <th data-sort="runs_per_second" data-type="num">runs/s</th>
-            <th data-sort="response_time_avg_ms" data-type="num">avg ms</th>
-            <th data-sort="p50" data-type="num">p50</th>
-            <th data-sort="p95" data-type="num">p95</th>
-            <th data-sort="p99" data-type="num">p99</th>
+            <th data-sort="response_time_avg_ms" data-type="num" title="Whole run">avg ms</th>
+            <th data-sort="p50" data-type="num" title="Whole run">p50</th>
+            <th data-sort="p95" data-type="num" title="Whole run">p95</th>
+            <th data-sort="p99" data-type="num" title="Whole run">p99</th>
           </tr>
         </thead>
         <tbody id="transactions-body"></tbody>
@@ -199,10 +200,10 @@
             <th data-sort="request_count" data-type="num" class="sorted desc">#reqs</th>
             <th data-sort="failure_count" data-type="num">#fails</th>
             <th data-sort="requests_per_second" data-type="num">req/s</th>
-            <th data-sort="response_time_avg_ms" data-type="num">avg ms</th>
-            <th data-sort="p50" data-type="num">p50</th>
-            <th data-sort="p95" data-type="num">p95</th>
-            <th data-sort="p99" data-type="num">p99</th>
+            <th data-sort="response_time_avg_ms" data-type="num" title="Whole run">avg ms</th>
+            <th data-sort="p50" data-type="num" title="Whole run">p50</th>
+            <th data-sort="p95" data-type="num" title="Whole run">p95</th>
+            <th data-sort="p99" data-type="num" title="Whole run">p99</th>
           </tr>
         </thead>
         <tbody id="requests-body"></tbody>

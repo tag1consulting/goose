@@ -83,7 +83,8 @@ function renderSnapshot(
   // Once coordinated omission mitigation has events, response times are
   // shown adjusted, labelled so, with the measured value on hover.
   const co = agg.co_adjusted != null ? agg.co_adjusted : null;
-  const suffix = co ? " (adjusted)" : "";
+  // Both cover the whole run, unlike the heatmap's seconds.
+  const suffix = co ? " (whole run, adjusted)" : " (whole run)";
   const p95 = shownTime(p.p95, co ? co.percentile_ms.p95 : null, formatInt);
   const avg = shownTime(
     agg.response_time_avg_ms,

@@ -5431,4 +5431,768 @@ mod tests {
             assert_eq!(aggregate(&with_change), aggregate(other));
         }
     }
+
+    // --- Whole run figures against an independent reference (#713) ---
+
+    /// Every percentile Goose prints (console: 50, 75, 98, 99, 99.9 and
+    /// 99.99), reports (50, 60, 70, 80, 90, 95, 99 and 100) or shows on the
+    /// dashboard (50, 95 and 99), as an exact fraction and as Goose uses it.
+    const AUDIT_PERCENTS: [(usize, usize, f32); 12] = [
+        (50, 100, 0.5),
+        (60, 100, 0.6),
+        (70, 100, 0.7),
+        (75, 100, 0.75),
+        (80, 100, 0.8),
+        (90, 100, 0.9),
+        (95, 100, 0.95),
+        (98, 100, 0.98),
+        (99, 100, 0.99),
+        (999, 1000, 0.999),
+        (9999, 10000, 0.9999),
+        (100, 100, 1.0),
+    ];
+
+    /// The audit's reference, written apart from Goose's code: nearest rank
+    /// over the rounded times, the rank being `p` of the count rounded half
+    /// away from zero (at least 1), the value clamped to the fastest and
+    /// slowest measured time.
+    struct Reference {
+        rounded: Vec<usize>,
+        minimum: usize,
+        maximum: usize,
+        total: usize,
+    }
+
+    impl Reference {
+        fn new(times: &[u64]) -> Self {
+            let mut rounded: Vec<usize> = times
+                .iter()
+                .map(|&t| crate::metrics::round_metric_time(t))
+                .collect();
+            rounded.sort_unstable();
+            Reference {
+                rounded,
+                minimum: times.iter().copied().min().unwrap_or(0) as usize,
+                maximum: times.iter().copied().max().unwrap_or(0) as usize,
+                total: times.iter().map(|&t| t as usize).sum(),
+            }
+        }
+
+        fn count(&self) -> usize {
+            self.rounded.len()
+        }
+
+        /// The `numerator / denominator` percentile, 0 without times.
+        fn percentile(&self, numerator: usize, denominator: usize) -> usize {
+            let n = self.rounded.len();
+            if n == 0 {
+                return 0;
+            }
+            // round(n * p), half away from zero, in integers.
+            let rank = ((2 * n * numerator + denominator) / (2 * denominator)).max(1);
+            self.rounded[rank.min(n) - 1].clamp(self.minimum, self.maximum)
+        }
+
+        /// The mean, 0 without times.
+        fn average(&self) -> f64 {
+            if self.count() == 0 {
+                return 0.0;
+            }
+            self.total as f64 / self.count() as f64
+        }
+    }
+
+    /// A seeded source of the audit's datasets.
+    struct AuditRng(u64);
+
+    impl AuditRng {
+        fn next(&mut self) -> u64 {
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            self.0 >> 11
+        }
+
+        fn below(&mut self, n: u64) -> u64 {
+            self.next() % n
+        }
+
+        /// Uniform in (0, 1].
+        fn unit(&mut self) -> f64 {
+            (self.next() as f64 + 1.0) / (1u64 << 53) as f64
+        }
+
+        /// A lognormal time with this median and sigma, in whole
+        /// milliseconds as Goose measures them, at most 60 s.
+        fn lognormal(&mut self, median: f64, sigma: f64) -> u64 {
+            let z =
+                (-2.0 * self.unit().ln()).sqrt() * (2.0 * std::f64::consts::PI * self.unit()).cos();
+            (median * (sigma * z).exp()).min(60_000.0) as u64
+        }
+    }
+
+    /// One request of an audit dataset.
+    struct AuditRequest {
+        user: usize,
+        name: usize,
+        time: u64,
+        failed: bool,
+    }
+
+    /// The figures for one request name (or all of them) that the audit
+    /// compares, from one place Goose prints or reports them.
+    #[derive(Debug, PartialEq)]
+    struct Figures {
+        percentiles: Vec<(String, usize)>,
+        minimum: usize,
+        maximum: usize,
+        average: String,
+    }
+
+    fn figures(
+        reference: &Reference,
+        percents: &[(usize, usize, f32)],
+        average: String,
+    ) -> Figures {
+        Figures {
+            percentiles: percents
+                .iter()
+                .map(|&(numerator, denominator, _)| {
+                    (
+                        format!("{}/{}", numerator, denominator),
+                        reference.percentile(numerator, denominator),
+                    )
+                })
+                .collect(),
+            minimum: reference.minimum,
+            maximum: reference.maximum,
+            average,
+        }
+    }
+
+    fn goose_figures(
+        percentiles: &[usize],
+        percents: &[(usize, usize, f32)],
+        minimum: usize,
+        maximum: usize,
+        average: String,
+    ) -> Figures {
+        Figures {
+            percentiles: percents
+                .iter()
+                .zip(percentiles)
+                .map(|(&(numerator, denominator, _), &value)| {
+                    (format!("{}/{}", numerator, denominator), value)
+                })
+                .collect(),
+            minimum,
+            maximum,
+            average,
+        }
+    }
+
+    /// One figure set that differs from the reference.
+    struct Mismatch {
+        what: String,
+        /// Which defect fixed on fix-whole-run-percentiles (#744) explains it.
+        known: Option<&'static str>,
+    }
+
+    const ZERO_MINIMUM: &str = "the minimum ignores 0 ms responses";
+    const REPORT_AGGREGATE_COUNT: &str =
+        "with mitigation the report's aggregate divides by every request counted, synthetic ones included";
+    const ADJUSTED_AGGREGATE: &str =
+        "the report's and console's adjusted aggregate leave out requests without synthetic times";
+    const REPORT_AVERAGE_F32: &str =
+        "the reports compute averages in f32, so a large one can print 0.01 ms off";
+    const KNOWN_DEFECTS: [&str; 4] = [
+        ZERO_MINIMUM,
+        REPORT_AGGREGATE_COUNT,
+        ADJUSTED_AGGREGATE,
+        REPORT_AVERAGE_F32,
+    ];
+
+    /// Which known defect, if any, explains a mismatch: a minimum that
+    /// should be 0 with everything else right, a report average a hundredth
+    /// off with everything else right, or a report or console aggregate
+    /// under mitigation.
+    fn known_defect(what: &str, goose: &Figures, reference: &Figures) -> Option<&'static str> {
+        let only_minimum = goose.percentiles == reference.percentiles
+            && goose.maximum == reference.maximum
+            && goose.average == reference.average
+            && reference.minimum == 0
+            && goose.minimum > 0;
+        let only_average_hundredth = what.starts_with("report ")
+            && goose.percentiles == reference.percentiles
+            && goose.minimum == reference.minimum
+            && goose.maximum == reference.maximum
+            && match (
+                goose.average.parse::<f64>(),
+                reference.average.parse::<f64>(),
+            ) {
+                (Ok(a), Ok(b)) => (a - b).abs() < 0.0101,
+                _ => false,
+            };
+        if only_minimum {
+            Some(ZERO_MINIMUM)
+        } else if only_average_hundredth {
+            Some(REPORT_AVERAGE_F32)
+        } else if what == "report Aggregated" {
+            Some(REPORT_AGGREGATE_COUNT)
+        } else if what == "report adjusted aggregate" || what == "console adjusted aggregate" {
+            Some(ADJUSTED_AGGREGATE)
+        } else {
+            None
+        }
+    }
+
+    /// The console's response time and percentile tables, as printed.
+    struct ConsoleTables<'a>(&'a crate::metrics::GooseMetrics);
+
+    impl std::fmt::Display for ConsoleTables<'_> {
+        fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            self.0.fmt_response_times(fmt)?;
+            self.0.fmt_percentiles(fmt)
+        }
+    }
+
+    /// The printed rows of the table with this header, by name, each cell
+    /// trimmed: the measured rows, or with `adjusted` the rows under
+    /// "Adjusted for Coordinated Omission".
+    fn console_rows(text: &str, header: &str, adjusted: bool) -> HashMap<String, Vec<String>> {
+        const ADJUSTED: &str = "Adjusted for Coordinated Omission";
+        let mut rows = HashMap::new();
+        let mut inside = false;
+        // A table prints its header once for measured times and, with
+        // coordinated omission data, once more for adjusted ones.
+        let mut seen = 0;
+        for line in text.lines() {
+            if line.contains(header) {
+                inside = seen == usize::from(adjusted);
+                seen += 1;
+                continue;
+            }
+            if line.contains(ADJUSTED) {
+                if inside {
+                    break;
+                }
+                continue;
+            }
+            if !inside {
+                continue;
+            }
+            if line.trim().is_empty() || line.contains("====") {
+                break;
+            }
+            let cells: Vec<String> = line
+                .split('|')
+                .map(|cell| cell.trim().to_string())
+                .collect();
+            // The next table begins.
+            if line.contains("Slowest page load") || (cells[0] == "Name" && !rows.is_empty()) {
+                break;
+            }
+            if cells.len() < 2 || cells[0].starts_with('-') || cells[0] == "Name" {
+                continue;
+            }
+            rows.insert(cells[0].clone(), cells[1..].to_vec());
+        }
+        rows
+    }
+
+    /// Feeds a dataset through users' batches (`accumulate_request` and
+    /// `process_batch`), as user threads and the metrics processor do, and
+    /// returns the processor and the synthetic times coordinated omission
+    /// mitigation should add for each name.
+    fn audit_run(
+        requests: &[AuditRequest],
+        names: usize,
+        users: usize,
+        stalls: &[(usize, usize, u64, u64)],
+        rng: &mut AuditRng,
+    ) -> (crate::metrics::MetricsProcessor, Vec<Vec<u64>>) {
+        let mut configuration = GooseConfiguration::parse_args_default(&["--no-save"]).unwrap();
+        let co = !stalls.is_empty();
+        if co {
+            configuration.co_mitigation = Some(GooseCoordinatedOmissionMitigation::Average);
+        }
+        let registry: crate::metrics::GooseRequestCounterRegistry =
+            Arc::new(std::sync::Mutex::new(HashMap::new()));
+        let (_metrics_tx, metrics_rx) = flume::unbounded();
+        let (_cmd_tx, cmd_rx) = flume::unbounded();
+        let mut metrics = crate::metrics::GooseMetrics::default();
+        if co {
+            metrics.coordinated_omission_metrics =
+                Some(crate::metrics::CoordinatedOmissionMetrics::new(
+                    GooseCoordinatedOmissionMitigation::Average,
+                ));
+        }
+        let mut processor = crate::metrics::MetricsProcessor::new(
+            metrics_rx,
+            cmd_rx,
+            metrics,
+            crate::graph::GraphData::new(),
+            configuration.clone(),
+            Vec::new(),
+            crate::config::GooseDefaults::default(),
+            registry.clone(),
+            None,
+            Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        );
+        let (mut batching, rx) = batching_users(&configuration, users);
+        for user in batching.iter_mut() {
+            user.request_counters = Some(registry.clone());
+        }
+        let mut limits: Vec<usize> = (0..users).map(|_| 1 + rng.below(100) as usize).collect();
+        let mut synthetic: Vec<Vec<u64>> = vec![Vec::new(); names];
+        let feed = |user: &mut GooseUser,
+                    metric: GooseRequestMetric,
+                    limit: &mut usize,
+                    rng: &mut AuditRng| {
+            let (method, name, success) = (metric.raw.method, metric.name.clone(), metric.success);
+            if metric.error.is_empty() && metric.coordinated_omission_elapsed == 0 {
+                user.accumulate_request(&metric);
+            } else {
+                user.accumulate_individual_request(metric);
+            }
+            user.increment_request_counter(&method, &name, success);
+            if user.batch_item_count >= *limit {
+                user.flush_batch().unwrap();
+                *limit = 1 + rng.below(100) as usize;
+            }
+        };
+        for (i, request) in requests.iter().enumerate() {
+            let mut metric =
+                latency_request_metric(&format!("/audit{}", request.name), 1_000, request.time);
+            if request.failed {
+                metric.success = false;
+                metric.status_code = 500;
+                metric.error = "500 Internal Server Error".to_string();
+            }
+            let user = request.user;
+            feed(&mut batching[user], metric, &mut limits[user], rng);
+            // After some requests, a stall: the copy coordinated omission
+            // mitigation sends for the next request.
+            for &(after, name, elapsed, cadence) in stalls {
+                if after == i {
+                    let r = requests[i].time;
+                    let mut copy = latency_request_metric(&format!("/audit{}", name), 1_000, r);
+                    copy.coordinated_omission_elapsed = elapsed;
+                    copy.user_cadence = cadence;
+                    // Synthetic times as the book documents mitigation:
+                    // the stall minus each missed cadence, less this
+                    // request's own time, while longer than it.
+                    let mut t = elapsed as i64 - cadence as i64 - r as i64;
+                    while t > r as i64 {
+                        synthetic[name].push(t as u64);
+                        t -= cadence as i64;
+                    }
+                    feed(&mut batching[user], copy, &mut limits[user], rng);
+                }
+            }
+        }
+        for user in batching.iter_mut() {
+            user.flush_batch().unwrap();
+        }
+        for batch in received_batches(&rx) {
+            processor.process_batch_for_test(batch);
+        }
+        processor.sync_atomic_counters_for_test();
+        (processor, synthetic)
+    }
+
+    /// For 200 seeded datasets, split across users and batches, every
+    /// percentile Goose prints or reports, and the minimum, maximum and
+    /// average, per request and for all requests, equal an independent
+    /// reference; with coordinated omission mitigation, the adjusted ones
+    /// equal the reference over measured and synthetic times together.
+    #[test]
+    fn whole_run_figures_match_a_reference() {
+        const SIZES: [usize; 6] = [1, 2, 3, 10, 1_000, 100_000];
+        let mut rng = AuditRng(0x713);
+        let mut checked = 0usize;
+        let mut mismatches: Vec<Mismatch> = Vec::new();
+        for dataset in 0..200 {
+            let size = SIZES[dataset % SIZES.len()];
+            let distribution = dataset / SIZES.len() % 3;
+            let users = 1 + rng.below(8) as usize;
+            let names = 1 + rng.below(3) as usize;
+            let requests: Vec<AuditRequest> = (0..size)
+                .map(|_| {
+                    let time = match distribution {
+                        0 => rng.below(60_001),
+                        1 => rng.lognormal(50.0, 1.2),
+                        _ if rng.below(2) == 0 => rng.lognormal(5.0, 0.5),
+                        _ => rng.lognormal(800.0, 0.3),
+                    };
+                    AuditRequest {
+                        user: rng.below(users as u64) as usize,
+                        name: rng.below(names as u64) as usize,
+                        time,
+                        failed: rng.below(50) == 0,
+                    }
+                })
+                .collect();
+            // One dataset in four has stalls that mitigation backfills, each
+            // with the copy of the request it follows.
+            let stalls: Vec<(usize, usize, u64, u64)> = if dataset % 4 == 3 {
+                (0..1 + size / 1_000)
+                    .map(|_| {
+                        let cadence = 20 + rng.below(200);
+                        let after = rng.below(size as u64) as usize;
+                        (
+                            after,
+                            requests[after].name,
+                            cadence * (3 + rng.below(40)),
+                            cadence,
+                        )
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let (processor, synthetic) = audit_run(&requests, names, users, &stalls, &mut rng);
+            let metrics = processor.metrics_for_test();
+
+            // The references: each name's measured times, all of them, and
+            // with stalls, measured and synthetic together.
+            let mut by_name: Vec<Vec<u64>> = vec![Vec::new(); names];
+            for request in &requests {
+                by_name[request.name].push(request.time);
+            }
+            let all: Vec<u64> = requests.iter().map(|r| r.time).collect();
+            let mut adjusted = all.clone();
+            for times in &synthetic {
+                adjusted.extend(times);
+            }
+
+            let check = |what: String,
+                         goose: Figures,
+                         reference: Figures,
+                         mismatches: &mut Vec<Mismatch>| {
+                if goose != reference {
+                    let known = known_defect(&what, &goose, &reference);
+                    mismatches.push(Mismatch {
+                        what: format!(
+                            "dataset {} (size {}, distribution {}, users {}, stalls {}): {}\n  goose     {:?}\n  reference {:?}",
+                            dataset, size, distribution, users, stalls.len(), what, goose, reference
+                        ),
+                        known,
+                    });
+                }
+            };
+
+            // 1. The dashboard snapshot.
+            let snapshot = crate::metrics::dashboard_snapshot::build_dashboard_snapshot(
+                crate::metrics::dashboard_snapshot::DashboardSnapshotInput {
+                    metrics,
+                    series: crate::metrics::dashboard_snapshot::SeriesWindow::empty(),
+                    active_users: users,
+                    maximum_users: users,
+                    target_users: users,
+                    total_users: users,
+                    phase: "maintain".to_string(),
+                    stopping: false,
+                    series_window_secs: 300,
+                    no_status_codes: false,
+                    metrics_disabled: false,
+                    no_transaction_metrics: false,
+                    no_scenario_metrics: false,
+                    save: crate::metrics::dashboard_snapshot::SnapshotSave {
+                        state: "off".to_string(),
+                        reason: None,
+                        dir: "goose-runs".to_string(),
+                        last_run: None,
+                    },
+                    percentiles_over_time: false,
+                    series_keys: std::collections::HashSet::new(),
+                },
+            );
+            let dashboard_percents = [AUDIT_PERCENTS[0], AUDIT_PERCENTS[6], AUDIT_PERCENTS[8]];
+            for row in &snapshot.requests {
+                let name: usize = row.name.trim_start_matches("/audit").parse().unwrap();
+                let reference = Reference::new(&by_name[name]);
+                let p = &row.percentile_ms;
+                check(
+                    format!("dashboard row {}", row.name),
+                    goose_figures(
+                        &[p.p50 as usize, p.p95 as usize, p.p99 as usize],
+                        &dashboard_percents,
+                        row.response_time_min_ms as usize,
+                        row.response_time_max_ms as usize,
+                        format!("{:.6}", row.response_time_avg_ms),
+                    ),
+                    figures(
+                        &reference,
+                        &dashboard_percents,
+                        format!("{:.6}", reference.average()),
+                    ),
+                    &mut mismatches,
+                );
+            }
+            let aggregate = &snapshot.aggregate;
+            let reference = Reference::new(&all);
+            let p = &aggregate.percentile_ms;
+            check(
+                "dashboard aggregate".to_string(),
+                goose_figures(
+                    &[p.p50 as usize, p.p95 as usize, p.p99 as usize],
+                    &dashboard_percents,
+                    aggregate.response_time_min_ms as usize,
+                    aggregate.response_time_max_ms as usize,
+                    format!("{:.6}", aggregate.response_time_avg_ms),
+                ),
+                figures(
+                    &reference,
+                    &dashboard_percents,
+                    format!("{:.6}", reference.average()),
+                ),
+                &mut mismatches,
+            );
+            if let Some(co) = aggregate.co_adjusted.as_ref() {
+                let reference = Reference::new(&adjusted);
+                let p = &co.percentile_ms;
+                let mut goose = goose_figures(
+                    &[p.p50 as usize, p.p95 as usize, p.p99 as usize],
+                    &dashboard_percents,
+                    0,
+                    co.response_time_max_ms as usize,
+                    format!("{:.6}", co.response_time_avg_ms),
+                );
+                let mut expected = figures(
+                    &reference,
+                    &dashboard_percents,
+                    format!("{:.6}", reference.average()),
+                );
+                // The adjusted figures show no minimum.
+                goose.minimum = 0;
+                expected.minimum = 0;
+                check(
+                    "dashboard adjusted aggregate".to_string(),
+                    goose,
+                    expected,
+                    &mut mismatches,
+                );
+            } else if !synthetic.iter().all(Vec::is_empty) {
+                mismatches.push(Mismatch {
+                    what: format!(
+                        "dataset {}: no adjusted aggregate on the dashboard",
+                        dataset
+                    ),
+                    known: None,
+                });
+            }
+
+            // 2. The reports (HTML, Markdown, JSON and PDF share this data).
+            let report = crate::metrics::prepare_data_with_baseline(
+                crate::metrics::AuditReportOptions {
+                    no_transaction_metrics: true,
+                    no_scenario_metrics: true,
+                    no_status_codes: false,
+                },
+                metrics,
+                None,
+            );
+            let report_percents = [
+                AUDIT_PERCENTS[0],
+                AUDIT_PERCENTS[1],
+                AUDIT_PERCENTS[2],
+                AUDIT_PERCENTS[4],
+                AUDIT_PERCENTS[5],
+                AUDIT_PERCENTS[6],
+                AUDIT_PERCENTS[8],
+                AUDIT_PERCENTS[11],
+            ];
+            let report_values = |m: &crate::report::ResponseMetric| -> Vec<usize> {
+                [
+                    &m.percentile_50,
+                    &m.percentile_60,
+                    &m.percentile_70,
+                    &m.percentile_80,
+                    &m.percentile_90,
+                    &m.percentile_95,
+                    &m.percentile_99,
+                    &m.percentile_100,
+                ]
+                .iter()
+                .map(|value| value.value())
+                .collect()
+            };
+            for (response, request) in report.raw_response_metrics.iter().zip(
+                report
+                    .raw_request_metrics
+                    .iter()
+                    .filter(|r| !r.is_breakdown),
+            ) {
+                let reference = if response.name == "Aggregated" {
+                    Reference::new(&all)
+                } else {
+                    let name: usize = response.name.trim_start_matches("/audit").parse().unwrap();
+                    Reference::new(&by_name[name])
+                };
+                check(
+                    format!("report {}", response.name),
+                    goose_figures(
+                        &report_values(response),
+                        &report_percents,
+                        request.response_time_minimum.value(),
+                        request.response_time_maximum.value(),
+                        // As the reports print it.
+                        format!("{:.2}", request.response_time_average.value()),
+                    ),
+                    figures(
+                        &reference,
+                        &report_percents,
+                        format!("{:.2}", reference.average()),
+                    ),
+                    &mut mismatches,
+                );
+            }
+            if let Some(co) = report.co_response_metrics.as_ref() {
+                let aggregated = co.iter().find(|m| m.name == "Aggregated").unwrap();
+                let reference = Reference::new(&adjusted);
+                let mut goose = goose_figures(
+                    &report_values(aggregated),
+                    &report_percents,
+                    0,
+                    0,
+                    String::new(),
+                );
+                let mut expected = figures(&reference, &report_percents, String::new());
+                expected.minimum = 0;
+                expected.maximum = 0;
+                goose.minimum = 0;
+                check(
+                    "report adjusted aggregate".to_string(),
+                    goose,
+                    expected,
+                    &mut mismatches,
+                );
+            }
+
+            // 3. The console tables, as printed.
+            // The percentile table prints with the final metrics.
+            let mut final_metrics = metrics.clone();
+            final_metrics.final_metrics = true;
+            let printed = ConsoleTables(&final_metrics).to_string();
+            let times = console_rows(&printed, "Avg (ms)", false);
+            let percentiles = console_rows(&printed, "50%", false);
+            let console_percents = [
+                AUDIT_PERCENTS[0],
+                AUDIT_PERCENTS[3],
+                AUDIT_PERCENTS[7],
+                AUDIT_PERCENTS[8],
+                AUDIT_PERCENTS[9],
+                AUDIT_PERCENTS[10],
+            ];
+            let mut console_names: Vec<(String, Reference)> = (0..names)
+                .filter(|&name| !by_name[name].is_empty())
+                .map(|name| {
+                    (
+                        format!("GET /audit{}", name),
+                        Reference::new(&by_name[name]),
+                    )
+                })
+                .collect();
+            if console_names.len() > 1 {
+                console_names.push(("Aggregated".to_string(), Reference::new(&all)));
+            }
+            // A cell that is not a number shows as usize::MAX, a mismatch.
+            let number =
+                |cell: &String| cell.replace(',', "").parse::<usize>().unwrap_or(usize::MAX);
+            // The console's average: an f32, two decimals below 1,000.
+            let console_average = |reference: &Reference| {
+                let average = reference.average() as f32;
+                if average < 1000.0 {
+                    format!("{:.2}", average)
+                } else {
+                    format!("{:.0}", average)
+                }
+            };
+            for (name, reference) in &console_names {
+                let (Some(time), Some(percentile)) = (times.get(name), percentiles.get(name))
+                else {
+                    mismatches.push(Mismatch {
+                        what: format!("dataset {}: console has no row {}", dataset, name),
+                        known: None,
+                    });
+                    continue;
+                };
+                let mut values: Vec<usize> = percentile.iter().map(number).collect();
+                // The response time table's median is a 50th percentile too.
+                values.push(number(&time[3]));
+                let mut percents = console_percents.to_vec();
+                percents.push(AUDIT_PERCENTS[0]);
+                check(
+                    format!("console {}", name),
+                    goose_figures(
+                        &values,
+                        &percents,
+                        number(&time[1]),
+                        number(&time[2]),
+                        time[0].clone(),
+                    ),
+                    figures(reference, &percents, console_average(reference)),
+                    &mut mismatches,
+                );
+            }
+            let has_synthetic = !synthetic.iter().all(Vec::is_empty);
+            if has_synthetic && metrics.requests.len() > 1 {
+                let times = console_rows(&printed, "Avg (ms)", true);
+                let percentiles = console_rows(&printed, "50%", true);
+                let reference = Reference::new(&adjusted);
+                match (times.get("Aggregated"), percentiles.get("Aggregated")) {
+                    (Some(time), Some(percentile)) => {
+                        let mut values: Vec<usize> = percentile.iter().map(number).collect();
+                        values.push(number(&time[3]));
+                        let mut percents = console_percents.to_vec();
+                        percents.push(AUDIT_PERCENTS[0]);
+                        // The adjusted table shows a standard deviation where
+                        // the measured one shows the minimum.
+                        let mut expected =
+                            figures(&reference, &percents, console_average(&reference));
+                        expected.minimum = 0;
+                        check(
+                            "console adjusted aggregate".to_string(),
+                            goose_figures(&values, &percents, 0, number(&time[2]), time[0].clone()),
+                            expected,
+                            &mut mismatches,
+                        );
+                    }
+                    _ => mismatches.push(Mismatch {
+                        what: format!(
+                            "dataset {}: console has no adjusted Aggregated row",
+                            dataset
+                        ),
+                        known: None,
+                    }),
+                }
+            }
+            checked += size;
+        }
+        let unknown: Vec<&str> = mismatches
+            .iter()
+            .filter(|m| m.known.is_none())
+            .map(|m| m.what.as_str())
+            .collect();
+        assert!(
+            unknown.is_empty(),
+            "{} mismatches over {} requests:\n{}",
+            unknown.len(),
+            checked,
+            unknown.join("\n")
+        );
+        // The four defects the audit found are fixed on their own branch,
+        // fix-whole-run-percentiles (#744), whose copy of this audit allows
+        // none; until it is merged they are counted here, not failed. Once it
+        // is, `known_defect` and this allowance go.
+        for defect in KNOWN_DEFECTS {
+            let count = mismatches
+                .iter()
+                .filter(|m| m.known == Some(defect))
+                .count();
+            eprintln!("known defect, {} figures: {}", count, defect);
+        }
+    }
 }
