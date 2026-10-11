@@ -1,7 +1,13 @@
 use super::{
     delta::*, merge_times, per_second_calculations, prepare_status_codes, update_max_time,
-    update_min_time, CoMetricsSummary, GooseMetrics, NullableFloat,
+    update_min_time, CoMetricsSummary, GooseMetrics, GooseRequestMetricTimingData, NullableFloat,
 };
+
+/// The mean of these response times, in `f64` so that a large one prints to
+/// the hundredth exactly (NaN without times).
+fn average(data: &GooseRequestMetricTimingData) -> f64 {
+    data.total_time as f64 / data.counter as f64
+}
 use crate::{
     report::{
         get_response_metric, CORequestMetric, ErrorMetric, RequestMetric, ResponseMetric,
@@ -18,13 +24,13 @@ use std::hash::Hash;
 use std::io::BufReader;
 use std::path::Path;
 
-/// Custom deserializer for f32 values that converts JSON null to f32::NAN
-fn deserialize_nullable_f32<'de, D>(deserializer: D) -> Result<f32, D::Error>
+/// Custom deserializer for f64 values that converts JSON null to f64::NAN
+fn deserialize_nullable_f64<'de, D>(deserializer: D) -> Result<f64, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let opt: Option<f32> = Option::deserialize(deserializer)?;
-    Ok(opt.unwrap_or(f32::NAN))
+    let opt: Option<f64> = Option::deserialize(deserializer)?;
+    Ok(opt.unwrap_or(f64::NAN))
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -67,9 +73,8 @@ pub fn prepare_data_with_baseline<'a>(
 }
 
 struct RawIntermediate {
-    raw_aggregate_response_time_counter: usize,
-    raw_aggregate_response_time_minimum: usize,
-    raw_aggregate_total_count: usize,
+    /// Every request's measured times together.
+    raw_aggregate: GooseRequestMetricTimingData,
 }
 
 struct Prepare<'m> {
@@ -122,10 +127,10 @@ impl<'m> Prepare<'m> {
         let mut raw_response_metrics = vec![];
         let mut raw_aggregate_total_count = 0;
         let mut raw_aggregate_fail_count = 0;
-        let mut raw_aggregate_response_time_counter: usize = 0;
-        let mut raw_aggregate_response_time_minimum: usize = 0;
-        let mut raw_aggregate_response_time_maximum: usize = 0;
-        let mut raw_aggregate_response_times: BTreeMap<usize, usize> = BTreeMap::new();
+        // Every request's measured times together. Its count can be lower
+        // than the requests counted: with coordinated omission mitigation,
+        // those include the synthetic requests, which have no measured time.
+        let mut raw_aggregate = GooseRequestMetricTimingData::new(None);
 
         for (request_key, request) in self.metrics.requests.iter().sorted() {
             let method = request.method_label();
@@ -147,9 +152,7 @@ impl<'m> Prepare<'m> {
                 name: name.to_string(),
                 number_of_requests: total_request_count.into(),
                 number_of_failures: request.fail_count.into(),
-                response_time_average: (request.raw_data.total_time as f32
-                    / request.raw_data.counter as f32)
-                    .into(),
+                response_time_average: average(&request.raw_data).into(),
                 response_time_minimum: request.raw_data.minimum_time.into(),
                 response_time_maximum: request.raw_data.maximum_time.into(),
                 requests_per_second: requests_per_second.into(),
@@ -188,17 +191,7 @@ impl<'m> Prepare<'m> {
             // Collect aggregated request and response metrics.
             raw_aggregate_total_count += total_request_count;
             raw_aggregate_fail_count += request.fail_count;
-            raw_aggregate_response_time_counter += request.raw_data.total_time;
-            raw_aggregate_response_time_minimum = update_min_time(
-                raw_aggregate_response_time_minimum,
-                request.raw_data.minimum_time,
-            );
-            raw_aggregate_response_time_maximum = update_max_time(
-                raw_aggregate_response_time_maximum,
-                request.raw_data.maximum_time,
-            );
-            raw_aggregate_response_times =
-                merge_times(raw_aggregate_response_times, &request.raw_data.times);
+            raw_aggregate.merge(&request.raw_data);
         }
 
         // Prepare aggregate per-request metrics.
@@ -213,11 +206,9 @@ impl<'m> Prepare<'m> {
             name: "Aggregated".to_string(),
             number_of_requests: raw_aggregate_total_count.into(),
             number_of_failures: raw_aggregate_fail_count.into(),
-            response_time_average: (raw_aggregate_response_time_counter as f32
-                / raw_aggregate_total_count as f32)
-                .into(),
-            response_time_minimum: raw_aggregate_response_time_minimum.into(),
-            response_time_maximum: raw_aggregate_response_time_maximum.into(),
+            response_time_average: average(&raw_aggregate).into(),
+            response_time_minimum: raw_aggregate.minimum_time.into(),
+            response_time_maximum: raw_aggregate.maximum_time.into(),
             requests_per_second: raw_aggregate_requests_per_second.into(),
             failures_per_second: raw_aggregate_failures_per_second.into(),
             is_breakdown: false,
@@ -227,20 +218,16 @@ impl<'m> Prepare<'m> {
         raw_response_metrics.push(get_response_metric(
             "",
             "Aggregated",
-            &raw_aggregate_response_times,
-            raw_aggregate_total_count,
-            raw_aggregate_response_time_minimum,
-            raw_aggregate_response_time_maximum,
+            &raw_aggregate.times,
+            raw_aggregate.counter,
+            raw_aggregate.minimum_time,
+            raw_aggregate.maximum_time,
         ));
 
         (
             raw_request_metrics,
             raw_response_metrics,
-            RawIntermediate {
-                raw_aggregate_response_time_counter,
-                raw_aggregate_response_time_minimum,
-                raw_aggregate_total_count,
-            },
+            RawIntermediate { raw_aggregate },
         )
     }
 
@@ -254,12 +241,18 @@ impl<'m> Prepare<'m> {
 
         let mut co_request_metrics = vec![];
         let mut co_response_metrics = vec![];
-        let mut co_aggregate_total_count = 0;
-        let mut co_aggregate_response_time_counter: usize = 0;
-        let mut co_aggregate_response_time_maximum: usize = 0;
-        let mut co_aggregate_response_times: BTreeMap<usize, usize> = BTreeMap::new();
+        // Every request's adjusted times together: its measured times plus
+        // the synthetic ones, or only its measured times when mitigation
+        // added none to it.
+        let mut co_aggregate = GooseRequestMetricTimingData::new(None);
 
         for (request_key, request) in self.metrics.requests.iter().sorted() {
+            co_aggregate.merge(
+                request
+                    .coordinated_omission_data
+                    .as_ref()
+                    .unwrap_or(&request.raw_data),
+            );
             if let Some(coordinated_omission_data) = request.coordinated_omission_data.as_ref() {
                 let method = request.method_label();
                 // The request_key is "{method} {name}", so by stripping the "{method} "
@@ -268,18 +261,16 @@ impl<'m> Prepare<'m> {
                     .strip_prefix(&format!("{} ", method))
                     .unwrap()
                     .to_string();
-                let raw_average =
-                    request.raw_data.total_time as f32 / request.raw_data.counter as f32;
-                let co_average = coordinated_omission_data.total_time as f32
-                    / coordinated_omission_data.counter as f32;
+                let raw_average = average(&request.raw_data);
+                let co_average = average(coordinated_omission_data);
                 // Prepare per-request metrics.
                 co_request_metrics.push(CORequestMetric {
                     method: method.to_string(),
                     name: name.to_string(),
                     response_time_average: co_average.into(),
                     response_time_standard_deviation: util::standard_deviation(
-                        raw_average,
-                        co_average,
+                        raw_average as f32,
+                        co_average as f32,
                     )
                     .into(),
                     response_time_maximum: coordinated_omission_data.maximum_time.into(),
@@ -294,44 +285,30 @@ impl<'m> Prepare<'m> {
                     coordinated_omission_data.minimum_time,
                     coordinated_omission_data.maximum_time,
                 ));
-
-                // Collect aggregated request and response metrics.
-                co_aggregate_response_time_counter += coordinated_omission_data.total_time;
-                co_aggregate_response_time_maximum = update_max_time(
-                    co_aggregate_response_time_maximum,
-                    coordinated_omission_data.maximum_time,
-                );
-                co_aggregate_response_times = merge_times(
-                    co_aggregate_response_times,
-                    &coordinated_omission_data.times,
-                );
             }
-            let total_request_count = request.success_count + request.fail_count;
-            co_aggregate_total_count += total_request_count;
         }
-        let co_average =
-            co_aggregate_response_time_counter as f32 / co_aggregate_total_count as f32;
-        let raw_average = intermediate.raw_aggregate_response_time_counter as f32
-            / intermediate.raw_aggregate_total_count as f32;
+        let co_average = average(&co_aggregate);
+        let raw_average = average(&intermediate.raw_aggregate);
         co_request_metrics.push(CORequestMetric {
             method: "".to_string(),
             name: "Aggregated".to_string(),
-            response_time_average: (co_aggregate_response_time_counter as f32
-                / co_aggregate_total_count as f32)
-                .into(),
-            response_time_standard_deviation: util::standard_deviation(raw_average, co_average)
-                .into(),
-            response_time_maximum: co_aggregate_response_time_maximum.into(),
+            response_time_average: co_average.into(),
+            response_time_standard_deviation: util::standard_deviation(
+                raw_average as f32,
+                co_average as f32,
+            )
+            .into(),
+            response_time_maximum: co_aggregate.maximum_time.into(),
         });
 
         // Prepare aggregate per-response metrics.
         co_response_metrics.push(get_response_metric(
             "",
             "Aggregated",
-            &co_aggregate_response_times,
-            co_aggregate_total_count,
-            intermediate.raw_aggregate_response_time_minimum,
-            co_aggregate_response_time_maximum,
+            &co_aggregate.times,
+            co_aggregate.counter,
+            co_aggregate.minimum_time,
+            co_aggregate.maximum_time,
         ));
 
         (Some(co_request_metrics), Some(co_response_metrics))
@@ -417,8 +394,7 @@ impl<'m> Prepare<'m> {
             number_of_requests: aggregate_total_count.into(),
             number_of_failures: aggregate_fail_count.into(),
             response_time_average: Some(
-                (intermediate.raw_aggregate_response_time_counter as f32
-                    / aggregate_total_count as f32)
+                (intermediate.raw_aggregate.total_time as f32 / aggregate_total_count as f32)
                     .into(),
             ),
             response_time_minimum: aggregate_transaction_time_minimum.into(),
@@ -798,14 +774,14 @@ struct BaselineRequestMetric {
     pub name: String,
     pub number_of_requests: usize,
     pub number_of_failures: usize,
-    #[serde(deserialize_with = "deserialize_nullable_f32")]
-    pub response_time_average: f32,
+    #[serde(deserialize_with = "deserialize_nullable_f64")]
+    pub response_time_average: f64,
     pub response_time_minimum: usize,
     pub response_time_maximum: usize,
-    #[serde(deserialize_with = "deserialize_nullable_f32")]
-    pub requests_per_second: f32,
-    #[serde(deserialize_with = "deserialize_nullable_f32")]
-    pub failures_per_second: f32,
+    #[serde(deserialize_with = "deserialize_nullable_f64")]
+    pub requests_per_second: f64,
+    #[serde(deserialize_with = "deserialize_nullable_f64")]
+    pub failures_per_second: f64,
     #[serde(default)]
     pub is_breakdown: bool,
 }
@@ -864,8 +840,8 @@ impl From<BaselineResponseMetric> for ResponseMetric {
 struct BaselineCORequestMetric {
     pub method: String,
     pub name: String,
-    pub response_time_average: f32,
-    pub response_time_standard_deviation: f32,
+    pub response_time_average: f64,
+    pub response_time_standard_deviation: f64,
     pub response_time_maximum: usize,
 }
 
@@ -891,11 +867,11 @@ struct BaselineTransactionMetric {
     pub name: String,
     pub number_of_requests: usize,
     pub number_of_failures: usize,
-    pub response_time_average: Option<f32>,
+    pub response_time_average: Option<f64>,
     pub response_time_minimum: usize,
     pub response_time_maximum: usize,
-    pub requests_per_second: Option<f32>,
-    pub failures_per_second: Option<f32>,
+    pub requests_per_second: Option<f64>,
+    pub failures_per_second: Option<f64>,
 }
 
 impl From<BaselineTransactionMetric> for TransactionMetric {
@@ -927,11 +903,11 @@ struct BaselineScenarioMetric {
     pub name: String,
     pub users: usize,
     pub count: usize,
-    pub response_time_average: Option<f32>,
+    pub response_time_average: Option<f64>,
     pub response_time_minimum: usize,
     pub response_time_maximum: usize,
-    pub count_per_second: f32,
-    pub iterations: Option<f32>,
+    pub count_per_second: f64,
+    pub iterations: Option<f64>,
 }
 
 impl From<BaselineScenarioMetric> for ScenarioMetric {
@@ -941,12 +917,12 @@ impl From<BaselineScenarioMetric> for ScenarioMetric {
             users: Value::Plain(baseline.users),
             count: Value::Plain(baseline.count),
             response_time_average: Value::Plain(NullableFloat(
-                baseline.response_time_average.unwrap_or(f32::NAN),
+                baseline.response_time_average.unwrap_or(f64::NAN),
             )),
             response_time_minimum: Value::Plain(baseline.response_time_minimum),
             response_time_maximum: Value::Plain(baseline.response_time_maximum),
             count_per_second: Value::Plain(NullableFloat(baseline.count_per_second)),
-            iterations: Value::Plain(NullableFloat(baseline.iterations.unwrap_or(f32::NAN))),
+            iterations: Value::Plain(NullableFloat(baseline.iterations.unwrap_or(f64::NAN))),
         }
     }
 }
