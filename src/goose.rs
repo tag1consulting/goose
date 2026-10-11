@@ -2177,11 +2177,11 @@ impl GooseUser {
                 if request.coordinated_omission_elapsed > 0 || !request.error.is_empty() {
                     // CO-affected and failed requests need per-request processing.
                     self.accumulate_individual_request(request);
+                } else if self.record_graph_data {
+                    self.flush_batch_outside_seconds(request.elapsed)?;
+                    self.accumulate_request::<true>(&request);
                 } else {
-                    if self.record_graph_data {
-                        self.flush_batch_outside_seconds(request.elapsed)?;
-                    }
-                    self.accumulate_request(&request);
+                    self.accumulate_request::<false>(&request);
                 }
                 if self.batch_start.is_none() {
                     self.batch_start = Some(std::time::Instant::now());
@@ -2322,7 +2322,10 @@ impl GooseUser {
     /// elapsed time (`flush_pending_request` routes all other requests to
     /// `accumulate_individual_request`). Consequently, `request_metric.success`
     /// is always `true` and `request_metric.error` is always empty here.
-    fn accumulate_request(&mut self, request_metric: &GooseRequestMetric) {
+    ///
+    /// `BY_SECOND` is [`Self::record_graph_data`], checked once by the caller,
+    /// so a run that keeps no per second graphs does only what it always did.
+    fn accumulate_request<const BY_SECOND: bool>(&mut self, request_metric: &GooseRequestMetric) {
         debug_assert!(
             request_metric.success,
             "accumulate_request called with unsuccessful request"
@@ -2349,7 +2352,7 @@ impl GooseUser {
         // graphs, a request from the second after the batch's own goes in
         // its entry's `next_second` timing data instead of `raw_data`.
         // `flush_pending_request` has already sent a batch it can not join.
-        let next_second = self.record_graph_data && {
+        let next_second = BY_SECOND && {
             let second = (request_metric.elapsed / 1000) as usize;
             match batch.second {
                 None => {
@@ -2396,7 +2399,7 @@ impl GooseUser {
         if next_second {
             entry
                 .next_second
-                .get_or_insert_with(GooseRequestMetricTimingData::default)
+                .get_or_insert_with(Box::default)
                 .record_time(request_metric.response_time);
         } else {
             entry.raw_data.record_time(request_metric.response_time);
@@ -4873,7 +4876,11 @@ mod tests {
                 GooseUser::single("http://localhost:8080".parse().unwrap(), &configuration)
                     .unwrap();
             user.metrics_batch = Some(GooseMetricBatch::new(0));
-            user.accumulate_request(&metric);
+            if user.record_graph_data {
+                user.accumulate_request::<true>(&metric);
+            } else {
+                user.accumulate_request::<false>(&metric);
+            }
             let batch = user.metrics_batch.take().unwrap();
             let mut expected = GooseRequestMetricTimingData::new(None);
             expected.record_time(77);
@@ -5862,8 +5869,10 @@ mod tests {
             if metric.error.is_empty() && metric.coordinated_omission_elapsed == 0 {
                 if user.record_graph_data {
                     user.flush_batch_outside_seconds(metric.elapsed).unwrap();
+                    user.accumulate_request::<true>(&metric);
+                } else {
+                    user.accumulate_request::<false>(&metric);
                 }
-                user.accumulate_request(&metric);
             } else {
                 user.accumulate_individual_request(metric);
             }

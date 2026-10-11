@@ -192,7 +192,8 @@ pub(crate) struct RequestBatchEntry {
     /// Timing data of requests that started in the second after the batch's,
     /// created by the first of them. Only when per second graphs are kept.
     #[serde(default)]
-    pub(crate) next_second: Option<GooseRequestMetricTimingData>,
+    /// Boxed, so an entry is only a pointer larger when none is kept.
+    pub(crate) next_second: Option<Box<GooseRequestMetricTimingData>>,
     /// Per-status-code occurrence counts.
     pub(crate) status_code_counts: HashMap<u16, usize>,
     /// Per-status-code timing summaries (count, total, min, max).
@@ -3693,7 +3694,7 @@ impl MetricsProcessor {
                 let latency = self.graph_data.records_latency();
                 for (key, entry) in &batch.requests {
                     let data = &entry.raw_data;
-                    let next = entry.next_second.as_ref();
+                    let next = entry.next_second.as_deref();
                     // One lookup by name counts the requests in both seconds
                     // and finds the request's latency ring.
                     self.graph_data
