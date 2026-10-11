@@ -2414,14 +2414,7 @@ impl GooseUser {
                 .status_code_timings
                 .entry(request_metric.status_code)
                 .or_insert_with(StatusCodeTimingSummary::default);
-            summary.count += 1;
-            summary.total_time += time;
-            if time > 0 && (summary.min_time == 0 || time < summary.min_time) {
-                summary.min_time = time;
-            }
-            if summary.max_time < time {
-                summary.max_time = time;
-            }
+            summary.record(time);
         }
 
         self.batch_item_count += 1;
@@ -5038,12 +5031,24 @@ mod tests {
         configuration: &GooseConfiguration,
         count: usize,
     ) -> (Vec<GooseUser>, flume::Receiver<GooseMetric>) {
+        // Building a client loads the root certificates, which on Linux dominated the audit,
+        // and the audit never sends a request, so every user shares one client.
+        static CLIENT: std::sync::OnceLock<Client> = std::sync::OnceLock::new();
+        let client = CLIENT.get_or_init(Client::new);
         let (tx, rx) = flume::unbounded();
         let users = (0..count)
             .map(|_| {
-                let mut user =
-                    GooseUser::single("http://localhost:8080".parse().unwrap(), configuration)
-                        .unwrap();
+                let mut user = GooseUser::new(
+                    0,
+                    Arc::from(""),
+                    "http://localhost:8080".parse().unwrap(),
+                    configuration,
+                    0,
+                    Some(client.clone()),
+                )
+                .unwrap();
+                user.weighted_users_index = 0;
+                user.is_throttled = false;
                 user.metrics_channel = Some(tx.clone());
                 user.metrics_batch = Some(GooseMetricBatch::new(0));
                 user
@@ -5595,56 +5600,6 @@ mod tests {
     /// One figure set that differs from the reference.
     struct Mismatch {
         what: String,
-        /// Which defect fixed on fix-whole-run-percentiles (#744) explains it.
-        known: Option<&'static str>,
-    }
-
-    const ZERO_MINIMUM: &str = "the minimum ignores 0 ms responses";
-    const REPORT_AGGREGATE_COUNT: &str =
-        "with mitigation the report's aggregate divides by every request counted, synthetic ones included";
-    const ADJUSTED_AGGREGATE: &str =
-        "the report's and console's adjusted aggregate leave out requests without synthetic times";
-    const REPORT_AVERAGE_F32: &str =
-        "the reports compute averages in f32, so a large one can print 0.01 ms off";
-    const KNOWN_DEFECTS: [&str; 4] = [
-        ZERO_MINIMUM,
-        REPORT_AGGREGATE_COUNT,
-        ADJUSTED_AGGREGATE,
-        REPORT_AVERAGE_F32,
-    ];
-
-    /// Which known defect, if any, explains a mismatch: a minimum that
-    /// should be 0 with everything else right, a report average a hundredth
-    /// off with everything else right, or a report or console aggregate
-    /// under mitigation.
-    fn known_defect(what: &str, goose: &Figures, reference: &Figures) -> Option<&'static str> {
-        let only_minimum = goose.percentiles == reference.percentiles
-            && goose.maximum == reference.maximum
-            && goose.average == reference.average
-            && reference.minimum == 0
-            && goose.minimum > 0;
-        let only_average_hundredth = what.starts_with("report ")
-            && goose.percentiles == reference.percentiles
-            && goose.minimum == reference.minimum
-            && goose.maximum == reference.maximum
-            && match (
-                goose.average.parse::<f64>(),
-                reference.average.parse::<f64>(),
-            ) {
-                (Ok(a), Ok(b)) => (a - b).abs() < 0.0101,
-                _ => false,
-            };
-        if only_minimum {
-            Some(ZERO_MINIMUM)
-        } else if only_average_hundredth {
-            Some(REPORT_AVERAGE_F32)
-        } else if what == "report Aggregated" {
-            Some(REPORT_AGGREGATE_COUNT)
-        } else if what == "report adjusted aggregate" || what == "console adjusted aggregate" {
-            Some(ADJUSTED_AGGREGATE)
-        } else {
-            None
-        }
     }
 
     /// The console's response time and percentile tables, as printed.
@@ -5802,20 +5757,36 @@ mod tests {
         (processor, synthetic)
     }
 
-    /// For 200 seeded datasets, split across users and batches, every
-    /// percentile Goose prints or reports, and the minimum, maximum and
-    /// average, per request and for all requests, equal an independent
-    /// reference; with coordinated omission mitigation, the adjusted ones
-    /// equal the reference over measured and synthetic times together.
+    /// For 200 seeded datasets of up to 1,000 requests, split across users
+    /// and batches, every percentile Goose prints or reports, and the
+    /// minimum, maximum and average, per request and for all requests, equal
+    /// an independent reference; with coordinated omission mitigation, the
+    /// adjusted ones equal the reference over measured and synthetic times
+    /// together.
     #[test]
     fn whole_run_figures_match_a_reference() {
-        const SIZES: [usize; 6] = [1, 2, 3, 10, 1_000, 100_000];
+        audit_whole_run(&[1, 2, 3, 10, 1_000], 200);
+    }
+
+    /// The same audit with 100,000 request datasets added: 200 datasets,
+    /// 3,333,531 requests. Too slow for every `cargo test`; run it with
+    /// `cargo test --release --lib whole_run_figures_match_a_reference_full -- --ignored`.
+    #[test]
+    #[ignore]
+    fn whole_run_figures_match_a_reference_full() {
+        audit_whole_run(&[1, 2, 3, 10, 1_000, 100_000], 200);
+    }
+
+    /// Runs `datasets` seeded datasets, cycling through `sizes`, and checks
+    /// every whole run figure on the dashboard, in the reports and on the
+    /// console against an independent reference.
+    fn audit_whole_run(sizes: &[usize], datasets: usize) {
         let mut rng = AuditRng(0x713);
         let mut checked = 0usize;
         let mut mismatches: Vec<Mismatch> = Vec::new();
-        for dataset in 0..200 {
-            let size = SIZES[dataset % SIZES.len()];
-            let distribution = dataset / SIZES.len() % 3;
+        for dataset in 0..datasets {
+            let size = sizes[dataset % sizes.len()];
+            let distribution = dataset / sizes.len() % 3;
             let users = 1 + rng.below(8) as usize;
             let names = 1 + rng.below(3) as usize;
             let requests: Vec<AuditRequest> = (0..size)
@@ -5872,13 +5843,11 @@ mod tests {
                          reference: Figures,
                          mismatches: &mut Vec<Mismatch>| {
                 if goose != reference {
-                    let known = known_defect(&what, &goose, &reference);
                     mismatches.push(Mismatch {
                         what: format!(
                             "dataset {} (size {}, distribution {}, users {}, stalls {}): {}\n  goose     {:?}\n  reference {:?}",
                             dataset, size, distribution, users, stalls.len(), what, goose, reference
                         ),
-                        known,
                     });
                 }
             };
@@ -5980,7 +5949,6 @@ mod tests {
                         "dataset {}: no adjusted aggregate on the dashboard",
                         dataset
                     ),
-                    known: None,
                 });
             }
 
@@ -6115,7 +6083,6 @@ mod tests {
                 else {
                     mismatches.push(Mismatch {
                         what: format!("dataset {}: console has no row {}", dataset, name),
-                        known: None,
                     });
                     continue;
                 };
@@ -6165,34 +6132,21 @@ mod tests {
                             "dataset {}: console has no adjusted Aggregated row",
                             dataset
                         ),
-                        known: None,
                     }),
                 }
             }
             checked += size;
         }
-        let unknown: Vec<&str> = mismatches
-            .iter()
-            .filter(|m| m.known.is_none())
-            .map(|m| m.what.as_str())
-            .collect();
         assert!(
-            unknown.is_empty(),
+            mismatches.is_empty(),
             "{} mismatches over {} requests:\n{}",
-            unknown.len(),
+            mismatches.len(),
             checked,
-            unknown.join("\n")
-        );
-        // The four defects the audit found are fixed on their own branch,
-        // fix-whole-run-percentiles (#744), whose copy of this audit allows
-        // none; until it is merged they are counted here, not failed. Once it
-        // is, `known_defect` and this allowance go.
-        for defect in KNOWN_DEFECTS {
-            let count = mismatches
+            mismatches
                 .iter()
-                .filter(|m| m.known == Some(defect))
-                .count();
-            eprintln!("known defect, {} figures: {}", count, defect);
-        }
+                .map(|m| m.what.as_str())
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
     }
 }

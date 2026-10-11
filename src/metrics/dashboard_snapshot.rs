@@ -4,9 +4,9 @@
 //! and later by the HTTP dashboard server.
 
 use super::{
-    calculate_response_time_percentile, merge_times, per_second_calculations, update_max_time,
-    update_min_time, GooseErrorMetricAggregate, GooseMetrics, GooseRequestMetricAggregate,
-    GooseRequestMetricTimingData, ScenarioMetricAggregate, TransactionMetricAggregate,
+    calculate_response_time_percentile, per_second_calculations, GooseErrorMetricAggregate,
+    GooseMetrics, GooseRequestMetricAggregate, GooseRequestMetricTimingData,
+    ScenarioMetricAggregate, TransactionMetricAggregate,
 };
 use chrono::prelude::*;
 use serde::Serialize;
@@ -464,11 +464,8 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
 
     let mut aggregate_total_count: usize = 0;
     let mut aggregate_fail_count: usize = 0;
-    let mut aggregate_response_time_counter: usize = 0;
-    let mut aggregate_response_time_total: usize = 0;
-    let mut aggregate_min: usize = 0;
-    let mut aggregate_max: usize = 0;
-    let mut aggregate_times: BTreeMap<usize, usize> = BTreeMap::new();
+    // Every request's measured times together.
+    let mut aggregate = GooseRequestMetricTimingData::new(None);
 
     let co_active = input
         .metrics
@@ -478,8 +475,7 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
         .unwrap_or(false);
     // Adjusted times across every request, built only while mitigation has
     // events. A request without adjusted data contributes its measured times,
-    // which for it are the same thing. This deliberately differs from the
-    // report's adjusted aggregate, which leaves such requests out.
+    // which for it are the same thing, as in the console and the reports.
     let mut co_aggregate: Option<GooseRequestMetricTimingData> =
         co_active.then(|| GooseRequestMetricTimingData::new(None));
 
@@ -492,11 +488,7 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
         let total_count = request.success_count + request.fail_count;
         aggregate_total_count += total_count;
         aggregate_fail_count += request.fail_count;
-        aggregate_response_time_counter += request.raw_data.counter;
-        aggregate_response_time_total += request.raw_data.total_time;
-        aggregate_min = update_min_time(aggregate_min, request.raw_data.minimum_time);
-        aggregate_max = update_max_time(aggregate_max, request.raw_data.maximum_time);
-        aggregate_times = merge_times(aggregate_times, &request.raw_data.times);
+        aggregate.merge(&request.raw_data);
         if let Some(co_aggregate) = co_aggregate.as_mut() {
             co_aggregate.merge(
                 request
@@ -574,8 +566,8 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
     } else {
         0.0
     };
-    let response_time_avg_ms = if aggregate_response_time_counter > 0 {
-        aggregate_response_time_total as f64 / aggregate_response_time_counter as f64
+    let response_time_avg_ms = if aggregate.counter > 0 {
+        aggregate.total_time as f64 / aggregate.counter as f64
     } else {
         0.0
     };
@@ -602,13 +594,13 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
             failures_per_second: fps as f64,
             failure_rate,
             response_time_avg_ms,
-            response_time_min_ms: aggregate_min as u64,
-            response_time_max_ms: aggregate_max as u64,
+            response_time_min_ms: aggregate.minimum_time as u64,
+            response_time_max_ms: aggregate.maximum_time as u64,
             percentile_ms: Percentiles::from_times(
-                &aggregate_times,
-                aggregate_response_time_counter,
-                aggregate_min,
-                aggregate_max,
+                &aggregate.times,
+                aggregate.counter,
+                aggregate.minimum_time,
+                aggregate.maximum_time,
             ),
             co_active,
             co_adjusted: co_aggregate.as_ref().map(CoAdjusted::from_timing_data),

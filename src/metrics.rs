@@ -978,14 +978,7 @@ impl GooseRequestMetricAggregate {
     pub fn record_status_code_time(&mut self, status_code: u16, time_elapsed: u64) {
         let time = time_elapsed as usize;
         let summary = self.status_code_timings.entry(status_code).or_default();
-        summary.count += 1;
-        summary.total_time += time;
-        if time > 0 && (summary.min_time == 0 || time < summary.min_time) {
-            summary.min_time = time;
-        }
-        if time > summary.max_time {
-            summary.max_time = time;
-        }
+        summary.record(time);
     }
 
     /// Returns per-status-code breakdown data if multiple status codes were recorded.
@@ -1031,8 +1024,37 @@ impl GooseRequestMetricAggregate {
 pub struct StatusCodeTimingSummary {
     pub count: usize,
     pub total_time: usize,
+    /// The fastest response, 0 before any.
     pub min_time: usize,
     pub max_time: usize,
+}
+
+impl StatusCodeTimingSummary {
+    /// Count one response that took `time` ms. The count, not a minimum of
+    /// 0, says whether there is a time yet: a response under a millisecond
+    /// is a minimum of 0.
+    pub(crate) fn record(&mut self, time: usize) {
+        if self.count == 0 || time < self.min_time {
+            self.min_time = time;
+        }
+        if time > self.max_time {
+            self.max_time = time;
+        }
+        self.count += 1;
+        self.total_time += time;
+    }
+
+    /// Add another summary of the same status code's responses.
+    pub(crate) fn merge(&mut self, other: &StatusCodeTimingSummary) {
+        if other.count > 0 && (self.count == 0 || other.min_time < self.min_time) {
+            self.min_time = other.min_time;
+        }
+        if other.max_time > self.max_time {
+            self.max_time = other.max_time;
+        }
+        self.count += other.count;
+        self.total_time += other.total_time;
+    }
 }
 
 /// Computed breakdown data for a single status code, used for display.
@@ -1142,18 +1164,18 @@ impl GooseRequestMetricTimingData {
     }
 
     /// Merge another set of timing data into this one: combine the buckets and
-    /// update the minimum (ignoring 0), maximum, total and counter.
+    /// update the minimum, maximum, total and counter.
     pub(crate) fn merge(&mut self, other: &GooseRequestMetricTimingData) {
         for (time_bucket, count) in &other.times {
             *self.times.entry(*time_bucket).or_insert(0) += count;
         }
-        self.counter += other.counter;
-        self.total_time += other.total_time;
-        if other.minimum_time > 0
-            && (self.minimum_time == 0 || other.minimum_time < self.minimum_time)
-        {
+        // The counters, not a minimum of 0, say whether there are times yet:
+        // a response under a millisecond is a minimum of 0.
+        if other.counter > 0 && (self.counter == 0 || other.minimum_time < self.minimum_time) {
             self.minimum_time = other.minimum_time;
         }
+        self.counter += other.counter;
+        self.total_time += other.total_time;
         if other.maximum_time > self.maximum_time {
             self.maximum_time = other.maximum_time;
         }
@@ -1164,8 +1186,10 @@ impl GooseRequestMetricTimingData {
         // Perform this conversin only once, then re-use throughout this funciton.
         let time = time_elapsed as usize;
 
-        // Update minimum if this one is fastest yet.
-        if time > 0 && (self.minimum_time == 0 || time < self.minimum_time) {
+        // Update minimum if this one is the first or the fastest yet. The
+        // counter, not a minimum of 0, says whether there is a time yet: a
+        // response under a millisecond is a minimum of 0.
+        if self.counter == 0 || time < self.minimum_time {
             self.minimum_time = time;
         }
 
@@ -2309,11 +2333,8 @@ impl GooseMetrics {
             return Ok(());
         }
 
-        let mut aggregate_raw_times: BTreeMap<usize, usize> = BTreeMap::new();
-        let mut aggregate_raw_total_time: usize = 0;
-        let mut aggregate_raw_counter: usize = 0;
-        let mut aggregate_raw_min_time: usize = 0;
-        let mut aggregate_raw_max_time: usize = 0;
+        // Every request's measured times together.
+        let mut aggregate_raw = GooseRequestMetricTimingData::new(None);
         writeln!(
             fmt,
             " ------------------------------------------------------------------------------"
@@ -2342,17 +2363,7 @@ impl GooseMetrics {
             let raw_average_precision = determine_precision(raw_average);
 
             // Merge in all times from this request into an aggregate.
-            aggregate_raw_times = merge_times(aggregate_raw_times, &request.raw_data.times);
-            // Increment total response time counter.
-            aggregate_raw_total_time += &request.raw_data.total_time;
-            // Increment counter tracking individual response times seen.
-            aggregate_raw_counter += &request.raw_data.counter;
-            // If user had new fastest response time, update global fastest response time.
-            aggregate_raw_min_time =
-                update_min_time(aggregate_raw_min_time, request.raw_data.minimum_time);
-            // If user had new slowest response time, update global slowest response time.
-            aggregate_raw_max_time =
-                update_max_time(aggregate_raw_max_time, request.raw_data.maximum_time);
+            aggregate_raw.merge(&request.raw_data);
 
             writeln!(
                 fmt,
@@ -2390,9 +2401,9 @@ impl GooseMetrics {
             }
         }
 
-        let raw_average = match aggregate_raw_counter {
+        let raw_average = match aggregate_raw.counter {
             0 => 0.0,
-            _ => aggregate_raw_total_time as f32 / aggregate_raw_counter as f32,
+            _ => aggregate_raw.total_time as f32 / aggregate_raw.counter as f32,
         };
         let raw_average_precision = determine_precision(raw_average);
 
@@ -2407,13 +2418,13 @@ impl GooseMetrics {
                 " {:<24} | {:>11.avg_precision$} | {:>10} | {:>11} | {:>10}",
                 "Aggregated",
                 raw_average,
-                format_number(aggregate_raw_min_time),
-                format_number(aggregate_raw_max_time),
+                format_number(aggregate_raw.minimum_time),
+                format_number(aggregate_raw.maximum_time),
                 format_number(util::median(
-                    &aggregate_raw_times,
-                    aggregate_raw_counter,
-                    aggregate_raw_min_time,
-                    aggregate_raw_max_time
+                    &aggregate_raw.times,
+                    aggregate_raw.counter,
+                    aggregate_raw.minimum_time,
+                    aggregate_raw.maximum_time
                 )),
                 avg_precision = raw_average_precision,
             )?;
@@ -2430,11 +2441,10 @@ impl GooseMetrics {
         )?;
         writeln!(fmt, " Adjusted for Coordinated Omission:")?;
 
-        let mut aggregate_co_times: BTreeMap<usize, usize> = BTreeMap::new();
-        let mut aggregate_co_total_time: usize = 0;
-        let mut aggregate_co_counter: usize = 0;
-        let mut aggregate_co_min_time: usize = 0;
-        let mut aggregate_co_max_time: usize = 0;
+        // Every request's adjusted times together: its measured times plus
+        // the synthetic ones, or only its measured times when mitigation
+        // added none to it.
+        let mut aggregate_co = GooseRequestMetricTimingData::new(None);
         writeln!(
             fmt,
             " ------------------------------------------------------------------------------"
@@ -2451,6 +2461,12 @@ impl GooseMetrics {
 
         // Now display Coordinated Omission data.
         for (request_key, request) in self.requests.iter().sorted() {
+            aggregate_co.merge(
+                request
+                    .coordinated_omission_data
+                    .as_ref()
+                    .unwrap_or(&request.raw_data),
+            );
             let co_average;
             let standard_deviation;
             let co_minimum;
@@ -2465,15 +2481,6 @@ impl GooseMetrics {
                     _ => co_data.total_time as f32 / co_data.counter as f32,
                 };
                 standard_deviation = util::standard_deviation(raw_average, co_average);
-                aggregate_co_times = merge_times(aggregate_co_times, &co_data.times);
-                aggregate_co_counter += co_data.counter;
-                // If user had new fastest response time, update global fastest response time.
-                aggregate_co_min_time =
-                    update_min_time(aggregate_co_min_time, co_data.minimum_time);
-                // If user had new slowest response time, update global slowest response time.
-                aggregate_co_max_time =
-                    update_max_time(aggregate_raw_max_time, co_data.maximum_time);
-                aggregate_co_total_time += co_data.total_time;
                 co_minimum = co_data.minimum_time;
                 co_maximum = co_data.maximum_time;
             } else {
@@ -2518,9 +2525,9 @@ impl GooseMetrics {
 
         // Display aggregated Coordinate Omission data if there was more than one request.
         if self.requests.len() > 1 {
-            let co_average = match aggregate_co_counter {
+            let co_average = match aggregate_co.counter {
                 0 => 0.0,
-                _ => aggregate_co_total_time as f32 / aggregate_co_counter as f32,
+                _ => aggregate_co.total_time as f32 / aggregate_co.counter as f32,
             };
             let co_average_precision = determine_precision(co_average);
             let standard_deviation = util::standard_deviation(raw_average, co_average);
@@ -2537,12 +2544,12 @@ impl GooseMetrics {
                 "Aggregated",
                 co_average,
                 standard_deviation,
-                format_number(aggregate_co_max_time),
+                format_number(aggregate_co.maximum_time),
                 format_number(util::median(
-                    &aggregate_co_times,
-                    aggregate_co_counter,
-                    aggregate_co_min_time,
-                    aggregate_co_max_time
+                    &aggregate_co.times,
+                    aggregate_co.counter,
+                    aggregate_co.minimum_time,
+                    aggregate_co.maximum_time
                 )),
                 avg_precision = co_average_precision,
                 sd_precision = standard_deviation_precision,
@@ -2562,11 +2569,29 @@ impl GooseMetrics {
             return Ok(());
         }
 
-        let mut raw_aggregate_response_times: BTreeMap<usize, usize> = BTreeMap::new();
-        let mut raw_aggregate_total_response_time: usize = 0;
-        let mut raw_aggregate_response_time_counter: usize = 0;
-        let mut raw_aggregate_min_response_time: usize = 0;
-        let mut raw_aggregate_max_response_time: usize = 0;
+        /// The table's percentiles of these times.
+        fn row(data: &GooseRequestMetricTimingData) -> [usize; 6] {
+            [0.5, 0.75, 0.98, 0.99, 0.999, 0.9999].map(|percent| {
+                calculate_response_time_percentile(
+                    &data.times,
+                    data.counter,
+                    data.minimum_time,
+                    data.maximum_time,
+                    percent,
+                )
+            })
+        }
+
+        fn write_row(fmt: &mut fmt::Formatter<'_>, name: &str, cells: [String; 6]) -> fmt::Result {
+            writeln!(
+                fmt,
+                " {:<24} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6}",
+                name, cells[0], cells[1], cells[2], cells[3], cells[4], cells[5]
+            )
+        }
+
+        // Every request's measured times together.
+        let mut raw_aggregate = GooseRequestMetricTimingData::new(None);
         writeln!(
             fmt,
             " ------------------------------------------------------------------------------"
@@ -2594,75 +2619,11 @@ impl GooseMetrics {
             if !co_data && request.coordinated_omission_data.is_some() {
                 co_data = true;
             }
-
-            // Iterate over user response times, and merge into global response times.
-            raw_aggregate_response_times =
-                merge_times(raw_aggregate_response_times, &request.raw_data.times);
-
-            // Increment total response time counter.
-            raw_aggregate_total_response_time += &request.raw_data.total_time;
-
-            // Increment counter tracking individual response times seen.
-            raw_aggregate_response_time_counter += &request.raw_data.counter;
-
-            // If user had new fastest response time, update global fastest response time.
-            raw_aggregate_min_response_time = update_min_time(
-                raw_aggregate_min_response_time,
-                request.raw_data.minimum_time,
-            );
-
-            // If user had new slowest response time, update global slowest response time.
-            raw_aggregate_max_response_time = update_max_time(
-                raw_aggregate_max_response_time,
-                request.raw_data.maximum_time,
-            );
-            // Sort response times so we can calculate a mean.
-            writeln!(
+            raw_aggregate.merge(&request.raw_data);
+            write_row(
                 fmt,
-                " {:<24} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6}",
-                util::truncate_string(request_key, 24),
-                calculate_response_time_percentile(
-                    &request.raw_data.times,
-                    request.raw_data.counter,
-                    request.raw_data.minimum_time,
-                    request.raw_data.maximum_time,
-                    0.5
-                ),
-                calculate_response_time_percentile(
-                    &request.raw_data.times,
-                    request.raw_data.counter,
-                    request.raw_data.minimum_time,
-                    request.raw_data.maximum_time,
-                    0.75
-                ),
-                calculate_response_time_percentile(
-                    &request.raw_data.times,
-                    request.raw_data.counter,
-                    request.raw_data.minimum_time,
-                    request.raw_data.maximum_time,
-                    0.98
-                ),
-                calculate_response_time_percentile(
-                    &request.raw_data.times,
-                    request.raw_data.counter,
-                    request.raw_data.minimum_time,
-                    request.raw_data.maximum_time,
-                    0.99
-                ),
-                calculate_response_time_percentile(
-                    &request.raw_data.times,
-                    request.raw_data.counter,
-                    request.raw_data.minimum_time,
-                    request.raw_data.maximum_time,
-                    0.999
-                ),
-                calculate_response_time_percentile(
-                    &request.raw_data.times,
-                    request.raw_data.counter,
-                    request.raw_data.minimum_time,
-                    request.raw_data.maximum_time,
-                    0.9999
-                ),
+                &util::truncate_string(request_key, 24),
+                row(&request.raw_data).map(|value| value.to_string()),
             )?;
         }
         if self.requests.len() > 1 {
@@ -2670,52 +2631,10 @@ impl GooseMetrics {
                 fmt,
                 " -------------------------+--------+--------+--------+--------+--------+-------"
             )?;
-            writeln!(
+            write_row(
                 fmt,
-                " {:<24} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6}",
                 "Aggregated",
-                calculate_response_time_percentile(
-                    &raw_aggregate_response_times,
-                    raw_aggregate_response_time_counter,
-                    raw_aggregate_min_response_time,
-                    raw_aggregate_max_response_time,
-                    0.5
-                ),
-                calculate_response_time_percentile(
-                    &raw_aggregate_response_times,
-                    raw_aggregate_response_time_counter,
-                    raw_aggregate_min_response_time,
-                    raw_aggregate_max_response_time,
-                    0.75
-                ),
-                calculate_response_time_percentile(
-                    &raw_aggregate_response_times,
-                    raw_aggregate_response_time_counter,
-                    raw_aggregate_min_response_time,
-                    raw_aggregate_max_response_time,
-                    0.98
-                ),
-                calculate_response_time_percentile(
-                    &raw_aggregate_response_times,
-                    raw_aggregate_response_time_counter,
-                    raw_aggregate_min_response_time,
-                    raw_aggregate_max_response_time,
-                    0.99
-                ),
-                calculate_response_time_percentile(
-                    &raw_aggregate_response_times,
-                    raw_aggregate_response_time_counter,
-                    raw_aggregate_min_response_time,
-                    raw_aggregate_max_response_time,
-                    0.999
-                ),
-                calculate_response_time_percentile(
-                    &raw_aggregate_response_times,
-                    raw_aggregate_response_time_counter,
-                    raw_aggregate_min_response_time,
-                    raw_aggregate_max_response_time,
-                    0.9999
-                ),
+                row(&raw_aggregate).map(|value| value.to_string()),
             )?;
         }
 
@@ -2724,11 +2643,10 @@ impl GooseMetrics {
             return Ok(());
         }
 
-        let mut co_aggregate_response_times: BTreeMap<usize, usize> = BTreeMap::new();
-        let mut co_aggregate_total_response_time: usize = 0;
-        let mut co_aggregate_response_time_counter: usize = 0;
-        let mut co_aggregate_min_response_time: usize = 0;
-        let mut co_aggregate_max_response_time: usize = 0;
+        // Every request's adjusted times together: its measured times plus
+        // the synthetic ones, or only its measured times when mitigation
+        // added none to it.
+        let mut co_aggregate = GooseRequestMetricTimingData::new(None);
 
         writeln!(
             fmt,
@@ -2749,91 +2667,20 @@ impl GooseMetrics {
             " ------------------------------------------------------------------------------"
         )?;
         for (request_key, request) in self.requests.iter().sorted() {
-            if let Some(coordinated_omission_data) = request.coordinated_omission_data.as_ref() {
-                // Iterate over user response times, and merge into global response times.
-                co_aggregate_response_times = merge_times(
-                    co_aggregate_response_times,
-                    &coordinated_omission_data.times,
-                );
-
-                // Increment total response time counter.
-                co_aggregate_total_response_time += &coordinated_omission_data.total_time;
-
-                // Increment counter tracking individual response times seen.
-                co_aggregate_response_time_counter += &coordinated_omission_data.counter;
-
-                // If user had new fastest response time, update global fastest response time.
-                co_aggregate_min_response_time = update_min_time(
-                    co_aggregate_min_response_time,
-                    coordinated_omission_data.minimum_time,
-                );
-
-                // If user had new slowest response time, update global slowest response time.
-                co_aggregate_max_response_time = update_max_time(
-                    co_aggregate_max_response_time,
-                    coordinated_omission_data.maximum_time,
-                );
-
-                // Sort response times so we can calculate a mean.
-                writeln!(
+            co_aggregate.merge(
+                request
+                    .coordinated_omission_data
+                    .as_ref()
+                    .unwrap_or(&request.raw_data),
+            );
+            let name = util::truncate_string(request_key, 24);
+            match request.coordinated_omission_data.as_ref() {
+                Some(coordinated_omission_data) => write_row(
                     fmt,
-                    " {:<24} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6}",
-                    util::truncate_string(request_key, 24),
-                    calculate_response_time_percentile(
-                        &coordinated_omission_data.times,
-                        coordinated_omission_data.counter,
-                        coordinated_omission_data.minimum_time,
-                        coordinated_omission_data.maximum_time,
-                        0.5
-                    ),
-                    calculate_response_time_percentile(
-                        &coordinated_omission_data.times,
-                        coordinated_omission_data.counter,
-                        coordinated_omission_data.minimum_time,
-                        coordinated_omission_data.maximum_time,
-                        0.75
-                    ),
-                    calculate_response_time_percentile(
-                        &coordinated_omission_data.times,
-                        coordinated_omission_data.counter,
-                        coordinated_omission_data.minimum_time,
-                        coordinated_omission_data.maximum_time,
-                        0.98
-                    ),
-                    calculate_response_time_percentile(
-                        &coordinated_omission_data.times,
-                        coordinated_omission_data.counter,
-                        coordinated_omission_data.minimum_time,
-                        coordinated_omission_data.maximum_time,
-                        0.99
-                    ),
-                    calculate_response_time_percentile(
-                        &coordinated_omission_data.times,
-                        coordinated_omission_data.counter,
-                        coordinated_omission_data.minimum_time,
-                        coordinated_omission_data.maximum_time,
-                        0.999
-                    ),
-                    calculate_response_time_percentile(
-                        &coordinated_omission_data.times,
-                        coordinated_omission_data.counter,
-                        coordinated_omission_data.minimum_time,
-                        coordinated_omission_data.maximum_time,
-                        0.9999
-                    ),
-                )?;
-            } else {
-                writeln!(
-                    fmt,
-                    " {:<24} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6}",
-                    util::truncate_string(request_key, 24),
-                    "-",
-                    "-",
-                    "-",
-                    "-",
-                    "-",
-                    "-"
-                )?;
+                    &name,
+                    row(coordinated_omission_data).map(|value| value.to_string()),
+                )?,
+                None => write_row(fmt, &name, ["-"; 6].map(String::from))?,
             }
         }
         if self.requests.len() > 1 {
@@ -2841,52 +2688,10 @@ impl GooseMetrics {
                 fmt,
                 " -------------------------+--------+--------+--------+--------+--------+-------"
             )?;
-            writeln!(
+            write_row(
                 fmt,
-                " {:<24} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6}",
                 "Aggregated",
-                calculate_response_time_percentile(
-                    &co_aggregate_response_times,
-                    co_aggregate_response_time_counter,
-                    co_aggregate_min_response_time,
-                    co_aggregate_max_response_time,
-                    0.5
-                ),
-                calculate_response_time_percentile(
-                    &co_aggregate_response_times,
-                    co_aggregate_response_time_counter,
-                    co_aggregate_min_response_time,
-                    co_aggregate_max_response_time,
-                    0.75
-                ),
-                calculate_response_time_percentile(
-                    &co_aggregate_response_times,
-                    co_aggregate_response_time_counter,
-                    co_aggregate_min_response_time,
-                    co_aggregate_max_response_time,
-                    0.98
-                ),
-                calculate_response_time_percentile(
-                    &co_aggregate_response_times,
-                    co_aggregate_response_time_counter,
-                    co_aggregate_min_response_time,
-                    co_aggregate_max_response_time,
-                    0.99
-                ),
-                calculate_response_time_percentile(
-                    &co_aggregate_response_times,
-                    co_aggregate_response_time_counter,
-                    co_aggregate_min_response_time,
-                    co_aggregate_max_response_time,
-                    0.999
-                ),
-                calculate_response_time_percentile(
-                    &co_aggregate_response_times,
-                    co_aggregate_response_time_counter,
-                    co_aggregate_min_response_time,
-                    co_aggregate_max_response_time,
-                    0.9999
-                ),
+                row(&co_aggregate).map(|value| value.to_string()),
             )?;
         }
 
@@ -3554,24 +3359,6 @@ impl MetricsProcessor {
         &self.graph_data
     }
 
-    /// [`Self::process_batch`], for unit tests in other modules.
-    #[cfg(test)]
-    pub(crate) fn process_batch_for_test(&mut self, batch: GooseMetricBatch) {
-        self.process_batch(batch);
-    }
-
-    /// The processor's aggregated metrics, for unit tests in other modules.
-    #[cfg(test)]
-    pub(crate) fn metrics_for_test(&self) -> &GooseMetrics {
-        &self.metrics
-    }
-
-    /// [`Self::sync_atomic_counters`], for unit tests in other modules.
-    #[cfg(test)]
-    pub(crate) fn sync_atomic_counters_for_test(&mut self) {
-        self.sync_atomic_counters();
-    }
-
     /// Whether coordinated omission mitigation has recorded an event, so the
     /// dashboard shows adjusted values.
     fn co_active(&self) -> bool {
@@ -3673,6 +3460,24 @@ impl MetricsProcessor {
         }
 
         self.metrics.requests.insert(key, merge_request);
+    }
+
+    /// [`Self::process_batch`], for unit tests in other modules.
+    #[cfg(test)]
+    pub(crate) fn process_batch_for_test(&mut self, batch: GooseMetricBatch) {
+        self.process_batch(batch);
+    }
+
+    /// The processor's aggregated metrics, for unit tests in other modules.
+    #[cfg(test)]
+    pub(crate) fn metrics_for_test(&self) -> &GooseMetrics {
+        &self.metrics
+    }
+
+    /// [`Self::sync_atomic_counters`], for unit tests in other modules.
+    #[cfg(test)]
+    pub(crate) fn sync_atomic_counters_for_test(&mut self) {
+        self.sync_atomic_counters();
     }
 
     /// Process a single request metric: record errors, handle CO backfill, update
@@ -3956,17 +3761,11 @@ impl MetricsProcessor {
 
                 // Merge status-code timing summaries.
                 for (code, summary) in &entry.status_code_timings {
-                    let agg_summary = aggregate.status_code_timings.entry(*code).or_default();
-                    agg_summary.count += summary.count;
-                    agg_summary.total_time += summary.total_time;
-                    if summary.min_time > 0
-                        && (agg_summary.min_time == 0 || summary.min_time < agg_summary.min_time)
-                    {
-                        agg_summary.min_time = summary.min_time;
-                    }
-                    if summary.max_time > agg_summary.max_time {
-                        agg_summary.max_time = summary.max_time;
-                    }
+                    aggregate
+                        .status_code_timings
+                        .entry(*code)
+                        .or_default()
+                        .merge(summary);
                 }
             }
         }
@@ -4851,6 +4650,303 @@ mod test {
         // Max response time doesn't update when updating with a lower value.
         max_response_time = update_max_time(max_response_time, 1);
         assert_eq!(max_response_time, 101);
+    }
+
+    /// A response under a millisecond is a time of 0 ms, and the minimum:
+    /// the counter, not a minimum of 0, says whether there is a time yet.
+    #[test]
+    fn timing_data_minimum_includes_zero() {
+        let record = |times: &[u64]| {
+            let mut data = GooseRequestMetricTimingData::new(None);
+            for &time in times {
+                data.record_time(time);
+            }
+            data
+        };
+        assert_eq!(record(&[5, 0, 3]).minimum_time, 0);
+        assert_eq!(record(&[0, 5]).minimum_time, 0);
+        assert_eq!(record(&[5, 3]).minimum_time, 3);
+        assert_eq!(record(&[]).minimum_time, 0);
+
+        // Merging: an empty side never sets the minimum; a 0 always does.
+        let mut merged = record(&[5]);
+        merged.merge(&record(&[]));
+        assert_eq!(merged.minimum_time, 5);
+        merged.merge(&record(&[0, 9]));
+        assert_eq!(merged.minimum_time, 0);
+        merged.merge(&record(&[4]));
+        assert_eq!(merged.minimum_time, 0);
+        let mut empty = record(&[]);
+        empty.merge(&record(&[7]));
+        assert_eq!(empty.minimum_time, 7);
+        let mut from_zero = record(&[0]);
+        from_zero.merge(&record(&[2]));
+        assert_eq!(from_zero.minimum_time, 0);
+
+        // Percentiles are no longer clamped up to the fastest nonzero time.
+        let data = record(&[0, 0, 0, 5]);
+        assert_eq!(
+            calculate_response_time_percentile(
+                &data.times,
+                data.counter,
+                data.minimum_time,
+                data.maximum_time,
+                0.5
+            ),
+            0
+        );
+
+        // Status code summaries too.
+        let mut summary = StatusCodeTimingSummary::default();
+        summary.record(4);
+        summary.record(0);
+        assert_eq!(
+            (summary.min_time, summary.max_time, summary.count),
+            (0, 4, 2)
+        );
+        let mut other = StatusCodeTimingSummary::default();
+        other.merge(&StatusCodeTimingSummary::default());
+        assert_eq!(other.count, 0);
+        other.merge(&summary);
+        assert_eq!(other.min_time, 0);
+        let mut later = StatusCodeTimingSummary::default();
+        later.record(9);
+        later.merge(&summary);
+        assert_eq!(later.min_time, 0);
+    }
+
+    /// A request with these measured times, counted `counted` times (with
+    /// coordinated omission mitigation, synthetic requests are counted too).
+    fn request_with_times(
+        path: &str,
+        times: &[u64],
+        counted: usize,
+    ) -> GooseRequestMetricAggregate {
+        let mut request = GooseRequestMetricAggregate::new(path, GooseMethod::Get, 0, "");
+        for &time in times {
+            request.record_time(time, false);
+        }
+        request.success_count = counted;
+        request
+    }
+
+    fn report_of(metrics: &GooseMetrics) -> common::ReportData<'_> {
+        common::prepare_data_with_baseline(
+            ReportOptions {
+                no_transaction_metrics: true,
+                no_scenario_metrics: true,
+                no_status_codes: true,
+            },
+            metrics,
+            None,
+        )
+    }
+
+    /// The console's response time and percentile tables, as printed.
+    struct ConsoleTables<'a>(&'a GooseMetrics);
+
+    impl fmt::Display for ConsoleTables<'_> {
+        fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+            self.0.fmt_response_times(fmt)?;
+            self.0.fmt_percentiles(fmt)
+        }
+    }
+
+    /// The cells of the printed rows named `name`, measured then adjusted.
+    fn printed_rows(text: &str, name: &str) -> Vec<Vec<String>> {
+        text.lines()
+            .filter(|line| line.split('|').next().map(str::trim) == Some(name))
+            .map(|line| {
+                line.split('|')
+                    .skip(1)
+                    .map(|cell| cell.trim().to_string())
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// The minimum over several requests counts a 0 ms minimum.
+    #[test]
+    fn aggregate_minimum_includes_zero() {
+        let mut metrics = GooseMetrics::default();
+        metrics.final_metrics = true;
+        metrics
+            .requests
+            .insert("GET /a".to_string(), request_with_times("/a", &[0, 8], 2));
+        metrics
+            .requests
+            .insert("GET /b".to_string(), request_with_times("/b", &[3], 1));
+        let report = report_of(&metrics);
+        let aggregated = report.raw_request_metrics.last().unwrap();
+        assert_eq!(aggregated.name, "Aggregated");
+        assert_eq!(aggregated.response_time_minimum.value(), 0);
+        let printed = ConsoleTables(&metrics).to_string();
+        // Avg, Min, Max, Median.
+        assert_eq!(printed_rows(&printed, "Aggregated")[0][1], "0");
+    }
+
+    /// The console's transaction times table, as printed.
+    struct ConsoleTransactionTimes<'a>(&'a GooseMetrics);
+
+    impl fmt::Display for ConsoleTransactionTimes<'_> {
+        fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+            self.0.fmt_transaction_times(fmt)
+        }
+    }
+
+    /// The report's transaction Aggregated average is the transactions'
+    /// total time over their count, as the console prints it, not the
+    /// requests' total time over the transaction count.
+    #[test]
+    fn report_transaction_aggregate_average_uses_transaction_times() {
+        let mut metrics = GooseMetrics::default();
+        metrics.final_metrics = true;
+        metrics.display_metrics = true;
+        let mut first = TransactionMetricAggregate::new(
+            0,
+            "Scenario".into(),
+            0,
+            TransactionName::InheritNameByRequests(Arc::from("first")),
+        );
+        first.set_time(10, true);
+        first.set_time(13, true);
+        let mut second = TransactionMetricAggregate::new(
+            0,
+            "Scenario".into(),
+            1,
+            TransactionName::InheritNameByRequests(Arc::from("second")),
+        );
+        second.set_time(31, true);
+        metrics.transactions = vec![vec![first, second]];
+        metrics.requests.insert(
+            "GET /a".to_string(),
+            request_with_times("/a", &[100, 300], 2),
+        );
+        let report = common::prepare_data_with_baseline(
+            ReportOptions {
+                no_transaction_metrics: false,
+                no_scenario_metrics: true,
+                no_status_codes: true,
+            },
+            &metrics,
+            None,
+        );
+        let transactions = report.transaction_metrics.unwrap();
+        let aggregated = transactions.last().unwrap();
+        assert_eq!(aggregated.name, "Aggregated");
+        // (10 + 13 + 31) / 3 = 18; the old figure was (100 + 300) / 3.
+        let average = *aggregated.response_time_average.as_ref().unwrap().value();
+        assert_eq!(average, 18.0);
+        let printed = ConsoleTransactionTimes(&metrics).to_string();
+        assert_eq!(
+            printed_rows(&printed, "Aggregated")[0][0],
+            format!("{:.2}", average)
+        );
+    }
+
+    /// With coordinated omission mitigation every request is counted, the
+    /// synthetic ones too, but only measured times have a time: the
+    /// report's measured aggregate takes its rank and its average over those.
+    #[test]
+    fn report_aggregate_uses_measured_times() {
+        let mut metrics = GooseMetrics::default();
+        let times: Vec<u64> = (1..=10).map(|i| i * 10).collect();
+        // Ten measured times, counted 40 times.
+        metrics
+            .requests
+            .insert("GET /a".to_string(), request_with_times("/a", &times, 40));
+        metrics
+            .requests
+            .insert("GET /b".to_string(), request_with_times("/b", &[5], 1));
+        let report = report_of(&metrics);
+        let aggregated = report.raw_response_metrics.last().unwrap();
+        assert_eq!(aggregated.name, "Aggregated");
+        // Eleven times: 5, 10, 20, ..., 100.
+        assert_eq!(aggregated.percentile_50.value(), 50);
+        assert_eq!(aggregated.percentile_99.value(), 100);
+        assert_eq!(aggregated.percentile_100.value(), 100);
+        let request = report.raw_request_metrics.last().unwrap();
+        assert_eq!(request.number_of_requests.value(), 41);
+        assert_eq!(
+            format!("{:.2}", request.response_time_average.value()),
+            "50.45"
+        );
+    }
+
+    /// The adjusted aggregate covers every request: one with synthetic times
+    /// contributes its adjusted times, one without its measured times. The
+    /// console's adjusted maximum is the largest of all of them.
+    #[test]
+    fn adjusted_aggregate_includes_every_request() {
+        let mut metrics = GooseMetrics::default();
+        metrics.final_metrics = true;
+        // /a: measured 10 and 20, then a synthetic 900.
+        let mut a = request_with_times("/a", &[10, 20], 3);
+        a.record_time(900, true);
+        // /b: measured 30 and 40, then a synthetic 500.
+        let mut b = request_with_times("/b", &[30, 40], 3);
+        b.record_time(500, true);
+        // /c: measured 50 and 60, no synthetic times.
+        let c = request_with_times("/c", &[50, 60], 2);
+        metrics.requests.insert("GET /a".to_string(), a);
+        metrics.requests.insert("GET /b".to_string(), b);
+        metrics.requests.insert("GET /c".to_string(), c);
+
+        // Adjusted times: 10, 20, 30, 40, 50, 60, 500, 900.
+        let report = report_of(&metrics);
+        let co = report.co_response_metrics.as_ref().unwrap();
+        let aggregated = co.last().unwrap();
+        assert_eq!(aggregated.name, "Aggregated");
+        assert_eq!(aggregated.percentile_50.value(), 40);
+        assert_eq!(aggregated.percentile_90.value(), 500);
+        assert_eq!(aggregated.percentile_100.value(), 900);
+        let co_requests = report.co_request_metrics.as_ref().unwrap();
+        assert_eq!(
+            co_requests.last().unwrap().response_time_maximum.value(),
+            900
+        );
+        assert_eq!(
+            format!(
+                "{:.2}",
+                co_requests.last().unwrap().response_time_average.value()
+            ),
+            "201.25"
+        );
+
+        let printed = ConsoleTables(&metrics).to_string();
+        let rows = printed_rows(&printed, "Aggregated");
+        // Response times: measured, then adjusted (Avg, Std Dev, Max, Median).
+        assert_eq!(rows[1][0], "201.25");
+        assert_eq!(rows[1][2], "900");
+        assert_eq!(rows[1][3], "40");
+        // Percentiles: measured, then adjusted (50%, 75%, 98%, ...).
+        assert_eq!(rows[3][0], "40");
+        assert_eq!(rows[3][1], "60");
+        assert_eq!(rows[3][2], "900");
+    }
+
+    /// The reports keep averages as `f64`, so a large mean prints exactly to
+    /// the hundredth; as an `f32` this one printed 29609.38.
+    #[test]
+    fn report_average_prints_exactly() {
+        let mut metrics = GooseMetrics::default();
+        let mut request = GooseRequestMetricAggregate::new("/a", GooseMethod::Get, 0, "");
+        request.raw_data.total_time = 2_960_937_350;
+        request.raw_data.counter = 100_000;
+        request.raw_data.times.insert(30_000, 100_000);
+        request.raw_data.minimum_time = 29_000;
+        request.raw_data.maximum_time = 30_000;
+        request.success_count = 100_000;
+        metrics.requests.insert("GET /a".to_string(), request);
+        let report = report_of(&metrics);
+        for row in &report.raw_request_metrics {
+            assert_eq!(
+                format!("{:.2}", row.response_time_average.value()),
+                "29609.37"
+            );
+        }
+        // A value still computed as an f32 keeps the digits it prints with.
+        assert_eq!(NullableFloat::from(0.1f32).0, 0.1f64);
     }
 
     #[test]

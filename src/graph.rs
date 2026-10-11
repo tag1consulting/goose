@@ -193,7 +193,7 @@ pub(crate) struct SecondHistogram {
     /// While a ring's second is still filling: its count for each fixed
     /// index, with `entries` empty.
     open: Option<Box<[usize; FIXED_BUCKETS]>>,
-    /// The fastest response, ignoring 0, not rounded.
+    /// The fastest response, not rounded.
     pub(crate) minimum_time: usize,
     /// The slowest response, not rounded.
     pub(crate) maximum_time: usize,
@@ -285,7 +285,9 @@ impl SecondHistogram {
     }
 
     fn add_totals(&mut self, minimum: usize, maximum: usize, total: usize, counter: usize) {
-        if minimum > 0 && (self.minimum_time == 0 || minimum < self.minimum_time) {
+        // The counters, not a minimum of 0, say whether there are times yet:
+        // a response under a millisecond is a minimum of 0.
+        if counter > 0 && (self.counter == 0 || minimum < self.minimum_time) {
             self.minimum_time = minimum;
         }
         if maximum > self.maximum_time {
@@ -330,8 +332,8 @@ impl SecondHistogram {
     }
 
     /// Add a batch's response times for one request name, all from this
-    /// second: buckets of rounded times, and the unrounded minimum (ignoring
-    /// 0), maximum, total and count, as
+    /// second: buckets of rounded times, and the unrounded minimum, maximum,
+    /// total and count, as
     /// [`GooseRequestMetricTimingData::merge`] adds them.
     pub(crate) fn merge_timing(&mut self, other: &GooseRequestMetricTimingData) {
         for (&rounded, &count) in &other.times {
