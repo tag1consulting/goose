@@ -88,11 +88,33 @@
     </div>
     <div id="chart-latency-card" class="card chart-card chart-wide">
       <div class="chart-head">
-        <h2 id="chart-latency-title">Latency by second (ms)</h2>
-        <button id="chart-latency-all" type="button" hidden>All requests</button>
+        <h2 id="chart-latency-title">Response times by second</h2>
+        <div class="chart-controls">
+          <div id="heatmap-view" class="segmented" role="group" aria-label="Response times shown" hidden>
+            <button type="button" id="heatmap-adjusted" aria-pressed="true">Adjusted</button>
+            <button type="button" id="heatmap-measured" aria-pressed="false">Measured</button>
+          </div>
+          <select id="heatmap-request" aria-label="Request shown">
+            <option value="">All requests</option>
+          </select>
+        </div>
       </div>
       <p id="chart-latency-note" class="note" hidden></p>
-      <canvas id="chart-latency" aria-label="Latency by second: p50, p95, p99 and average"></canvas>
+      <p id="heatmap-note" class="note">Each column is one second. Color shows how many requests took that long.</p>
+      <div id="heatmap-wrap" class="heatmap-wrap">
+        <canvas id="chart-heatmap" aria-label="Response times by second, heatmap"></canvas>
+        <div id="heatmap-tooltip" class="heatmap-tooltip" role="tooltip" hidden></div>
+      </div>
+      <div id="heatmap-legend" class="heatmap-legend">
+        <span>Requests</span>
+        <span id="heatmap-legend-min"></span>
+        <span id="heatmap-legend-bar" class="heatmap-legend-bar"></span>
+        <span id="heatmap-legend-max"></span>
+      </div>
+      <!-- Chart.js sets its canvas to display: block, so the wrapper hides it. -->
+      <div id="chart-latency-wrap" hidden>
+        <canvas id="chart-latency" aria-label="Average latency chart"></canvas>
+      </div>
     </div>
   </section>
 

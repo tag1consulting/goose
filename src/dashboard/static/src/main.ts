@@ -6,18 +6,13 @@
 // declarations in snapshot.d.ts, generated from
 // src/metrics/dashboard_snapshot.rs; edit the Rust structs, not those types.
 
-import {
-  ensureCharts,
-  secondLabels,
-  updateCharts,
-  updateLatencyChart,
-} from "./charts";
+import { ensureCharts, updateCharts } from "./charts";
 import { shownTime } from "./coadjust";
 import {
   clearAuthRequired,
-  fetchRequestSeries,
   initToken,
   isAuthRequired,
+  setHeatmapCursorSource,
   startSse,
 } from "./connection";
 import {
@@ -28,7 +23,11 @@ import {
 } from "./control";
 import { requireElement } from "./dom";
 import { formatDuration, formatInt, formatPct, formatRate, kv } from "./format";
-import { latencyChartData, type SelectedRequest } from "./latency";
+import {
+  initHeatmapCard,
+  snapshotHeatmapCursor,
+  updateHeatmapCard,
+} from "./heatmap-card";
 import {
   closedBannerText,
   initRunsPanel,
@@ -36,12 +35,7 @@ import {
   updateSaveFromSnapshot,
 } from "./runs";
 import { setBanner, setConnection, type ConnectionMode } from "./status";
-import {
-  initTables,
-  onRequestSelected,
-  setSelectedRequest,
-  setTableData,
-} from "./tables";
+import { initTables, setTableData } from "./tables";
 
 const hostsEl = requireElement("hosts", HTMLElement);
 const durationEl = requireElement("duration", HTMLElement);
@@ -55,120 +49,6 @@ const kpiAvg = requireElement("kpi-avg", HTMLElement);
 const kpiP95Label = requireElement("kpi-p95-label", HTMLElement);
 const kpiAvgLabel = requireElement("kpi-avg-label", HTMLElement);
 const requestsCoNote = requireElement("requests-co-note", HTMLElement);
-const latencyCard = requireElement("chart-latency-card", HTMLElement);
-const latencyAll = requireElement("chart-latency-all", HTMLButtonElement);
-
-// The request charted alone in the latency chart, or null for all requests,
-// and its latest series (null until it arrives, or after a 404).
-let selected: SelectedRequest | null = null;
-let selectedSeries: RequestSeries | null = null;
-let seriesTimer: ReturnType<typeof setInterval> | null = null;
-let lastSnapshot: DashboardSnapshot | null = null;
-
-const EMPTY_LATENCY: LatencySeries = {
-  count: [],
-  avg: [],
-  p50: [],
-  p95: [],
-  p99: [],
-  max: [],
-};
-
-function sameRequest(a: SelectedRequest | null, b: SelectedRequest): boolean {
-  return a !== null && a.method === b.method && a.name === b.name;
-}
-
-/** Fetches the selected request's series and redraws the latency chart. */
-function pollSelectedSeries(): void {
-  const request = selected;
-  if (request === null) return;
-  void fetchRequestSeries(request.method, request.name).then((series) => {
-    if (!sameRequest(selected, request)) return;
-    selectedSeries = series;
-    drawLatency();
-  });
-}
-
-function selectRequest(request: SelectedRequest): void {
-  if (sameRequest(selected, request)) {
-    showAllRequests();
-    return;
-  }
-  selected = request;
-  selectedSeries = null;
-  setSelectedRequest(request);
-  latencyAll.hidden = false;
-  // jsdom, which runs the client tests, has no scrollIntoView.
-  if (typeof latencyCard.scrollIntoView === "function") {
-    latencyCard.scrollIntoView({ block: "nearest" });
-  }
-  if (seriesTimer === null) seriesTimer = setInterval(pollSelectedSeries, 1000);
-  pollSelectedSeries();
-  drawLatency();
-}
-
-function showAllRequests(): void {
-  if (seriesTimer !== null) {
-    clearInterval(seriesTimer);
-    seriesTimer = null;
-  }
-  selected = null;
-  selectedSeries = null;
-  setSelectedRequest(null);
-  latencyAll.hidden = true;
-  drawLatency();
-}
-
-/** Draws the latency chart for the selection from the latest data. */
-function drawLatency(): void {
-  const snap = lastSnapshot;
-  if (snap === null) return;
-  const flags = snap.flags;
-  const coActive = snap.aggregate.co_active;
-  if (selected === null) {
-    const series = snap.series;
-    updateLatencyChart(
-      latencyChartData({
-        rps: series.rps,
-        avg_latency_ms: series.avg_latency_ms,
-        latency_ms: series.latency_ms,
-        latency_co_adjusted_ms: series.latency_co_adjusted_ms,
-        percentiles_over_time: flags.percentiles_over_time,
-        metrics_disabled: flags.metrics_disabled,
-        co_active: coActive,
-        selected: null,
-      }),
-      secondLabels(series.start_second, series.rps.length)
-    );
-    return;
-  }
-  const series = selectedSeries;
-  updateLatencyChart(
-    latencyChartData({
-      rps: series ? series.rps : [],
-      avg_latency_ms: [],
-      latency_ms: series ? series.latency_ms : EMPTY_LATENCY,
-      latency_co_adjusted_ms: series ? series.latency_co_adjusted_ms : EMPTY_LATENCY,
-      percentiles_over_time: flags.percentiles_over_time,
-      metrics_disabled: flags.metrics_disabled,
-      co_active: coActive,
-      selected,
-    }),
-    series ? secondLabels(series.start_second, series.rps.length) : []
-  );
-}
-
-/** Goes back to all requests when the selection can no longer be charted. */
-function checkSelection(snap: DashboardSnapshot): void {
-  const request = selected;
-  if (request === null) return;
-  const row = snap.requests.find(
-    (r) => r.method === request.method && r.name === request.name
-  );
-  if (!snap.flags.percentiles_over_time || row === undefined || !row.has_series) {
-    showAllRequests();
-  }
-}
 
 function percentileText(p: Percentiles): string {
   return formatInt(p.p50) + " / " + formatInt(p.p95) + " / " + formatInt(p.p99);
@@ -264,11 +144,10 @@ function renderSnapshot(
   }
 
   updateSaveFromSnapshot(snap);
-  lastSnapshot = snap;
-  checkSelection(snap);
   setTableData(snap);
-  updateCharts(snap.series);
-  drawLatency();
+  // The response time card shows the heatmap, or with percentiles over time
+  // off the average latency chart, which updateCharts then draws.
+  updateCharts(snap.series, updateHeatmapCard(snap));
   updateControlFromSnapshot(snap);
 
   // Prefer metrics/auth banners.
@@ -305,9 +184,9 @@ function renderSnapshot(
 
 initToken();
 initTables();
-onRequestSelected(selectRequest);
-latencyAll.addEventListener("click", showAllRequests);
 ensureCharts();
+initHeatmapCard();
+setHeatmapCursorSource(snapshotHeatmapCursor);
 initRunsPanel();
 void initControlPanel().then(setRunsControl);
 startSse(renderSnapshot, (data) => setBanner(closedBannerText(data), "info"));

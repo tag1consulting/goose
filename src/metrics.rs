@@ -359,10 +359,13 @@ pub(crate) enum MetricsCommand {
         series_window_secs: u32,
         /// Saving runs, which only the main loop knows.
         save: dashboard_snapshot::SnapshotSave,
+        /// What the dashboard holds of the heatmap: only columns changed
+        /// since are exported (every column when `None`).
+        heatmap_since: Option<dashboard_snapshot::HeatmapCursor>,
         respond: tokio::sync::oneshot::Sender<DashboardSnapshot>,
     },
-    /// One request's series for the dashboard's latency chart (`GET
-    /// /api/v1/series`), or `None` when the request has no series of its own.
+    /// One request's heatmap for the dashboard (`GET /api/v1/series`), or
+    /// `None` when the request has no histograms of its own.
     #[cfg_attr(not(feature = "dashboard"), allow(dead_code))]
     GetRequestSeries {
         /// The request's method label, as in the snapshot's request rows.
@@ -372,6 +375,9 @@ pub(crate) enum MetricsCommand {
         /// Seconds since the continuous series clock started, as for
         /// [`MetricsCommand::GetDashboardSnapshot`].
         series_elapsed_secs: usize,
+        /// What the client holds of this heatmap, as for
+        /// [`MetricsCommand::GetDashboardSnapshot`].
+        since: Option<dashboard_snapshot::HeatmapCursor>,
         respond: tokio::sync::oneshot::Sender<Option<dashboard_snapshot::RequestSeries>>,
     },
 }
@@ -3465,6 +3471,7 @@ impl MetricsProcessor {
                 stopping,
                 series_window_secs,
                 save,
+                heatmap_since,
                 respond,
             } => {
                 self.drain_pending();
@@ -3478,10 +3485,11 @@ impl MetricsProcessor {
                 // the right edge so the chart matches the KPI active_users.
                 self.graph_data
                     .record_users_monotonic(active_users, series_elapsed_secs);
-                let series = self.graph_data.export_series_window_with_latency(
+                let series = self.graph_data.export_series_window_with_heatmap(
                     series_window_secs,
                     Some(series_elapsed_secs),
                     self.co_active(),
+                    heatmap_since,
                 );
                 let snapshot = dashboard_snapshot::build_dashboard_snapshot(
                     dashboard_snapshot::DashboardSnapshotInput {
@@ -3513,6 +3521,7 @@ impl MetricsProcessor {
                 method,
                 name,
                 series_elapsed_secs,
+                since,
                 respond,
             } => {
                 self.drain_pending();
@@ -3522,6 +3531,7 @@ impl MetricsProcessor {
                     dashboard_snapshot::SERIES_WINDOW_SECS,
                     Some(series_elapsed_secs),
                     self.co_active(),
+                    since,
                 );
                 let _ = respond.send(series);
                 false
@@ -5675,6 +5685,7 @@ mod test {
             stopping: true,
             series_window_secs: dashboard_snapshot::SERIES_WINDOW_SECS,
             save: dashboard_snapshot::SnapshotSave::off("goose-runs"),
+            heatmap_since: None,
             respond: respond_tx,
         });
         assert!(!shutdown);
@@ -6509,12 +6520,13 @@ mod test {
         processor
     }
 
-    /// Count of measured times in second `second` of the all requests series.
+    /// Count of measured times in second `second` of the all requests
+    /// heatmap.
     fn measured_count(processor: &MetricsProcessor, second: usize) -> u64 {
         let window = processor
             .graph_data
             .export_series_window_until(dashboard_snapshot::SERIES_WINDOW_SECS, Some(second + 2));
-        window.latency_ms.count[second - window.start_second as usize]
+        window.heatmap.expect("heatmap").counts(second as u64).0
     }
 
     fn request_series(
@@ -6528,7 +6540,16 @@ mod test {
             dashboard_snapshot::SERIES_WINDOW_SECS,
             Some(10),
             co_active,
+            None,
         )
+    }
+
+    /// The measured `(bucket index, count)` pairs of `second` in a heatmap.
+    fn measured_buckets(heatmap: &dashboard_snapshot::Heatmap, second: u64) -> Vec<(u64, u64)> {
+        heatmap
+            .column(second)
+            .map(|column| dashboard_snapshot::HeatmapColumn::pairs(&column.measured))
+            .unwrap_or_default()
     }
 
     #[test]
@@ -6543,8 +6564,8 @@ mod test {
         processor.process_request_metric(&failed);
         assert_eq!(measured_count(&processor, 2), 1);
         let series = request_series(&processor, "/fail", false).expect("series");
-        assert_eq!(series.latency_ms.count[2], 1);
-        assert_eq!(series.latency_ms.max[2], Some(250));
+        // 250 ms is in the 250 ms bucket, index 115.
+        assert_eq!(measured_buckets(&series.heatmap, 2), [(115, 1)]);
 
         // An update is not a new measurement.
         let mut update = make_request_metric("/fail", 300, 200, 2_200);
@@ -6561,7 +6582,7 @@ mod test {
             processor.process_request_metric(&copy);
             assert_eq!(measured_count(&processor, 2), 1, "cadence {user_cadence}");
             let series = request_series(&processor, "/fail", false).unwrap();
-            assert_eq!(series.latency_ms.count[2], 1, "cadence {user_cadence}");
+            assert_eq!(series.heatmap.counts(2), (1, 0), "cadence {user_cadence}");
         }
     }
 
@@ -6597,9 +6618,12 @@ mod test {
         assert_eq!(measured_count(&processor, 3), 2);
         assert_eq!(measured_count(&processor, 4), 1);
         let series = request_series(&processor, "/", false).unwrap();
-        assert_eq!(series.latency_ms.count[3..5], [2, 1]);
-        assert_eq!(series.latency_ms.p99[4], Some(1400));
-        assert_eq!(series.rps[3..5], [2.0, 1.0]);
+        assert_eq!(measured_buckets(&series.heatmap, 3), [(10, 1), (30, 1)]);
+        // 1400 ms rounds to the 1 second bucket, index 145.
+        assert_eq!(measured_buckets(&series.heatmap, 4), [(145, 1)]);
+        let graph = &processor.graph_data;
+        assert_eq!(graph.requests_in_second_for_test("GET /", 3), 2);
+        assert_eq!(graph.requests_in_second_for_test("GET /", 4), 1);
     }
 
     #[tokio::test]
@@ -6634,6 +6658,7 @@ mod test {
             stopping: false,
             series_window_secs: dashboard_snapshot::SERIES_WINDOW_SECS,
             save: dashboard_snapshot::SnapshotSave::off("goose-runs"),
+            heatmap_since: None,
             respond,
         });
         let snapshot = respond_rx.await.unwrap();
@@ -6650,7 +6675,7 @@ mod test {
             .filter(|r| r.name != "/late")
             .all(|r| r.has_series));
         // Its times still count toward all requests.
-        assert_eq!(snapshot.series.latency_ms.count[1], 105);
+        assert_eq!(snapshot.series.heatmap.unwrap().counts(1), (105, 0));
     }
 
     #[tokio::test]
@@ -6679,19 +6704,13 @@ mod test {
             stopping: false,
             series_window_secs: dashboard_snapshot::SERIES_WINDOW_SECS,
             save: dashboard_snapshot::SnapshotSave::off("goose-runs"),
+            heatmap_since: None,
             respond,
         });
         let snapshot = respond_rx.await.unwrap();
         assert!(!snapshot.flags.percentiles_over_time);
         assert!(!snapshot.series.rps.is_empty());
-        assert_eq!(
-            snapshot.series.latency_ms,
-            dashboard_snapshot::LatencySeries::default()
-        );
-        assert_eq!(
-            snapshot.series.latency_co_adjusted_ms,
-            dashboard_snapshot::LatencySeries::default()
-        );
+        assert_eq!(snapshot.series.heatmap, None);
         assert!(snapshot.requests.iter().all(|r| !r.has_series));
 
         let (respond, respond_rx) = tokio::sync::oneshot::channel();
@@ -6699,6 +6718,7 @@ mod test {
             method: "GET".to_string(),
             name: "/".to_string(),
             series_elapsed_secs: 2,
+            since: None,
             respond,
         });
         assert!(respond_rx.await.unwrap().is_none());
@@ -6743,14 +6763,17 @@ mod test {
 
     #[test]
     fn latency_synthetic_off_with_mitigation_disabled() {
-        let processor = make_latency_test_processor(GooseCoordinatedOmissionMitigation::Disabled);
+        let mut processor =
+            make_latency_test_processor(GooseCoordinatedOmissionMitigation::Disabled);
         assert!(!processor.graph_data.records_synthetic_latency());
-        let window = processor
+        processor.process_request_metric(&make_request_metric("/", 10, 200, 3_000));
+        processor
             .graph_data
-            .export_series_window_with_latency(300, Some(5), true);
-        assert_eq!(
-            window.latency_co_adjusted_ms,
-            dashboard_snapshot::LatencySeries::default()
-        );
+            .record_synthetic_latency("GET /", 3, 900);
+        let window =
+            processor
+                .graph_data
+                .export_series_window_with_heatmap(300, Some(5), true, None);
+        assert_eq!(window.heatmap.expect("heatmap").counts(3), (1, 0));
     }
 }

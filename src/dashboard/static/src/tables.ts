@@ -5,7 +5,6 @@
 import { shownTime } from "./coadjust";
 import { optionalElement, requireElement } from "./dom";
 import { formatInt, formatRate, textCell } from "./format";
-import type { SelectedRequest } from "./latency";
 
 type SortDir = "asc" | "desc";
 type SortType = "num" | "str";
@@ -23,8 +22,6 @@ interface Column<R> {
   format: (row: R) => string;
   /** The cell's hover text, or null for none. */
   title?: (row: R) => string | null;
-  /** Fills the cell instead of `format` and `title`, when given. */
-  cell?: (row: R, td: HTMLTableCellElement) => void;
 }
 
 interface TableFilter<R> {
@@ -43,14 +40,14 @@ interface TableOptions<R> {
   /** The text shown instead of rows when the table is off, or null. */
   disabledText: (flags: SnapshotFlags) => string | null;
   filter?: TableFilter<R>;
-  /** Sets attributes of a row's `tr`, when given. */
-  row?: (row: R, tr: HTMLTableRowElement) => void;
 }
 
 interface SortableTable<R> {
   setRows(rows: R[], flags: SnapshotFlags): void;
-  /** Renders the stored rows again. */
-  refresh(): void;
+  /** Every stored row in the table's current sort order, unfiltered. */
+  sorted(): R[];
+  /** Calls `handler` after a header click changes the sort. */
+  onSort(handler: () => void): void;
   /** Wires the sortable headers and the filter input. */
   init(): void;
 }
@@ -85,6 +82,7 @@ function sortableTable<R>(options: TableOptions<R>): SortableTable<R> {
   let sort = options.sort;
   let rows: R[] = [];
   let flags: SnapshotFlags | null = null;
+  let sortHandler: (() => void) | null = null;
 
   function emptyRow(text: string): void {
     const tr = document.createElement("tr");
@@ -124,18 +122,11 @@ function sortableTable<R>(options: TableOptions<R>): SortableTable<R> {
     for (let i = 0; i < shown.length; i++) {
       const row = shown[i];
       const tr = document.createElement("tr");
-      if (options.row) options.row(row, tr);
       for (let c = 0; c < columns.length; c++) {
         const column = columns[c];
-        let td: HTMLTableCellElement;
-        if (column.cell) {
-          td = document.createElement("td");
-          column.cell(row, td);
-        } else {
-          td = textCell(column.format(row));
-          const title = column.title ? column.title(row) : null;
-          if (title !== null) td.title = title;
-        }
+        const td = textCell(column.format(row));
+        const title = column.title ? column.title(row) : null;
+        if (title !== null) td.title = title;
         tr.appendChild(td);
       }
       body.appendChild(tr);
@@ -168,6 +159,7 @@ function sortableTable<R>(options: TableOptions<R>): SortableTable<R> {
         }
         th.classList.add("sorted", sort.dir);
         render();
+        if (sortHandler) sortHandler();
       });
     }
   }
@@ -178,7 +170,12 @@ function sortableTable<R>(options: TableOptions<R>): SortableTable<R> {
       flags = nextFlags;
       render();
     },
-    refresh: render,
+    sorted(): R[] {
+      return sortRows(rows, sort);
+    },
+    onSort(handler: () => void): void {
+      sortHandler = handler;
+    },
     init(): void {
       wireSort();
       if (filter && filter.input) {
@@ -237,7 +234,7 @@ interface FlatTransactionRow {
 interface FlatRequestRow {
   method: string;
   name: string;
-  /** Whether the request has its own latency series to chart. */
+  /** Whether the request has its own response time heatmap. */
   has_series: boolean;
   request_count: number;
   failure_count: number;
@@ -406,47 +403,12 @@ const transactionsTable = sortableTable<FlatTransactionRow>({
   },
 });
 
-/** Hover text of a request name that cannot be charted on its own. */
-export const NOT_KEPT_TITLE =
-  "Trends are kept for the first 100 request names seen this run, or since metrics were last reset.";
-
-let selectedRequest: SelectedRequest | null = null;
-let onSelectRequest: ((request: SelectedRequest) => void) | null = null;
-
-function isSelected(r: FlatRequestRow): boolean {
-  return (
-    selectedRequest !== null &&
-    selectedRequest.method === r.method &&
-    selectedRequest.name === r.name
-  );
-}
-
 const requestsTable = sortableTable<FlatRequestRow>({
   tableId: "requests-table",
   body: requireElement("requests-body", HTMLTableSectionElement),
   columns: [
     { key: "method", type: "str", format: (r) => r.method },
-    {
-      key: "name",
-      type: "str",
-      format: (r) => r.name,
-      cell: (r, td) => {
-        if (!r.has_series) {
-          td.textContent = r.name;
-          td.title = NOT_KEPT_TITLE;
-          return;
-        }
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "link-button";
-        button.textContent = r.name;
-        button.setAttribute("aria-pressed", isSelected(r) ? "true" : "false");
-        button.addEventListener("click", () => {
-          if (onSelectRequest) onSelectRequest({ method: r.method, name: r.name });
-        });
-        td.appendChild(button);
-      },
-    },
+    { key: "name", type: "str", format: (r) => r.name },
     { key: "request_count", type: "num", format: (r) => formatInt(r.request_count) },
     { key: "failure_count", type: "num", format: (r) => formatInt(r.failure_count) },
     {
@@ -490,23 +452,7 @@ const requestsTable = sortableTable<FlatRequestRow>({
     matches: (r, needle) => includes(r.method, needle) || includes(r.name, needle),
     noMatchText: "No matching requests",
   },
-  row: (r, tr) => {
-    if (isSelected(r)) tr.setAttribute("aria-selected", "true");
-  },
 });
-
-/** Marks `request` as charted in the requests table, or none for null. */
-export function setSelectedRequest(request: SelectedRequest | null): void {
-  selectedRequest = request;
-  requestsTable.refresh();
-}
-
-/** Calls `handler` when a request name is clicked. */
-export function onRequestSelected(
-  handler: (request: SelectedRequest) => void
-): void {
-  onSelectRequest = handler;
-}
 
 const errorsTable = sortableTable<ErrorRow>({
   tableId: "errors-table",
@@ -531,6 +477,28 @@ export function setTableData(snap: DashboardSnapshot): void {
   );
   requestsTable.setRows(snap.requests.map(flattenRequest), snap.flags);
   errorsTable.setRows(snap.errors.slice(), snap.flags);
+}
+
+/** One request that has its own heatmap, as the heatmap's select names it. */
+export interface ChartableRequest {
+  method: string;
+  name: string;
+}
+
+/**
+ * The requests with their own heatmap, in the Requests table's current sort
+ * order (its filter aside).
+ */
+export function chartableRequests(): ChartableRequest[] {
+  return requestsTable
+    .sorted()
+    .filter((r) => r.has_series)
+    .map((r) => ({ method: r.method, name: r.name }));
+}
+
+/** Calls `handler` when the Requests table is sorted by another column. */
+export function onRequestsSorted(handler: () => void): void {
+  requestsTable.onSort(handler);
 }
 
 /** Wires the sortable headers and the filters. */

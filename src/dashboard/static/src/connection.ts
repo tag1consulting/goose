@@ -40,6 +40,34 @@ let finished = false;
 let onSnapshot: SnapshotHandler | null = null;
 let onClosed: ClosedHandler | null = null;
 
+/** The heatmap a snapshot fetch says the client holds, if any. */
+export interface HeatmapCursor {
+  generation: number;
+  since: number;
+}
+
+let heatmapCursor: () => HeatmapCursor | null = () => null;
+let catchingUp = false;
+
+/** Tells snapshot fetches which heatmap the page holds. */
+export function setHeatmapCursorSource(source: () => HeatmapCursor | null): void {
+  heatmapCursor = source;
+}
+
+/** `path` with the heatmap cursor's query parameters, when there is one. */
+function withCursor(path: string, cursor: HeatmapCursor | null): string {
+  if (cursor === null) return path;
+  const sep = path.indexOf("?") >= 0 ? "&" : "?";
+  return (
+    path +
+    sep +
+    "heatmap_generation=" +
+    cursor.generation +
+    "&heatmap_since=" +
+    cursor.since
+  );
+}
+
 // sessionStorage access throws when storage is blocked; the token then lives
 // in memory only.
 function readStoredToken(): string {
@@ -107,7 +135,7 @@ function withToken(path: string): string {
 }
 
 function snapshotUrl(): string {
-  return withToken("/api/v1/snapshot");
+  return withToken(withCursor("/api/v1/snapshot", heatmapCursor()));
 }
 
 function eventsUrl(): string {
@@ -146,32 +174,58 @@ function showAuthMissing(): void {
   );
 }
 
+/** What `GET /api/v1/series` answered. */
+export type SeriesResult =
+  | { kind: "ok"; series: RequestSeries }
+  | { kind: "missing" }
+  | { kind: "failed" };
+
 /**
- * One request's series from `GET /api/v1/series`, with the token handling of
- * the snapshot: a 401 shows the missing token banner. Resolves null for a 404
- * (no series for that request) and on any other failure.
+ * One request's heatmap from `GET /api/v1/series`, only what changed since
+ * `cursor` when given, with the token handling of the snapshot: a 401 shows
+ * the missing token banner. `missing` is a 404 (no heatmap for that request).
  */
 export function fetchRequestSeries(
   method: string,
-  name: string
-): Promise<RequestSeries | null> {
-  if (authBlocked) return Promise.resolve(null);
-  const path =
+  name: string,
+  cursor: HeatmapCursor | null
+): Promise<SeriesResult> {
+  if (authBlocked) return Promise.resolve({ kind: "failed" });
+  const path = withCursor(
     "/api/v1/series?method=" +
-    encodeURIComponent(method) +
-    "&name=" +
-    encodeURIComponent(name);
+      encodeURIComponent(method) +
+      "&name=" +
+      encodeURIComponent(name),
+    cursor
+  );
   return fetch(withToken(path))
-    .then((res): Promise<unknown> | null => {
+    .then((res): Promise<SeriesResult> | SeriesResult => {
       if (res.status === 401) {
         showAuthMissing();
-        return null;
+        return { kind: "failed" };
       }
-      if (!res.ok) return null;
-      return res.json();
+      if (res.status === 404) return { kind: "missing" };
+      if (!res.ok) return { kind: "failed" };
+      return res
+        .json()
+        .then((data: unknown): SeriesResult => ({ kind: "ok", series: data as RequestSeries }));
     })
-    .then((data) => (data == null ? null : (data as RequestSeries)))
-    .catch(() => null);
+    .catch((): SeriesResult => ({ kind: "failed" }));
+}
+
+/**
+ * Fetches a snapshot now with the page's heatmap cursor and renders it, when
+ * an SSE snapshot's heatmap followed on from another than the one held. At
+ * most one such fetch at a time.
+ */
+export function catchUpHeatmap(): void {
+  if (catchingUp || authBlocked || finished) return;
+  catchingUp = true;
+  fetchSnapshotOnce(usingPoll ? "poll" : "live")
+    .catch(() => null)
+    .then(() => {
+      catchingUp = false;
+    });
 }
 
 // The JSON boundary: refuse a snapshot of another wire format version

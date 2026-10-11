@@ -1601,8 +1601,10 @@ impl GooseAttack {
         // Kept apart from `control_batch`: a non empty control batch answers
         // pending snapshots locally, which polling a series must not cause.
         let mut series_requests: Vec<dashboard::DashboardRequest> = Vec::new();
-        let mut pending_snapshot: Option<tokio::sync::oneshot::Sender<metrics::DashboardSnapshot>> =
-            None;
+        let mut pending_snapshot: Option<(
+            tokio::sync::oneshot::Sender<metrics::DashboardSnapshot>,
+            Option<metrics::dashboard_snapshot::HeatmapCursor>,
+        )> = None;
         let mut disconnected = false;
 
         {
@@ -1612,9 +1614,12 @@ impl GooseAttack {
 
             for _ in 0..MAX_DRAIN {
                 match rx.try_recv() {
-                    Ok(dashboard::DashboardRequest::GetSnapshot { respond }) => {
+                    Ok(dashboard::DashboardRequest::GetSnapshot {
+                        respond,
+                        heatmap_since,
+                    }) => {
                         // Coalesce: only the latest snapshot request is kept.
-                        if let Some(stale) = pending_snapshot.replace(respond) {
+                        if let Some(stale) = pending_snapshot.replace((respond, heatmap_since)) {
                             drop(stale);
                         }
                     }
@@ -1641,7 +1646,7 @@ impl GooseAttack {
         // Flush any coalesced snapshot first with a cheap local build so the hub/SSE
         // clients observe the pre-mutation phase rather than stalling past timeouts.
         if !control_batch.is_empty() {
-            if let Some(respond) = pending_snapshot.take() {
+            if let Some((respond, heatmap_since)) = pending_snapshot.take() {
                 if !respond.is_closed() {
                     self.update_duration();
                     let phase = attack_phase_str(self.attack_phase).to_string();
@@ -1650,6 +1655,7 @@ impl GooseAttack {
                         phase,
                         goose_attack_run_state.stopping,
                         active_users,
+                        heatmap_since,
                     );
                     let _ = respond.send(snapshot);
                 }
@@ -1752,7 +1758,7 @@ impl GooseAttack {
         }
 
         // Forward at most one snapshot request without parking the attack loop.
-        if let Some(respond) = pending_snapshot {
+        if let Some((respond, heatmap_since)) = pending_snapshot {
             if respond.is_closed() {
                 debug!("[dashboard]: snapshot skipped; hub waiter disconnected");
             } else {
@@ -1772,6 +1778,7 @@ impl GooseAttack {
                         stopping: goose_attack_run_state.stopping,
                         series_window_secs: metrics::dashboard_snapshot::SERIES_WINDOW_SECS,
                         save: self.save_snapshot(),
+                        heatmap_since,
                         respond,
                     },
                 ) {
@@ -1783,13 +1790,18 @@ impl GooseAttack {
                         phase,
                         stopping,
                         active_users,
+                        heatmap_since,
                         ..
                     })) => {
                         debug!(
                             "[dashboard]: metrics processor unavailable; serving local snapshot (phase={phase})"
                         );
-                        let snapshot =
-                            self.build_local_dashboard_snapshot(phase, stopping, active_users);
+                        let snapshot = self.build_local_dashboard_snapshot(
+                            phase,
+                            stopping,
+                            active_users,
+                            heatmap_since,
+                        );
                         let _ = respond.send(snapshot);
                     }
                     Err(_) => {
@@ -1805,6 +1817,7 @@ impl GooseAttack {
             let dashboard::DashboardRequest::GetRequestSeries {
                 method,
                 name,
+                since,
                 respond,
             } = req
             else {
@@ -1819,6 +1832,7 @@ impl GooseAttack {
                     method,
                     name,
                     series_elapsed_secs: self.series_elapsed_secs(),
+                    since,
                     respond,
                 }) {
                 Ok(()) => {}
@@ -1828,6 +1842,7 @@ impl GooseAttack {
                     method,
                     name,
                     series_elapsed_secs,
+                    since,
                     respond,
                 })) => {
                     let series = self.graph_data.export_request_series(
@@ -1839,6 +1854,7 @@ impl GooseAttack {
                             .coordinated_omission_metrics
                             .as_ref()
                             .is_some_and(|m| m.has_events()),
+                        since,
                     );
                     let _ = respond.send(series);
                 }
@@ -1884,16 +1900,18 @@ impl GooseAttack {
         phase: String,
         stopping: bool,
         active_users: usize,
+        heatmap_since: Option<metrics::dashboard_snapshot::HeatmapCursor>,
     ) -> metrics::DashboardSnapshot {
         // Main-loop graph_data is usually empty until Shutdown merge. Export with
         // series-clock "now" so any retained users level holds to the right edge.
-        let series = self.graph_data.export_series_window_with_latency(
+        let series = self.graph_data.export_series_window_with_heatmap(
             metrics::dashboard_snapshot::SERIES_WINDOW_SECS,
             Some(self.series_elapsed_secs()),
             self.metrics
                 .coordinated_omission_metrics
                 .as_ref()
                 .is_some_and(|m| m.has_events()),
+            heatmap_since,
         );
         metrics::dashboard_snapshot::build_dashboard_snapshot(
             metrics::dashboard_snapshot::DashboardSnapshotInput {
@@ -3705,26 +3723,41 @@ mod tests {
         run_state.metrics_cmd_tx = metrics_cmd_tx;
         run_state.stopping = true;
 
-        // Forwarded to the metrics processor.
+        // Forwarded to the metrics processor, with the hub's heatmap cursor.
+        let cursor = metrics::dashboard_snapshot::HeatmapCursor {
+            generation: 7,
+            rev: 41,
+        };
         let (respond, _snapshot_rx) = tokio::sync::oneshot::channel();
         dashboard_tx
-            .send(dashboard::DashboardRequest::GetSnapshot { respond })
+            .send(dashboard::DashboardRequest::GetSnapshot {
+                respond,
+                heatmap_since: Some(cursor),
+            })
             .unwrap();
         goose_attack
             .handle_dashboard_requests(&mut run_state)
             .await
             .unwrap();
-        let Ok(MetricsCommand::GetDashboardSnapshot { stopping, .. }) = metrics_cmd_rx.try_recv()
+        let Ok(MetricsCommand::GetDashboardSnapshot {
+            stopping,
+            heatmap_since,
+            ..
+        }) = metrics_cmd_rx.try_recv()
         else {
             panic!("expected a forwarded snapshot request");
         };
         assert!(stopping);
+        assert_eq!(heatmap_since, Some(cursor));
 
         // Processor gone: served from main-loop state.
         drop(metrics_cmd_rx);
         let (respond, snapshot_rx) = tokio::sync::oneshot::channel();
         dashboard_tx
-            .send(dashboard::DashboardRequest::GetSnapshot { respond })
+            .send(dashboard::DashboardRequest::GetSnapshot {
+                respond,
+                heatmap_since: None,
+            })
             .unwrap();
         goose_attack
             .handle_dashboard_requests(&mut run_state)
@@ -3735,7 +3768,10 @@ mod tests {
         // Flushed before a control batch, which then refuses Users.
         let (respond, snapshot_rx) = tokio::sync::oneshot::channel();
         dashboard_tx
-            .send(dashboard::DashboardRequest::GetSnapshot { respond })
+            .send(dashboard::DashboardRequest::GetSnapshot {
+                respond,
+                heatmap_since: None,
+            })
             .unwrap();
         let (respond, users_rx) = tokio::sync::oneshot::channel();
         dashboard_tx
@@ -3801,12 +3837,10 @@ mod tests {
             let configuration = GooseConfiguration::parse_args_default(&args).unwrap();
             let goose_attack = GooseAttack::initialize_with_config(configuration).unwrap();
             let snapshot =
-                goose_attack.build_local_dashboard_snapshot("idle".to_string(), false, 0);
+                goose_attack.build_local_dashboard_snapshot("idle".to_string(), false, 0, None);
             assert_eq!(snapshot.flags.percentiles_over_time, expected, "{args:?}");
-            assert_eq!(
-                snapshot.series.latency_ms,
-                metrics::dashboard_snapshot::LatencySeries::default()
-            );
+            // No histograms are kept before the first test starts.
+            assert_eq!(snapshot.series.heatmap, None);
         }
     }
 }

@@ -407,7 +407,7 @@ body {
   grid-column: 1 / -1;
 }
 
-/* A chart's title with a button beside it. */
+/* A chart's title with its controls beside it. */
 .chart-head {
   display: flex;
   flex-wrap: wrap;
@@ -416,29 +416,97 @@ body {
   gap: 0.5rem;
 }
 
-/* A request name that charts that request when clicked. */
-.link-button {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--accent);
+.chart-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.chart-controls select {
+  max-width: 22rem;
+  padding: 0.2rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--text);
   font: inherit;
-  text-align: left;
+  font-size: 0.85rem;
+}
+
+/* Two buttons that choose one of two views. */
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.segmented button {
+  padding: 0.2rem 0.6rem;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.85rem;
   cursor: pointer;
 }
 
-.link-button:hover,
-.link-button[aria-pressed="true"] {
-  text-decoration: underline;
+.segmented button[aria-pressed="true"] {
+  background: var(--accent);
+  color: #fff;
 }
 
-.link-button:focus-visible {
+.segmented button:focus-visible {
   outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  outline-offset: -2px;
 }
 
-tr[aria-selected="true"] td {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
+/* The response time heatmap and its tooltip. */
+.heatmap-wrap {
+  position: relative;
+}
+
+.chart-card .heatmap-wrap canvas {
+  display: block;
+  height: 220px;
+}
+
+.heatmap-tooltip {
+  position: absolute;
+  z-index: 2;
+  max-width: 26rem;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.8rem;
+  pointer-events: none;
+  white-space: normal;
+}
+
+.heatmap-legend {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.35rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.segmented[hidden],
+.heatmap-legend[hidden],
+.chart-controls select[hidden] {
+  display: none;
+}
+
+.heatmap-legend-bar {
+  display: inline-block;
+  width: 10rem;
+  height: 0.6rem;
+  border-radius: 3px;
 }
 
 @media (max-width: 720px) {

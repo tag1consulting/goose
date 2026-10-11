@@ -4949,30 +4949,25 @@ mod tests {
         let end = (s / 1000) as usize + 3;
         let window = processor
             .graph_data_for_test()
-            .export_series_window_with_latency(300, Some(end), true);
+            .export_series_window_with_heatmap(300, Some(end), true, None);
         let series = processor
             .graph_data_for_test()
-            .export_request_series("GET".into(), "/x".into(), 300, Some(end), true)
+            .export_request_series("GET".into(), "/x".into(), 300, Some(end), true, None)
             .expect("series for /x");
-        for (latency_ms, adjusted) in [
-            (&window.latency_ms, &window.latency_co_adjusted_ms),
-            (&series.latency_ms, &series.latency_co_adjusted_ms),
-        ] {
-            for second in 0..adjusted.count.len() {
-                let synthetic = adjusted.count[second] - latency_ms.count[second];
+        for heatmap in [window.heatmap.as_ref().expect("heatmap"), &series.heatmap] {
+            for second in 0..=end as u64 {
+                let (measured, synthetic) = heatmap.counts(second);
                 assert_eq!(
                     synthetic,
-                    expected.get(&second).copied().unwrap_or(0),
+                    expected.get(&(second as usize)).copied().unwrap_or(0),
                     "second {second}"
                 );
-                if synthetic > 0 {
-                    assert_ne!(adjusted.max[second], latency_ms.max[second]);
-                }
+                // The request itself is measured in its own second, and only
+                // there.
+                let own = u64::from(second == s / 1000);
+                assert_eq!(measured, own, "second {second}");
             }
         }
-        // The request itself is measured in its own second, and only there.
-        assert_eq!(window.latency_ms.count.iter().sum::<u64>(), 1);
-        assert_eq!(window.latency_ms.count[(s / 1000) as usize], 1);
     }
 
     // --- One recording per request, batches within one second (#713) ---

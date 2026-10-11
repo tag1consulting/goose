@@ -40,8 +40,7 @@ export const IDLE_SNAPSHOT = {
     fps: [],
     users: [],
     avg_latency_ms: [],
-    latency_ms: { count: [], avg: [], p50: [], p95: [], p99: [], max: [] },
-    latency_co_adjusted_ms: { count: [], avg: [], p50: [], p95: [], p99: [], max: [] },
+    heatmap: null,
   },
   flags: {
     metrics_disabled: false,

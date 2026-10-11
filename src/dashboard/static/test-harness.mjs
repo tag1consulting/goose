@@ -44,10 +44,11 @@ function fileResponse(status, body, filename) {
 // authorized request to answer with that status instead of 200 (`snapshotStatus`
 // "reject" makes the snapshot fetch fail as on a network error), and
 // `snapshot` for the snapshot an authorized request gets (default
-// IDLE_SNAPSHOT).
+// IDLE_SNAPSHOT), or a function of the request URL returning it.
 //
-// Request series: `GET /api/v1/series` answers `seriesStatus` (default 200)
-// with the `series` body (default: an empty series for the requested name).
+// Request heatmaps: `GET /api/v1/series` answers `seriesStatus` (default 200)
+// with the `series` body (default: an empty heatmap for the requested name),
+// or the body `series(url)` returns when it is a function.
 //
 // Saved runs: `runs` is the listing `GET /api/v1/runs` answers (default: no
 // runs); a report or comparison under /api/v1/runs/ answers with a small body
@@ -122,20 +123,25 @@ export function stubServer(token, options = {}) {
       if (seriesStatus !== 200) {
         return Promise.resolve(jsonResponse(seriesStatus, { error: "not_found" }));
       }
-      const empty = { count: [], avg: [], p50: [], p95: [], p99: [], max: [] };
-      return Promise.resolve(
-        jsonResponse(
-          200,
-          series || {
-            method: url.searchParams.get("method"),
-            name: url.searchParams.get("name"),
-            start_second: 0,
-            rps: [],
-            latency_ms: empty,
-            latency_co_adjusted_ms: empty,
-          }
-        )
-      );
+      const empty = {
+        generation: 1,
+        rev: 0,
+        since: 0,
+        start_second: 0,
+        end_second: 0,
+        hold_from: 0,
+        buckets: [],
+        columns: [],
+      };
+      const body =
+        typeof series === "function"
+          ? series(url)
+          : series || {
+              method: url.searchParams.get("method"),
+              name: url.searchParams.get("name"),
+              heatmap: empty,
+            };
+      return Promise.resolve(jsonResponse(200, body));
     }
     if (snapshotStatus === "reject") {
       return Promise.reject(new TypeError("network error"));
@@ -143,7 +149,9 @@ export function stubServer(token, options = {}) {
     if (snapshotStatus !== 200) {
       return Promise.resolve(jsonResponse(snapshotStatus, {}));
     }
-    return Promise.resolve(jsonResponse(200, snapshot));
+    return Promise.resolve(
+      jsonResponse(200, typeof snapshot === "function" ? snapshot(url) : snapshot)
+    );
   }
   return { fetch, requests };
 }

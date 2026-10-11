@@ -8,7 +8,6 @@ use super::{
     update_min_time, GooseErrorMetricAggregate, GooseMetrics, GooseRequestMetricAggregate,
     GooseRequestMetricTimingData, ScenarioMetricAggregate, TransactionMetricAggregate,
 };
-use crate::graph::SecondHistogram;
 use chrono::prelude::*;
 use serde::Serialize;
 use std::collections::{BTreeMap, HashSet};
@@ -129,8 +128,9 @@ pub(crate) struct RequestRow {
     pub percentile_ms: Percentiles,
     pub status_codes: Vec<(u16, u64)>,
     pub co_adjusted: Option<CoAdjusted>,
-    /// True when the latency chart can show this request alone: trends are
-    /// kept for the first 100 request names seen since metrics were last reset.
+    /// True when the response time heatmap can show this request alone:
+    /// they are kept for the first 100 request names seen since metrics were
+    /// last reset.
     pub has_series: bool,
 }
 
@@ -197,13 +197,9 @@ pub(crate) struct SeriesWindow {
     pub fps: Vec<f64>,
     pub users: Vec<u64>,
     pub avg_latency_ms: Vec<f64>,
-    /// Measured response times of all requests, for each second of the window.
-    /// Every vector is empty when percentiles over time are off.
-    pub latency_ms: LatencySeries,
-    /// Response times of all requests including the synthetic times
-    /// coordinated omission mitigation adds. An empty series means absent:
-    /// every vector is empty unless mitigation is on and has recorded an event.
-    pub latency_co_adjusted_ms: LatencySeries,
+    /// Response times of all requests by second, for the dashboard's
+    /// heatmap. Null when percentiles over time are off.
+    pub heatmap: Option<Heatmap>,
 }
 
 impl SeriesWindow {
@@ -215,83 +211,98 @@ impl SeriesWindow {
             fps: Vec::new(),
             users: Vec::new(),
             avg_latency_ms: Vec::new(),
-            latency_ms: LatencySeries::default(),
-            latency_co_adjusted_ms: LatencySeries::default(),
+            heatmap: None,
         }
     }
 }
 
-/// Response times for each second of the window. Percentiles are null for a second with no requests and for the two newest seconds while a test runs; count tells them apart.
-#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+/// Response times by second over the trailing window, as counts in Goose's response time buckets. Only the columns that changed since the client's last heatmap are sent: apply them to the columns kept from earlier ones. `since` 0 means every column of the window is here; otherwise a client holding `since` of this `generation` applies the columns, and any other client asks again with its own `heatmap_generation` and `heatmap_since`.
+#[derive(Debug, Clone, Serialize, PartialEq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-pub(crate) struct LatencySeries {
-    pub count: Vec<u64>,
-    pub avg: Vec<Option<f64>>,
-    pub p50: Vec<Option<u64>>,
-    pub p95: Vec<Option<u64>>,
-    pub p99: Vec<Option<u64>>,
-    pub max: Vec<Option<u64>>,
+pub(crate) struct Heatmap {
+    /// Which set of histograms the columns come from. It changes when they
+    /// are cleared (metrics reset, or a new test), so a client starts over.
+    pub generation: u64,
+    /// The newest change these columns include. Send it back as
+    /// `heatmap_since` with `heatmap_generation` to get only later changes.
+    pub rev: u64,
+    /// The `rev` these columns follow on from, or 0 for a whole window.
+    pub since: u64,
+    /// First second of the window, in seconds from the test start. Columns
+    /// before it are dropped.
+    pub start_second: u64,
+    /// Last second of the window.
+    pub end_second: u64,
+    /// Seconds from this one on may still be missing their slowest requests,
+    /// so they are not drawn yet.
+    pub hold_from: u64,
+    /// Each bucket by index, as `[time, lowest, highest]` in milliseconds:
+    /// the rounded response time Goose stores for the bucket, and the range
+    /// of measured times that round to it. A longer table replaces a shorter
+    /// one; entries never change.
+    pub buckets: Vec<[u64; 3]>,
+    /// The columns that changed, oldest first.
+    pub columns: Vec<HeatmapColumn>,
 }
 
-impl LatencySeries {
-    /// An empty series with room for `len` seconds.
-    pub(crate) fn with_capacity(len: usize) -> Self {
-        LatencySeries {
-            count: Vec::with_capacity(len),
-            avg: Vec::with_capacity(len),
-            p50: Vec::with_capacity(len),
-            p95: Vec::with_capacity(len),
-            p99: Vec::with_capacity(len),
-            max: Vec::with_capacity(len),
-        }
+/// One second of the heatmap. Bucket counts are flattened pairs, `[index, count, index, count, ...]`, by ascending index, empty buckets left out.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub(crate) struct HeatmapColumn {
+    /// The second, from the test start.
+    pub second: u64,
+    /// Measured response times.
+    pub measured: Vec<u64>,
+    /// Synthetic times coordinated omission mitigation added to this second.
+    /// Empty unless mitigation is on and has recorded an event.
+    pub synthetic: Vec<u64>,
+}
+
+#[cfg(test)]
+impl Heatmap {
+    /// The column for `second`, if this heatmap has one.
+    pub(crate) fn column(&self, second: u64) -> Option<&HeatmapColumn> {
+        self.columns.iter().find(|column| column.second == second)
     }
 
-    /// Append one second. `data` is that second's response times, if any;
-    /// `hold` withholds its percentiles because slower requests may still
-    /// arrive for it.
-    pub(crate) fn push(&mut self, data: Option<&SecondHistogram>, hold: bool) {
-        match data.filter(|data| data.counter > 0) {
-            None => {
-                self.count.push(0);
-                self.avg.push(None);
-                self.p50.push(None);
-                self.p95.push(None);
-                self.p99.push(None);
-                self.max.push(None);
-            }
-            Some(data) => {
-                self.count.push(data.counter as u64);
-                self.avg
-                    .push(Some(data.total_time as f64 / data.counter as f64));
-                self.max.push(Some(data.maximum_time as u64));
-                if hold {
-                    self.p50.push(None);
-                    self.p95.push(None);
-                    self.p99.push(None);
-                } else {
-                    let percentile = |p: f32| Some(data.percentile(p) as u64);
-                    self.p50.push(percentile(0.5));
-                    self.p95.push(percentile(0.95));
-                    self.p99.push(percentile(0.99));
-                }
-            }
-        }
+    /// Requests counted in `second`: measured, then synthetic.
+    pub(crate) fn counts(&self, second: u64) -> (u64, u64) {
+        self.column(second).map_or((0, 0), |column| {
+            (
+                HeatmapColumn::total(&column.measured),
+                HeatmapColumn::total(&column.synthetic),
+            )
+        })
     }
 }
 
-/// One request's trailing per-second series, the body of `GET /api/v1/series`.
+#[cfg(test)]
+impl HeatmapColumn {
+    /// The `(index, count)` pairs of flattened bucket counts.
+    pub(crate) fn pairs(cells: &[u64]) -> Vec<(u64, u64)> {
+        cells.chunks(2).map(|pair| (pair[0], pair[1])).collect()
+    }
+
+    /// The sum of flattened bucket counts.
+    pub(crate) fn total(cells: &[u64]) -> u64 {
+        cells.chunks(2).map(|pair| pair[1]).sum()
+    }
+}
+
+/// What a client holds of a heatmap: its `generation` and `rev`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct HeatmapCursor {
+    pub generation: u64,
+    pub rev: u64,
+}
+
+/// One request's response time heatmap, the body of `GET /api/v1/series`.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub(crate) struct RequestSeries {
     pub method: String,
     pub name: String,
-    /// First exported bucket index in seconds-from-test-start.
-    pub start_second: u64,
-    pub rps: Vec<f64>,
-    pub latency_ms: LatencySeries,
-    /// Empty unless coordinated omission mitigation is on and has recorded an
-    /// event, as in [`SeriesWindow::latency_co_adjusted_ms`].
-    pub latency_co_adjusted_ms: LatencySeries,
+    pub heatmap: Heatmap,
 }
 
 /// Response times including the synthetic times coordinated omission mitigation adds. Present only when mitigation has recorded at least one event.
@@ -1104,8 +1115,7 @@ mod tests {
             fps: vec![0.0, 0.5],
             users: vec![1, 2],
             avg_latency_ms: vec![10.0, 20.0],
-            latency_ms: LatencySeries::default(),
-            latency_co_adjusted_ms: LatencySeries::default(),
+            heatmap: None,
         };
 
         let snap = build_dashboard_snapshot(DashboardSnapshotInput {
