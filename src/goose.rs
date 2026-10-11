@@ -2371,25 +2371,23 @@ impl GooseUser {
             batch.second = Some(second);
         }
 
-        // Look the name up by reference: the key is only copied the first
-        // time the batch sees the name.
-        if !batch.requests.contains_key(self.counter_key_buf.as_str()) {
-            batch.requests.insert(
-                self.counter_key_buf.clone(),
-                RequestBatchEntry {
+        // One lookup by reference when the batch has seen the name; the key
+        // is only copied the first time it does.
+        let key = self.counter_key_buf.as_str();
+        let entry = match batch.requests.get_mut(key) {
+            Some(entry) => entry,
+            None => batch
+                .requests
+                .entry(key.to_string())
+                .or_insert_with(|| RequestBatchEntry {
                     path: request_metric.name.to_string(),
                     method: request_metric.raw.method,
                     custom_method: request_metric.raw.custom_method.clone(),
                     raw_data: GooseRequestMetricTimingData::new(None),
                     status_code_counts: HashMap::new(),
                     status_code_timings: HashMap::new(),
-                },
-            );
-        }
-        let entry = batch
-            .requests
-            .get_mut(self.counter_key_buf.as_str())
-            .expect("inserted above");
+                }),
+        };
 
         // Only non-update requests reach accumulate_request; updates go through
         // set_success/set_failure → send_request_metric_now directly.
