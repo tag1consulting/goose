@@ -577,15 +577,6 @@ impl LatencyRing {
         }
     }
 
-    /// Add a histogram of response times to `second`, as the batch merge
-    /// before #713's single recording did (unit tests compare against it).
-    #[cfg(test)]
-    fn merge_histogram(&mut self, second: usize, other: &SecondHistogram, rev: u64) {
-        if let Some(data) = self.slot_mut(second, rev) {
-            data.merge(other);
-        }
-    }
-
     /// Forget every second.
     pub(crate) fn clear(&mut self) {
         for slot in self.slots.iter_mut() {
@@ -936,17 +927,28 @@ impl GraphData {
     /// histograms are kept and `times` is given, their response times (the
     /// batch's timing data for this request, every time from `second`),
     /// finding the request's ring through the same lookup that counts them.
+    /// `next`, the batch's timing data for this request from the second
+    /// after, is counted and kept the same way in `second + 1`.
     pub(crate) fn record_requests_per_second_and_latency_batch(
         &mut self,
         key: &str,
         second: usize,
         count: u32,
         times: Option<&GooseRequestMetricTimingData>,
+        next: Option<&GooseRequestMetricTimingData>,
     ) {
         let data = self.requests_per_second.increment(key, second, count);
         if let (Some(times), Some(histograms)) = (times, self.latency.as_mut()) {
             if times.counter > 0 {
                 histograms.merge_cached(key, &mut data.latency_ring, second, times);
+            }
+        }
+        if let Some(next) = next {
+            data.increase_value(second + 1, next.counter as u32);
+            if let Some(histograms) = self.latency.as_mut() {
+                if next.counter > 0 {
+                    histograms.merge_cached(key, &mut data.latency_ring, second + 1, next);
+                }
             }
         }
     }
@@ -1020,37 +1022,6 @@ impl GraphData {
             .map_or(0, |series| series.get(second))
     }
 
-    /// The batch merge before #713's single recording: a user thread kept a
-    /// second histogram for each request name and second, which was merged
-    /// into the rings (unit tests compare the new path against it).
-    #[cfg(test)]
-    pub(crate) fn merge_latency_histogram_for_test(
-        &mut self,
-        key: &str,
-        second: usize,
-        count: u32,
-        times: &SecondHistogram,
-    ) {
-        let data = self.requests_per_second.increment(key, second, count);
-        if times.counter > 0 {
-            if let Some(histograms) = self.latency.as_mut() {
-                let rev = histograms.next_rev();
-                histograms.all.merge_histogram(second, times, rev);
-                let ring = match data.latency_ring {
-                    Some(index) => index,
-                    None => {
-                        let index = histograms.ring_index(key);
-                        data.latency_ring = Some(index);
-                        index
-                    }
-                };
-                if let Some(ring) = ring.and_then(|index| histograms.rings.get_mut(index)) {
-                    ring.merge_histogram(second, times, rev);
-                }
-            }
-        }
-    }
-
     /// Last absolute second with a users sample, if any.
     pub(crate) fn users_last_absolute_second(&self) -> Option<usize> {
         self.users_per_second.last_absolute_second()
@@ -1121,15 +1092,19 @@ impl GraphData {
     ///
     /// Performs a proper weighted merge of the batch's total response time and
     /// count into the per-second moving average, avoiding the precision loss
-    /// that would result from truncating the average to an integer.
+    /// that would result from truncating the average to an integer. `next`
+    /// is the batch's total response time and count for `second + 1`, merged
+    /// through the same lookup.
     pub(crate) fn record_average_response_time_per_second_batch(
         &mut self,
         key: &str,
         second: usize,
         total_time: f64,
         count: u32,
+        next: Option<(f64, u32)>,
     ) {
-        if count == 0 {
+        let next = next.filter(|&(_, count)| count > 0);
+        if count == 0 && next.is_none() {
             return;
         }
         let origin = self.users_per_second.origin;
@@ -1137,11 +1112,17 @@ impl GraphData {
             .average_response_time_per_second
             .entry(key.to_string())
             .or_insert_with(|| TimeSeries::with_origin(origin));
-        let batch_avg = MovingAverage {
-            count,
-            average: total_time as f32 / count as f32,
-        };
-        data.merge_value(second, &batch_avg);
+        for (second, total_time, count) in std::iter::once((second, total_time, count))
+            .chain(next.map(|(total_time, count)| (second + 1, total_time, count)))
+        {
+            if count > 0 {
+                let batch_avg = MovingAverage {
+                    count,
+                    average: total_time as f32 / count as f32,
+                };
+                data.merge_value(second, &batch_avg);
+            }
+        }
     }
 
     /// Record multiple transactions per second for batch merging.
@@ -2862,7 +2843,7 @@ mod test {
         let mut graph = GraphData::new();
 
         // Batch merge: 3 requests with total_time 60.0 → avg 20.0
-        graph.record_average_response_time_per_second_batch("GET /", 0, 60.0, 3);
+        graph.record_average_response_time_per_second_batch("GET /", 0, 60.0, 3, None);
         let avg = graph
             .average_response_time_per_second
             .get("GET /")
@@ -2883,7 +2864,7 @@ mod test {
         assert_eq!(avg.count, 4);
 
         // Another batch at a different second.
-        graph.record_average_response_time_per_second_batch("GET /", 5, 100.0, 2);
+        graph.record_average_response_time_per_second_batch("GET /", 5, 100.0, 2, None);
         let avg = graph
             .average_response_time_per_second
             .get("GET /")
@@ -2893,7 +2874,7 @@ mod test {
         assert_eq!(avg.count, 2);
 
         // Merge a second batch into the same second.
-        graph.record_average_response_time_per_second_batch("GET /", 5, 200.0, 2);
+        graph.record_average_response_time_per_second_batch("GET /", 5, 200.0, 2, None);
         let avg = graph
             .average_response_time_per_second
             .get("GET /")
@@ -3383,6 +3364,7 @@ mod test {
                     *second,
                     data.counter as u32,
                     Some(data),
+                    None,
                 );
             }
         }
@@ -3847,6 +3829,7 @@ mod test {
                 second,
                 data.counter as u32,
                 Some(&data),
+                None,
             );
         }
         let size = |heatmap: &Heatmap| serde_json::to_vec(heatmap).unwrap().len();
@@ -3867,6 +3850,7 @@ mod test {
                 second,
                 data.counter as u32,
                 Some(&data),
+                None,
             );
         }
         let next = graph
