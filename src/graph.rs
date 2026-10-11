@@ -538,6 +538,21 @@ struct RingSlot {
     /// The histograms' revision when this second last changed.
     rev: u64,
     data: SecondHistogram,
+    /// The heatmap's cells of this second as of a revision (0 before the
+    /// first build), so a column is built once for each change, whichever
+    /// heatmap asks for it.
+    cells: (u64, Vec<u64>),
+}
+
+impl RingSlot {
+    /// This second's heatmap cells, built only if it changed since the last
+    /// build.
+    fn heat_cells(&mut self) -> Vec<u64> {
+        if self.cells.0 != self.rev {
+            self.cells = (self.rev, self.data.heat_cells());
+        }
+        self.cells.1.clone()
+    }
 }
 
 /// One response time histogram for each of the last [`SERIES_WINDOW_SECS`]
@@ -577,6 +592,7 @@ impl LatencyRing {
                     second,
                     rev,
                     data: SecondHistogram::open(),
+                    cells: (0, Vec::new()),
                 });
                 // A new second has begun: those two or more seconds back
                 // have all but their slowest requests, so pack them.
@@ -630,6 +646,14 @@ impl LatencyRing {
         self.open.clear();
     }
 
+    /// [`Self::slot`], to build and keep its heatmap cells.
+    fn slot_at_mut(&mut self, second: usize) -> Option<&mut RingSlot> {
+        self.slots[second % SERIES_WINDOW_SECS as usize]
+            .as_mut()
+            .filter(|slot| slot.second == second)
+    }
+
+    #[cfg(test)]
     fn slot(&self, second: usize) -> Option<&RingSlot> {
         self.slots[second % SERIES_WINDOW_SECS as usize]
             .as_ref()
@@ -799,33 +823,34 @@ impl LatencyHistograms {
     /// the seconds changed after `since` when it is a cursor of these
     /// histograms, otherwise every second with data.
     #[allow(clippy::too_many_arguments)]
+    ///
+    /// `generation` and `rev` are the histograms' own, passed in so the
+    /// rings can be borrowed to build and keep each column's cells.
     fn heatmap(
-        &self,
-        measured: &LatencyRing,
-        synthetic: Option<&LatencyRing>,
+        (generation, rev): (u64, u64),
+        measured: &mut LatencyRing,
+        mut synthetic: Option<&mut LatencyRing>,
         start: usize,
         end: usize,
         hold_from: usize,
         since: Option<HeatmapCursor>,
-        co_active: bool,
     ) -> Heatmap {
-        let synthetic = synthetic.filter(|_| co_active && self.synthetic.is_some());
         let since = match since {
-            Some(cursor) if cursor.generation == self.generation && cursor.rev <= self.rev => {
-                cursor.rev
-            }
+            Some(cursor) if cursor.generation == generation && cursor.rev <= rev => cursor.rev,
             _ => 0,
         };
         let mut columns = Vec::new();
         let mut last_index = FIXED_BUCKETS - 1;
         for second in start..=end {
-            let real = measured.slot(second);
-            let added = synthetic.and_then(|ring| ring.slot(second));
-            if !real.into_iter().chain(added).any(|slot| slot.rev > since) {
+            let real = measured.slot_at_mut(second);
+            let added = synthetic
+                .as_deref_mut()
+                .and_then(|ring| ring.slot_at_mut(second));
+            if !real.iter().chain(added.iter()).any(|slot| slot.rev > since) {
                 continue;
             }
-            let real = real.map_or_else(Vec::new, |slot| slot.data.heat_cells());
-            let added = added.map_or_else(Vec::new, |slot| slot.data.heat_cells());
+            let real = real.map_or_else(Vec::new, RingSlot::heat_cells);
+            let added = added.map_or_else(Vec::new, RingSlot::heat_cells);
             for cells in [&real, &added] {
                 if let Some(&index) = cells.iter().rev().nth(1) {
                     last_index = last_index.max(index as usize);
@@ -838,8 +863,8 @@ impl LatencyHistograms {
             });
         }
         Heatmap {
-            generation: self.generation,
-            rev: self.rev,
+            generation,
+            rev,
             since,
             start_second: start as u64,
             end_second: end as u64,
@@ -850,21 +875,31 @@ impl LatencyHistograms {
     }
 
     fn heatmap_all(
-        &self,
+        &mut self,
         start: usize,
         end: usize,
         hold_from: usize,
         since: Option<HeatmapCursor>,
         co_active: bool,
     ) -> Heatmap {
-        let synthetic = self.synthetic.as_ref().map(|(all, _)| all);
-        self.heatmap(
-            &self.all, synthetic, start, end, hold_from, since, co_active,
+        let synthetic = self
+            .synthetic
+            .as_mut()
+            .filter(|_| co_active)
+            .map(|(all, _)| all);
+        Self::heatmap(
+            (self.generation, self.rev),
+            &mut self.all,
+            synthetic,
+            start,
+            end,
+            hold_from,
+            since,
         )
     }
 
     fn heatmap_request(
-        &self,
+        &mut self,
         key: &str,
         start: usize,
         end: usize,
@@ -872,12 +907,21 @@ impl LatencyHistograms {
         since: Option<HeatmapCursor>,
         co_active: bool,
     ) -> Option<Heatmap> {
-        let measured = &self.rings[*self.by_request.get(key)?];
+        let measured = &mut self.rings[*self.by_request.get(key)?];
         let synthetic = self
             .synthetic
-            .as_ref()
-            .and_then(|(_, by_request)| by_request.get(key));
-        Some(self.heatmap(measured, synthetic, start, end, hold_from, since, co_active))
+            .as_mut()
+            .filter(|_| co_active)
+            .and_then(|(_, by_request)| by_request.get_mut(key));
+        Some(Self::heatmap(
+            (self.generation, self.rev),
+            measured,
+            synthetic,
+            start,
+            end,
+            hold_from,
+            since,
+        ))
     }
 }
 
@@ -1216,7 +1260,7 @@ impl GraphData {
     /// Production paths always pass a series-clock hint via
     /// [`Self::export_series_window_until`].
     #[cfg(test)]
-    pub(crate) fn export_series_window(&self, window_secs: u32) -> SeriesWindow {
+    pub(crate) fn export_series_window(&mut self, window_secs: u32) -> SeriesWindow {
         self.export_series_window_until(window_secs, None)
     }
 
@@ -1225,7 +1269,7 @@ impl GraphData {
     /// tests).
     #[cfg(test)]
     pub(crate) fn export_series_window_until(
-        &self,
+        &mut self,
         window_secs: u32,
         end_second_hint: Option<usize>,
     ) -> SeriesWindow {
@@ -1290,7 +1334,7 @@ impl GraphData {
     /// last stored sample is a few seconds older (main-loop cadence / no recent
     /// requests).
     pub(crate) fn export_series_window_with_heatmap(
-        &self,
+        &mut self,
         window_secs: u32,
         end_second_hint: Option<usize>,
         co_active: bool,
@@ -1302,7 +1346,7 @@ impl GraphData {
             let mut empty = SeriesWindow::empty();
             empty.heatmap = self
                 .latency
-                .as_ref()
+                .as_mut()
                 .map(|latency| latency.heatmap_all(0, 0, 0, heatmap_since, co_active));
             return empty;
         };
@@ -1368,11 +1412,12 @@ impl GraphData {
             users.push(self.users_per_second.get_held(s) as u64);
         }
 
-        let heatmap = self.latency.as_ref().map(|latency| {
+        let hold_from = Self::latency_hold_from(end_second, end_second_hint);
+        let heatmap = self.latency.as_mut().map(|latency| {
             latency.heatmap_all(
                 start_second,
                 end_second,
-                Self::latency_hold_from(end_second, end_second_hint),
+                hold_from,
                 heatmap_since,
                 co_active,
             )
@@ -1392,7 +1437,7 @@ impl GraphData {
     /// as [`Self::export_series_window_with_heatmap`] and sent the same way.
     /// `None` when the request has no histograms of its own.
     pub(crate) fn export_request_series(
-        &self,
+        &mut self,
         method: String,
         name: String,
         window_secs: u32,
@@ -1400,11 +1445,12 @@ impl GraphData {
         co_active: bool,
         since: Option<HeatmapCursor>,
     ) -> Option<RequestSeries> {
-        let latency = self.latency.as_ref()?;
+        self.latency.as_ref()?;
         let key = format!("{method} {name}");
         let (start_second, end_second) = self
             .series_window_bounds(window_secs, end_second_hint)
             .unwrap_or((0, 0));
+        let latency = self.latency.as_mut()?;
         let heatmap = latency.heatmap_request(
             &key,
             start_second,
@@ -3017,7 +3063,7 @@ mod test {
 
     #[test]
     fn test_export_series_window_empty() {
-        let graph = GraphData::new();
+        let mut graph = GraphData::new();
         let window = graph.export_series_window(300);
         assert_eq!(window, SeriesWindow::empty());
         assert_eq!(window.start_second, 0);
@@ -3674,6 +3720,31 @@ mod test {
             assert_eq!(table[index], entry, "index {index}");
         }
         assert_eq!(bucket_table(0).len(), FIXED_BUCKETS);
+    }
+
+    /// A column's cells are kept from one heatmap to the next, and rebuilt
+    /// when its second changes.
+    #[test]
+    fn heatmap_columns_rebuild_only_when_changed() {
+        let mut graph = latency_graph(false);
+        graph.record_requests_per_second("GET /", 1);
+        graph.record_latency("GET /", 1, 5);
+        let first = graph
+            .export_series_window_until(300, Some(4))
+            .heatmap
+            .unwrap();
+        assert_eq!(measured_pairs(&first, 1), [(5, 1)]);
+        let again = graph
+            .export_series_window_until(300, Some(4))
+            .heatmap
+            .unwrap();
+        assert_eq!(again.columns, first.columns);
+        graph.record_latency("GET /", 1, 6);
+        let changed = graph
+            .export_series_window_until(300, Some(4))
+            .heatmap
+            .unwrap();
+        assert_eq!(measured_pairs(&changed, 1), [(5, 1), (6, 1)]);
     }
 
     #[test]

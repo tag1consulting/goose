@@ -3353,8 +3353,8 @@ impl MetricsProcessor {
 
     /// The processor's graph data, for unit tests in other modules.
     #[cfg(test)]
-    pub(crate) fn graph_data_for_test(&self) -> &GraphData {
-        &self.graph_data
+    pub(crate) fn graph_data_for_test(&mut self) -> &mut GraphData {
+        &mut self.graph_data
     }
 
     /// Whether coordinated omission mitigation has recorded an event, so the
@@ -6631,7 +6631,7 @@ mod test {
 
     /// Count of measured times in second `second` of the all requests
     /// heatmap.
-    fn measured_count(processor: &MetricsProcessor, second: usize) -> u64 {
+    fn measured_count(processor: &mut MetricsProcessor, second: usize) -> u64 {
         let window = processor
             .graph_data
             .export_series_window_until(dashboard_snapshot::SERIES_WINDOW_SECS, Some(second + 2));
@@ -6639,7 +6639,7 @@ mod test {
     }
 
     fn request_series(
-        processor: &MetricsProcessor,
+        processor: &mut MetricsProcessor,
         name: &str,
         co_active: bool,
     ) -> Option<dashboard_snapshot::RequestSeries> {
@@ -6671,8 +6671,8 @@ mod test {
         failed.success = false;
         failed.error = "500 Internal Server Error".to_string();
         processor.process_request_metric(&failed);
-        assert_eq!(measured_count(&processor, 2), 1);
-        let series = request_series(&processor, "/fail", false).expect("series");
+        assert_eq!(measured_count(&mut processor, 2), 1);
+        let series = request_series(&mut processor, "/fail", false).expect("series");
         // 250 ms is in the 250 ms bucket, index 115.
         assert_eq!(measured_buckets(&series.heatmap, 2), [(115, 1)]);
 
@@ -6680,7 +6680,7 @@ mod test {
         let mut update = make_request_metric("/fail", 300, 200, 2_200);
         update.update = true;
         processor.process_request_metric(&update);
-        assert_eq!(measured_count(&processor, 2), 1);
+        assert_eq!(measured_count(&mut processor, 2), 1);
 
         // Coordinated omission copies never reach the measured series, with
         // or without a cadence.
@@ -6689,8 +6689,12 @@ mod test {
             copy.coordinated_omission_elapsed = 1_000;
             copy.user_cadence = user_cadence;
             processor.process_request_metric(&copy);
-            assert_eq!(measured_count(&processor, 2), 1, "cadence {user_cadence}");
-            let series = request_series(&processor, "/fail", false).unwrap();
+            assert_eq!(
+                measured_count(&mut processor, 2),
+                1,
+                "cadence {user_cadence}"
+            );
+            let series = request_series(&mut processor, "/fail", false).unwrap();
             assert_eq!(series.heatmap.counts(2), (1, 0), "cadence {user_cadence}");
         }
     }
@@ -6725,9 +6729,9 @@ mod test {
             make_latency_test_processor(GooseCoordinatedOmissionMitigation::Disabled);
         processor.process_batch(latency_batch(3, &[10, 30]));
         processor.process_batch(latency_batch(4, &[1400]));
-        assert_eq!(measured_count(&processor, 3), 2);
-        assert_eq!(measured_count(&processor, 4), 1);
-        let series = request_series(&processor, "/", false).unwrap();
+        assert_eq!(measured_count(&mut processor, 3), 2);
+        assert_eq!(measured_count(&mut processor, 4), 1);
+        let series = request_series(&mut processor, "/", false).unwrap();
         assert_eq!(measured_buckets(&series.heatmap, 3), [(10, 1), (30, 1)]);
         // 1400 ms rounds to the 1 second bucket, index 145.
         assert_eq!(measured_buckets(&series.heatmap, 4), [(145, 1)]);

@@ -1896,7 +1896,7 @@ impl GooseAttack {
     /// Stop) so clients still receive a coherent phase/users view.
     #[cfg(feature = "dashboard")]
     fn build_local_dashboard_snapshot(
-        &self,
+        &mut self,
         phase: String,
         stopping: bool,
         active_users: usize,
@@ -3835,7 +3835,7 @@ mod tests {
             (vec!["--dashboard", "--no-percentiles-over-time"], false),
         ] {
             let configuration = GooseConfiguration::parse_args_default(&args).unwrap();
-            let goose_attack = GooseAttack::initialize_with_config(configuration).unwrap();
+            let mut goose_attack = GooseAttack::initialize_with_config(configuration).unwrap();
             let snapshot =
                 goose_attack.build_local_dashboard_snapshot("idle".to_string(), false, 0, None);
             assert_eq!(snapshot.flags.percentiles_over_time, expected, "{args:?}");
