@@ -2559,7 +2559,9 @@ impl GooseUser {
     /// from its first request's second and the next one (see
     /// [`GooseMetricBatch::second`]); a request from before that second, or
     /// two or more seconds after it, starts a new batch. Batches flush as
-    /// [`Self::maybe_flush_batch`] says, so this happens only when a slow
+    /// [`Self::maybe_flush_batch`] says, which checks a batch's age only
+    /// after adding a request, so this happens when a user adds a request
+    /// after idling a second or more with a batch open, or when a slow
     /// request, added when it finished, started well before the requests
     /// that follow it.
     fn flush_batch_outside_seconds(&mut self, elapsed: u64) -> TransactionResult {

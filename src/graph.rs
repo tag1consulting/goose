@@ -265,15 +265,24 @@ impl SecondHistogram {
     }
 
     fn add_bucket(&mut self, rounded: usize, count: usize) {
-        if let Some(index) = dense_index(rounded) {
-            match self.open.as_mut() {
-                Some(open) => open[index] += count,
-                None => {
-                    self.add_indexed(0, index, count);
-                }
-            }
-            return;
+        match dense_index(rounded) {
+            Some(index) => self.add_dense(index, count),
+            None => self.add_overflow(rounded, count),
         }
+    }
+
+    /// Add `count` to the bucket with fixed index `index`.
+    fn add_dense(&mut self, index: usize, count: usize) {
+        match self.open.as_mut() {
+            Some(open) => open[index] += count,
+            None => {
+                self.add_indexed(0, index, count);
+            }
+        }
+    }
+
+    /// Add `count` to the bucket of a rounded time with no fixed index.
+    fn add_overflow(&mut self, rounded: usize, count: usize) {
         let count = u32::try_from(count).unwrap_or(u32::MAX);
         match self
             .overflow
@@ -345,6 +354,39 @@ impl SecondHistogram {
             other.total_time,
             other.counter,
         );
+    }
+
+    /// [`Self::merge_timing`] into `self` and, when given, `also`, walking
+    /// the batch's buckets once for both: all requests and the request's own
+    /// ring, for the same second.
+    fn merge_timing_also(
+        &mut self,
+        also: Option<&mut SecondHistogram>,
+        other: &GooseRequestMetricTimingData,
+    ) {
+        let Some(also) = also else {
+            return self.merge_timing(other);
+        };
+        for (&rounded, &count) in &other.times {
+            match dense_index(rounded) {
+                Some(index) => {
+                    self.add_dense(index, count);
+                    also.add_dense(index, count);
+                }
+                None => {
+                    self.add_overflow(rounded, count);
+                    also.add_overflow(rounded, count);
+                }
+            }
+        }
+        for histogram in [self, also] {
+            histogram.add_totals(
+                other.minimum_time,
+                other.maximum_time,
+                other.total_time,
+                other.counter,
+            );
+        }
     }
 
     /// Once the second is unlikely to grow: move the counts of an open
@@ -523,7 +565,9 @@ impl LatencyRing {
     /// changed at `rev`. `None` when the slot already holds a newer second:
     /// the sample is too old to show.
     fn slot_mut(&mut self, second: usize, rev: u64) -> Option<&mut SecondHistogram> {
-        let len = self.slots.len();
+        // The window is a constant, so the remainder needs no division.
+        let len = SERIES_WINDOW_SECS as usize;
+        debug_assert_eq!(self.slots.len(), len);
         let at = second % len;
         match &self.slots[at] {
             Some(slot) if slot.second > second => return None,
@@ -565,7 +609,8 @@ impl LatencyRing {
     }
 
     /// Add a batch's response times for one request name to `second`, at
-    /// `rev`.
+    /// `rev` (unit tests; the metrics processor merges into two rings at once).
+    #[cfg(test)]
     pub(crate) fn merge_timing(
         &mut self,
         second: usize,
@@ -586,7 +631,7 @@ impl LatencyRing {
     }
 
     fn slot(&self, second: usize) -> Option<&RingSlot> {
-        self.slots[second % self.slots.len()]
+        self.slots[second % SERIES_WINDOW_SECS as usize]
             .as_ref()
             .filter(|slot| slot.second == second)
     }
@@ -656,15 +701,21 @@ impl LatencyHistograms {
         key: &str,
         cached: &mut Option<Option<usize>>,
     ) -> Option<&mut LatencyRing> {
-        let index = match *cached {
+        let index = self.cached_index(key, cached)?;
+        self.rings.get_mut(index)
+    }
+
+    /// The index of `key`'s ring, looked up through `cached` as
+    /// [`Self::cached_ring`] does.
+    fn cached_index(&mut self, key: &str, cached: &mut Option<Option<usize>>) -> Option<usize> {
+        match *cached {
             Some(index) => index,
             None => {
                 let index = self.ring_index(key);
                 *cached = Some(index);
                 index
             }
-        };
-        self.rings.get_mut(index?)
+        }
     }
 
     #[cfg(test)]
@@ -698,9 +749,15 @@ impl LatencyHistograms {
         data: &GooseRequestMetricTimingData,
     ) {
         let rev = self.next_rev();
-        self.all.merge_timing(second, data, rev);
-        if let Some(ring) = self.cached_ring(key, cached) {
-            ring.merge_timing(second, data, rev);
+        let index = self.cached_index(key, cached);
+        let rings = &mut self.rings;
+        let own = index
+            .and_then(|index| rings.get_mut(index))
+            .and_then(|ring| ring.slot_mut(second, rev));
+        match (self.all.slot_mut(second, rev), own) {
+            (Some(all), own) => all.merge_timing_also(own, data),
+            (None, Some(own)) => own.merge_timing(data),
+            (None, None) => {}
         }
     }
 
