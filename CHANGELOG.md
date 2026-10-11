@@ -7,6 +7,7 @@
     o the report's and the console's adjusted aggregates left out the times of requests without synthetic times, while the report still counted those requests, and the console took its adjusted maximum from the measured maximum; both now cover every request's adjusted times, its measured ones when mitigation added none, as the dashboard does
     o the reports computed and kept averages as `f32`, so an average above about 10,000 ms could print 0.01 ms off; they are `f64` now
     o **behavior change**: report averages are exact, so the JSON report carries them with more digits; values still computed as `f32` serialize as before
+    o the report's transaction aggregate average divided the requests' total time by the transaction count; it now divides the transactions' total time by their count, as the console does
  - [#715](https://github.com/tag1consulting/goose/issues/715) save every run, and download saved runs from the dashboard
     o **behavior change**: every run now writes `goose-runs/` in the working directory (the HTML, JSON and Markdown reports and `run.json`), including runs started from library code and test suites; `--no-save` or `GooseDefault::NoSave` turns it off
     o **behavior change**: `--report-file` is written even with `--no-print-metrics`; the reports were skipped with the printed metrics

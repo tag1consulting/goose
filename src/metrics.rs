@@ -958,9 +958,6 @@ impl GooseRequestMetricAggregate {
         let time = time_elapsed as usize;
         let summary = self.status_code_timings.entry(status_code).or_default();
         summary.record(time);
-        if time > summary.max_time {
-            summary.max_time = time;
-        }
     }
 
     /// Returns per-status-code breakdown data if multiple status codes were recorded.
@@ -3392,8 +3389,6 @@ impl MetricsProcessor {
         self.metrics.requests.insert(key, merge_request);
     }
 
-    /// Process a single request metric: record errors, handle CO backfill, update
-    /// aggregates and graph data.
     /// [`Self::process_batch`], for unit tests in other modules.
     #[cfg(test)]
     pub(crate) fn process_batch_for_test(&mut self, batch: GooseMetricBatch) {
@@ -3412,6 +3407,8 @@ impl MetricsProcessor {
         self.sync_atomic_counters();
     }
 
+    /// Process a single request metric: record errors, handle CO backfill, update
+    /// aggregates and graph data.
     fn process_request_metric(&mut self, request_metric: &GooseRequestMetric) {
         if !request_metric.error.is_empty() {
             self.record_error(request_metric);
@@ -4638,6 +4635,65 @@ mod test {
         let printed = ConsoleTables(&metrics).to_string();
         // Avg, Min, Max, Median.
         assert_eq!(printed_rows(&printed, "Aggregated")[0][1], "0");
+    }
+
+    /// The console's transaction times table, as printed.
+    struct ConsoleTransactionTimes<'a>(&'a GooseMetrics);
+
+    impl fmt::Display for ConsoleTransactionTimes<'_> {
+        fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+            self.0.fmt_transaction_times(fmt)
+        }
+    }
+
+    /// The report's transaction Aggregated average is the transactions'
+    /// total time over their count, as the console prints it, not the
+    /// requests' total time over the transaction count.
+    #[test]
+    fn report_transaction_aggregate_average_uses_transaction_times() {
+        let mut metrics = GooseMetrics::default();
+        metrics.final_metrics = true;
+        metrics.display_metrics = true;
+        let mut first = TransactionMetricAggregate::new(
+            0,
+            "Scenario".into(),
+            0,
+            TransactionName::InheritNameByRequests(Arc::from("first")),
+        );
+        first.set_time(10, true);
+        first.set_time(13, true);
+        let mut second = TransactionMetricAggregate::new(
+            0,
+            "Scenario".into(),
+            1,
+            TransactionName::InheritNameByRequests(Arc::from("second")),
+        );
+        second.set_time(31, true);
+        metrics.transactions = vec![vec![first, second]];
+        metrics.requests.insert(
+            "GET /a".to_string(),
+            request_with_times("/a", &[100, 300], 2),
+        );
+        let report = common::prepare_data_with_baseline(
+            ReportOptions {
+                no_transaction_metrics: false,
+                no_scenario_metrics: true,
+                no_status_codes: true,
+            },
+            &metrics,
+            None,
+        );
+        let transactions = report.transaction_metrics.unwrap();
+        let aggregated = transactions.last().unwrap();
+        assert_eq!(aggregated.name, "Aggregated");
+        // (10 + 13 + 31) / 3 = 18; the old figure was (100 + 300) / 3.
+        let average = *aggregated.response_time_average.as_ref().unwrap().value();
+        assert_eq!(average, 18.0);
+        let printed = ConsoleTransactionTimes(&metrics).to_string();
+        assert_eq!(
+            printed_rows(&printed, "Aggregated")[0][0],
+            format!("{:.2}", average)
+        );
     }
 
     /// With coordinated omission mitigation every request is counted, the

@@ -3,11 +3,6 @@ use super::{
     update_min_time, CoMetricsSummary, GooseMetrics, GooseRequestMetricTimingData, NullableFloat,
 };
 
-/// The mean of these response times, in `f64` so that a large one prints to
-/// the hundredth exactly (NaN without times).
-fn average(data: &GooseRequestMetricTimingData) -> f64 {
-    data.total_time as f64 / data.counter as f64
-}
 use crate::{
     report::{
         get_response_metric, CORequestMetric, ErrorMetric, RequestMetric, ResponseMetric,
@@ -23,6 +18,12 @@ use std::fs::File;
 use std::hash::Hash;
 use std::io::BufReader;
 use std::path::Path;
+
+/// The mean of these response times, in `f64` so that a large one prints to
+/// the hundredth exactly (NaN without times).
+fn average(data: &GooseRequestMetricTimingData) -> f64 {
+    data.total_time as f64 / data.counter as f64
+}
 
 /// Custom deserializer for f64 values that converts JSON null to f64::NAN
 fn deserialize_nullable_f64<'de, D>(deserializer: D) -> Result<f64, D::Error>
@@ -110,7 +111,7 @@ impl<'m> Prepare<'m> {
             co_request_metrics,
             co_response_metrics,
             scenario_metrics: self.build_scenario(),
-            transaction_metrics: self.build_transaction(&intermediate),
+            transaction_metrics: self.build_transaction(),
             status_code_metrics: self.build_status_code(),
             errors: self.build_errors(),
             coordinated_omission_metrics: self
@@ -314,7 +315,7 @@ impl<'m> Prepare<'m> {
         (Some(co_request_metrics), Some(co_response_metrics))
     }
 
-    fn build_transaction(&self, intermediate: &RawIntermediate) -> Option<Vec<TransactionMetric>> {
+    fn build_transaction(&self) -> Option<Vec<TransactionMetric>> {
         if self.options.no_transaction_metrics {
             return None;
         }
@@ -323,6 +324,7 @@ impl<'m> Prepare<'m> {
         let mut aggregate_total_count = 0;
         let mut aggregate_fail_count = 0;
         let mut aggregate_transaction_time_counter: usize = 0;
+        let mut aggregate_transaction_total_time: usize = 0;
         let mut aggregate_transaction_time_minimum: usize = 0;
         let mut aggregate_transaction_time_maximum: usize = 0;
         let mut aggregate_transaction_times: BTreeMap<usize, usize> = BTreeMap::new();
@@ -374,6 +376,7 @@ impl<'m> Prepare<'m> {
                 aggregate_transaction_times =
                     merge_times(aggregate_transaction_times, &transaction.times);
                 aggregate_transaction_time_counter += &transaction.counter;
+                aggregate_transaction_total_time += &transaction.total_time;
                 aggregate_transaction_time_minimum =
                     update_min_time(aggregate_transaction_time_minimum, transaction.min_time);
                 aggregate_transaction_time_maximum =
@@ -394,8 +397,14 @@ impl<'m> Prepare<'m> {
             number_of_requests: aggregate_total_count.into(),
             number_of_failures: aggregate_fail_count.into(),
             response_time_average: Some(
-                (intermediate.raw_aggregate.total_time as f32 / aggregate_total_count as f32)
-                    .into(),
+                match aggregate_transaction_time_counter {
+                    0 => 0.0,
+                    _ => {
+                        aggregate_transaction_total_time as f64
+                            / aggregate_transaction_time_counter as f64
+                    }
+                }
+                .into(),
             ),
             response_time_minimum: aggregate_transaction_time_minimum.into(),
             response_time_maximum: aggregate_transaction_time_maximum.into(),

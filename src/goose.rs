@@ -5154,20 +5154,36 @@ mod tests {
         (processor, synthetic)
     }
 
-    /// For 200 seeded datasets, split across users and batches, every
-    /// percentile Goose prints or reports, and the minimum, maximum and
-    /// average, per request and for all requests, equal an independent
-    /// reference; with coordinated omission mitigation, the adjusted ones
-    /// equal the reference over measured and synthetic times together.
+    /// For 200 seeded datasets of up to 1,000 requests, split across users
+    /// and batches, every percentile Goose prints or reports, and the
+    /// minimum, maximum and average, per request and for all requests, equal
+    /// an independent reference; with coordinated omission mitigation, the
+    /// adjusted ones equal the reference over measured and synthetic times
+    /// together.
     #[test]
     fn whole_run_figures_match_a_reference() {
-        const SIZES: [usize; 6] = [1, 2, 3, 10, 1_000, 100_000];
+        audit_whole_run(&[1, 2, 3, 10, 1_000], 200);
+    }
+
+    /// The same audit with 100,000 request datasets added: 200 datasets,
+    /// 3,333,531 requests. Too slow for every `cargo test`; run it with
+    /// `cargo test --release --lib whole_run_figures_match_a_reference_full -- --ignored`.
+    #[test]
+    #[ignore]
+    fn whole_run_figures_match_a_reference_full() {
+        audit_whole_run(&[1, 2, 3, 10, 1_000, 100_000], 200);
+    }
+
+    /// Runs `datasets` seeded datasets, cycling through `sizes`, and checks
+    /// every whole run figure on the dashboard, in the reports and on the
+    /// console against an independent reference.
+    fn audit_whole_run(sizes: &[usize], datasets: usize) {
         let mut rng = AuditRng(0x713);
         let mut checked = 0usize;
         let mut mismatches: Vec<Mismatch> = Vec::new();
-        for dataset in 0..200 {
-            let size = SIZES[dataset % SIZES.len()];
-            let distribution = dataset / SIZES.len() % 3;
+        for dataset in 0..datasets {
+            let size = sizes[dataset % sizes.len()];
+            let distribution = dataset / sizes.len() % 3;
             let users = 1 + rng.below(8) as usize;
             let names = 1 + rng.below(3) as usize;
             let requests: Vec<AuditRequest> = (0..size)
