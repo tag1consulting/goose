@@ -351,7 +351,7 @@ Transaction times cover the whole transaction function, so they include `--throt
 
 When control is off there are **no control buttons**. Use the Controllers (or enable dashboard control) to change the running test.
 
-When coordinated omission mitigation is on (`--co-mitigation`) and has recorded at least one event, the KPI strip, the aggregate panel and the requests table show adjusted response times, which include the synthetic times mitigation adds for requests a stalled user could not send. They are labelled "adjusted", and hovering a value shows the measured one. The aggregate panel shows both. The adjusted aggregate includes every request, using measured times for requests that never needed backfill, so it can differ from the report's adjusted aggregate, which leaves those requests out.
+When coordinated omission mitigation is on (`--co-mitigation`) and has recorded at least one event, the KPI strip, the aggregate panel and the requests table show adjusted response times, which include the synthetic times mitigation adds for requests a stalled user could not send. They are labelled "adjusted", and hovering a value shows the measured one. The aggregate panel shows both. The adjusted aggregate includes every request, using measured times for requests that never needed backfill, as the printed metrics and the reports do.
 
 ## Saved runs
 

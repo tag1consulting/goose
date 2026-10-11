@@ -104,6 +104,12 @@ impl<T: DeltaValue> From<T> for Value<T> {
 
 impl From<f32> for Value<NullableFloat> {
     fn from(value: f32) -> Self {
+        Self::Plain(NullableFloat::from(value))
+    }
+}
+
+impl From<f64> for Value<NullableFloat> {
+    fn from(value: f64) -> Self {
         Self::Plain(NullableFloat(value))
     }
 }
@@ -261,8 +267,8 @@ mod test {
         use crate::metrics::NullableFloat;
         let a = NullableFloat(100.0);
         let b = NullableFloat(60.0);
-        assert_eq!(a.delta(b), 40.0f32);
-        assert_eq!(b.delta(a), -40.0f32);
+        assert_eq!(a.delta(b), 40.0f64);
+        assert_eq!(b.delta(a), -40.0f64);
     }
 
     #[test]
