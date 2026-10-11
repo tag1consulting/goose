@@ -315,8 +315,7 @@ impl SecondHistogram {
         self.add_bucket(round_metric_time(time), 1);
     }
 
-    /// Add another second's response times (unit tests).
-    #[cfg(test)]
+    /// Add another second's response times.
     pub(crate) fn merge(&mut self, other: &SecondHistogram) {
         if let Some(open) = self.open.as_mut() {
             for (index, count) in other.indexed() {
@@ -354,39 +353,6 @@ impl SecondHistogram {
             other.total_time,
             other.counter,
         );
-    }
-
-    /// [`Self::merge_timing`] into `self` and, when given, `also`, walking
-    /// the batch's buckets once for both: all requests and the request's own
-    /// ring, for the same second.
-    fn merge_timing_also(
-        &mut self,
-        also: Option<&mut SecondHistogram>,
-        other: &GooseRequestMetricTimingData,
-    ) {
-        let Some(also) = also else {
-            return self.merge_timing(other);
-        };
-        for (&rounded, &count) in &other.times {
-            match dense_index(rounded) {
-                Some(index) => {
-                    self.add_dense(index, count);
-                    also.add_dense(index, count);
-                }
-                None => {
-                    self.add_overflow(rounded, count);
-                    also.add_overflow(rounded, count);
-                }
-            }
-        }
-        for histogram in [self, also] {
-            histogram.add_totals(
-                other.minimum_time,
-                other.maximum_time,
-                other.total_time,
-                other.counter,
-            );
-        }
     }
 
     /// Once the second is unlikely to grow: move the counts of an open
@@ -653,7 +619,6 @@ impl LatencyRing {
             .filter(|slot| slot.second == second)
     }
 
-    #[cfg(test)]
     fn slot(&self, second: usize) -> Option<&RingSlot> {
         self.slots[second % SERIES_WINDOW_SECS as usize]
             .as_ref()
@@ -667,11 +632,79 @@ impl LatencyRing {
     }
 }
 
-/// Per second response time histograms for the dashboard's heatmap: all
-/// requests, each of the first [`MAX_REQUEST_SERIES`] request names, and the
-/// same for synthetic times while coordinated omission mitigation is on.
+/// Where a heatmap's measured columns come from.
+trait MeasuredColumns {
+    /// The revision `second` last changed at, if it has response times.
+    fn rev(&self, second: usize) -> Option<u64>;
+    /// `second`'s heatmap cells.
+    fn cells(&mut self, second: usize) -> Vec<u64>;
+}
+
+impl MeasuredColumns for LatencyRing {
+    fn rev(&self, second: usize) -> Option<u64> {
+        self.slot(second).map(|slot| slot.rev)
+    }
+
+    fn cells(&mut self, second: usize) -> Vec<u64> {
+        self.slot_at_mut(second)
+            .map_or_else(Vec::new, RingSlot::heat_cells)
+    }
+}
+
+/// All requests: every name's ring and the ring of names without one,
+/// added up for a column only when a heatmap asks for it.
+struct AllRequests<'a> {
+    rings: &'a [LatencyRing],
+    others: &'a LatencyRing,
+    /// Each second's cells as of the revision they were built at.
+    cells: &'a mut [Option<(usize, u64, Vec<u64>)>],
+}
+
+impl AllRequests<'_> {
+    fn slots(&self, second: usize) -> impl Iterator<Item = &RingSlot> + '_ {
+        self.rings
+            .iter()
+            .chain([self.others])
+            .filter_map(move |ring| ring.slot(second))
+    }
+}
+
+impl MeasuredColumns for AllRequests<'_> {
+    fn rev(&self, second: usize) -> Option<u64> {
+        self.slots(second).map(|slot| slot.rev).max()
+    }
+
+    fn cells(&mut self, second: usize) -> Vec<u64> {
+        let Some(rev) = self.rev(second) else {
+            return Vec::new();
+        };
+        let at = second % self.cells.len();
+        match &self.cells[at] {
+            Some((kept, built, cells)) if *kept == second && *built == rev => cells.clone(),
+            _ => {
+                let mut all = SecondHistogram::open();
+                for slot in self.slots(second) {
+                    all.merge(&slot.data);
+                }
+                let cells = all.heat_cells();
+                self.cells[at] = Some((second, rev, cells.clone()));
+                cells
+            }
+        }
+    }
+}
+
+/// Per second response time histograms for the dashboard's heatmap: each of
+/// the first [`MAX_REQUEST_SERIES`] request names, the names after them
+/// together, all requests as their sum, and the same for synthetic times
+/// while coordinated omission mitigation is on. A batch's response times for
+/// a name go to one ring; the all requests column of a second is only added
+/// up when a heatmap needs it.
 pub(crate) struct LatencyHistograms {
-    all: LatencyRing,
+    /// Requests whose names have no ring of their own.
+    others: LatencyRing,
+    /// The all requests heatmap's cells, kept by second (see [`AllRequests`]).
+    all_cells: Vec<Option<(usize, u64, Vec<u64>)>>,
     /// Each admitted request name's ring, in the order names were admitted.
     rings: Vec<LatencyRing>,
     /// Admitted request names and the index of their ring in `rings`.
@@ -689,7 +722,8 @@ impl LatencyHistograms {
     /// synthetic times too; pass it when mitigation is not `disabled`.
     pub(crate) fn new(synthetic: bool) -> Self {
         LatencyHistograms {
-            all: LatencyRing::new(),
+            others: LatencyRing::new(),
+            all_cells: (0..SERIES_WINDOW_SECS).map(|_| None).collect(),
             rings: Vec::new(),
             by_request: HashMap::new(),
             synthetic: synthetic.then(|| (LatencyRing::new(), HashMap::new())),
@@ -718,19 +752,8 @@ impl LatencyHistograms {
         Some(self.rings.len() - 1)
     }
 
-    /// `key`'s ring, looked up through `cached` (a [`KeySeries`]'s
-    /// `latency_ring`) and only by name the first time.
-    fn cached_ring(
-        &mut self,
-        key: &str,
-        cached: &mut Option<Option<usize>>,
-    ) -> Option<&mut LatencyRing> {
-        let index = self.cached_index(key, cached)?;
-        self.rings.get_mut(index)
-    }
-
-    /// The index of `key`'s ring, looked up through `cached` as
-    /// [`Self::cached_ring`] does.
+    /// The index of `key`'s ring, looked up through `cached` (a
+    /// [`KeySeries`]'s `latency_ring`) and only by name the first time.
     fn cached_index(&mut self, key: &str, cached: &mut Option<Option<usize>>) -> Option<usize> {
         match *cached {
             Some(index) => index,
@@ -742,13 +765,19 @@ impl LatencyHistograms {
         }
     }
 
+    /// The ring of the name with ring `index`, or of the names without one.
+    fn ring(&mut self, index: Option<usize>) -> &mut LatencyRing {
+        match index {
+            Some(index) => &mut self.rings[index],
+            None => &mut self.others,
+        }
+    }
+
     #[cfg(test)]
     fn record(&mut self, key: &str, second: usize, time: u64) {
         let rev = self.next_rev();
-        self.all.record(second, time, rev);
-        if let Some(index) = self.ring_index(key) {
-            self.rings[index].record(second, time, rev);
-        }
+        let index = self.ring_index(key);
+        self.ring(index).record(second, time, rev);
     }
 
     fn record_cached(
@@ -759,10 +788,8 @@ impl LatencyHistograms {
         time: u64,
     ) {
         let rev = self.next_rev();
-        self.all.record(second, time, rev);
-        if let Some(ring) = self.cached_ring(key, cached) {
-            ring.record(second, time, rev);
-        }
+        let index = self.cached_index(key, cached);
+        self.ring(index).record(second, time, rev);
     }
 
     fn merge_cached(
@@ -774,15 +801,27 @@ impl LatencyHistograms {
     ) {
         let rev = self.next_rev();
         let index = self.cached_index(key, cached);
-        let rings = &mut self.rings;
-        let own = index
-            .and_then(|index| rings.get_mut(index))
-            .and_then(|ring| ring.slot_mut(second, rev));
-        match (self.all.slot_mut(second, rev), own) {
-            (Some(all), own) => all.merge_timing_also(own, data),
-            (None, Some(own)) => own.merge_timing(data),
-            (None, None) => {}
+        if let Some(histogram) = self.ring(index).slot_mut(second, rev) {
+            histogram.merge_timing(data);
         }
+    }
+
+    /// All requests in `second`: every ring's histogram for it added up, if
+    /// any ring holds it.
+    #[cfg(test)]
+    pub(crate) fn all_second(&self, second: usize) -> Option<SecondHistogram> {
+        let mut slots = self
+            .rings
+            .iter()
+            .chain([&self.others])
+            .filter_map(|ring| ring.slot(second))
+            .peekable();
+        slots.peek()?;
+        let mut all = SecondHistogram::default();
+        for slot in slots {
+            all.merge(&slot.data);
+        }
+        Some(all)
     }
 
     /// Record a synthetic time. A name gets a synthetic ring only if it has a
@@ -808,7 +847,8 @@ impl LatencyHistograms {
     /// Clear every ring and forget every name, so names are admitted again,
     /// and start a new generation.
     fn clear(&mut self) {
-        self.all.clear();
+        self.others.clear();
+        self.all_cells.iter_mut().for_each(|cells| *cells = None);
         self.rings.clear();
         self.by_request.clear();
         if let Some((all, by_request)) = self.synthetic.as_mut() {
@@ -828,7 +868,7 @@ impl LatencyHistograms {
     /// rings can be borrowed to build and keep each column's cells.
     fn heatmap(
         (generation, rev): (u64, u64),
-        measured: &mut LatencyRing,
+        measured: &mut impl MeasuredColumns,
         mut synthetic: Option<&mut LatencyRing>,
         start: usize,
         end: usize,
@@ -842,14 +882,18 @@ impl LatencyHistograms {
         let mut columns = Vec::new();
         let mut last_index = FIXED_BUCKETS - 1;
         for second in start..=end {
-            let real = measured.slot_at_mut(second);
+            let real = measured.rev(second);
             let added = synthetic
                 .as_deref_mut()
                 .and_then(|ring| ring.slot_at_mut(second));
-            if !real.iter().chain(added.iter()).any(|slot| slot.rev > since) {
+            if !real.is_some_and(|real| real > since) && !added.iter().any(|slot| slot.rev > since)
+            {
                 continue;
             }
-            let real = real.map_or_else(Vec::new, RingSlot::heat_cells);
+            let real = match real {
+                Some(_) => measured.cells(second),
+                None => Vec::new(),
+            };
             let added = added.map_or_else(Vec::new, RingSlot::heat_cells);
             for cells in [&real, &added] {
                 if let Some(&index) = cells.iter().rev().nth(1) {
@@ -887,9 +931,14 @@ impl LatencyHistograms {
             .as_mut()
             .filter(|_| co_active)
             .map(|(all, _)| all);
+        let mut all = AllRequests {
+            rings: &self.rings,
+            others: &self.others,
+            cells: &mut self.all_cells,
+        };
         Self::heatmap(
             (self.generation, self.rev),
-            &mut self.all,
+            &mut all,
             synthetic,
             start,
             end,
@@ -1095,11 +1144,13 @@ impl GraphData {
         &self,
         key: Option<&str>,
         second: usize,
-    ) -> Option<&SecondHistogram> {
+    ) -> Option<SecondHistogram> {
         let latency = self.latency.as_ref()?;
         match key {
-            None => latency.all.get(second),
-            Some(key) => latency.rings[*latency.by_request.get(key)?].get(second),
+            None => latency.all_second(second),
+            Some(key) => latency.rings[*latency.by_request.get(key)?]
+                .get(second)
+                .cloned(),
         }
     }
 
@@ -3482,7 +3533,7 @@ mod test {
         for second in [3, 4] {
             let merged = histograms(&merged);
             let direct = histograms(&direct);
-            assert_eq!(merged.all.get(second), direct.all.get(second));
+            assert_eq!(merged.all_second(second), direct.all_second(second));
             assert_eq!(
                 merged.rings[merged.by_request["GET /a"]].get(second),
                 direct.rings[direct.by_request["GET /a"]].get(second)
@@ -3491,7 +3542,7 @@ mod test {
             for &(_, time) in times.iter().filter(|(s, _)| *s == second) {
                 expected.record(time);
             }
-            assert_eq!(merged.all.get(second), Some(&expected));
+            assert_eq!(merged.all_second(second), Some(expected.clone()));
         }
     }
 
@@ -3905,7 +3956,7 @@ mod test {
         assert!(!latency.by_request.contains_key("GET /100"));
         // The 101st name still counts toward all requests.
         assert_eq!(
-            latency.all.get(1).map(|d| d.counter),
+            latency.all_second(1).map(|d| d.counter),
             Some(MAX_REQUEST_SERIES + 1)
         );
         // No synthetic ring for a name without a measured one.
@@ -3926,7 +3977,7 @@ mod test {
         graph.reset_rate_series();
         let latency = histograms(&graph);
         assert!(latency.by_request.is_empty());
-        assert!(latency.all.get(1).is_none());
+        assert!(latency.all_second(1).is_none());
         let (all, by_request) = latency.synthetic.as_ref().unwrap();
         assert!(by_request.is_empty());
         assert!(all.get(1).is_none());

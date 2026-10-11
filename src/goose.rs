@@ -5243,14 +5243,14 @@ mod tests {
         for second in 0..=last + 2 {
             assert_eq!(
                 graph.latency_second_for_test(None, second),
-                reference.get(&(None, second)),
+                reference.get(&(None, second)).cloned(),
                 "all requests, second {second}"
             );
             for name in 0..12 {
                 let key = format!("GET /p{name}");
                 assert_eq!(
                     graph.latency_second_for_test(Some(&key), second),
-                    reference.get(&(Some(key.clone()), second)),
+                    reference.get(&(Some(key.clone()), second)).cloned(),
                     "{key}, second {second}"
                 );
                 assert_eq!(
