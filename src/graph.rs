@@ -595,21 +595,6 @@ struct RingSlot {
     /// The histograms' revision when this second last changed.
     rev: u64,
     data: SecondHistogram,
-    /// The heatmap's cells of this second as of a revision (0 before the
-    /// first build), so a column is built once for each change, whichever
-    /// heatmap asks for it.
-    cells: (u64, Vec<u64>),
-}
-
-impl RingSlot {
-    /// This second's heatmap cells, built only if it changed since the last
-    /// build.
-    fn heat_cells(&mut self) -> Vec<u64> {
-        if self.cells.0 != self.rev {
-            self.cells = (self.rev, self.data.heat_cells());
-        }
-        self.cells.1.clone()
-    }
 }
 
 /// One response time histogram for each of the last [`SERIES_WINDOW_SECS`]
@@ -649,7 +634,6 @@ impl LatencyRing {
                     second,
                     rev,
                     data: SecondHistogram::open(),
-                    cells: (0, Vec::new()),
                 });
                 // A new second has begun: those two or more seconds back
                 // have all but their slowest requests, so pack them.
@@ -738,7 +722,7 @@ impl MeasuredColumns for LatencyRing {
 
     fn cells(&mut self, second: usize) -> Vec<u64> {
         self.slot_at_mut(second)
-            .map_or_else(Vec::new, RingSlot::heat_cells)
+            .map_or_else(Vec::new, |slot| slot.data.heat_cells())
     }
 }
 
@@ -1015,7 +999,7 @@ impl LatencyHistograms {
                 Some(_) => measured.cells(second),
                 None => Vec::new(),
             };
-            let added = added.map_or_else(Vec::new, RingSlot::heat_cells);
+            let added = added.map_or_else(Vec::new, |slot| slot.data.heat_cells());
             for cells in [&real, &added] {
                 if let Some(&index) = cells.iter().rev().nth(1) {
                     last_index = last_index.max(index as usize);
