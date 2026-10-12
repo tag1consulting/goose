@@ -335,8 +335,14 @@ impl SecondHistogram {
     /// An empty histogram for a ring's newest second, counted by fixed index
     /// until [`pack`](Self::pack).
     fn open() -> Self {
+        Self::open_with(Box::new([0; FIXED_BUCKETS]))
+    }
+
+    /// [`Self::open`], counting in `counts`, which must be all zero.
+    fn open_with(counts: Box<[usize; FIXED_BUCKETS]>) -> Self {
+        debug_assert!(counts.iter().all(|&count| count == 0));
         SecondHistogram {
-            open: Some(Box::new([0; FIXED_BUCKETS])),
+            open: Some(counts),
             ..Default::default()
         }
     }
@@ -457,18 +463,25 @@ impl SecondHistogram {
     }
 
     /// Once the second is unlikely to grow: move the counts of an open
-    /// second into the compact list, and release spare capacity.
-    fn pack(&mut self) {
-        if let Some(open) = self.open.take() {
-            let mut from = 0;
-            for (index, &count) in open.iter().enumerate() {
-                if count > 0 {
-                    from = self.add_indexed(from, index, count);
-                }
+    /// second into the compact list, allocated once at its size, and release
+    /// spare capacity. Returns the emptied counts of the open second, for
+    /// the next second to reuse.
+    fn pack(&mut self) -> Option<Box<[usize; FIXED_BUCKETS]>> {
+        let mut open = self.open.take()?;
+        if self.entries.is_empty() {
+            let buckets = open.iter().filter(|&&count| count > 0).count();
+            self.entries.reserve_exact(buckets);
+        }
+        let mut from = 0;
+        for (index, count) in open.iter_mut().enumerate() {
+            if *count > 0 {
+                from = self.add_indexed(from, index, *count);
+                *count = 0;
             }
         }
         self.entries.shrink_to_fit();
         self.overflow.shrink_to_fit();
+        Some(open)
     }
 
     /// The heatmap's buckets of this second: each non empty bucket as
@@ -618,6 +631,11 @@ pub(crate) struct LatencyRing {
     slots: Vec<Option<RingSlot>>,
     /// Seconds whose histograms are still open.
     open: Vec<usize>,
+    /// Emptied counts of packed seconds, for new seconds to count in, so a
+    /// ring does not allocate and free them every second. Boxed, as a
+    /// histogram holds them, so they move between the two without copying.
+    #[allow(clippy::vec_box)]
+    spare: Vec<Box<[usize; FIXED_BUCKETS]>>,
 }
 
 impl LatencyRing {
@@ -625,6 +643,7 @@ impl LatencyRing {
         LatencyRing {
             slots: (0..SERIES_WINDOW_SECS).map(|_| None).collect(),
             open: Vec::new(),
+            spare: Vec::new(),
         }
     }
 
@@ -640,25 +659,25 @@ impl LatencyRing {
             Some(slot) if slot.second > second => return None,
             Some(slot) if slot.second == second => {}
             _ => {
-                self.slots[at] = Some(RingSlot {
-                    second,
-                    rev,
-                    data: SecondHistogram::open(),
-                });
                 // A new second has begun: those two or more seconds back
                 // have all but their slowest requests, so pack them.
-                let slots = &mut self.slots;
+                let (slots, spare) = (&mut self.slots, &mut self.spare);
                 self.open.retain(|&older| {
                     if older + 2 > second {
                         return true;
                     }
                     if let Some(slot) = &mut slots[older % len] {
                         if slot.second == older {
-                            slot.data.pack();
+                            spare.extend(slot.data.pack());
                         }
                     }
                     false
                 });
+                let data = match self.spare.pop() {
+                    Some(counts) => SecondHistogram::open_with(counts),
+                    None => SecondHistogram::open(),
+                };
+                self.slots[at] = Some(RingSlot { second, rev, data });
                 self.open.push(second);
             }
         }
@@ -676,7 +695,7 @@ impl LatencyRing {
     }
 
     /// Add a batch's response times for one request name to `second`, at
-    /// `rev` (unit tests; the metrics processor merges into two rings at once).
+    /// `rev` (unit tests).
     #[cfg(test)]
     pub(crate) fn merge_timing(
         &mut self,
