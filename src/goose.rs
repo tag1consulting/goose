@@ -2352,7 +2352,7 @@ impl GooseUser {
 
         // When a report file, saved runs or the dashboard keep per second
         // graphs, a request from the second after the batch's own goes in
-        // its entry's `next_second` timing data instead of `raw_data`.
+        // the batch's `next_second` timing data instead of `raw_data`.
         // `flush_pending_request` has already sent a batch it can not join.
         let next_second = BY_SECOND && {
             let second = (request_metric.elapsed / 1000) as usize;
@@ -2384,7 +2384,6 @@ impl GooseUser {
                     method: request_metric.raw.method,
                     custom_method: request_metric.raw.custom_method.clone(),
                     raw_data: GooseRequestMetricTimingData::new(None),
-                    next_second: None,
                     status_code_counts: HashMap::new(),
                     status_code_timings: HashMap::new(),
                 }),
@@ -2399,10 +2398,14 @@ impl GooseUser {
 
         // Pre-aggregate timing data using the same bucketing logic.
         if next_second {
-            entry
-                .next_second
-                .get_or_insert_with(Box::default)
-                .record_time(request_metric.response_time);
+            match batch.next_second.get_mut(key) {
+                Some(next) => next.record_time(request_metric.response_time),
+                None => {
+                    let mut next = GooseRequestMetricTimingData::new(None);
+                    next.record_time(request_metric.response_time);
+                    batch.next_second.insert(key.to_string(), next);
+                }
+            }
         } else {
             entry.raw_data.record_time(request_metric.response_time);
         }
@@ -5226,10 +5229,7 @@ mod tests {
         let requests = seeded_requests_with_boundaries(47, users, 40);
         let batches = batch_through_users(&configuration, users + 1, &requests);
         // Batches reach the next second, and slow requests start new ones.
-        assert!(batches.iter().any(|batch| batch
-            .requests
-            .values()
-            .any(|entry| entry.next_second.is_some())));
+        assert!(batches.iter().any(|batch| !batch.next_second.is_empty()));
         let mut processor = test_processor(&configuration);
         for batch in batches {
             processor.process_batch_for_test(batch);
@@ -5283,9 +5283,9 @@ mod tests {
         if let Some(second) = batch.second {
             for entry in batch.requests.values() {
                 *seconds.entry(second).or_default() += entry.raw_data.counter;
-                if let Some(next) = &entry.next_second {
-                    *seconds.entry(second + 1).or_default() += next.counter;
-                }
+            }
+            for next in batch.next_second.values() {
+                *seconds.entry(second + 1).or_default() += next.counter;
             }
         }
         seconds
@@ -5366,6 +5366,7 @@ mod tests {
             .any(|batch| batch.len() < METRICS_BATCH_SIZE / 2));
         for (batch, expected) in batches.iter().zip(&expected) {
             assert_eq!(batch.second, None);
+            assert!(batch.next_second.is_empty());
             let mut times: HashMap<String, GooseRequestMetricTimingData> = HashMap::new();
             let mut failed: Vec<u64> = Vec::new();
             for request in expected {
@@ -5381,7 +5382,6 @@ mod tests {
             assert_eq!(batch.requests.len(), times.len());
             for (key, entry) in &batch.requests {
                 assert_eq!(entry.raw_data, times[key], "{key}");
-                assert!(entry.next_second.is_none());
                 assert_eq!(
                     entry.status_code_counts,
                     HashMap::from([(200, times[key].counter)])

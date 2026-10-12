@@ -144,12 +144,16 @@ pub struct GooseMetricBatch {
     pub(crate) transactions: HashMap<(usize, usize), TransactionBatchEntry>,
     /// Pre-aggregated scenario timing data, keyed by `scenario_index`.
     pub(crate) scenarios: HashMap<usize, ScenarioBatchEntry>,
+    /// When a report file, saved runs or the dashboard keep per second
+    /// graphs: timing data of the requests that started in the second after
+    /// [`Self::second`], keyed like `requests`, which then hold only those
+    /// that started in that second. Empty otherwise, so a batch without
+    /// per second graphs is laid out and built as it always was.
+    pub(crate) next_second: HashMap<String, GooseRequestMetricTimingData>,
     /// The second, from the start of the test, that the first request in
-    /// `requests` started in (`None` before it), when a report file, saved
-    /// runs or the dashboard keep per second graphs. Each entry's `raw_data`
-    /// holds the requests that started in this second and its `next_second`
-    /// those that started in the second after; a request from any other
-    /// second goes in a new batch.
+    /// `requests` started in (`None` before it), when per second graphs are
+    /// kept. A request from a second other than this one or the next goes
+    /// in a new batch.
     pub(crate) second: Option<usize>,
     /// Per-second transaction counters for graph data.
     /// Only populated when `--report-file` is configured.
@@ -168,6 +172,7 @@ impl GooseMetricBatch {
             individual_requests: Vec::new(),
             transactions: HashMap::new(),
             scenarios: HashMap::new(),
+            next_second: HashMap::new(),
             second: None,
             graph_tps: HashMap::new(),
             graph_sps: HashMap::new(),
@@ -189,11 +194,6 @@ pub(crate) struct RequestBatchEntry {
     /// count). When per second graphs are kept, only of requests that started
     /// in the batch's second ([`GooseMetricBatch::second`]).
     pub(crate) raw_data: GooseRequestMetricTimingData,
-    /// Timing data of requests that started in the second after the batch's,
-    /// created by the first of them. Only when per second graphs are kept.
-    #[serde(default)]
-    /// Boxed, so an entry is only a pointer larger when none is kept.
-    pub(crate) next_second: Option<Box<GooseRequestMetricTimingData>>,
     /// Per-status-code occurrence counts.
     pub(crate) status_code_counts: HashMap<u16, usize>,
     /// Per-status-code timing summaries (count, total, min, max).
@@ -3688,22 +3688,29 @@ impl MetricsProcessor {
         //    is on, before step 3 consumes the request entries.
         if self.configuration.records_graph_data() {
             // A request's `raw_data` in the batch holds its requests that
-            // started in the batch's second, and `next_second` those that
-            // started in the second after.
+            // started in the batch's second, and the batch's `next_second`
+            // those that started in the second after.
             if let Some(second) = batch.second {
                 let latency = self.graph_data.records_latency();
-                for (key, entry) in &batch.requests {
-                    let data = &entry.raw_data;
-                    let next = entry.next_second.as_deref();
-                    // One lookup by name counts the requests in both seconds
-                    // and finds the request's latency ring.
+                let seconds = batch
+                    .requests
+                    .iter()
+                    .map(|(key, entry)| (key, second, &entry.raw_data))
+                    .chain(
+                        batch
+                            .next_second
+                            .iter()
+                            .map(|(key, data)| (key, second + 1, data)),
+                    );
+                for (key, second, data) in seconds {
+                    // One lookup by name counts the requests and finds the
+                    // request's latency ring.
                     self.graph_data
                         .record_requests_per_second_and_latency_batch(
                             key,
                             second,
                             data.counter as u32,
                             latency.then_some(data),
-                            next,
                         );
                     self.graph_data
                         .record_average_response_time_per_second_batch(
@@ -3711,7 +3718,6 @@ impl MetricsProcessor {
                             second,
                             data.total_time as f64,
                             data.counter as u32,
-                            next.map(|next| (next.total_time as f64, next.counter as u32)),
                         );
                 }
             }
@@ -3732,10 +3738,8 @@ impl MetricsProcessor {
             let total_actual: u64 = batch
                 .requests
                 .values()
-                .map(|e| {
-                    (e.raw_data.counter + e.next_second.as_ref().map_or(0, |next| next.counter))
-                        as u64
-                })
+                .map(|e| e.raw_data.counter as u64)
+                .chain(batch.next_second.values().map(|next| next.counter as u64))
                 .sum();
             co_metrics.actual_requests += total_actual;
             co_metrics.update_synthetic_percentage();
@@ -3747,17 +3751,11 @@ impl MetricsProcessor {
 
             // Merge timing data: combine BTreeMaps, update min/max/total/counter.
             aggregate.raw_data.merge(&entry.raw_data);
-            if let Some(next) = &entry.next_second {
-                aggregate.raw_data.merge(next);
-            }
             // Once a request has coordinated omission adjusted times they must
             // include every later real time too, batched ones included, or the
             // adjusted values drift toward the synthetic times (#739).
             if let Some(co_data) = aggregate.coordinated_omission_data.as_mut() {
                 co_data.merge(&entry.raw_data);
-                if let Some(next) = &entry.next_second {
-                    co_data.merge(next);
-                }
             }
 
             // Merge status-code counts.
@@ -3773,6 +3771,17 @@ impl MetricsProcessor {
                         .entry(*code)
                         .or_default()
                         .merge(summary);
+                }
+            }
+        }
+
+        // Times from the second after the batch's: every key here also has
+        // an entry in `requests`, merged above.
+        for (key, next) in batch.next_second {
+            if let Some(aggregate) = self.metrics.requests.get_mut(&key) {
+                aggregate.raw_data.merge(&next);
+                if let Some(co_data) = aggregate.coordinated_omission_data.as_mut() {
+                    co_data.merge(&next);
                 }
             }
         }
@@ -5981,7 +5990,6 @@ mod test {
                 method: GooseMethod::Get,
                 custom_method: String::new(),
                 raw_data: GooseRequestMetricTimingData::new(None),
-                next_second: None,
                 status_code_counts: HashMap::new(),
                 status_code_timings: HashMap::new(),
             },
@@ -6024,7 +6032,6 @@ mod test {
                 method: GooseMethod::Get,
                 custom_method: String::new(),
                 raw_data,
-                next_second: None,
                 status_code_counts: HashMap::from([(200, 3)]),
                 status_code_timings: HashMap::from([(
                     200,
@@ -6081,7 +6088,6 @@ mod test {
                 method: GooseMethod::Get,
                 custom_method: String::new(),
                 raw_data,
-                next_second: None,
                 status_code_counts: HashMap::from([(200, 100)]),
                 status_code_timings: HashMap::new(),
             },
@@ -6123,7 +6129,6 @@ mod test {
                 method: GooseMethod::Get,
                 custom_method: String::new(),
                 raw_data: raw1,
-                next_second: None,
                 status_code_counts: HashMap::from([(200, 2)]),
                 status_code_timings: HashMap::new(),
             },
@@ -6141,7 +6146,6 @@ mod test {
                 method: GooseMethod::Get,
                 custom_method: String::new(),
                 raw_data: raw2,
-                next_second: None,
                 status_code_counts: HashMap::from([(200, 1)]),
                 status_code_timings: HashMap::new(),
             },
@@ -6253,7 +6257,6 @@ mod test {
                 method: GooseMethod::Get,
                 custom_method: String::new(),
                 raw_data,
-                next_second: None,
                 status_code_counts: HashMap::new(),
                 status_code_timings: HashMap::new(),
             },
@@ -6282,7 +6285,6 @@ mod test {
                 method: GooseMethod::Get,
                 custom_method: String::new(),
                 raw_data,
-                next_second: None,
                 status_code_counts: HashMap::new(),
                 status_code_timings: HashMap::new(),
             },
@@ -6344,7 +6346,6 @@ mod test {
                 method: GooseMethod::Get,
                 custom_method: String::new(),
                 raw_data,
-                next_second: None,
                 status_code_counts,
                 status_code_timings,
             },
@@ -6456,7 +6457,6 @@ mod test {
                 method: GooseMethod::Get,
                 custom_method: String::new(),
                 raw_data,
-                next_second: None,
                 status_code_counts: sc_counts,
                 status_code_timings: HashMap::new(),
             },
@@ -6715,7 +6715,6 @@ mod test {
                 method: GooseMethod::Get,
                 custom_method: String::new(),
                 raw_data,
-                next_second: None,
                 status_code_counts: HashMap::from([(200, times.len())]),
                 status_code_timings: HashMap::new(),
             },

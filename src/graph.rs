@@ -1181,29 +1181,18 @@ impl GraphData {
     /// Merge a batch's count of requests in `second` and, when the
     /// histograms are kept and `times` is given, their response times (the
     /// batch's timing data for this request, every time from `second`),
-    /// finding the request's ring through the same lookup that counts them.
-    /// `next`, the batch's timing data for this request from the second
-    /// after, is counted and kept the same way in `second + 1`.
+    /// keeping them beside the count the same lookup finds.
     pub(crate) fn record_requests_per_second_and_latency_batch(
         &mut self,
         key: &str,
         second: usize,
         count: u32,
         times: Option<&GooseRequestMetricTimingData>,
-        next: Option<&GooseRequestMetricTimingData>,
     ) {
         let data = self.requests_per_second.increment(key, second, count);
         if let (Some(times), Some(histograms)) = (times, self.latency.as_mut()) {
             if times.counter > 0 {
                 histograms.merge_pending(key, data, second, times);
-            }
-        }
-        if let Some(next) = next {
-            data.increase_value(second + 1, next.counter as u32);
-            if let Some(histograms) = self.latency.as_mut() {
-                if next.counter > 0 {
-                    histograms.merge_pending(key, data, second + 1, next);
-                }
             }
         }
     }
@@ -1373,10 +1362,8 @@ impl GraphData {
         second: usize,
         total_time: f64,
         count: u32,
-        next: Option<(f64, u32)>,
     ) {
-        let next = next.filter(|&(_, count)| count > 0);
-        if count == 0 && next.is_none() {
+        if count == 0 {
             return;
         }
         let origin = self.users_per_second.origin;
@@ -1384,17 +1371,11 @@ impl GraphData {
             .average_response_time_per_second
             .entry(key.to_string())
             .or_insert_with(|| TimeSeries::with_origin(origin));
-        for (second, total_time, count) in std::iter::once((second, total_time, count))
-            .chain(next.map(|(total_time, count)| (second + 1, total_time, count)))
-        {
-            if count > 0 {
-                let batch_avg = MovingAverage {
-                    count,
-                    average: total_time as f32 / count as f32,
-                };
-                data.merge_value(second, &batch_avg);
-            }
-        }
+        let batch_avg = MovingAverage {
+            count,
+            average: total_time as f32 / count as f32,
+        };
+        data.merge_value(second, &batch_avg);
     }
 
     /// Record multiple transactions per second for batch merging.
@@ -3119,7 +3100,7 @@ mod test {
         let mut graph = GraphData::new();
 
         // Batch merge: 3 requests with total_time 60.0 → avg 20.0
-        graph.record_average_response_time_per_second_batch("GET /", 0, 60.0, 3, None);
+        graph.record_average_response_time_per_second_batch("GET /", 0, 60.0, 3);
         let avg = graph
             .average_response_time_per_second
             .get("GET /")
@@ -3140,7 +3121,7 @@ mod test {
         assert_eq!(avg.count, 4);
 
         // Another batch at a different second.
-        graph.record_average_response_time_per_second_batch("GET /", 5, 100.0, 2, None);
+        graph.record_average_response_time_per_second_batch("GET /", 5, 100.0, 2);
         let avg = graph
             .average_response_time_per_second
             .get("GET /")
@@ -3150,7 +3131,7 @@ mod test {
         assert_eq!(avg.count, 2);
 
         // Merge a second batch into the same second.
-        graph.record_average_response_time_per_second_batch("GET /", 5, 200.0, 2, None);
+        graph.record_average_response_time_per_second_batch("GET /", 5, 200.0, 2);
         let avg = graph
             .average_response_time_per_second
             .get("GET /")
@@ -3641,7 +3622,6 @@ mod test {
                     *second,
                     data.counter as u32,
                     Some(data),
-                    None,
                 );
             }
         }
@@ -3698,7 +3678,6 @@ mod test {
                 second,
                 data.counter as u32,
                 Some(&data),
-                None,
             );
             // Read part way through as well as at the end.
             if i == 3 {
@@ -4195,7 +4174,6 @@ mod test {
                 second,
                 data.counter as u32,
                 Some(&data),
-                None,
             );
         }
         let size = |heatmap: &Heatmap| serde_json::to_vec(heatmap).unwrap().len();
@@ -4216,7 +4194,6 @@ mod test {
                 second,
                 data.counter as u32,
                 Some(&data),
-                None,
             );
         }
         let next = graph
