@@ -2178,8 +2178,7 @@ impl GooseUser {
                     // CO-affected and failed requests need per-request processing.
                     self.accumulate_individual_request(request);
                 } else if self.record_graph_data {
-                    self.flush_batch_outside_seconds(request.elapsed)?;
-                    self.accumulate_request::<true>(&request);
+                    self.accumulate_request_by_second(&request)?;
                 } else {
                     self.accumulate_request::<false>(&request);
                 }
@@ -2324,7 +2323,10 @@ impl GooseUser {
     /// is always `true` and `request_metric.error` is always empty here.
     ///
     /// `BY_SECOND` is [`Self::record_graph_data`], checked once by the caller,
-    /// so a run that keeps no per second graphs does only what it always did.
+    /// so a run that keeps no per second graphs does only what it always did:
+    /// without it this is inlined into [`Self::flush_pending_request`] as
+    /// before, and with it into [`Self::accumulate_request_by_second`].
+    #[inline(always)]
     fn accumulate_request<const BY_SECOND: bool>(&mut self, request_metric: &GooseRequestMetric) {
         debug_assert!(
             request_metric.success,
@@ -2554,6 +2556,16 @@ impl GooseUser {
                 return self.flush_batch();
             }
         }
+        Ok(())
+    }
+
+    /// [`Self::accumulate_request`] when per second graphs are kept, after
+    /// [`Self::flush_batch_outside_seconds`]. Kept out of line, so the path
+    /// without them stays as compact as it was.
+    #[inline(never)]
+    fn accumulate_request_by_second(&mut self, request: &GooseRequestMetric) -> TransactionResult {
+        self.flush_batch_outside_seconds(request.elapsed)?;
+        self.accumulate_request::<true>(request);
         Ok(())
     }
 
