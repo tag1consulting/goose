@@ -77,6 +77,14 @@ impl PendingLatency {
 
     /// Add a batch's timing data for held second `at` (0 or 1).
     fn add(&mut self, at: usize, data: &GooseRequestMetricTimingData) {
+        self.add_totals(at, data);
+        for (&rounded, &count) in &data.times {
+            self.add_bucket(at, rounded, count);
+        }
+    }
+
+    /// Add a batch's fastest, slowest, total and count for held second `at`.
+    fn add_totals(&mut self, at: usize, data: &GooseRequestMetricTimingData) {
         let totals = &mut self.totals[at];
         if data.counter > 0 && (totals[3] == 0 || data.minimum_time < totals[0]) {
             totals[0] = data.minimum_time;
@@ -84,14 +92,16 @@ impl PendingLatency {
         totals[1] = totals[1].max(data.maximum_time);
         totals[2] += data.total_time;
         totals[3] += data.counter;
-        for (&rounded, &count) in &data.times {
-            match dense_index(rounded) {
-                Some(index) => {
-                    let held = &mut self.counts[index][at];
-                    *held = held.saturating_add(u32::try_from(count).unwrap_or(u32::MAX));
-                }
-                None => self.overflow.push((at, rounded, count)),
+    }
+
+    /// Add `count` responses that round to `rounded` to held second `at`.
+    fn add_bucket(&mut self, at: usize, rounded: usize, count: usize) {
+        match dense_index(rounded) {
+            Some(index) => {
+                let held = &mut self.counts[index][at];
+                *held = held.saturating_add(u32::try_from(count).unwrap_or(u32::MAX));
             }
+            None => self.overflow.push((at, rounded, count)),
         }
     }
 
@@ -878,24 +888,46 @@ impl LatencyHistograms {
         second: usize,
         data: &GooseRequestMetricTimingData,
     ) {
-        let index = self.cached_index(key, &mut entry.latency_ring);
+        match self.pending_at(key, entry, second) {
+            Some(at) => entry.pending.add(at, data),
+            None => self.merge_older(key, entry, second, data),
+        }
+    }
+
+    /// Which of the two seconds `key`'s pending counts hold is `second`,
+    /// after moving what they held to its ring when `second` is past both;
+    /// `None` when `second` is before them.
+    fn pending_at(&mut self, key: &str, entry: &mut KeySeries, second: usize) -> Option<usize> {
         let pending = &mut entry.pending;
         if !pending.held {
             pending.held = true;
             pending.second = second;
         }
         if second < pending.second {
-            let rev = self.next_rev();
-            if let Some(histogram) = self.ring(index).slot_mut(second, rev) {
-                histogram.merge_timing(data);
-            }
-            return;
+            return None;
         }
         if second > pending.second + 1 {
-            self.move_pending(index, pending);
-            pending.second = second;
+            let index = self.cached_index(key, &mut entry.latency_ring);
+            self.move_pending(index, &mut entry.pending);
+            entry.pending.second = second;
         }
-        pending.add(second - pending.second, data);
+        Some(second - entry.pending.second)
+    }
+
+    /// Merge timing data for a second before those `key`'s pending counts
+    /// hold straight into its ring.
+    fn merge_older(
+        &mut self,
+        key: &str,
+        entry: &mut KeySeries,
+        second: usize,
+        data: &GooseRequestMetricTimingData,
+    ) {
+        let index = self.cached_index(key, &mut entry.latency_ring);
+        let rev = self.next_rev();
+        if let Some(histogram) = self.ring(index).slot_mut(second, rev) {
+            histogram.merge_timing(data);
+        }
     }
 
     /// Move `pending` to the ring of the name with ring `index`.
@@ -1193,6 +1225,39 @@ impl GraphData {
         if let (Some(times), Some(histograms)) = (times, self.latency.as_mut()) {
             if times.counter > 0 {
                 histograms.merge_pending(key, data, second, times);
+            }
+        }
+    }
+
+    /// Count a batch's requests for `key` in `second`, and merge their
+    /// response times (the batch's timing data for the request, all from
+    /// `second`) into `whole_run`, the request's timing data for the whole
+    /// run, and, when the histograms are kept, into its pending counts,
+    /// walking the batch's buckets once for both.
+    pub(crate) fn record_requests_per_second_merging_latency(
+        &mut self,
+        key: &str,
+        second: usize,
+        data: &GooseRequestMetricTimingData,
+        whole_run: &mut GooseRequestMetricTimingData,
+    ) {
+        let entry = self
+            .requests_per_second
+            .increment(key, second, data.counter as u32);
+        let Some(histograms) = self.latency.as_mut().filter(|_| data.counter > 0) else {
+            return whole_run.merge(data);
+        };
+        match histograms.pending_at(key, entry, second) {
+            Some(at) => {
+                let pending = &mut entry.pending;
+                pending.add_totals(at, data);
+                whole_run.merge_also(data, |rounded, count| {
+                    pending.add_bucket(at, rounded, count)
+                });
+            }
+            None => {
+                histograms.merge_older(key, entry, second, data);
+                whole_run.merge(data);
             }
         }
     }

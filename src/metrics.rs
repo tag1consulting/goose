@@ -1163,6 +1163,28 @@ impl GooseRequestMetricTimingData {
 
     /// Merge another set of timing data into this one: combine the buckets and
     /// update the minimum, maximum, total and counter.
+    /// [`Self::merge`], also handing each of `other`'s buckets, as its
+    /// rounded time and count, to `also`, so a caller keeping the same times
+    /// elsewhere walks them once.
+    pub(crate) fn merge_also(
+        &mut self,
+        other: &GooseRequestMetricTimingData,
+        mut also: impl FnMut(usize, usize),
+    ) {
+        for (&time_bucket, &count) in &other.times {
+            *self.times.entry(time_bucket).or_insert(0) += count;
+            also(time_bucket, count);
+        }
+        if other.counter > 0 && (self.counter == 0 || other.minimum_time < self.minimum_time) {
+            self.minimum_time = other.minimum_time;
+        }
+        self.counter += other.counter;
+        self.total_time += other.total_time;
+        if other.maximum_time > self.maximum_time {
+            self.maximum_time = other.maximum_time;
+        }
+    }
+
     pub(crate) fn merge(&mut self, other: &GooseRequestMetricTimingData) {
         for (time_bucket, count) in &other.times {
             *self.times.entry(*time_bucket).or_insert(0) += count;
@@ -3672,6 +3694,38 @@ impl MetricsProcessor {
     /// Individual request metrics (failed / CO-affected) are processed one by one
     /// using the normal per-request path. Pre-aggregated entries are merged directly
     /// into the global aggregates, avoiding the per-request overhead.
+    /// Merge a batched request's coordinated omission and status code
+    /// figures into its whole run `aggregate`; its timing data is merged by
+    /// the caller.
+    fn merge_batch_entry(
+        no_status_codes: bool,
+        aggregate: &mut GooseRequestMetricAggregate,
+        entry: &RequestBatchEntry,
+    ) {
+        // Once a request has coordinated omission adjusted times they must
+        // include every later real time too, batched ones included, or the
+        // adjusted values drift toward the synthetic times (#739).
+        if let Some(co_data) = aggregate.coordinated_omission_data.as_mut() {
+            co_data.merge(&entry.raw_data);
+        }
+
+        // Merge status-code counts.
+        if !no_status_codes {
+            for (code, count) in &entry.status_code_counts {
+                *aggregate.status_code_counts.entry(*code).or_insert(0) += count;
+            }
+
+            // Merge status-code timing summaries.
+            for (code, summary) in &entry.status_code_timings {
+                aggregate
+                    .status_code_timings
+                    .entry(*code)
+                    .or_default()
+                    .merge(summary);
+            }
+        }
+    }
+
     fn process_batch(&mut self, batch: GooseMetricBatch) {
         // Discard stale batches from before a metrics reset.
         let current_epoch = self.metrics_epoch.load(AtomicOrdering::Relaxed);
@@ -3684,14 +3738,73 @@ impl MetricsProcessor {
             self.process_request_metric(request_metric);
         }
 
+        // With response times kept by second, step 2 merges each request's
+        // timing data into the whole run's as well.
+        let latency_merged = self.configuration.records_graph_data()
+            && batch.second.is_some()
+            && self.graph_data.records_latency();
+
         // 2. Apply graph data if a report file is configured or the dashboard
         //    is on, before step 3 consumes the request entries.
         if self.configuration.records_graph_data() {
             // A request's `raw_data` in the batch holds its requests that
             // started in the batch's second, and the batch's `next_second`
             // those that started in the second after.
-            if let Some(second) = batch.second {
-                let latency = self.graph_data.records_latency();
+            if let (true, Some(second)) = (latency_merged, batch.second) {
+                // Each request's whole run timing data and its pending counts
+                // in one walk of the batch's buckets, with the rest of the
+                // request's whole run figures, so step 3 has nothing left
+                // to merge for it.
+                for (key, entry) in &batch.requests {
+                    let aggregate = match self.metrics.requests.get_mut(key) {
+                        Some(aggregate) => aggregate,
+                        None => self.metrics.requests.entry(key.clone()).or_insert_with(|| {
+                            GooseRequestMetricAggregate::new(
+                                &entry.path,
+                                entry.method,
+                                0,
+                                &entry.custom_method,
+                            )
+                        }),
+                    };
+                    self.graph_data.record_requests_per_second_merging_latency(
+                        key,
+                        second,
+                        &entry.raw_data,
+                        &mut aggregate.raw_data,
+                    );
+                    Self::merge_batch_entry(self.configuration.no_status_codes, aggregate, entry);
+                    self.graph_data
+                        .record_average_response_time_per_second_batch(
+                            key,
+                            second,
+                            entry.raw_data.total_time as f64,
+                            entry.raw_data.counter as u32,
+                        );
+                }
+                // Times from the second after the batch's: every key here
+                // also has an entry in `requests`, merged above.
+                for (key, next) in &batch.next_second {
+                    if let Some(aggregate) = self.metrics.requests.get_mut(key) {
+                        self.graph_data.record_requests_per_second_merging_latency(
+                            key,
+                            second + 1,
+                            next,
+                            &mut aggregate.raw_data,
+                        );
+                        if let Some(co_data) = aggregate.coordinated_omission_data.as_mut() {
+                            co_data.merge(next);
+                        }
+                        self.graph_data
+                            .record_average_response_time_per_second_batch(
+                                key,
+                                second + 1,
+                                next.total_time as f64,
+                                next.counter as u32,
+                            );
+                    }
+                }
+            } else if let Some(second) = batch.second {
                 let seconds = batch
                     .requests
                     .iter()
@@ -3703,14 +3816,12 @@ impl MetricsProcessor {
                             .map(|(key, data)| (key, second + 1, data)),
                     );
                 for (key, second, data) in seconds {
-                    // One lookup by name counts the requests and finds the
-                    // request's latency ring.
                     self.graph_data
                         .record_requests_per_second_and_latency_batch(
                             key,
                             second,
                             data.counter as u32,
-                            latency.then_some(data),
+                            None,
                         );
                     self.graph_data
                         .record_average_response_time_per_second_batch(
@@ -3744,44 +3855,30 @@ impl MetricsProcessor {
             co_metrics.actual_requests += total_actual;
             co_metrics.update_synthetic_percentage();
         }
-        for (key, entry) in batch.requests {
-            let aggregate = self.metrics.requests.entry(key).or_insert_with(|| {
-                GooseRequestMetricAggregate::new(&entry.path, entry.method, 0, &entry.custom_method)
-            });
+        if !latency_merged {
+            for (key, entry) in batch.requests {
+                let aggregate = self.metrics.requests.entry(key).or_insert_with(|| {
+                    GooseRequestMetricAggregate::new(
+                        &entry.path,
+                        entry.method,
+                        0,
+                        &entry.custom_method,
+                    )
+                });
 
-            // Merge timing data: combine BTreeMaps, update min/max/total/counter.
-            aggregate.raw_data.merge(&entry.raw_data);
-            // Once a request has coordinated omission adjusted times they must
-            // include every later real time too, batched ones included, or the
-            // adjusted values drift toward the synthetic times (#739).
-            if let Some(co_data) = aggregate.coordinated_omission_data.as_mut() {
-                co_data.merge(&entry.raw_data);
+                // Merge timing data: combine BTreeMaps, update min/max/total/counter.
+                aggregate.raw_data.merge(&entry.raw_data);
+                Self::merge_batch_entry(self.configuration.no_status_codes, aggregate, &entry);
             }
 
-            // Merge status-code counts.
-            if !self.configuration.no_status_codes {
-                for (code, count) in &entry.status_code_counts {
-                    *aggregate.status_code_counts.entry(*code).or_insert(0) += count;
-                }
-
-                // Merge status-code timing summaries.
-                for (code, summary) in &entry.status_code_timings {
-                    aggregate
-                        .status_code_timings
-                        .entry(*code)
-                        .or_default()
-                        .merge(summary);
-                }
-            }
-        }
-
-        // Times from the second after the batch's: every key here also has
-        // an entry in `requests`, merged above.
-        for (key, next) in batch.next_second {
-            if let Some(aggregate) = self.metrics.requests.get_mut(&key) {
-                aggregate.raw_data.merge(&next);
-                if let Some(co_data) = aggregate.coordinated_omission_data.as_mut() {
-                    co_data.merge(&next);
+            // Times from the second after the batch's: every key here also
+            // has an entry in `requests`, merged above.
+            for (key, next) in batch.next_second {
+                if let Some(aggregate) = self.metrics.requests.get_mut(&key) {
+                    aggregate.raw_data.merge(&next);
+                    if let Some(co_data) = aggregate.coordinated_omission_data.as_mut() {
+                        co_data.merge(&next);
+                    }
                 }
             }
         }
