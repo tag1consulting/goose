@@ -34,6 +34,88 @@ struct KeySeries {
     /// request. Unused for errors. Reset with the latency histograms, by
     /// [`GraphData::reset_rate_series`].
     latency_ring: Option<Option<usize>>,
+    /// The request's response times from the newest batches, kept here,
+    /// next to the count each batch already updates, until they move to its
+    /// ring (see [`PendingLatency`]). Unused for errors.
+    pending: Option<Box<PendingLatency>>,
+}
+
+/// A request's batched response times for two consecutive seconds, counted
+/// by fixed bucket index, waiting to move to its latency ring. Merging a
+/// batch here touches one small block the processor keeps using, instead of
+/// the ring's slot for the second; the counts move to the ring once both
+/// seconds are past, or when a heatmap is built.
+#[derive(Clone)]
+struct PendingLatency {
+    /// The seconds held: `second` and `second + 1`.
+    second: usize,
+    /// Fastest, slowest, total and count, for each second held.
+    totals: [[usize; 4]; 2],
+    /// Counts by fixed bucket index, for each second held.
+    counts: [[u32; FIXED_BUCKETS]; 2],
+    /// Rounded times with no fixed index (past 60 seconds): which second
+    /// held (0 or 1), the rounded time and its count.
+    overflow: Vec<(usize, usize, usize)>,
+}
+
+impl PendingLatency {
+    fn new(second: usize) -> Box<Self> {
+        Box::new(PendingLatency {
+            second,
+            totals: [[0; 4]; 2],
+            counts: [[0; FIXED_BUCKETS]; 2],
+            overflow: Vec::new(),
+        })
+    }
+
+    /// Add a batch's timing data for held second `at` (0 or 1).
+    fn add(&mut self, at: usize, data: &GooseRequestMetricTimingData) {
+        let totals = &mut self.totals[at];
+        if data.counter > 0 && (totals[3] == 0 || data.minimum_time < totals[0]) {
+            totals[0] = data.minimum_time;
+        }
+        totals[1] = totals[1].max(data.maximum_time);
+        totals[2] += data.total_time;
+        totals[3] += data.counter;
+        let counts = &mut self.counts[at];
+        for (&rounded, &count) in &data.times {
+            match dense_index(rounded) {
+                Some(index) => {
+                    counts[index] =
+                        counts[index].saturating_add(u32::try_from(count).unwrap_or(u32::MAX))
+                }
+                None => self.overflow.push((at, rounded, count)),
+            }
+        }
+    }
+
+    /// Move everything held to `ring`, each second marked with `rev` of its
+    /// own, and empty the counts.
+    fn move_to(&mut self, ring: &mut LatencyRing, mut next_rev: impl FnMut() -> u64) {
+        for at in 0..2 {
+            let [minimum, maximum, total, counter] = self.totals[at];
+            if counter == 0 {
+                continue;
+            }
+            let counts = &mut self.counts[at];
+            if let Some(histogram) = ring.slot_mut(self.second + at, next_rev()) {
+                for (index, count) in counts.iter().enumerate() {
+                    if *count > 0 {
+                        histogram.add_dense(index, *count as usize);
+                    }
+                }
+                for &(held, rounded, count) in &self.overflow {
+                    if held == at {
+                        histogram.add_bucket(rounded, count);
+                    }
+                }
+                histogram.add_totals(minimum, maximum, total, counter);
+            }
+            *counts = [0; FIXED_BUCKETS];
+            self.totals[at] = [0; 4];
+        }
+        self.overflow.clear();
+    }
 }
 
 impl std::ops::Deref for KeySeries {
@@ -90,6 +172,7 @@ impl ItemsPerSecond {
             .or_insert_with(|| KeySeries {
                 counts: TimeSeries::with_origin(origin),
                 latency_ring: None,
+                pending: None,
             });
         data.increase_value(second, value);
         data
@@ -122,6 +205,7 @@ impl ItemsPerSecond {
             KeySeries {
                 counts: time_series,
                 latency_ring: None,
+                pending: None,
             },
         );
     }
@@ -792,18 +876,46 @@ impl LatencyHistograms {
         self.ring(index).record(second, time, rev);
     }
 
-    fn merge_cached(
+    /// Merge a batch's timing data for `key` in `second` into the key's
+    /// pending counts, moving what they held to its ring first when `second`
+    /// is past both seconds they hold. Times for a second before them go to
+    /// the ring directly.
+    fn merge_pending(
         &mut self,
         key: &str,
-        cached: &mut Option<Option<usize>>,
+        entry: &mut KeySeries,
         second: usize,
         data: &GooseRequestMetricTimingData,
     ) {
-        let rev = self.next_rev();
-        let index = self.cached_index(key, cached);
-        if let Some(histogram) = self.ring(index).slot_mut(second, rev) {
-            histogram.merge_timing(data);
+        let index = self.cached_index(key, &mut entry.latency_ring);
+        let pending = entry
+            .pending
+            .get_or_insert_with(|| PendingLatency::new(second));
+        if second < pending.second {
+            let rev = self.next_rev();
+            if let Some(histogram) = self.ring(index).slot_mut(second, rev) {
+                histogram.merge_timing(data);
+            }
+            return;
         }
+        if second > pending.second + 1 {
+            self.move_pending(index, pending);
+            pending.second = second;
+        }
+        pending.add(second - pending.second, data);
+    }
+
+    /// Move `pending` to the ring of the name with ring `index`.
+    fn move_pending(&mut self, index: Option<usize>, pending: &mut PendingLatency) {
+        let rev = &mut self.rev;
+        let ring = match index {
+            Some(index) => &mut self.rings[index],
+            None => &mut self.others,
+        };
+        pending.move_to(ring, || {
+            *rev += 1;
+            *rev
+        });
     }
 
     /// All requests in `second`: every ring's histogram for it added up, if
@@ -1090,15 +1202,29 @@ impl GraphData {
         let data = self.requests_per_second.increment(key, second, count);
         if let (Some(times), Some(histograms)) = (times, self.latency.as_mut()) {
             if times.counter > 0 {
-                histograms.merge_cached(key, &mut data.latency_ring, second, times);
+                histograms.merge_pending(key, data, second, times);
             }
         }
         if let Some(next) = next {
             data.increase_value(second + 1, next.counter as u32);
             if let Some(histograms) = self.latency.as_mut() {
                 if next.counter > 0 {
-                    histograms.merge_cached(key, &mut data.latency_ring, second + 1, next);
+                    histograms.merge_pending(key, data, second + 1, next);
                 }
+            }
+        }
+    }
+
+    /// Move every request's pending response times to its ring, so the
+    /// rings hold every time merged so far.
+    fn move_pending_latency(&mut self) {
+        let Some(histograms) = self.latency.as_mut() else {
+            return;
+        };
+        for (key, entry) in self.requests_per_second.series.iter_mut() {
+            if let Some(pending) = entry.pending.as_deref_mut() {
+                let index = histograms.cached_index(key, &mut entry.latency_ring);
+                histograms.move_pending(index, pending);
             }
         }
     }
@@ -1133,7 +1259,7 @@ impl GraphData {
 
     /// The latency histograms, if kept (unit tests).
     #[cfg(test)]
-    pub(crate) fn latency_histograms(&self) -> Option<&LatencyHistograms> {
+    pub(crate) fn latency_histograms(&mut self) -> Option<&LatencyHistograms> {
         self.latency.as_ref()
     }
 
@@ -1141,10 +1267,11 @@ impl GraphData {
     /// `None`, otherwise `key`'s own ring (unit tests).
     #[cfg(test)]
     pub(crate) fn latency_second_for_test(
-        &self,
+        &mut self,
         key: Option<&str>,
         second: usize,
     ) -> Option<SecondHistogram> {
+        self.move_pending_latency();
         let latency = self.latency.as_ref()?;
         match key {
             None => latency.all_second(second),
@@ -1391,6 +1518,7 @@ impl GraphData {
         co_active: bool,
         heatmap_since: Option<HeatmapCursor>,
     ) -> SeriesWindow {
+        self.move_pending_latency();
         let Some((start_second, end_second)) =
             self.series_window_bounds(window_secs, end_second_hint)
         else {
@@ -1497,6 +1625,7 @@ impl GraphData {
         since: Option<HeatmapCursor>,
     ) -> Option<RequestSeries> {
         self.latency.as_ref()?;
+        self.move_pending_latency();
         let key = format!("{method} {name}");
         let (start_second, end_second) = self
             .series_window_bounds(window_secs, end_second_hint)
@@ -3497,7 +3626,8 @@ mod test {
         GraphData::for_metrics_processor(true, synthetic)
     }
 
-    fn histograms(graph: &GraphData) -> &LatencyHistograms {
+    fn histograms(graph: &mut GraphData) -> &LatencyHistograms {
+        graph.move_pending_latency();
         graph.latency_histograms().expect("latency histograms")
     }
 
@@ -3531,8 +3661,8 @@ mod test {
             direct.requests_per_second.get("GET /a").unwrap().data
         );
         for second in [3, 4] {
-            let merged = histograms(&merged);
-            let direct = histograms(&direct);
+            let merged = histograms(&mut merged);
+            let direct = histograms(&mut direct);
             assert_eq!(merged.all_second(second), direct.all_second(second));
             assert_eq!(
                 merged.rings[merged.by_request["GET /a"]].get(second),
@@ -3543,6 +3673,70 @@ mod test {
                 expected.record(time);
             }
             assert_eq!(merged.all_second(second), Some(expected.clone()));
+        }
+    }
+
+    /// Batches merged through a request's pending counts, in and out of
+    /// order, with a jump of several seconds, an earlier second and a time
+    /// past 60 seconds, give the rings and the heatmap the same response
+    /// times as recording each request directly, whenever they are read.
+    #[test]
+    fn pending_latency_equals_direct_recording() {
+        let batches: [(usize, &[u64]); 8] = [
+            (5, &[3, 40]),
+            (6, &[7]),
+            (5, &[61_500, 2]),
+            (6, &[0, 900]),
+            (9, &[12]),
+            (4, &[33]),
+            (10, &[5, 5]),
+            (9, &[250]),
+        ];
+        let mut merged = latency_graph(false);
+        let mut direct = latency_graph(false);
+        for (i, &(second, times)) in batches.iter().enumerate() {
+            let mut data = GooseRequestMetricTimingData::new(None);
+            for &time in times {
+                data.record_time(time);
+                direct.record_request_per_second_and_latency("GET /a", second, Some(time));
+            }
+            merged.record_requests_per_second_and_latency_batch(
+                "GET /a",
+                second,
+                data.counter as u32,
+                Some(&data),
+                None,
+            );
+            // Read part way through as well as at the end.
+            if i == 3 {
+                let merged = histograms(&mut merged);
+                let direct = histograms(&mut direct);
+                for second in 4..=6 {
+                    assert_eq!(merged.all_second(second), direct.all_second(second));
+                }
+            }
+        }
+        let window = |graph: &mut GraphData| {
+            graph
+                .export_series_window_until(300, Some(12))
+                .heatmap
+                .unwrap()
+                .columns
+        };
+        assert_eq!(window(&mut merged), window(&mut direct));
+        for second in 3..=11 {
+            let merged = histograms(&mut merged);
+            let direct = histograms(&mut direct);
+            assert_eq!(
+                merged.all_second(second),
+                direct.all_second(second),
+                "{second}"
+            );
+            assert_eq!(
+                merged.rings[merged.by_request["GET /a"]].get(second),
+                direct.rings[direct.by_request["GET /a"]].get(second),
+                "{second}"
+            );
         }
     }
 
@@ -3951,7 +4145,7 @@ mod test {
         for i in 0..=MAX_REQUEST_SERIES {
             graph.record_latency(&format!("GET /{i}"), 1, 10);
         }
-        let latency = histograms(&graph);
+        let latency = histograms(&mut graph);
         assert_eq!(latency.by_request.len(), MAX_REQUEST_SERIES);
         assert!(!latency.by_request.contains_key("GET /100"));
         // The 101st name still counts toward all requests.
@@ -3962,7 +4156,7 @@ mod test {
         // No synthetic ring for a name without a measured one.
         graph.record_synthetic_latency("GET /100", 1, 500);
         graph.record_synthetic_latency("GET /0", 1, 500);
-        let (all, by_request) = histograms(&graph).synthetic.as_ref().unwrap();
+        let (all, by_request) = histograms(&mut graph).synthetic.as_ref().unwrap();
         assert_eq!(all.get(1).map(|d| d.counter), Some(2));
         assert!(by_request.contains_key("GET /0"));
         assert!(!by_request.contains_key("GET /100"));
@@ -3975,7 +4169,7 @@ mod test {
         // A metrics reset empties both maps and every ring, so names are
         // admitted again.
         graph.reset_rate_series();
-        let latency = histograms(&graph);
+        let latency = histograms(&mut graph);
         assert!(latency.by_request.is_empty());
         assert!(latency.all_second(1).is_none());
         let (all, by_request) = latency.synthetic.as_ref().unwrap();
