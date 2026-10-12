@@ -23,8 +23,10 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::OnceLock;
 
 /// One key's counts by second, and for requests, which latency ring holds the
-/// request's own response times.
+/// request's own response times. Laid out in order, so a request's pending
+/// response times follow the fields a batch merge reads first.
 #[derive(Clone)]
+#[repr(C)]
 struct KeySeries {
     counts: TimeSeries<u32, u32>,
     /// `None` until the request's latency is first recorded through this
@@ -37,35 +39,40 @@ struct KeySeries {
     /// The request's response times from the newest batches, kept here,
     /// next to the count each batch already updates, until they move to its
     /// ring (see [`PendingLatency`]). Unused for errors.
-    pending: Option<Box<PendingLatency>>,
+    pending: PendingLatency,
 }
 
 /// A request's batched response times for two consecutive seconds, counted
-/// by fixed bucket index, waiting to move to its latency ring. Merging a
-/// batch here touches one small block the processor keeps using, instead of
-/// the ring's slot for the second; the counts move to the ring once both
-/// seconds are past, or when a heatmap is built.
+/// by fixed bucket index, waiting to move to its latency ring. It lives in
+/// the request's [`KeySeries`], so merging a batch writes next to the count
+/// the batch already updates instead of reaching into the ring's slot for
+/// the second; the counts move to the ring once both seconds are past, or
+/// when a heatmap is built. Laid out in order: what every merge writes
+/// first, and both seconds' counts of a bucket side by side.
 #[derive(Clone)]
+#[repr(C)]
 struct PendingLatency {
-    /// The seconds held: `second` and `second + 1`.
+    /// The seconds held: `second` and `second + 1`, once `held`.
     second: usize,
+    held: bool,
     /// Fastest, slowest, total and count, for each second held.
     totals: [[usize; 4]; 2],
-    /// Counts by fixed bucket index, for each second held.
-    counts: [[u32; FIXED_BUCKETS]; 2],
     /// Rounded times with no fixed index (past 60 seconds): which second
     /// held (0 or 1), the rounded time and its count.
     overflow: Vec<(usize, usize, usize)>,
+    /// Counts by fixed bucket index, for each second held.
+    counts: [[u32; 2]; FIXED_BUCKETS],
 }
 
 impl PendingLatency {
-    fn new(second: usize) -> Box<Self> {
-        Box::new(PendingLatency {
-            second,
+    fn new() -> Self {
+        PendingLatency {
+            second: 0,
+            held: false,
             totals: [[0; 4]; 2],
-            counts: [[0; FIXED_BUCKETS]; 2],
             overflow: Vec::new(),
-        })
+            counts: [[0; 2]; FIXED_BUCKETS],
+        }
     }
 
     /// Add a batch's timing data for held second `at` (0 or 1).
@@ -77,12 +84,11 @@ impl PendingLatency {
         totals[1] = totals[1].max(data.maximum_time);
         totals[2] += data.total_time;
         totals[3] += data.counter;
-        let counts = &mut self.counts[at];
         for (&rounded, &count) in &data.times {
             match dense_index(rounded) {
                 Some(index) => {
-                    counts[index] =
-                        counts[index].saturating_add(u32::try_from(count).unwrap_or(u32::MAX))
+                    let held = &mut self.counts[index][at];
+                    *held = held.saturating_add(u32::try_from(count).unwrap_or(u32::MAX));
                 }
                 None => self.overflow.push((at, rounded, count)),
             }
@@ -97,11 +103,10 @@ impl PendingLatency {
             if counter == 0 {
                 continue;
             }
-            let counts = &mut self.counts[at];
             if let Some(histogram) = ring.slot_mut(self.second + at, next_rev()) {
-                for (index, count) in counts.iter().enumerate() {
-                    if *count > 0 {
-                        histogram.add_dense(index, *count as usize);
+                for (index, counts) in self.counts.iter().enumerate() {
+                    if counts[at] > 0 {
+                        histogram.add_dense(index, counts[at] as usize);
                     }
                 }
                 for &(held, rounded, count) in &self.overflow {
@@ -111,7 +116,9 @@ impl PendingLatency {
                 }
                 histogram.add_totals(minimum, maximum, total, counter);
             }
-            *counts = [0; FIXED_BUCKETS];
+            for counts in self.counts.iter_mut() {
+                counts[at] = 0;
+            }
             self.totals[at] = [0; 4];
         }
         self.overflow.clear();
@@ -172,7 +179,7 @@ impl ItemsPerSecond {
             .or_insert_with(|| KeySeries {
                 counts: TimeSeries::with_origin(origin),
                 latency_ring: None,
-                pending: None,
+                pending: PendingLatency::new(),
             });
         data.increase_value(second, value);
         data
@@ -205,7 +212,7 @@ impl ItemsPerSecond {
             KeySeries {
                 counts: time_series,
                 latency_ring: None,
-                pending: None,
+                pending: PendingLatency::new(),
             },
         );
     }
@@ -888,9 +895,11 @@ impl LatencyHistograms {
         data: &GooseRequestMetricTimingData,
     ) {
         let index = self.cached_index(key, &mut entry.latency_ring);
-        let pending = entry
-            .pending
-            .get_or_insert_with(|| PendingLatency::new(second));
+        let pending = &mut entry.pending;
+        if !pending.held {
+            pending.held = true;
+            pending.second = second;
+        }
         if second < pending.second {
             let rev = self.next_rev();
             if let Some(histogram) = self.ring(index).slot_mut(second, rev) {
@@ -1222,9 +1231,9 @@ impl GraphData {
             return;
         };
         for (key, entry) in self.requests_per_second.series.iter_mut() {
-            if let Some(pending) = entry.pending.as_deref_mut() {
+            if entry.pending.held {
                 let index = histograms.cached_index(key, &mut entry.latency_ring);
-                histograms.move_pending(index, pending);
+                histograms.move_pending(index, &mut entry.pending);
             }
         }
     }
