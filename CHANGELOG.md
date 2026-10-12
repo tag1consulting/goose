@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.19.0-dev
+ - [#735](https://github.com/tag1consulting/goose/issues/735) the per second graphs no longer count a request twice when `set_success()` or `set_failure()` changes its outcome: the update adds no request and no response time, a `set_failure()` update adds one failure in the original's second, and a `set_success()` update takes back the failure the original added
  - [#713](https://github.com/tag1consulting/goose/issues/713) fix whole run response time figures that an audit against an independent calculation found wrong, in the printed metrics, the reports and the dashboard
     o a response under a millisecond was never a minimum: request timings used a minimum of 0 to mean no time yet, so the minimum showed the fastest nonzero time, and percentiles below it were raised to it; the count of times now says whether there is one, for each request, each status code and every aggregate over requests
     o with coordinated omission mitigation the report's aggregate took its percentile ranks and its average over every request counted, synthetic ones included, though only measured times are in it, so its highest percentiles printed 0 and its average was too low; it now uses the count of measured times

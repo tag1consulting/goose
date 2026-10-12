@@ -52,6 +52,24 @@ impl ItemsPerSecond {
         data.get(second)
     }
 
+    /// Takes back one item recorded for `key` at `second`, if there is one.
+    ///
+    /// Seconds already pruned from the window, or never recorded, are left alone.
+    fn decrement(&mut self, key: &str, second: usize) {
+        let Some(data) = self.series.get_mut(key) else {
+            return;
+        };
+        if second < data.origin {
+            return;
+        }
+        if let Some(value) = data.data.get_mut(second - data.origin) {
+            if *value > 0 {
+                *value -= 1;
+                data.total = data.total.saturating_sub(1);
+            }
+        }
+    }
+
     #[cfg(test)]
     #[inline(always)]
     fn insert(&mut self, key: &str, time_series: TimeSeries<u32, u32>) {
@@ -144,6 +162,14 @@ impl GraphData {
             .initialize_or_increment(key, second, 1);
 
         debug!("incremented second {second} for errors per second counter: {value}");
+    }
+
+    /// Remove an error recorded at `second`, when `set_success()` turns a failed
+    /// request into a success.
+    pub(crate) fn remove_error_per_second(&mut self, key: &str, second: usize) {
+        self.errors_per_second.decrement(key, second);
+
+        debug!("decremented second {second} for errors per second counter");
     }
 
     /// Record average response time per second metric.
@@ -1650,6 +1676,41 @@ mod test {
             graph.requests_per_second.get("GET /user").unwrap().total(),
             6
         );
+    }
+
+    #[test]
+    fn test_remove_error_per_second() {
+        let mut graph = GraphData::new();
+
+        // Nothing recorded yet: no series is created.
+        graph.remove_error_per_second("GET /", 0);
+        assert_eq!(graph.errors_per_second.len(), 0);
+
+        graph.record_errors_per_second("GET /", 1);
+        graph.record_errors_per_second("GET /", 1);
+        graph.remove_error_per_second("GET /", 1);
+        assert_eq!(graph.errors_per_second.get("GET /").unwrap().data[1], 1);
+        assert_eq!(graph.errors_per_second.get("GET /").unwrap().total(), 1);
+
+        // A second with no errors, one past the end, and an unknown key are
+        // left alone rather than going below zero.
+        graph.remove_error_per_second("GET /", 0);
+        graph.remove_error_per_second("GET /", 5);
+        graph.remove_error_per_second("GET /other", 1);
+        let series = graph.errors_per_second.get("GET /").unwrap();
+        assert_eq!(series.data.len(), 2);
+        assert_eq!(series.data[0], 0);
+        assert_eq!(series.data[1], 1);
+        assert_eq!(series.total(), 1);
+
+        // A second pruned from the window is left alone.
+        let mut pruned = GraphData::new();
+        pruned.errors_per_second = ItemsPerSecond::with_origin(10);
+        pruned.record_errors_per_second("GET /", 12);
+        pruned.remove_error_per_second("GET /", 3);
+        assert_eq!(pruned.errors_per_second.get("GET /").unwrap().total(), 1);
+        pruned.remove_error_per_second("GET /", 12);
+        assert_eq!(pruned.errors_per_second.get("GET /").unwrap().total(), 0);
     }
 
     #[test]

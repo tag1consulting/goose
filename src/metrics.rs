@@ -3469,17 +3469,30 @@ impl MetricsProcessor {
                     request_metric.raw.method_label(),
                     request_metric.name
                 );
-                self.graph_data
-                    .record_requests_per_second(&key, seconds_since_start);
-                self.graph_data.record_average_response_time_per_second(
-                    key.clone(),
-                    seconds_since_start,
-                    request_metric.response_time,
-                );
-
-                if !request_metric.success {
+                if request_metric.update {
+                    // `set_success()` and `set_failure()` resend a request that
+                    // was already counted, with its time, in this second. Only
+                    // its outcome changed, so only the error count moves.
+                    if request_metric.success {
+                        self.graph_data
+                            .remove_error_per_second(&key, seconds_since_start);
+                    } else {
+                        self.graph_data
+                            .record_errors_per_second(&key, seconds_since_start);
+                    }
+                } else {
                     self.graph_data
-                        .record_errors_per_second(&key, seconds_since_start);
+                        .record_requests_per_second(&key, seconds_since_start);
+                    self.graph_data.record_average_response_time_per_second(
+                        key.clone(),
+                        seconds_since_start,
+                        request_metric.response_time,
+                    );
+
+                    if !request_metric.success {
+                        self.graph_data
+                            .record_errors_per_second(&key, seconds_since_start);
+                    }
                 }
                 // Do not prune here: per-request pruning is O(unique keys) and
                 // would dominate at high RPS. Pruning runs from low-frequency
@@ -5465,6 +5478,97 @@ mod test {
         assert!(
             window.avg_latency_ms.iter().any(|&v| v > 0.0),
             "expected non-zero latency samples"
+        );
+    }
+
+    /// Per second graph totals for one processor: (RPS, failures per second,
+    /// average response time) in the window.
+    fn graph_window_totals(processor: &MetricsProcessor) -> (f64, f64, Vec<f64>) {
+        let window = processor.graph_data.export_series_window(300);
+        (
+            window.rps.iter().sum(),
+            window.fps.iter().sum(),
+            window.avg_latency_ms,
+        )
+    }
+
+    #[test]
+    fn set_failure_update_is_not_counted_twice_in_graphs() {
+        // Regression (#735): set_failure() on a success resends the request with
+        // `update: true`; the graphs must count it once and add one failure.
+        let configuration = GooseConfiguration {
+            dashboard: true,
+            ..Default::default()
+        };
+        let mut processor = make_dashboard_test_processor(configuration);
+
+        let mut request = make_test_request_metric();
+        request.elapsed = 1_200;
+        request.response_time = 100;
+        request.success = true;
+        processor.process_request_metric(&request);
+
+        let mut update = request.clone();
+        update.success = false;
+        update.update = true;
+        update.error = "string missing".to_string();
+        processor.process_request_metric(&update);
+
+        // A second request in the same second, so the average shows the weight
+        // the updated request carries.
+        let mut other = make_test_request_metric();
+        other.elapsed = 1_700;
+        other.response_time = 400;
+        other.success = true;
+        processor.process_request_metric(&other);
+
+        let (rps, fps, avg) = graph_window_totals(&processor);
+        assert_eq!(rps, 2.0, "two requests were made");
+        assert_eq!(fps, 1.0, "set_failure() adds one failure");
+        assert_eq!(
+            avg.last().copied(),
+            Some(250.0),
+            "average of 100ms and 400ms"
+        );
+    }
+
+    #[test]
+    fn set_success_update_is_not_counted_twice_in_graphs() {
+        // Regression (#735): set_success() on a failure resends the request with
+        // `update: true`; the graphs must count it once and take back the
+        // failure the original added.
+        let configuration = GooseConfiguration {
+            dashboard: true,
+            ..Default::default()
+        };
+        let mut processor = make_dashboard_test_processor(configuration);
+
+        let mut request = make_test_request_metric();
+        request.elapsed = 1_200;
+        request.response_time = 100;
+        request.success = false;
+        request.error = "500 Internal Server Error".to_string();
+        processor.process_request_metric(&request);
+
+        let mut update = request.clone();
+        update.success = true;
+        update.update = true;
+        processor.process_request_metric(&update);
+
+        let mut other = make_test_request_metric();
+        other.elapsed = 1_700;
+        other.response_time = 400;
+        other.success = false;
+        other.error = "500 Internal Server Error".to_string();
+        processor.process_request_metric(&other);
+
+        let (rps, fps, avg) = graph_window_totals(&processor);
+        assert_eq!(rps, 2.0, "two requests were made");
+        assert_eq!(fps, 1.0, "only the request left as a failure counts");
+        assert_eq!(
+            avg.last().copied(),
+            Some(250.0),
+            "average of 100ms and 400ms"
         );
     }
 
