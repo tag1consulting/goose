@@ -480,7 +480,33 @@ test("choosing a request fetches its heatmap now and every second, with its curs
   assert.equal(seriesRequests(page).length, after, "polling stopped");
 });
 
+test("a slow answer is asked for once, and the next fetch carries its cursor", async () => {
+  const served = (url) => ({
+    method: url.searchParams.get("method"),
+    name: url.searchParams.get("name"),
+    heatmap: heatmap({ generation: 4, rev: 21, since: url.searchParams.get("heatmap_since") ? 20 : 0 }),
+  });
+  const page = await openPage("/?token=" + TOKEN, FRESH, TOKEN, {
+    snapshot: snapshotWith([requestRow("/slow", true)]),
+    series: served,
+    seriesDelayMs: 2500,
+  });
+  choose(page, "GET\n/slow");
+  // Ticks at 1 s and 2 s find the first fetch still out.
+  await wait(page.window, 2400);
+  assert.equal(seriesRequests(page).length, 1, "one request, not three");
+  // It answers at 2.5 s; the 3 s tick asks for what follows on from it.
+  await wait(page.window, 900);
+  const fetched = seriesRequests(page);
+  assert.equal(fetched.length, 2);
+  const url = new URL(fetched[1].url);
+  assert.equal(url.searchParams.get("heatmap_generation"), "4");
+  assert.equal(url.searchParams.get("heatmap_since"), "21");
+  choose(page, "");
+});
+
 test("a 404 keeps the request chosen and shows an empty heatmap", async () => {
+
   const page = await openPage("/?token=" + TOKEN, FRESH, TOKEN, {
     snapshot: snapshotWith([requestRow("/gone", true)]),
     seriesStatus: 404,

@@ -57,6 +57,8 @@ let selectedState: HeatmapState | null = null;
 /** Ask for the selected request's whole window next time. */
 let selectedFull = true;
 let seriesTimer: ReturnType<typeof setInterval> | null = null;
+/** The request whose heatmap is being fetched, so a tick skips while it is. */
+let inFlight: SelectedRequest | null = null;
 /** The Adjusted (true, the default) or Measured view. */
 let adjustedView = true;
 /** Coordinated omission mitigation has recorded an event. */
@@ -88,13 +90,20 @@ function stopPolling(): void {
   }
 }
 
-/** Fetches the selected request's heatmap and draws it. */
+/**
+ * Fetches the selected request's heatmap and draws it. A tick while the last
+ * fetch for it is still out does nothing, so a slow answer is never asked for
+ * twice and the next fetch carries the cursor it brings.
+ */
 function pollSelected(): void {
   const request = selected;
-  if (request === null) return;
+  if (request === null || inFlight === request) return;
+  inFlight = request;
   const cursor = selectedFull ? null : heatmapCursor(selectedState);
   void fetchRequestSeries(request.method, request.name, cursor).then((result) => {
+    if (inFlight === request) inFlight = null;
     if (!sameRequest(selected, request)) return;
+
     if (result.kind === "ok") {
       const next = applyHeatmap(selectedState, result.series.heatmap);
       if (next === null) {
