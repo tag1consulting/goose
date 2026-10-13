@@ -366,7 +366,8 @@ The colour of a cell shows how many requests in that second took that long, on a
 
 Each column covers only the requests that started in that second. The KPI strip, the **Whole run** card and the tables cover the whole run instead, since the test started or since metrics were last reset, and say so. While a test runs, the two newest seconds are not drawn yet, because their slowest requests are still arriving.
 
-Choose a request in the select at the top of the card to see that request alone, and **All requests** to go back; the select lists requests in the Requests table's current order. Response times are kept by second for the first 100 request names Goose sees, counting again from each metrics reset; a name seen later counts toward all requests but is not in the select.
+Choose a request in the select at the top of the card to see that request alone, and **All requests** to go back. Response times are kept by second for each of the first 100 request names Goose records a response time for, in the order it first records one, counting again from each metrics reset. Those are the names in the select, as far as they are among the rows the Requests table receives; a name seen later counts toward all requests but is not in the select. The select lists them by method, then name, whatever the Requests table's sort, and is not rebuilt while it is open: a request that appears then is added when it closes.
+
 
 When coordinated omission mitigation is on and has recorded an event, two buttons choose what the heatmap counts: **Adjusted**, the default, as in the KPI strip and the tables, adds the synthetic times mitigation adds for requests a stalled user could not send, and **Measured** leaves them out. Synthetic times belong to the seconds of the stall, which Goose only learns about when it ends, so cells in seconds already drawn can change.
 
