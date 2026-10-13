@@ -1558,6 +1558,9 @@ async fn events_handler(
                         break;
                     }
                 }
+                // The client disconnected and its body stream was dropped:
+                // free the slot now, not on the next snapshot (#696).
+                _ = event_tx.closed() => break,
             }
         }
     });
