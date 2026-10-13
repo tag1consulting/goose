@@ -388,9 +388,12 @@ body {
 }
 
 /* Charts */
+/* minmax(0, 1fr), not 1fr: a 1fr track never shrinks below its widest
+   content, so an open "Show data" table would widen the page instead of
+   scrolling inside its .table-wrap. */
 .charts-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 0.75rem;
   margin-top: 0.85rem;
 }
@@ -558,7 +561,7 @@ body {
 
 @media (max-width: 720px) {
   .charts-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .chart-wide {

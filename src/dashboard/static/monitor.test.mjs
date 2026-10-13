@@ -10,6 +10,8 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { JSDOM } from "jsdom";
 import { IDLE_SNAPSHOT } from "./idle-snapshot.mjs";
 import { FRESH, openPage, openPages, settle } from "./test-harness.mjs";
 
@@ -514,6 +516,44 @@ test("the card's data table follows the switch to the heatmap", async () => {
   await send(page, snapshotWith({ series: { ...series25(100), heatmap: heatmapOf(100, 3) } }));
   assert.equal(el(page, "heatmap-table").hidden, false, "the heatmap's table shows");
   assert.equal(el(page, "chart-latency-table").hidden, true, "the average's table hides");
+});
+
+test("an open data table scrolls in its own box instead of widening the page", () => {
+  // jsdom cannot lay out a page, so this checks the two facts the layout
+  // rests on: each data table sits in a .table-wrap scroll box inside its
+  // details, and no rule gives the chart grid a bare 1fr track, whose minimum
+  // is its widest content (a 5 column table at 320 px).
+  const here = new URL(".", import.meta.url);
+  const css = readFileSync(new URL("app.css", here), "utf8");
+  const html = readFileSync(new URL("index.html", here), "utf8");
+  const { window } = new JSDOM(html.replace("</head>", "<style>" + css + "</style></head>"));
+  const doc = window.document;
+  const tables = doc.querySelectorAll(".chart-data table");
+  assert.equal(tables.length, 4, "rps, users, heatmap and average latency");
+  for (const table of tables) {
+    const wrap = table.parentElement;
+    assert.ok(wrap.classList.contains("table-wrap"), table.id + " sits in a .table-wrap");
+    assert.ok(wrap.closest("details.chart-data"), table.id + "'s scroll box is in its details");
+    assert.equal(window.getComputedStyle(wrap).overflowX, "auto", table.id + " scrolls sideways");
+  }
+  const grids = [];
+  const walk = (rules) => {
+    for (const rule of rules) {
+      if (rule.selectorText === ".charts-grid" && rule.style.gridTemplateColumns) {
+        grids.push(rule.style.gridTemplateColumns);
+      } else if (rule.cssRules) {
+        walk(rule.cssRules);
+      }
+    }
+  };
+  walk(doc.styleSheets[0].cssRules);
+  assert.equal(grids.length, 2, "the wide layout and the narrow one");
+  for (const columns of grids) {
+    for (const track of columns.split(/\s+(?![^(]*\))/)) {
+      assert.equal(track, "minmax(0, 1fr)", "track in " + columns);
+    }
+  }
+  window.close();
 });
 
 test("each summary follows the data: value, then rising, falling or steady", async () => {
