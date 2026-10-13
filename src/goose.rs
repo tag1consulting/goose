@@ -2657,6 +2657,12 @@ impl GooseUser {
     /// after idling a second or more with a batch open, or when a slow
     /// request, added when it finished, started well before the requests
     /// that follow it.
+    ///
+    /// Main would have added the request to the open batch and sent the two
+    /// together when the batch reached its count or age. The new batch keeps
+    /// the open one's start and count, so the request leaves on the flush
+    /// main would use, never later: a user that idled past the batch's age
+    /// sends it at once instead of holding it.
     fn flush_batch_outside_seconds(&mut self, elapsed: u64) -> TransactionResult {
         let second = (elapsed / 1000) as usize;
         let outside = self
@@ -2665,7 +2671,10 @@ impl GooseUser {
             .and_then(|batch| batch.second)
             .is_some_and(|held| second != held && second != held + 1);
         if outside {
+            let (start, count) = (self.batch_start, self.batch_item_count);
             self.flush_batch()?;
+            self.batch_start = start;
+            self.batch_item_count = count;
         }
         Ok(())
     }
@@ -5534,6 +5543,76 @@ mod tests {
         }
     }
 
+    /// The requests a user has sent so far, from the batches on `rx`.
+    fn requests_sent(rx: &flume::Receiver<GooseMetric>) -> usize {
+        received_batches(rx)
+            .iter()
+            .map(|batch| {
+                batch
+                    .requests
+                    .values()
+                    .map(|entry| entry.raw_data.counter)
+                    .chain(batch.next_second.values().map(|next| next.counter))
+                    .sum::<usize>()
+                    + batch.individual_requests.len()
+            })
+            .sum()
+    }
+
+    /// With the heatmap on, a user's last request in a quiet second leaves
+    /// on the same flush main would use: after every request, the user has
+    /// sent as many requests as main's count and age rule sends, so it holds
+    /// none main would not (#713).
+    #[test]
+    fn last_request_in_a_quiet_second_leaves_with_mains_flush() {
+        let configuration = GooseConfiguration::parse_args_default(&["--dashboard"]).unwrap();
+        assert!(configuration.records_latency_series());
+        let (mut users, rx) = batching_users(&configuration, 1);
+        let mut clock = BatchClock::default();
+        let mut sent = 0;
+        // Main's rule: the open batch goes when an added request makes it
+        // 100, or when its first request was added 250 ms or more before.
+        let (mut main_open, mut main_started, mut main_sent) = (0, None, 0);
+        // One request every few seconds, as a user with a wait time sends
+        // them, then a burst across a second boundary, a slow request, and
+        // quiet seconds again. (start, response time)
+        let requests: [(u64, u64); 12] = [
+            (1_000, 20),
+            (6_400, 15),
+            (12_900, 30),
+            (13_100, 5),
+            (13_980, 10),
+            (14_005, 5),
+            (14_100, 4_000),
+            (18_120, 5),
+            (21_500, 5),
+            (21_900, 5),
+            (27_000, 5),
+            (35_000, 5),
+        ];
+        for (i, &(elapsed, response_time)) in requests.iter().enumerate() {
+            let now = elapsed + response_time;
+            clock.add(
+                &mut users[0],
+                now,
+                latency_request_metric("/x", elapsed, response_time),
+            );
+            sent += requests_sent(&rx);
+            main_open += 1;
+            let start = *main_started.get_or_insert(now);
+            if main_open >= METRICS_BATCH_SIZE
+                || now - start >= METRICS_BATCH_MAX_AGE.as_millis() as u64
+            {
+                main_sent += main_open;
+                main_open = 0;
+                main_started = None;
+            }
+            assert_eq!(sent, main_sent, "after request {i}");
+        }
+        // Each quiet request went out with the next one, as on main.
+        assert_eq!(main_sent, requests.len() - 1);
+    }
+
     /// A batch never holds requests from more than two seconds: not after a
     /// user idles for 2 s, with or without a check while idle, and not after
     /// a slow request whose response came seconds after it started.
@@ -5552,7 +5631,8 @@ mod tests {
         };
 
         // Idle for 2 s with no check in between: the next request sends the
-        // old batch before it is added.
+        // old batch before it is added, then goes itself, as main sends the
+        // two together once the batch is past its age.
         send(user, 9_000, 5);
         assert!(rx.is_empty());
         send(user, 11_000, 5);
@@ -5561,16 +5641,10 @@ mod tests {
                 .iter()
                 .map(batch_seconds)
                 .collect::<Vec<_>>(),
-            [vec![(9, 1)]]
+            [vec![(9, 1)], vec![(11, 1)]]
         );
         user.flush_batch().unwrap();
-        assert_eq!(
-            received_batches(&rx)
-                .iter()
-                .map(batch_seconds)
-                .collect::<Vec<_>>(),
-            [vec![(11, 1)]]
-        );
+        assert!(rx.is_empty());
 
         // Idle for 2 s with checks: the batch goes 250 ms after it started.
         let mut clock = BatchClock::default();
