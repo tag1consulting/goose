@@ -29,17 +29,13 @@ use std::sync::OnceLock;
 #[repr(C)]
 struct KeySeries {
     counts: TimeSeries<u32, u32>,
-    /// `None` until the request's latency is first recorded through this
-    /// entry, then the index of its ring in [`LatencyHistograms`], or
-    /// `Some(None)` when it has no ring of its own. Caching it here lets a
-    /// batch merge find the ring with the same lookup that counts the
-    /// request. Unused for errors. Reset with the latency histograms, by
-    /// [`GraphData::reset_rate_series`].
-    latency_ring: Option<Option<usize>>,
     /// The request's response times from the newest batches, kept here,
     /// next to the count each batch already updates, until they move to its
-    /// ring (see [`PendingLatency`]). Unused for errors.
-    pending: PendingLatency,
+    /// ring (see [`PendingLatency`]). Allocated the first time the heatmap
+    /// records a response time for the request, so without the heatmap a
+    /// name costs one pointer more than its counts, and errors never
+    /// allocate one.
+    pending: Option<Box<PendingLatency>>,
 }
 
 /// A request's batched response times for two consecutive seconds, counted
@@ -52,6 +48,12 @@ struct KeySeries {
 #[derive(Clone)]
 #[repr(C)]
 struct PendingLatency {
+    /// `None` until the request's ring is first looked up, then the index
+    /// of its ring in [`LatencyHistograms`], or `Some(None)` when it has no
+    /// ring of its own. Caching it here lets a batch merge find the ring
+    /// with the same lookup that counts the request. Reset with the latency
+    /// histograms, by [`GraphData::reset_rate_series`].
+    ring: Option<Option<usize>>,
     /// The seconds held: `second` and `second + 1`, once `held`.
     second: usize,
     held: bool,
@@ -67,6 +69,7 @@ struct PendingLatency {
 impl PendingLatency {
     fn new() -> Self {
         PendingLatency {
+            ring: None,
             second: 0,
             held: false,
             totals: [[0; 4]; 2],
@@ -135,6 +138,14 @@ impl PendingLatency {
     }
 }
 
+impl KeySeries {
+    /// The request's pending response times, allocated the first time.
+    fn pending_mut(&mut self) -> &mut PendingLatency {
+        self.pending
+            .get_or_insert_with(|| Box::new(PendingLatency::new()))
+    }
+}
+
 impl std::ops::Deref for KeySeries {
     type Target = TimeSeries<u32, u32>;
     fn deref(&self) -> &Self::Target {
@@ -188,8 +199,7 @@ impl ItemsPerSecond {
             .entry(key.to_string())
             .or_insert_with(|| KeySeries {
                 counts: TimeSeries::with_origin(origin),
-                latency_ring: None,
-                pending: PendingLatency::new(),
+                pending: None,
             });
         data.increase_value(second, value);
         data
@@ -221,8 +231,7 @@ impl ItemsPerSecond {
             key.to_string(),
             KeySeries {
                 counts: time_series,
-                latency_ring: None,
-                pending: PendingLatency::new(),
+                pending: None,
             },
         );
     }
@@ -857,7 +866,7 @@ impl LatencyHistograms {
     }
 
     /// The index of `key`'s ring, looked up through `cached` (a
-    /// [`KeySeries`]'s `latency_ring`) and only by name the first time.
+    /// [`PendingLatency`]'s `ring`) and only by name the first time.
     fn cached_index(&mut self, key: &str, cached: &mut Option<Option<usize>>) -> Option<usize> {
         match *cached {
             Some(index) => index,
@@ -907,17 +916,22 @@ impl LatencyHistograms {
         second: usize,
         data: &GooseRequestMetricTimingData,
     ) {
-        match self.pending_at(key, entry, second) {
-            Some(at) => entry.pending.add(at, data),
-            None => self.merge_older(key, entry, second, data),
+        let pending = entry.pending_mut();
+        match self.pending_at(key, pending, second) {
+            Some(at) => pending.add(at, data),
+            None => self.merge_older(key, pending, second, data),
         }
     }
 
     /// Which of the two seconds `key`'s pending counts hold is `second`,
     /// after moving what they held to its ring when `second` is past both;
     /// `None` when `second` is before them.
-    fn pending_at(&mut self, key: &str, entry: &mut KeySeries, second: usize) -> Option<usize> {
-        let pending = &mut entry.pending;
+    fn pending_at(
+        &mut self,
+        key: &str,
+        pending: &mut PendingLatency,
+        second: usize,
+    ) -> Option<usize> {
         if !pending.held {
             pending.held = true;
             pending.second = second;
@@ -926,11 +940,11 @@ impl LatencyHistograms {
             return None;
         }
         if second > pending.second + 1 {
-            let index = self.cached_index(key, &mut entry.latency_ring);
-            self.move_pending(index, &mut entry.pending);
-            entry.pending.second = second;
+            let index = self.cached_index(key, &mut pending.ring);
+            self.move_pending(index, pending);
+            pending.second = second;
         }
-        Some(second - entry.pending.second)
+        Some(second - pending.second)
     }
 
     /// Merge timing data for a second before those `key`'s pending counts
@@ -938,11 +952,11 @@ impl LatencyHistograms {
     fn merge_older(
         &mut self,
         key: &str,
-        entry: &mut KeySeries,
+        pending: &mut PendingLatency,
         second: usize,
         data: &GooseRequestMetricTimingData,
     ) {
-        let index = self.cached_index(key, &mut entry.latency_ring);
+        let index = self.cached_index(key, &mut pending.ring);
         let rev = self.next_rev();
         if let Some(histogram) = self.ring(index).slot_mut(second, rev) {
             histogram.merge_timing(data);
@@ -1225,7 +1239,7 @@ impl GraphData {
             data.get(second)
         );
         if let (Some(time), Some(histograms)) = (latency, self.latency.as_mut()) {
-            histograms.record_cached(key, &mut data.latency_ring, second, time);
+            histograms.record_cached(key, &mut data.pending_mut().ring, second, time);
         }
     }
 
@@ -1266,16 +1280,16 @@ impl GraphData {
         let Some(histograms) = self.latency.as_mut().filter(|_| data.counter > 0) else {
             return whole_run.merge(data);
         };
-        match histograms.pending_at(key, entry, second) {
+        let pending = entry.pending_mut();
+        match histograms.pending_at(key, pending, second) {
             Some(at) => {
-                let pending = &mut entry.pending;
                 pending.add_totals(at, data);
                 whole_run.merge_also(data, |rounded, count| {
                     pending.add_bucket(at, rounded, count)
                 });
             }
             None => {
-                histograms.merge_older(key, entry, second, data);
+                histograms.merge_older(key, pending, second, data);
                 whole_run.merge(data);
             }
         }
@@ -1288,9 +1302,9 @@ impl GraphData {
             return;
         };
         for (key, entry) in self.requests_per_second.series.iter_mut() {
-            if entry.pending.held {
-                let index = histograms.cached_index(key, &mut entry.latency_ring);
-                histograms.move_pending(index, &mut entry.pending);
+            if let Some(pending) = entry.pending.as_deref_mut().filter(|pending| pending.held) {
+                let index = histograms.cached_index(key, &mut pending.ring);
+                histograms.move_pending(index, pending);
             }
         }
     }
@@ -3927,6 +3941,49 @@ mod test {
             full.buckets().collect::<Vec<_>>(),
             vec![(4, 1), (5, COUNT_MAX as usize), (5, 10)]
         );
+    }
+
+    /// A request name's entry stays small, and its pending response times
+    /// are allocated only when the heatmap records one: never without the
+    /// heatmap, and never for an error (#713).
+    #[test]
+    fn pending_latency_is_allocated_only_for_the_heatmap() {
+        assert!(
+            std::mem::size_of::<KeySeries>() <= 64,
+            "KeySeries is {} bytes",
+            std::mem::size_of::<KeySeries>()
+        );
+        let mut times = GooseRequestMetricTimingData::new(None);
+        times.record_time(12);
+        times.record_time(70_000);
+        for heatmap in [false, true] {
+            let mut graph = GraphData::for_metrics_processor(heatmap, heatmap);
+            let mut whole_run = GooseRequestMetricTimingData::new(None);
+            for second in 0..5 {
+                graph.record_requests_per_second_merging_latency(
+                    "GET /a",
+                    second,
+                    &times,
+                    &mut whole_run,
+                );
+                graph.record_requests_per_second_and_latency_batch(
+                    "GET /b",
+                    second,
+                    2,
+                    Some(&times),
+                );
+                graph.record_request_per_second_and_latency("GET /c", second, Some(9));
+                graph.record_errors_per_second("GET /c 500 Internal Server Error", second);
+            }
+            graph.move_pending_latency();
+            for (key, entry) in &graph.requests_per_second.series {
+                assert_eq!(entry.pending.is_some(), heatmap, "{}", key);
+            }
+            assert_eq!(graph.errors_per_second.series.len(), 1);
+            for (key, entry) in &graph.errors_per_second.series {
+                assert!(entry.pending.is_none(), "{}", key);
+            }
+        }
     }
 
     #[test]
