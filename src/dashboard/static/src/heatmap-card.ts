@@ -26,7 +26,6 @@ import {
   type HeatmapState,
   type SelectedRequest,
 } from "./heatmap";
-import { chartableRequests, onRequestsSorted } from "./tables";
 
 /** The card's title when it shows the average latency chart, as before #713. */
 const AVERAGE_TITLE = "Average latency (ms)";
@@ -65,6 +64,8 @@ let adjustedView = true;
 let coActive = false;
 /** Percentiles over time are on, as the last snapshot said. */
 let percentilesOn = true;
+/** The requests with a heatmap of their own, as the last snapshot listed them. */
+let listed: SelectedRequest[] = [];
 /** The select's options, as one string, to rebuild them only on change. */
 let optionsKey = "";
 let layout: HeatmapLayout | null = null;
@@ -135,15 +136,26 @@ function selectRequest(request: SelectedRequest | null): void {
   draw();
 }
 
+/** A snapshot's requests with a heatmap of their own, by method then name. */
+function selectableRequests(snap: DashboardSnapshot): SelectedRequest[] {
+  const order = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+  return snap.requests
+    .filter((r) => r.has_series)
+    .map((r) => ({ method: r.method, name: r.name }))
+    .sort((a, b) => order(a.method, b.method) || order(a.name, b.name));
+}
+
 /**
- * Fills the select: All requests, then each request with its own heatmap in
- * the Requests table's current order. Goes back to All requests when the
+ * Fills the select: All requests, then each request with its own heatmap by
+ * method then name. The options are rebuilt only when that set of requests
+ * changes, and never while the select has focus: a change waits for blur, so
+ * the list never moves under the pointer. Goes back to All requests when the
  * chosen one is no longer listed.
  */
 function updateSelect(): void {
-  const requests = chartableRequests();
+  const requests = listed;
   const key = requests.map(optionValue).join("\u0000");
-  if (key !== optionsKey) {
+  if (key !== optionsKey && document.activeElement !== selectEl) {
     optionsKey = key;
     selectEl.textContent = "";
     const all = document.createElement("option");
@@ -265,6 +277,7 @@ export function updateHeatmapCard(snap: DashboardSnapshot): boolean {
       allState = next;
     }
   }
+  listed = selectableRequests(snap);
   updateSelect();
   // The chosen request redraws when its own heatmap arrives.
   if (selected === null) draw();
@@ -294,5 +307,6 @@ export function initHeatmapCard(): void {
   });
   canvas.addEventListener("mousemove", showTooltip);
   canvas.addEventListener("mouseleave", hideTooltip);
-  onRequestsSorted(updateSelect);
+  selectEl.addEventListener("blur", updateSelect);
+
 }

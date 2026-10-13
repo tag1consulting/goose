@@ -44,10 +44,6 @@ interface TableOptions<R> {
 
 interface SortableTable<R> {
   setRows(rows: R[], flags: SnapshotFlags): void;
-  /** Every stored row in the table's current sort order, unfiltered. */
-  sorted(): R[];
-  /** Calls `handler` after a header click changes the sort. */
-  onSort(handler: () => void): void;
   /** Wires the sortable headers and the filter input. */
   init(): void;
 }
@@ -82,7 +78,6 @@ function sortableTable<R>(options: TableOptions<R>): SortableTable<R> {
   let sort = options.sort;
   let rows: R[] = [];
   let flags: SnapshotFlags | null = null;
-  let sortHandler: (() => void) | null = null;
 
   function emptyRow(text: string): void {
     const tr = document.createElement("tr");
@@ -159,7 +154,6 @@ function sortableTable<R>(options: TableOptions<R>): SortableTable<R> {
         }
         th.classList.add("sorted", sort.dir);
         render();
-        if (sortHandler) sortHandler();
       });
     }
   }
@@ -169,12 +163,6 @@ function sortableTable<R>(options: TableOptions<R>): SortableTable<R> {
       rows = next;
       flags = nextFlags;
       render();
-    },
-    sorted(): R[] {
-      return sortRows(rows, sort);
-    },
-    onSort(handler: () => void): void {
-      sortHandler = handler;
     },
     init(): void {
       wireSort();
@@ -234,8 +222,6 @@ interface FlatTransactionRow {
 interface FlatRequestRow {
   method: string;
   name: string;
-  /** Whether the request has its own response time heatmap. */
-  has_series: boolean;
   request_count: number;
   failure_count: number;
   requests_per_second: number;
@@ -300,7 +286,6 @@ function flattenRequest(r: RequestRow): FlatRequestRow {
   return {
     method: r.method,
     name: r.name,
-    has_series: r.has_series,
     request_count: r.request_count,
     failure_count: r.failure_count,
     requests_per_second: r.requests_per_second,
@@ -477,28 +462,6 @@ export function setTableData(snap: DashboardSnapshot): void {
   );
   requestsTable.setRows(snap.requests.map(flattenRequest), snap.flags);
   errorsTable.setRows(snap.errors.slice(), snap.flags);
-}
-
-/** One request that has its own heatmap, as the heatmap's select names it. */
-export interface ChartableRequest {
-  method: string;
-  name: string;
-}
-
-/**
- * The requests with their own heatmap, in the Requests table's current sort
- * order (its filter aside).
- */
-export function chartableRequests(): ChartableRequest[] {
-  return requestsTable
-    .sorted()
-    .filter((r) => r.has_series)
-    .map((r) => ({ method: r.method, name: r.name }));
-}
-
-/** Calls `handler` when the Requests table is sorted by another column. */
-export function onRequestsSorted(handler: () => void): void {
-  requestsTable.onSort(handler);
 }
 
 /** Wires the sortable headers and the filters. */

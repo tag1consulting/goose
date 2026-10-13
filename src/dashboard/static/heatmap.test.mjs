@@ -393,18 +393,61 @@ test("the card shows the heatmap, its notes and a select of requests with heatma
   assert.equal(ARIA_LABEL, "Response times by second, heatmap");
   assert.equal(el(page, "chart-latency-wrap").hidden, true);
   assert.equal(el(page, "heatmap-wrap").hidden, false);
-  // All requests first, then the requests with heatmaps in the table's
-  // order (most requests first by default).
-  assert.deepEqual(optionTexts(page), ["All requests", "GET /many", "GET /few"]);
+  // All requests first, then the requests with heatmaps by method then
+  // name, whatever the table's order (most requests first by default).
+  assert.deepEqual(optionTexts(page), ["All requests", "GET /few", "GET /many"]);
   assert.equal(el(page, "heatmap-request").value, "");
   // Names in the Requests table are plain text again.
   assert.equal(page.window.document.querySelector("#requests-body button"), null);
   assert.equal(seriesRequests(page).length, 0, "no fetches while nothing is chosen");
 
-  // Sorting the table by name reorders the select.
-  page.window.document.querySelector('#requests-table th[data-sort="name"]').click();
-  assert.deepEqual(optionTexts(page), ["All requests", "GET /few", "GET /many"]);
 });
+
+test("re-sorting the Requests table leaves the select's options untouched", async () => {
+  const requests = [
+    requestRow("/b", true, 5),
+    requestRow("/c", true, 50),
+    requestRow("/a", true, 100),
+  ];
+  const page = await openPage("/?token=" + TOKEN, FRESH, TOKEN, {
+    snapshot: snapshotWith(requests),
+    eventStream: true,
+  });
+  page.events.emit("snapshot", JSON.stringify(snapshotWith(requests)));
+  await settle(page.window);
+  const before = Array.from(el(page, "heatmap-request").options);
+  assert.deepEqual(optionTexts(page), ["All requests", "GET /a", "GET /b", "GET /c"]);
+  for (const column of ["name", "request_count", "name"]) {
+    page.window.document.querySelector('#requests-table th[data-sort="' + column + '"]').click();
+    // A snapshot after the sort, with the rows in another order.
+    page.events.emit("snapshot", JSON.stringify(snapshotWith(requests.slice().reverse())));
+    await settle(page.window);
+    const after = Array.from(el(page, "heatmap-request").options);
+    assert.equal(after.length, before.length);
+    after.forEach((option, i) => assert.equal(option, before[i], "the same element"));
+  }
+});
+
+test("the select is never rebuilt while it has focus; a change waits for blur", async () => {
+  const page = await openPage("/?token=" + TOKEN, FRESH, TOKEN, {
+    snapshot: snapshotWith([requestRow("/a", true)]),
+    eventStream: true,
+  });
+  page.events.emit("snapshot", JSON.stringify(snapshotWith([requestRow("/a", true)])));
+  await settle(page.window);
+  const select = el(page, "heatmap-request");
+  const before = Array.from(select.options);
+  select.focus();
+  page.events.emit(
+    "snapshot",
+    JSON.stringify(snapshotWith([requestRow("/a", true), requestRow("/b", true)]))
+  );
+  await settle(page.window);
+  assert.deepEqual(Array.from(select.options), before, "untouched while focused");
+  select.blur();
+  assert.deepEqual(optionTexts(page), ["All requests", "GET /a", "GET /b"]);
+});
+
 
 test("the Adjusted and Measured toggle shows only once mitigation has an event", async () => {
   const page = await openPage("/?token=" + TOKEN, FRESH, TOKEN, {
