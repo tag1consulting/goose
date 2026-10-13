@@ -6,7 +6,7 @@
 // declarations in snapshot.d.ts, generated from
 // src/metrics/dashboard_snapshot.rs; edit the Rust structs, not those types.
 
-import { ensureCharts, updateCharts } from "./charts";
+import { ensureCharts, recolorCharts, updateCharts } from "./charts";
 import { shownTime } from "./coadjust";
 import {
   clearAuthRequired,
@@ -25,6 +25,7 @@ import { requireElement } from "./dom";
 import { formatDuration, formatInt, formatPct, formatRate, kv } from "./format";
 import {
   initHeatmapCard,
+  redrawHeatmapCard,
   snapshotHeatmapCursor,
   updateHeatmapCard,
 } from "./heatmap-card";
@@ -52,6 +53,10 @@ const requestsCoNote = requireElement("requests-co-note", HTMLElement);
 
 function percentileText(p: Percentiles): string {
   return formatInt(p.p50) + " / " + formatInt(p.p95) + " / " + formatInt(p.p99);
+}
+
+function minMaxText(min: number, max: number): string {
+  return formatInt(min) + " / " + formatInt(max);
 }
 
 /** Sets a KPI's text, and its hover only while it shows an adjusted value. */
@@ -124,7 +129,11 @@ function renderSnapshot(
   aggregateEl.appendChild(kv("Requests", formatInt(agg.total_requests)));
   aggregateEl.appendChild(kv("Failures", formatInt(agg.total_failures)));
   aggregateEl.appendChild(kv("RPS", formatRate(agg.requests_per_second)));
+  aggregateEl.appendChild(kv("Failures/s", formatRate(agg.failures_per_second)));
   aggregateEl.appendChild(kv("Fail %", formatPct(agg.failure_rate)));
+  // The minimum has no adjusted value: the adjusted line pairs the measured
+  // minimum with the adjusted maximum.
+  const measuredMinMax = minMaxText(agg.response_time_min_ms, agg.response_time_max_ms);
   if (co) {
     aggregateEl.appendChild(
       kv("Avg ms (adjusted)", formatRate(co.response_time_avg_ms))
@@ -133,12 +142,20 @@ function renderSnapshot(
       kv("p50 / p95 / p99 (adjusted)", percentileText(co.percentile_ms))
     );
     aggregateEl.appendChild(
+      kv(
+        "Min / max ms (adjusted)",
+        minMaxText(agg.response_time_min_ms, co.response_time_max_ms)
+      )
+    );
+    aggregateEl.appendChild(
       kv("Avg ms (measured)", formatRate(agg.response_time_avg_ms))
     );
     aggregateEl.appendChild(kv("p50 / p95 / p99 (measured)", percentileText(p)));
+    aggregateEl.appendChild(kv("Min / max ms (measured)", measuredMinMax));
   } else {
     aggregateEl.appendChild(kv("Avg ms", formatRate(agg.response_time_avg_ms)));
     aggregateEl.appendChild(kv("p50 / p95 / p99", percentileText(p)));
+    aggregateEl.appendChild(kv("Min / max ms", measuredMinMax));
   }
   if (agg.co_active) {
     aggregateEl.appendChild(kv("Coordinated omission", "active"));
@@ -188,6 +205,13 @@ initTables();
 ensureCharts();
 initHeatmapCard();
 setHeatmapCursorSource(snapshotHeatmapCursor);
+// Recolour on an OS theme change; the light query sees every switch the CSS makes.
+if (window.matchMedia) {
+  window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
+    recolorCharts();
+    redrawHeatmapCard();
+  });
+}
 initRunsPanel();
 void initControlPanel().then(setRunsControl);
 startSse(renderSnapshot, (data) => setBanner(closedBannerText(data), "info"));

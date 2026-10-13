@@ -18,8 +18,15 @@ interface ControlResultBody {
   target_users?: number | null;
 }
 
+/** Where each Controller listens, or null when it is off. */
+interface HealthControllers {
+  telnet: string | null;
+  websocket: string | null;
+}
+
 interface HealthBody {
   control_enabled?: boolean;
+  controllers?: HealthControllers;
 }
 
 const phaseBadge = requireElement("phase-badge", HTMLElement);
@@ -49,6 +56,9 @@ let currentPhase = "idle";
 // A cancel is in progress: the server refuses Users until idle.
 let stopping = false;
 let controlTokenMissing = false;
+// The Controllers health reported, or null before it answers or when it did
+// not say (a failed probe).
+let controllers: HealthControllers | null = null;
 
 /** True while control is on and the page has no token. */
 export function isControlTokenMissing(): boolean {
@@ -339,6 +349,24 @@ function onStepClick(delta: number): void {
   runControl("/api/v1/control/users", { users: next }, next);
 }
 
+/**
+ * The sentence naming the Controllers' addresses after `lead`, or one saying
+ * none is running; empty when health did not say. The addresses are bind
+ * addresses as configured, such as 0.0.0.0:5116.
+ */
+function controllersText(lead: string): string {
+  if (!controllers) return "";
+  const parts: string[] = [];
+  if (controllers.telnet) {
+    parts.push("the telnet controller listening on " + controllers.telnet);
+  }
+  if (controllers.websocket) {
+    parts.push("the WebSocket controller listening on " + controllers.websocket);
+  }
+  if (parts.length === 0) return "No telnet or WebSocket controller is running.";
+  return lead + parts.join(" or ") + ".";
+}
+
 function applyControlChrome(): void {
   if (subtitleEl) {
     subtitleEl.textContent = controlEnabled
@@ -346,9 +374,16 @@ function applyControlChrome(): void {
       : "Live dashboard";
   }
   if (footerNoteEl) {
-    footerNoteEl.textContent = controlEnabled
-      ? "Start, stop, and adjust users from this panel (authenticated). Stop begins a cancel ramp (decrease) before idle, and users cannot be changed until then. Advanced control remains on Controllers."
-      : "Control this test via telnet :5116 or WebSocket :5117. This dashboard is read-only.";
+    const sentences = controlEnabled
+      ? [
+          "Start, stop, and adjust users from this panel (authenticated). Stop begins a cancel ramp (decrease) before idle, and users cannot be changed until then.",
+          controllersText("Advanced control remains on "),
+        ]
+      : [
+          controllersText("Control this test via "),
+          "This dashboard is read-only.",
+        ];
+    footerNoteEl.textContent = sentences.filter((s) => s !== "").join(" ");
   }
 }
 
@@ -363,6 +398,7 @@ export function initControlPanel(): Promise<boolean> {
     })
     .then((health) => {
       controlEnabled = !!(health && health.control_enabled);
+      controllers = (health && health.controllers) || null;
       applyControlChrome();
       if (!controlEnabled) {
         controlPanel.classList.add("hidden");

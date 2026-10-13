@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Goose Dashboard</title>
+  <link rel="icon" href="data:,">
   <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
@@ -176,10 +177,13 @@
             <th data-sort="run_count" data-type="num">#runs</th>
             <th data-sort="failure_count" data-type="num">#fails</th>
             <th data-sort="runs_per_second" data-type="num">runs/s</th>
+            <th data-sort="failures_per_second" data-type="num">fails/s</th>
             <th data-sort="response_time_avg_ms" data-type="num" title="Whole run">avg ms</th>
+            <th data-sort="response_time_min_ms" data-type="num" title="Whole run">min ms</th>
             <th data-sort="p50" data-type="num" title="Whole run">p50</th>
             <th data-sort="p95" data-type="num" title="Whole run">p95</th>
             <th data-sort="p99" data-type="num" title="Whole run">p99</th>
+            <th data-sort="response_time_max_ms" data-type="num" title="Whole run">max ms</th>
           </tr>
         </thead>
         <tbody id="transactions-body"></tbody>
@@ -205,10 +209,14 @@
             <th data-sort="request_count" data-type="num" class="sorted desc">#reqs</th>
             <th data-sort="failure_count" data-type="num">#fails</th>
             <th data-sort="requests_per_second" data-type="num">req/s</th>
+            <th data-sort="failures_per_second" data-type="num">fails/s</th>
             <th data-sort="response_time_avg_ms" data-type="num" title="Whole run">avg ms</th>
+            <th data-sort="response_time_min_ms" data-type="num" title="Whole run">min ms</th>
             <th data-sort="p50" data-type="num" title="Whole run">p50</th>
             <th data-sort="p95" data-type="num" title="Whole run">p95</th>
             <th data-sort="p99" data-type="num" title="Whole run">p99</th>
+            <th data-sort="response_time_max_ms" data-type="num" title="Whole run">max ms</th>
+            <th data-sort="status_codes" data-type="str" title="Whole run">status codes</th>
           </tr>
         </thead>
         <tbody id="requests-body"></tbody>
@@ -266,7 +274,7 @@
   </section>
 
   <footer>
-    <p id="footer-note">Control this test via telnet :5116 or WebSocket :5117. This dashboard is read-only.</p>
+    <p id="footer-note">This dashboard is read-only.</p>
   </footer>
 
   <script src="/static/app.js"></script>
