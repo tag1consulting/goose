@@ -42,7 +42,8 @@ function fileResponse(status, body, filename) {
 // (default `token`; the real server has one token, this lets a test produce a
 // control 401 alone), and `controlStatus` / `snapshotStatus` to force an
 // authorized request to answer with that status instead of 200 (`snapshotStatus`
-// "reject" makes the snapshot fetch fail as on a network error), and
+// "reject" makes the snapshot fetch fail as on a network error, "pending"
+// leaves it unanswered), and
 // `snapshot` for the snapshot an authorized request gets (default
 // IDLE_SNAPSHOT), or a function of the request URL returning it.
 //
@@ -149,6 +150,9 @@ export function stubServer(token, options = {}) {
         );
       }
       return Promise.resolve(jsonResponse(200, body));
+    }
+    if (snapshotStatus === "pending") {
+      return new Promise(() => {});
     }
     if (snapshotStatus === "reject") {
 
