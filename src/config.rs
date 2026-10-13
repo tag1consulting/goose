@@ -2213,10 +2213,11 @@ impl GooseConfiguration {
                     filter: !self.no_percentiles_over_time,
                     message: "no_percentiles_over_time",
                 },
-                // Otherwise use GooseDefault if set.
+                // Otherwise use GooseDefault if set, only with the dashboard:
+                // a load test can set it once for runs with and without it.
                 GooseValue {
                     value: defaults.no_percentiles_over_time,
-                    filter: defaults.no_percentiles_over_time.is_none(),
+                    filter: defaults.no_percentiles_over_time.is_none() || !self.dashboard,
                     message: "no_percentiles_over_time",
                 },
             ])
@@ -3430,5 +3431,16 @@ mod test {
         };
         config.configure(&goose_attack.defaults);
         assert!(config.no_percentiles_over_time);
+
+        // Without the dashboard the default is ignored, while the flag on
+        // the command line is still refused.
+        let mut config = GooseConfiguration::default();
+        config.configure(&goose_attack.defaults);
+        assert!(!config.no_percentiles_over_time);
+        assert!(config.validate().is_ok());
+        let mut config =
+            GooseConfiguration::parse_args_default(&["--no-percentiles-over-time"]).unwrap();
+        config.configure(&goose_attack.defaults);
+        assert!(config.validate().is_err());
     }
 }
