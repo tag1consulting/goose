@@ -275,7 +275,7 @@ async fn test_no_percentiles_over_time_default_without_dashboard() {
         .await
         .expect("a load test setting the default runs without the dashboard");
 
-    assert!(mock_endpoints[INDEX_KEY].hits() > 0);
+    assert!(mock_endpoints[INDEX_KEY].calls() > 0);
     assert!(!goose_metrics.requests.is_empty());
 }
 
