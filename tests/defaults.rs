@@ -255,6 +255,30 @@ async fn test_defaults() {
     );
 }
 
+#[tokio::test]
+// A load test that sets GooseDefault::NoPercentilesOverTime runs without the
+// dashboard, which then ignores the default (#713).
+async fn test_no_percentiles_over_time_default_without_dashboard() {
+    let server = MockServer::start();
+    let mock_endpoints = setup_mock_server_endpoints(&server);
+    let mut config = common::build_configuration(&server, vec![]);
+    config.users = Some(1);
+    config.run_time = "1".to_string();
+    assert!(!config.dashboard);
+
+    let goose_metrics = crate::GooseAttack::initialize_with_config(config)
+        .unwrap()
+        .register_scenario(scenario!("Index").register_transaction(transaction!(get_index)))
+        .set_default(GooseDefault::NoPercentilesOverTime, true)
+        .unwrap()
+        .execute()
+        .await
+        .expect("a load test setting the default runs without the dashboard");
+
+    assert!(mock_endpoints[INDEX_KEY].calls() > 0);
+    assert!(!goose_metrics.requests.is_empty());
+}
+
 #[ignore]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[serial]

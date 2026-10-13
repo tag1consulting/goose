@@ -1570,6 +1570,215 @@ async fn test_dashboard_series_without_report_file() {
     let _metrics = load.join().await.expect("load test execute");
 }
 
+/// `GET /api/v1/series` with these query parameters, encoded.
+fn series_url(base: &str, params: &[(&str, &str)]) -> reqwest::Url {
+    reqwest::Url::parse_with_params(&format!("{base}/api/v1/series"), params).expect("series url")
+}
+
+/// Sum of a JSON array of numbers.
+fn json_sum(value: &serde_json::Value) -> f64 {
+    value
+        .as_array()
+        .map(|values| values.iter().filter_map(|v| v.as_f64()).sum())
+        .unwrap_or(0.0)
+}
+
+/// Measured requests counted in a heatmap column (flattened index, count
+/// pairs).
+fn column_count(column: &serde_json::Value) -> u64 {
+    column["measured"]
+        .as_array()
+        .expect("measured")
+        .chunks(2)
+        .map(|pair| pair[1].as_u64().expect("count"))
+        .sum()
+}
+
+/// A heatmap's columns by second.
+fn heatmap_columns(heatmap: &serde_json::Value) -> std::collections::BTreeMap<u64, u64> {
+    heatmap["columns"]
+        .as_array()
+        .expect("columns")
+        .iter()
+        .map(|column| {
+            (
+                column["second"].as_u64().expect("second"),
+                column_count(column),
+            )
+        })
+        .collect()
+}
+
+/// The response time heatmap: its columns count the same requests as the
+/// requests per second series, a client holding a heatmap is sent only what
+/// changed, and `GET /api/v1/series` returns one request's heatmap.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn test_dashboard_latency_by_second() {
+    let server = MockServer::start();
+    let _mocks = setup_mock_endpoints(&server);
+    let port = reserve_port();
+    let base_v4 = format!("http://127.0.0.1:{port}");
+
+    let mut configuration = build_dashboard_config(&server, "127.0.0.1", port, None);
+    configuration.run_time = "7".to_string();
+
+    let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
+    let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
+    let started = Instant::now();
+
+    let (base, _health) = wait_for_health(&[&base_v4], 80).await;
+    let client = reqwest::Client::new();
+
+    let wait = Duration::from_secs(4).saturating_sub(started.elapsed());
+    tokio::time::sleep(wait).await;
+    let snap = get_snapshot_json(&client, &base, None)
+        .await
+        .expect("snapshot");
+    assert_eq!(snap["flags"]["percentiles_over_time"], true);
+    let series = &snap["series"];
+    let heatmap = &series["heatmap"];
+    // Without a cursor: the whole window.
+    assert_eq!(heatmap["since"], 0);
+    assert_eq!(heatmap["start_second"], series["start_second"]);
+    let rps_len = series["rps"].as_array().expect("rps").len() as u64;
+    assert_eq!(
+        heatmap["end_second"].as_u64().unwrap(),
+        heatmap["start_second"].as_u64().unwrap() + rps_len - 1
+    );
+    assert!(heatmap["buckets"].as_array().expect("buckets").len() >= 205);
+    assert_eq!(heatmap["buckets"][100], serde_json::json!([100, 100, 104]));
+    let columns = heatmap_columns(heatmap);
+    assert!(json_sum(&series["rps"]) > 0.0);
+    assert_eq!(
+        columns.values().sum::<u64>() as f64,
+        json_sum(&series["rps"])
+    );
+    // Mitigation is disabled: no synthetic times.
+    for column in heatmap["columns"].as_array().unwrap() {
+        assert_eq!(column["synthetic"], serde_json::json!([]));
+    }
+
+    // Holding that heatmap, a client is sent only later changes.
+    let generation = heatmap["generation"].as_u64().expect("generation");
+    let rev = heatmap["rev"].as_u64().expect("rev");
+    tokio::time::sleep(Duration::from_millis(1_100)).await;
+    let resp = client
+        .get(format!(
+            "{base}/api/v1/snapshot?heatmap_generation={generation}&heatmap_since={rev}"
+        ))
+        .send()
+        .await
+        .expect("snapshot GET");
+    let later: serde_json::Value = resp.json().await.expect("snapshot json");
+    let delta = &later["series"]["heatmap"];
+    assert_eq!(delta["generation"], generation);
+    assert_eq!(delta["since"], rev);
+    let hold_from = heatmap["hold_from"].as_u64().unwrap();
+    for (second, count) in heatmap_columns(delta) {
+        // A changed second is sent whole, with every request so far.
+        assert!(
+            count >= columns.get(&second).copied().unwrap_or(0),
+            "second {}",
+            second
+        );
+        assert!(second + 3 >= hold_from, "old second {} resent", second);
+    }
+
+    let row = &snap["requests"][0];
+    assert_eq!(row["has_series"], true);
+    let method = row["method"].as_str().expect("method").to_string();
+    let name = row["name"].as_str().expect("name").to_string();
+
+    let resp = client
+        .get(series_url(
+            &base,
+            &[("method", method.as_str()), ("name", name.as_str())],
+        ))
+        .send()
+        .await
+        .expect("series GET");
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.headers()["content-type"].to_str().unwrap(),
+        "application/json"
+    );
+    let one: serde_json::Value = resp.json().await.expect("series json");
+    assert_eq!(one["method"], method.as_str());
+    assert_eq!(one["name"], name.as_str());
+    assert_eq!(one["heatmap"]["since"], 0);
+    // The only request: its complete seconds match the snapshot's.
+    let one_columns = heatmap_columns(&one["heatmap"]);
+    for (second, count) in &columns {
+        if *second < hold_from {
+            assert_eq!(one_columns.get(second), Some(count), "second {second}");
+        }
+    }
+    // With its cursor, only what changed since.
+    let one_generation = one["heatmap"]["generation"].as_u64().unwrap().to_string();
+    let one_rev = one["heatmap"]["rev"].as_u64().unwrap().to_string();
+    let resp = client
+        .get(series_url(
+            &base,
+            &[
+                ("method", method.as_str()),
+                ("name", name.as_str()),
+                ("heatmap_generation", one_generation.as_str()),
+                ("heatmap_since", one_rev.as_str()),
+            ],
+        ))
+        .send()
+        .await
+        .expect("series GET");
+    let one_delta: serde_json::Value = resp.json().await.expect("series json");
+    assert_eq!(one_delta["heatmap"]["since"].to_string(), one_rev);
+
+    let status_and_error = |resp: reqwest::Response| async move {
+        let status = resp.status().as_u16();
+        let body: serde_json::Value = resp.json().await.expect("error json");
+        (
+            status,
+            body["error"].as_str().unwrap_or_default().to_string(),
+        )
+    };
+    let unknown = client
+        .get(series_url(
+            &base,
+            &[("method", "GET"), ("name", "/nothing-here")],
+        ))
+        .send()
+        .await
+        .expect("series GET");
+    assert_eq!(
+        status_and_error(unknown).await,
+        (404, "not_found".to_string())
+    );
+    let missing = client
+        .get(series_url(&base, &[("method", "GET")]))
+        .send()
+        .await
+        .expect("series GET");
+    assert_eq!(
+        status_and_error(missing).await,
+        (400, "bad_request".to_string())
+    );
+    let long_name = "x".repeat(2_048);
+    let too_long = client
+        .get(series_url(
+            &base,
+            &[("method", "GET"), ("name", long_name.as_str())],
+        ))
+        .send()
+        .await
+        .expect("series GET");
+    assert_eq!(
+        status_and_error(too_long).await,
+        (400, "bad_request".to_string())
+    );
+
+    let _metrics = load.join().await.expect("load test execute");
+}
+
 /// With `--no-transaction-metrics --no-scenario-metrics` the snapshot says
 /// both tables are off, while request metrics still flow.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

@@ -95,8 +95,14 @@ function requestCells(doc, name) {
 
 test("a snapshot with adjusted times labels them and shows the table note", async () => {
   const doc = await load(snapshot(CO_ADJUSTED));
-  assert.equal(doc.getElementById("kpi-p95-label").textContent, "p95 ms (adjusted)");
-  assert.equal(doc.getElementById("kpi-avg-label").textContent, "Avg ms (adjusted)");
+  assert.equal(
+    doc.getElementById("kpi-p95-label").textContent,
+    "p95 ms (whole run, adjusted)"
+  );
+  assert.equal(
+    doc.getElementById("kpi-avg-label").textContent,
+    "Avg ms (whole run, adjusted)"
+  );
   const p95 = doc.getElementById("kpi-p95");
   assert.equal(p95.textContent, (20).toLocaleString());
   assert.equal(p95.title, "Measured: 20 ms");
@@ -127,8 +133,8 @@ test("a snapshot with adjusted times labels them and shows the table note", asyn
 
 test("a snapshot without adjusted times shows neither the label nor the note", async () => {
   const doc = await load(snapshot(null));
-  assert.equal(doc.getElementById("kpi-p95-label").textContent, "p95 ms");
-  assert.equal(doc.getElementById("kpi-avg-label").textContent, "Avg ms");
+  assert.equal(doc.getElementById("kpi-p95-label").textContent, "p95 ms (whole run)");
+  assert.equal(doc.getElementById("kpi-avg-label").textContent, "Avg ms (whole run)");
   assert.equal(doc.getElementById("kpi-p95").title, "");
   assert.equal(doc.getElementById("requests-co-note").hidden, true);
   const labels = Array.from(

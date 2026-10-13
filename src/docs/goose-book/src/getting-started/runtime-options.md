@@ -76,6 +76,7 @@ Advanced:
                               Sets dashboard auth token (required for non-loopback binds, and always required with --dashboard-control)
   --dashboard-max-clients COUNT
                               Sets max concurrent dashboard SSE clients (default: 32)
+  --no-percentiles-over-time  Doesn't track response times by second (requires --dashboard)
   --no-autostart              Doesn't automatically start load test
   --no-gzip                   Doesn't set the gzip Accept-Encoding header
   --timeout VALUE             Sets per-request timeout, in seconds (default: 60)

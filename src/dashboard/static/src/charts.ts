@@ -1,4 +1,5 @@
-// The three line charts: RPS and failures, active users, average latency.
+// The three line charts: RPS and failures, active users, and average latency,
+// which the response time card shows when percentiles over time are off.
 
 import {
   CategoryScale,
@@ -35,13 +36,15 @@ interface ChartColors {
   latency: string;
   grid: string;
   tick: string;
+  /** The heatmap's percentile lines. */
+  percentile: string;
 }
 
 let chartRps: LineChart | null = null;
 let chartUsers: LineChart | null = null;
 let chartLatency: LineChart | null = null;
 
-function chartColors(): ChartColors {
+function isDark(): boolean {
   let dark =
     window.matchMedia &&
     window.matchMedia("(prefers-color-scheme: dark)").matches;
@@ -53,6 +56,22 @@ function chartColors(): ChartColors {
   ) {
     dark = true;
   }
+  return dark;
+}
+
+/** The theme, and the tick, grid and percentile line colours the charts use in it. */
+export function chartTheme(): { dark: boolean; tick: string; grid: string; percentile: string } {
+  const colors = chartColors();
+  return {
+    dark: isDark(),
+    tick: colors.tick,
+    grid: colors.grid,
+    percentile: colors.percentile,
+  };
+}
+
+function chartColors(): ChartColors {
+  const dark = isDark();
   return {
     rps: dark ? "#3d8bfd" : "#0b5fff",
     fps: dark ? "#f07178" : "#b42318",
@@ -60,7 +79,9 @@ function chartColors(): ChartColors {
     latency: dark ? "#e6b450" : "#9a6700",
     grid: dark ? "rgba(154, 167, 184, 0.2)" : "rgba(91, 107, 124, 0.2)",
     tick: dark ? "#9aa7b8" : "#5b6b7c",
+    percentile: dark ? "#ff8f45" : "#c2410c",
   };
+
 }
 
 function baseChartOpts(colors: ChartColors): ChartOptions<"line"> {
@@ -185,7 +206,11 @@ function drawable(chart: LineChart | null): chart is LineChart {
   return chart !== null && chart.ctx != null;
 }
 
-export function updateCharts(series: SeriesWindow): void {
+/**
+ * Draws the charts; the average latency chart only when `averageLatency`
+ * (percentiles over time are off and the response time card shows it).
+ */
+export function updateCharts(series: SeriesWindow, averageLatency: boolean): void {
   ensureCharts();
   const start = series.start_second;
   const rps = series.rps;
@@ -209,7 +234,7 @@ export function updateCharts(series: SeriesWindow): void {
     chartUsers.data.datasets[0].data = users;
     chartUsers.update("none");
   }
-  if (drawable(chartLatency)) {
+  if (averageLatency && drawable(chartLatency)) {
     chartLatency.data.labels = labels;
     chartLatency.data.datasets[0].data = lat;
     chartLatency.update("none");

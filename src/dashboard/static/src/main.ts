@@ -12,6 +12,7 @@ import {
   clearAuthRequired,
   initToken,
   isAuthRequired,
+  setHeatmapCursorSource,
   startSse,
 } from "./connection";
 import {
@@ -22,6 +23,11 @@ import {
 } from "./control";
 import { requireElement } from "./dom";
 import { formatDuration, formatInt, formatPct, formatRate, kv } from "./format";
+import {
+  initHeatmapCard,
+  snapshotHeatmapCursor,
+  updateHeatmapCard,
+} from "./heatmap-card";
 import {
   closedBannerText,
   initRunsPanel,
@@ -77,7 +83,8 @@ function renderSnapshot(
   // Once coordinated omission mitigation has events, response times are
   // shown adjusted, labelled so, with the measured value on hover.
   const co = agg.co_adjusted != null ? agg.co_adjusted : null;
-  const suffix = co ? " (adjusted)" : "";
+  // Both cover the whole run, unlike the heatmap's seconds.
+  const suffix = co ? " (whole run, adjusted)" : " (whole run)";
   const p95 = shownTime(p.p95, co ? co.percentile_ms.p95 : null, formatInt);
   const avg = shownTime(
     agg.response_time_avg_ms,
@@ -139,7 +146,9 @@ function renderSnapshot(
 
   updateSaveFromSnapshot(snap);
   setTableData(snap);
-  updateCharts(snap.series);
+  // The response time card shows the heatmap, or with percentiles over time
+  // off the average latency chart, which updateCharts then draws.
+  updateCharts(snap.series, updateHeatmapCard(snap));
   updateControlFromSnapshot(snap);
 
   // Prefer metrics/auth banners.
@@ -177,6 +186,8 @@ function renderSnapshot(
 initToken();
 initTables();
 ensureCharts();
+initHeatmapCard();
+setHeatmapCursorSource(snapshotHeatmapCursor);
 initRunsPanel();
 void initControlPanel().then(setRunsControl);
 startSse(renderSnapshot, (data) => setBanner(closedBannerText(data), "info"));

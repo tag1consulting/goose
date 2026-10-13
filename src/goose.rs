@@ -989,6 +989,11 @@ pub struct GooseUser {
     /// Whether graph data is collected: `--report-file` is set or `--dashboard` is on
     /// (cached to avoid repeated string checks).
     pub(crate) record_graph_data: bool,
+    /// Whether the dashboard's heatmap keeps response times by second
+    /// ([`GooseConfiguration::records_latency_series`]): only then does a
+    /// batch hold requests from one second and the next. Without it, batches
+    /// are built as they always were.
+    pub(crate) record_latency_series: bool,
     /// Shared epoch counter for batch validity across metrics resets.
     pub(crate) metrics_epoch: Option<MetricsEpoch>,
     /// Optional per-user session data of a generic type implementing the
@@ -1036,6 +1041,7 @@ impl Clone for GooseUser {
             batch_item_count: 0,
             batch_start: None,
             record_graph_data: self.record_graph_data,
+            record_latency_series: self.record_latency_series,
             metrics_epoch: self.metrics_epoch.clone(),
             session_data: self.session_data.clone(),
             request_counters: self.request_counters.clone(),
@@ -1073,6 +1079,7 @@ impl GooseUser {
         };
 
         let record_graph_data = configuration.records_graph_data();
+        let record_latency_series = configuration.records_latency_series();
 
         Ok(GooseUser {
             started: Instant::now(),
@@ -1100,6 +1107,7 @@ impl GooseUser {
             batch_item_count: 0,
             batch_start: None,
             record_graph_data,
+            record_latency_series,
             metrics_epoch: None,
             session_data: None,
             request_counters: None,
@@ -2177,6 +2185,8 @@ impl GooseUser {
                 if request.coordinated_omission_elapsed > 0 || !request.error.is_empty() {
                     // CO-affected and failed requests need per-request processing.
                     self.accumulate_individual_request(request);
+                } else if self.record_latency_series {
+                    self.accumulate_request_by_second(&request)?;
                 } else {
                     self.accumulate_request(&request);
                 }
@@ -2394,6 +2404,116 @@ impl GooseUser {
         self.batch_item_count += 1;
     }
 
+    /// [`Self::accumulate_request`] when the dashboard's heatmap keeps
+    /// response times by second: the request's time goes in the batch's
+    /// `raw_data` when it started in the batch's second, or in its
+    /// `next_second` when it started in the second after, after
+    /// [`Self::flush_batch_outside_seconds`] has sent a batch it can not
+    /// join. The batch records no `graph_request_data`: the metrics thread
+    /// counts requests per second from the batch's second. Kept out of line,
+    /// so the path without the heatmap stays as it was.
+    #[inline(never)]
+    fn accumulate_request_by_second(
+        &mut self,
+        request_metric: &GooseRequestMetric,
+    ) -> TransactionResult {
+        debug_assert!(
+            request_metric.success,
+            "accumulate_request_by_second called with unsuccessful request"
+        );
+        debug_assert!(
+            request_metric.error.is_empty(),
+            "accumulate_request_by_second called with non-empty error"
+        );
+        // Only non-update requests get here; updates go through
+        // set_success/set_failure → send_request_metric_now directly.
+        debug_assert!(
+            !request_metric.update,
+            "accumulate_request_by_second called with update request"
+        );
+
+        self.flush_batch_outside_seconds(request_metric.elapsed)?;
+
+        let batch = match self.metrics_batch.as_mut() {
+            Some(b) => b,
+            None => return Ok(()),
+        };
+
+        let method_label = request_metric.raw.method_label();
+        // Format key into reusable buffer to avoid per-request allocation.
+        self.counter_key_buf.clear();
+        let _ = std::fmt::Write::write_fmt(
+            &mut self.counter_key_buf,
+            format_args!("{} {}", method_label, request_metric.name),
+        );
+
+        let second = (request_metric.elapsed / 1000) as usize;
+        let next_second = match batch.second {
+            None => {
+                batch.second = Some(second);
+                false
+            }
+            Some(held) => {
+                debug_assert!(
+                    second == held || second == held + 1,
+                    "a batch holds requests from more than two seconds"
+                );
+                second != held
+            }
+        };
+
+        // One lookup by reference when the batch has seen the name; the key
+        // is only copied the first time it does.
+        let key = self.counter_key_buf.as_str();
+        let entry = match batch.requests.get_mut(key) {
+            Some(entry) => entry,
+            None => batch
+                .requests
+                .entry(key.to_string())
+                .or_insert_with(|| RequestBatchEntry {
+                    path: request_metric.name.to_string(),
+                    method: request_metric.raw.method,
+                    custom_method: request_metric.raw.custom_method.clone(),
+                    raw_data: GooseRequestMetricTimingData::new(None),
+                    status_code_counts: HashMap::new(),
+                    status_code_timings: HashMap::new(),
+                }),
+        };
+
+        // Pre-aggregate timing data using the same bucketing logic.
+        if next_second {
+            match batch.next_second.get_mut(key) {
+                Some(next) => next.record_time(request_metric.response_time),
+                None => {
+                    let mut next = GooseRequestMetricTimingData::new(None);
+                    next.record_time(request_metric.response_time);
+                    batch.next_second.insert(key.to_string(), next);
+                }
+            }
+        } else {
+            entry.raw_data.record_time(request_metric.response_time);
+        }
+
+        if !self.config.no_status_codes {
+            // Increment status-code count.
+            *entry
+                .status_code_counts
+                .entry(request_metric.status_code)
+                .or_insert(0) += 1;
+
+            // Record status-code timing summary.
+            let time = request_metric.response_time as usize;
+            let summary = entry
+                .status_code_timings
+                .entry(request_metric.status_code)
+                .or_insert_with(StatusCodeTimingSummary::default);
+            summary.record(time);
+        }
+
+        self.batch_item_count += 1;
+        Ok(())
+    }
+
     /// Buffer an individual request metric in the batch without pre-aggregating.
     ///
     /// Used for failed requests (which need per-request error logging on the
@@ -2523,6 +2643,38 @@ impl GooseUser {
             if start.elapsed() >= METRICS_BATCH_MAX_AGE {
                 return self.flush_batch();
             }
+        }
+        Ok(())
+    }
+
+    /// When the heatmap is on, flush the batch first if a request
+    /// that started at `elapsed` ms can not join it. A batch holds requests
+    /// from its first request's second and the next one (see
+    /// [`GooseMetricBatch::second`]); a request from before that second, or
+    /// two or more seconds after it, starts a new batch. Batches flush as
+    /// [`Self::maybe_flush_batch`] says, which checks a batch's age only
+    /// after adding a request, so this happens when a user adds a request
+    /// after idling a second or more with a batch open, or when a slow
+    /// request, added when it finished, started well before the requests
+    /// that follow it.
+    ///
+    /// Main would have added the request to the open batch and sent the two
+    /// together when the batch reached its count or age. The new batch keeps
+    /// the open one's start and count, so the request leaves on the flush
+    /// main would use, never later: a user that idled past the batch's age
+    /// sends it at once instead of holding it.
+    fn flush_batch_outside_seconds(&mut self, elapsed: u64) -> TransactionResult {
+        let second = (elapsed / 1000) as usize;
+        let outside = self
+            .metrics_batch
+            .as_ref()
+            .and_then(|batch| batch.second)
+            .is_some_and(|held| second != held && second != held + 1);
+        if outside {
+            let (start, count) = (self.batch_start, self.batch_item_count);
+            self.flush_batch()?;
+            self.batch_start = start;
+            self.batch_item_count = count;
         }
         Ok(())
     }
@@ -4785,7 +4937,7 @@ mod tests {
         );
     }
 
-    // --- Whole run figures against an independent reference ---
+    // --- Latency by second (#713) ---
 
     /// A successful request for `name` that started `elapsed` ms into the run.
     fn latency_request_metric(name: &str, elapsed: u64, response_time: u64) -> GooseRequestMetric {
@@ -4805,6 +4957,206 @@ mod tests {
         metric.response_time = response_time;
         metric.status_code = 200;
         metric.success = true;
+        metric
+    }
+
+    /// Each request's time is recorded once, in the batch's timing data for
+    /// its name, whatever the dashboard keeps; the graph entry only counts it.
+    #[test]
+    fn accumulate_request_records_each_time_once() {
+        let metric = latency_request_metric("/x", 3_400, 77);
+        for args in [
+            vec!["--dashboard"],
+            vec!["--dashboard", "--no-percentiles-over-time"],
+            vec!["--report-file", "report.html"],
+        ] {
+            let configuration = GooseConfiguration::parse_args_default(&args).unwrap();
+            let mut user =
+                GooseUser::single("http://localhost:8080".parse().unwrap(), &configuration)
+                    .unwrap();
+            user.metrics_batch = Some(GooseMetricBatch::new(0));
+            if user.record_latency_series {
+                user.accumulate_request_by_second(&metric).unwrap();
+            } else {
+                user.accumulate_request(&metric);
+            }
+            let batch = user.metrics_batch.take().unwrap();
+            let mut expected = GooseRequestMetricTimingData::new(None);
+            expected.record_time(77);
+            assert_eq!(batch.requests["GET /x"].raw_data, expected, "{args:?}");
+            if user.record_latency_series {
+                // The batch's second, which its timing data stands for.
+                assert_eq!(batch.second, Some(3), "{args:?}");
+                assert!(batch.graph_request_data.is_empty(), "{:?}", args);
+            } else {
+                // Counted by second as on main.
+                assert_eq!(batch.second, None, "{args:?}");
+                let graph = &batch.graph_request_data[&("GET /x".to_string(), 3)];
+                assert_eq!((graph.count, graph.total_time), (1, 77.0), "{args:?}");
+            }
+        }
+    }
+
+    /// A real stall, no wait time: the copy coordinated omission mitigation
+    /// sends puts each synthetic time in the second its request would have
+    /// started, inside the stall.
+    #[tokio::test]
+    async fn synthetic_latency_lands_in_the_stall() {
+        let mut configuration = GooseConfiguration::parse_args_default(&["--dashboard"]).unwrap();
+        configuration.co_mitigation = Some(GooseCoordinatedOmissionMitigation::Average);
+        let mut user =
+            GooseUser::single("http://localhost:8080".parse().unwrap(), &configuration).unwrap();
+        let (tx, rx) = flume::unbounded();
+        user.metrics_channel = Some(tx);
+
+        // Four quick iterations set the cadence, then one stalls.
+        for _ in 0..4 {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            user.update_request_cadence(0).await;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(2_500)).await;
+        user.update_request_cadence(0).await;
+
+        // The first request of the iteration after the stall.
+        let s = user.started.elapsed().as_millis() as u64;
+        let request = latency_request_metric("/x", s, 5);
+        user.coordinated_omission_mitigation(&request)
+            .await
+            .unwrap();
+        user.flush_pending_request().unwrap();
+        let copy = match rx.try_recv().expect("coordinated omission copy") {
+            GooseMetric::Request(copy) => *copy,
+            other => panic!("expected a request metric, got {:?}", other),
+        };
+        let stall = copy.coordinated_omission_elapsed;
+        let cadence = copy.user_cadence;
+        assert!(stall >= 2_500, "stall {}", stall);
+        assert!(cadence > 0 && stall > 2 * cadence);
+
+        let (_metrics_tx, metrics_rx) = flume::unbounded();
+        let (_cmd_tx, cmd_rx) = flume::unbounded();
+        let mut metrics = crate::metrics::GooseMetrics::default();
+        metrics.coordinated_omission_metrics =
+            Some(crate::metrics::CoordinatedOmissionMetrics::new(
+                GooseCoordinatedOmissionMitigation::Average,
+            ));
+        let mut processor = crate::metrics::MetricsProcessor::new(
+            metrics_rx,
+            cmd_rx,
+            metrics,
+            crate::graph::GraphData::for_metrics_processor(
+                configuration.records_latency_series(),
+                configuration.records_synthetic_latency(),
+            ),
+            configuration.clone(),
+            Vec::new(),
+            crate::config::GooseDefaults::default(),
+            Arc::new(std::sync::Mutex::new(HashMap::new())),
+            None,
+            Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        );
+        processor.process_request_metric_for_test(&request);
+        processor.process_request_metric_for_test(&copy);
+
+        // Expected: t_k = E - k*c - r while t_k > r, in second (s - t_k) / 1000.
+        let r = request.response_time;
+        let mut expected: HashMap<usize, u64> = HashMap::new();
+        let mut k = 1;
+        while stall as i64 - (k * cadence) as i64 - r as i64 > r as i64 {
+            let t = stall - k * cadence - r;
+            assert!(s - t >= s.saturating_sub(stall) && s - t <= s);
+            *expected.entry(((s - t) / 1000) as usize).or_default() += 1;
+            k += 1;
+        }
+        assert!(
+            !expected.is_empty(),
+            "the stall must produce synthetic times"
+        );
+
+        let end = (s / 1000) as usize + 3;
+        let window = processor
+            .graph_data_for_test()
+            .export_series_window_with_heatmap(300, Some(end), true, None);
+        let series = processor
+            .graph_data_for_test()
+            .export_request_series("GET".into(), "/x".into(), 300, Some(end), true, None)
+            .expect("series for /x");
+        for heatmap in [window.heatmap.as_ref().expect("heatmap"), &series.heatmap] {
+            for second in 0..=end as u64 {
+                let (measured, synthetic) = heatmap.counts(second);
+                assert_eq!(
+                    synthetic,
+                    expected.get(&(second as usize)).copied().unwrap_or(0),
+                    "second {second}"
+                );
+                // The request itself is measured in its own second, and only
+                // there.
+                let own = u64::from(second == s / 1000);
+                assert_eq!(measured, own, "second {second}");
+            }
+        }
+    }
+
+    // --- One recording per request, batches within one second (#713) ---
+
+    /// One request of a seeded run: the user that sent it, its name, when it
+    /// started, how long it took, and whether it failed.
+    #[derive(Clone, Debug)]
+    struct SeededRequest {
+        user: usize,
+        name: String,
+        elapsed: u64,
+        response_time: u64,
+        failed: bool,
+    }
+
+    /// A seeded run: `users` users each sending requests one after another
+    /// for `seconds` seconds over twelve names, with fast, slow and very slow
+    /// responses (past the 60 second buckets), responses under a millisecond,
+    /// and failures. Ordered by when each response arrived, as the metrics
+    /// processor sees them.
+    fn seeded_requests(seed: u64, users: usize, seconds: u64) -> Vec<SeededRequest> {
+        let mut state = seed;
+        let mut next = move |modulus: u64| {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (state >> 33) % modulus
+        };
+        let mut requests = Vec::new();
+        for user in 0..users {
+            let mut elapsed = next(997);
+            while elapsed < seconds * 1000 {
+                let response_time = match next(200) {
+                    0..=1 => 0,
+                    2 => 61_000 + next(1_000),
+                    3..=19 => 1_500 + next(6_500),
+                    20..=59 => 60 + next(1_440),
+                    _ => 1 + next(60),
+                };
+                requests.push(SeededRequest {
+                    user,
+                    name: format!("/p{}", next(12)),
+                    elapsed,
+                    response_time,
+                    failed: next(100) < 3,
+                });
+                elapsed += response_time + next(30);
+            }
+        }
+        requests.sort_by_key(|request| (request.elapsed + request.response_time, request.user));
+        requests
+    }
+
+    fn seeded_metric(request: &SeededRequest) -> GooseRequestMetric {
+        let mut metric =
+            latency_request_metric(&request.name, request.elapsed, request.response_time);
+        metric.user = request.user;
+        if request.failed {
+            metric.success = false;
+            metric.status_code = 500;
+            metric.error = "500 Internal Server Error".to_string();
+        }
         metric
     }
 
@@ -4839,6 +5191,49 @@ mod tests {
         (users, rx)
     }
 
+    /// A user's batch clock in a test: when its batch started, in
+    /// milliseconds of a simulated run, so batches flush by count and age as
+    /// they would at those times.
+    #[derive(Default)]
+    struct BatchClock {
+        /// When the batch started, and the `batch_start` last given the user.
+        started: Option<(u64, std::time::Instant)>,
+    }
+
+    impl BatchClock {
+        /// Runs `step` with `user`'s batch start set so that its age reads as
+        /// at `now` ms, then notes what it became: kept, cleared by a flush,
+        /// or started at `now` by a new batch.
+        fn at(&mut self, user: &mut GooseUser, now: u64, step: impl FnOnce(&mut GooseUser)) {
+            if let Some((started, _)) = self.started {
+                let instant = std::time::Instant::now()
+                    .checked_sub(std::time::Duration::from_millis(now - started))
+                    .expect("monotonic clock far enough from its origin");
+                user.batch_start = Some(instant);
+                self.started = Some((started, instant));
+            }
+            step(user);
+            self.started = match (user.batch_start, self.started) {
+                (None, _) => None,
+                (Some(start), Some((started, given))) if start == given => Some((started, given)),
+                (Some(start), _) => Some((now, start)),
+            };
+        }
+
+        /// Adds `metric` to `user`'s batch when its response arrives, at `now` ms.
+        fn add(&mut self, user: &mut GooseUser, now: u64, metric: GooseRequestMetric) {
+            self.at(user, now, |user| {
+                user.pending_request = Some(metric);
+                user.flush_pending_request().unwrap();
+            });
+        }
+
+        /// The check a user thread makes while it has nothing to send, at `now` ms.
+        fn check(&mut self, user: &mut GooseUser, now: u64) {
+            self.at(user, now, |user| user.maybe_flush_batch().unwrap());
+        }
+    }
+
     fn received_batches(rx: &flume::Receiver<GooseMetric>) -> Vec<GooseMetricBatch> {
         rx.drain()
             .map(|metric| match metric {
@@ -4847,6 +5242,577 @@ mod tests {
             })
             .collect()
     }
+
+    /// Sends each request through its user's batch path when its response
+    /// arrives, as user threads do, each user's batch flushing by count and
+    /// age at the simulated times, then flushes every user's batch. Returns
+    /// the batches in the order they were sent.
+    fn batch_through_users(
+        configuration: &GooseConfiguration,
+        users: usize,
+        requests: &[SeededRequest],
+    ) -> Vec<GooseMetricBatch> {
+        let (mut users, rx) = batching_users(configuration, users);
+        let mut clocks: Vec<BatchClock> = users.iter().map(|_| BatchClock::default()).collect();
+        for request in requests {
+            clocks[request.user].add(
+                &mut users[request.user],
+                request.elapsed + request.response_time,
+                seeded_metric(request),
+            );
+        }
+        for user in users.iter_mut() {
+            user.flush_batch().unwrap();
+        }
+        received_batches(&rx)
+    }
+
+    fn test_processor(configuration: &GooseConfiguration) -> crate::metrics::MetricsProcessor {
+        let (_metrics_tx, metrics_rx) = flume::unbounded();
+        let (_cmd_tx, cmd_rx) = flume::unbounded();
+        crate::metrics::MetricsProcessor::new(
+            metrics_rx,
+            cmd_rx,
+            crate::metrics::GooseMetrics::default(),
+            crate::graph::GraphData::for_metrics_processor(
+                configuration.records_latency_series(),
+                configuration.records_synthetic_latency(),
+            ),
+            configuration.clone(),
+            Vec::new(),
+            crate::config::GooseDefaults::default(),
+            Arc::new(std::sync::Mutex::new(HashMap::new())),
+            None,
+            Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        )
+    }
+
+    /// Seeded requests with, for one more user, a request ending exactly on
+    /// each second boundary and one starting on it.
+    fn seeded_requests_with_boundaries(
+        seed: u64,
+        users: usize,
+        seconds: u64,
+    ) -> Vec<SeededRequest> {
+        let mut requests = seeded_requests(seed, users, seconds);
+        for second in 1..seconds {
+            for (elapsed, response_time) in [(second * 1000 - 1, 1), (second * 1000, 2)] {
+                requests.push(SeededRequest {
+                    user: users,
+                    name: format!("/p{}", second % 12),
+                    elapsed,
+                    response_time,
+                    failed: false,
+                });
+            }
+        }
+        requests.sort_by_key(|request| (request.elapsed + request.response_time, request.user));
+        requests
+    }
+
+    /// The per second rings built from batches equal an independent
+    /// reference built from each request's own time and second, for every
+    /// second, all requests and each name: buckets, count, minimum, maximum
+    /// and total, and the requests per second counts.
+    #[test]
+    fn per_second_rings_match_a_reference() {
+        let users = 8;
+        let configuration = GooseConfiguration::parse_args_default(&["--dashboard"]).unwrap();
+        let requests = seeded_requests_with_boundaries(47, users, 40);
+        let batches = batch_through_users(&configuration, users + 1, &requests);
+        // Batches reach the next second, and slow requests start new ones.
+        assert!(batches.iter().any(|batch| !batch.next_second.is_empty()));
+        let mut processor = test_processor(&configuration);
+        for batch in batches {
+            processor.process_batch_for_test(batch);
+        }
+
+        let mut reference: HashMap<(Option<String>, usize), crate::graph::SecondHistogram> =
+            HashMap::new();
+        let mut counts: HashMap<(String, usize), u32> = HashMap::new();
+        for request in &requests {
+            let key = format!("GET {}", request.name);
+            let second = (request.elapsed / 1000) as usize;
+            for name in [None, Some(key.clone())] {
+                reference
+                    .entry((name, second))
+                    .or_default()
+                    .record(request.response_time);
+            }
+            *counts.entry((key, second)).or_default() += 1;
+        }
+
+        let graph = processor.graph_data_for_test();
+        let last = requests.iter().map(|r| r.elapsed / 1000).max().unwrap() as usize;
+        for second in 0..=last + 2 {
+            assert_eq!(
+                graph.latency_second_for_test(None, second),
+                reference.get(&(None, second)).cloned(),
+                "all requests, second {second}"
+            );
+            for name in 0..12 {
+                let key = format!("GET /p{name}");
+                assert_eq!(
+                    graph.latency_second_for_test(Some(&key), second),
+                    reference.get(&(Some(key.clone()), second)).cloned(),
+                    "{key}, second {second}"
+                );
+                assert_eq!(
+                    graph.requests_in_second_for_test(&key, second),
+                    counts.get(&(key.clone(), second)).copied().unwrap_or(0),
+                    "{key}, second {second}"
+                );
+            }
+        }
+        assert!(reference.len() > 300);
+    }
+
+    /// The seconds of the requests in a batch: its own second for `raw_data`
+    /// and the next for `next_second`, by request count, and each individual
+    /// request's.
+    fn batch_seconds(batch: &GooseMetricBatch) -> Vec<(usize, usize)> {
+        let mut seconds: std::collections::BTreeMap<usize, usize> = Default::default();
+        if let Some(second) = batch.second {
+            for entry in batch.requests.values() {
+                *seconds.entry(second).or_default() += entry.raw_data.counter;
+            }
+            for next in batch.next_second.values() {
+                *seconds.entry(second + 1).or_default() += next.counter;
+            }
+        }
+        seconds
+            .into_iter()
+            .filter(|&(_, count)| count > 0)
+            .collect()
+    }
+
+    /// Without the heatmap, every batch a user sends is the batch main's
+    /// count and age rule sends for the same requests: the same boundaries
+    /// and contents, no second, and, when per second graphs are kept, the
+    /// same requests counted by second. At the end the user holds unsent
+    /// exactly the requests main holds.
+    fn assert_batches_follow_the_count_and_age_rule(configuration: &GooseConfiguration) {
+        assert!(!configuration.records_latency_series());
+        // One user for a minute: 10 s of responses under 5 ms, so batches
+        // fill to 100, then mostly fast responses with slow ones between,
+        // so batches go by age, and an idle gap of 1.6 s at 30 s. Times are
+        // multiples of 5 ms, so no age sits within a millisecond of the
+        // 250 ms limit.
+        let mut state = 1_017u64;
+        let mut next = move |modulus: u64| {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (state >> 33) % modulus
+        };
+        let mut requests: Vec<SeededRequest> = Vec::new();
+        let mut elapsed = 0;
+        let mut idled = false;
+        while elapsed < 60_000 {
+            let response_time = match (elapsed < 10_000, next(20)) {
+                (true, _) => 0,
+                (false, 0) => 5 * (60 + next(400)),
+                (false, _) => 5 * next(8),
+            };
+            requests.push(SeededRequest {
+                user: 0,
+                name: format!("/p{}", next(4)),
+                elapsed,
+                response_time,
+                failed: next(50) == 0,
+            });
+            elapsed += response_time + 5 * next(2);
+            if !idled && elapsed >= 30_000 {
+                elapsed += 1_600;
+                idled = true;
+            }
+        }
+        let (mut users, rx) = batching_users(configuration, 1);
+        let mut clock = BatchClock::default();
+        for request in &requests {
+            clock.add(
+                &mut users[0],
+                request.elapsed + request.response_time,
+                seeded_metric(request),
+            );
+        }
+        let sent = received_batches(&rx);
+        let held = users[0].batch_item_count;
+        users[0].flush_batch().unwrap();
+        let mut batches: Vec<GooseMetricBatch> = sent
+            .into_iter()
+            .chain(received_batches(&rx))
+            .filter(|batch| !batch.requests.is_empty() || !batch.individual_requests.is_empty())
+            .collect();
+
+        // The rule: a batch goes when an added request makes it 100, or
+        // when its first request was added 250 ms or more before.
+        let mut expected: Vec<Vec<&SeededRequest>> = Vec::new();
+        let mut current: Vec<&SeededRequest> = Vec::new();
+        let mut started: Option<u64> = None;
+        for request in &requests {
+            let now = request.elapsed + request.response_time;
+            current.push(request);
+            let start = *started.get_or_insert(now);
+            if current.len() >= METRICS_BATCH_SIZE
+                || now - start >= METRICS_BATCH_MAX_AGE.as_millis() as u64
+            {
+                expected.push(std::mem::take(&mut current));
+                started = None;
+            }
+        }
+        // Main holds what is left; the user holds the same.
+        assert_eq!(held, current.len());
+        if !current.is_empty() {
+            expected.push(current);
+        }
+
+        assert_eq!(batches.len(), expected.len());
+        assert!(batches.len() > 80);
+        // Both limits sent batches.
+        assert!(expected
+            .iter()
+            .any(|batch| batch.len() == METRICS_BATCH_SIZE));
+        assert!(expected
+            .iter()
+            .any(|batch| batch.len() < METRICS_BATCH_SIZE / 2));
+        for (batch, expected) in batches.iter_mut().zip(&expected) {
+            assert_eq!(batch.second, None);
+            assert!(batch.next_second.is_empty());
+            let mut times: HashMap<String, GooseRequestMetricTimingData> = HashMap::new();
+            let mut graph: HashMap<(String, usize), (u32, f64)> = HashMap::new();
+            let mut failed: Vec<u64> = Vec::new();
+            for request in expected {
+                if request.failed {
+                    failed.push(request.elapsed);
+                } else {
+                    let key = format!("GET {}", request.name);
+                    times
+                        .entry(key.clone())
+                        .or_default()
+                        .record_time(request.response_time);
+                    if configuration.records_graph_data() {
+                        let entry = graph
+                            .entry((key, (request.elapsed / 1000) as usize))
+                            .or_default();
+                        entry.0 += 1;
+                        entry.1 += request.response_time as f64;
+                    }
+                }
+            }
+            assert_eq!(batch.requests.len(), times.len());
+            for (key, entry) in &batch.requests {
+                assert_eq!(entry.raw_data, times[key], "{key}");
+                assert_eq!(
+                    entry.status_code_counts,
+                    HashMap::from([(200, times[key].counter)])
+                );
+            }
+            let counted: HashMap<(String, usize), (u32, f64)> = batch
+                .graph_request_data
+                .drain()
+                .map(|(key, data)| (key, (data.count, data.total_time)))
+                .collect();
+            assert_eq!(counted, graph);
+            let individual: Vec<u64> = batch
+                .individual_requests
+                .iter()
+                .map(|request| request.elapsed)
+                .collect();
+            assert_eq!(individual, failed);
+        }
+    }
+
+    /// With per second graphs off, batches are main's.
+    #[test]
+    fn batches_follow_the_count_and_age_rule_without_graphs() {
+        let configuration = GooseConfiguration::parse_args_default(&["--no-save"]).unwrap();
+        assert!(!configuration.records_graph_data());
+        assert_batches_follow_the_count_and_age_rule(&configuration);
+    }
+
+    /// With default flags, where the run is saved and so per second graphs
+    /// are kept, and with the dashboard but no heatmap, batches are main's
+    /// too: the heatmap alone splits them by second (#713).
+    #[test]
+    fn batches_follow_the_count_and_age_rule_without_the_heatmap() {
+        for args in [vec![], vec!["--dashboard", "--no-percentiles-over-time"]] {
+            let configuration = GooseConfiguration::parse_args_default(&args).unwrap();
+            assert!(configuration.records_graph_data());
+            assert_batches_follow_the_count_and_age_rule(&configuration);
+        }
+    }
+
+    /// The requests a user has sent so far, from the batches on `rx`.
+    fn requests_sent(rx: &flume::Receiver<GooseMetric>) -> usize {
+        received_batches(rx)
+            .iter()
+            .map(|batch| {
+                batch
+                    .requests
+                    .values()
+                    .map(|entry| entry.raw_data.counter)
+                    .chain(batch.next_second.values().map(|next| next.counter))
+                    .sum::<usize>()
+                    + batch.individual_requests.len()
+            })
+            .sum()
+    }
+
+    /// With the heatmap on, a user's last request in a quiet second leaves
+    /// on the same flush main would use: after every request, the user has
+    /// sent as many requests as main's count and age rule sends, so it holds
+    /// none main would not (#713).
+    #[test]
+    fn last_request_in_a_quiet_second_leaves_with_mains_flush() {
+        let configuration = GooseConfiguration::parse_args_default(&["--dashboard"]).unwrap();
+        assert!(configuration.records_latency_series());
+        let (mut users, rx) = batching_users(&configuration, 1);
+        let mut clock = BatchClock::default();
+        let mut sent = 0;
+        // Main's rule: the open batch goes when an added request makes it
+        // 100, or when its first request was added 250 ms or more before.
+        let (mut main_open, mut main_started, mut main_sent) = (0, None, 0);
+        // One request every few seconds, as a user with a wait time sends
+        // them, then a burst across a second boundary, a slow request, and
+        // quiet seconds again. (start, response time)
+        let requests: [(u64, u64); 12] = [
+            (1_000, 20),
+            (6_400, 15),
+            (12_900, 30),
+            (13_100, 5),
+            (13_980, 10),
+            (14_005, 5),
+            (14_100, 4_000),
+            (18_120, 5),
+            (21_500, 5),
+            (21_900, 5),
+            (27_000, 5),
+            (35_000, 5),
+        ];
+        for (i, &(elapsed, response_time)) in requests.iter().enumerate() {
+            let now = elapsed + response_time;
+            clock.add(
+                &mut users[0],
+                now,
+                latency_request_metric("/x", elapsed, response_time),
+            );
+            sent += requests_sent(&rx);
+            main_open += 1;
+            let start = *main_started.get_or_insert(now);
+            if main_open >= METRICS_BATCH_SIZE
+                || now - start >= METRICS_BATCH_MAX_AGE.as_millis() as u64
+            {
+                main_sent += main_open;
+                main_open = 0;
+                main_started = None;
+            }
+            assert_eq!(sent, main_sent, "after request {i}");
+        }
+        // Each quiet request went out with the next one, as on main.
+        assert_eq!(main_sent, requests.len() - 1);
+    }
+
+    /// A batch never holds requests from more than two seconds: not after a
+    /// user idles for 2 s, with or without a check while idle, and not after
+    /// a slow request whose response came seconds after it started.
+    #[test]
+    fn no_batch_spans_more_than_two_seconds() {
+        let configuration = GooseConfiguration::parse_args_default(&["--dashboard"]).unwrap();
+        let (mut users, rx) = batching_users(&configuration, 1);
+        let user = &mut users[0];
+        let mut clock = BatchClock::default();
+        let mut send = |user: &mut GooseUser, elapsed: u64, response_time: u64| {
+            clock.add(
+                user,
+                elapsed + response_time,
+                latency_request_metric("/x", elapsed, response_time),
+            );
+        };
+
+        // Idle for 2 s with no check in between: the next request sends the
+        // old batch before it is added, then goes itself, as main sends the
+        // two together once the batch is past its age.
+        send(user, 9_000, 5);
+        assert!(rx.is_empty());
+        send(user, 11_000, 5);
+        assert_eq!(
+            received_batches(&rx)
+                .iter()
+                .map(batch_seconds)
+                .collect::<Vec<_>>(),
+            [vec![(9, 1)], vec![(11, 1)]]
+        );
+        user.flush_batch().unwrap();
+        assert!(rx.is_empty());
+
+        // Idle for 2 s with checks: the batch goes 250 ms after it started.
+        let mut clock = BatchClock::default();
+        clock.add(user, 20_905, latency_request_metric("/x", 20_900, 5));
+        clock.check(user, 21_100);
+        assert!(rx.is_empty());
+        clock.check(user, 21_160);
+        assert_eq!(
+            received_batches(&rx)
+                .iter()
+                .map(batch_seconds)
+                .collect::<Vec<_>>(),
+            [vec![(20, 1)]]
+        );
+        clock.add(user, 22_905, latency_request_metric("/x", 22_900, 5));
+        user.flush_batch().unwrap();
+        assert_eq!(
+            received_batches(&rx)
+                .iter()
+                .map(batch_seconds)
+                .collect::<Vec<_>>(),
+            [vec![(22, 1)]]
+        );
+
+        // Across a second boundary within 250 ms: one batch, two seconds.
+        let mut clock = BatchClock::default();
+        clock.add(user, 30_905, latency_request_metric("/x", 30_900, 5));
+        clock.add(user, 31_010, latency_request_metric("/x", 31_000, 10));
+        user.flush_batch().unwrap();
+        assert_eq!(
+            received_batches(&rx)
+                .iter()
+                .map(batch_seconds)
+                .collect::<Vec<_>>(),
+            [vec![(30, 1), (31, 1)]]
+        );
+
+        // A slow request is added when it ends, 5 s after it started: the
+        // request after it starts a new batch.
+        let mut clock = BatchClock::default();
+        clock.add(user, 46_000, latency_request_metric("/x", 41_000, 5_000));
+        clock.add(user, 46_020, latency_request_metric("/x", 46_005, 15));
+        user.flush_batch().unwrap();
+        assert_eq!(
+            received_batches(&rx)
+                .iter()
+                .map(batch_seconds)
+                .collect::<Vec<_>>(),
+            [vec![(41, 1)], vec![(46, 1)]]
+        );
+
+        // Seeded users: every batch holds at most two seconds, and every
+        // request is in one.
+        let requests = seeded_requests_with_boundaries(713, 8, 40);
+        let batches = batch_through_users(&configuration, 9, &requests);
+        let mut sent = 0;
+        for batch in &batches {
+            let seconds = batch_seconds(batch);
+            assert!(seconds.len() <= 2, "a batch holds seconds {:?}", seconds);
+            sent += seconds.iter().map(|&(_, count)| count).sum::<usize>()
+                + batch.individual_requests.len();
+        }
+        assert_eq!(sent, requests.len());
+    }
+
+    /// The report graphs' requests per second and average response time per
+    /// second, which batches give from each name's timing data for the
+    /// batch's second and the next, equal the requests themselves: every request counted in
+    /// the second it started, and the mean of their times.
+    #[test]
+    fn per_second_graphs_come_from_the_batch() {
+        let configuration =
+            GooseConfiguration::parse_args_default(&["--report-file", "audit.html", "--no-save"])
+                .unwrap();
+        assert!(configuration.records_graph_data());
+        let requests = seeded_requests(2027, 8, 30);
+        let mut processor = test_processor(&configuration);
+        for batch in batch_through_users(&configuration, 8, &requests) {
+            processor.process_batch_for_test(batch);
+        }
+        let graph = processor.graph_data_for_test();
+        let mut by_second: HashMap<(String, usize), Vec<u64>> = HashMap::new();
+        for request in &requests {
+            by_second
+                .entry((
+                    format!("GET {}", request.name),
+                    (request.elapsed / 1000) as usize,
+                ))
+                .or_default()
+                .push(request.response_time);
+        }
+        assert!(by_second.len() > 200);
+        for ((key, second), times) in &by_second {
+            assert_eq!(
+                graph.requests_in_second_for_test(key, *second) as usize,
+                times.len(),
+                "{} second {}",
+                key,
+                second
+            );
+            let mean = times.iter().sum::<u64>() as f64 / times.len() as f64;
+            let average = graph
+                .average_in_second_for_test(key, *second)
+                .expect("an average") as f64;
+            assert!(
+                (average - mean).abs() <= mean.max(1.0) * 1e-5,
+                "{} second {}: {} against {}",
+                key,
+                second,
+                average,
+                mean
+            );
+        }
+    }
+
+    /// Whole run results (every request's aggregate, errors, and all requests
+    /// together with their status codes) are the same with percentiles over
+    /// time collected, with per second graphs but no percentiles, with no
+    /// graphs at all, and with every request processed one at a time.
+    #[test]
+    fn whole_run_results_match_with_collection_on_and_off() {
+        let users = 8;
+        let requests = seeded_requests_with_boundaries(2026, users, 40);
+        let batched = |args: &[&str]| {
+            let configuration = GooseConfiguration::parse_args_default(args).unwrap();
+            let mut processor = test_processor(&configuration);
+            for batch in batch_through_users(&configuration, users + 1, &requests) {
+                processor.process_batch_for_test(batch);
+            }
+            processor
+        };
+        let on = batched(&["--dashboard"]);
+        let others = [
+            batched(&["--dashboard", "--no-percentiles-over-time"]),
+            batched(&["--report-file", "audit.html", "--no-save"]),
+            batched(&["--no-save"]),
+            {
+                let plain = GooseConfiguration::parse_args_default(&["--no-save"]).unwrap();
+                let mut processor = test_processor(&plain);
+                for request in &requests {
+                    processor.process_request_metric_for_test(&seeded_metric(request));
+                }
+                processor
+            },
+        ];
+
+        let aggregate = |processor: &crate::metrics::MetricsProcessor| {
+            let mut times = GooseRequestMetricTimingData::new(None);
+            let mut status_codes: HashMap<u16, usize> = HashMap::new();
+            for request in processor.metrics_for_test().requests.values() {
+                times.merge(&request.raw_data);
+                for (code, count) in &request.status_code_counts {
+                    *status_codes.entry(*code).or_default() += count;
+                }
+            }
+            (times, status_codes)
+        };
+        let metrics = on.metrics_for_test();
+        assert_eq!(metrics.requests.len(), 12);
+        assert_eq!(aggregate(&on).0.counter, requests.len());
+        for other in &others {
+            assert_eq!(metrics.requests, other.metrics_for_test().requests);
+            assert_eq!(metrics.errors, other.metrics_for_test().errors);
+            assert_eq!(aggregate(&on), aggregate(other));
+        }
+    }
+
+    // --- Whole run figures against an independent reference (#713) ---
 
     /// Every percentile Goose prints (console: 50, 75, 98, 99, 99.9 and
     /// 99.99), reports (50, 60, 70, 80, 90, 95, 99 and 100) or shows on the
@@ -5075,8 +6041,14 @@ mod tests {
         users: usize,
         stalls: &[(usize, usize, u64, u64)],
         rng: &mut AuditRng,
+        collect: bool,
     ) -> (crate::metrics::MetricsProcessor, Vec<Vec<u64>>) {
-        let mut configuration = GooseConfiguration::parse_args_default(&["--no-save"]).unwrap();
+        let args: &[&str] = if collect {
+            &["--dashboard", "--no-save"]
+        } else {
+            &["--no-save"]
+        };
+        let mut configuration = GooseConfiguration::parse_args_default(args).unwrap();
         let co = !stalls.is_empty();
         if co {
             configuration.co_mitigation = Some(GooseCoordinatedOmissionMitigation::Average);
@@ -5096,7 +6068,10 @@ mod tests {
             metrics_rx,
             cmd_rx,
             metrics,
-            crate::graph::GraphData::new(),
+            crate::graph::GraphData::for_metrics_processor(
+                configuration.records_latency_series(),
+                configuration.records_synthetic_latency(),
+            ),
             configuration.clone(),
             Vec::new(),
             crate::config::GooseDefaults::default(),
@@ -5116,7 +6091,11 @@ mod tests {
                     rng: &mut AuditRng| {
             let (method, name, success) = (metric.raw.method, metric.name.clone(), metric.success);
             if metric.error.is_empty() && metric.coordinated_omission_elapsed == 0 {
-                user.accumulate_request(&metric);
+                if user.record_latency_series {
+                    user.accumulate_request_by_second(&metric).unwrap();
+                } else {
+                    user.accumulate_request(&metric);
+                }
             } else {
                 user.accumulate_individual_request(metric);
             }
@@ -5127,8 +6106,10 @@ mod tests {
             }
         };
         for (i, request) in requests.iter().enumerate() {
+            // Requests start 3 ms apart, so batches hold several seconds.
+            let elapsed = 1_000 + 3 * i as u64;
             let mut metric =
-                latency_request_metric(&format!("/audit{}", request.name), 1_000, request.time);
+                latency_request_metric(&format!("/audit{}", request.name), elapsed, request.time);
             if request.failed {
                 metric.success = false;
                 metric.status_code = 500;
@@ -5141,7 +6122,7 @@ mod tests {
             for &(after, name, elapsed, cadence) in stalls {
                 if after == i {
                     let r = requests[i].time;
-                    let mut copy = latency_request_metric(&format!("/audit{}", name), 1_000, r);
+                    let mut copy = latency_request_metric(&format!("/audit{}", name), elapsed, r);
                     copy.coordinated_omission_elapsed = elapsed;
                     copy.user_cadence = cadence;
                     // Synthetic times as the book documents mitigation:
@@ -5171,10 +6152,12 @@ mod tests {
     /// minimum, maximum and average, per request and for all requests, equal
     /// an independent reference; with coordinated omission mitigation, the
     /// adjusted ones equal the reference over measured and synthetic times
-    /// together.
+    /// together. Run with percentiles over time collected and not.
     #[test]
     fn whole_run_figures_match_a_reference() {
-        audit_whole_run(&[1, 2, 3, 10, 1_000], 200);
+        for collect in [false, true] {
+            audit_whole_run(&[1, 2, 3, 10, 1_000], 200, collect);
+        }
     }
 
     /// The same audit with 100,000 request datasets added: 200 datasets,
@@ -5183,13 +6166,15 @@ mod tests {
     #[test]
     #[ignore]
     fn whole_run_figures_match_a_reference_full() {
-        audit_whole_run(&[1, 2, 3, 10, 1_000, 100_000], 200);
+        for collect in [false, true] {
+            audit_whole_run(&[1, 2, 3, 10, 1_000, 100_000], 200, collect);
+        }
     }
 
     /// Runs `datasets` seeded datasets, cycling through `sizes`, and checks
     /// every whole run figure on the dashboard, in the reports and on the
     /// console against an independent reference.
-    fn audit_whole_run(sizes: &[usize], datasets: usize) {
+    fn audit_whole_run(sizes: &[usize], datasets: usize, collect: bool) {
         let mut rng = AuditRng(0x713);
         let mut checked = 0usize;
         let mut mismatches: Vec<Mismatch> = Vec::new();
@@ -5232,7 +6217,8 @@ mod tests {
             } else {
                 Vec::new()
             };
-            let (processor, synthetic) = audit_run(&requests, names, users, &stalls, &mut rng);
+            let (processor, synthetic) =
+                audit_run(&requests, names, users, &stalls, &mut rng, collect);
             let metrics = processor.metrics_for_test();
 
             // The references: each name's measured times, all of them, and
@@ -5254,8 +6240,8 @@ mod tests {
                 if goose != reference {
                     mismatches.push(Mismatch {
                         what: format!(
-                            "dataset {} (size {}, distribution {}, users {}, stalls {}): {}\n  goose     {:?}\n  reference {:?}",
-                            dataset, size, distribution, users, stalls.len(), what, goose, reference
+                            "dataset {} (size {}, distribution {}, users {}, stalls {}, collect {}): {}\n  goose     {:?}\n  reference {:?}",
+                            dataset, size, distribution, users, stalls.len(), collect, what, goose, reference
                         ),
                     });
                 }
@@ -5283,6 +6269,8 @@ mod tests {
                         dir: "goose-runs".to_string(),
                         last_run: None,
                     },
+                    percentiles_over_time: false,
+                    series_keys: std::collections::HashSet::new(),
                 },
             );
             let dashboard_percents = [AUDIT_PERCENTS[0], AUDIT_PERCENTS[6], AUDIT_PERCENTS[8]];

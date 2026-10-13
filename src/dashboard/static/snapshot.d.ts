@@ -50,9 +50,73 @@ save: SnapshotSave, };
 
 type ErrorRow = { method: string, name: string, error: string, occurrences: number, };
 
+type Heatmap = {
+/**
+ * Which set of histograms the columns come from. It changes when they
+ * are cleared (metrics reset, or a new test), so a client starts over.
+ */
+generation: number,
+/**
+ * The newest change these columns include. Send it back as
+ * `heatmap_since` with `heatmap_generation` to get only later changes.
+ */
+rev: number,
+/**
+ * The `rev` these columns follow on from, or 0 for a whole window.
+ */
+since: number,
+/**
+ * First second of the window, in seconds from the test start. Columns
+ * before it are dropped.
+ */
+start_second: number,
+/**
+ * Last second of the window.
+ */
+end_second: number,
+/**
+ * Seconds from this one on may still be missing their slowest requests,
+ * so they are not drawn yet.
+ */
+hold_from: number,
+/**
+ * Each bucket by index, as `[time, lowest, highest]` in milliseconds:
+ * the rounded response time Goose stores for the bucket, and the range
+ * of measured times that round to it. A longer table replaces a shorter
+ * one; entries never change.
+ */
+buckets: Array<[number, number, number]>,
+/**
+ * The columns that changed, oldest first.
+ */
+columns: Array<HeatmapColumn>, };
+
+type HeatmapColumn = {
+/**
+ * The second, from the test start.
+ */
+second: number,
+/**
+ * Measured response times.
+ */
+measured: Array<number>,
+/**
+ * Synthetic times coordinated omission mitigation added to this second.
+ * Empty unless mitigation is on and has recorded an event.
+ */
+synthetic: Array<number>, };
+
 type Percentiles = { p50: number, p95: number, p99: number, };
 
-type RequestRow = { method: string, name: string, request_count: number, failure_count: number, requests_per_second: number, failures_per_second: number, response_time_avg_ms: number, response_time_min_ms: number, response_time_max_ms: number, percentile_ms: Percentiles, status_codes: Array<[number, number]>, co_adjusted: CoAdjusted | null, };
+type RequestRow = { method: string, name: string, request_count: number, failure_count: number, requests_per_second: number, failures_per_second: number, response_time_avg_ms: number, response_time_min_ms: number, response_time_max_ms: number, percentile_ms: Percentiles, status_codes: Array<[number, number]>, co_adjusted: CoAdjusted | null,
+/**
+ * True when the response time heatmap can show this request alone:
+ * they are kept for the first 100 request names seen since metrics were
+ * last reset.
+ */
+has_series: boolean, };
+
+type RequestSeries = { method: string, name: string, heatmap: Heatmap, };
 
 type ScenarioRow = {
 /**
@@ -74,7 +138,12 @@ type SeriesWindow = {
 /**
  * First exported bucket index in seconds-from-test-start.
  */
-start_second: number, rps: Array<number>, fps: Array<number>, users: Array<number>, avg_latency_ms: Array<number>, };
+start_second: number, rps: Array<number>, fps: Array<number>, users: Array<number>, avg_latency_ms: Array<number>,
+/**
+ * Response times of all requests by second, for the dashboard's
+ * heatmap. Null when percentiles over time are off.
+ */
+heatmap: Heatmap | null, };
 
 type SnapshotFlags = { metrics_disabled: boolean,
 /**
@@ -86,7 +155,13 @@ transaction_metrics_disabled: boolean,
  * True under `--no-scenario-metrics`, and under `--no-metrics` too;
  * `scenarios` is then empty.
  */
-scenario_metrics_disabled: boolean, requests_truncated: boolean, errors_truncated: boolean, series_seconds: number, };
+scenario_metrics_disabled: boolean, requests_truncated: boolean, errors_truncated: boolean, series_seconds: number,
+/**
+ * True when the dashboard tracks response times by second for its
+ * heatmap: on with `--dashboard` unless `--no-percentiles-over-time` or
+ * `--no-metrics`.
+ */
+percentiles_over_time: boolean, };
 
 type SnapshotSave = {
 /**

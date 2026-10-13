@@ -145,9 +145,20 @@ pub struct GooseMetricBatch {
     /// Pre-aggregated scenario timing data, keyed by `scenario_index`.
     pub(crate) scenarios: HashMap<usize, ScenarioBatchEntry>,
     /// Per-second request graph data (RPS count and average response time),
-    /// keyed by `(request_key, second)`. Only populated when `--report-file`
-    /// is configured.
+    /// keyed by `(request_key, second)`. Populated when per second graphs are
+    /// kept and the heatmap is off; with the heatmap on, the batch's
+    /// [`Self::second`] and [`Self::next_second`] stand for it.
     pub(crate) graph_request_data: HashMap<(String, usize), RequestGraphBatchData>,
+    /// When the dashboard's heatmap keeps response times by second:
+    /// timing data of the requests that started in the second after
+    /// [`Self::second`], keyed like `requests`, which then hold only those
+    /// that started in that second. Empty otherwise, so a batch without
+    /// the heatmap is laid out and built as it always was.
+    pub(crate) next_second: HashMap<String, GooseRequestMetricTimingData>,
+    /// The second, from the start of the test, that the first request in
+    /// `requests` started in (`None` before it), when the heatmap is on. A request from a second other than this one or the next goes
+    /// in a new batch.
+    pub(crate) second: Option<usize>,
     /// Per-second transaction counters for graph data.
     /// Only populated when `--report-file` is configured.
     pub(crate) graph_tps: HashMap<usize, u32>,
@@ -166,6 +177,8 @@ impl GooseMetricBatch {
             transactions: HashMap::new(),
             scenarios: HashMap::new(),
             graph_request_data: HashMap::new(),
+            next_second: HashMap::new(),
+            second: None,
             graph_tps: HashMap::new(),
             graph_sps: HashMap::new(),
         }
@@ -192,7 +205,9 @@ pub(crate) struct RequestBatchEntry {
     pub(crate) method: GooseMethod,
     /// Custom method label for non-HTTP protocols (empty for standard HTTP).
     pub(crate) custom_method: String,
-    /// Pre-aggregated timing data (bucketed response times, min, max, total, count).
+    /// Pre-aggregated timing data (bucketed response times, min, max, total,
+    /// count). When per second graphs are kept, only of requests that started
+    /// in the batch's second ([`GooseMetricBatch::second`]).
     pub(crate) raw_data: GooseRequestMetricTimingData,
     /// Per-status-code occurrence counts.
     pub(crate) status_code_counts: HashMap<u16, usize>,
@@ -360,7 +375,26 @@ pub(crate) enum MetricsCommand {
         series_window_secs: u32,
         /// Saving runs, which only the main loop knows.
         save: dashboard_snapshot::SnapshotSave,
+        /// What the dashboard holds of the heatmap: only columns changed
+        /// since are exported (every column when `None`).
+        heatmap_since: Option<dashboard_snapshot::HeatmapCursor>,
         respond: tokio::sync::oneshot::Sender<DashboardSnapshot>,
+    },
+    /// One request's heatmap for the dashboard (`GET /api/v1/series`), or
+    /// `None` when the request has no histograms of its own.
+    #[cfg_attr(not(feature = "dashboard"), allow(dead_code))]
+    GetRequestSeries {
+        /// The request's method label, as in the snapshot's request rows.
+        method: String,
+        /// The request's name.
+        name: String,
+        /// Seconds since the continuous series clock started, as for
+        /// [`MetricsCommand::GetDashboardSnapshot`].
+        series_elapsed_secs: usize,
+        /// What the client holds of this heatmap, as for
+        /// [`MetricsCommand::GetDashboardSnapshot`].
+        since: Option<dashboard_snapshot::HeatmapCursor>,
+        respond: tokio::sync::oneshot::Sender<Option<dashboard_snapshot::RequestSeries>>,
     },
 }
 
@@ -1117,6 +1151,12 @@ pub struct GooseRequestMetricTimingData {
     /// A count of how many requests have been tracked for this method-path pair.
     pub counter: usize,
 }
+impl Default for GooseRequestMetricTimingData {
+    /// Empty timing data.
+    fn default() -> Self {
+        GooseRequestMetricTimingData::new(None)
+    }
+}
 impl GooseRequestMetricTimingData {
     /// Create a new GooseRequestMetricAggregate object.
     pub(crate) fn new(metric_data: Option<&GooseRequestMetricTimingData>) -> Self {
@@ -1138,6 +1178,28 @@ impl GooseRequestMetricTimingData {
 
     /// Merge another set of timing data into this one: combine the buckets and
     /// update the minimum, maximum, total and counter.
+    /// [`Self::merge`], also handing each of `other`'s buckets, as its
+    /// rounded time and count, to `also`, so a caller keeping the same times
+    /// elsewhere walks them once.
+    pub(crate) fn merge_also(
+        &mut self,
+        other: &GooseRequestMetricTimingData,
+        mut also: impl FnMut(usize, usize),
+    ) {
+        for (&time_bucket, &count) in &other.times {
+            *self.times.entry(time_bucket).or_insert(0) += count;
+            also(time_bucket, count);
+        }
+        if other.counter > 0 && (self.counter == 0 || other.minimum_time < self.minimum_time) {
+            self.minimum_time = other.minimum_time;
+        }
+        self.counter += other.counter;
+        self.total_time += other.total_time;
+        if other.maximum_time > self.maximum_time {
+            self.maximum_time = other.maximum_time;
+        }
+    }
+
     pub(crate) fn merge(&mut self, other: &GooseRequestMetricTimingData) {
         for (time_bucket, count) in &other.times {
             *self.times.entry(*time_bucket).or_insert(0) += count;
@@ -3252,6 +3314,7 @@ impl MetricsProcessor {
                 stopping,
                 series_window_secs,
                 save,
+                heatmap_since,
                 respond,
             } => {
                 self.drain_pending();
@@ -3265,9 +3328,12 @@ impl MetricsProcessor {
                 // the right edge so the chart matches the KPI active_users.
                 self.graph_data
                     .record_users_monotonic(active_users, series_elapsed_secs);
-                let series = self
-                    .graph_data
-                    .export_series_window_until(series_window_secs, Some(series_elapsed_secs));
+                let series = self.graph_data.export_series_window_with_heatmap(
+                    series_window_secs,
+                    Some(series_elapsed_secs),
+                    self.co_active(),
+                    heatmap_since,
+                );
                 let snapshot = dashboard_snapshot::build_dashboard_snapshot(
                     dashboard_snapshot::DashboardSnapshotInput {
                         metrics: &self.metrics,
@@ -3284,6 +3350,8 @@ impl MetricsProcessor {
                         no_transaction_metrics: self.configuration.no_transaction_metrics,
                         no_scenario_metrics: self.configuration.no_scenario_metrics,
                         save,
+                        percentiles_over_time: self.configuration.records_latency_series(),
+                        series_keys: self.graph_data.latency_series_keys(),
                     },
                 );
                 let _ = respond.send(snapshot);
@@ -3292,7 +3360,47 @@ impl MetricsProcessor {
                 self.maybe_prune_dashboard_graph();
                 false
             }
+            MetricsCommand::GetRequestSeries {
+                method,
+                name,
+                series_elapsed_secs,
+                since,
+                respond,
+            } => {
+                self.drain_pending();
+                let series = self.graph_data.export_request_series(
+                    method,
+                    name,
+                    dashboard_snapshot::SERIES_WINDOW_SECS,
+                    Some(series_elapsed_secs),
+                    self.co_active(),
+                    since,
+                );
+                let _ = respond.send(series);
+                false
+            }
         }
+    }
+
+    /// [`Self::process_request_metric`], for unit tests in other modules.
+    #[cfg(test)]
+    pub(crate) fn process_request_metric_for_test(&mut self, request_metric: &GooseRequestMetric) {
+        self.process_request_metric(request_metric);
+    }
+
+    /// The processor's graph data, for unit tests in other modules.
+    #[cfg(test)]
+    pub(crate) fn graph_data_for_test(&mut self) -> &mut GraphData {
+        &mut self.graph_data
+    }
+
+    /// Whether coordinated omission mitigation has recorded an event, so the
+    /// dashboard shows adjusted values.
+    fn co_active(&self) -> bool {
+        self.metrics
+            .coordinated_omission_metrics
+            .as_ref()
+            .is_some_and(|m| m.has_events())
     }
 
     /// Prune GraphData to a trailing window when only the live dashboard needs series.
@@ -3439,10 +3547,41 @@ impl MetricsProcessor {
                 - request_metric.user_cadence as i64
                 - request_metric.response_time as i64;
 
+            // Synthetic times also go to the dashboard's heatmap, each in
+            // the second its synthetic request would have started. This copy
+            // was sent because the previous scenario iteration took
+            // `coordinated_omission_elapsed` (E) ms, more than twice the
+            // cadence (c). That iteration is the stall, and it ended at or
+            // just before this request started, at `elapsed` (s) ms since the
+            // start. The loop below records t_k = E - k*c - r for k = 1, 2, ...
+            // while t_k > r, where r is this request's own response time; a
+            // request that took t_k and ended at s started at s - t_k. This
+            // is exact for the first request of an iteration and slightly late
+            // for later ones, and with wait times the seconds compress toward
+            // the end of the stall.
+            let latency_key = self.graph_data.records_synthetic_latency().then(|| {
+                format!(
+                    "{} {}",
+                    request_metric.raw.method_label(),
+                    request_metric.name
+                )
+            });
+
             loop {
                 if response_time > request_metric.response_time as i64 {
                     co_metric.response_time = response_time as u64;
                     self.record_request_metric(&co_metric);
+                    if let Some(key) = latency_key.as_deref() {
+                        let second = (request_metric
+                            .elapsed
+                            .saturating_sub(co_metric.response_time)
+                            / 1000) as usize;
+                        self.graph_data.record_synthetic_latency(
+                            key,
+                            second,
+                            co_metric.response_time,
+                        );
+                    }
                     let co_key = format!("{} {}", co_metric.raw.method, co_metric.name);
                     Self::increment_registry_counter(
                         &self.request_counter_registry,
@@ -3469,8 +3608,16 @@ impl MetricsProcessor {
                     request_metric.raw.method_label(),
                     request_metric.name
                 );
-                self.graph_data
-                    .record_requests_per_second(&key, seconds_since_start);
+                // Coordinated omission copies and updates are not new
+                // measurements, so they stay out of the heatmap.
+                let latency = (!request_metric.update
+                    && request_metric.coordinated_omission_elapsed == 0)
+                    .then_some(request_metric.response_time);
+                self.graph_data.record_request_per_second_and_latency(
+                    &key,
+                    seconds_since_start,
+                    latency,
+                );
                 self.graph_data.record_average_response_time_per_second(
                     key.clone(),
                     seconds_since_start,
@@ -3562,6 +3709,38 @@ impl MetricsProcessor {
     /// Individual request metrics (failed / CO-affected) are processed one by one
     /// using the normal per-request path. Pre-aggregated entries are merged directly
     /// into the global aggregates, avoiding the per-request overhead.
+    /// Merge a batched request's coordinated omission and status code
+    /// figures into its whole run `aggregate`; its timing data is merged by
+    /// the caller.
+    fn merge_batch_entry(
+        no_status_codes: bool,
+        aggregate: &mut GooseRequestMetricAggregate,
+        entry: &RequestBatchEntry,
+    ) {
+        // Once a request has coordinated omission adjusted times they must
+        // include every later real time too, batched ones included, or the
+        // adjusted values drift toward the synthetic times (#739).
+        if let Some(co_data) = aggregate.coordinated_omission_data.as_mut() {
+            co_data.merge(&entry.raw_data);
+        }
+
+        // Merge status-code counts.
+        if !no_status_codes {
+            for (code, count) in &entry.status_code_counts {
+                *aggregate.status_code_counts.entry(*code).or_insert(0) += count;
+            }
+
+            // Merge status-code timing summaries.
+            for (code, summary) in &entry.status_code_timings {
+                aggregate
+                    .status_code_timings
+                    .entry(*code)
+                    .or_default()
+                    .merge(summary);
+            }
+        }
+    }
+
     fn process_batch(&mut self, batch: GooseMetricBatch) {
         // Discard stale batches from before a metrics reset.
         let current_epoch = self.metrics_epoch.load(AtomicOrdering::Relaxed);
@@ -3574,7 +3753,126 @@ impl MetricsProcessor {
             self.process_request_metric(request_metric);
         }
 
-        // 2. Merge pre-aggregated request timing and status-code data.
+        // With response times kept by second, step 2 merges each request's
+        // timing data into the whole run's as well.
+        let latency_merged = self.configuration.records_graph_data()
+            && batch.second.is_some()
+            && self.graph_data.records_latency();
+
+        // 2. Apply graph data if a report file is configured or the dashboard
+        //    is on, before step 3 consumes the request entries.
+        if self.configuration.records_graph_data() {
+            // A request's `raw_data` in the batch holds its requests that
+            // started in the batch's second, and the batch's `next_second`
+            // those that started in the second after.
+            if let (true, Some(second)) = (latency_merged, batch.second) {
+                // Each request's whole run timing data and its pending counts
+                // in one walk of the batch's buckets, with the rest of the
+                // request's whole run figures, so step 3 has nothing left
+                // to merge for it.
+                for (key, entry) in &batch.requests {
+                    let aggregate = match self.metrics.requests.get_mut(key) {
+                        Some(aggregate) => aggregate,
+                        None => self.metrics.requests.entry(key.clone()).or_insert_with(|| {
+                            GooseRequestMetricAggregate::new(
+                                &entry.path,
+                                entry.method,
+                                0,
+                                &entry.custom_method,
+                            )
+                        }),
+                    };
+                    self.graph_data.record_requests_per_second_merging_latency(
+                        key,
+                        second,
+                        &entry.raw_data,
+                        &mut aggregate.raw_data,
+                    );
+                    Self::merge_batch_entry(self.configuration.no_status_codes, aggregate, entry);
+                    self.graph_data
+                        .record_average_response_time_per_second_batch(
+                            key,
+                            second,
+                            entry.raw_data.total_time as f64,
+                            entry.raw_data.counter as u32,
+                        );
+                }
+                // Times from the second after the batch's: every key here
+                // also has an entry in `requests`, merged above.
+                for (key, next) in &batch.next_second {
+                    if let Some(aggregate) = self.metrics.requests.get_mut(key) {
+                        self.graph_data.record_requests_per_second_merging_latency(
+                            key,
+                            second + 1,
+                            next,
+                            &mut aggregate.raw_data,
+                        );
+                        if let Some(co_data) = aggregate.coordinated_omission_data.as_mut() {
+                            co_data.merge(next);
+                        }
+                        self.graph_data
+                            .record_average_response_time_per_second_batch(
+                                key,
+                                second + 1,
+                                next.total_time as f64,
+                                next.counter as u32,
+                            );
+                    }
+                }
+            } else if let Some(second) = batch.second {
+                let seconds = batch
+                    .requests
+                    .iter()
+                    .map(|(key, entry)| (key, second, &entry.raw_data))
+                    .chain(
+                        batch
+                            .next_second
+                            .iter()
+                            .map(|(key, data)| (key, second + 1, data)),
+                    );
+                for (key, second, data) in seconds {
+                    self.graph_data
+                        .record_requests_per_second_and_latency_batch(
+                            key,
+                            second,
+                            data.counter as u32,
+                            None,
+                        );
+                    self.graph_data
+                        .record_average_response_time_per_second_batch(
+                            key,
+                            second,
+                            data.total_time as f64,
+                            data.counter as u32,
+                        );
+                }
+            }
+            // Without the heatmap, the batch counts its requests by second
+            // as it always did.
+            for ((key, second), entry) in &batch.graph_request_data {
+                self.graph_data
+                    .record_requests_per_second_and_latency_batch(key, *second, entry.count, None);
+                if entry.count > 0 {
+                    self.graph_data
+                        .record_average_response_time_per_second_batch(
+                            key,
+                            *second,
+                            entry.total_time,
+                            entry.count,
+                        );
+                }
+            }
+            for (&second, &count) in &batch.graph_tps {
+                self.graph_data
+                    .record_transactions_per_second_batch(second, count as usize);
+            }
+            for (&second, &count) in &batch.graph_sps {
+                self.graph_data
+                    .record_scenarios_per_second_batch(second, count as usize);
+            }
+        }
+
+        // 3. Merge pre-aggregated request timing and status-code data.
         //    Pre-aggregated requests are all non-CO successful requests, so they
         //    count as actual requests for coordinated omission tracking.
         if let Some(co_metrics) = &mut self.metrics.coordinated_omission_metrics {
@@ -3582,42 +3880,40 @@ impl MetricsProcessor {
                 .requests
                 .values()
                 .map(|e| e.raw_data.counter as u64)
+                .chain(batch.next_second.values().map(|next| next.counter as u64))
                 .sum();
             co_metrics.actual_requests += total_actual;
             co_metrics.update_synthetic_percentage();
         }
-        for (key, entry) in batch.requests {
-            let aggregate = self.metrics.requests.entry(key).or_insert_with(|| {
-                GooseRequestMetricAggregate::new(&entry.path, entry.method, 0, &entry.custom_method)
-            });
+        if !latency_merged {
+            for (key, entry) in batch.requests {
+                let aggregate = self.metrics.requests.entry(key).or_insert_with(|| {
+                    GooseRequestMetricAggregate::new(
+                        &entry.path,
+                        entry.method,
+                        0,
+                        &entry.custom_method,
+                    )
+                });
 
-            // Merge timing data: combine BTreeMaps, update min/max/total/counter.
-            aggregate.raw_data.merge(&entry.raw_data);
-            // Once a request has coordinated omission adjusted times they must
-            // include every later real time too, batched ones included, or the
-            // adjusted values drift toward the synthetic times (#739).
-            if let Some(co_data) = aggregate.coordinated_omission_data.as_mut() {
-                co_data.merge(&entry.raw_data);
+                // Merge timing data: combine BTreeMaps, update min/max/total/counter.
+                aggregate.raw_data.merge(&entry.raw_data);
+                Self::merge_batch_entry(self.configuration.no_status_codes, aggregate, &entry);
             }
 
-            // Merge status-code counts.
-            if !self.configuration.no_status_codes {
-                for (code, count) in &entry.status_code_counts {
-                    *aggregate.status_code_counts.entry(*code).or_insert(0) += count;
-                }
-
-                // Merge status-code timing summaries.
-                for (code, summary) in &entry.status_code_timings {
-                    aggregate
-                        .status_code_timings
-                        .entry(*code)
-                        .or_default()
-                        .merge(summary);
+            // Times from the second after the batch's: every key here also
+            // has an entry in `requests`, merged above.
+            for (key, next) in batch.next_second {
+                if let Some(aggregate) = self.metrics.requests.get_mut(&key) {
+                    aggregate.raw_data.merge(&next);
+                    if let Some(co_data) = aggregate.coordinated_omission_data.as_mut() {
+                        co_data.merge(&next);
+                    }
                 }
             }
         }
 
-        // 3. Merge pre-aggregated transaction timing data.
+        // 4. Merge pre-aggregated transaction timing data.
         for ((si, ti), entry) in batch.transactions {
             let Some(scenario_txns) = self.metrics.transactions.get_mut(si) else {
                 // Invalid scenario index (possible in Gaggle mode with mismatched configs).
@@ -3642,7 +3938,7 @@ impl MetricsProcessor {
             }
         }
 
-        // 4. Merge pre-aggregated scenario timing data.
+        // 5. Merge pre-aggregated scenario timing data.
         for (index, entry) in batch.scenarios {
             let Some(agg) = self.metrics.scenarios.get_mut(index) else {
                 // Invalid scenario index (possible in Gaggle mode with mismatched configs).
@@ -3659,31 +3955,6 @@ impl MetricsProcessor {
             }
             if entry.max_time > agg.max_time {
                 agg.max_time = entry.max_time;
-            }
-        }
-
-        // 5. Apply graph data if a report file is configured or the dashboard is on.
-        if self.configuration.records_graph_data() {
-            for ((key, second), entry) in batch.graph_request_data {
-                self.graph_data
-                    .record_requests_per_second_batch(&key, second, entry.count);
-                if entry.count > 0 {
-                    self.graph_data
-                        .record_average_response_time_per_second_batch(
-                            &key,
-                            second,
-                            entry.total_time,
-                            entry.count,
-                        );
-                }
-            }
-            for (second, count) in batch.graph_tps {
-                self.graph_data
-                    .record_transactions_per_second_batch(second, count as usize);
-            }
-            for (second, count) in batch.graph_sps {
-                self.graph_data
-                    .record_scenarios_per_second_batch(second, count as usize);
             }
         }
     }
@@ -4430,6 +4701,26 @@ pub(crate) fn calculate_response_time_percentile(
     max: usize,
     percent: f32,
 ) -> usize {
+    response_time_percentile(
+        response_times
+            .iter()
+            .map(|(value, counter)| (*value, *counter)),
+        total_requests,
+        min,
+        max,
+        percent,
+    )
+}
+
+/// [`calculate_response_time_percentile`] over any `(response time, count)`
+/// buckets in ascending order.
+pub(crate) fn response_time_percentile(
+    response_times: impl IntoIterator<Item = (usize, usize)>,
+    total_requests: usize,
+    min: usize,
+    max: usize,
+    percent: f32,
+) -> usize {
     let percentile_request = (total_requests as f32 * percent).round() as usize;
     debug!("percentile: {percent}, request {percentile_request} of total {total_requests}");
 
@@ -4438,12 +4729,12 @@ pub(crate) fn calculate_response_time_percentile(
     for (value, counter) in response_times {
         total_count += counter;
         if total_count >= percentile_request {
-            if *value < min {
+            if value < min {
                 return min;
-            } else if *value > max {
+            } else if value > max {
                 return max;
             } else {
-                return *value;
+                return value;
             }
         }
     }
@@ -4822,6 +5113,46 @@ mod test {
         global_response_times = merge_times(global_response_times, &local_response_times);
         // @TODO: how can we do useful testing of private method and objects?
         assert_eq!(&global_response_times, &local_response_times);
+    }
+
+    /// The histogram `CROSS_CHECK` in src/dashboard/static/heatmap.test.mjs
+    /// checks the dashboard's per second percentiles against: both use this
+    /// rule, so both must give these answers (#713).
+    #[test]
+    fn response_time_percentile_matches_the_dashboard_heatmap() {
+        let histogram: [(usize, usize); 24] = [
+            (0, 40),
+            (1, 60),
+            (2, 80),
+            (3, 100),
+            (5, 120),
+            (8, 110),
+            (12, 100),
+            (18, 90),
+            (25, 70),
+            (40, 60),
+            (60, 50),
+            (90, 40),
+            (100, 30),
+            (110, 25),
+            (150, 20),
+            (200, 15),
+            (300, 12),
+            (400, 10),
+            (500, 8),
+            (700, 6),
+            (1000, 5),
+            (2000, 3),
+            (5000, 2),
+            (10000, 1),
+        ];
+        let total: usize = histogram.iter().map(|(_, count)| count).sum();
+        assert_eq!(total, 1057);
+        let percentile =
+            |percent| response_time_percentile(histogram.iter().copied(), total, 0, 10000, percent);
+        assert_eq!(percentile(0.5), 12);
+        assert_eq!(percentile(0.95), 200);
+        assert_eq!(percentile(0.99), 700);
     }
 
     #[test]
@@ -5642,6 +5973,7 @@ mod test {
             stopping: true,
             series_window_secs: dashboard_snapshot::SERIES_WINDOW_SECS,
             save: dashboard_snapshot::SnapshotSave::off("goose-runs"),
+            heatmap_since: None,
             respond: respond_tx,
         });
         assert!(!shutdown);
@@ -5810,7 +6142,7 @@ mod test {
         assert!(batch.individual_requests.is_empty());
         assert!(batch.transactions.is_empty());
         assert!(batch.scenarios.is_empty());
-        assert!(batch.graph_request_data.is_empty());
+        assert!(batch.second.is_none());
         assert!(batch.graph_tps.is_empty());
         assert!(batch.graph_sps.is_empty());
     }
@@ -6277,14 +6609,7 @@ mod test {
             Arc::new(std::sync::atomic::AtomicU64::new(0)),
         );
         let mut batch = GooseMetricBatch::new(0);
-        let total_time: f64 = response_times.iter().map(|&rt| rt as f64).sum();
-        batch.graph_request_data.insert(
-            ("GET /".to_string(), 5),
-            RequestGraphBatchData {
-                count: response_times.len() as u32,
-                total_time,
-            },
-        );
+        batch.second = Some(5);
         // Pre-aggregate request timing data too, so both paths match.
         let mut raw_data = GooseRequestMetricTimingData::new(None);
         for &rt in &response_times {
@@ -6445,5 +6770,290 @@ mod test {
             vec![800, 1000],
             "scenario times must bucket 750ms to 800 and 1499ms to 1000, not 80 and 10: {GUARD}"
         );
+    }
+
+    // --- Latency by second (#713) ---
+
+    /// A dashboard processor with the latency histograms on, as the attack
+    /// creates it for `mitigation`.
+    fn make_latency_test_processor(
+        mitigation: GooseCoordinatedOmissionMitigation,
+    ) -> MetricsProcessor {
+        let configuration = GooseConfiguration {
+            dashboard: true,
+            co_mitigation: Some(mitigation.clone()),
+            ..Default::default()
+        };
+        let mut processor = make_dashboard_test_processor(configuration.clone());
+        processor.graph_data = GraphData::for_metrics_processor(
+            configuration.records_latency_series(),
+            configuration.records_synthetic_latency(),
+        );
+        if mitigation != GooseCoordinatedOmissionMitigation::Disabled {
+            processor.metrics.coordinated_omission_metrics =
+                Some(CoordinatedOmissionMetrics::new(mitigation));
+        }
+        processor
+    }
+
+    /// Count of measured times in second `second` of the all requests
+    /// heatmap.
+    fn measured_count(processor: &mut MetricsProcessor, second: usize) -> u64 {
+        let window = processor
+            .graph_data
+            .export_series_window_until(dashboard_snapshot::SERIES_WINDOW_SECS, Some(second + 2));
+        window.heatmap.expect("heatmap").counts(second as u64).0
+    }
+
+    fn request_series(
+        processor: &mut MetricsProcessor,
+        name: &str,
+        co_active: bool,
+    ) -> Option<dashboard_snapshot::RequestSeries> {
+        processor.graph_data.export_request_series(
+            "GET".to_string(),
+            name.to_string(),
+            dashboard_snapshot::SERIES_WINDOW_SECS,
+            Some(10),
+            co_active,
+            None,
+        )
+    }
+
+    /// The measured `(bucket index, count)` pairs of `second` in a heatmap.
+    fn measured_buckets(heatmap: &dashboard_snapshot::Heatmap, second: u64) -> Vec<(u64, u64)> {
+        heatmap
+            .column(second)
+            .map(|column| dashboard_snapshot::HeatmapColumn::pairs(&column.measured))
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn latency_records_failures_but_not_updates_or_co_copies() {
+        let mut processor =
+            make_latency_test_processor(GooseCoordinatedOmissionMitigation::Average);
+
+        // A failed request lands in all requests and in its own series.
+        let mut failed = make_request_metric("/fail", 250, 500, 2_100);
+        failed.success = false;
+        failed.error = "500 Internal Server Error".to_string();
+        processor.process_request_metric(&failed);
+        assert_eq!(measured_count(&mut processor, 2), 1);
+        let series = request_series(&mut processor, "/fail", false).expect("series");
+        // 250 ms is in the 250 ms bucket, index 115.
+        assert_eq!(measured_buckets(&series.heatmap, 2), [(115, 1)]);
+
+        // An update is not a new measurement.
+        let mut update = make_request_metric("/fail", 300, 200, 2_200);
+        update.update = true;
+        processor.process_request_metric(&update);
+        assert_eq!(measured_count(&mut processor, 2), 1);
+
+        // Coordinated omission copies never reach the measured series, with
+        // or without a cadence.
+        for user_cadence in [0, 100] {
+            let mut copy = make_request_metric("/fail", 20, 200, 2_300);
+            copy.coordinated_omission_elapsed = 1_000;
+            copy.user_cadence = user_cadence;
+            processor.process_request_metric(&copy);
+            assert_eq!(
+                measured_count(&mut processor, 2),
+                1,
+                "cadence {user_cadence}"
+            );
+            let series = request_series(&mut processor, "/fail", false).unwrap();
+            assert_eq!(series.heatmap.counts(2), (1, 0), "cadence {user_cadence}");
+        }
+    }
+
+    /// A batch of successful `GET /` requests, all from `second`, as a user
+    /// thread builds it.
+    fn latency_batch(second: usize, times: &[u64]) -> GooseMetricBatch {
+        let mut batch = GooseMetricBatch::new(0);
+        batch.second = Some(second);
+        let mut raw_data = GooseRequestMetricTimingData::new(None);
+        for &time in times {
+            raw_data.record_time(time);
+        }
+        batch.requests.insert(
+            "GET /".to_string(),
+            RequestBatchEntry {
+                path: "/".to_string(),
+                method: GooseMethod::Get,
+                custom_method: String::new(),
+                raw_data,
+                status_code_counts: HashMap::from([(200, times.len())]),
+                status_code_timings: HashMap::new(),
+            },
+        );
+        batch
+    }
+
+    #[test]
+    fn latency_batch_times_reach_the_rings() {
+        let mut processor =
+            make_latency_test_processor(GooseCoordinatedOmissionMitigation::Disabled);
+        processor.process_batch(latency_batch(3, &[10, 30]));
+        processor.process_batch(latency_batch(4, &[1400]));
+        assert_eq!(measured_count(&mut processor, 3), 2);
+        assert_eq!(measured_count(&mut processor, 4), 1);
+        let series = request_series(&mut processor, "/", false).unwrap();
+        assert_eq!(measured_buckets(&series.heatmap, 3), [(10, 1), (30, 1)]);
+        // 1400 ms rounds to the 1 second bucket, index 145.
+        assert_eq!(measured_buckets(&series.heatmap, 4), [(145, 1)]);
+        let graph = &processor.graph_data;
+        assert_eq!(graph.requests_in_second_for_test("GET /", 3), 2);
+        assert_eq!(graph.requests_in_second_for_test("GET /", 4), 1);
+    }
+
+    #[tokio::test]
+    async fn latency_has_series_marks_first_hundred_names() {
+        let mut processor =
+            make_latency_test_processor(GooseCoordinatedOmissionMitigation::Disabled);
+        for i in 0..dashboard_snapshot::MAX_REQUEST_ROWS {
+            processor.process_request_metric(&make_request_metric(
+                &format!("/{i}"),
+                10,
+                200,
+                1_000,
+            ));
+        }
+        // The 101st name, requested most so its row is in the snapshot.
+        for _ in 0..5 {
+            processor.process_request_metric(&make_request_metric("/late", 10, 200, 1_000));
+        }
+        // Counts come from the atomic counters, which this test has none of.
+        for request in processor.metrics.requests.values_mut() {
+            request.success_count = request.raw_data.counter;
+        }
+        let (respond, respond_rx) = tokio::sync::oneshot::channel();
+        processor.handle_command(MetricsCommand::GetDashboardSnapshot {
+            duration: 2,
+            total_users: 1,
+            maximum_users: 1,
+            active_users: 1,
+            target_users: 1,
+            series_elapsed_secs: 2,
+            phase: "maintain".to_string(),
+            stopping: false,
+            series_window_secs: dashboard_snapshot::SERIES_WINDOW_SECS,
+            save: dashboard_snapshot::SnapshotSave::off("goose-runs"),
+            heatmap_since: None,
+            respond,
+        });
+        let snapshot = respond_rx.await.unwrap();
+        assert!(snapshot.flags.percentiles_over_time);
+        let late = snapshot
+            .requests
+            .iter()
+            .find(|r| r.name == "/late")
+            .unwrap();
+        assert!(!late.has_series);
+        assert!(snapshot
+            .requests
+            .iter()
+            .filter(|r| r.name != "/late")
+            .all(|r| r.has_series));
+        // Its times still count toward all requests.
+        assert_eq!(snapshot.series.heatmap.unwrap().counts(1), (105, 0));
+    }
+
+    #[tokio::test]
+    async fn latency_off_snapshot_is_empty() {
+        let configuration = GooseConfiguration {
+            dashboard: true,
+            no_percentiles_over_time: true,
+            ..Default::default()
+        };
+        assert!(!configuration.records_latency_series());
+        let mut processor = make_dashboard_test_processor(configuration.clone());
+        processor.graph_data = GraphData::for_metrics_processor(
+            configuration.records_latency_series(),
+            configuration.records_synthetic_latency(),
+        );
+        processor.process_request_metric(&make_request_metric("/", 10, 200, 1_000));
+        let (respond, respond_rx) = tokio::sync::oneshot::channel();
+        processor.handle_command(MetricsCommand::GetDashboardSnapshot {
+            duration: 2,
+            total_users: 1,
+            maximum_users: 1,
+            active_users: 1,
+            target_users: 1,
+            series_elapsed_secs: 2,
+            phase: "maintain".to_string(),
+            stopping: false,
+            series_window_secs: dashboard_snapshot::SERIES_WINDOW_SECS,
+            save: dashboard_snapshot::SnapshotSave::off("goose-runs"),
+            heatmap_since: None,
+            respond,
+        });
+        let snapshot = respond_rx.await.unwrap();
+        assert!(!snapshot.flags.percentiles_over_time);
+        assert!(!snapshot.series.rps.is_empty());
+        assert_eq!(snapshot.series.heatmap, None);
+        assert!(snapshot.requests.iter().all(|r| !r.has_series));
+
+        let (respond, respond_rx) = tokio::sync::oneshot::channel();
+        processor.handle_command(MetricsCommand::GetRequestSeries {
+            method: "GET".to_string(),
+            name: "/".to_string(),
+            series_elapsed_secs: 2,
+            since: None,
+            respond,
+        });
+        assert!(respond_rx.await.unwrap().is_none());
+    }
+
+    #[test]
+    fn latency_gate() {
+        let on = GooseConfiguration {
+            dashboard: true,
+            ..Default::default()
+        };
+        assert!(on.records_latency_series());
+        for off in [
+            GooseConfiguration::default(),
+            GooseConfiguration {
+                dashboard: true,
+                no_percentiles_over_time: true,
+                ..Default::default()
+            },
+            GooseConfiguration {
+                dashboard: true,
+                no_metrics: true,
+                ..Default::default()
+            },
+        ] {
+            assert!(!off.records_latency_series());
+            assert!(!off.records_synthetic_latency());
+        }
+        let mitigated = GooseConfiguration {
+            dashboard: true,
+            co_mitigation: Some(GooseCoordinatedOmissionMitigation::Average),
+            ..Default::default()
+        };
+        assert!(mitigated.records_synthetic_latency());
+        let disabled = GooseConfiguration {
+            dashboard: true,
+            co_mitigation: Some(GooseCoordinatedOmissionMitigation::Disabled),
+            ..Default::default()
+        };
+        assert!(!disabled.records_synthetic_latency());
+    }
+
+    #[test]
+    fn latency_synthetic_off_with_mitigation_disabled() {
+        let mut processor =
+            make_latency_test_processor(GooseCoordinatedOmissionMitigation::Disabled);
+        assert!(!processor.graph_data.records_synthetic_latency());
+        processor.process_request_metric(&make_request_metric("/", 10, 200, 3_000));
+        processor
+            .graph_data
+            .record_synthetic_latency("GET /", 3, 900);
+        let window =
+            processor
+                .graph_data
+                .export_series_window_with_heatmap(300, Some(5), true, None);
+        assert_eq!(window.heatmap.expect("heatmap").counts(3), (1, 0));
     }
 }

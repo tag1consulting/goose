@@ -68,11 +68,11 @@
       <span id="kpi-fail" class="v">—</span>
     </div>
     <div class="kpi card">
-      <span id="kpi-p95-label" class="k">p95 ms</span>
+      <span id="kpi-p95-label" class="k">p95 ms (whole run)</span>
       <span id="kpi-p95" class="v">—</span>
     </div>
     <div class="kpi card">
-      <span id="kpi-avg-label" class="k">Avg ms</span>
+      <span id="kpi-avg-label" class="k">Avg ms (whole run)</span>
       <span id="kpi-avg" class="v">—</span>
     </div>
   </section>
@@ -86,9 +86,40 @@
       <h2>Active users</h2>
       <canvas id="chart-users" aria-label="Active users chart"></canvas>
     </div>
-    <div class="card chart-card chart-wide">
-      <h2>Average latency (ms)</h2>
-      <canvas id="chart-latency" aria-label="Average latency chart"></canvas>
+    <div id="chart-latency-card" class="card chart-card chart-wide">
+      <div class="chart-head">
+        <h2 id="chart-latency-title">Response times by second</h2>
+        <div class="chart-controls">
+          <div id="heatmap-view" class="segmented" role="group" aria-label="Response times shown" hidden>
+            <button type="button" id="heatmap-adjusted" aria-pressed="true">Adjusted</button>
+            <button type="button" id="heatmap-measured" aria-pressed="false">Measured</button>
+          </div>
+          <select id="heatmap-request" aria-label="Request shown">
+            <option value="">All requests</option>
+          </select>
+        </div>
+      </div>
+      <p id="chart-latency-note" class="note" hidden></p>
+      <p id="heatmap-note" class="note">Each column is one second. Color shows how many requests took that long; the lines are that second's p50, p95 and p99.</p>
+      <div id="heatmap-wrap" class="heatmap-wrap">
+        <canvas id="chart-heatmap" aria-label="Response times by second, heatmap"></canvas>
+        <div id="heatmap-tooltip" class="heatmap-tooltip" role="tooltip" hidden></div>
+      </div>
+      <div id="heatmap-legend" class="heatmap-legend">
+        <span>Requests</span>
+        <span id="heatmap-legend-min"></span>
+        <span id="heatmap-legend-bar" class="heatmap-legend-bar"></span>
+        <span id="heatmap-legend-max"></span>
+        <span>(log scale)</span>
+        <span class="heatmap-key heatmap-key-p50">p50</span>
+        <span class="heatmap-key heatmap-key-p95">p95</span>
+        <span class="heatmap-key heatmap-key-p99">p99</span>
+      </div>
+
+      <!-- Chart.js sets its canvas to display: block, so the wrapper hides it. -->
+      <div id="chart-latency-wrap" hidden>
+        <canvas id="chart-latency" aria-label="Average latency chart"></canvas>
+      </div>
     </div>
   </section>
 
@@ -98,7 +129,8 @@
   </section>
 
   <section id="aggregate" class="card">
-    <h2>Aggregate</h2>
+    <h2>Whole run</h2>
+    <p class="note">Since the test started, or since metrics were last reset. Goose measures response times in whole milliseconds.</p>
     <div id="aggregate-body" class="grid">—</div>
   </section>
 
@@ -115,10 +147,10 @@
             <th data-sort="run_count" data-type="num">#runs</th>
             <th data-sort="runs_per_second" data-type="num">runs/s</th>
             <th data-sort="runs_per_user" data-type="num">runs/user</th>
-            <th data-sort="response_time_avg_ms" data-type="num">avg ms</th>
-            <th data-sort="p50" data-type="num">p50</th>
-            <th data-sort="p95" data-type="num">p95</th>
-            <th data-sort="p99" data-type="num">p99</th>
+            <th data-sort="response_time_avg_ms" data-type="num" title="Whole run">avg ms</th>
+            <th data-sort="p50" data-type="num" title="Whole run">p50</th>
+            <th data-sort="p95" data-type="num" title="Whole run">p95</th>
+            <th data-sort="p99" data-type="num" title="Whole run">p99</th>
           </tr>
         </thead>
         <tbody id="scenarios-body"></tbody>
@@ -144,10 +176,10 @@
             <th data-sort="run_count" data-type="num">#runs</th>
             <th data-sort="failure_count" data-type="num">#fails</th>
             <th data-sort="runs_per_second" data-type="num">runs/s</th>
-            <th data-sort="response_time_avg_ms" data-type="num">avg ms</th>
-            <th data-sort="p50" data-type="num">p50</th>
-            <th data-sort="p95" data-type="num">p95</th>
-            <th data-sort="p99" data-type="num">p99</th>
+            <th data-sort="response_time_avg_ms" data-type="num" title="Whole run">avg ms</th>
+            <th data-sort="p50" data-type="num" title="Whole run">p50</th>
+            <th data-sort="p95" data-type="num" title="Whole run">p95</th>
+            <th data-sort="p99" data-type="num" title="Whole run">p99</th>
           </tr>
         </thead>
         <tbody id="transactions-body"></tbody>
@@ -173,10 +205,10 @@
             <th data-sort="request_count" data-type="num" class="sorted desc">#reqs</th>
             <th data-sort="failure_count" data-type="num">#fails</th>
             <th data-sort="requests_per_second" data-type="num">req/s</th>
-            <th data-sort="response_time_avg_ms" data-type="num">avg ms</th>
-            <th data-sort="p50" data-type="num">p50</th>
-            <th data-sort="p95" data-type="num">p95</th>
-            <th data-sort="p99" data-type="num">p99</th>
+            <th data-sort="response_time_avg_ms" data-type="num" title="Whole run">avg ms</th>
+            <th data-sort="p50" data-type="num" title="Whole run">p50</th>
+            <th data-sort="p95" data-type="num" title="Whole run">p95</th>
+            <th data-sort="p99" data-type="num" title="Whole run">p99</th>
           </tr>
         </thead>
         <tbody id="requests-body"></tbody>

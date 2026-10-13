@@ -5,20 +5,155 @@
 //! this data is converted into [`Graph`] structures and HTML markup is generated
 //! based on them.
 
-use crate::metrics::dashboard_snapshot::SeriesWindow;
+use crate::metrics::dashboard_snapshot::{
+    Heatmap, HeatmapColumn, HeatmapCursor, RequestSeries, SeriesWindow, SERIES_WINDOW_SECS,
+};
+use crate::metrics::{round_metric_time, GooseRequestMetricTimingData};
 use crate::test_plan::{TestPlanHistory, TestPlanStepAction};
 use chrono::prelude::*;
 use itertools::Itertools;
 use serde::Serialize;
 use serde_json::json;
 use std::cmp::Ordering;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::convert::TryFrom;
 use std::fmt::Write;
 use std::marker::PhantomData;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+use std::sync::OnceLock;
+
+/// One key's counts by second, and for requests, which latency ring holds the
+/// request's own response times. Laid out in order, so a request's pending
+/// response times follow the fields a batch merge reads first.
+#[derive(Clone)]
+#[repr(C)]
+struct KeySeries {
+    counts: TimeSeries<u32, u32>,
+    /// The request's response times from the newest batches, kept here,
+    /// next to the count each batch already updates, until they move to its
+    /// ring (see [`PendingLatency`]). Allocated the first time the heatmap
+    /// records a response time for the request, so without the heatmap a
+    /// name costs one pointer more than its counts, and errors never
+    /// allocate one.
+    pending: Option<Box<PendingLatency>>,
+}
+
+/// A request's batched response times for two consecutive seconds, counted
+/// by fixed bucket index, waiting to move to its latency ring. It lives in
+/// the request's [`KeySeries`], so merging a batch writes next to the count
+/// the batch already updates instead of reaching into the ring's slot for
+/// the second; the counts move to the ring once both seconds are past, or
+/// when a heatmap is built. Laid out in order: what every merge writes
+/// first, and both seconds' counts of a bucket side by side.
+#[derive(Clone)]
+#[repr(C)]
+struct PendingLatency {
+    /// The index of the request's ring in [`LatencyHistograms`], or `None`
+    /// when it has no ring of its own, assigned when this is allocated.
+    /// Keeping it here lets a batch merge find the ring with the same lookup
+    /// that counts the request. Reset with the latency histograms, by
+    /// [`GraphData::reset_rate_series`].
+    ring: Option<usize>,
+    /// The seconds held: `second` and `second + 1`, once `held`.
+    second: usize,
+    held: bool,
+    /// Fastest, slowest, total and count, for each second held.
+    totals: [[usize; 4]; 2],
+    /// Rounded times with no fixed index (past 60 seconds): which second
+    /// held (0 or 1), the rounded time and its count.
+    overflow: Vec<(usize, usize, usize)>,
+    /// Counts by fixed bucket index, for each second held.
+    counts: [[u32; 2]; FIXED_BUCKETS],
+}
+
+impl PendingLatency {
+    fn new(ring: Option<usize>) -> Self {
+        PendingLatency {
+            ring,
+            second: 0,
+            held: false,
+            totals: [[0; 4]; 2],
+            overflow: Vec::new(),
+            counts: [[0; 2]; FIXED_BUCKETS],
+        }
+    }
+
+    /// Add a batch's timing data for held second `at` (0 or 1).
+    fn add(&mut self, at: usize, data: &GooseRequestMetricTimingData) {
+        self.add_totals(at, data);
+        for (&rounded, &count) in &data.times {
+            self.add_bucket(at, rounded, count);
+        }
+    }
+
+    /// Add a batch's fastest, slowest, total and count for held second `at`.
+    fn add_totals(&mut self, at: usize, data: &GooseRequestMetricTimingData) {
+        let totals = &mut self.totals[at];
+        if data.counter > 0 && (totals[3] == 0 || data.minimum_time < totals[0]) {
+            totals[0] = data.minimum_time;
+        }
+        totals[1] = totals[1].max(data.maximum_time);
+        totals[2] += data.total_time;
+        totals[3] += data.counter;
+    }
+
+    /// Add `count` responses that round to `rounded` to held second `at`.
+    fn add_bucket(&mut self, at: usize, rounded: usize, count: usize) {
+        match dense_index(rounded) {
+            Some(index) => {
+                let held = &mut self.counts[index][at];
+                *held = held.saturating_add(u32::try_from(count).unwrap_or(u32::MAX));
+            }
+            None => self.overflow.push((at, rounded, count)),
+        }
+    }
+
+    /// Move everything held to `ring`, each second marked with `rev` of its
+    /// own, and empty the counts.
+    fn move_to(&mut self, ring: &mut LatencyRing, mut next_rev: impl FnMut() -> u64) {
+        for at in 0..2 {
+            let [minimum, maximum, total, counter] = self.totals[at];
+            if counter == 0 {
+                continue;
+            }
+            if let Some(histogram) = ring.slot_mut(self.second + at, next_rev()) {
+                for (index, counts) in self.counts.iter().enumerate() {
+                    if counts[at] > 0 {
+                        histogram.add_dense(index, counts[at] as usize);
+                    }
+                }
+                for &(held, rounded, count) in &self.overflow {
+                    if held == at {
+                        histogram.add_bucket(rounded, count);
+                    }
+                }
+                histogram.add_totals(minimum, maximum, total, counter);
+            }
+            for counts in self.counts.iter_mut() {
+                counts[at] = 0;
+            }
+            self.totals[at] = [0; 4];
+        }
+        self.overflow.clear();
+    }
+}
+
+impl std::ops::Deref for KeySeries {
+    type Target = TimeSeries<u32, u32>;
+    fn deref(&self) -> &Self::Target {
+        &self.counts
+    }
+}
+
+impl std::ops::DerefMut for KeySeries {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.counts
+    }
+}
 
 #[derive(Clone)]
 struct ItemsPerSecond {
-    series: HashMap<String, TimeSeries<u32, u32>>,
+    series: HashMap<String, KeySeries>,
     /// Absolute second used as `origin` for newly inserted keys.
     ///
     /// After dashboard pruning / rate-series reset this tracks the retained window
@@ -43,19 +178,54 @@ impl ItemsPerSecond {
 
     #[inline(always)]
     fn initialize_or_increment(&mut self, key: &str, second: usize, value: u32) -> u32 {
+        let data = self.increment(key, second, value);
+        data.get(second)
+    }
+
+    /// Add `value` to `key`'s count for `second`, returning the key's entry.
+    #[inline(always)]
+    fn increment(&mut self, key: &str, second: usize, value: u32) -> &mut KeySeries {
         let origin = self.origin;
         let data = self
             .series
             .entry(key.to_string())
-            .or_insert_with(|| TimeSeries::with_origin(origin));
+            .or_insert_with(|| KeySeries {
+                counts: TimeSeries::with_origin(origin),
+                pending: None,
+            });
         data.increase_value(second, value);
-        data.get(second)
+        data
+    }
+
+    /// A report graph of every key's counts, in the map's iteration order.
+    fn graph<'a>(
+        &'a self,
+        html_id: &'a str,
+        y_axis_label: &'a str,
+        granular_data: bool,
+    ) -> Graph<'a, u32, u32> {
+        Graph {
+            html_id,
+            y_axis_label,
+            granular_data,
+            data: self
+                .series
+                .iter()
+                .map(|(label, series)| (label.as_str(), &series.counts))
+                .collect(),
+        }
     }
 
     #[cfg(test)]
     #[inline(always)]
     fn insert(&mut self, key: &str, time_series: TimeSeries<u32, u32>) {
-        self.series.insert(key.to_string(), time_series);
+        self.series.insert(
+            key.to_string(),
+            KeySeries {
+                counts: time_series,
+                pending: None,
+            },
+        );
     }
 
     #[cfg(test)]
@@ -67,7 +237,890 @@ impl ItemsPerSecond {
     #[cfg(test)]
     #[inline(always)]
     fn get(&self, key: &str) -> Option<TimeSeries<u32, u32>> {
-        self.series.get(key).cloned()
+        self.series.get(key).map(|data| data.counts.clone())
+    }
+}
+
+/// Most request names that get their own latency series. Later names still
+/// count toward the all requests series.
+pub(crate) const MAX_REQUEST_SERIES: usize = 100;
+
+/// Rounded response times up to the default 60 second timeout each have a
+/// fixed index: every millisecond to 100 ms, then 110 to 500 ms by 10, 600
+/// to 1000 ms by 100 and 2 to 60 seconds by 1000.
+const FIXED_BUCKETS: usize = 205;
+
+/// The fixed index of a rounded response time, if it has one.
+fn dense_index(rounded: usize) -> Option<usize> {
+    match rounded {
+        0..=100 => Some(rounded),
+        101..=500 => Some(100 + (rounded - 100) / 10),
+        501..=1000 => Some(140 + (rounded - 500) / 100),
+        1001..=60_000 => Some(145 + (rounded - 1000) / 1000),
+        _ => None,
+    }
+}
+
+/// The rounded response time a fixed index stands for.
+fn dense_value(index: usize) -> usize {
+    match index {
+        0..=100 => index,
+        101..=140 => 100 + (index - 100) * 10,
+        141..=145 => 500 + (index - 140) * 100,
+        _ => 1000 + (index - 145) * 1000,
+    }
+}
+
+/// Bits of a [`SecondHistogram`] entry that hold the count; the bucket index
+/// is in the top 8 bits.
+const COUNT_BITS: u32 = 24;
+/// Most one entry counts. A bucket that fills an entry continues in the next.
+const COUNT_MAX: u32 = (1 << COUNT_BITS) - 1;
+
+/// One second's response times, in the same buckets as
+/// [`GooseRequestMetricTimingData`](crate::metrics::GooseRequestMetricTimingData) but held compactly: a sorted list with 4
+/// bytes for each bucket the second has seen (its index and its count), so a
+/// quiet name costs little and a busy one at most about 1 KB a second.
+/// Rounded times above 60 seconds, possible with a longer `--timeout`, go to
+/// a short sorted overflow list. The metrics processor merges each batch's
+/// response times for a request name (the batch's
+/// [`GooseRequestMetricTimingData`], all from one second) into the rings. A
+/// ring counts its newest seconds in a flat array instead (see
+/// [`LatencyRing`]), so merging a batch is an addition per bucket rather
+/// than a search, and packs each second once it stops filling.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct SecondHistogram {
+    entries: Vec<u32>,
+    overflow: Vec<(usize, u32)>,
+    /// While a ring's second is still filling: its count for each fixed
+    /// index, with `entries` empty.
+    open: Option<Box<[usize; FIXED_BUCKETS]>>,
+    /// The fastest response, not rounded.
+    pub(crate) minimum_time: usize,
+    /// The slowest response, not rounded.
+    pub(crate) maximum_time: usize,
+    /// Sum of all response times.
+    pub(crate) total_time: usize,
+    /// Number of responses.
+    pub(crate) counter: usize,
+}
+
+/// Two histograms are equal when they hold the same response times, however
+/// each holds them.
+impl PartialEq for SecondHistogram {
+    fn eq(&self, other: &Self) -> bool {
+        self.minimum_time == other.minimum_time
+            && self.maximum_time == other.maximum_time
+            && self.total_time == other.total_time
+            && self.counter == other.counter
+            && self
+                .buckets()
+                .coalesce(merge_bucket)
+                .eq(other.buckets().coalesce(merge_bucket))
+    }
+}
+
+/// A bucket as `(rounded time, count)`.
+type Bucket = (usize, usize);
+
+/// Join consecutive pieces of one bucket (a bucket past [`COUNT_MAX`]).
+fn merge_bucket(a: Bucket, b: Bucket) -> Result<Bucket, (Bucket, Bucket)> {
+    if a.0 == b.0 {
+        Ok((a.0, a.1 + b.1))
+    } else {
+        Err((a, b))
+    }
+}
+
+impl SecondHistogram {
+    /// An empty histogram for a ring's newest second, counted by fixed index
+    /// until [`pack`](Self::pack).
+    fn open() -> Self {
+        Self::open_with(Box::new([0; FIXED_BUCKETS]))
+    }
+
+    /// [`Self::open`], counting in `counts`, which must be all zero.
+    fn open_with(counts: Box<[usize; FIXED_BUCKETS]>) -> Self {
+        debug_assert!(counts.iter().all(|&count| count == 0));
+        SecondHistogram {
+            open: Some(counts),
+            ..Default::default()
+        }
+    }
+
+    /// Add `count` to the bucket with fixed index `index`, searching from
+    /// entry `from` on. Returns where the search for a higher index can
+    /// start.
+    fn add_indexed(&mut self, from: usize, index: usize, mut count: usize) -> usize {
+        debug_assert!(index < FIXED_BUCKETS && FIXED_BUCKETS <= 1 << (32 - COUNT_BITS));
+        let bucket = index as u32;
+        let key = bucket << COUNT_BITS;
+        let mut at = from + self.entries[from..].partition_point(|&entry| entry < key);
+        while count > 0 {
+            if at < self.entries.len() && self.entries[at] >> COUNT_BITS == bucket {
+                let room = (COUNT_MAX - (self.entries[at] & COUNT_MAX)) as usize;
+                let add = room.min(count);
+                self.entries[at] += add as u32;
+                count -= add;
+            } else {
+                let add = count.min(COUNT_MAX as usize);
+                self.entries.insert(at, key | add as u32);
+                count -= add;
+            }
+            at += 1;
+        }
+        at
+    }
+
+    fn add_bucket(&mut self, rounded: usize, count: usize) {
+        match dense_index(rounded) {
+            Some(index) => self.add_dense(index, count),
+            None => self.add_overflow(rounded, count),
+        }
+    }
+
+    /// Add `count` to the bucket with fixed index `index`.
+    fn add_dense(&mut self, index: usize, count: usize) {
+        match self.open.as_mut() {
+            Some(open) => open[index] += count,
+            None => {
+                self.add_indexed(0, index, count);
+            }
+        }
+    }
+
+    /// Add `count` to the bucket of a rounded time with no fixed index.
+    fn add_overflow(&mut self, rounded: usize, count: usize) {
+        let count = u32::try_from(count).unwrap_or(u32::MAX);
+        match self
+            .overflow
+            .binary_search_by_key(&rounded, |&(bucket, _)| bucket)
+        {
+            Ok(at) => self.overflow[at].1 = self.overflow[at].1.saturating_add(count),
+            Err(at) => self.overflow.insert(at, (rounded, count)),
+        }
+    }
+
+    fn add_totals(&mut self, minimum: usize, maximum: usize, total: usize, counter: usize) {
+        // The counters, not a minimum of 0, say whether there are times yet:
+        // a response under a millisecond is a minimum of 0.
+        if counter > 0 && (self.counter == 0 || minimum < self.minimum_time) {
+            self.minimum_time = minimum;
+        }
+        if maximum > self.maximum_time {
+            self.maximum_time = maximum;
+        }
+        self.total_time += total;
+        self.counter += counter;
+    }
+
+    /// Record one response time, as
+    /// [`GooseRequestMetricTimingData::record_time`](crate::metrics::GooseRequestMetricTimingData::record_time)
+    /// does.
+    pub(crate) fn record(&mut self, time: u64) {
+        let time_ms = time as usize;
+        self.add_totals(time_ms, time_ms, time_ms, 1);
+        self.add_bucket(round_metric_time(time), 1);
+    }
+
+    /// Add another second's response times.
+    pub(crate) fn merge(&mut self, other: &SecondHistogram) {
+        if let Some(open) = self.open.as_mut() {
+            for (index, count) in other.indexed() {
+                open[index] += count;
+            }
+        } else {
+            // Both are sorted, so each search starts where the last one ended.
+            let mut from = 0;
+            for (index, count) in other.indexed() {
+                from = self.add_indexed(from, index, count);
+            }
+        }
+        for &(bucket, count) in &other.overflow {
+            self.add_bucket(bucket, count as usize);
+        }
+        self.add_totals(
+            other.minimum_time,
+            other.maximum_time,
+            other.total_time,
+            other.counter,
+        );
+    }
+
+    /// Add a batch's response times for one request name, all from this
+    /// second: buckets of rounded times, and the unrounded minimum, maximum,
+    /// total and count, as
+    /// [`GooseRequestMetricTimingData::merge`] adds them.
+    pub(crate) fn merge_timing(&mut self, other: &GooseRequestMetricTimingData) {
+        for (&rounded, &count) in &other.times {
+            self.add_bucket(rounded, count);
+        }
+        self.add_totals(
+            other.minimum_time,
+            other.maximum_time,
+            other.total_time,
+            other.counter,
+        );
+    }
+
+    /// Once the second is unlikely to grow: move the counts of an open
+    /// second into the compact list, allocated once at its size, and release
+    /// spare capacity. Returns the emptied counts of the open second, for
+    /// the next second to reuse.
+    fn pack(&mut self) -> Option<Box<[usize; FIXED_BUCKETS]>> {
+        let mut open = self.open.take()?;
+        if self.entries.is_empty() {
+            let buckets = open.iter().filter(|&&count| count > 0).count();
+            self.entries.reserve_exact(buckets);
+        }
+        let mut from = 0;
+        for (index, count) in open.iter_mut().enumerate() {
+            if *count > 0 {
+                from = self.add_indexed(from, index, *count);
+                *count = 0;
+            }
+        }
+        self.entries.shrink_to_fit();
+        self.overflow.shrink_to_fit();
+        Some(open)
+    }
+
+    /// The heatmap's buckets of this second: each non empty bucket as
+    /// `index, count`, flattened, by ascending heatmap index.
+    fn heat_cells(&self) -> Vec<u64> {
+        let mut cells: Vec<u64> = Vec::new();
+        let overflow = self
+            .overflow
+            .iter()
+            .map(|&(rounded, count)| (heat_index(rounded), count as usize));
+        for (index, count) in self.indexed().chain(overflow) {
+            let (index, count) = (index as u64, count as u64);
+            // A bucket past COUNT_MAX continues in the next entry.
+            match cells.len().checked_sub(2).map(|at| cells[at]) {
+                Some(last) if last == index => *cells.last_mut().expect("a count") += count,
+                _ => cells.extend([index, count]),
+            }
+        }
+        cells
+    }
+
+    /// Non empty buckets with a fixed index as `(index, count)`, fastest
+    /// first. A bucket past [`COUNT_MAX`] appears more than once,
+    /// consecutively, unless the second is open.
+    fn indexed(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
+        let open = self.open.iter().flat_map(|open| {
+            open.iter()
+                .enumerate()
+                .filter(|&(_, &count)| count > 0)
+                .map(|(index, &count)| (index, count))
+        });
+        let packed = self
+            .entries
+            .iter()
+            .map(|&entry| ((entry >> COUNT_BITS) as usize, (entry & COUNT_MAX) as usize));
+        open.chain(packed)
+    }
+
+    /// Non empty buckets as `(rounded time, count)`, fastest first. A bucket
+    /// past [`COUNT_MAX`] may appear more than once, consecutively.
+    fn buckets(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
+        self.indexed()
+            .map(|(index, count)| (dense_value(index), count))
+            .chain(
+                self.overflow
+                    .iter()
+                    .map(|&(bucket, count)| (bucket, count as usize)),
+            )
+    }
+
+    /// The response time `percent` of these requests finished within,
+    /// computed as for the whole run's percentiles (unit tests).
+    #[cfg(test)]
+    pub(crate) fn percentile(&self, percent: f32) -> usize {
+        crate::metrics::response_time_percentile(
+            self.buckets(),
+            self.counter,
+            self.minimum_time,
+            self.maximum_time,
+            percent,
+        )
+    }
+}
+
+/// The heatmap's index of a rounded response time: its fixed index, or past
+/// 60 seconds one more for each second.
+fn heat_index(rounded: usize) -> usize {
+    dense_index(rounded)
+        .unwrap_or_else(|| FIXED_BUCKETS - 1 + rounded.saturating_sub(60_000) / 1000)
+}
+
+/// A bucket's rounded time and the lowest and highest measured times that
+/// round to it, in milliseconds.
+fn bucket_entry(value: u64) -> [u64; 3] {
+    // round_metric_time never decreases, so the times that round to `value`
+    // are one range: from the first that rounds to it up to the first that
+    // rounds past it.
+    let first_rounding_to = |target: u64| {
+        let (mut low, mut high) = (0u64, value * 2 + 1000);
+        while low < high {
+            let middle = (low + high) / 2;
+            if (round_metric_time(middle) as u64) < target {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+        low
+    };
+    [
+        value,
+        first_rounding_to(value),
+        first_rounding_to(value + 1) - 1,
+    ]
+}
+
+/// The heatmap's bucket table, `[time, lowest, highest]` for each index from
+/// 0 to `last`, and always every fixed index.
+fn bucket_table(last: usize) -> Vec<[u64; 3]> {
+    static FIXED: OnceLock<Vec<[u64; 3]>> = OnceLock::new();
+    let mut table = FIXED
+        .get_or_init(|| {
+            (0..FIXED_BUCKETS)
+                .map(|index| bucket_entry(dense_value(index) as u64))
+                .collect()
+        })
+        .clone();
+    for index in FIXED_BUCKETS..=last {
+        table.push(bucket_entry(
+            60_000 + (index + 1 - FIXED_BUCKETS) as u64 * 1000,
+        ));
+    }
+    table
+}
+
+/// A new generation for a set of latency histograms: unique in the process
+/// and, starting from the clock, unlikely to repeat one a client kept from an
+/// earlier Goose.
+fn next_heatmap_generation() -> u64 {
+    static NEXT: OnceLock<AtomicU64> = OnceLock::new();
+    NEXT.get_or_init(|| {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(1, |since| since.as_millis() as u64);
+        AtomicU64::new(now_ms * 1000)
+    })
+    .fetch_add(1, AtomicOrdering::Relaxed)
+}
+
+/// One second of a [`LatencyRing`].
+#[derive(Clone)]
+struct RingSlot {
+    second: usize,
+    /// The histograms' revision when this second last changed.
+    rev: u64,
+    data: SecondHistogram,
+}
+
+/// One response time histogram for each of the last [`SERIES_WINDOW_SECS`]
+/// seconds. Second `s` lives in slot `s % len`, tagged with `s` so a slot that
+/// still holds an older second is recognized and reused, and with the
+/// revision of its last change so a heatmap can send only what changed. The
+/// newest seconds stay open, counted by fixed index, until a second two later
+/// begins.
+#[derive(Clone)]
+pub(crate) struct LatencyRing {
+    slots: Vec<Option<RingSlot>>,
+    /// Seconds whose histograms are still open.
+    open: Vec<usize>,
+    /// Emptied counts of packed seconds, for new seconds to count in, so a
+    /// ring does not allocate and free them every second. Boxed, as a
+    /// histogram holds them, so they move between the two without copying.
+    #[allow(clippy::vec_box)]
+    spare: Vec<Box<[usize; FIXED_BUCKETS]>>,
+}
+
+impl LatencyRing {
+    pub(crate) fn new() -> Self {
+        LatencyRing {
+            slots: (0..SERIES_WINDOW_SECS).map(|_| None).collect(),
+            open: Vec::new(),
+            spare: Vec::new(),
+        }
+    }
+
+    /// The histogram for `second`, replacing an older second's, marked as
+    /// changed at `rev`. `None` when the slot already holds a newer second:
+    /// the sample is too old to show.
+    fn slot_mut(&mut self, second: usize, rev: u64) -> Option<&mut SecondHistogram> {
+        // The window is a constant, so the remainder needs no division.
+        let len = SERIES_WINDOW_SECS as usize;
+        debug_assert_eq!(self.slots.len(), len);
+        let at = second % len;
+        match &self.slots[at] {
+            Some(slot) if slot.second > second => return None,
+            Some(slot) if slot.second == second => {}
+            _ => {
+                // A new second has begun: those two or more seconds back
+                // have all but their slowest requests, so pack them.
+                let (slots, spare) = (&mut self.slots, &mut self.spare);
+                self.open.retain(|&older| {
+                    if older + 2 > second {
+                        return true;
+                    }
+                    if let Some(slot) = &mut slots[older % len] {
+                        if slot.second == older {
+                            spare.extend(slot.data.pack());
+                        }
+                    }
+                    false
+                });
+                let data = match self.spare.pop() {
+                    Some(counts) => SecondHistogram::open_with(counts),
+                    None => SecondHistogram::open(),
+                };
+                self.slots[at] = Some(RingSlot { second, rev, data });
+                self.open.push(second);
+            }
+        }
+        self.slots[at].as_mut().map(|slot| {
+            slot.rev = rev;
+            &mut slot.data
+        })
+    }
+
+    /// Record one response time in `second`, at `rev`.
+    pub(crate) fn record(&mut self, second: usize, time: u64, rev: u64) {
+        if let Some(data) = self.slot_mut(second, rev) {
+            data.record(time);
+        }
+    }
+
+    /// Add a batch's response times for one request name to `second`, at
+    /// `rev` (unit tests).
+    #[cfg(test)]
+    pub(crate) fn merge_timing(
+        &mut self,
+        second: usize,
+        other: &GooseRequestMetricTimingData,
+        rev: u64,
+    ) {
+        if let Some(data) = self.slot_mut(second, rev) {
+            data.merge_timing(other);
+        }
+    }
+
+    /// Forget every second.
+    pub(crate) fn clear(&mut self) {
+        for slot in self.slots.iter_mut() {
+            *slot = None;
+        }
+        self.open.clear();
+    }
+
+    /// [`Self::slot`], to build and keep its heatmap cells.
+    fn slot_at_mut(&mut self, second: usize) -> Option<&mut RingSlot> {
+        self.slots[second % SERIES_WINDOW_SECS as usize]
+            .as_mut()
+            .filter(|slot| slot.second == second)
+    }
+
+    fn slot(&self, second: usize) -> Option<&RingSlot> {
+        self.slots[second % SERIES_WINDOW_SECS as usize]
+            .as_ref()
+            .filter(|slot| slot.second == second)
+    }
+
+    /// The histogram for `second`, if the ring still holds it (unit tests).
+    #[cfg(test)]
+    pub(crate) fn get(&self, second: usize) -> Option<&SecondHistogram> {
+        self.slot(second).map(|slot| &slot.data)
+    }
+}
+
+/// Where a heatmap's measured columns come from.
+trait MeasuredColumns {
+    /// The revision `second` last changed at, if it has response times.
+    fn rev(&self, second: usize) -> Option<u64>;
+    /// `second`'s heatmap cells.
+    fn cells(&mut self, second: usize) -> Vec<u64>;
+}
+
+impl MeasuredColumns for LatencyRing {
+    fn rev(&self, second: usize) -> Option<u64> {
+        self.slot(second).map(|slot| slot.rev)
+    }
+
+    fn cells(&mut self, second: usize) -> Vec<u64> {
+        self.slot_at_mut(second)
+            .map_or_else(Vec::new, |slot| slot.data.heat_cells())
+    }
+}
+
+/// All requests: every name's ring and the ring of names without one,
+/// added up for a column only when a heatmap asks for it.
+struct AllRequests<'a> {
+    rings: &'a [LatencyRing],
+    others: &'a LatencyRing,
+    /// Each second's cells as of the revision they were built at.
+    cells: &'a mut [Option<(usize, u64, Vec<u64>)>],
+}
+
+impl AllRequests<'_> {
+    fn slots(&self, second: usize) -> impl Iterator<Item = &RingSlot> + '_ {
+        self.rings
+            .iter()
+            .chain([self.others])
+            .filter_map(move |ring| ring.slot(second))
+    }
+}
+
+impl MeasuredColumns for AllRequests<'_> {
+    fn rev(&self, second: usize) -> Option<u64> {
+        self.slots(second).map(|slot| slot.rev).max()
+    }
+
+    fn cells(&mut self, second: usize) -> Vec<u64> {
+        let Some(rev) = self.rev(second) else {
+            return Vec::new();
+        };
+        let at = second % self.cells.len();
+        match &self.cells[at] {
+            Some((kept, built, cells)) if *kept == second && *built == rev => cells.clone(),
+            _ => {
+                let mut all = SecondHistogram::open();
+                for slot in self.slots(second) {
+                    all.merge(&slot.data);
+                }
+                let cells = all.heat_cells();
+                self.cells[at] = Some((second, rev, cells.clone()));
+                cells
+            }
+        }
+    }
+}
+
+/// Per second response time histograms for the dashboard's heatmap: each of
+/// the first [`MAX_REQUEST_SERIES`] request names, the names after them
+/// together, all requests as their sum, and the same for synthetic times
+/// while coordinated omission mitigation is on. A batch's response times for
+/// a name go to one ring; the all requests column of a second is only added
+/// up when a heatmap needs it.
+pub(crate) struct LatencyHistograms {
+    /// Requests whose names have no ring of their own.
+    others: LatencyRing,
+    /// The all requests heatmap's cells, kept by second (see [`AllRequests`]).
+    all_cells: Vec<Option<(usize, u64, Vec<u64>)>>,
+    /// Each admitted request name's ring, in the order names were admitted.
+    rings: Vec<LatencyRing>,
+    /// Admitted request names and the index of their ring in `rings`.
+    by_request: HashMap<String, usize>,
+    synthetic: Option<(LatencyRing, HashMap<String, LatencyRing>)>,
+    /// Changes when the rings are cleared, so a client starts over.
+    generation: u64,
+    /// Counts changes: each record or merge marks the seconds it changes
+    /// with the next value.
+    rev: u64,
+}
+
+impl LatencyHistograms {
+    /// `synthetic` keeps rings for coordinated omission mitigation's
+    /// synthetic times too; pass it when mitigation is not `disabled`.
+    pub(crate) fn new(synthetic: bool) -> Self {
+        LatencyHistograms {
+            others: LatencyRing::new(),
+            all_cells: (0..SERIES_WINDOW_SECS).map(|_| None).collect(),
+            rings: Vec::new(),
+            by_request: HashMap::new(),
+            synthetic: synthetic.then(|| (LatencyRing::new(), HashMap::new())),
+            generation: next_heatmap_generation(),
+            rev: 0,
+        }
+    }
+
+    /// The revision of a change about to be made.
+    fn next_rev(&mut self) -> u64 {
+        self.rev += 1;
+        self.rev
+    }
+
+    /// The index of `key`'s ring, admitting the name while there is room.
+    fn ring_index(&mut self, key: &str) -> Option<usize> {
+        if let Some(&index) = self.by_request.get(key) {
+            return Some(index);
+        }
+        if self.rings.len() >= MAX_REQUEST_SERIES {
+            return None;
+        }
+        self.rings.push(LatencyRing::new());
+        self.by_request
+            .insert(key.to_string(), self.rings.len() - 1);
+        Some(self.rings.len() - 1)
+    }
+
+    /// `key`'s pending response times in `entry`, allocated the first time
+    /// the request has a response time to record, which is when its ring is
+    /// assigned: so the first [`MAX_REQUEST_SERIES`] names seen get rings,
+    /// in the order they are seen.
+    fn pending<'a>(&mut self, key: &str, entry: &'a mut KeySeries) -> &'a mut PendingLatency {
+        let ring = match entry.pending {
+            Some(_) => None,
+            None => self.ring_index(key),
+        };
+        entry
+            .pending
+            .get_or_insert_with(|| Box::new(PendingLatency::new(ring)))
+    }
+
+    /// The ring of the name with ring `index`, or of the names without one.
+    fn ring(&mut self, index: Option<usize>) -> &mut LatencyRing {
+        match index {
+            Some(index) => &mut self.rings[index],
+            None => &mut self.others,
+        }
+    }
+
+    #[cfg(test)]
+    fn record(&mut self, key: &str, second: usize, time: u64) {
+        let rev = self.next_rev();
+        let index = self.ring_index(key);
+        self.ring(index).record(second, time, rev);
+    }
+
+    /// Record one response time for `key`, whose entry is `entry`.
+    fn record_in(&mut self, key: &str, entry: &mut KeySeries, second: usize, time: u64) {
+        let index = self.pending(key, entry).ring;
+        let rev = self.next_rev();
+        self.ring(index).record(second, time, rev);
+    }
+
+    /// Merge a batch's timing data for `key` in `second` into the key's
+    /// pending counts, moving what they held to its ring first when `second`
+    /// is past both seconds they hold. Times for a second before them go to
+    /// the ring directly.
+    fn merge_pending(
+        &mut self,
+        key: &str,
+        entry: &mut KeySeries,
+        second: usize,
+        data: &GooseRequestMetricTimingData,
+    ) {
+        let pending = self.pending(key, entry);
+        match self.pending_at(pending, second) {
+            Some(at) => pending.add(at, data),
+            None => self.merge_older(pending, second, data),
+        }
+    }
+
+    /// Which of the two seconds `key`'s pending counts hold is `second`,
+    /// after moving what they held to its ring when `second` is past both;
+    /// `None` when `second` is before them.
+    fn pending_at(&mut self, pending: &mut PendingLatency, second: usize) -> Option<usize> {
+        if !pending.held {
+            pending.held = true;
+            pending.second = second;
+        }
+        if second < pending.second {
+            return None;
+        }
+        if second > pending.second + 1 {
+            self.move_pending(pending);
+            pending.second = second;
+        }
+        Some(second - pending.second)
+    }
+
+    /// Merge timing data for a second before those `key`'s pending counts
+    /// hold straight into its ring.
+    fn merge_older(
+        &mut self,
+        pending: &PendingLatency,
+        second: usize,
+        data: &GooseRequestMetricTimingData,
+    ) {
+        let rev = self.next_rev();
+        if let Some(histogram) = self.ring(pending.ring).slot_mut(second, rev) {
+            histogram.merge_timing(data);
+        }
+    }
+
+    /// Move `pending` to its request's ring.
+    fn move_pending(&mut self, pending: &mut PendingLatency) {
+        let rev = &mut self.rev;
+        let ring = match pending.ring {
+            Some(index) => &mut self.rings[index],
+            None => &mut self.others,
+        };
+        pending.move_to(ring, || {
+            *rev += 1;
+            *rev
+        });
+    }
+
+    /// All requests in `second`: every ring's histogram for it added up, if
+    /// any ring holds it.
+    #[cfg(test)]
+    pub(crate) fn all_second(&self, second: usize) -> Option<SecondHistogram> {
+        let mut slots = self
+            .rings
+            .iter()
+            .chain([&self.others])
+            .filter_map(|ring| ring.slot(second))
+            .peekable();
+        slots.peek()?;
+        let mut all = SecondHistogram::default();
+        for slot in slots {
+            all.merge(&slot.data);
+        }
+        Some(all)
+    }
+
+    /// Record a synthetic time. A name gets a synthetic ring only if it has a
+    /// measured one.
+    fn record_synthetic(&mut self, key: &str, second: usize, time: u64) {
+        let rev = self.next_rev();
+        let Some((all, by_request)) = self.synthetic.as_mut() else {
+            return;
+        };
+        all.record(second, time, rev);
+        if !self.by_request.contains_key(key) {
+            return;
+        }
+        if let Some(ring) = by_request.get_mut(key) {
+            ring.record(second, time, rev);
+        } else {
+            let mut ring = LatencyRing::new();
+            ring.record(second, time, rev);
+            by_request.insert(key.to_string(), ring);
+        }
+    }
+
+    /// Clear every ring and forget every name, so names are admitted again,
+    /// and start a new generation.
+    fn clear(&mut self) {
+        self.others.clear();
+        self.all_cells.iter_mut().for_each(|cells| *cells = None);
+        self.rings.clear();
+        self.by_request.clear();
+        if let Some((all, by_request)) = self.synthetic.as_mut() {
+            all.clear();
+            by_request.clear();
+        }
+        self.generation = next_heatmap_generation();
+    }
+
+    /// The heatmap of one measured ring and, when `co_active` and synthetic
+    /// rings are kept, its synthetic counterpart, over `start..=end`: only
+    /// the seconds changed after `since` when it is a cursor of these
+    /// histograms, otherwise every second with data.
+    #[allow(clippy::too_many_arguments)]
+    ///
+    /// `generation` and `rev` are the histograms' own, passed in so the
+    /// rings can be borrowed to build and keep each column's cells.
+    fn heatmap(
+        (generation, rev): (u64, u64),
+        measured: &mut impl MeasuredColumns,
+        mut synthetic: Option<&mut LatencyRing>,
+        start: usize,
+        end: usize,
+        hold_from: usize,
+        since: Option<HeatmapCursor>,
+    ) -> Heatmap {
+        let since = match since {
+            Some(cursor) if cursor.generation == generation && cursor.rev <= rev => cursor.rev,
+            _ => 0,
+        };
+        let mut columns = Vec::new();
+        let mut last_index = FIXED_BUCKETS - 1;
+        for second in start..=end {
+            let real = measured.rev(second);
+            let added = synthetic
+                .as_deref_mut()
+                .and_then(|ring| ring.slot_at_mut(second));
+            if !real.is_some_and(|real| real > since) && !added.iter().any(|slot| slot.rev > since)
+            {
+                continue;
+            }
+            let real = match real {
+                Some(_) => measured.cells(second),
+                None => Vec::new(),
+            };
+            let added = added.map_or_else(Vec::new, |slot| slot.data.heat_cells());
+            for cells in [&real, &added] {
+                if let Some(&index) = cells.iter().rev().nth(1) {
+                    last_index = last_index.max(index as usize);
+                }
+            }
+            columns.push(HeatmapColumn {
+                second: second as u64,
+                measured: real,
+                synthetic: added,
+            });
+        }
+        Heatmap {
+            generation,
+            rev,
+            since,
+            start_second: start as u64,
+            end_second: end as u64,
+            hold_from: hold_from as u64,
+            buckets: bucket_table(last_index),
+            columns,
+        }
+    }
+
+    fn heatmap_all(
+        &mut self,
+        start: usize,
+        end: usize,
+        hold_from: usize,
+        since: Option<HeatmapCursor>,
+        co_active: bool,
+    ) -> Heatmap {
+        let synthetic = self
+            .synthetic
+            .as_mut()
+            .filter(|_| co_active)
+            .map(|(all, _)| all);
+        let mut all = AllRequests {
+            rings: &self.rings,
+            others: &self.others,
+            cells: &mut self.all_cells,
+        };
+        Self::heatmap(
+            (self.generation, self.rev),
+            &mut all,
+            synthetic,
+            start,
+            end,
+            hold_from,
+            since,
+        )
+    }
+
+    fn heatmap_request(
+        &mut self,
+        key: &str,
+        start: usize,
+        end: usize,
+        hold_from: usize,
+        since: Option<HeatmapCursor>,
+        co_active: bool,
+    ) -> Option<Heatmap> {
+        let measured = &mut self.rings[*self.by_request.get(key)?];
+        let synthetic = self
+            .synthetic
+            .as_mut()
+            .filter(|_| co_active)
+            .and_then(|(_, by_request)| by_request.get_mut(key));
+        Some(Self::heatmap(
+            (self.generation, self.rev),
+            measured,
+            synthetic,
+            start,
+            end,
+            hold_from,
+            since,
+        ))
     }
 }
 
@@ -85,6 +1138,10 @@ pub(crate) struct GraphData {
     scenarios_per_second: TimeSeries<usize, usize>,
     /// Number of users at the end of each second of the test.
     users_per_second: TimeSeries<usize, usize>,
+    /// Response time histograms by second for the dashboard's heatmap.
+    /// Only the metrics processor's copy has them, and only while the
+    /// dashboard tracks percentiles over time.
+    latency: Option<LatencyHistograms>,
 }
 
 impl GraphData {
@@ -98,7 +1155,19 @@ impl GraphData {
             transactions_per_second: TimeSeries::new(),
             scenarios_per_second: TimeSeries::new(),
             users_per_second: TimeSeries::new(),
+            latency: None,
         }
+    }
+
+    /// Create GraphData for the metrics processor: with latency histograms
+    /// when `latency_series` is set, and synthetic ones too when
+    /// `synthetic_latency` (coordinated omission mitigation is on).
+    pub(crate) fn for_metrics_processor(latency_series: bool, synthetic_latency: bool) -> Self {
+        let mut graph_data = GraphData::new();
+        if latency_series {
+            graph_data.latency = Some(LatencyHistograms::new(synthetic_latency));
+        }
+        graph_data
     }
 
     /// Reset per-second *rate* series after the increase→maintain metrics reset.
@@ -122,6 +1191,173 @@ impl GraphData {
         self.average_response_time_per_second = HashMap::new();
         self.transactions_per_second = TimeSeries::with_origin(origin);
         self.scenarios_per_second = TimeSeries::with_origin(origin);
+        if let Some(latency) = self.latency.as_mut() {
+            latency.clear();
+        }
+    }
+
+    /// Record one measured response time for the heatmap, without
+    /// counting a request (unit tests).
+    #[cfg(test)]
+    pub(crate) fn record_latency(&mut self, key: &str, second: usize, time: u64) {
+        if let Some(latency) = self.latency.as_mut() {
+            latency.record(key, second, time);
+        }
+    }
+
+    /// Count one request in `second` and, when `latency` is given and the
+    /// histograms are kept, record its response time for the heatmap.
+    pub(crate) fn record_request_per_second_and_latency(
+        &mut self,
+        key: &str,
+        second: usize,
+        latency: Option<u64>,
+    ) {
+        let data = self.requests_per_second.increment(key, second, 1);
+        debug!(
+            "incremented second {second} for requests per second counter: {}",
+            data.get(second)
+        );
+        if let (Some(time), Some(histograms)) = (latency, self.latency.as_mut()) {
+            histograms.record_in(key, data, second, time);
+        }
+    }
+
+    /// Merge a batch's count of requests in `second` and, when the
+    /// histograms are kept and `times` is given, their response times (the
+    /// batch's timing data for this request, every time from `second`),
+    /// keeping them beside the count the same lookup finds.
+    pub(crate) fn record_requests_per_second_and_latency_batch(
+        &mut self,
+        key: &str,
+        second: usize,
+        count: u32,
+        times: Option<&GooseRequestMetricTimingData>,
+    ) {
+        let data = self.requests_per_second.increment(key, second, count);
+        if let (Some(times), Some(histograms)) = (times, self.latency.as_mut()) {
+            if times.counter > 0 {
+                histograms.merge_pending(key, data, second, times);
+            }
+        }
+    }
+
+    /// Count a batch's requests for `key` in `second`, and merge their
+    /// response times (the batch's timing data for the request, all from
+    /// `second`) into `whole_run`, the request's timing data for the whole
+    /// run, and, when the histograms are kept, into its pending counts,
+    /// walking the batch's buckets once for both.
+    pub(crate) fn record_requests_per_second_merging_latency(
+        &mut self,
+        key: &str,
+        second: usize,
+        data: &GooseRequestMetricTimingData,
+        whole_run: &mut GooseRequestMetricTimingData,
+    ) {
+        let entry = self
+            .requests_per_second
+            .increment(key, second, data.counter as u32);
+        let Some(histograms) = self.latency.as_mut().filter(|_| data.counter > 0) else {
+            return whole_run.merge(data);
+        };
+        let pending = histograms.pending(key, entry);
+        match histograms.pending_at(pending, second) {
+            Some(at) => {
+                pending.add_totals(at, data);
+                whole_run.merge_also(data, |rounded, count| {
+                    pending.add_bucket(at, rounded, count)
+                });
+            }
+            None => {
+                histograms.merge_older(pending, second, data);
+                whole_run.merge(data);
+            }
+        }
+    }
+
+    /// Move every request's pending response times to its ring, so the
+    /// rings hold every time merged so far.
+    fn move_pending_latency(&mut self) {
+        let Some(histograms) = self.latency.as_mut() else {
+            return;
+        };
+        for entry in self.requests_per_second.series.values_mut() {
+            if let Some(pending) = entry.pending.as_deref_mut().filter(|pending| pending.held) {
+                histograms.move_pending(pending);
+            }
+        }
+    }
+
+    /// Whether response times are kept by second for the dashboard.
+    pub(crate) fn records_latency(&self) -> bool {
+        self.latency.is_some()
+    }
+
+    /// Record one synthetic response time from coordinated omission
+    /// mitigation, when synthetic histograms are kept.
+    pub(crate) fn record_synthetic_latency(&mut self, key: &str, second: usize, time: u64) {
+        if let Some(latency) = self.latency.as_mut() {
+            latency.record_synthetic(key, second, time);
+        }
+    }
+
+    /// Whether synthetic response times are kept for the heatmap.
+    pub(crate) fn records_synthetic_latency(&self) -> bool {
+        self.latency
+            .as_ref()
+            .is_some_and(|latency| latency.synthetic.is_some())
+    }
+
+    /// Keys (`"METHOD name"`) of the requests with their own latency series.
+    pub(crate) fn latency_series_keys(&self) -> HashSet<&str> {
+        self.latency
+            .as_ref()
+            .map(|latency| latency.by_request.keys().map(String::as_str).collect())
+            .unwrap_or_default()
+    }
+
+    /// The latency histograms, if kept (unit tests).
+    #[cfg(test)]
+    pub(crate) fn latency_histograms(&mut self) -> Option<&LatencyHistograms> {
+        self.latency.as_ref()
+    }
+
+    /// The measured histogram for `second`: all requests when `key` is
+    /// `None`, otherwise `key`'s own ring (unit tests).
+    #[cfg(test)]
+    pub(crate) fn latency_second_for_test(
+        &mut self,
+        key: Option<&str>,
+        second: usize,
+    ) -> Option<SecondHistogram> {
+        self.move_pending_latency();
+        let latency = self.latency.as_ref()?;
+        match key {
+            None => latency.all_second(second),
+            Some(key) => latency.rings[*latency.by_request.get(key)?]
+                .get(second)
+                .cloned(),
+        }
+    }
+
+    /// The average response time for `key` in `second`, if recorded (unit
+    /// tests).
+    #[cfg(test)]
+    pub(crate) fn average_in_second_for_test(&self, key: &str, second: usize) -> Option<f32> {
+        self.average_response_time_per_second
+            .get(key)
+            .map(|series| series.get(second))
+            .filter(|average| average.count > 0)
+            .map(|average| average.average)
+    }
+
+    /// The requests per second count for `key` in `second` (unit tests).
+    #[cfg(test)]
+    pub(crate) fn requests_in_second_for_test(&self, key: &str, second: usize) -> u32 {
+        self.requests_per_second
+            .series
+            .get(key)
+            .map_or(0, |series| series.get(second))
     }
 
     /// Last absolute second with a users sample, if any.
@@ -129,7 +1365,8 @@ impl GraphData {
         self.users_per_second.last_absolute_second()
     }
 
-    /// Record requests per second metric.
+    /// Record requests per second metric, without latency (unit tests).
+    #[cfg(test)]
     pub(crate) fn record_requests_per_second(&mut self, key: &str, second: usize) {
         let value = self
             .requests_per_second
@@ -189,22 +1426,13 @@ impl GraphData {
         );
     }
 
-    /// Record multiple requests per second for batch merging.
-    pub(crate) fn record_requests_per_second_batch(
-        &mut self,
-        key: &str,
-        second: usize,
-        count: u32,
-    ) {
-        self.requests_per_second
-            .initialize_or_increment(key, second, count);
-    }
-
     /// Record pre-aggregated average response time for batch merging.
     ///
     /// Performs a proper weighted merge of the batch's total response time and
     /// count into the per-second moving average, avoiding the precision loss
-    /// that would result from truncating the average to an integer.
+    /// that would result from truncating the average to an integer. `next`
+    /// is the batch's total response time and count for `second + 1`, merged
+    /// through the same lookup.
     pub(crate) fn record_average_response_time_per_second_batch(
         &mut self,
         key: &str,
@@ -261,8 +1489,53 @@ impl GraphData {
     /// Production paths always pass a series-clock hint via
     /// [`Self::export_series_window_until`].
     #[cfg(test)]
-    pub(crate) fn export_series_window(&self, window_secs: u32) -> SeriesWindow {
+    pub(crate) fn export_series_window(&mut self, window_secs: u32) -> SeriesWindow {
         self.export_series_window_until(window_secs, None)
+    }
+
+    /// [`Self::export_series_window_with_heatmap`] for a client with no
+    /// heatmap yet and coordinated omission mitigation without events (unit
+    /// tests).
+    #[cfg(test)]
+    pub(crate) fn export_series_window_until(
+        &mut self,
+        window_secs: u32,
+        end_second_hint: Option<usize>,
+    ) -> SeriesWindow {
+        self.export_series_window_with_heatmap(window_secs, end_second_hint, false, None)
+    }
+
+    /// The trailing window's first and last second, as
+    /// [`Self::export_series_window_with_heatmap`] defines them, or `None`
+    /// before anything is recorded.
+    fn series_window_bounds(
+        &self,
+        window_secs: u32,
+        end_second_hint: Option<usize>,
+    ) -> Option<(usize, usize)> {
+        if window_secs == 0 {
+            return None;
+        }
+        let mut end_second: Option<usize> = end_second_hint;
+        for series in self.requests_per_second.series.values() {
+            if let Some(last) = series.last_absolute_second() {
+                end_second = Some(end_second.map_or(last, |e| e.max(last)));
+            }
+        }
+        if let Some(last) = self.users_per_second.last_absolute_second() {
+            end_second = Some(end_second.map_or(last, |e| e.max(last)));
+        }
+        let end_second = end_second?;
+        Some((
+            end_second.saturating_sub(window_secs as usize - 1),
+            end_second,
+        ))
+    }
+
+    /// First second the heatmap does not draw yet: the newest seconds may
+    /// still be missing their slowest requests.
+    fn latency_hold_from(end_second: usize, end_second_hint: Option<usize>) -> usize {
+        end_second_hint.unwrap_or(end_second).saturating_sub(1)
     }
 
     /// Export a trailing aggregate series window for the live dashboard.
@@ -279,35 +1552,34 @@ impl GraphData {
     ///    seconds where request metrics advanced past the last `RecordUsers`)
     ///    hold the last known active-user count — never drop to 0 solely because
     ///    the users series lags RPS by a few seconds.
+    /// 6. With latency histograms kept, `heatmap` covers the same seconds:
+    ///    the seconds that changed after `heatmap_since` when it is a cursor
+    ///    of these histograms, otherwise every second, with synthetic times
+    ///    only when `co_active` (coordinated omission mitigation has recorded
+    ///    an event) and synthetic histograms are kept. Without latency
+    ///    histograms it is `None`.
     ///
     /// `end_second_hint` extends the window through series-clock "now" when the
     /// last stored sample is a few seconds older (main-loop cadence / no recent
     /// requests).
-    pub(crate) fn export_series_window_until(
-        &self,
+    pub(crate) fn export_series_window_with_heatmap(
+        &mut self,
         window_secs: u32,
         end_second_hint: Option<usize>,
+        co_active: bool,
+        heatmap_since: Option<HeatmapCursor>,
     ) -> SeriesWindow {
-        if window_secs == 0 {
-            return SeriesWindow::empty();
-        }
-
-        let mut end_second: Option<usize> = end_second_hint;
-        for series in self.requests_per_second.series.values() {
-            if let Some(last) = series.last_absolute_second() {
-                end_second = Some(end_second.map_or(last, |e| e.max(last)));
-            }
-        }
-        if let Some(last) = self.users_per_second.last_absolute_second() {
-            end_second = Some(end_second.map_or(last, |e| e.max(last)));
-        }
-
-        let end_second = match end_second {
-            Some(end) => end,
-            None => return SeriesWindow::empty(),
+        self.move_pending_latency();
+        let Some((start_second, end_second)) =
+            self.series_window_bounds(window_secs, end_second_hint)
+        else {
+            let mut empty = SeriesWindow::empty();
+            empty.heatmap = self
+                .latency
+                .as_mut()
+                .map(|latency| latency.heatmap_all(0, 0, 0, heatmap_since, co_active));
+            return empty;
         };
-
-        let start_second = end_second.saturating_sub(window_secs as usize - 1);
         let len = end_second - start_second + 1;
 
         // Allocate fixed-length outputs once, then accumulate per key into the
@@ -370,13 +1642,59 @@ impl GraphData {
             users.push(self.users_per_second.get_held(s) as u64);
         }
 
+        let hold_from = Self::latency_hold_from(end_second, end_second_hint);
+        let heatmap = self.latency.as_mut().map(|latency| {
+            latency.heatmap_all(
+                start_second,
+                end_second,
+                hold_from,
+                heatmap_since,
+                co_active,
+            )
+        });
+
         SeriesWindow {
             start_second: start_second as u64,
             rps,
             fps,
             users,
             avg_latency_ms,
+            heatmap,
         }
+    }
+
+    /// One request's heatmap for `GET /api/v1/series`, over the same seconds
+    /// as [`Self::export_series_window_with_heatmap`] and sent the same way.
+    /// `None` when the request has no histograms of its own.
+    pub(crate) fn export_request_series(
+        &mut self,
+        method: String,
+        name: String,
+        window_secs: u32,
+        end_second_hint: Option<usize>,
+        co_active: bool,
+        since: Option<HeatmapCursor>,
+    ) -> Option<RequestSeries> {
+        self.latency.as_ref()?;
+        self.move_pending_latency();
+        let key = format!("{method} {name}");
+        let (start_second, end_second) = self
+            .series_window_bounds(window_secs, end_second_hint)
+            .unwrap_or((0, 0));
+        let latency = self.latency.as_mut()?;
+        let heatmap = latency.heatmap_request(
+            &key,
+            start_second,
+            end_second,
+            Self::latency_hold_from(end_second, end_second_hint),
+            since,
+            co_active,
+        )?;
+        Some(RequestSeries {
+            method,
+            name,
+            heatmap,
+        })
     }
 
     /// Drop series samples older than the trailing `keep_secs` window.
@@ -455,12 +1773,8 @@ impl GraphData {
 
     /// Generate requests per second graph.
     pub(crate) fn get_requests_per_second_graph(&self, granular_data: bool) -> Graph<'_, u32, u32> {
-        self.create_graph_from_data(
-            "graph-rps",
-            "Requests #",
-            granular_data,
-            &self.requests_per_second.series,
-        )
+        self.requests_per_second
+            .graph("graph-rps", "Requests #", granular_data)
     }
 
     /// Generate average response time graph.
@@ -504,12 +1818,8 @@ impl GraphData {
 
     /// Generate errors per second graph.
     pub(crate) fn get_errors_per_second_graph(&self, granular_data: bool) -> Graph<'_, u32, u32> {
-        self.create_graph_from_data(
-            "graph-eps",
-            "Errors #",
-            granular_data,
-            &self.errors_per_second.series,
-        )
+        self.errors_per_second
+            .graph("graph-eps", "Errors #", granular_data)
     }
 
     /// Creates a Graph from granular data.
@@ -1984,7 +3294,7 @@ mod test {
 
     #[test]
     fn test_export_series_window_empty() {
-        let graph = GraphData::new();
+        let mut graph = GraphData::new();
         let window = graph.export_series_window(300);
         assert_eq!(window, SeriesWindow::empty());
         assert_eq!(window.start_second, 0);
@@ -2360,6 +3670,772 @@ mod test {
         for s in 3..=8 {
             assert_eq!(window.users[s], 7, "hold users[{s}]");
         }
+    }
+
+    /// GraphData with latency histograms, synthetic ones too when `synthetic`.
+    fn latency_graph(synthetic: bool) -> GraphData {
+        GraphData::for_metrics_processor(true, synthetic)
+    }
+
+    fn histograms(graph: &mut GraphData) -> &LatencyHistograms {
+        graph.move_pending_latency();
+        graph.latency_histograms().expect("latency histograms")
+    }
+
+    #[test]
+    fn latency_batch_merge_equals_direct_recording() {
+        let times: [(usize, u64); 6] = [(3, 12), (3, 140), (3, 1400), (4, 7), (4, 90), (4, 2600)];
+        // Two batches, so the second finds the request's ring through the
+        // index cached on its requests per second entry.
+        let mut batches: [HashMap<usize, GooseRequestMetricTimingData>; 2] = Default::default();
+        for (i, &(second, time)) in times.iter().enumerate() {
+            batches[i % 2].entry(second).or_default().record_time(time);
+        }
+        let mut merged = latency_graph(false);
+        for batch in &batches {
+            for (second, data) in batch {
+                merged.record_requests_per_second_and_latency_batch(
+                    "GET /a",
+                    *second,
+                    data.counter as u32,
+                    Some(data),
+                );
+            }
+        }
+        let mut direct = latency_graph(false);
+        for &(second, time) in &times {
+            direct.record_request_per_second_and_latency("GET /a", second, Some(time));
+        }
+        assert_eq!(
+            merged.requests_per_second.get("GET /a").unwrap().data,
+            direct.requests_per_second.get("GET /a").unwrap().data
+        );
+        for second in [3, 4] {
+            let merged = histograms(&mut merged);
+            let direct = histograms(&mut direct);
+            assert_eq!(merged.all_second(second), direct.all_second(second));
+            assert_eq!(
+                merged.rings[merged.by_request["GET /a"]].get(second),
+                direct.rings[direct.by_request["GET /a"]].get(second)
+            );
+            let mut expected = SecondHistogram::default();
+            for &(_, time) in times.iter().filter(|(s, _)| *s == second) {
+                expected.record(time);
+            }
+            assert_eq!(merged.all_second(second), Some(expected.clone()));
+        }
+    }
+
+    /// Batches merged through a request's pending counts, in and out of
+    /// order, with a jump of several seconds, an earlier second and a time
+    /// past 60 seconds, give the rings and the heatmap the same response
+    /// times as recording each request directly, whenever they are read.
+    #[test]
+    fn pending_latency_equals_direct_recording() {
+        let batches: [(usize, &[u64]); 8] = [
+            (5, &[3, 40]),
+            (6, &[7]),
+            (5, &[61_500, 2]),
+            (6, &[0, 900]),
+            (9, &[12]),
+            (4, &[33]),
+            (10, &[5, 5]),
+            (9, &[250]),
+        ];
+        let mut merged = latency_graph(false);
+        let mut direct = latency_graph(false);
+        for (i, &(second, times)) in batches.iter().enumerate() {
+            let mut data = GooseRequestMetricTimingData::new(None);
+            for &time in times {
+                data.record_time(time);
+                direct.record_request_per_second_and_latency("GET /a", second, Some(time));
+            }
+            merged.record_requests_per_second_and_latency_batch(
+                "GET /a",
+                second,
+                data.counter as u32,
+                Some(&data),
+            );
+            // Read part way through as well as at the end.
+            if i == 3 {
+                let merged = histograms(&mut merged);
+                let direct = histograms(&mut direct);
+                for second in 4..=6 {
+                    assert_eq!(merged.all_second(second), direct.all_second(second));
+                }
+            }
+        }
+        let window = |graph: &mut GraphData| {
+            graph
+                .export_series_window_until(300, Some(12))
+                .heatmap
+                .unwrap()
+                .columns
+        };
+        assert_eq!(window(&mut merged), window(&mut direct));
+        for second in 3..=11 {
+            let merged = histograms(&mut merged);
+            let direct = histograms(&mut direct);
+            assert_eq!(
+                merged.all_second(second),
+                direct.all_second(second),
+                "{second}"
+            );
+            assert_eq!(
+                merged.rings[merged.by_request["GET /a"]].get(second),
+                direct.rings[direct.by_request["GET /a"]].get(second),
+                "{second}"
+            );
+        }
+    }
+
+    #[test]
+    fn second_histogram_matches_timing_data() {
+        // Every rounded time maps to its own counter and back.
+        let mut rounded: Vec<usize> = (0..=100).collect();
+        rounded.extend((110..=500).step_by(10));
+        rounded.extend((600..=1000).step_by(100));
+        rounded.extend((2000..=60_000).step_by(1000));
+        assert_eq!(rounded.len(), FIXED_BUCKETS);
+        for (index, &value) in rounded.iter().enumerate() {
+            assert_eq!(dense_index(value), Some(index));
+            assert_eq!(dense_value(index), value);
+        }
+        assert_eq!(dense_index(61_000), None);
+
+        // Same buckets, totals and percentiles as the whole run histogram,
+        // including times past 60 seconds (a longer --timeout).
+        let mut times: Vec<u64> = Vec::new();
+        let mut seed: u64 = 7;
+        for _ in 0..5000 {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            times.push((seed >> 33) % 90_000 / (1 + (seed >> 60)));
+        }
+        let mut reference = crate::metrics::GooseRequestMetricTimingData::default();
+        let mut histogram = SecondHistogram::default();
+        for &time in &times {
+            reference.record_time(time);
+            histogram.record(time);
+        }
+        assert!(!histogram.overflow.is_empty());
+        let buckets: Vec<(usize, usize)> = histogram.buckets().collect();
+        let expected: Vec<(usize, usize)> = reference.times.iter().map(|(&t, &c)| (t, c)).collect();
+        assert_eq!(buckets, expected);
+        assert_eq!(histogram.counter, reference.counter);
+        assert_eq!(histogram.total_time, reference.total_time);
+        assert_eq!(histogram.minimum_time, reference.minimum_time);
+        assert_eq!(histogram.maximum_time, reference.maximum_time);
+        for percent in [0.0, 0.5, 0.95, 0.99, 1.0] {
+            assert_eq!(
+                histogram.percentile(percent),
+                crate::metrics::calculate_response_time_percentile(
+                    &reference.times,
+                    reference.counter,
+                    reference.minimum_time,
+                    reference.maximum_time,
+                    percent,
+                )
+            );
+        }
+
+        // Batches merged into an empty histogram give the same histogram.
+        let (first, second) = times.split_at(times.len() / 3);
+        let mut via_batch = SecondHistogram::default();
+        for part in [first, second] {
+            let mut batch = SecondHistogram::default();
+            for &time in part {
+                batch.record(time);
+            }
+            via_batch.merge(&batch);
+        }
+        assert_eq!(via_batch, histogram);
+
+        // A bucket past the most one entry holds continues in the next.
+        let mut full = SecondHistogram::default();
+        full.add_indexed(0, 5, COUNT_MAX as usize + 10);
+        full.add_indexed(0, 5, 3);
+        full.add_indexed(0, 4, 1);
+        assert_eq!(
+            full.buckets().collect::<Vec<_>>(),
+            vec![(4, 1), (5, COUNT_MAX as usize), (5, 13)]
+        );
+
+        // Merging two halves equals recording everything.
+        let (first, second) = times.split_at(times.len() / 2);
+        let mut a = SecondHistogram::default();
+        first.iter().for_each(|&time| a.record(time));
+        let mut b = SecondHistogram::default();
+        second.iter().for_each(|&time| b.record(time));
+        a.merge(&b);
+        assert_eq!(a, histogram);
+    }
+
+    #[test]
+    fn open_second_equals_packed_second() {
+        let mut times: Vec<u64> = Vec::new();
+        let mut seed: u64 = 11;
+        for _ in 0..3000 {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            times.push((seed >> 33) % 90_000 / (1 + (seed >> 60)));
+        }
+        let mut packed = SecondHistogram::default();
+        times.iter().for_each(|&time| packed.record(time));
+
+        // Recorded and merged into an open second, read open and packed.
+        let mut open = SecondHistogram::open();
+        let (first, second) = times.split_at(times.len() / 2);
+        first.iter().for_each(|&time| open.record(time));
+        let mut batch = SecondHistogram::default();
+        second.iter().for_each(|&time| batch.record(time));
+        open.merge(&batch);
+        assert!(open.entries.is_empty());
+        assert_eq!(open, packed);
+        assert_eq!(
+            open.buckets().collect::<Vec<_>>(),
+            packed.buckets().collect::<Vec<_>>()
+        );
+        for percent in [0.0, 0.5, 0.95, 0.99, 1.0] {
+            assert_eq!(open.percentile(percent), packed.percentile(percent));
+        }
+        open.pack();
+        assert!(open.open.is_none());
+        assert_eq!(open.entries, packed.entries);
+        assert_eq!(open.overflow, packed.overflow);
+
+        // A packed second keeps taking late responses.
+        open.record(7);
+        packed.record(7);
+        assert_eq!(open.entries, packed.entries);
+
+        // An open bucket past the most one entry holds packs into two.
+        let mut full = SecondHistogram::open();
+        full.add_bucket(5, COUNT_MAX as usize + 10);
+        full.add_bucket(4, 1);
+        full.pack();
+        assert_eq!(
+            full.buckets().collect::<Vec<_>>(),
+            vec![(4, 1), (5, COUNT_MAX as usize), (5, 10)]
+        );
+    }
+
+    /// The first [`MAX_REQUEST_SERIES`] request names the metrics thread
+    /// sees with a response time get rings, in the order it sees them, even
+    /// when their pending counts first move to a ring in another order
+    /// (#713).
+    #[test]
+    fn rings_go_to_the_first_names_seen() {
+        let mut graph = GraphData::for_metrics_processor(true, false);
+        let mut times = GooseRequestMetricTimingData::new(None);
+        times.record_time(25);
+        let mut whole_run = GooseRequestMetricTimingData::new(None);
+        let names: Vec<String> = (0..150).map(|i| format!("GET /n{i}")).collect();
+        // First sightings in order, all in second 0.
+        for name in &names {
+            graph.record_requests_per_second_merging_latency(name, 0, &times, &mut whole_run);
+        }
+        // Then second 5 in reverse order, which moves each name's pending
+        // counts to its ring, last name first.
+        for name in names.iter().rev() {
+            graph.record_requests_per_second_merging_latency(name, 5, &times, &mut whole_run);
+        }
+        let histograms = graph.latency.as_ref().unwrap();
+        let mut ringed: Vec<&String> = histograms.by_request.keys().collect();
+        ringed.sort_by_key(|name| names.iter().position(|n| n == *name));
+        let first: Vec<&String> = names.iter().take(MAX_REQUEST_SERIES).collect();
+        assert_eq!(ringed, first);
+        // In the order seen.
+        for (i, name) in names.iter().take(MAX_REQUEST_SERIES).enumerate() {
+            assert_eq!(histograms.by_request[name], i, "{}", name);
+        }
+    }
+
+    /// A request name's entry stays small, and its pending response times
+    /// are allocated only when the heatmap records one: never without the
+    /// heatmap, and never for an error (#713).
+    #[test]
+    fn pending_latency_is_allocated_only_for_the_heatmap() {
+        assert!(
+            std::mem::size_of::<KeySeries>() <= 64,
+            "KeySeries is {} bytes",
+            std::mem::size_of::<KeySeries>()
+        );
+        let mut times = GooseRequestMetricTimingData::new(None);
+        times.record_time(12);
+        times.record_time(70_000);
+        for heatmap in [false, true] {
+            let mut graph = GraphData::for_metrics_processor(heatmap, heatmap);
+            let mut whole_run = GooseRequestMetricTimingData::new(None);
+            for second in 0..5 {
+                graph.record_requests_per_second_merging_latency(
+                    "GET /a",
+                    second,
+                    &times,
+                    &mut whole_run,
+                );
+                graph.record_requests_per_second_and_latency_batch(
+                    "GET /b",
+                    second,
+                    2,
+                    Some(&times),
+                );
+                graph.record_request_per_second_and_latency("GET /c", second, Some(9));
+                graph.record_errors_per_second("GET /c 500 Internal Server Error", second);
+            }
+            graph.move_pending_latency();
+            for (key, entry) in &graph.requests_per_second.series {
+                assert_eq!(entry.pending.is_some(), heatmap, "{}", key);
+            }
+            assert_eq!(graph.errors_per_second.series.len(), 1);
+            for (key, entry) in &graph.errors_per_second.series {
+                assert!(entry.pending.is_none(), "{}", key);
+            }
+        }
+    }
+
+    #[test]
+    fn latency_ring_packs_seconds_two_back() {
+        let mut ring = LatencyRing::new();
+        ring.record(10, 20, 1);
+        ring.record(11, 20, 2);
+        let is_open = |ring: &LatencyRing, second| ring.get(second).unwrap().open.is_some();
+        assert!(is_open(&ring, 10) && is_open(&ring, 11));
+        ring.record(12, 20, 3);
+        assert!(!is_open(&ring, 10));
+        assert!(is_open(&ring, 11) && is_open(&ring, 12));
+        // A late response to a packed second still counts, and marks it
+        // changed.
+        ring.record(10, 30, 4);
+        assert_eq!(ring.get(10).unwrap().counter, 2);
+        assert_eq!(ring.slot(10).unwrap().rev, 4);
+        assert_eq!(ring.slot(11).unwrap().rev, 2);
+        // After a gap every older open second is packed.
+        ring.record(40, 20, 5);
+        assert!(!is_open(&ring, 11) && !is_open(&ring, 12));
+        assert_eq!(ring.open, vec![40]);
+        ring.clear();
+        assert!(ring.open.is_empty());
+    }
+
+    #[test]
+    fn latency_ring_drops_samples_older_than_its_slot() {
+        let mut ring = LatencyRing::new();
+        ring.record(400, 25, 1);
+        // Second 100 maps to the same slot as 400 (300 slots).
+        ring.record(100, 10, 2);
+        ring.merge_timing(
+            100,
+            &{
+                let mut data = GooseRequestMetricTimingData::default();
+                data.record_time(10);
+                data
+            },
+            3,
+        );
+        assert!(ring.get(100).is_none());
+        let held = ring.get(400).expect("slot keeps second 400");
+        assert_eq!(held.counter, 1);
+        assert_eq!(held.maximum_time, 25);
+        // A sample too old to keep does not mark the slot changed.
+        assert_eq!(ring.slot(400).unwrap().rev, 1);
+        // A newer second replaces the older one.
+        ring.record(700, 5, 4);
+        assert!(ring.get(400).is_none());
+        assert_eq!(ring.get(700).map(|d| d.counter), Some(1));
+    }
+
+    /// The `(index, count)` pairs of `second`'s measured buckets.
+    fn measured_pairs(heatmap: &Heatmap, second: u64) -> Vec<(u64, u64)> {
+        heatmap
+            .column(second)
+            .map(|column| HeatmapColumn::pairs(&column.measured))
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn heatmap_bucket_table_follows_round_metric_time() {
+        let table = bucket_table(FIXED_BUCKETS);
+        assert_eq!(table.len(), FIXED_BUCKETS + 1);
+        // Every measured time from 0 to past 61 seconds falls in exactly the
+        // bucket whose range holds it, and the ranges meet end to end.
+        for (index, entry) in table.iter().enumerate() {
+            let [value, lowest, highest] = *entry;
+            assert!(lowest <= value && value <= highest, "{:?}", entry);
+            for time in [lowest, highest] {
+                assert_eq!(round_metric_time(time) as u64, value, "{entry:?}");
+                assert_eq!(heat_index(round_metric_time(time)), index, "{entry:?}");
+            }
+            if index > 0 {
+                assert_eq!(table[index - 1][2] + 1, lowest, "{entry:?}");
+            }
+        }
+        for (index, entry) in [
+            (0, [0, 0, 0]),
+            (1, [1, 1, 1]),
+            (99, [99, 99, 99]),
+            (100, [100, 100, 104]),
+            (101, [110, 105, 114]),
+            (140, [500, 495, 549]),
+            (141, [600, 550, 649]),
+            (145, [1000, 950, 1499]),
+            (146, [2000, 1500, 2499]),
+            (204, [60_000, 59_500, 60_499]),
+            (205, [61_000, 60_500, 61_499]),
+        ] {
+            assert_eq!(table[index], entry, "index {index}");
+        }
+        assert_eq!(bucket_table(0).len(), FIXED_BUCKETS);
+    }
+
+    /// A column's cells are kept from one heatmap to the next, and rebuilt
+    /// when its second changes.
+    #[test]
+    fn heatmap_columns_rebuild_only_when_changed() {
+        let mut graph = latency_graph(false);
+        graph.record_requests_per_second("GET /", 1);
+        graph.record_latency("GET /", 1, 5);
+        let first = graph
+            .export_series_window_until(300, Some(4))
+            .heatmap
+            .unwrap();
+        assert_eq!(measured_pairs(&first, 1), [(5, 1)]);
+        let again = graph
+            .export_series_window_until(300, Some(4))
+            .heatmap
+            .unwrap();
+        assert_eq!(again.columns, first.columns);
+        graph.record_latency("GET /", 1, 6);
+        let changed = graph
+            .export_series_window_until(300, Some(4))
+            .heatmap
+            .unwrap();
+        assert_eq!(measured_pairs(&changed, 1), [(5, 1), (6, 1)]);
+    }
+
+    #[test]
+    fn heatmap_sends_only_changed_seconds() {
+        let mut graph = latency_graph(false);
+        for (second, time) in [(1, 5), (2, 7), (2, 7), (2, 120)] {
+            graph.record_requests_per_second("GET /", second);
+            graph.record_latency("GET /", second, time);
+        }
+        let first = graph
+            .export_series_window_until(300, Some(4))
+            .heatmap
+            .unwrap();
+        assert_eq!(first.since, 0);
+        assert_eq!(
+            (first.start_second, first.end_second, first.hold_from),
+            (0, 4, 3)
+        );
+        assert_eq!(first.columns.len(), 2);
+        assert_eq!(measured_pairs(&first, 1), [(5, 1)]);
+        // 120 ms is in the 120 ms bucket, index 102.
+        assert_eq!(measured_pairs(&first, 2), [(7, 2), (102, 1)]);
+        assert!(first
+            .columns
+            .iter()
+            .all(|column| column.synthetic.is_empty()));
+        assert_eq!(first.buckets.len(), FIXED_BUCKETS);
+
+        // Nothing changed: no columns.
+        let cursor = HeatmapCursor {
+            generation: first.generation,
+            rev: first.rev,
+        };
+        let same = graph
+            .export_series_window_with_heatmap(300, Some(4), false, Some(cursor))
+            .heatmap
+            .unwrap();
+        assert_eq!((same.since, same.rev), (first.rev, first.rev));
+        assert!(same.columns.is_empty());
+
+        // A late response to second 1 and a new second 3: only those, whole.
+        graph.record_latency("GET /", 1, 6);
+        graph.record_latency("GET /", 3, 75_000);
+        let delta = graph
+            .export_series_window_with_heatmap(300, Some(4), false, Some(cursor))
+            .heatmap
+            .unwrap();
+        assert_eq!(delta.since, first.rev);
+        assert_eq!(
+            delta
+                .columns
+                .iter()
+                .map(|column| column.second)
+                .collect::<Vec<_>>(),
+            [1, 3]
+        );
+        assert_eq!(measured_pairs(&delta, 1), [(5, 1), (6, 1)]);
+        // Past 60 seconds one row per second: 75 s is index 219, and the
+        // table grows to cover it.
+        assert_eq!(measured_pairs(&delta, 3), [(219, 1)]);
+        assert_eq!(delta.buckets.len(), 220);
+        assert_eq!(delta.buckets[219], [75_000, 74_500, 75_499]);
+
+        // A cursor of another generation, or from the future, gets the whole
+        // window.
+        for stale in [
+            HeatmapCursor {
+                generation: cursor.generation + 1,
+                rev: cursor.rev,
+            },
+            HeatmapCursor {
+                generation: cursor.generation,
+                rev: delta.rev + 1,
+            },
+        ] {
+            let whole = graph
+                .export_series_window_with_heatmap(300, Some(4), false, Some(stale))
+                .heatmap
+                .unwrap();
+            assert_eq!(whole.since, 0);
+            assert_eq!(whole.columns.len(), 3);
+        }
+
+        // A metrics reset starts a new generation with no columns.
+        graph.reset_rate_series();
+        let reset = graph
+            .export_series_window_with_heatmap(300, Some(4), false, Some(cursor))
+            .heatmap
+            .unwrap();
+        assert_ne!(reset.generation, cursor.generation);
+        assert_eq!(reset.since, 0);
+        assert!(reset.columns.is_empty());
+    }
+
+    #[test]
+    fn heatmap_slow_second_and_split_buckets() {
+        let mut graph = latency_graph(false);
+        for _ in 0..10 {
+            graph.record_requests_per_second("GET /slow", 5);
+            graph.record_latency("GET /slow", 5, 1400);
+        }
+        let heatmap = graph
+            .export_series_window_until(300, Some(7))
+            .heatmap
+            .unwrap();
+        assert_eq!(measured_pairs(&heatmap, 5), [(145, 10)]);
+
+        // A bucket past the most one packed entry holds is still one cell.
+        let mut full = SecondHistogram::default();
+        full.add_indexed(0, 5, COUNT_MAX as usize + 10);
+        full.add_indexed(0, 4, 1);
+        assert_eq!(full.heat_cells(), [4, 1, 5, COUNT_MAX as u64 + 10]);
+    }
+
+    #[test]
+    fn heatmap_window_gaps_and_hold() {
+        let mut graph = latency_graph(false);
+        for second in [2, 4, 9, 10] {
+            graph.record_requests_per_second("GET /", second);
+            graph.record_latency("GET /", second, 20);
+        }
+        let heatmap = graph
+            .export_series_window_until(300, Some(10))
+            .heatmap
+            .unwrap();
+        // Seconds without requests have no column.
+        assert_eq!(
+            heatmap.columns.iter().map(|c| c.second).collect::<Vec<_>>(),
+            [2, 4, 9, 10]
+        );
+        // The two newest seconds, from hint - 1, are held back.
+        assert_eq!(heatmap.hold_from, 9);
+        // A request filed one second past the hint extends the window; the
+        // hold still starts at hint - 1.
+        graph.record_requests_per_second("GET /", 11);
+        graph.record_latency("GET /", 11, 20);
+        let heatmap = graph
+            .export_series_window_until(300, Some(10))
+            .heatmap
+            .unwrap();
+        assert_eq!((heatmap.end_second, heatmap.hold_from), (11, 9));
+        // Nothing recorded yet: an empty heatmap, not none.
+        let empty = latency_graph(false)
+            .export_series_window_until(300, None)
+            .heatmap
+            .unwrap();
+        assert!(empty.columns.is_empty());
+    }
+
+    #[test]
+    fn latency_keeps_first_hundred_names() {
+        let mut graph = latency_graph(true);
+        for i in 0..=MAX_REQUEST_SERIES {
+            graph.record_latency(&format!("GET /{i}"), 1, 10);
+        }
+        let latency = histograms(&mut graph);
+        assert_eq!(latency.by_request.len(), MAX_REQUEST_SERIES);
+        assert!(!latency.by_request.contains_key("GET /100"));
+        // The 101st name still counts toward all requests.
+        assert_eq!(
+            latency.all_second(1).map(|d| d.counter),
+            Some(MAX_REQUEST_SERIES + 1)
+        );
+        // No synthetic ring for a name without a measured one.
+        graph.record_synthetic_latency("GET /100", 1, 500);
+        graph.record_synthetic_latency("GET /0", 1, 500);
+        let (all, by_request) = histograms(&mut graph).synthetic.as_ref().unwrap();
+        assert_eq!(all.get(1).map(|d| d.counter), Some(2));
+        assert!(by_request.contains_key("GET /0"));
+        assert!(!by_request.contains_key("GET /100"));
+
+        let keys = graph.latency_series_keys();
+        assert_eq!(keys.len(), MAX_REQUEST_SERIES);
+        assert!(keys.contains("GET /99"));
+        assert!(!keys.contains("GET /100"));
+
+        // A metrics reset empties both maps and every ring, so names are
+        // admitted again.
+        graph.reset_rate_series();
+        let latency = histograms(&mut graph);
+        assert!(latency.by_request.is_empty());
+        assert!(latency.all_second(1).is_none());
+        let (all, by_request) = latency.synthetic.as_ref().unwrap();
+        assert!(by_request.is_empty());
+        assert!(all.get(1).is_none());
+        graph.record_latency("GET /100", 2, 10);
+        assert!(graph.latency_series_keys().contains("GET /100"));
+    }
+
+    /// The heatmap's JSON in the worst case, every bucket in every second of
+    /// the window: what changes in a second, and a 60 second synthetic
+    /// backfill, stay within 200 KB; a whole window, sent once to a client
+    /// with no heatmap, does not, which is why only changes are sent.
+    #[test]
+    fn heatmap_worst_case_sizes() {
+        let mut graph = latency_graph(true);
+        let every_bucket = |count: usize| {
+            let mut data = GooseRequestMetricTimingData::default();
+            for index in 0..FIXED_BUCKETS {
+                data.times.insert(dense_value(index), count);
+            }
+            data.counter = FIXED_BUCKETS * count;
+            data.maximum_time = 60_000;
+            data
+        };
+        let data = every_bucket(12_345);
+        for second in 0..300 {
+            graph.record_requests_per_second_and_latency_batch(
+                "GET /",
+                second,
+                data.counter as u32,
+                Some(&data),
+            );
+        }
+        let size = |heatmap: &Heatmap| serde_json::to_vec(heatmap).unwrap().len();
+        let whole = graph
+            .export_series_window_with_heatmap(300, Some(299), true, None)
+            .heatmap
+            .unwrap();
+        assert_eq!(whole.columns.len(), 300);
+        let cursor = HeatmapCursor {
+            generation: whole.generation,
+            rev: whole.rev,
+        };
+        // The next second: a new column, and late responses to the two
+        // before it.
+        for second in [298, 299, 300] {
+            graph.record_requests_per_second_and_latency_batch(
+                "GET /",
+                second,
+                data.counter as u32,
+                Some(&data),
+            );
+        }
+        let next = graph
+            .export_series_window_with_heatmap(300, Some(300), true, Some(cursor))
+            .heatmap
+            .unwrap();
+        assert_eq!(next.columns.len(), 3);
+        // A 60 second stall backfilled with synthetic times in every bucket.
+        let cursor = HeatmapCursor {
+            generation: next.generation,
+            rev: next.rev,
+        };
+        for second in 241..=300 {
+            for index in 0..FIXED_BUCKETS {
+                graph.record_synthetic_latency("GET /", second, dense_value(index) as u64);
+            }
+        }
+        let backfill = graph
+            .export_series_window_with_heatmap(300, Some(300), true, Some(cursor))
+            .heatmap
+            .unwrap();
+        assert_eq!(backfill.columns.len(), 60);
+        eprintln!(
+            "worst case heatmap JSON: whole window {} bytes, a second's changes {} bytes, a 60 s backfill {} bytes",
+            size(&whole),
+            size(&next),
+            size(&backfill)
+        );
+        assert!(size(&next) <= 200 * 1024);
+        assert!(size(&backfill) <= 200 * 1024);
+        assert!(size(&whole) > 200 * 1024);
+    }
+
+    #[test]
+    fn heatmap_off_exports_none() {
+        let mut graph = GraphData::new();
+        graph.record_requests_per_second("GET /", 1);
+        graph.record_latency("GET /", 1, 10);
+        let window = graph.export_series_window_with_heatmap(300, Some(3), true, None);
+        assert_eq!(window.rps.len(), 4);
+        assert_eq!(window.heatmap, None);
+        assert!(graph.latency_series_keys().is_empty());
+        assert!(graph
+            .export_request_series("GET".into(), "/".into(), 300, Some(3), true, None)
+            .is_none());
+    }
+
+    #[test]
+    fn heatmap_request_series_export() {
+        let mut graph = latency_graph(true);
+        for second in [1, 2] {
+            for _ in 0..3 {
+                graph.record_requests_per_second("GET /a", second);
+                graph.record_latency("GET /a", second, 30);
+            }
+            graph.record_requests_per_second("GET /b", second);
+            graph.record_latency("GET /b", second, 900);
+        }
+        graph.record_synthetic_latency("GET /a", 1, 4000);
+        let series = graph
+            .export_request_series("GET".into(), "/a".into(), 300, Some(5), true, None)
+            .expect("series for /a");
+        assert_eq!(series.method, "GET");
+        assert_eq!(series.name, "/a");
+        let heatmap = &series.heatmap;
+        assert_eq!((heatmap.start_second, heatmap.end_second), (0, 5));
+        assert_eq!(measured_pairs(heatmap, 1), [(30, 3)]);
+        assert_eq!(measured_pairs(heatmap, 2), [(30, 3)]);
+        // 4 s is index 148.
+        assert_eq!(
+            HeatmapColumn::pairs(&heatmap.column(1).unwrap().synthetic),
+            [(148, 1)]
+        );
+        // Not co_active: no synthetic times.
+        let series = graph
+            .export_request_series("GET".into(), "/a".into(), 300, Some(5), false, None)
+            .unwrap();
+        assert!(series
+            .heatmap
+            .columns
+            .iter()
+            .all(|c| c.synthetic.is_empty()));
+        // All requests: both names.
+        let all = graph
+            .export_series_window_until(300, Some(5))
+            .heatmap
+            .unwrap();
+        assert_eq!(all.counts(1), (4, 0));
+        assert!(graph
+            .export_request_series("GET".into(), "/missing".into(), 300, Some(5), true, None)
+            .is_none());
     }
 
     #[test]

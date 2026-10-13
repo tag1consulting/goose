@@ -10,7 +10,7 @@ use super::{
 };
 use chrono::prelude::*;
 use serde::Serialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 /// Maximum per-request rows included in a snapshot table.
 pub(crate) const MAX_REQUEST_ROWS: usize = 100;
@@ -128,6 +128,10 @@ pub(crate) struct RequestRow {
     pub percentile_ms: Percentiles,
     pub status_codes: Vec<(u16, u64)>,
     pub co_adjusted: Option<CoAdjusted>,
+    /// True when the response time heatmap can show this request alone:
+    /// they are kept for the first 100 request names seen since metrics were
+    /// last reset.
+    pub has_series: bool,
 }
 
 /// Metrics for one registered scenario.
@@ -193,6 +197,9 @@ pub(crate) struct SeriesWindow {
     pub fps: Vec<f64>,
     pub users: Vec<u64>,
     pub avg_latency_ms: Vec<f64>,
+    /// Response times of all requests by second, for the dashboard's
+    /// heatmap. Null when percentiles over time are off.
+    pub heatmap: Option<Heatmap>,
 }
 
 impl SeriesWindow {
@@ -204,8 +211,98 @@ impl SeriesWindow {
             fps: Vec::new(),
             users: Vec::new(),
             avg_latency_ms: Vec::new(),
+            heatmap: None,
         }
     }
+}
+
+/// Response times by second over the trailing window, as counts in Goose's response time buckets. Only the columns that changed since the client's last heatmap are sent: apply them to the columns kept from earlier ones. `since` 0 means every column of the window is here; otherwise a client holding `since` of this `generation` applies the columns, and any other client asks again with its own `heatmap_generation` and `heatmap_since`.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub(crate) struct Heatmap {
+    /// Which set of histograms the columns come from. It changes when they
+    /// are cleared (metrics reset, or a new test), so a client starts over.
+    pub generation: u64,
+    /// The newest change these columns include. Send it back as
+    /// `heatmap_since` with `heatmap_generation` to get only later changes.
+    pub rev: u64,
+    /// The `rev` these columns follow on from, or 0 for a whole window.
+    pub since: u64,
+    /// First second of the window, in seconds from the test start. Columns
+    /// before it are dropped.
+    pub start_second: u64,
+    /// Last second of the window.
+    pub end_second: u64,
+    /// Seconds from this one on may still be missing their slowest requests,
+    /// so they are not drawn yet.
+    pub hold_from: u64,
+    /// Each bucket by index, as `[time, lowest, highest]` in milliseconds:
+    /// the rounded response time Goose stores for the bucket, and the range
+    /// of measured times that round to it. A longer table replaces a shorter
+    /// one; entries never change.
+    pub buckets: Vec<[u64; 3]>,
+    /// The columns that changed, oldest first.
+    pub columns: Vec<HeatmapColumn>,
+}
+
+/// One second of the heatmap. Bucket counts are flattened pairs, `[index, count, index, count, ...]`, by ascending index, empty buckets left out.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub(crate) struct HeatmapColumn {
+    /// The second, from the test start.
+    pub second: u64,
+    /// Measured response times.
+    pub measured: Vec<u64>,
+    /// Synthetic times coordinated omission mitigation added to this second.
+    /// Empty unless mitigation is on and has recorded an event.
+    pub synthetic: Vec<u64>,
+}
+
+#[cfg(test)]
+impl Heatmap {
+    /// The column for `second`, if this heatmap has one.
+    pub(crate) fn column(&self, second: u64) -> Option<&HeatmapColumn> {
+        self.columns.iter().find(|column| column.second == second)
+    }
+
+    /// Requests counted in `second`: measured, then synthetic.
+    pub(crate) fn counts(&self, second: u64) -> (u64, u64) {
+        self.column(second).map_or((0, 0), |column| {
+            (
+                HeatmapColumn::total(&column.measured),
+                HeatmapColumn::total(&column.synthetic),
+            )
+        })
+    }
+}
+
+#[cfg(test)]
+impl HeatmapColumn {
+    /// The `(index, count)` pairs of flattened bucket counts.
+    pub(crate) fn pairs(cells: &[u64]) -> Vec<(u64, u64)> {
+        cells.chunks(2).map(|pair| (pair[0], pair[1])).collect()
+    }
+
+    /// The sum of flattened bucket counts.
+    pub(crate) fn total(cells: &[u64]) -> u64 {
+        cells.chunks(2).map(|pair| pair[1]).sum()
+    }
+}
+
+/// What a client holds of a heatmap: its `generation` and `rev`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct HeatmapCursor {
+    pub generation: u64,
+    pub rev: u64,
+}
+
+/// One request's response time heatmap, the body of `GET /api/v1/series`.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub(crate) struct RequestSeries {
+    pub method: String,
+    pub name: String,
+    pub heatmap: Heatmap,
 }
 
 /// Response times including the synthetic times coordinated omission mitigation adds. Present only when mitigation has recorded at least one event.
@@ -279,6 +376,10 @@ pub(crate) struct SnapshotFlags {
     pub requests_truncated: bool,
     pub errors_truncated: bool,
     pub series_seconds: u32,
+    /// True when the dashboard tracks response times by second for its
+    /// heatmap: on with `--dashboard` unless `--no-percentiles-over-time` or
+    /// `--no-metrics`.
+    pub percentiles_over_time: bool,
 }
 
 /// Inputs supplied by the metrics processor / main loop when building a snapshot.
@@ -302,6 +403,11 @@ pub(crate) struct DashboardSnapshotInput<'a> {
     pub no_scenario_metrics: bool,
     /// See [`DashboardSnapshot::save`].
     pub save: SnapshotSave,
+    /// See [`SnapshotFlags::percentiles_over_time`].
+    pub percentiles_over_time: bool,
+    /// Keys (`"METHOD name"`) of the requests that have their own latency
+    /// series; see [`RequestRow::has_series`].
+    pub series_keys: HashSet<&'a str>,
 }
 
 /// Build a compact [`DashboardSnapshot`] from live metrics + series window.
@@ -348,6 +454,7 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
                 requests_truncated: false,
                 errors_truncated: false,
                 series_seconds: input.series_window_secs,
+                percentiles_over_time: false,
             },
             save: input.save,
         };
@@ -375,9 +482,9 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
     // Rank by count first; only materialize full table rows for the top N so
     // high request-name cardinality does not pay percentile/status work ~1 Hz
     // for rows the UI never shows.
-    let mut request_rank: Vec<(&GooseRequestMetricAggregate, usize)> =
+    let mut request_rank: Vec<(&str, &GooseRequestMetricAggregate, usize)> =
         Vec::with_capacity(input.metrics.requests.len());
-    for request in input.metrics.requests.values() {
+    for (key, request) in &input.metrics.requests {
         let total_count = request.success_count + request.fail_count;
         aggregate_total_count += total_count;
         aggregate_fail_count += request.fail_count;
@@ -390,10 +497,10 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
                     .unwrap_or(&request.raw_data),
             );
         }
-        request_rank.push((request, total_count));
+        request_rank.push((key.as_str(), request, total_count));
     }
 
-    request_rank.sort_by(|(a, a_count), (b, b_count)| {
+    request_rank.sort_by(|(_, a, a_count), (_, b, b_count)| {
         b_count
             .cmp(a_count)
             .then_with(|| a.method_label().cmp(b.method_label()))
@@ -403,8 +510,14 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
     request_rank.truncate(MAX_REQUEST_ROWS);
     let request_rows: Vec<RequestRow> = request_rank
         .into_iter()
-        .map(|(request, _)| {
-            request_row_from_aggregate(request, duration, input.no_status_codes, co_active)
+        .map(|(key, request, _)| {
+            request_row_from_aggregate(
+                request,
+                duration,
+                input.no_status_codes,
+                co_active,
+                input.series_keys.contains(key),
+            )
         })
         .collect();
 
@@ -504,6 +617,7 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
             requests_truncated,
             errors_truncated,
             series_seconds: input.series_window_secs,
+            percentiles_over_time: input.percentiles_over_time,
         },
         save: input.save,
     }
@@ -514,6 +628,7 @@ fn request_row_from_aggregate(
     duration: usize,
     no_status_codes: bool,
     co_active: bool,
+    has_series: bool,
 ) -> RequestRow {
     let total_count = request.success_count + request.fail_count;
     let (rps, fps) = per_second_calculations(duration, total_count, request.fail_count);
@@ -559,6 +674,7 @@ fn request_row_from_aggregate(
         } else {
             None
         },
+        has_series,
     }
 }
 
@@ -680,6 +796,8 @@ mod tests {
             no_transaction_metrics: false,
             no_scenario_metrics: false,
             save: SnapshotSave::off("goose-runs"),
+            percentiles_over_time: false,
+            series_keys: HashSet::new(),
         });
         assert_eq!(snap.version, 1);
         assert_eq!(snap.phase, "idle");
@@ -734,6 +852,8 @@ mod tests {
             no_transaction_metrics: false,
             no_scenario_metrics: false,
             save: SnapshotSave::off("goose-runs"),
+            percentiles_over_time: false,
+            series_keys: HashSet::new(),
         });
 
         assert_eq!(snap.requests.len(), MAX_REQUEST_ROWS);
@@ -772,6 +892,8 @@ mod tests {
             no_transaction_metrics: false,
             no_scenario_metrics: false,
             save: SnapshotSave::off("goose-runs"),
+            percentiles_over_time: false,
+            series_keys: HashSet::new(),
         });
         assert!(!snap.aggregate.co_active);
 
@@ -802,6 +924,8 @@ mod tests {
             no_transaction_metrics: false,
             no_scenario_metrics: false,
             save: SnapshotSave::off("goose-runs"),
+            percentiles_over_time: false,
+            series_keys: HashSet::new(),
         });
         assert!(snap.aggregate.co_active);
     }
@@ -822,6 +946,8 @@ mod tests {
             no_transaction_metrics: false,
             no_scenario_metrics: false,
             save: SnapshotSave::off("goose-runs"),
+            percentiles_over_time: false,
+            series_keys: HashSet::new(),
         }
     }
 
@@ -941,6 +1067,8 @@ mod tests {
             no_transaction_metrics: false,
             no_scenario_metrics: false,
             save: SnapshotSave::off("goose-runs"),
+            percentiles_over_time: false,
+            series_keys: HashSet::new(),
         });
 
         assert_eq!(snap.aggregate.total_requests, 15);
@@ -980,6 +1108,7 @@ mod tests {
             fps: vec![0.0, 0.5],
             users: vec![1, 2],
             avg_latency_ms: vec![10.0, 20.0],
+            heatmap: None,
         };
 
         let snap = build_dashboard_snapshot(DashboardSnapshotInput {
@@ -997,6 +1126,8 @@ mod tests {
             no_transaction_metrics: false,
             no_scenario_metrics: false,
             save: SnapshotSave::off("goose-runs"),
+            percentiles_over_time: false,
+            series_keys: HashSet::new(),
         });
 
         assert!(snap.flags.metrics_disabled);
@@ -1096,6 +1227,8 @@ mod tests {
             no_transaction_metrics: false,
             no_scenario_metrics: false,
             save: SnapshotSave::off("goose-runs"),
+            percentiles_over_time: false,
+            series_keys: HashSet::new(),
         }
     }
 
@@ -1266,6 +1399,7 @@ mod tests {
             decls: Vec::new(),
         };
         declarations.visit::<DashboardSnapshot>();
+        declarations.visit::<RequestSeries>();
         // The derive's visiting order is not stable from one build to the
         // next; sort by type name so the file is.
         declarations.decls.sort();

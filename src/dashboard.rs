@@ -18,7 +18,9 @@
 //! request is dequeued. Tests assert multi-client coalescing, not sub-100 ms
 //! latency.
 
-use crate::metrics::dashboard_snapshot::SnapshotSave;
+use crate::metrics::dashboard_snapshot::{
+    Heatmap, HeatmapColumn, HeatmapCursor, RequestSeries, SnapshotSave,
+};
 use crate::metrics::DashboardSnapshot;
 use crate::runs;
 use crate::{ControlOutcome, GooseConfiguration, GooseError, INVALID_USERS_MSG, MAX_CONTROL_USERS};
@@ -33,10 +35,11 @@ use axum::{Json, Router};
 use futures::stream;
 use serde::Deserialize;
 use serde::Serialize;
+use std::collections::{BTreeMap, HashMap};
 use std::convert::Infallible;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::io::AsyncReadExt;
 use tokio::sync::{oneshot, watch, Notify};
@@ -108,6 +111,19 @@ const CONTROL_BODY_LIMIT: usize = 16 * 1024;
 /// enqueueing unbounded flume work.
 const MAX_CONTROL_IN_FLIGHT: usize = 4;
 
+/// Max concurrent `GET /api/v1/series` requests waiting on the main loop.
+/// Counted apart from control requests, so polling a series can never make
+/// Start or Stop answer `busy`.
+const MAX_SERIES_IN_FLIGHT: usize = 4;
+
+/// Longest combined length, in bytes, of the `method` and `name` parameters
+/// of `GET /api/v1/series`.
+const MAX_SERIES_QUERY_LEN: usize = 2048;
+
+/// How long a `GET /api/v1/series` answer is served from the cache, so
+/// several viewers polling one request cost one export a second.
+const SERIES_CACHE_TTL: Duration = Duration::from_secs(1);
+
 /// Result of a successful dashboard server spawn.
 #[derive(Debug)]
 pub(crate) struct DashboardSetup {
@@ -143,8 +159,10 @@ pub(crate) struct DashboardSetup {
 /// Requests from the dashboard HTTP task to the GooseAttack main loop.
 #[derive(Debug)]
 pub(crate) enum DashboardRequest {
-    /// Build and return a compact metrics snapshot.
+    /// Build and return a compact metrics snapshot, with the heatmap's
+    /// columns changed since `heatmap_since` (every column when `None`).
     GetSnapshot {
+        heatmap_since: Option<HeatmapCursor>,
         respond: tokio::sync::oneshot::Sender<DashboardSnapshot>,
     },
     /// Start an idle load test (reply before `reset_run_state`).
@@ -163,6 +181,15 @@ pub(crate) enum DashboardRequest {
     SetUsers {
         users: usize,
         respond: tokio::sync::oneshot::Sender<ControlResult>,
+    },
+    /// One request's heatmap (`GET /api/v1/series`), with the columns
+    /// changed since `since` (every column when `None`); `None` when the
+    /// request has no histograms of its own.
+    GetRequestSeries {
+        method: String,
+        name: String,
+        since: Option<HeatmapCursor>,
+        respond: tokio::sync::oneshot::Sender<Option<RequestSeries>>,
     },
 }
 
@@ -262,11 +289,105 @@ impl ClosedData {
     }
 }
 
+/// Every heatmap column the dashboard has been sent for the window, each
+/// with the `rev` of the export that last changed it, so a client can be sent
+/// only the columns changed since the heatmap it holds.
+struct HeatmapStore {
+    generation: u64,
+    rev: u64,
+    start_second: u64,
+    end_second: u64,
+    hold_from: u64,
+    buckets: Vec<[u64; 3]>,
+    columns: BTreeMap<u64, (u64, HeatmapColumn)>,
+}
+
+impl HeatmapStore {
+    fn new(heatmap: &Heatmap) -> Self {
+        let mut store = HeatmapStore {
+            generation: heatmap.generation,
+            rev: 0,
+            start_second: 0,
+            end_second: 0,
+            hold_from: 0,
+            buckets: Vec::new(),
+            columns: BTreeMap::new(),
+        };
+        store.apply(heatmap);
+        store
+    }
+
+    /// Takes in an export: the columns changed since this store's cursor, or
+    /// a whole window that replaces it.
+    fn apply(&mut self, heatmap: &Heatmap) {
+        if heatmap.since == 0 || heatmap.generation != self.generation {
+            self.columns.clear();
+        }
+        self.generation = heatmap.generation;
+        self.rev = heatmap.rev;
+        self.start_second = heatmap.start_second;
+        self.end_second = heatmap.end_second;
+        self.hold_from = heatmap.hold_from;
+        if heatmap.buckets.len() >= self.buckets.len() {
+            self.buckets = heatmap.buckets.clone();
+        }
+        for column in &heatmap.columns {
+            self.columns
+                .insert(column.second, (heatmap.rev, column.clone()));
+        }
+        self.columns = self.columns.split_off(&heatmap.start_second);
+    }
+
+    fn cursor(&self) -> HeatmapCursor {
+        HeatmapCursor {
+            generation: self.generation,
+            rev: self.rev,
+        }
+    }
+
+    /// The columns a client holding `cursor` lacks: those changed after it,
+    /// or every column when it is not a cursor of this generation.
+    fn since(&self, cursor: Option<HeatmapCursor>) -> Heatmap {
+        let since = match cursor {
+            Some(cursor) if cursor.generation == self.generation && cursor.rev <= self.rev => {
+                cursor.rev
+            }
+            _ => 0,
+        };
+        Heatmap {
+            generation: self.generation,
+            rev: self.rev,
+            since,
+            start_second: self.start_second,
+            end_second: self.end_second,
+            hold_from: self.hold_from,
+            buckets: self.buckets.clone(),
+            columns: self
+                .columns
+                .values()
+                .filter(|(rev, _)| *rev > since)
+                .map(|(_, column)| column.clone())
+                .collect(),
+        }
+    }
+}
+
+/// The latest snapshot without its heatmap, and the heatmap's columns, for
+/// answering a poll with only the columns that client lacks.
+#[derive(Default)]
+struct HubView {
+    snapshot: Option<DashboardSnapshot>,
+    heatmap: Option<HeatmapStore>,
+}
+
 /// Coalescing fan-out for dashboard snapshots.
 ///
 /// One hub task builds at most ~1 snapshot/sec while `active_sse > 0` or a poll
 /// was recent. Idle (no clients, no recent poll) issues **no**
-/// `GetDashboardSnapshot` commands.
+/// `GetDashboardSnapshot` commands. SSE clients all get the same snapshot,
+/// whose heatmap holds the columns changed since the previous build; a client
+/// that missed one, and every poll, asks with its own heatmap cursor and is
+/// answered from [`HubView`].
 #[derive(Clone, Debug)]
 struct SnapshotHub {
     inner: Arc<HubInner>,
@@ -297,6 +418,8 @@ struct HubInner {
     wake: Notify,
     /// When `true`, SSE clients should emit `event: closed` and disconnect.
     shutdown_tx: watch::Sender<bool>,
+    /// The latest snapshot and heatmap columns, for polls.
+    view: Mutex<HubView>,
 }
 
 // Manual Debug — `Notify` is not Debug on all tokio versions.
@@ -348,6 +471,7 @@ impl SnapshotHub {
             snapshot_in_flight: AtomicBool::new(false),
             wake: Notify::new(),
             shutdown_tx,
+            view: Mutex::new(HubView::default()),
         });
         let loop_inner = Arc::clone(&inner);
         tokio::spawn(async move {
@@ -485,6 +609,32 @@ impl SnapshotHub {
         }
     }
 
+    /// The latest snapshot with the heatmap columns a client holding
+    /// `cursor` lacks, as JSON. Waits for a fresh build as
+    /// [`Self::snapshot_bytes`] does.
+    async fn snapshot_bytes_since(
+        &self,
+        cursor: Option<HeatmapCursor>,
+    ) -> Result<Bytes, StatusCode> {
+        let shared = self.snapshot_bytes().await?;
+        let snapshot = {
+            let view = self.inner.view.lock().unwrap_or_else(|e| e.into_inner());
+            let Some(snapshot) = view.snapshot.as_ref() else {
+                return Ok(shared);
+            };
+            let mut snapshot = snapshot.clone();
+            snapshot.series.heatmap = view.heatmap.as_ref().map(|store| store.since(cursor));
+            snapshot
+        };
+        match serde_json::to_vec(&snapshot) {
+            Ok(json) => Ok(Bytes::from(json)),
+            Err(e) => {
+                warn!("[dashboard]: failed to serialize snapshot: {e}");
+                Err(StatusCode::INTERNAL_SERVER_ERROR)
+            }
+        }
+    }
+
     /// Cached snapshot if one was built within [`SNAPSHOT_INTERVAL`].
     fn fresh_latest(&self) -> Option<Bytes> {
         let bytes = self.inner.latest_tx.borrow().clone()?;
@@ -619,9 +769,17 @@ async fn build_once(inner: &Arc<HubInner>) -> BuildOutcome {
 
     let started = Instant::now();
     let (respond_tx, mut respond_rx) = oneshot::channel();
+    let heatmap_since = inner
+        .view
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .heatmap
+        .as_ref()
+        .map(HeatmapStore::cursor);
     if inner
         .request_tx
         .send(DashboardRequest::GetSnapshot {
+            heatmap_since,
             respond: respond_tx,
         })
         .is_err()
@@ -655,6 +813,20 @@ async fn build_once(inner: &Arc<HubInner>) -> BuildOutcome {
             return BuildOutcome::Transient;
         }
     };
+
+    // Keep the heatmap's columns for polls. SSE clients are sent the export as
+    // it came: the columns changed since the previous build.
+    {
+        let mut view = inner.view.lock().unwrap_or_else(|e| e.into_inner());
+        match (snapshot.series.heatmap.as_ref(), view.heatmap.as_mut()) {
+            (Some(heatmap), Some(store)) => store.apply(heatmap),
+            (Some(heatmap), None) => view.heatmap = Some(HeatmapStore::new(heatmap)),
+            (None, _) => view.heatmap = None,
+        }
+        let mut kept = snapshot.clone();
+        kept.series.heatmap = None;
+        view.snapshot = Some(kept);
+    }
 
     let outcome = match serde_json::to_vec(&snapshot) {
         Ok(json) => {
@@ -705,6 +877,11 @@ struct DashboardState {
     control_enabled: bool,
     /// Concurrent control POSTs currently waiting on the main loop.
     control_in_flight: Arc<AtomicUsize>,
+    /// Concurrent `GET /api/v1/series` requests waiting on the main loop.
+    series_in_flight: Arc<AtomicUsize>,
+    /// Recent `GET /api/v1/series` 200 answers by method and name, with when
+    /// each was built.
+    series_cache: Arc<Mutex<SeriesCache>>,
     /// The runs directory as given, or the default: the saved run routes
     /// read it, and only them.
     runs_dir: String,
@@ -714,6 +891,41 @@ struct DashboardState {
 struct TokenQuery {
     token: Option<String>,
 }
+
+/// Query of `GET /api/v1/snapshot`: the token, and the heatmap the client
+/// holds, if any.
+#[derive(Debug, Deserialize)]
+struct SnapshotQuery {
+    token: Option<String>,
+    heatmap_generation: Option<u64>,
+    heatmap_since: Option<u64>,
+}
+
+/// The heatmap a client holds, when it sent both halves of its cursor.
+fn heatmap_cursor(generation: Option<u64>, since: Option<u64>) -> Option<HeatmapCursor> {
+    Some(HeatmapCursor {
+        generation: generation?,
+        rev: since?,
+    })
+}
+
+/// Query of `GET /api/v1/series`. Every field is optional so a missing one
+/// is answered by the handler, as JSON, not by the extractor.
+#[derive(Debug, Deserialize)]
+struct SeriesQuery {
+    method: Option<String>,
+    name: Option<String>,
+    token: Option<String>,
+    heatmap_generation: Option<u64>,
+    heatmap_since: Option<u64>,
+}
+
+/// What a `GET /api/v1/series` answer depends on: method, name and the
+/// heatmap cursor the client sent.
+type SeriesKey = (String, String, Option<(u64, u64)>);
+
+/// Cached `GET /api/v1/series` bodies, by what they depend on.
+type SeriesCache = HashMap<SeriesKey, (Instant, Bytes)>;
 
 /// Liveness plus lightweight operational counters (no load-test metrics).
 ///
@@ -822,6 +1034,8 @@ pub(crate) async fn setup_dashboard(
         auth_token: configuration.dashboard_auth_token.clone(),
         control_enabled,
         control_in_flight: Arc::new(AtomicUsize::new(0)),
+        series_in_flight: Arc::new(AtomicUsize::new(0)),
+        series_cache: Arc::new(Mutex::new(HashMap::new())),
         runs_dir: configuration.runs_dir_or_default().to_string(),
     };
 
@@ -1027,6 +1241,7 @@ fn build_router(state: DashboardState, loopback_bind: bool) -> Router {
         .route("/static/app.css", get(app_css_handler))
         .route("/api/v1/health", get(health_handler))
         .route("/api/v1/snapshot", get(snapshot_handler))
+        .route("/api/v1/series", get(series_handler))
         .route("/api/v1/events", get(events_handler))
         .route("/api/v1/runs", get(runs_handler))
         .route("/api/v1/runs/{id}/{file}", get(run_file_handler));
@@ -1134,17 +1349,130 @@ async fn health_handler(State(state): State<Arc<DashboardState>>) -> impl IntoRe
     })
 }
 
+/// `GET /api/v1/snapshot`: the latest snapshot. Its heatmap holds every
+/// column of the window, or with `heatmap_generation` and `heatmap_since`
+/// only the columns changed since that heatmap.
 async fn snapshot_handler(
     State(state): State<Arc<DashboardState>>,
     headers: HeaderMap,
-    Query(query): Query<TokenQuery>,
+    Query(query): Query<SnapshotQuery>,
 ) -> Result<impl IntoResponse, StatusCode> {
     if !authorize(&state.auth_token, &headers, query.token.as_deref()) {
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let bytes = state.hub.snapshot_bytes().await?;
+    let cursor = heatmap_cursor(query.heatmap_generation, query.heatmap_since);
+    let bytes = state.hub.snapshot_bytes_since(cursor).await?;
     Ok(([(header::CONTENT_TYPE, "application/json")], bytes))
+}
+
+/// A `GET /api/v1/series` error: the status and `{"error":"<code>"}`.
+fn series_error(status: StatusCode, error: &'static str) -> Response<Body> {
+    (status, Json(serde_json::json!({ "error": error }))).into_response()
+}
+
+/// RAII guard that decrements `series_in_flight` on drop.
+struct SeriesInFlightGuard {
+    counter: Arc<AtomicUsize>,
+}
+
+impl Drop for SeriesInFlightGuard {
+    fn drop(&mut self) {
+        self.counter.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+/// Try to reserve a series slot. Returns `None` when at cap.
+fn try_acquire_series_slot(state: &DashboardState) -> Option<SeriesInFlightGuard> {
+    let prev = state.series_in_flight.fetch_add(1, Ordering::AcqRel);
+    if prev >= MAX_SERIES_IN_FLIGHT {
+        state.series_in_flight.fetch_sub(1, Ordering::AcqRel);
+        return None;
+    }
+    Some(SeriesInFlightGuard {
+        counter: Arc::clone(&state.series_in_flight),
+    })
+}
+
+/// A cached series body for this method and name, if built within
+/// [`SERIES_CACHE_TTL`].
+fn cached_series(state: &DashboardState, key: &SeriesKey) -> Option<Bytes> {
+    let cache = state.series_cache.lock().unwrap_or_else(|e| e.into_inner());
+    cache
+        .get(key)
+        .filter(|(built, _)| built.elapsed() < SERIES_CACHE_TTL)
+        .map(|(_, body)| body.clone())
+}
+
+/// Cache a series body, dropping every entry older than [`SERIES_CACHE_TTL`].
+/// Only 200 answers are cached, so it holds at most one entry per request
+/// with a series of its own.
+fn cache_series(state: &DashboardState, key: SeriesKey, body: Bytes) {
+    let mut cache = state.series_cache.lock().unwrap_or_else(|e| e.into_inner());
+    cache.retain(|_, (built, _)| built.elapsed() < SERIES_CACHE_TTL);
+    cache.insert(key, (Instant::now(), body));
+}
+
+/// `GET /api/v1/series?method=&name=`: one request's response time heatmap,
+/// with only the columns changed since `heatmap_generation` and
+/// `heatmap_since` when the client sends the heatmap it holds. 400
+/// `bad_request` without both parameters or when they are too long together,
+/// 404 `not_found` when the request has no histograms of its own (or
+/// percentiles over time are off), 503 `busy`, `timeout` or `unavailable`
+/// when the main loop cannot answer.
+async fn series_handler(
+    State(state): State<Arc<DashboardState>>,
+    headers: HeaderMap,
+    Query(query): Query<SeriesQuery>,
+) -> Response<Body> {
+    if !authorize(&state.auth_token, &headers, query.token.as_deref()) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let (Some(method), Some(name)) = (query.method, query.name) else {
+        return series_error(StatusCode::BAD_REQUEST, "bad_request");
+    };
+    if method.len() + name.len() > MAX_SERIES_QUERY_LEN {
+        return series_error(StatusCode::BAD_REQUEST, "bad_request");
+    }
+    let since = heatmap_cursor(query.heatmap_generation, query.heatmap_since);
+    let key = (
+        method,
+        name,
+        since.map(|cursor| (cursor.generation, cursor.rev)),
+    );
+    if let Some(body) = cached_series(&state, &key) {
+        return ([(header::CONTENT_TYPE, "application/json")], body).into_response();
+    }
+
+    let Some(_slot) = try_acquire_series_slot(&state) else {
+        return series_error(StatusCode::SERVICE_UNAVAILABLE, "busy");
+    };
+    let (respond, respond_rx) = oneshot::channel();
+    let request = DashboardRequest::GetRequestSeries {
+        method: key.0.clone(),
+        name: key.1.clone(),
+        since,
+        respond,
+    };
+    if state.request_tx.send(request).is_err() {
+        return series_error(StatusCode::SERVICE_UNAVAILABLE, "unavailable");
+    }
+    match tokio::time::timeout(CONTROL_TIMEOUT, respond_rx).await {
+        Ok(Ok(Some(series))) => match serde_json::to_vec(&series) {
+            Ok(body) => {
+                let body = Bytes::from(body);
+                cache_series(&state, key, body.clone());
+                ([(header::CONTENT_TYPE, "application/json")], body).into_response()
+            }
+            Err(e) => {
+                error!("[dashboard]: failed to serialize series: {e}");
+                StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            }
+        },
+        Ok(Ok(None)) => series_error(StatusCode::NOT_FOUND, "not_found"),
+        Ok(Err(_)) => series_error(StatusCode::SERVICE_UNAVAILABLE, "unavailable"),
+        Err(_) => series_error(StatusCode::SERVICE_UNAVAILABLE, "timeout"),
+    }
 }
 
 /// SSE stream of coalesced `snapshot` events, with `: ping` heartbeats and a
@@ -1999,6 +2327,7 @@ mod tests {
                 requests_truncated: false,
                 errors_truncated: false,
                 series_seconds: 300,
+                percentiles_over_time: false,
             },
             save: SnapshotSave::off("goose-runs"),
         }
@@ -2013,7 +2342,7 @@ mod tests {
         tokio::spawn(async move {
             while let Ok(msg) = request_rx.recv_async().await {
                 match msg {
-                    DashboardRequest::GetSnapshot { respond } => {
+                    DashboardRequest::GetSnapshot { respond, .. } => {
                         let n = parent_builds.fetch_add(1, Ordering::SeqCst);
                         let _ = respond.send(dummy_snapshot(n));
                     }
@@ -2061,6 +2390,9 @@ mod tests {
                             target_users: Some(users as u64),
                         });
                     }
+                    DashboardRequest::GetRequestSeries { respond, .. } => {
+                        let _ = respond.send(None);
+                    }
                 }
             }
         })
@@ -2077,7 +2409,7 @@ mod tests {
         tokio::spawn(async move {
             while let Ok(msg) = request_rx.recv_async().await {
                 match msg {
-                    DashboardRequest::GetSnapshot { respond } => {
+                    DashboardRequest::GetSnapshot { respond, .. } => {
                         let n = parent_builds.fetch_add(1, Ordering::SeqCst);
                         if n >= drop_from && n < drop_until {
                             drop(respond);
@@ -2091,6 +2423,9 @@ mod tests {
                     | DashboardRequest::Quit { respond }
                     | DashboardRequest::SetUsers { respond, .. } => {
                         let _ = respond.send(ControlResult::internal("unused", "idle", 0));
+                    }
+                    DashboardRequest::GetRequestSeries { respond, .. } => {
+                        let _ = respond.send(None);
                     }
                 }
             }
@@ -2703,7 +3038,7 @@ mod tests {
         let parent = tokio::spawn(async move {
             while let Ok(req) = rx.recv_async().await {
                 match req {
-                    DashboardRequest::GetSnapshot { respond } => {
+                    DashboardRequest::GetSnapshot { respond, .. } => {
                         let n = counter2.fetch_add(1, Ordering::SeqCst);
                         let mut snap = dummy_snapshot(n + 1);
                         snap.active_users = n + 1;
@@ -2728,6 +3063,9 @@ mod tests {
                             }
                             DashboardRequest::SetUsers { respond, .. } => {
                                 let _ = respond.send(ControlResult::internal("users", "idle", 0));
+                            }
+                            DashboardRequest::GetRequestSeries { respond, .. } => {
+                                let _ = respond.send(None);
                             }
                             DashboardRequest::GetSnapshot { .. } => unreachable!(),
                         }
@@ -3144,6 +3482,152 @@ mod tests {
         parent.abort();
     }
 
+    /// A heatmap export with these columns (second, measured count in bucket 3).
+    fn heatmap_export(
+        generation: u64,
+        rev: u64,
+        since: u64,
+        start_second: u64,
+        columns: &[(u64, u64)],
+        buckets: usize,
+    ) -> Heatmap {
+        Heatmap {
+            generation,
+            rev,
+            since,
+            start_second,
+            end_second: start_second + 299,
+            hold_from: start_second + 298,
+            buckets: vec![[0, 0, 0]; buckets],
+            columns: columns
+                .iter()
+                .map(|&(second, count)| HeatmapColumn {
+                    second,
+                    measured: vec![3, count],
+                    synthetic: Vec::new(),
+                })
+                .collect(),
+        }
+    }
+
+    /// `(second, measured count)` of each column of a heatmap.
+    fn column_counts(heatmap: &Heatmap) -> Vec<(u64, u64)> {
+        heatmap
+            .columns
+            .iter()
+            .map(|column| (column.second, column.measured[1]))
+            .collect()
+    }
+
+    #[test]
+    fn heatmap_store_sends_each_client_what_it_lacks() {
+        let cursor = |generation, rev| Some(HeatmapCursor { generation, rev });
+        let mut store = HeatmapStore::new(&heatmap_export(7, 5, 0, 0, &[(1, 10), (2, 4)], 205));
+        // A client with nothing, or a stranger's cursor, gets every column.
+        for held in [None, cursor(6, 5), cursor(7, 6)] {
+            let heatmap = store.since(held);
+            assert_eq!((heatmap.since, heatmap.rev), (0, 5), "{:?}", held);
+            assert_eq!(column_counts(&heatmap), [(1, 10), (2, 4)]);
+        }
+        assert!(store.since(cursor(7, 5)).columns.is_empty());
+
+        // The next build: second 2 grew and second 3 began.
+        store.apply(&heatmap_export(7, 9, 5, 0, &[(2, 6), (3, 1)], 205));
+        assert_eq!(
+            store.cursor(),
+            HeatmapCursor {
+                generation: 7,
+                rev: 9
+            }
+        );
+        let caught_up = store.since(cursor(7, 5));
+        assert_eq!(caught_up.since, 5);
+        assert_eq!(column_counts(&caught_up), [(2, 6), (3, 1)]);
+        // A client that missed builds gets everything changed after its own.
+        assert_eq!(
+            column_counts(&store.since(cursor(7, 2))),
+            [(1, 10), (2, 6), (3, 1)]
+        );
+        assert_eq!(column_counts(&store.since(None)), [(1, 10), (2, 6), (3, 1)]);
+
+        // The window moves on: older columns are dropped. A shorter bucket
+        // table never replaces a longer one.
+        store.apply(&heatmap_export(7, 12, 9, 2, &[(301, 2)], 206));
+        store.apply(&heatmap_export(7, 13, 12, 2, &[], 205));
+        let whole = store.since(None);
+        assert_eq!(column_counts(&whole), [(2, 6), (3, 1), (301, 2)]);
+        assert_eq!(whole.buckets.len(), 206);
+        assert_eq!((whole.start_second, whole.end_second), (2, 301));
+
+        // A new generation (metrics reset, new test) replaces everything.
+        store.apply(&heatmap_export(8, 1, 0, 0, &[(0, 1)], 205));
+        assert_eq!(column_counts(&store.since(cursor(7, 13))), [(0, 1)]);
+        assert_eq!(store.since(cursor(7, 13)).since, 0);
+    }
+
+    /// A fifth series request while four wait on a main loop that never
+    /// answers gets 503 `busy`, and control requests are still admitted.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn series_admission_caps_in_flight() {
+        let (setup, base) = bind_dashboard_with("s3cret", 0, true).await;
+        // Nobody drains the request channel: admitted requests wait in it.
+        let request_rx = setup.request_rx;
+        let client = reqwest::Client::new();
+        let wait_for_queue = |len: usize| {
+            let request_rx = request_rx.clone();
+            async move {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                while request_rx.len() < len && Instant::now() < deadline {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                request_rx.len()
+            }
+        };
+        let mut waiting = Vec::new();
+        for i in 0..MAX_SERIES_IN_FLIGHT {
+            let client = client.clone();
+            let url = format!("{base}/api/v1/series?method=GET&name=/{i}&token=s3cret");
+            waiting.push(tokio::spawn(async move { client.get(url).send().await }));
+        }
+        assert_eq!(
+            wait_for_queue(MAX_SERIES_IN_FLIGHT).await,
+            MAX_SERIES_IN_FLIGHT
+        );
+
+        let resp = client
+            .get(format!(
+                "{base}/api/v1/series?method=GET&name=/{MAX_SERIES_IN_FLIGHT}&token=s3cret"
+            ))
+            .send()
+            .await
+            .expect("fifth series GET");
+        assert_eq!(resp.status(), 503);
+        let body: serde_json::Value = resp.json().await.expect("json");
+        assert_eq!(body, serde_json::json!({ "error": "busy" }));
+        assert_eq!(request_rx.len(), MAX_SERIES_IN_FLIGHT);
+
+        // Series polls never take control slots: Start still reaches the
+        // main loop.
+        let start_client = client.clone();
+        let start_url = format!("{base}/api/v1/control/start");
+        waiting.push(tokio::spawn(async move {
+            start_client
+                .post(start_url)
+                .header(header::AUTHORIZATION, "Bearer s3cret")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body("{}")
+                .send()
+                .await
+        }));
+        assert_eq!(
+            wait_for_queue(MAX_SERIES_IN_FLIGHT + 1).await,
+            MAX_SERIES_IN_FLIGHT + 1
+        );
+        for task in waiting {
+            task.abort();
+        }
+    }
+
     /// Parent that drops control oneshots (simulates main-loop disconnect mid-command).
     fn spawn_control_drop_parent(
         request_rx: flume::Receiver<DashboardRequest>,
@@ -3151,13 +3635,16 @@ mod tests {
         tokio::spawn(async move {
             while let Ok(msg) = request_rx.recv_async().await {
                 match msg {
-                    DashboardRequest::GetSnapshot { respond } => {
+                    DashboardRequest::GetSnapshot { respond, .. } => {
                         let _ = respond.send(dummy_snapshot(0));
                     }
                     DashboardRequest::Start { respond }
                     | DashboardRequest::Stop { respond }
                     | DashboardRequest::Quit { respond }
                     | DashboardRequest::SetUsers { respond, .. } => {
+                        drop(respond);
+                    }
+                    DashboardRequest::GetRequestSeries { respond, .. } => {
                         drop(respond);
                     }
                 }
@@ -3172,7 +3659,7 @@ mod tests {
         tokio::spawn(async move {
             while let Ok(msg) = request_rx.recv_async().await {
                 match msg {
-                    DashboardRequest::GetSnapshot { respond } => {
+                    DashboardRequest::GetSnapshot { respond, .. } => {
                         let _ = respond.send(dummy_snapshot(0));
                     }
                     DashboardRequest::Start { respond } => {
@@ -3187,6 +3674,9 @@ mod tests {
                     DashboardRequest::SetUsers { respond, .. } => {
                         let _ = respond.send(ControlResult::internal("users", "maintain", 1));
                     }
+                    DashboardRequest::GetRequestSeries { respond, .. } => {
+                        let _ = respond.send(None);
+                    }
                 }
             }
         })
@@ -3199,7 +3689,7 @@ mod tests {
         tokio::spawn(async move {
             while let Ok(msg) = request_rx.recv_async().await {
                 match msg {
-                    DashboardRequest::GetSnapshot { respond } => {
+                    DashboardRequest::GetSnapshot { respond, .. } => {
                         let _ = respond.send(dummy_snapshot(0));
                     }
                     // Hold oneshots until task abort / channel drop — do not reply.
@@ -3209,6 +3699,11 @@ mod tests {
                     | DashboardRequest::SetUsers { respond, .. } => {
                         // Keep the oneshot Sender alive so the client hits CONTROL_TIMEOUT
                         // rather than an immediate oneshot-drop 503.
+                        let _hold = respond;
+                        futures::future::pending::<()>().await;
+                        drop(_hold);
+                    }
+                    DashboardRequest::GetRequestSeries { respond, .. } => {
                         let _hold = respond;
                         futures::future::pending::<()>().await;
                         drop(_hold);
