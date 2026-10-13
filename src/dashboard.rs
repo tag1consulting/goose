@@ -4361,4 +4361,57 @@ mod tests {
         assert!(served, "a closed connection must free its slot");
         parent.abort();
     }
+
+    /// Poll `/api/v1/health` until `active_sse_clients` equals `want` or
+    /// `within` elapses; returns the last count read.
+    async fn wait_active_sse(base: &str, want: u64, within: Duration) -> u64 {
+        let client = reqwest::Client::new();
+        let deadline = Instant::now() + within;
+        loop {
+            let health: serde_json::Value = client
+                .get(format!("{base}/api/v1/health"))
+                .send()
+                .await
+                .expect("health")
+                .json()
+                .await
+                .expect("health json");
+            let active = health["active_sse_clients"].as_u64().expect("count");
+            if active == want || Instant::now() >= deadline {
+                return active;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    /// Regression for #696: a client that disconnects frees its SSE slot at
+    /// once, even while no snapshot is published, so browsers reconnecting
+    /// while the main loop is busy cannot fill the cap and lock viewers out.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sse_slot_freed_on_disconnect_without_snapshots() {
+        let cap = 2u32;
+        // Nothing reads `request_rx`, like a main loop busy in a long
+        // `test_start`, so no snapshot is ever published.
+        let (_setup, base) = bind_dashboard_with("", cap, false).await;
+        let client = reqwest::Client::new();
+
+        let mut held = Vec::new();
+        for i in 0..cap {
+            let resp = client
+                .get(format!("{base}/api/v1/events"))
+                .send()
+                .await
+                .expect("connect");
+            assert_eq!(resp.status(), 200, "client {i} should be accepted");
+            held.push(resp);
+        }
+
+        drop(held);
+        // Well inside the 15 s heartbeat, so its write cannot free the slots.
+        assert_eq!(
+            wait_active_sse(&base, 0, Duration::from_secs(2)).await,
+            0,
+            "disconnected clients must free their slots"
+        );
+    }
 }
