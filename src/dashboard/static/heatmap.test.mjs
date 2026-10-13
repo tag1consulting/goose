@@ -249,26 +249,39 @@ function contrast(a, b) {
 const CARD = { light: [1, 1, 1], dark: [0x1a / 255, 0x23 / 255, 0x32 / 255] };
 
 test("one request and the busiest cell, in both themes", () => {
-  assert.equal(countPosition(1, 500), 0);
-  assert.equal(countPosition(500, 500), 1);
-  assert.ok(Math.abs(countPosition(Math.sqrt(500), 500) - 0.5) < 1e-9, "log scale");
-  assert.equal(countPosition(1, 1), 1);
+  assert.equal(countPosition(1, 1, 500), 0);
+  assert.equal(countPosition(500, 1, 500), 1);
+  assert.ok(Math.abs(countPosition(Math.sqrt(500), 1, 500) - 0.5) < 1e-9, "log scale");
+  assert.equal(countPosition(1, 1, 1), 1);
 
-  assert.equal(cellColor(1, 500, false), "hsl(222, 85.0%, 70.0%)");
-  assert.equal(cellColor(500, 500, false), "hsl(222, 80.0%, 20.0%)");
-  assert.equal(cellColor(1, 500, true), "hsl(222, 62.0%, 45.0%)");
-  assert.equal(cellColor(500, 500, true), "hsl(222, 92.0%, 84.0%)");
-  assert.equal(scaleColor(0, false), cellColor(1, 500, false));
+  assert.equal(cellColor(1, 1, 500, false), "hsl(222, 85.0%, 70.0%)");
+  assert.equal(cellColor(500, 1, 500, false), "hsl(222, 80.0%, 20.0%)");
+  assert.equal(cellColor(1, 1, 500, true), "hsl(222, 62.0%, 45.0%)");
+  assert.equal(cellColor(500, 1, 500, true), "hsl(222, 92.0%, 84.0%)");
+  assert.equal(scaleColor(0, false), cellColor(1, 1, 500, false));
 
   // Light: fewer lighter, more darker. Dark: fewer darker, more brighter.
-  const few = (dark) => luminance(hslToRgb(cellColor(1, 500, dark)));
-  const many = (dark) => luminance(hslToRgb(cellColor(500, 500, dark)));
+  const few = (dark) => luminance(hslToRgb(cellColor(1, 1, 500, dark)));
+  const many = (dark) => luminance(hslToRgb(cellColor(500, 1, 500, dark)));
   assert.ok(few(false) > many(false));
   assert.ok(few(true) < many(true));
   // A single request stands out from the card in both themes.
-  assert.ok(contrast(hslToRgb(cellColor(1, 500, false)), CARD.light) >= 2.5);
-  assert.ok(contrast(hslToRgb(cellColor(1, 500, true)), CARD.dark) >= 2.2);
+  assert.ok(contrast(hslToRgb(cellColor(1, 1, 500, false)), CARD.light) >= 2.5);
+  assert.ok(contrast(hslToRgb(cellColor(1, 1, 500, true)), CARD.dark) >= 2.2);
 });
+
+test("the scale runs from the sparsest drawn cell to the busiest, as the legend says", () => {
+  // Cells of 5, 50 and 500: the legend reads 5 at the left end and 500 at
+  // the right, and the colours sit where it says.
+  assert.equal(countPosition(5, 5, 500), 0);
+  assert.equal(countPosition(500, 5, 500), 1);
+  assert.ok(Math.abs(countPosition(50, 5, 500) - 0.5) < 1e-9);
+  assert.equal(cellColor(5, 5, 500, false), scaleColor(0, false));
+  assert.equal(cellColor(500, 5, 500, true), scaleColor(1, true));
+  // Every cell the same: all at the highest.
+  assert.equal(countPosition(7, 7, 7), 1);
+});
+
 
 // --- Tooltips ---------------------------------------------------------------
 

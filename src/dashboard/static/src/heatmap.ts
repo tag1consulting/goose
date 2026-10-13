@@ -263,13 +263,13 @@ const RAMP = {
 };
 
 /**
- * Where `count` sits on the colour scale, from 0 for one request to 1 for
- * `max`, on a logarithmic scale. With every cell at one request, all are the
- * highest.
+ * Where `count` sits on the colour scale, from 0 for `min`, the sparsest
+ * drawn cell, to 1 for `max`, the busiest, on a logarithmic scale. When every
+ * cell holds the same count, all are the highest.
  */
-export function countPosition(count: number, max: number): number {
-  if (max <= 1) return 1;
-  return Math.min(1, Math.max(0, Math.log(count) / Math.log(max)));
+export function countPosition(count: number, min: number, max: number): number {
+  if (max <= min) return 1;
+  return Math.min(1, Math.max(0, Math.log(count / min) / Math.log(max / min)));
 }
 
 /** The colour at position `t` (0 to 1) of the scale, as an `hsl()` string. */
@@ -280,9 +280,12 @@ export function scaleColor(t: number, dark: boolean): string {
   return "hsl(" + HUE + ", " + s.toFixed(1) + "%, " + l.toFixed(1) + "%)";
 }
 
-/** The colour of a cell holding `count` requests when the busiest holds `max`. */
-export function cellColor(count: number, max: number, dark: boolean): string {
-  return scaleColor(countPosition(count, max), dark);
+/**
+ * The colour of a cell holding `count` requests when the sparsest drawn cell
+ * holds `min` and the busiest `max`.
+ */
+export function cellColor(count: number, min: number, max: number, dark: boolean): string {
+  return scaleColor(countPosition(count, min, max), dark);
 }
 
 /** Number formats, as the tables use them (format.ts); passed in so this module needs no other. */
@@ -411,7 +414,8 @@ export function drawHeatmap(
     const x0 = left + cell.column * columnWidth;
     const y0 = top + row.top * height;
     const y1 = top + row.bottom * height;
-    ctx.fillStyle = cellColor(cell.count, view.maxCount, dark);
+    ctx.fillStyle = cellColor(cell.count, view.minCount, view.maxCount, dark);
+
     // At least a pixel each way, so a single request is never lost.
     ctx.fillRect(x0, y0, Math.max(1, columnWidth), Math.max(1, y1 - y0));
     layout.cells.set(cellKey(cell.column, cell.bucket), cell);
