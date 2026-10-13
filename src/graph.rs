@@ -48,12 +48,12 @@ struct KeySeries {
 #[derive(Clone)]
 #[repr(C)]
 struct PendingLatency {
-    /// `None` until the request's ring is first looked up, then the index
-    /// of its ring in [`LatencyHistograms`], or `Some(None)` when it has no
-    /// ring of its own. Caching it here lets a batch merge find the ring
-    /// with the same lookup that counts the request. Reset with the latency
-    /// histograms, by [`GraphData::reset_rate_series`].
-    ring: Option<Option<usize>>,
+    /// The index of the request's ring in [`LatencyHistograms`], or `None`
+    /// when it has no ring of its own, assigned when this is allocated.
+    /// Keeping it here lets a batch merge find the ring with the same lookup
+    /// that counts the request. Reset with the latency histograms, by
+    /// [`GraphData::reset_rate_series`].
+    ring: Option<usize>,
     /// The seconds held: `second` and `second + 1`, once `held`.
     second: usize,
     held: bool,
@@ -67,9 +67,9 @@ struct PendingLatency {
 }
 
 impl PendingLatency {
-    fn new() -> Self {
+    fn new(ring: Option<usize>) -> Self {
         PendingLatency {
-            ring: None,
+            ring,
             second: 0,
             held: false,
             totals: [[0; 4]; 2],
@@ -135,14 +135,6 @@ impl PendingLatency {
             self.totals[at] = [0; 4];
         }
         self.overflow.clear();
-    }
-}
-
-impl KeySeries {
-    /// The request's pending response times, allocated the first time.
-    fn pending_mut(&mut self) -> &mut PendingLatency {
-        self.pending
-            .get_or_insert_with(|| Box::new(PendingLatency::new()))
     }
 }
 
@@ -865,17 +857,18 @@ impl LatencyHistograms {
         Some(self.rings.len() - 1)
     }
 
-    /// The index of `key`'s ring, looked up through `cached` (a
-    /// [`PendingLatency`]'s `ring`) and only by name the first time.
-    fn cached_index(&mut self, key: &str, cached: &mut Option<Option<usize>>) -> Option<usize> {
-        match *cached {
-            Some(index) => index,
-            None => {
-                let index = self.ring_index(key);
-                *cached = Some(index);
-                index
-            }
-        }
+    /// `key`'s pending response times in `entry`, allocated the first time
+    /// the request has a response time to record, which is when its ring is
+    /// assigned: so the first [`MAX_REQUEST_SERIES`] names seen get rings,
+    /// in the order they are seen.
+    fn pending<'a>(&mut self, key: &str, entry: &'a mut KeySeries) -> &'a mut PendingLatency {
+        let ring = match entry.pending {
+            Some(_) => None,
+            None => self.ring_index(key),
+        };
+        entry
+            .pending
+            .get_or_insert_with(|| Box::new(PendingLatency::new(ring)))
     }
 
     /// The ring of the name with ring `index`, or of the names without one.
@@ -893,15 +886,10 @@ impl LatencyHistograms {
         self.ring(index).record(second, time, rev);
     }
 
-    fn record_cached(
-        &mut self,
-        key: &str,
-        cached: &mut Option<Option<usize>>,
-        second: usize,
-        time: u64,
-    ) {
+    /// Record one response time for `key`, whose entry is `entry`.
+    fn record_in(&mut self, key: &str, entry: &mut KeySeries, second: usize, time: u64) {
+        let index = self.pending(key, entry).ring;
         let rev = self.next_rev();
-        let index = self.cached_index(key, cached);
         self.ring(index).record(second, time, rev);
     }
 
@@ -916,22 +904,17 @@ impl LatencyHistograms {
         second: usize,
         data: &GooseRequestMetricTimingData,
     ) {
-        let pending = entry.pending_mut();
-        match self.pending_at(key, pending, second) {
+        let pending = self.pending(key, entry);
+        match self.pending_at(pending, second) {
             Some(at) => pending.add(at, data),
-            None => self.merge_older(key, pending, second, data),
+            None => self.merge_older(pending, second, data),
         }
     }
 
     /// Which of the two seconds `key`'s pending counts hold is `second`,
     /// after moving what they held to its ring when `second` is past both;
     /// `None` when `second` is before them.
-    fn pending_at(
-        &mut self,
-        key: &str,
-        pending: &mut PendingLatency,
-        second: usize,
-    ) -> Option<usize> {
+    fn pending_at(&mut self, pending: &mut PendingLatency, second: usize) -> Option<usize> {
         if !pending.held {
             pending.held = true;
             pending.second = second;
@@ -940,8 +923,7 @@ impl LatencyHistograms {
             return None;
         }
         if second > pending.second + 1 {
-            let index = self.cached_index(key, &mut pending.ring);
-            self.move_pending(index, pending);
+            self.move_pending(pending);
             pending.second = second;
         }
         Some(second - pending.second)
@@ -951,22 +933,20 @@ impl LatencyHistograms {
     /// hold straight into its ring.
     fn merge_older(
         &mut self,
-        key: &str,
-        pending: &mut PendingLatency,
+        pending: &PendingLatency,
         second: usize,
         data: &GooseRequestMetricTimingData,
     ) {
-        let index = self.cached_index(key, &mut pending.ring);
         let rev = self.next_rev();
-        if let Some(histogram) = self.ring(index).slot_mut(second, rev) {
+        if let Some(histogram) = self.ring(pending.ring).slot_mut(second, rev) {
             histogram.merge_timing(data);
         }
     }
 
-    /// Move `pending` to the ring of the name with ring `index`.
-    fn move_pending(&mut self, index: Option<usize>, pending: &mut PendingLatency) {
+    /// Move `pending` to its request's ring.
+    fn move_pending(&mut self, pending: &mut PendingLatency) {
         let rev = &mut self.rev;
-        let ring = match index {
+        let ring = match pending.ring {
             Some(index) => &mut self.rings[index],
             None => &mut self.others,
         };
@@ -1239,7 +1219,7 @@ impl GraphData {
             data.get(second)
         );
         if let (Some(time), Some(histograms)) = (latency, self.latency.as_mut()) {
-            histograms.record_cached(key, &mut data.pending_mut().ring, second, time);
+            histograms.record_in(key, data, second, time);
         }
     }
 
@@ -1280,8 +1260,8 @@ impl GraphData {
         let Some(histograms) = self.latency.as_mut().filter(|_| data.counter > 0) else {
             return whole_run.merge(data);
         };
-        let pending = entry.pending_mut();
-        match histograms.pending_at(key, pending, second) {
+        let pending = histograms.pending(key, entry);
+        match histograms.pending_at(pending, second) {
             Some(at) => {
                 pending.add_totals(at, data);
                 whole_run.merge_also(data, |rounded, count| {
@@ -1289,7 +1269,7 @@ impl GraphData {
                 });
             }
             None => {
-                histograms.merge_older(key, pending, second, data);
+                histograms.merge_older(pending, second, data);
                 whole_run.merge(data);
             }
         }
@@ -1301,10 +1281,9 @@ impl GraphData {
         let Some(histograms) = self.latency.as_mut() else {
             return;
         };
-        for (key, entry) in self.requests_per_second.series.iter_mut() {
+        for entry in self.requests_per_second.series.values_mut() {
             if let Some(pending) = entry.pending.as_deref_mut().filter(|pending| pending.held) {
-                let index = histograms.cached_index(key, &mut pending.ring);
-                histograms.move_pending(index, pending);
+                histograms.move_pending(pending);
             }
         }
     }
@@ -3941,6 +3920,37 @@ mod test {
             full.buckets().collect::<Vec<_>>(),
             vec![(4, 1), (5, COUNT_MAX as usize), (5, 10)]
         );
+    }
+
+    /// The first [`MAX_REQUEST_SERIES`] request names the metrics thread
+    /// sees with a response time get rings, in the order it sees them, even
+    /// when their pending counts first move to a ring in another order
+    /// (#713).
+    #[test]
+    fn rings_go_to_the_first_names_seen() {
+        let mut graph = GraphData::for_metrics_processor(true, false);
+        let mut times = GooseRequestMetricTimingData::new(None);
+        times.record_time(25);
+        let mut whole_run = GooseRequestMetricTimingData::new(None);
+        let names: Vec<String> = (0..150).map(|i| format!("GET /n{i}")).collect();
+        // First sightings in order, all in second 0.
+        for name in &names {
+            graph.record_requests_per_second_merging_latency(name, 0, &times, &mut whole_run);
+        }
+        // Then second 5 in reverse order, which moves each name's pending
+        // counts to its ring, last name first.
+        for name in names.iter().rev() {
+            graph.record_requests_per_second_merging_latency(name, 5, &times, &mut whole_run);
+        }
+        let histograms = graph.latency.as_ref().unwrap();
+        let mut ringed: Vec<&String> = histograms.by_request.keys().collect();
+        ringed.sort_by_key(|name| names.iter().position(|n| n == *name));
+        let first: Vec<&String> = names.iter().take(MAX_REQUEST_SERIES).collect();
+        assert_eq!(ringed, first);
+        // In the order seen.
+        for (i, name) in names.iter().take(MAX_REQUEST_SERIES).enumerate() {
+            assert_eq!(histograms.by_request[name], i, "{}", name);
+        }
     }
 
     /// A request name's entry stays small, and its pending response times
