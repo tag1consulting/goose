@@ -4,7 +4,7 @@
 import { forgetStoredToken, getToken } from "./connection";
 import { optionalElement, requireElement } from "./dom";
 import { formatInt } from "./format";
-import { setBanner } from "./status";
+import { announce, setBanner } from "./status";
 
 type ControlStatusKind = "info" | "ok" | "error";
 
@@ -46,6 +46,7 @@ let inFlight = false;
 let lastSnap: DashboardSnapshot | null = null;
 let lastDisplayTarget: number | null = null;
 let currentPhase = "idle";
+let seenPhase: string | null = null;
 // A cancel is in progress: the server refuses Users until idle.
 let stopping = false;
 let controlTokenMissing = false;
@@ -55,7 +56,15 @@ export function isControlTokenMissing(): boolean {
   return controlTokenMissing;
 }
 
-export function setPhase(phase: string | undefined): void {
+/**
+ * Shows the phase. Only snapshots announce a change: a control response can
+ * run ahead of a snapshot taken just before the command, and announcing both
+ * would flap the phase.
+ */
+export function setPhase(
+  phase: string | undefined,
+  fromSnapshot = true
+): void {
   const p = (phase || "idle").toLowerCase();
   const known: Record<string, boolean> = {
     idle: true,
@@ -65,6 +74,13 @@ export function setPhase(phase: string | undefined): void {
     shutdown: true,
   };
   const cls = known[p] ? p : "idle";
+  // The first phase the page sees is not a change.
+  if (fromSnapshot) {
+    if (seenPhase !== null && seenPhase !== cls) {
+      announce(cls === "idle" ? "Test finished." : "Phase: " + cls + ".");
+    }
+    seenPhase = cls;
+  }
   currentPhase = cls;
   phaseBadge.className = "phase-badge phase-" + cls;
   phaseBadge.textContent = p;
@@ -231,7 +247,7 @@ function handleControlResponse(
           "ok"
         );
         if (data.phase) {
-          setPhase(data.phase);
+          setPhase(data.phase, false);
         }
         // Lock the user controls now rather than at the next snapshot.
         if (data.command === "stop") {
@@ -265,7 +281,7 @@ function handleControlResponse(
       }
       setControlStatus(data.message || "Control rejected", "error");
       if (data.phase) {
-        setPhase(data.phase);
+        setPhase(data.phase, false);
       }
       updateControlEnablement();
       return data;

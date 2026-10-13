@@ -4,7 +4,7 @@
 
 import { shownTime } from "./coadjust";
 import { optionalElement, requireElement } from "./dom";
-import { formatInt, formatRate, textCell } from "./format";
+import { formatInt, formatRate } from "./format";
 
 type SortDir = "asc" | "desc";
 type SortType = "num" | "str";
@@ -40,10 +40,12 @@ interface TableOptions<R> {
   /** The text shown instead of rows when the table is off, or null. */
   disabledText: (flags: SnapshotFlags) => string | null;
   filter?: TableFilter<R>;
+  /** What identifies a row across snapshots, so it keeps its <tr>. */
+  rowKey: (row: R) => string;
 }
 
 interface SortableTable<R> {
-  setRows(rows: R[], flags: SnapshotFlags): void;
+  setRows(rows: R[], flags: SnapshotFlags | null): void;
   /** Wires the sortable headers and the filter input. */
   init(): void;
 }
@@ -79,18 +81,41 @@ function sortableTable<R>(options: TableOptions<R>): SortableTable<R> {
   let rows: R[] = [];
   let flags: SnapshotFlags | null = null;
 
+  // Rows keep their <tr> across snapshots and sorts, so a screen reader
+  // keeps its place: cells are rewritten only when their text changes.
+  let rowsByKey = new Map<string, HTMLTableRowElement>();
+  const emptyTr = document.createElement("tr");
+  const emptyTd = document.createElement("td");
+  emptyTd.colSpan = columns.length;
+  emptyTd.className = "empty";
+  emptyTr.appendChild(emptyTd);
+
+  function show(trs: HTMLTableRowElement[]): void {
+    for (let i = 0; i < trs.length; i++) {
+      if (body.children[i] !== trs[i]) body.insertBefore(trs[i], body.children[i] || null);
+    }
+    while (body.children.length > trs.length) body.removeChild(body.lastChild as Node);
+  }
+
   function emptyRow(text: string): void {
-    const tr = document.createElement("tr");
-    const td = document.createElement("td");
-    td.colSpan = columns.length;
-    td.className = "empty";
-    td.textContent = text;
-    tr.appendChild(td);
-    body.appendChild(tr);
+    if (emptyTd.textContent !== text) emptyTd.textContent = text;
+    rowsByKey = new Map();
+    show([emptyTr]);
+  }
+
+  function fillRow(tr: HTMLTableRowElement, row: R): void {
+    for (let c = 0; c < columns.length; c++) {
+      const column = columns[c];
+      const td = tr.cells[c] || tr.appendChild(document.createElement("td"));
+      const text = column.format(row);
+      if (td.textContent !== text) td.textContent = text;
+      const title = column.title ? column.title(row) : null;
+      if (title === null) td.removeAttribute("title");
+      else if (td.title !== title) td.title = title;
+    }
   }
 
   function render(): void {
-    body.textContent = "";
     const disabled = flags ? options.disabledText(flags) : null;
     if (disabled !== null || rows.length === 0) {
       emptyRow(disabled !== null ? disabled : options.emptyText);
@@ -114,18 +139,18 @@ function sortableTable<R>(options: TableOptions<R>): SortableTable<R> {
       }
     }
 
+    const next = new Map<string, HTMLTableRowElement>();
+    const trs: HTMLTableRowElement[] = [];
     for (let i = 0; i < shown.length; i++) {
       const row = shown[i];
-      const tr = document.createElement("tr");
-      for (let c = 0; c < columns.length; c++) {
-        const column = columns[c];
-        const td = textCell(column.format(row));
-        const title = column.title ? column.title(row) : null;
-        if (title !== null) td.title = title;
-        tr.appendChild(td);
-      }
-      body.appendChild(tr);
+      const key = options.rowKey(row);
+      const tr = rowsByKey.get(key) || document.createElement("tr");
+      fillRow(tr, row);
+      next.set(key, tr);
+      trs.push(tr);
     }
+    rowsByKey = next;
+    show(trs);
   }
 
   function wireSort(): void {
@@ -159,7 +184,7 @@ function sortableTable<R>(options: TableOptions<R>): SortableTable<R> {
   }
 
   return {
-    setRows(next: R[], nextFlags: SnapshotFlags): void {
+    setRows(next: R[], nextFlags: SnapshotFlags | null): void {
       rows = next;
       flags = nextFlags;
       render();
@@ -170,6 +195,37 @@ function sortableTable<R>(options: TableOptions<R>): SortableTable<R> {
         filter.input.addEventListener("input", render);
       }
     },
+  };
+}
+
+/**
+ * A chart's "Show data" table, `name + "-table"` in the collapsed `details`
+ * under the chart: one row per second, built only while the details is open,
+ * and on opening from the latest rows. It is not a live region; a reader
+ * opens it when they want the numbers.
+ */
+export function chartDataTable<R extends { second: number }>(
+  detailsId: string,
+  name: string,
+  columns: Column<R>[]
+): (rows: R[]) => void {
+  const details = requireElement(detailsId, HTMLDetailsElement);
+  const table = sortableTable<R>({
+    tableId: name + "-table",
+    body: requireElement(name + "-rows", HTMLTableSectionElement),
+    columns,
+    sort: { key: "second", type: "num", dir: "asc" },
+    rowKey: (r) => String(r.second),
+    emptyText: "No data yet",
+    disabledText: () => null,
+  });
+  let latest: R[] = [];
+  details.addEventListener("toggle", () => {
+    if (details.open) table.setRows(latest, null);
+  });
+  return (rows) => {
+    latest = rows;
+    if (details.open) table.setRows(rows, null);
   };
 }
 
@@ -334,6 +390,7 @@ const scenariosTable = sortableTable<FlatScenarioRow>({
     { key: "p99", type: "num", format: (r) => timing(r.run_count, formatInt(r.p99)) },
   ],
   sort: { key: "scenario_index", type: "num", dir: "asc" },
+  rowKey: (r) => String(r.scenario_index),
   emptyText: "No scenarios yet",
   disabledText: (flags) => {
     if (flags.metrics_disabled) return "Metrics disabled (--no-metrics).";
@@ -372,6 +429,7 @@ const transactionsTable = sortableTable<FlatTransactionRow>({
     { key: "p99", type: "num", format: (r) => timing(r.run_count, formatInt(r.p99)) },
   ],
   sort: { key: "order", type: "num", dir: "asc" },
+  rowKey: (r) => String(r.order),
   emptyText: "No transactions yet",
   disabledText: (flags) => {
     if (flags.metrics_disabled) return "Metrics disabled (--no-metrics).";
@@ -427,6 +485,7 @@ const requestsTable = sortableTable<FlatRequestRow>({
     },
   ],
   sort: { key: "request_count", type: "num", dir: "desc" },
+  rowKey: (r) => JSON.stringify([r.method, r.name]),
   emptyText: "No requests yet",
   disabledText: (flags) =>
     flags.metrics_disabled
@@ -449,6 +508,7 @@ const errorsTable = sortableTable<ErrorRow>({
     { key: "occurrences", type: "num", format: (r) => formatInt(r.occurrences) },
   ],
   sort: { key: "occurrences", type: "num", dir: "desc" },
+  rowKey: (r) => JSON.stringify([r.method, r.name, r.error]),
   emptyText: "No errors",
   disabledText: () => null,
 });

@@ -405,6 +405,26 @@ body {
   max-height: 220px;
 }
 
+/* A chart's one sentence summary and its "Show data" table. */
+.chart-summary {
+  margin: 0.5rem 0 0;
+  font-size: 0.85rem;
+}
+
+.chart-data {
+  margin-top: 0.35rem;
+  font-size: 0.85rem;
+}
+
+.chart-data summary {
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.chart-data th {
+  cursor: default;
+}
+
 .chart-wide {
   grid-column: 1 / -1;
 }
@@ -717,4 +737,13 @@ footer {
 .run-banner button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }

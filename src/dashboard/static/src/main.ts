@@ -69,6 +69,13 @@ function renderSnapshot(
   modeLabel?: ConnectionMode | string
 ): void {
   const flags = snap.flags;
+  // The connection first: announce() joins this task's messages, so a
+  // recovery reads "Connection restored. Test finished.".
+  if (modeLabel === "live") {
+    setConnection("live");
+  } else if (modeLabel === "poll") {
+    setConnection("poll");
+  }
   setPhase(snap.phase);
   hostsEl.textContent = snap.hosts.length ? snap.hosts.join(", ") : "—";
   durationEl.textContent = formatDuration(snap.duration_secs);
@@ -148,7 +155,7 @@ function renderSnapshot(
   setTableData(snap);
   // The response time card shows the heatmap, or with percentiles over time
   // off the average latency chart, which updateCharts then draws.
-  updateCharts(snap.series, updateHeatmapCard(snap));
+  updateCharts(snap.series, updateHeatmapCard(snap), snap.target_users);
   updateControlFromSnapshot(snap);
 
   // Prefer metrics/auth banners.
@@ -174,12 +181,6 @@ function renderSnapshot(
     clearAuthRequired();
   } else {
     setBanner("");
-  }
-
-  if (modeLabel === "live") {
-    setConnection("live");
-  } else if (modeLabel === "poll") {
-    setConnection("poll");
   }
 }
 
