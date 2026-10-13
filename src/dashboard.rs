@@ -2988,6 +2988,75 @@ mod tests {
         parent.abort();
     }
 
+    #[tokio::test]
+    async fn health_reports_controller_addresses() {
+        // (no_telnet, no_websocket, expected controllers). Hosts and ports are
+        // set as setup_controllers leaves them; an IPv6 host is bracketed.
+        let cases = [
+            (
+                false,
+                false,
+                serde_json::json!({"telnet": "0.0.0.0:5116", "websocket": "[::1]:6117"}),
+            ),
+            (
+                true,
+                false,
+                serde_json::json!({"telnet": null, "websocket": "[::1]:6117"}),
+            ),
+            (
+                true,
+                true,
+                serde_json::json!({"telnet": null, "websocket": null}),
+            ),
+        ];
+        let client = reqwest::Client::new();
+        for (no_telnet, no_websocket, expected) in cases {
+            let config = GooseConfiguration {
+                dashboard: true,
+                dashboard_host: "127.0.0.1".to_string(),
+                dashboard_port: 0,
+                no_telnet,
+                telnet_host: "0.0.0.0".to_string(),
+                telnet_port: 5116,
+                no_websocket,
+                websocket_host: "::1".to_string(),
+                websocket_port: 6117,
+                ..Default::default()
+            };
+            let setup = setup_dashboard(&config)
+                .await
+                .expect("bind")
+                .expect("enabled");
+            let health: serde_json::Value = client
+                .get(format!(
+                    "http://127.0.0.1:{}/api/v1/health",
+                    setup.bound_port
+                ))
+                .send()
+                .await
+                .expect("health")
+                .json()
+                .await
+                .expect("json");
+            assert_eq!(
+                health["controllers"], expected,
+                "no_telnet {}, no_websocket {}",
+                no_telnet, no_websocket
+            );
+            // The fields health had before stay.
+            assert_eq!(health["ok"], true);
+            assert_eq!(health["control_enabled"], false);
+            for field in [
+                "version",
+                "last_build_ms",
+                "build_count",
+                "active_sse_clients",
+            ] {
+                assert!(!health[field].is_null(), "{} missing", field);
+            }
+        }
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn events_require_token_when_configured() {
         let token = "sse-secret";
