@@ -114,6 +114,36 @@ function baseChartOpts(colors: ChartColors): ChartOptions<"line"> {
   };
 }
 
+/**
+ * The RPS chart's two lines. Failures/s is dashed so the lines differ by more
+ * than colour.
+ */
+export function rpsDatasets(
+  colors: ChartColors
+): ChartConfiguration<"line", number[], string>["data"]["datasets"] {
+  return [
+    {
+      label: "RPS",
+      data: [],
+      borderColor: colors.rps,
+      backgroundColor: colors.rps,
+      borderWidth: 1.5,
+      pointRadius: 0,
+      tension: 0.15,
+    },
+    {
+      label: "Failures/s",
+      data: [],
+      borderColor: colors.fps,
+      backgroundColor: colors.fps,
+      borderWidth: 1.5,
+      borderDash: [6, 4],
+      pointRadius: 0,
+      tension: 0.15,
+    },
+  ];
+}
+
 export function ensureCharts(): void {
   const colors = chartColors();
 
@@ -122,26 +152,7 @@ export function ensureCharts(): void {
       type: "line",
       data: {
         labels: [],
-        datasets: [
-          {
-            label: "RPS",
-            data: [],
-            borderColor: colors.rps,
-            backgroundColor: colors.rps,
-            borderWidth: 1.5,
-            pointRadius: 0,
-            tension: 0.15,
-          },
-          {
-            label: "Failures/s",
-            data: [],
-            borderColor: colors.fps,
-            backgroundColor: colors.fps,
-            borderWidth: 1.5,
-            pointRadius: 0,
-            tension: 0.15,
-          },
-        ],
+        datasets: rpsDatasets(colors),
       },
       options: baseChartOpts(colors),
     };
