@@ -144,15 +144,19 @@ pub struct GooseMetricBatch {
     pub(crate) transactions: HashMap<(usize, usize), TransactionBatchEntry>,
     /// Pre-aggregated scenario timing data, keyed by `scenario_index`.
     pub(crate) scenarios: HashMap<usize, ScenarioBatchEntry>,
-    /// When a report file, saved runs or the dashboard keep per second
-    /// graphs: timing data of the requests that started in the second after
+    /// Per-second request graph data (RPS count and average response time),
+    /// keyed by `(request_key, second)`. Populated when per second graphs are
+    /// kept and the heatmap is off; with the heatmap on, the batch's
+    /// [`Self::second`] and [`Self::next_second`] stand for it.
+    pub(crate) graph_request_data: HashMap<(String, usize), RequestGraphBatchData>,
+    /// When the dashboard's heatmap keeps response times by second:
+    /// timing data of the requests that started in the second after
     /// [`Self::second`], keyed like `requests`, which then hold only those
     /// that started in that second. Empty otherwise, so a batch without
-    /// per second graphs is laid out and built as it always was.
+    /// the heatmap is laid out and built as it always was.
     pub(crate) next_second: HashMap<String, GooseRequestMetricTimingData>,
     /// The second, from the start of the test, that the first request in
-    /// `requests` started in (`None` before it), when per second graphs are
-    /// kept. A request from a second other than this one or the next goes
+    /// `requests` started in (`None` before it), when the heatmap is on. A request from a second other than this one or the next goes
     /// in a new batch.
     pub(crate) second: Option<usize>,
     /// Per-second transaction counters for graph data.
@@ -172,12 +176,23 @@ impl GooseMetricBatch {
             individual_requests: Vec::new(),
             transactions: HashMap::new(),
             scenarios: HashMap::new(),
+            graph_request_data: HashMap::new(),
             next_second: HashMap::new(),
             second: None,
             graph_tps: HashMap::new(),
             graph_sps: HashMap::new(),
         }
     }
+}
+
+/// Per-second graph data for a single request endpoint within a batch,
+/// combining RPS count and average response time accumulator.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub(crate) struct RequestGraphBatchData {
+    /// Number of requests in this second.
+    pub(crate) count: u32,
+    /// Sum of response times in this second (for computing weighted average).
+    pub(crate) total_time: f64,
 }
 
 /// Pre-aggregated request timing and status-code data for a single
@@ -3829,6 +3844,21 @@ impl MetricsProcessor {
                             second,
                             data.total_time as f64,
                             data.counter as u32,
+                        );
+                }
+            }
+            // Without the heatmap, the batch counts its requests by second
+            // as it always did.
+            for ((key, second), entry) in &batch.graph_request_data {
+                self.graph_data
+                    .record_requests_per_second_and_latency_batch(key, *second, entry.count, None);
+                if entry.count > 0 {
+                    self.graph_data
+                        .record_average_response_time_per_second_batch(
+                            key,
+                            *second,
+                            entry.total_time,
+                            entry.count,
                         );
                 }
             }
