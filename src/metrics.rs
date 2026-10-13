@@ -5115,6 +5115,46 @@ mod test {
         assert_eq!(&global_response_times, &local_response_times);
     }
 
+    /// The histogram `CROSS_CHECK` in src/dashboard/static/heatmap.test.mjs
+    /// checks the dashboard's per second percentiles against: both use this
+    /// rule, so both must give these answers (#713).
+    #[test]
+    fn response_time_percentile_matches_the_dashboard_heatmap() {
+        let histogram: [(usize, usize); 24] = [
+            (0, 40),
+            (1, 60),
+            (2, 80),
+            (3, 100),
+            (5, 120),
+            (8, 110),
+            (12, 100),
+            (18, 90),
+            (25, 70),
+            (40, 60),
+            (60, 50),
+            (90, 40),
+            (100, 30),
+            (110, 25),
+            (150, 20),
+            (200, 15),
+            (300, 12),
+            (400, 10),
+            (500, 8),
+            (700, 6),
+            (1000, 5),
+            (2000, 3),
+            (5000, 2),
+            (10000, 1),
+        ];
+        let total: usize = histogram.iter().map(|(_, count)| count).sum();
+        assert_eq!(total, 1057);
+        let percentile =
+            |percent| response_time_percentile(histogram.iter().copied(), total, 0, 10000, percent);
+        assert_eq!(percentile(0.5), 12);
+        assert_eq!(percentile(0.95), 200);
+        assert_eq!(percentile(0.99), 700);
+    }
+
     #[test]
     fn max_response_time_percentile() {
         let mut response_times: BTreeMap<usize, usize> = BTreeMap::new();

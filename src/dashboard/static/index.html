@@ -100,7 +100,7 @@
         </div>
       </div>
       <p id="chart-latency-note" class="note" hidden></p>
-      <p id="heatmap-note" class="note">Each column is one second. Color shows how many requests took that long.</p>
+      <p id="heatmap-note" class="note">Each column is one second. Color shows how many requests took that long; the lines are that second's p50, p95 and p99.</p>
       <div id="heatmap-wrap" class="heatmap-wrap">
         <canvas id="chart-heatmap" aria-label="Response times by second, heatmap"></canvas>
         <div id="heatmap-tooltip" class="heatmap-tooltip" role="tooltip" hidden></div>
@@ -110,7 +110,12 @@
         <span id="heatmap-legend-min"></span>
         <span id="heatmap-legend-bar" class="heatmap-legend-bar"></span>
         <span id="heatmap-legend-max"></span>
+        <span>(log scale)</span>
+        <span class="heatmap-key heatmap-key-p50">p50</span>
+        <span class="heatmap-key heatmap-key-p95">p95</span>
+        <span class="heatmap-key heatmap-key-p99">p99</span>
       </div>
+
       <!-- Chart.js sets its canvas to display: block, so the wrapper hides it. -->
       <div id="chart-latency-wrap" hidden>
         <canvas id="chart-latency" aria-label="Average latency chart"></canvas>

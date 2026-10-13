@@ -9,7 +9,7 @@
 /** The card's title, and its note, always shown with the heatmap. */
 export const TITLE = "Response times by second";
 export const NOTE =
-  "Each column is one second. Color shows how many requests took that long.";
+  "Each column is one second. Color shows how many requests took that long; the lines are that second's p50, p95 and p99.";
 /** The note shown under the title while the heatmap shows adjusted times. */
 export const ADJUSTED_NOTE =
   "Adjusted: includes the synthetic times coordinated omission mitigation adds.";
@@ -113,6 +113,14 @@ export interface HeatmapRow {
   bottom: number;
 }
 
+/** A drawn second's p50, p95 and p99, in milliseconds. */
+export interface SecondPercentiles {
+  second: number;
+  p50: number;
+  p95: number;
+  p99: number;
+}
+
 export interface HeatmapTick {
   ms: number;
   label: string;
@@ -133,6 +141,8 @@ export interface HeatmapView {
   ticks: HeatmapTick[];
   /** Requests shown in each drawn second, for the tooltip's share. */
   secondTotals: Map<number, number>;
+  /** Each drawn second's percentiles, by second; none for an empty one. */
+  percentiles: Map<number, SecondPercentiles>;
 }
 
 /** Latency axis ticks, in milliseconds. */
@@ -181,6 +191,7 @@ export function heatmapView(state: HeatmapState | null, adjusted: boolean): Heat
     maxCount: 0,
     ticks: [],
     secondTotals: new Map(),
+    percentiles: new Map(),
   };
   if (state === null) return empty;
   const cells: HeatmapCell[] = [];
@@ -231,6 +242,10 @@ export function heatmapView(state: HeatmapState | null, adjusted: boolean): Heat
     });
   }
   const ticks: HeatmapTick[] = [];
+  // Responses under a millisecond have their own row, below the 1 ms tick.
+  if (rows[0].bucket === 0) {
+    ticks.push({ ms: 0, label: "<1 ms", y: (rows[0].top + rows[0].bottom) / 2 });
+  }
   for (const ms of TICKS_MS) {
     const y = fraction(ms);
     if (y >= 0 && y <= 1) ticks.push({ ms, label: tickLabel(ms), y });
@@ -244,7 +259,90 @@ export function heatmapView(state: HeatmapState | null, adjusted: boolean): Heat
     maxCount,
     ticks,
     secondTotals,
+    percentiles: secondPercentiles(cells, rows),
   };
+}
+
+/**
+ * The response time at `percent` (0 to 1) of `total` requests whose counts
+ * by bucket are `buckets`, as `[time, count]` in ascending bucket order, by
+ * Goose's own rule for its whole run figures (`response_time_percentile` in
+ * src/metrics.rs): the rank is `total * percent` rounded, in single
+ * precision as Rust's `f32`, and the answer the time of the first bucket
+ * whose running count reaches it.
+ */
+export function percentileOf(
+  buckets: Array<[number, number]>,
+  total: number,
+  percent: number
+): number {
+  const rank = Math.round(Math.fround(Math.fround(total) * Math.fround(percent)));
+  let running = 0;
+  for (const [time, count] of buckets) {
+    running += count;
+    if (running >= rank) return time;
+  }
+  return 0;
+}
+
+/**
+ * Each drawn second's p50, p95 and p99 from the same counts its cells show:
+ * with synthetic times in the adjusted view, without them in the measured
+ * one. `cells` are in order of second, then bucket, as heatmapView builds
+ * them; a second with no cells has no entry.
+ */
+export function secondPercentiles(
+  cells: HeatmapCell[],
+  rows: HeatmapRow[]
+): Map<number, SecondPercentiles> {
+  const times = new Map<number, number>();
+  for (const row of rows) times.set(row.bucket, row.time);
+  const bySecond = new Map<number, Array<[number, number]>>();
+  for (const cell of cells) {
+    let buckets = bySecond.get(cell.second);
+    if (buckets === undefined) {
+      buckets = [];
+      bySecond.set(cell.second, buckets);
+    }
+    buckets.push([times.get(cell.bucket) as number, cell.count]);
+  }
+  const result = new Map<number, SecondPercentiles>();
+  for (const [second, buckets] of bySecond) {
+    const total = buckets.reduce((sum, [, count]) => sum + count, 0);
+    result.set(second, {
+      second,
+      p50: percentileOf(buckets, total, 0.5),
+      p95: percentileOf(buckets, total, 0.95),
+      p99: percentileOf(buckets, total, 0.99),
+    });
+  }
+  return result;
+}
+
+/** Steps between second labels: the smallest that fits is used. */
+export const SECOND_STEPS = [1, 2, 5, 10, 15, 30, 60, 120, 300];
+
+/** The step between second labels for a window of `columns` seconds. */
+export function secondStep(columns: number): number {
+  for (const step of SECOND_STEPS) {
+    if (Math.ceil(columns / step) <= 8) return step;
+  }
+  return SECOND_STEPS[SECOND_STEPS.length - 1];
+}
+
+/**
+ * The seconds to label in a window of `columns` seconds from `startSecond`:
+ * every multiple of the step counted from the test start, so the labels stay
+ * on the same seconds as the window slides.
+ */
+export function secondLabels(startSecond: number, columns: number): number[] {
+  const step = secondStep(columns);
+  const labels: number[] = [];
+  const first = Math.ceil(startSecond / step) * step;
+  for (let second = first; second < startSecond + columns; second += step) {
+    labels.push(second);
+  }
+  return labels;
 }
 
 /** A bucket's table entry, or one built past the table's end (1 s apart). */
@@ -258,8 +356,8 @@ function bucketOf(state: HeatmapState, bucket: number): number[] {
 /** One sequential hue, light to dark in the light theme, dark to bright in the dark. */
 const HUE = 222;
 const RAMP = {
-  light: { from: [85, 70], to: [80, 20] },
-  dark: { from: [62, 45], to: [92, 84] },
+  light: { from: [80, 64], to: [85, 22] },
+  dark: { from: [75, 56], to: [100, 94] },
 };
 
 /**
@@ -330,6 +428,17 @@ export function tooltipText(
   }
   text +=
     " (" + formats.pct(cell.count / total) + " of the second's " + formats.int(total) + ")";
+  const percentiles = view.percentiles.get(cell.second);
+  if (percentiles !== undefined) {
+    text +=
+      " p50 / p95 / p99: " +
+      formats.int(percentiles.p50) +
+      " / " +
+      formats.int(percentiles.p95) +
+      " / " +
+      formats.int(percentiles.p99) +
+      " ms";
+  }
   return text;
 }
 
@@ -348,7 +457,17 @@ export interface HeatmapLayout {
   cells: Map<string, HeatmapCell>;
 }
 
-const MARGIN = { left: 52, right: 8, top: 6, bottom: 22 };
+/** The right margin holds the percentile lines' labels. */
+const MARGIN = { left: 52, right: 72, top: 6, bottom: 22 };
+
+/** The percentile lines: which, how wide, dashed or not, in drawing order. */
+const LINES: Array<{ key: "p50" | "p95" | "p99"; width: number; dash: number[] }> = [
+  { key: "p50", width: 1.5, dash: [] },
+  { key: "p99", width: 1.5, dash: [5, 4] },
+  // Last, so it sits on top.
+  { key: "p95", width: 2.5, dash: [] },
+];
+
 
 function cellKey(column: number, bucket: number): string {
   return column + ":" + bucket;
@@ -362,13 +481,13 @@ export function drawHeatmap(
   canvas: HTMLCanvasElement,
   view: HeatmapView,
   dark: boolean,
-  colors: { tick: string; grid: string }
+  colors: { tick: string; grid: string; percentile: string }
 ): HeatmapLayout | null {
   const ctx = canvas.getContext("2d");
   if (!ctx) return null;
   const ratio = window.devicePixelRatio || 1;
   const cssWidth = canvas.clientWidth || 600;
-  const cssHeight = canvas.clientHeight || 220;
+  const cssHeight = canvas.clientHeight || 300;
   canvas.width = Math.round(cssWidth * ratio);
   canvas.height = Math.round(cssHeight * ratio);
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
@@ -379,46 +498,124 @@ export function drawHeatmap(
   const width = Math.max(1, cssWidth - MARGIN.left - MARGIN.right);
   const height = Math.max(1, cssHeight - MARGIN.top - MARGIN.bottom);
   const layout: HeatmapLayout = { view, left, top, width, height, cells: new Map() };
+  const font = getComputedStyle(canvas).fontFamily;
+  const card =
+    getComputedStyle(canvas).getPropertyValue("--card").trim() || (dark ? "#1a2332" : "#ffffff");
 
-  ctx.font = "10px " + getComputedStyle(canvas).fontFamily;
-  ctx.fillStyle = colors.tick;
-  ctx.strokeStyle = colors.grid;
-  ctx.lineWidth = 1;
-
-  // Second labels along the bottom, about eight, as the other charts.
+  // Every edge on a whole pixel from one function, so neighbouring cells
+  // share their edges exactly and no seam shows between them.
   const columns = Math.max(1, view.columns);
   const columnWidth = width / columns;
-  const step = Math.max(1, Math.ceil(columns / 8));
-  ctx.textAlign = "center";
-  ctx.textBaseline = "top";
-  for (let c = 0; c < view.columns; c += step) {
-    ctx.fillText(String(view.startSecond + c), left + (c + 0.5) * columnWidth, top + height + 6);
-  }
-
-  // Latency ticks and grid lines.
-  ctx.textAlign = "right";
-  ctx.textBaseline = "middle";
-  for (const tick of view.ticks) {
-    const y = Math.round(top + tick.y * height) + 0.5;
-    ctx.beginPath();
-    ctx.moveTo(left, y);
-    ctx.lineTo(left + width, y);
-    ctx.stroke();
-    ctx.fillText(tick.label, left - 6, y);
-  }
+  const x = (c: number): number => Math.round(left + c * columnWidth);
+  const y = (f: number): number => Math.round(top + f * height);
 
   const rows = new Map<number, HeatmapRow>();
   for (const row of view.rows) rows.set(row.bucket, row);
   for (const cell of view.cells) {
     const row = rows.get(cell.bucket) as HeatmapRow;
-    const x0 = left + cell.column * columnWidth;
-    const y0 = top + row.top * height;
-    const y1 = top + row.bottom * height;
+    const x0 = x(cell.column);
+    const y0 = y(row.top);
     ctx.fillStyle = cellColor(cell.count, view.minCount, view.maxCount, dark);
-
     // At least a pixel each way, so a single request is never lost.
-    ctx.fillRect(x0, y0, Math.max(1, columnWidth), Math.max(1, y1 - y0));
+    ctx.fillRect(
+      x0,
+      y0,
+      Math.max(1, x(cell.column + 1) - x0),
+      Math.max(1, y(row.bottom) - y0)
+    );
     layout.cells.set(cellKey(cell.column, cell.bucket), cell);
+  }
+
+  // Latency ticks, with grid lines over the cells as a faint overlay.
+  ctx.font = "10px " + font;
+  ctx.fillStyle = colors.tick;
+  ctx.strokeStyle = colors.grid;
+  ctx.lineWidth = 1;
+  ctx.setLineDash([]);
+  ctx.textAlign = "right";
+  ctx.textBaseline = "middle";
+  for (const tick of view.ticks) {
+    const tickY = y(tick.y) + 0.5;
+    // The <1 ms label names a row; it is not a boundary.
+    if (tick.ms > 0) {
+      ctx.beginPath();
+      ctx.moveTo(left, tickY);
+      ctx.lineTo(left + width, tickY);
+      ctx.stroke();
+    }
+    ctx.fillText(tick.label, left - 6, tickY);
+  }
+
+  // Second labels along the bottom, at round seconds from the test start.
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+  for (const second of secondLabels(view.startSecond, view.columns)) {
+    const c = second - view.startSecond;
+    ctx.fillText(String(second), (x(c) + x(c + 1)) / 2, top + height + 6);
+  }
+
+  // Each second's p50, p95 and p99 through the column centres, each value
+  // in the middle of its bucket's row, broken at a second with no requests.
+  const rowsByTime = new Map<number, HeatmapRow>();
+  for (const row of view.rows) rowsByTime.set(row.time, row);
+  const labels: Array<{ key: string; value: number; y: number }> = [];
+  ctx.lineJoin = "round";
+  ctx.lineCap = "butt";
+  for (const line of LINES) {
+    const segments: Array<Array<[number, number]>> = [];
+    let segment: Array<[number, number]> = [];
+    let newest: { value: number; y: number } | null = null;
+    for (let c = 0; c < view.columns; c++) {
+      const percentiles = view.percentiles.get(view.startSecond + c);
+      const row = percentiles && rowsByTime.get(percentiles[line.key]);
+      if (!percentiles || !row) {
+        if (segment.length) segments.push(segment);
+        segment = [];
+        continue;
+      }
+      const pointY = top + ((row.top + row.bottom) / 2) * height;
+      segment.push([(x(c) + x(c + 1)) / 2, pointY]);
+      newest = { value: percentiles[line.key], y: pointY };
+    }
+    if (segment.length) segments.push(segment);
+    // A halo in the card's colour under the stroke keeps it clear of the cells.
+    for (const [stroke, lineWidth, dash] of [
+      [card, line.width + 3, [] as number[]],
+      [colors.percentile, line.width, line.dash],
+    ] as Array<[string, number, number[]]>) {
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = lineWidth;
+      ctx.setLineDash(dash);
+      for (const points of segments) {
+        ctx.beginPath();
+        if (points.length === 1) {
+          // A lone second: a short level line across its column.
+          const half = Math.max(1, columnWidth / 2);
+          ctx.moveTo(points[0][0] - half, points[0][1]);
+          ctx.lineTo(points[0][0] + half, points[0][1]);
+        } else {
+          ctx.moveTo(points[0][0], points[0][1]);
+          for (const [pointX, pointY] of points.slice(1)) ctx.lineTo(pointX, pointY);
+        }
+        ctx.stroke();
+      }
+    }
+    if (newest) labels.push({ key: line.key, value: newest.value, y: newest.y });
+  }
+  ctx.setLineDash([]);
+
+  // Each line labelled at the right edge, beside its newest point, nudged
+  // apart when two would sit closer than 12 pixels.
+  labels.sort((a, b) => a.y - b.y);
+  for (let i = 1; i < labels.length; i++) {
+    if (labels[i].y - labels[i - 1].y < 12) labels[i].y = labels[i - 1].y + 12;
+  }
+  ctx.fillStyle = colors.percentile;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  for (const label of labels) {
+    ctx.font = (label.key === "p95" ? "600 " : "") + "11px " + font;
+    ctx.fillText(label.key + " " + tickLabel(label.value), left + width + 6, label.y);
   }
   return layout;
 }

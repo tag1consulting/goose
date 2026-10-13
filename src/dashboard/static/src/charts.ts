@@ -36,6 +36,8 @@ interface ChartColors {
   latency: string;
   grid: string;
   tick: string;
+  /** The heatmap's percentile lines. */
+  percentile: string;
 }
 
 let chartRps: LineChart | null = null;
@@ -57,10 +59,15 @@ function isDark(): boolean {
   return dark;
 }
 
-/** The theme, and the tick and grid colours the charts use in it. */
-export function chartTheme(): { dark: boolean; tick: string; grid: string } {
+/** The theme, and the tick, grid and percentile line colours the charts use in it. */
+export function chartTheme(): { dark: boolean; tick: string; grid: string; percentile: string } {
   const colors = chartColors();
-  return { dark: isDark(), tick: colors.tick, grid: colors.grid };
+  return {
+    dark: isDark(),
+    tick: colors.tick,
+    grid: colors.grid,
+    percentile: colors.percentile,
+  };
 }
 
 function chartColors(): ChartColors {
@@ -72,7 +79,9 @@ function chartColors(): ChartColors {
     latency: dark ? "#e6b450" : "#9a6700",
     grid: dark ? "rgba(154, 167, 184, 0.2)" : "rgba(91, 107, 124, 0.2)",
     tick: dark ? "#9aa7b8" : "#5b6b7c",
+    percentile: dark ? "#ff8f45" : "#c2410c",
   };
+
 }
 
 function baseChartOpts(colors: ChartColors): ChartOptions<"line"> {

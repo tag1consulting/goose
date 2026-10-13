@@ -17,6 +17,7 @@
   --font: system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif;
   --chart-grid: rgba(154, 167, 184, 0.2);
   --chart-tick: #9aa7b8;
+  --percentile: #ff8f45;
 }
 
 @media (prefers-color-scheme: light) {
@@ -37,6 +38,7 @@
     --phase-shutdown: #b42318;
     --chart-grid: rgba(91, 107, 124, 0.2);
     --chart-tick: #5b6b7c;
+    --percentile: #c2410c;
   }
 }
 
@@ -469,7 +471,7 @@ body {
 
 .chart-card .heatmap-wrap canvas {
   display: block;
-  height: 220px;
+  height: 300px;
 }
 
 .heatmap-tooltip {
@@ -488,6 +490,7 @@ body {
 
 .heatmap-legend {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.4rem;
   margin-top: 0.35rem;
@@ -508,6 +511,30 @@ body {
   height: 0.6rem;
   border-radius: 3px;
 }
+
+/* A short sample of each percentile line's stroke, as the heatmap draws it. */
+.heatmap-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-left: 0.4rem;
+}
+
+.heatmap-key::before {
+  content: "";
+  display: inline-block;
+  width: 1.5rem;
+  border-top: 1.5px solid var(--percentile);
+}
+
+.heatmap-key-p95::before {
+  border-top-width: 2.5px;
+}
+
+.heatmap-key-p99::before {
+  border-top-style: dashed;
+}
+
 
 @media (max-width: 720px) {
   .charts-grid {

@@ -18,7 +18,10 @@ import {
   countPosition,
   heatmapCursor,
   heatmapView,
+  percentileOf,
   scaleColor,
+  secondLabels,
+  secondStep,
   tooltipText,
 } from "./test-build/heatmap.mjs";
 import { IDLE_SNAPSHOT } from "./idle-snapshot.mjs";
@@ -181,8 +184,11 @@ test("the under 1 ms row spans half a millisecond to one; seconds tick in s", ()
   assert.equal(view.rows[0].bucket, 0);
   assert.deepEqual(
     view.ticks.map((t) => t.label),
-    ["1 ms", "2 ms", "5 ms", "10 ms", "20 ms", "50 ms", "100 ms", "200 ms", "500 ms", "1 s", "2 s", "5 s", "10 s", "20 s"]
+    ["<1 ms", "1 ms", "2 ms", "5 ms", "10 ms", "20 ms", "50 ms", "100 ms", "200 ms", "500 ms", "1 s", "2 s", "5 s", "10 s", "20 s"]
   );
+  // The <1 ms label sits in the middle of the bucket 0 row.
+  assert.equal(view.ticks[0].y, (view.rows[0].top + view.rows[0].bottom) / 2);
+  assert.equal(view.ticks[0].ms, 0);
 });
 
 test("held and empty seconds have no cells; adjusted adds synthetic times", () => {
@@ -254,10 +260,10 @@ test("one request and the busiest cell, in both themes", () => {
   assert.ok(Math.abs(countPosition(Math.sqrt(500), 1, 500) - 0.5) < 1e-9, "log scale");
   assert.equal(countPosition(1, 1, 1), 1);
 
-  assert.equal(cellColor(1, 1, 500, false), "hsl(222, 85.0%, 70.0%)");
-  assert.equal(cellColor(500, 1, 500, false), "hsl(222, 80.0%, 20.0%)");
-  assert.equal(cellColor(1, 1, 500, true), "hsl(222, 62.0%, 45.0%)");
-  assert.equal(cellColor(500, 1, 500, true), "hsl(222, 92.0%, 84.0%)");
+  assert.equal(cellColor(1, 1, 500, false), "hsl(222, 80.0%, 64.0%)");
+  assert.equal(cellColor(500, 1, 500, false), "hsl(222, 85.0%, 22.0%)");
+  assert.equal(cellColor(1, 1, 500, true), "hsl(222, 75.0%, 56.0%)");
+  assert.equal(cellColor(500, 1, 500, true), "hsl(222, 100.0%, 94.0%)");
   assert.equal(scaleColor(0, false), cellColor(1, 1, 500, false));
 
   // Light: fewer lighter, more darker. Dark: fewer darker, more brighter.
@@ -265,9 +271,16 @@ test("one request and the busiest cell, in both themes", () => {
   const many = (dark) => luminance(hslToRgb(cellColor(500, 1, 500, dark)));
   assert.ok(few(false) > many(false));
   assert.ok(few(true) < many(true));
-  // A single request stands out from the card in both themes.
-  assert.ok(contrast(hslToRgb(cellColor(1, 1, 500, false)), CARD.light) >= 2.5);
-  assert.ok(contrast(hslToRgb(cellColor(1, 1, 500, true)), CARD.dark) >= 2.2);
+});
+
+test("the ramp's floor stands out from the card, and its ends from each other", () => {
+  for (const dark of [false, true]) {
+    const card = dark ? CARD.dark : CARD.light;
+    const floor = hslToRgb(scaleColor(0, dark));
+    const top = hslToRgb(scaleColor(1, dark));
+    assert.ok(contrast(floor, card) >= 3, "floor against the card, dark " + dark);
+    assert.ok(contrast(floor, top) >= 3, "floor against the top, dark " + dark);
+  }
 });
 
 test("the scale runs from the sparsest drawn cell to the busiest, as the legend says", () => {
@@ -299,24 +312,128 @@ test("tooltips, in every form", () => {
   const cell = (bucket) => view.cells.find((c) => c.bucket === bucket);
   const text = (bucket, v = view, adjusted = false) =>
     tooltipText(v, v.cells.find((c) => c.bucket === bucket), rows.get(bucket), adjusted, FORMATS);
-  assert.equal(text(MS_7), "Second 7: 7 ms, 5 requests (41.67% of the second's 12)");
+  // Every tooltip ends with its second's percentiles.
+  const measured = " p50 / p95 / p99: 7 / 1,000 / 1,000 ms";
+  assert.equal(text(MS_7), "Second 7: 7 ms, 5 requests (41.67% of the second's 12)" + measured);
   assert.equal(
     text(MS_110),
-    "Second 7: 110 ms bucket (105 to 114 ms), 3 requests (25.00% of the second's 12)"
+    "Second 7: 110 ms bucket (105 to 114 ms), 3 requests (25.00% of the second's 12)" + measured
   );
-  assert.equal(text(0), "Second 7: under 1 ms, 2 requests (16.67% of the second's 12)");
+  assert.equal(
+    text(0),
+    "Second 7: under 1 ms, 2 requests (16.67% of the second's 12)" + measured
+  );
   assert.ok(cell(S_1));
 
   const adjusted = heatmapView(state, true);
+  const withSynthetic = " p50 / p95 / p99: 1,000 / 1,000 / 1,000 ms";
   assert.equal(
     text(S_1, adjusted, true),
-    "Second 7: 1,000 ms bucket (950 to 1,499 ms), 1,236 requests, of which 1,234 synthetic (99.20% of the second's 1,246)"
+    "Second 7: 1,000 ms bucket (950 to 1,499 ms), 1,236 requests, of which 1,234 synthetic (99.20% of the second's 1,246)" +
+      withSynthetic
   );
   // No synthetic times in a cell: no synthetic clause.
   assert.equal(
     text(MS_7, adjusted, true),
-    "Second 7: 7 ms, 5 requests (0.40% of the second's 1,246)"
+    "Second 7: 7 ms, 5 requests (0.40% of the second's 1,246)" + withSynthetic
   );
+});
+
+// --- Percentiles by second --------------------------------------------------
+
+test("each second's percentiles, by Goose's own rule", () => {
+  const state = applyHeatmap(
+    null,
+    heatmap({
+      hold_from: 9,
+      columns: [
+        // Most requests under a millisecond: p50 is bucket 0.
+        column(1, [0, 5, MS_7, 1]),
+        // Three requests: p50's rank is round(1.5) = 2, so the second.
+        column(3, [MS_1, 1, MS_7, 1, MS_110, 1]),
+        // One request: every percentile is its bucket.
+        column(4, [MS_110, 1]),
+        // Synthetic times in a slow bucket move the adjusted p99 only.
+        column(5, [MS_7, 99], [S_1, 10]),
+        // Held: not drawn, so no percentiles.
+        column(9, [MS_7, 3]),
+      ],
+    })
+  );
+  const view = heatmapView(state, false);
+  assert.deepEqual(view.percentiles.get(1), { second: 1, p50: 0, p95: 7, p99: 7 });
+  assert.deepEqual(view.percentiles.get(3), { second: 3, p50: 7, p95: 110, p99: 110 });
+  assert.deepEqual(view.percentiles.get(4), { second: 4, p50: 110, p95: 110, p99: 110 });
+  assert.equal(view.percentiles.get(5).p99, 7, "measured");
+  assert.equal(heatmapView(state, true).percentiles.get(5).p99, 1000, "adjusted");
+  assert.equal(heatmapView(state, true).percentiles.get(5).p50, 7);
+  // A second with no requests, and a held one, have no point.
+  assert.equal(view.percentiles.has(2), false);
+  assert.equal(view.percentiles.has(9), false);
+  assert.deepEqual(Array.from(view.percentiles.keys()), [1, 3, 4, 5]);
+});
+
+// The histogram `response_time_percentile_matches_the_dashboard_heatmap` in
+// src/metrics.rs runs through the Rust rule: the two must give one answer.
+const CROSS_CHECK = [
+  [0, 40], [1, 60], [2, 80], [3, 100], [5, 120], [8, 110], [12, 100], [18, 90],
+  [25, 70], [40, 60], [60, 50], [90, 40], [100, 30], [110, 25], [150, 20],
+  [200, 15], [300, 12], [400, 10], [500, 8], [700, 6], [1000, 5], [2000, 3],
+  [5000, 2], [10000, 1],
+];
+
+test("per second percentiles match the Rust rule on a fixed histogram", () => {
+  const total = CROSS_CHECK.reduce((sum, [, count]) => sum + count, 0);
+  assert.equal(total, 1057);
+  assert.equal(CROSS_CHECK.length, 24);
+  assert.equal(percentileOf(CROSS_CHECK, total, 0.5), 12);
+  assert.equal(percentileOf(CROSS_CHECK, total, 0.95), 200);
+  assert.equal(percentileOf(CROSS_CHECK, total, 0.99), 700);
+  // The same counts as a heatmap column give the same answers.
+  const index = new Map(BUCKETS.map(([time], i) => [time, i]));
+  const measured = CROSS_CHECK.flatMap(([time, count]) => [index.get(time), count]);
+  const view = heatmapView(applyHeatmap(null, heatmap({ columns: [column(2, measured)] })), false);
+  assert.deepEqual(view.percentiles.get(2), { second: 2, p50: 12, p95: 200, p99: 700 });
+});
+
+// --- Time ticks -------------------------------------------------------------
+
+test("second labels fall on round seconds from the test start", () => {
+  assert.equal(secondStep(100), 15);
+  assert.equal(secondStep(300), 60);
+  assert.equal(secondStep(8), 1);
+  assert.equal(secondStep(9), 2);
+  assert.deepEqual(secondLabels(37, 100), [45, 60, 75, 90, 105, 120, 135]);
+  // As the window slides, the labels stay on the same seconds.
+  assert.deepEqual(secondLabels(38, 100), [45, 60, 75, 90, 105, 120, 135]);
+  assert.deepEqual(secondLabels(46, 100), [60, 75, 90, 105, 120, 135]);
+  for (const second of secondLabels(1234, 300)) assert.equal(second % 60, 0);
+  assert.ok(secondLabels(1234, 300).length <= 8);
+  assert.deepEqual(secondLabels(0, 8), [0, 1, 2, 3, 4, 5, 6, 7]);
+});
+
+// --- Cost ---------------------------------------------------------------------
+
+test("cost of a view with percentiles (informational)", () => {
+  const columns = [];
+  for (let second = 0; second < 300; second++) {
+    const measured = [];
+    for (let bucket = 0; bucket < 200; bucket++) measured.push(bucket, 1 + ((second * 7 + bucket) % 13));
+    columns.push(column(second, measured));
+  }
+  const state = applyHeatmap(
+    null,
+    heatmap({ start_second: 0, end_second: 299, hold_from: 300, columns })
+  );
+  const times = [];
+  for (let run = 0; run < 50; run++) {
+    const started = process.hrtime.bigint();
+    const view = heatmapView(state, false);
+    times.push(Number(process.hrtime.bigint() - started) / 1e6);
+    assert.equal(view.percentiles.size, 300);
+  }
+  times.sort((a, b) => a - b);
+  console.log("heatmapView with percentiles, 300 columns of 200 buckets: median " + times[25].toFixed(2) + " ms of 50 runs");
 });
 
 // --- The card ---------------------------------------------------------------
@@ -387,7 +504,11 @@ test("the card shows the heatmap, its notes and a select of requests with heatma
   assert.equal(TITLE, "Response times by second");
   assert.equal(el(page, "heatmap-note").hidden, false);
   assert.equal(el(page, "heatmap-note").textContent, NOTE);
-  assert.equal(NOTE, "Each column is one second. Color shows how many requests took that long.");
+  assert.equal(
+    NOTE,
+    "Each column is one second. Color shows how many requests took that long; the lines are that second's p50, p95 and p99."
+  );
+
   assert.equal(el(page, "chart-latency-note").hidden, true);
   assert.equal(el(page, "chart-heatmap").getAttribute("aria-label"), ARIA_LABEL);
   assert.equal(ARIA_LABEL, "Response times by second, heatmap");
