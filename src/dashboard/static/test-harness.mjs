@@ -45,6 +45,8 @@ function fileResponse(status, body, filename) {
 // "reject" makes the snapshot fetch fail as on a network error), and
 // `snapshot` for the snapshot an authorized request gets (default
 // IDLE_SNAPSHOT), or a function of the request URL returning it.
+// `controlDelayMs` (default 0) holds each control answer that long, so a test
+// can act while a request is in flight.
 //
 // Request heatmaps: `GET /api/v1/series` answers `seriesStatus` (default 200)
 // with the `series` body (default: an empty heatmap for the requested name),
@@ -67,6 +69,7 @@ export function stubServer(token, options = {}) {
     seriesStatus = 200,
     series = null,
     seriesDelayMs = 0,
+    controlDelayMs = 0,
   } = options;
   const requests = [];
   function fetch(input, init) {
@@ -108,15 +111,20 @@ export function stubServer(token, options = {}) {
       }
       // Quit leaves idle for decrease on its way out; the others run.
       const command = url.pathname.split("/").pop();
-      return Promise.resolve(
+      const answer =
         controlStatus === 200
           ? jsonResponse(200, {
               ok: true,
               command,
               phase: command === "quit" ? "decrease" : "increase",
             })
-          : jsonResponse(controlStatus, { error: "busy", message: "busy" })
-      );
+          : jsonResponse(controlStatus, { error: "busy", message: "busy" });
+      if (controlDelayMs > 0) {
+        return new Promise((resolve) =>
+          setTimeout(() => resolve(answer), controlDelayMs)
+        );
+      }
+      return Promise.resolve(answer);
     }
     const ok =
       url.searchParams.get("token") === token || bearer === "Bearer " + token;
