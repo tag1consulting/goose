@@ -113,6 +113,7 @@ body {
 
 .phase-badge.phase-increase {
   background: var(--phase-increase);
+  color: #06142b;
 }
 
 .phase-badge.phase-maintain {
@@ -127,11 +128,14 @@ body {
 
 .phase-badge.phase-shutdown {
   background: var(--phase-shutdown);
+  color: #2a0a0c;
 }
 
 @media (prefers-color-scheme: light) {
+  .phase-badge.phase-increase,
   .phase-badge.phase-maintain,
-  .phase-badge.phase-decrease {
+  .phase-badge.phase-decrease,
+  .phase-badge.phase-shutdown {
     color: #fff;
   }
 }
@@ -260,7 +264,7 @@ body {
 .control-label input {
   background: var(--bg);
   color: var(--text);
-  border: 1px solid var(--border);
+  border: 1px solid var(--muted);
   border-radius: 6px;
   padding: 0.3rem 0.45rem;
   font: inherit;
@@ -428,7 +432,7 @@ body {
 .chart-controls select {
   max-width: 22rem;
   padding: 0.2rem 0.4rem;
-  border: 1px solid var(--border);
+  border: 1px solid var(--muted);
   border-radius: 6px;
   background: var(--card);
   color: var(--text);
@@ -454,9 +458,17 @@ body {
   cursor: pointer;
 }
 
+/* Dark text on the dark theme's light accent, as on the increase badge;
+   white text was 3.33:1. */
 .segmented button[aria-pressed="true"] {
   background: var(--accent);
-  color: #fff;
+  color: #06142b;
+}
+
+@media (prefers-color-scheme: light) {
+  .segmented button[aria-pressed="true"] {
+    color: #fff;
+  }
 }
 
 .segmented button:focus-visible {
@@ -512,7 +524,8 @@ body {
   border-radius: 3px;
 }
 
-/* A short sample of each percentile line's stroke, as the heatmap draws it. */
+/* A short sample of each percentile line's stroke, as the heatmap draws it:
+   p50 solid, p95 dashed, p99 dotted, one width. */
 .heatmap-key {
   display: inline-flex;
   align-items: center;
@@ -524,15 +537,15 @@ body {
   content: "";
   display: inline-block;
   width: 1.5rem;
-  border-top: 1.5px solid var(--percentile);
+  border-top: 2px solid var(--percentile);
 }
 
 .heatmap-key-p95::before {
-  border-top-width: 2.5px;
+  border-top-style: dashed;
 }
 
 .heatmap-key-p99::before {
-  border-top-style: dashed;
+  border-top-style: dotted;
 }
 
 
@@ -575,7 +588,7 @@ body {
 .filter-label input {
   background: var(--bg);
   color: var(--text);
-  border: 1px solid var(--border);
+  border: 1px solid var(--muted);
   border-radius: 6px;
   padding: 0.3rem 0.5rem;
   font: inherit;
