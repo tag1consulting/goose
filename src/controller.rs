@@ -1686,3 +1686,188 @@ impl ControllerExecuteCommand<ControllerWebSocketSender> for ControllerState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// What a client line becomes: the typed command written out, or the
+    /// error the client is sent back.
+    fn parse(line: &str) -> Result<String, String> {
+        let command = ControllerCommand::from_str(line.trim())
+            .map_err(|_| "unrecognized command".to_string())?;
+        let value = command.get_value(line.trim()).unwrap_or_default();
+        Ok(match command {
+            ControllerCommand::Host => format!("Host({value:?})"),
+            ControllerCommand::Users => {
+                format!(
+                    "Users({})",
+                    value.parse::<usize>().map_err(|e| e.to_string())?
+                )
+            }
+            ControllerCommand::IncreaseRate | ControllerCommand::DecreaseRate => format!(
+                "{command:?}({:?})",
+                value.parse::<f32>().map_err(|e| e.to_string())?
+            ),
+            ControllerCommand::IncreaseTime
+            | ControllerCommand::DecreaseTime
+            | ControllerCommand::RunTime => {
+                format!("{command:?}({})", util::parse_timespan(&value))
+            }
+            ControllerCommand::TestPlan => format!(
+                "TestPlan({:?})",
+                value.parse::<TestPlan>().map_err(|e| e.to_string())?
+            ),
+            _ => format!("{command:?}"),
+        })
+    }
+
+    /// Every command and alias parses to its typed value, and every bad
+    /// input to the error its client is sent.
+    #[test]
+    fn parse_table() {
+        const UNRECOGNIZED: &str = "unrecognized command";
+        const USERS: &str = "users must be an integer between 1 and 100000";
+        const HOST: &str = "host must be a valid url starting with http:// or https://";
+        const INCREASE_RATE: &str = "increase_rate must be a number above 0";
+        const DECREASE_RATE: &str = "decrease_rate must be a number above 0";
+        const INCREASE_TIME: &str = "increase_time must be a time span such as 1h30m5s";
+        const DECREASE_TIME: &str = "decrease_time must be a time span such as 1h30m5s";
+        const RUN_TIME: &str = "run_time must be a time span such as 1h30m5s";
+        const TEST_PLAN: &str =
+            "test-plan must be users,time steps such as 10,5m;10,1h;0,30s, with 1 to 100000 users in total";
+
+        let ok: &[(&str, &str)] = &[
+            ("help", "Help"),
+            ("?", "Help"),
+            ("HELP", "Help"),
+            ("exit", "Exit"),
+            ("quit", "Exit"),
+            ("q", "Exit"),
+            ("Exit", "Exit"),
+            ("start", "Start"),
+            ("START", "Start"),
+            ("stop", "Stop"),
+            ("shutdown", "Shutdown"),
+            ("config", "Config"),
+            ("configjson", "ConfigJson"),
+            ("config-json", "ConfigJson"),
+            ("metrics", "Metrics"),
+            ("stats", "Metrics"),
+            ("metricsjson", "MetricsJson"),
+            ("metrics-json", "MetricsJson"),
+            ("statsjson", "MetricsJson"),
+            ("stats-json", "MetricsJson"),
+            ("host http://example.com/", "Host(\"http://example.com/\")"),
+            ("hostname https://example.com", "Host(\"https://example.com\")"),
+            ("host_name http://127.0.0.1:8080/", "Host(\"http://127.0.0.1:8080/\")"),
+            ("host-name http://example.com/", "Host(\"http://example.com/\")"),
+            ("HOST HTTP://EXAMPLE.COM/", "Host(\"HTTP://EXAMPLE.COM/\")"),
+            ("users 5", "Users(5)"),
+            ("user 1", "Users(1)"),
+            ("users 100000", "Users(100000)"),
+            ("increaserate 1.25", "IncreaseRate(1.25)"),
+            ("increase_rate .1", "IncreaseRate(0.1)"),
+            ("increase-rate 25", "IncreaseRate(25.0)"),
+            ("decreaserate 0.5", "DecreaseRate(0.5)"),
+            ("decrease_rate 2", "DecreaseRate(2.0)"),
+            ("decrease-rate 0.90", "DecreaseRate(0.9)"),
+            ("increasetime 30s", "IncreaseTime(30)"),
+            ("increase_time 1h2m3s", "IncreaseTime(3723)"),
+            ("increase-time 10", "IncreaseTime(10)"),
+            ("decreasetime 5m", "DecreaseTime(300)"),
+            ("decrease_time 1h", "DecreaseTime(3600)"),
+            ("decrease-time 30", "DecreaseTime(30)"),
+            ("runtime 60", "RunTime(60)"),
+            ("run 1h", "RunTime(3600)"),
+            ("run_time 1h2s", "RunTime(3602)"),
+            ("run-time 10s", "RunTime(10)"),
+            ("runtime 1H2M3S", "RunTime(3723)"),
+            (
+                "testplan 10,5s;10,30s;0,5s",
+                "TestPlan(TestPlan { steps: [(10, 5000), (10, 30000), (0, 5000)], current: 0 })",
+            ),
+            (
+                "test_plan 10,2s;10,30m5s;0,1h2s",
+                "TestPlan(TestPlan { steps: [(10, 2000), (10, 1805000), (0, 3602000)], current: 0 })",
+            ),
+            (
+                "test-plan 100000,1s",
+                "TestPlan(TestPlan { steps: [(100000, 1000)], current: 0 })",
+            ),
+            (
+                "plan 50000,1s;100000,1s",
+                "TestPlan(TestPlan { steps: [(50000, 1000), (100000, 1000)], current: 0 })",
+            ),
+        ];
+        let refused: &[(&str, &str)] = &[
+            ("", UNRECOGNIZED),
+            ("foo", UNRECOGNIZED),
+            ("start now", UNRECOGNIZED),
+            ("users", USERS),
+            ("users 0", USERS),
+            ("users 100001", USERS),
+            ("users 1.1", USERS),
+            ("users -1", USERS),
+            ("users 99999999999999999999", USERS),
+            ("host foobar", HOST),
+            ("host http://$[foo", HOST),
+            ("host ftp://example.com/", HOST),
+            ("increaserate 0", INCREASE_RATE),
+            ("increaserate 0.0", INCREASE_RATE),
+            ("increaserate .", INCREASE_RATE),
+            ("increaserate 1.2.3", INCREASE_RATE),
+            ("increaserate -1", INCREASE_RATE),
+            ("decreaserate 0", DECREASE_RATE),
+            ("decreaserate .", DECREASE_RATE),
+            ("increasetime .1", INCREASE_TIME),
+            ("increasetime 10d", INCREASE_TIME),
+            ("increase-time 2m1h", INCREASE_TIME),
+            ("increasetime 99999999999999999999h", INCREASE_TIME),
+            ("decreasetime 9999999999999999h", DECREASE_TIME),
+            ("runtime 10d", RUN_TIME),
+            ("runtime 99999999999999999999h", RUN_TIME),
+            ("runtime 18446744073709552", RUN_TIME),
+            ("testplan 10", TEST_PLAN),
+            ("testplan 0,1s", TEST_PLAN),
+            ("testplan 0,1s;0,1h", TEST_PLAN),
+            ("testplan 99999999999999999999,1s", TEST_PLAN),
+            ("testplan 10,99999999999999999999h", TEST_PLAN),
+            ("testplan 10,18446744073709552", TEST_PLAN),
+            ("testplan 100001,1s", TEST_PLAN),
+            ("testplan 60000,1s;0,1s;60000,1s", TEST_PLAN),
+            // Only ASCII digits: a regex `\d` also matches other scripts' digits.
+            ("testplan ١,1s", TEST_PLAN),
+            ("testplan 10,١s", TEST_PLAN),
+            ("users ١", USERS),
+            ("increaserate ١", INCREASE_RATE),
+            ("runtime ١h", RUN_TIME),
+            ("users 9999999999999999999999999999", USERS),
+            ("testplan 9999999999999999999999999999,1s", TEST_PLAN),
+        ];
+
+        // Collect every mismatch, so one run shows the whole table.
+        let mut mismatches = Vec::new();
+        let rows = ok
+            .iter()
+            .map(|(line, typed)| (*line, Ok(typed.to_string())))
+            .chain(
+                refused
+                    .iter()
+                    .map(|(line, error)| (*line, Err(error.to_string()))),
+            );
+        for (line, expected) in rows {
+            let got = std::panic::catch_unwind(|| parse(line))
+                .unwrap_or_else(|_| Err("panicked".to_string()));
+            if got != expected {
+                mismatches.push(format!("{line:?}: expected {expected:?}, got {got:?}"));
+            }
+        }
+        // A long line is refused like a short one.
+        let long = format!("users {}", "1".repeat(10_000));
+        if parse(&long) != Err(USERS.to_string()) {
+            mismatches.push(format!("10 KB users line: got {:?}", parse(&long)));
+        }
+        assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+    }
+}

@@ -3443,4 +3443,103 @@ mod test {
         config.configure(&goose_attack.defaults);
         assert!(config.validate().is_err());
     }
+
+    /// A test plan that overflows, or that has no users, is an error on the
+    /// command line instead of a panic or a load test that never starts.
+    #[test]
+    fn test_plan_overflow_and_no_users_refused() {
+        for plan in [
+            "99999999999999999999,1s",
+            "10,99999999999999999999h",
+            "10,9999999999999999h",
+            "10,18446744073709552",
+            "18446744073709551615,1s;0,1s;1,1s",
+            "0,1s",
+            "١,1s",
+            "10,١s",
+            "0,1s;0,1h",
+        ] {
+            assert!(
+                GooseConfiguration::parse_args_default(&["--test-plan", plan]).is_err(),
+                "{}",
+                plan
+            );
+        }
+        // What was accepted is still accepted.
+        for plan in ["10,1s;0,1s", "1,0", "100001,1h", "10, 1h2m3s ;0,30s"] {
+            assert!(
+                GooseConfiguration::parse_args_default(&["--test-plan", plan]).is_ok(),
+                "{}",
+                plan
+            );
+        }
+    }
+
+    /// `set_default(GooseDefault::TestPlan, ..)` returns an error for a plan
+    /// it can't use instead of panicking.
+    #[test]
+    fn set_default_test_plan_refused() {
+        for plan in ["foo", "99999999999999999999,1s", "0,1s"] {
+            let result = GooseAttack::initialize_with_config(GooseConfiguration::default())
+                .unwrap()
+                .set_default(GooseDefault::TestPlan, plan);
+            assert!(result.is_err(), "{}", plan);
+        }
+    }
+
+    /// A time span too large on the command line, or as a default, stops the
+    /// load test with an error before it starts instead of panicking.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn time_span_overflow_refused() {
+        use crate::goose::{Scenario, Transaction};
+
+        async fn noop(_user: &mut crate::goose::GooseUser) -> crate::goose::TransactionResult {
+            Ok(())
+        }
+        let base = [
+            "--users",
+            "1",
+            "--no-telnet",
+            "--no-websocket",
+            "--no-save",
+            "--quiet",
+            "--host",
+            "http://127.0.0.1",
+        ];
+        let scenario =
+            || crate::scenario!("Overflow").register_transaction(crate::transaction!(noop));
+        for option in ["--run-time", "--increase-time", "--decrease-time"] {
+            for value in [
+                "99999999999999999999h",
+                "9999999999999999h",
+                "18446744073709552",
+            ] {
+                let mut args = base.to_vec();
+                args.extend([option, value]);
+                let configuration = GooseConfiguration::parse_args_default(&args).unwrap();
+                let result = GooseAttack::initialize_with_config(configuration)
+                    .unwrap()
+                    .register_scenario(scenario())
+                    .execute()
+                    .await;
+                assert!(result.is_err(), "{} {}", option, value);
+            }
+        }
+        for (name, key) in [
+            ("run time", GooseDefault::RunTime),
+            ("increase time", GooseDefault::IncreaseTime),
+            ("decrease time", GooseDefault::DecreaseTime),
+        ] {
+            let configuration = GooseConfiguration::parse_args_default(&base).unwrap();
+            let result = GooseAttack::initialize_with_config(configuration)
+                .unwrap()
+                .register_scenario(scenario())
+                .set_default(key, usize::MAX)
+                .unwrap()
+                .execute()
+                .await;
+            assert!(result.is_err(), "{}", name);
+        }
+    }
 }

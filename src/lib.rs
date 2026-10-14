@@ -3705,6 +3705,360 @@ mod tests {
         assert_eq!(goose_attack.configuration.users, None);
     }
 
+    /// Run `test` on a thread and runtime of its own and fail if it does not
+    /// finish within 20 seconds, so a dispatcher that never returns fails the
+    /// test instead of hanging the suite. A hung test leaves its thread
+    /// spinning until the test binary exits, which is why the tests that use
+    /// this register no scenario: weighting users then allocates nothing.
+    fn finishes<F, Fut>(test: F)
+    where
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = ()>,
+    {
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(test());
+            let _ = done_tx.send(());
+        });
+        match done_rx.recv_timeout(Duration::from_secs(20)) {
+            Ok(()) => handle.join().unwrap(),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                if let Err(panic) = handle.join() {
+                    std::panic::resume_unwind(panic);
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                panic!("the control dispatcher did not return within 20 seconds")
+            }
+        }
+    }
+
+    /// An idle load test with no scenario, built from `args`.
+    async fn idle_attack(args: &[&str]) -> (GooseAttack, GooseAttackRunState) {
+        let mut all = vec!["--no-telnet", "--no-websocket", "--no-save", "--quiet"];
+        all.extend_from_slice(args);
+        let configuration = GooseConfiguration::parse_args_default(&all).unwrap();
+        let mut goose_attack = GooseAttack::initialize_with_config(configuration).unwrap();
+        let run_state = goose_attack.initialize_attack().await.unwrap();
+        (goose_attack, run_state)
+    }
+
+    /// Send `line` to the parent as a telnet or WebSocket client does, and
+    /// return whether it was accepted. A line the client refuses never
+    /// reaches the parent and counts as refused.
+    async fn control(
+        goose_attack: &mut GooseAttack,
+        run_state: &mut GooseAttackRunState,
+        line: &str,
+    ) -> bool {
+        use crate::controller::{
+            ControllerCommand, ControllerRequestMessage, ControllerResponseMessage,
+        };
+
+        let Ok(command) = line.parse::<ControllerCommand>() else {
+            return false;
+        };
+        let value = line.split_once(' ').map(|(_, value)| value.to_string());
+        let (controller_tx, controller_rx) = flume::unbounded();
+        run_state.controller_channel_rx = Some(controller_rx);
+        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+        controller_tx
+            .send(ControllerRequest {
+                response_channel: Some(response_tx),
+                client_id: 0,
+                request: ControllerRequestMessage { command, value },
+            })
+            .unwrap();
+        goose_attack
+            .handle_controller_requests(run_state)
+            .await
+            .unwrap();
+        match response_rx.await.expect("the parent must reply").response {
+            ControllerResponseMessage::Bool(ok) => ok,
+            _ => true,
+        }
+    }
+
+    /// Gap 1: a test plan with no users is refused, idle or running, as
+    /// weighting zero users never ends.
+    #[test]
+    #[serial_test::serial]
+    fn test_control_test_plan_without_users_refused() {
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) = idle_attack(&[]).await;
+            for line in ["testplan 0,1s", "test-plan 0,1s;0,1h"] {
+                assert!(
+                    !control(&mut goose_attack, &mut run_state, line).await,
+                    "{}",
+                    line
+                );
+                assert!(goose_attack.configuration.test_plan.is_none(), "{}", line);
+            }
+            goose_attack.set_attack_phase(&mut run_state, AttackPhase::Maintain);
+            assert!(!control(&mut goose_attack, &mut run_state, "testplan 0,1s").await);
+            assert!(goose_attack.test_plan.steps.is_empty());
+        });
+    }
+
+    /// Gaps 2 and 3: users or time spans too large for a `usize`, or a step
+    /// too long in milliseconds, are refused instead of panicking the parent.
+    #[test]
+    #[serial_test::serial]
+    fn test_control_overflow_refused() {
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) = idle_attack(&[]).await;
+            let configuration = format!("{:?}", goose_attack.configuration);
+            for line in [
+                "testplan 99999999999999999999,1s",
+                "testplan 10,99999999999999999999h",
+                "testplan 10,9999999999999999h",
+                "testplan 10,18446744073709552",
+                "testplan 18446744073709551615,1s;0,1s;1,1s",
+                "increasetime 99999999999999999999h",
+                "increasetime 18446744073709552",
+                "decreasetime 9999999999999999h",
+                // Digits of other scripts, and a users count no integer holds.
+                "testplan ١,1s",
+                "users ١",
+                "runtime ١h",
+                "users 9999999999999999999999999999",
+                "testplan 9999999999999999999999999999,1s",
+            ] {
+                assert!(
+                    !control(&mut goose_attack, &mut run_state, line).await,
+                    "{}",
+                    line
+                );
+                assert_eq!(
+                    format!("{:?}", goose_attack.configuration),
+                    configuration,
+                    "{}",
+                    line
+                );
+            }
+        });
+    }
+
+    /// Gap 4: a run time too large is refused when it is set, instead of
+    /// panicking the next Start.
+    #[test]
+    #[serial_test::serial]
+    fn test_control_run_time_overflow_refused() {
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) = idle_attack(&[]).await;
+            let run_time = goose_attack.configuration.run_time.clone();
+            for line in ["runtime 99999999999999999999h", "run 18446744073709552"] {
+                assert!(
+                    !control(&mut goose_attack, &mut run_state, line).await,
+                    "{}",
+                    line
+                );
+                assert_eq!(goose_attack.configuration.run_time, run_time, "{}", line);
+            }
+        });
+    }
+
+    /// Gap 5: a rate must be a number above 0, as on the command line.
+    #[test]
+    #[serial_test::serial]
+    fn test_control_rate_zero_refused() {
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) = idle_attack(&[]).await;
+            for line in [
+                "increaserate 0",
+                "increaserate 0.0",
+                "increaserate 00",
+                "increaserate .",
+                "decreaserate 0",
+                "decreaserate .",
+            ] {
+                assert!(
+                    !control(&mut goose_attack, &mut run_state, line).await,
+                    "{}",
+                    line
+                );
+                assert_eq!(goose_attack.configuration.increase_rate, None, "{}", line);
+                assert_eq!(goose_attack.configuration.decrease_rate, None, "{}", line);
+            }
+            assert!(control(&mut goose_attack, &mut run_state, "increaserate .5").await);
+        });
+    }
+
+    /// Gap 6: a test plan goes through the users bound and the stopping
+    /// check that `users` does, and is refused in Shutdown.
+    #[test]
+    #[serial_test::serial]
+    fn test_control_test_plan_users_bound_and_stopping() {
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) = idle_attack(&[]).await;
+            // More than 100000 users in total, in one step or over several.
+            for line in ["testplan 100001,1s", "testplan 60000,1s;0,1s;60000,1s"] {
+                assert!(
+                    !control(&mut goose_attack, &mut run_state, line).await,
+                    "{}",
+                    line
+                );
+                assert!(goose_attack.configuration.test_plan.is_none(), "{}", line);
+            }
+            assert!(
+                control(
+                    &mut goose_attack,
+                    &mut run_state,
+                    "testplan 50000,1s;100000,1s"
+                )
+                .await
+            );
+
+            // Shutdown refuses instead of reaching `unreachable!`.
+            goose_attack.set_attack_phase(&mut run_state, AttackPhase::Shutdown);
+            assert!(!control(&mut goose_attack, &mut run_state, "testplan 10,1s").await);
+
+            // A cancel keeps its ramp to zero.
+            goose_attack.set_attack_phase(&mut run_state, AttackPhase::Idle);
+            goose_attack.test_plan = TestPlan {
+                steps: vec![(10, 0), (0, 10_000)],
+                current: 0,
+            };
+            run_state.active_users = 10;
+            goose_attack.advance_test_plan(&mut run_state);
+            goose_attack.cancel_attack(&mut run_state).await.unwrap();
+            assert!(run_state.stopping);
+            assert!(!control(&mut goose_attack, &mut run_state, "testplan 10,1s").await);
+            assert_eq!(goose_attack.test_plan.steps.last(), Some(&(0, 0)));
+        });
+    }
+
+    /// Gap 7: run time is only read at Start, so it is refused unless idle,
+    /// as increase and decrease time and host are.
+    #[test]
+    #[serial_test::serial]
+    fn test_control_run_time_refused_unless_idle() {
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) = idle_attack(&[]).await;
+            goose_attack.set_attack_phase(&mut run_state, AttackPhase::Maintain);
+            let configuration = format!("{:?}", goose_attack.configuration);
+            for line in [
+                "runtime 10",
+                "increasetime 10",
+                "decreasetime 10",
+                "host http://127.0.0.1/",
+            ] {
+                assert!(
+                    !control(&mut goose_attack, &mut run_state, line).await,
+                    "{}",
+                    line
+                );
+                assert_eq!(
+                    format!("{:?}", goose_attack.configuration),
+                    configuration,
+                    "{}",
+                    line
+                );
+            }
+            goose_attack.set_attack_phase(&mut run_state, AttackPhase::Idle);
+            assert!(control(&mut goose_attack, &mut run_state, "runtime 10").await);
+            assert_eq!(goose_attack.configuration.run_time, "10");
+        });
+    }
+
+    /// Gap 8: a controller `shutdown` from Idle shuts down as Ctrl-C and
+    /// dashboard Quit do there, with a plan that has nothing left to run, and
+    /// does not hold the main loop.
+    #[test]
+    #[serial_test::serial]
+    fn test_control_shutdown_from_idle() {
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) =
+                idle_attack(&["--no-autostart", "--test-plan", "10,1s"]).await;
+            goose_attack.test_plan = TestPlan::build(&goose_attack.configuration);
+            let started = std::time::Instant::now();
+            assert!(control(&mut goose_attack, &mut run_state, "shutdown").await);
+            assert!(
+                started.elapsed() < Duration::from_millis(250),
+                "shutdown held the main loop for {:?}",
+                started.elapsed()
+            );
+            assert_eq!(goose_attack.attack_phase, AttackPhase::Decrease);
+            assert!(run_state.stopping);
+            assert!(run_state.shutdown_after_stop);
+            assert_eq!(goose_attack.test_plan.steps, vec![(0, 0)]);
+            assert_eq!(goose_attack.test_plan.current, 0);
+        });
+    }
+
+    /// Gap 10: on a `--test-plan` launch, a run time or rate clears the test
+    /// plan and leaves no users, and Start then answers instead of weighting
+    /// zero users forever.
+    #[test]
+    #[serial_test::serial]
+    fn test_control_start_after_test_plan_cleared_answers() {
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) =
+                idle_attack(&["--no-autostart", "--test-plan", "2,1s"]).await;
+            for line in ["runtime 10", "increaserate 2"] {
+                assert!(
+                    control(&mut goose_attack, &mut run_state, line).await,
+                    "{}",
+                    line
+                );
+                assert!(
+                    !control(&mut goose_attack, &mut run_state, "start").await,
+                    "{}",
+                    line
+                );
+                assert_eq!(goose_attack.attack_phase, AttackPhase::Idle, "{}", line);
+            }
+        });
+    }
+
+    /// The parent answers every queued controller request in one tick, up
+    /// to a batch, and skips a request whose client has gone.
+    #[test]
+    #[serial_test::serial]
+    fn test_control_drains_batch_and_skips_gone_clients() {
+        use crate::controller::{
+            ControllerCommand, ControllerRequestMessage, ControllerResponseMessage,
+        };
+
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) = idle_attack(&[]).await;
+            let (controller_tx, controller_rx) = flume::unbounded();
+            run_state.controller_channel_rx = Some(controller_rx);
+            let mut replies = Vec::new();
+            for (users, gone) in [("6", false), ("7", false), ("5", true)] {
+                let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+                controller_tx
+                    .send(ControllerRequest {
+                        response_channel: Some(response_tx),
+                        client_id: 0,
+                        request: ControllerRequestMessage {
+                            command: ControllerCommand::Users,
+                            value: Some(users.to_string()),
+                        },
+                    })
+                    .unwrap();
+                if !gone {
+                    replies.push(response_rx);
+                }
+            }
+            goose_attack
+                .handle_controller_requests(&mut run_state)
+                .await
+                .unwrap();
+            for mut reply in replies {
+                assert!(matches!(
+                    reply.try_recv().map(|r| r.response),
+                    Ok(ControllerResponseMessage::Bool(true))
+                ));
+            }
+            assert_eq!(goose_attack.configuration.users, Some(7));
+        });
+    }
+
     /// Every snapshot the main loop serves carries the stopping flag: the one
     /// forwarded to the metrics processor, the local fallback when the
     /// processor is gone, and the one flushed before a control batch.
