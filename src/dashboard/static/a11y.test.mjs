@@ -415,4 +415,28 @@ test("the legend draws each swatch as a line, so it shows the dash", () => {
   const labels = opts.plugins.legend.labels;
   assert.equal(labels.usePointStyle, true, "the legend uses a point style");
   assert.equal(labels.pointStyle, "line", "the point style is a line");
+  // Wide enough for two full dash periods of the failures line, or the swatch
+  // reads as solid.
+  const [, failures] = charts.rpsDatasets({ rps: "#000000", fps: "#000000" });
+  const period = failures.borderDash.reduce((a, b) => a + b, 0);
+  assert.ok(
+    labels.pointStyleWidth >= 2 * period,
+    `swatch ${labels.pointStyleWidth} px shows two ${period} px dash periods`
+  );
+  assert.equal(typeof labels.generateLabels, "function", "legend items get the dash");
+});
+
+// With usePointStyle, Chart.js styles legend items from the points, which have
+// no dash; withLineDash puts each dataset's dash back on its item.
+test("the Failures/s legend item carries its line's dash", () => {
+  const datasets = charts.rpsDatasets({ rps: "#000000", fps: "#000000" });
+  const items = charts.withLineDash(
+    [
+      { text: "RPS", datasetIndex: 0 },
+      { text: "Failures/s", datasetIndex: 1 },
+    ],
+    datasets
+  );
+  assert.equal(items[0].lineDash, undefined, "RPS stays solid");
+  assert.deepEqual(items[1].lineDash, datasets[1].borderDash, "Failures/s is dashed");
 });

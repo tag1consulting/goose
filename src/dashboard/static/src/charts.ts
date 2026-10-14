@@ -13,6 +13,7 @@ import {
   Tooltip,
   type ChartConfiguration,
   type ChartOptions,
+  type LegendItem,
 } from "chart.js";
 import { requireElement } from "./dom";
 
@@ -84,6 +85,26 @@ function chartColors(): ChartColors {
 
 }
 
+/**
+ * Gives each legend item its dataset's dash. With usePointStyle, Chart.js
+ * styles a legend item from the dataset's points, which have no dash, so the
+ * dashed Failures/s line would otherwise get a solid swatch.
+ */
+export function withLineDash(
+  items: LegendItem[],
+  datasets: ReadonlyArray<object>
+): LegendItem[] {
+  for (const item of items) {
+    const dataset = (item.datasetIndex == null ? undefined : datasets[item.datasetIndex]) as
+      | { borderDash?: unknown }
+      | undefined;
+    if (dataset && Array.isArray(dataset.borderDash)) {
+      item.lineDash = dataset.borderDash as number[];
+    }
+  }
+  return items;
+}
+
 export function baseChartOpts(colors: ChartColors): ChartOptions<"line"> {
   // Fresh object per chart so Chart.js cannot share/mutate nested scales.
   return {
@@ -93,14 +114,22 @@ export function baseChartOpts(colors: ChartColors): ChartOptions<"line"> {
     interaction: { mode: "index", intersect: false },
     plugins: {
       legend: {
-        // Each swatch is a short line drawn with its dataset's dash, so the
-        // legend tells the dashed Failures/s line apart without colour.
+        // Each swatch is a line drawn with its dataset's dash, so the legend
+        // tells the dashed Failures/s line apart without colour. The width is
+        // set because Chart.js otherwise caps a point style swatch at the font
+        // size, 11 px, too short to show a 6 on, 4 off dash.
         labels: {
           color: colors.tick,
           boxWidth: 12,
           font: { size: 11 },
           usePointStyle: true,
           pointStyle: "line",
+          pointStyleWidth: 30,
+          generateLabels: (chart) =>
+            withLineDash(
+              Chart.defaults.plugins.legend.labels.generateLabels(chart),
+              chart.data.datasets
+            ),
         },
       },
     },
