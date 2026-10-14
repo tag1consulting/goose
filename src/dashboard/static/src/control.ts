@@ -115,6 +115,15 @@ function readStep(): number {
   return step;
 }
 
+// aria-disabled, not disabled: a disabled button drops keyboard focus.
+function setAvailable(button: HTMLButtonElement | null, on: boolean): void {
+  if (button) button.setAttribute("aria-disabled", on ? "false" : "true");
+}
+
+function unavailable(button: HTMLButtonElement | null): boolean {
+  return !button || button.getAttribute("aria-disabled") === "true";
+}
+
 function updateControlEnablement(): void {
   if (!controlPanel || !controlEnabled) return;
 
@@ -132,16 +141,19 @@ function updateControlEnablement(): void {
       phase === "maintain" ||
       phase === "decrease");
 
-  if (ctrlStart) ctrlStart.disabled = !canStart;
-  if (ctrlStop) ctrlStop.disabled = !canStop;
-  // Quit only shuts Goose down from idle, so it shows only then.
+  setAvailable(ctrlStart, canStart);
+  setAvailable(ctrlStop, canStop);
+  // Quit only shuts Goose down from idle, so it shows only then. A focused
+  // Quit that hides hands focus to Start, the first button in its row.
   if (ctrlQuit) {
+    const focused = document.activeElement === ctrlQuit;
     ctrlQuit.hidden = phase !== "idle";
-    ctrlQuit.disabled = !hasToken || inFlight;
+    setAvailable(ctrlQuit, hasToken && !inFlight);
+    if (focused && ctrlQuit.hidden && ctrlStart) ctrlStart.focus();
   }
-  if (ctrlApply) ctrlApply.disabled = !canUsers;
-  if (ctrlMinus) ctrlMinus.disabled = !canUsers;
-  if (ctrlPlus) ctrlPlus.disabled = !canUsers;
+  setAvailable(ctrlApply, canUsers);
+  setAvailable(ctrlMinus, canUsers);
+  setAvailable(ctrlPlus, canUsers);
   if (ctrlTarget) ctrlTarget.disabled = !hasToken || inFlight;
   if (ctrlStep) ctrlStep.disabled = !hasToken || inFlight;
 
@@ -315,18 +327,22 @@ function runControl(
 }
 
 function onStartClick(): void {
+  if (unavailable(ctrlStart)) return;
   runControl("/api/v1/control/start");
 }
 
 function onStopClick(): void {
+  if (unavailable(ctrlStop)) return;
   runControl("/api/v1/control/stop");
 }
 
 function onQuitClick(): void {
+  if (unavailable(ctrlQuit)) return;
   runControl("/api/v1/control/quit");
 }
 
 function onApplyClick(): void {
+  if (unavailable(ctrlApply)) return;
   const n = parseInt(ctrlTarget && ctrlTarget.value ? ctrlTarget.value : "", 10);
   if (!isFinite(n) || n < 1) {
     setControlStatus("Target must be an integer ≥ 1", "error");
@@ -337,6 +353,7 @@ function onApplyClick(): void {
 }
 
 function onStepClick(delta: number): void {
+  if (unavailable(delta < 0 ? ctrlMinus : ctrlPlus)) return;
   readStep();
   let base: number;
   if (dirty) {

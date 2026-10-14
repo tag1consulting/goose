@@ -288,22 +288,31 @@ body {
   cursor: pointer;
 }
 
-.ctrl-btn:hover:not(:disabled) {
+.ctrl-btn:hover:not([aria-disabled="true"]) {
   border-color: var(--accent);
   color: var(--accent);
 }
 
-.ctrl-btn:disabled {
-  opacity: 0.45;
+/* An unavailable button keeps focus, so it is dimmed by colour: opacity would
+   dim its focus ring too. The mixes match the old 0.45 opacity on a card. */
+.ctrl-btn[aria-disabled="true"] {
+  background: color-mix(in srgb, var(--bg) 45%, var(--card));
+  border-color: color-mix(in srgb, var(--border) 45%, var(--card));
+  color: color-mix(in srgb, var(--text) 45%, var(--card));
   cursor: not-allowed;
 }
 
-.ctrl-btn.ctrl-start:not(:disabled) {
+.ctrl-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.ctrl-btn.ctrl-start:not([aria-disabled="true"]) {
   border-color: color-mix(in srgb, var(--ok) 55%, var(--border));
   color: var(--ok);
 }
 
-.ctrl-btn.ctrl-stop:not(:disabled) {
+.ctrl-btn.ctrl-stop:not([aria-disabled="true"]) {
   border-color: color-mix(in srgb, var(--err) 55%, var(--border));
   color: var(--err);
 }
@@ -599,6 +608,11 @@ body {
   overflow-x: auto;
 }
 
+.table-wrap:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -629,13 +643,31 @@ th.sorted {
   color: var(--accent);
 }
 
-th.sorted.asc::after {
+th button {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+th button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* The "/ ''" alt text keeps the arrow out of the button's accessible name;
+   aria-sort on the th says the order. The first line is the fallback. */
+th.sorted.asc button::after {
   content: " ▲";
+  content: " ▲" / "";
   font-size: 0.7em;
 }
 
-th.sorted.desc::after {
+th.sorted.desc button::after {
   content: " ▼";
+  content: " ▼" / "";
   font-size: 0.7em;
 }
 

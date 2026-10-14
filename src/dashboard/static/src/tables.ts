@@ -136,6 +136,16 @@ function sortableTable<R>(options: TableOptions<R>): SortableTable<R> {
     );
     for (let i = 0; i < ths.length; i++) {
       const th = ths[i];
+      // A button in the header makes it focusable and pressable; aria-sort
+      // goes on the th, where it is valid. The button's click bubbles here.
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = th.textContent;
+      th.textContent = "";
+      th.appendChild(button);
+      if (th.getAttribute("data-sort") === sort.key) {
+        th.setAttribute("aria-sort", sort.dir === "asc" ? "ascending" : "descending");
+      }
       th.addEventListener("click", () => {
         const attr = th.getAttribute("data-sort");
         const column = columns.find((c) => c.key === attr);
@@ -151,8 +161,10 @@ function sortableTable<R>(options: TableOptions<R>): SortableTable<R> {
         }
         for (let j = 0; j < ths.length; j++) {
           ths[j].classList.remove("sorted", "asc", "desc");
+          ths[j].removeAttribute("aria-sort");
         }
         th.classList.add("sorted", sort.dir);
+        th.setAttribute("aria-sort", sort.dir === "asc" ? "ascending" : "descending");
         render();
       });
     }
