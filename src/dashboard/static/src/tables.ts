@@ -248,8 +248,13 @@ interface FlatRequestRow {
   p95: number;
   p99: number;
   response_time_max_ms: number;
-  /** The most frequent status codes, as shown; it sorts as text. */
+  /**
+   * The sort key for the status codes cell: every code and count, most
+   * frequent first, zero padded so 9,812 sorts below 10,000.
+   */
   status_codes: string;
+  /** The most frequent status codes, as shown. */
+  status_codes_text: string;
   measured: {
     response_time_avg_ms: string | null;
     p50: string | null;
@@ -272,15 +277,19 @@ const STATUS_CODES_SHOWN = 3;
 function statusCodesText(codes: Array<[number, number]>): {
   shown: string;
   title: string | null;
+  sort: string;
 } {
-  if (codes.length === 0) return { shown: "", title: null };
+  if (codes.length === 0) return { shown: "", title: null, sort: "" };
   const sorted = codes.slice().sort((a, b) => b[1] - a[1] || a[0] - b[0]);
   const parts = sorted.map(([code, count]) => code + " " + formatInt(count));
   const shown = parts.slice(0, STATUS_CODES_SHOWN);
   if (parts.length > STATUS_CODES_SHOWN) {
     shown.push("+" + (parts.length - STATUS_CODES_SHOWN));
   }
-  return { shown: shown.join(" · "), title: parts.join(" · ") };
+  const sort = sorted
+    .map(([code, count]) => String(code).padStart(5, "0") + ":" + String(count).padStart(16, "0"))
+    .join(" ");
+  return { shown: shown.join(" · "), title: parts.join(" · "), sort };
 }
 
 function flattenScenario(r: ScenarioRow): FlatScenarioRow {
@@ -351,7 +360,8 @@ function flattenRequest(r: RequestRow): FlatRequestRow {
     p95: p95.value,
     p99: p99.value,
     response_time_max_ms: max.value,
-    status_codes: codes.shown,
+    status_codes: codes.sort,
+    status_codes_text: codes.shown,
     measured: {
       response_time_avg_ms: avg.title,
       p50: p50.title,
@@ -520,7 +530,7 @@ const requestsTable = sortableTable<FlatRequestRow>({
     {
       key: "status_codes",
       type: "str",
-      format: (r) => r.status_codes,
+      format: (r) => r.status_codes_text,
       title: (r) => r.status_codes_title,
     },
   ],

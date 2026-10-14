@@ -619,6 +619,40 @@ test("the new request columns sort like the others", async () => {
   ]);
 });
 
+test("status codes sort by count as a number within one code", async () => {
+  // As text, "200 10,000" sorts below "200 9,812"; the sort key pads counts.
+  const window = await load(
+    snapshotWith({
+      requests: [
+        requestRow("GET", "/many", 10000, 0, { status_codes: [[200, 10000]] }),
+        requestRow("GET", "/fewer", 9812, 0, { status_codes: [[200, 9812]] }),
+        requestRow("GET", "/least", 950, 0, { status_codes: [[200, 950]] }),
+        requestRow("GET", "/none", 5, 0, { status_codes: [] }),
+      ],
+    })
+  );
+  header(window, "requests-table", "status_codes").click();
+  assert.deepEqual(column(window, "requests-body", 1), [
+    "/none",
+    "/least",
+    "/fewer",
+    "/many",
+  ]);
+  assert.deepEqual(column(window, "requests-body", 12), [
+    "",
+    "200 950",
+    "200 9,812",
+    "200 10,000",
+  ]);
+  header(window, "requests-table", "status_codes").click();
+  assert.deepEqual(column(window, "requests-body", 1), [
+    "/many",
+    "/fewer",
+    "/least",
+    "/none",
+  ]);
+});
+
 test("the new transaction columns sort like the others", async () => {
   const window = await load(
     snapshotWith({ scenarios: SCENARIOS, transactions: TRANSACTIONS })
