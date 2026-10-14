@@ -1053,6 +1053,10 @@ mod tests {
             ("users ١", USERS),
             ("increaserate ١", INCREASE_RATE),
             ("runtime ١h", RUN_TIME),
+            // ASCII case and spaces only: Unicode `(?i)` folds `ſ` to `s`, and
+            // Unicode `\s` matches a no break space.
+            ("runtime 1\u{17f}", RUN_TIME),
+            ("testplan 10,\u{a0}1s", TEST_PLAN),
             ("users 9999999999999999999999999999", USERS),
             ("testplan 9999999999999999999999999999,1s", TEST_PLAN),
             // Only what the Controller regexes on main accepted: a sign, a second

@@ -1524,12 +1524,15 @@ impl GooseAttack {
     /// so no metrics to print and nothing to save.
     fn shutdown_from_idle(&mut self, goose_attack_run_state: &mut GooseAttackRunState) {
         self.metrics.display_metrics = false;
-        // Nothing to cancel, but the run is stopping all the same: refuse
-        // Users until it shuts down.
-        goose_attack_run_state.stopping = true;
         goose_attack_run_state.shutdown_after_stop = true;
-        // A plan with nothing left to run, so the Decrease phase finds the
-        // load test fully stopped and shuts down.
+        self.stop_without_users(goose_attack_run_state);
+    }
+
+    /// Stop with no user running: refuse Users until the run stops, and leave
+    /// a plan with nothing left to run, so the Decrease phase finds the load
+    /// test fully stopped.
+    fn stop_without_users(&mut self, goose_attack_run_state: &mut GooseAttackRunState) {
+        goose_attack_run_state.stopping = true;
         self.test_plan.steps = vec![(0, 0)];
         self.test_plan.current = 0;
         self.set_attack_phase(goose_attack_run_state, AttackPhase::Decrease);
@@ -2740,6 +2743,17 @@ impl GooseAttack {
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> Result<(), GooseError> {
+        if goose_attack_run_state.active_users == 0 {
+            // A stop in the tick of its start, or a second shutdown from Idle:
+            // a plan maintaining 0 users would never end.
+            goose_attack_run_state.adjust_user_in_ms = 0;
+            self.stop_without_users(goose_attack_run_state);
+            self.metrics
+                .history
+                .push(TestPlanHistory::step(TestPlanStepAction::Canceling, 0));
+            return Ok(());
+        }
+
         // Determine how long has elapsed since this step started.
         let elapsed = self.step_elapsed() as usize;
 
@@ -3840,6 +3854,72 @@ mod tests {
             assert!(run_state.shutdown_after_stop);
             assert_eq!(goose_attack.test_plan.steps, vec![(0, 0)]);
             assert_eq!(goose_attack.test_plan.current, 0);
+        });
+    }
+
+    /// A cancel with no user running, as a second `shutdown` from Idle or a
+    /// `stop` in the tick of its `start` sends, ends the load test instead
+    /// of maintaining zero users with no end.
+    #[test]
+    #[serial_test::serial]
+    fn test_control_cancel_without_users_ends() {
+        // Run the main loop's phase work until the cancel ends in `until`,
+        // as a plan maintaining zero users never does.
+        async fn ends_in(
+            goose_attack: &mut GooseAttack,
+            run_state: &mut GooseAttackRunState,
+            until: AttackPhase,
+        ) {
+            for _ in 0..4 {
+                match goose_attack.attack_phase {
+                    AttackPhase::Maintain => goose_attack.maintain_attack(run_state).await,
+                    AttackPhase::Decrease => goose_attack.decrease_attack(run_state).await,
+                    _ => break,
+                }
+                .unwrap();
+            }
+            assert_eq!(goose_attack.attack_phase, until);
+        }
+
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) = idle_attack(&["--no-autostart"]).await;
+            assert!(control(&mut goose_attack, &mut run_state, "shutdown").await);
+            assert!(control(&mut goose_attack, &mut run_state, "shutdown").await);
+            assert_eq!(goose_attack.attack_phase, AttackPhase::Decrease);
+            assert_eq!(goose_attack.test_plan.steps, vec![(0, 0)]);
+            ends_in(&mut goose_attack, &mut run_state, AttackPhase::Shutdown).await;
+
+            let (mut goose_attack, mut run_state) = idle_attack(&["--no-autostart"]).await;
+            // As `start` leaves it before its first user launches.
+            goose_attack.set_attack_phase(&mut run_state, AttackPhase::Increase);
+            goose_attack.run_in_progress = true;
+            run_state.active_users = 0;
+            assert!(control(&mut goose_attack, &mut run_state, "stop").await);
+            assert_eq!(goose_attack.attack_phase, AttackPhase::Decrease);
+            assert_eq!(goose_attack.test_plan.steps, vec![(0, 0)]);
+            assert!(run_state.stopping);
+            assert!(!run_state.shutdown_after_stop);
+            assert!(matches!(
+                goose_attack.ended_by,
+                Some((runs::EndedBy::Stopped, _))
+            ));
+            ends_in(&mut goose_attack, &mut run_state, AttackPhase::Idle).await;
+            // The run ended through report writing, recorded as canceled.
+            assert!(!goose_attack.run_in_progress);
+            let actions: Vec<_> = goose_attack
+                .metrics
+                .history
+                .iter()
+                .map(|step| &step.action)
+                .collect();
+            assert!(
+                matches!(
+                    actions[..],
+                    [TestPlanStepAction::Canceling, TestPlanStepAction::Finished]
+                ),
+                "{:?}",
+                actions
+            );
         });
     }
 
