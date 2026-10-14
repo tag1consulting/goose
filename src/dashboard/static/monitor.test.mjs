@@ -211,6 +211,52 @@ test("repeated stream errors that end in a failing poll say the loss once", asyn
   assert.equal(announce.textContent, "Connection lost.");
 });
 
+test("a slow poll failing after a later one answered does not say the connection was lost", async () => {
+  const page = await livePage({ snapshot: snapshotWith() });
+  await send(page, snapshotWith());
+  const { window } = page;
+  // Each snapshot poll waits until the test settles it; the 2s timer's tick
+  // is kept to run by hand.
+  const polls = [];
+  const realFetch = window.fetch;
+  window.fetch = (url, init) => {
+    if (!String(url).includes("/api/v1/snapshot")) return realFetch(url, init);
+    return new Promise((resolve, reject) => polls.push({ resolve, reject }));
+  };
+  let tick = null;
+  const realSetInterval = window.setInterval;
+  window.setInterval = (fn, ms) => {
+    if (ms === 2000) {
+      tick = fn;
+      return 0;
+    }
+    return realSetInterval(fn, ms);
+  };
+  const said = [];
+  const announce = el(page, "announce");
+  new window.MutationObserver(() => said.push(announce.textContent))
+    .observe(announce, { childList: true, characterData: true, subtree: true });
+
+  page.events.source.readyState = 2;
+  page.events.source.onerror();
+  await settle(window);
+  assert.ok(tick, "polling started");
+  tick();
+  assert.equal(polls.length, 2, "the first poll is still out when the second goes");
+  polls[1].resolve({ status: 200, ok: true, json: () => Promise.resolve(snapshotWith()) });
+  await settle(window);
+  polls[0].reject(new TypeError("network error"));
+  await settle(window);
+  assert.deepEqual(said, [], "nothing to say: the connection never dropped");
+  assert.equal(el(page, "connection-label").textContent, "poll");
+
+  // A failure newer than every answer is a real loss.
+  tick();
+  polls[2].reject(new TypeError("network error"));
+  await settle(window);
+  assert.deepEqual(said, ["Connection lost."]);
+});
+
 test("the pill says poll as soon as the stream closes, before a poll answers", async () => {
   const page = await livePage({ snapshotStatus: "pending" });
   await send(page, snapshotWith());
@@ -446,6 +492,28 @@ test("a chart's data table is built only once opened, then follows the data in p
   assert.equal(body.rows[0].cells[0].textContent, "102");
 });
 
+test("as the window moves on, only the second leaving and the one arriving touch the table", async () => {
+  const page = await livePage();
+  const details = el(page, "chart-rps-details");
+  const body = el(page, "chart-rps-rows");
+  await send(page, snapshotWith({ series: series25(100) }));
+  details.open = true;
+  await settle(page.window);
+  let added = 0;
+  let removed = 0;
+  new page.window.MutationObserver((records) => {
+    for (const r of records) {
+      added += r.addedNodes.length;
+      removed += r.removedNodes.length;
+    }
+  }).observe(body, { childList: true });
+  await send(page, snapshotWith({ series: series25(101) }));
+  assert.equal(body.rows.length, 25);
+  // Moving a row detaches it, and a screen reader on it loses its place.
+  assert.equal(removed, 1, "only second 100 left the table");
+  assert.equal(added, 1, "only second 125 joined it");
+});
+
 test("the users and average latency charts have data tables too", async () => {
   const page = await livePage();
   el(page, "chart-users-details").open = true;
@@ -535,6 +603,13 @@ test("an open data table scrolls in its own box instead of widening the page", (
     assert.ok(wrap.classList.contains("table-wrap"), table.id + " sits in a .table-wrap");
     assert.ok(wrap.closest("details.chart-data"), table.id + "'s scroll box is in its details");
     assert.equal(window.getComputedStyle(wrap).overflowX, "auto", table.id + " scrolls sideways");
+    // Up to 300 rows: it scrolls down in its box too, so the box has to take
+    // focus for a keyboard user to scroll it.
+    assert.equal(window.getComputedStyle(wrap).overflowY, "auto", table.id + " scrolls down");
+    assert.ok(window.getComputedStyle(wrap).maxHeight !== "none", table.id + " has a height limit");
+    assert.equal(wrap.getAttribute("tabindex"), "0", table.id + "'s box takes focus");
+    assert.equal(wrap.getAttribute("role"), "region");
+    assert.ok((wrap.getAttribute("aria-label") || "").length > 0, table.id + "'s box is named");
   }
   const grids = [];
   const walk = (rules) => {
@@ -565,19 +640,31 @@ test("each summary follows the data: value, then rising, falling or steady", asy
 
   // Ten seconds at 100 then ten at 120: the mean is up 20 percent.
   const step = (before, after) => seriesOf(0, 20, (i) => (i < 10 ? before : after * (i % 2 ? 1.1 : 0.9)));
+  // Each RPS and failures series ends in the second still counting, here 7
+  // requests and no failures in, which the summary leaves out.
+  const counting = (values) => (values.length ? [...values, 7] : values);
   const snap = (rpsValues, usersValues, latencyValues, target = 200) =>
     snapshotWith(
-      { target_users: target, series: lineSeries(0, rpsValues, step(0.5, 0.5), usersValues, latencyValues) },
+      {
+        target_users: target,
+        series: lineSeries(
+          0,
+          counting(rpsValues),
+          rpsValues.length ? [...step(0.5, 0.5), 0] : [],
+          usersValues,
+          latencyValues
+        ),
+      },
       { percentiles_over_time: false }
     );
   await send(page, snap(step(100, 120), step(100, 120), step(20, 20)));
-  assert.equal(rps.textContent, "RPS " + int(120) + ", rising; failures " + rate(0.5) + "/s.");
+  assert.equal(rps.textContent, "RPS " + rate(120) + ", rising; failures " + rate(0.5) + "/s.");
   assert.equal(users.textContent, "Users " + int(120) + " of " + int(200) + ", rising.");
   assert.equal(latency.textContent, "Average " + int(20) + " ms, steady.");
 
   // Up 5 percent is steady; down 20 percent is falling.
   await send(page, snap(step(100, 105), step(120, 96), step(30, 20), 1500));
-  assert.equal(rps.textContent, "RPS " + int(105) + ", steady; failures " + rate(0.5) + "/s.");
+  assert.equal(rps.textContent, "RPS " + rate(105) + ", steady; failures " + rate(0.5) + "/s.");
   assert.equal(users.textContent, "Users " + int(96) + " of " + int(1500) + ", falling.");
   assert.equal(latency.textContent, "Average " + int(20) + " ms, falling.");
 
@@ -591,11 +678,19 @@ test("each summary follows the data: value, then rising, falling or steady", asy
     { target_users: 200, series: lineSeries(0, short, short.map(() => 0), short, short) },
     { percentiles_over_time: false }
   ));
-  assert.equal(rps.textContent, "RPS " + int(80) + "; failures " + rate(0) + "/s.");
+  assert.equal(rps.textContent, "RPS " + rate(80) + "; failures " + rate(0) + "/s.");
 
   // From nothing, the older mean is 0: no trend word either.
   await send(page, snap(step(0, 50), step(0, 50), step(0, 50)));
-  assert.equal(rps.textContent, "RPS " + int(50) + "; failures " + rate(0.5) + "/s.");
+  assert.equal(rps.textContent, "RPS " + rate(50) + "; failures " + rate(0.5) + "/s.");
+
+  // A slow test reads its rate, not 0: the stat card's two decimals.
+  const slow = seriesOf(0, 15, () => 0.4);
+  await send(page, snapshotWith(
+    { series: lineSeries(0, slow, slow.map(() => 0), slow, slow) },
+    { percentiles_over_time: false }
+  ));
+  assert.equal(rps.textContent, "RPS " + rate(0.4) + "; failures " + rate(0) + "/s.");
 
   // A new run starts with an empty series: back to no data.
   await send(page, snap([], [], []));

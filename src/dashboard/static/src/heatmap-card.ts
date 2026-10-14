@@ -2,7 +2,8 @@
 // chosen in its select, the Adjusted and Measured toggle, and, when
 // percentiles over time are off, the average latency chart instead.
 
-import { chartTheme, recentTrend, setLatencySummary } from "./charts";
+import { recentTrend, setLatencySummary } from "./chart-data";
+import { chartTheme } from "./charts";
 import {
   catchUpHeatmap,
   fetchRequestSeries,

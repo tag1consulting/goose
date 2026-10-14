@@ -90,11 +90,18 @@ function sortableTable<R>(options: TableOptions<R>): SortableTable<R> {
   emptyTd.className = "empty";
   emptyTr.appendChild(emptyTd);
 
+  // Rows leaving go first, so the ones staying line up and are not moved:
+  // inserting first would detach and reinsert every row below one that
+  // left, which is every row of a chart's table each second.
   function show(trs: HTMLTableRowElement[]): void {
+    const staying = new Set<Node>(trs);
+    for (let i = body.children.length - 1; i >= 0; i--) {
+      const child = body.children[i];
+      if (!staying.has(child)) body.removeChild(child);
+    }
     for (let i = 0; i < trs.length; i++) {
       if (body.children[i] !== trs[i]) body.insertBefore(trs[i], body.children[i] || null);
     }
-    while (body.children.length > trs.length) body.removeChild(body.lastChild as Node);
   }
 
   function emptyRow(text: string): void {

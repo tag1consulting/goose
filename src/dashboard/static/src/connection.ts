@@ -32,6 +32,9 @@ const TOKEN_STORAGE_KEY = "goose-dashboard-token";
 let token = "";
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
+// Each poll's number, and the highest whose snapshot arrived.
+let pollSeq = 0;
+let pollAnswered = 0;
 let eventSource: EventSource | null = null;
 let usingPoll = false;
 let authRequired = false;
@@ -293,10 +296,18 @@ function startPollFallback(): void {
       stopPoll();
       return;
     }
-    fetchSnapshotOnce("poll").catch(() => {
-      if (authBlocked) return;
-      setConnection("disconnected");
-    });
+    // A poll can take longer than the 2s between them; one that fails after a
+    // later one answered is old news and must not announce a loss.
+    const seq = ++pollSeq;
+    fetchSnapshotOnce("poll").then(
+      () => {
+        if (seq > pollAnswered) pollAnswered = seq;
+      },
+      () => {
+        if (authBlocked || seq < pollAnswered) return;
+        setConnection("disconnected");
+      }
+    );
   }
   tick();
   stopPoll();

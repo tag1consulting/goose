@@ -6,6 +6,7 @@
 // declarations in snapshot.d.ts, generated from
 // src/metrics/dashboard_snapshot.rs; edit the Rust structs, not those types.
 
+import { updateChartData } from "./chart-data";
 import { ensureCharts, recolorCharts, updateCharts } from "./charts";
 import { shownTime } from "./coadjust";
 import {
@@ -172,7 +173,9 @@ function renderSnapshot(
   setTableData(snap);
   // The response time card shows the heatmap, or with percentiles over time
   // off the average latency chart, which updateCharts then draws.
-  updateCharts(snap.series, updateHeatmapCard(snap), snap.target_users);
+  const averageLatency = updateHeatmapCard(snap);
+  updateChartData(snap.series, averageLatency, snap.target_users);
+  updateCharts(snap.series, averageLatency);
   updateControlFromSnapshot(snap);
 
   // Prefer metrics/auth banners.

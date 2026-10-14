@@ -441,6 +441,19 @@ body {
   cursor: default;
 }
 
+/* Up to 300 rows, one a second: the table scrolls in its own box, which is
+   a focusable region, with its header kept in view. */
+.chart-data .table-wrap {
+  max-height: 18rem;
+  overflow-y: auto;
+}
+
+.chart-data thead th {
+  position: sticky;
+  top: 0;
+  background: var(--card);
+}
+
 .chart-wide {
   grid-column: 1 / -1;
 }
@@ -791,7 +804,11 @@ footer {
   position: absolute;
   width: 1px;
   height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
   overflow: hidden;
   clip: rect(0 0 0 0);
+  clip-path: inset(50%);
   white-space: nowrap;
 }
