@@ -778,19 +778,26 @@ test("the KPIs, the Whole run card and the tables say they cover the whole run",
     aggregate.querySelector("p.note").textContent,
     "Since the test started, or since metrics were last reset. Goose measures response times in whole milliseconds."
   );
-  for (const table of ["scenarios-table", "transactions-table", "requests-table"]) {
+  const percentiles = [
+    ["p50", "Whole run"],
+    ["p95", "Whole run"],
+    ["p99", "Whole run"],
+  ];
+  const minMax = [
+    ["avg ms", "Whole run"],
+    ["min ms", "Whole run"],
+    ...percentiles,
+    ["max ms", "Whole run"],
+  ];
+  const expected = {
+    "scenarios-table": [["avg ms", "Whole run"], ...percentiles],
+    "transactions-table": minMax,
+    "requests-table": [...minMax, ["status codes", "Whole run"]],
+  };
+  for (const [table, titles] of Object.entries(expected)) {
     const titled = Array.from(
       document.querySelectorAll("#" + table + " thead th[title]")
     ).map((th) => [th.textContent, th.title]);
-    assert.deepEqual(
-      titled,
-      [
-        ["avg ms", "Whole run"],
-        ["p50", "Whole run"],
-        ["p95", "Whole run"],
-        ["p99", "Whole run"],
-      ],
-      table
-    );
+    assert.deepEqual(titled, titles, table);
   }
 });

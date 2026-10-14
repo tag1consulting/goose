@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Goose Dashboard</title>
+  <link rel="icon" href="data:,">
   <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
@@ -24,6 +25,7 @@
     </div>
   </header>
 
+  <main>
   <section id="banner" class="banner hidden" role="status"></section>
   <p id="announce" class="visually-hidden" role="status"></p>
 
@@ -45,8 +47,8 @@
         <input id="ctrl-target" type="number" min="1" step="1" inputmode="numeric" autocomplete="off">
       </label>
       <button type="button" id="ctrl-apply" class="ctrl-btn">Apply</button>
-      <button type="button" id="ctrl-minus" class="ctrl-btn ctrl-step-btn" title="Decrease target by step">−</button>
-      <button type="button" id="ctrl-plus" class="ctrl-btn ctrl-step-btn" title="Increase target by step">+</button>
+      <button type="button" id="ctrl-minus" class="ctrl-btn ctrl-step-btn" title="Decrease target by step" aria-label="Decrease target by step">−</button>
+      <button type="button" id="ctrl-plus" class="ctrl-btn ctrl-step-btn" title="Increase target by step" aria-label="Increase target by step">+</button>
       <label class="control-label" for="ctrl-step">
         step
         <input id="ctrl-step" type="number" min="1" step="1" value="10" inputmode="numeric" autocomplete="off">
@@ -81,7 +83,7 @@
   <section id="charts" class="charts-grid">
     <div class="card chart-card">
       <h2>Requests / failures per second</h2>
-      <canvas id="chart-rps" aria-label="RPS and failures chart"></canvas>
+      <canvas id="chart-rps" role="img" aria-label="RPS and failures chart"></canvas>
       <p id="chart-rps-summary" class="chart-summary">No data yet.</p>
       <details id="chart-rps-details" class="chart-data">
         <summary>Show data</summary>
@@ -95,7 +97,7 @@
     </div>
     <div class="card chart-card">
       <h2>Active users</h2>
-      <canvas id="chart-users" aria-label="Active users chart"></canvas>
+      <canvas id="chart-users" role="img" aria-label="Active users chart"></canvas>
       <p id="chart-users-summary" class="chart-summary">No data yet.</p>
       <details id="chart-users-details" class="chart-data">
         <summary>Show data</summary>
@@ -123,7 +125,7 @@
       <p id="chart-latency-note" class="note" hidden></p>
       <p id="heatmap-note" class="note">Each column is one second. Color shows how many requests took that long; the lines are that second's p50, p95 and p99.</p>
       <div id="heatmap-wrap" class="heatmap-wrap">
-        <canvas id="chart-heatmap" aria-label="Response times by second, heatmap"></canvas>
+        <canvas id="chart-heatmap" role="img" aria-label="Response times by second, heatmap"></canvas>
         <div id="heatmap-tooltip" class="heatmap-tooltip" role="tooltip" hidden></div>
       </div>
       <div id="heatmap-legend" class="heatmap-legend">
@@ -139,7 +141,7 @@
 
       <!-- Chart.js sets its canvas to display: block, so the wrapper hides it. -->
       <div id="chart-latency-wrap" hidden>
-        <canvas id="chart-latency" aria-label="Average latency chart"></canvas>
+        <canvas id="chart-latency" role="img" aria-label="Average latency chart"></canvas>
       </div>
       <p id="chart-latency-summary" class="chart-summary">No data yet.</p>
       <!-- The table follows the chart the card shows. -->
@@ -173,7 +175,7 @@
   <section id="scenarios" class="card">
     <h2>Scenarios</h2>
     <p class="table-note">A scenario run is one full pass through the scenario's weighted transactions. Run times include the scenario's wait time, if it sets one. Users is the number of users that have finished at least one run.</p>
-    <div class="table-wrap">
+    <div class="table-wrap" tabindex="0" role="region" aria-label="Scenarios table">
       <table id="scenarios-table">
         <thead>
           <tr>
@@ -202,7 +204,7 @@
         <input id="transactions-filter" type="search" placeholder="scenario or transaction…" autocomplete="off">
       </label>
     </div>
-    <div class="table-wrap">
+    <div class="table-wrap" tabindex="0" role="region" aria-label="Transactions table">
       <table id="transactions-table">
         <thead>
           <tr>
@@ -212,10 +214,13 @@
             <th data-sort="run_count" data-type="num">#runs</th>
             <th data-sort="failure_count" data-type="num">#fails</th>
             <th data-sort="runs_per_second" data-type="num">runs/s</th>
+            <th data-sort="failures_per_second" data-type="num">fails/s</th>
             <th data-sort="response_time_avg_ms" data-type="num" title="Whole run">avg ms</th>
+            <th data-sort="response_time_min_ms" data-type="num" title="Whole run">min ms</th>
             <th data-sort="p50" data-type="num" title="Whole run">p50</th>
             <th data-sort="p95" data-type="num" title="Whole run">p95</th>
             <th data-sort="p99" data-type="num" title="Whole run">p99</th>
+            <th data-sort="response_time_max_ms" data-type="num" title="Whole run">max ms</th>
           </tr>
         </thead>
         <tbody id="transactions-body"></tbody>
@@ -232,7 +237,7 @@
         <input id="requests-filter" type="search" placeholder="method or name…" autocomplete="off">
       </label>
     </div>
-    <div class="table-wrap">
+    <div class="table-wrap" tabindex="0" role="region" aria-label="Requests table">
       <table id="requests-table">
         <thead>
           <tr>
@@ -241,10 +246,14 @@
             <th data-sort="request_count" data-type="num" class="sorted desc">#reqs</th>
             <th data-sort="failure_count" data-type="num">#fails</th>
             <th data-sort="requests_per_second" data-type="num">req/s</th>
+            <th data-sort="failures_per_second" data-type="num">fails/s</th>
             <th data-sort="response_time_avg_ms" data-type="num" title="Whole run">avg ms</th>
+            <th data-sort="response_time_min_ms" data-type="num" title="Whole run">min ms</th>
             <th data-sort="p50" data-type="num" title="Whole run">p50</th>
             <th data-sort="p95" data-type="num" title="Whole run">p95</th>
             <th data-sort="p99" data-type="num" title="Whole run">p99</th>
+            <th data-sort="response_time_max_ms" data-type="num" title="Whole run">max ms</th>
+            <th data-sort="status_codes" data-type="str" title="Whole run">status codes</th>
           </tr>
         </thead>
         <tbody id="requests-body"></tbody>
@@ -254,7 +263,7 @@
 
   <section id="errors" class="card">
     <h2>Errors</h2>
-    <div class="table-wrap">
+    <div class="table-wrap" tabindex="0" role="region" aria-label="Errors table">
       <table id="errors-table">
         <thead>
           <tr>
@@ -271,7 +280,7 @@
 
   <section id="runs-panel" class="card" aria-labelledby="runs-heading">
     <h2 id="runs-heading">Saved runs</h2>
-    <div class="table-wrap">
+    <div class="table-wrap" tabindex="0" role="region" aria-label="Saved runs table">
       <table id="runs-table">
         <thead>
           <tr>
@@ -300,9 +309,10 @@
     <p id="runs-error" class="runs-error" role="status" hidden></p>
     <p id="runs-footer" class="table-note"></p>
   </section>
+  </main>
 
   <footer>
-    <p id="footer-note">Control this test via telnet :5116 or WebSocket :5117. This dashboard is read-only.</p>
+    <p id="footer-note">This dashboard is read-only.</p>
   </footer>
 
   <script src="/static/app.js"></script>

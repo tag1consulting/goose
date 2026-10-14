@@ -38,7 +38,8 @@ function fileResponse(status, body, filename) {
 
 // A stub of the dashboard server, as in src/dashboard.rs: metric GETs need
 // `?token=` (or Bearer) equal to `token`; control POSTs need a Bearer token and
-// no `?token=`. Options: `controlEnabled` for /api/v1/health, `controlToken`
+// no `?token=`. Options: `controlEnabled` and `controllers` (left out when
+// undefined) for /api/v1/health, `controlToken`
 // (default `token`; the real server has one token, this lets a test produce a
 // control 401 alone), and `controlStatus` / `snapshotStatus` to force an
 // authorized request to answer with that status instead of 200 (`snapshotStatus`
@@ -46,6 +47,8 @@ function fileResponse(status, body, filename) {
 // leaves it unanswered), and
 // `snapshot` for the snapshot an authorized request gets (default
 // IDLE_SNAPSHOT), or a function of the request URL returning it.
+// `controlDelayMs` (default 0) holds each control answer that long, so a test
+// can act while a request is in flight.
 //
 // Request heatmaps: `GET /api/v1/series` answers `seriesStatus` (default 200)
 // with the `series` body (default: an empty heatmap for the requested name),
@@ -59,6 +62,7 @@ function fileResponse(status, body, filename) {
 export function stubServer(token, options = {}) {
   const {
     controlEnabled = false,
+    controllers,
     controlToken = token,
     controlStatus = 200,
     snapshotStatus = 200,
@@ -68,6 +72,7 @@ export function stubServer(token, options = {}) {
     seriesStatus = 200,
     series = null,
     seriesDelayMs = 0,
+    controlDelayMs = 0,
   } = options;
   const requests = [];
   function fetch(input, init) {
@@ -98,7 +103,11 @@ export function stubServer(token, options = {}) {
     }
     if (url.pathname === "/api/v1/health") {
       return Promise.resolve(
-        jsonResponse(200, { status: "ok", control_enabled: controlEnabled })
+        jsonResponse(200, {
+          status: "ok",
+          control_enabled: controlEnabled,
+          ...(controllers === undefined ? {} : { controllers }),
+        })
       );
     }
     if (url.pathname.startsWith("/api/v1/control/")) {
@@ -109,15 +118,20 @@ export function stubServer(token, options = {}) {
       }
       // Quit leaves idle for decrease on its way out; the others run.
       const command = url.pathname.split("/").pop();
-      return Promise.resolve(
+      const answer =
         controlStatus === 200
           ? jsonResponse(200, {
               ok: true,
               command,
               phase: command === "quit" ? "decrease" : "increase",
             })
-          : jsonResponse(controlStatus, { error: "busy", message: "busy" })
-      );
+          : jsonResponse(controlStatus, { error: "busy", message: "busy" });
+      if (controlDelayMs > 0) {
+        return new Promise((resolve) =>
+          setTimeout(() => resolve(answer), controlDelayMs)
+        );
+      }
+      return Promise.resolve(answer);
     }
     const ok =
       url.searchParams.get("token") === token || bearer === "Bearer " + token;
@@ -190,6 +204,15 @@ export function dump(storage) {
 // browser does when site data is blocked. jsdom has no EventSource, so the
 // client polls; `eventSource` installs one that fails at once, as a browser's
 // does when the server answers 401, so the client takes its SSE error path.
+// jsdom has no matchMedia either; `colorScheme` ("dark" or "light") installs
+// one answering `prefers-color-scheme` queries, and `page.colorScheme.set`
+// switches it and fires `change` on every query list handed out, as a browser
+// does when the OS theme changes. jsdom has no canvas: `canvas` installs a
+// 2d context that draws nothing and records, in `page.canvas.calls`, each
+// property it is given and each method called on it as `{ id, name, value }`
+// (`value` the property's value, or the method's arguments), `id` the canvas
+// element's; with every element 400 by 200 and a ResizeObserver that never
+// fires, so Chart.js lays the charts out and draws them.
 export async function openPage(path, from, serverToken, options = {}) {
   const dom = new JSDOM(INDEX_HTML, {
     url: ORIGIN + path,
@@ -273,6 +296,27 @@ export async function openPage(path, from, serverToken, options = {}) {
       close() {}
     };
   }
+  let colorScheme = null;
+  if (options.colorScheme) {
+    let current = options.colorScheme;
+    const lists = [];
+    window.matchMedia = (query) => {
+      const list = new window.EventTarget();
+      Object.defineProperty(list, "media", { value: query });
+      Object.defineProperty(list, "matches", {
+        get: () => query.includes("prefers-color-scheme: " + current),
+      });
+      lists.push(list);
+      return list;
+    };
+    colorScheme = {
+      set(value) {
+        current = value;
+        for (const list of lists) list.dispatchEvent(new window.Event("change"));
+      },
+    };
+  }
+  const canvas = options.canvas ? installCanvas(window) : null;
   const server = stubServer(serverToken, options);
   window.fetch = server.fetch;
   // jsdom has no object URLs and does not navigate on a download link click:
@@ -285,7 +329,43 @@ export async function openPage(path, from, serverToken, options = {}) {
   };
   window.eval(APP_JS);
   await settle(window);
-  return { window, requests: server.requests, downloads, events };
+  return { window, requests: server.requests, downloads, events, colorScheme, canvas };
+}
+
+// The `canvas` option of openPage.
+function installCanvas(window) {
+  const calls = [];
+  window.Element.prototype.getBoundingClientRect = () => ({
+    x: 0, y: 0, top: 0, left: 0, right: 400, bottom: 200, width: 400, height: 200,
+  });
+  window.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+  window.HTMLCanvasElement.prototype.getContext = function () {
+    const canvas = this;
+    const state = { canvas };
+    return new Proxy(state, {
+      get(target, name) {
+        if (name in target) return target[name];
+        if (typeof name !== "string") return undefined;
+        return (...args) => {
+          calls.push({ id: canvas.id, name, value: args });
+          if (name === "measureText") return { width: 0 };
+          if (name === "getLineDash") return [];
+          if (name.startsWith("create")) return { addColorStop() {} };
+          return undefined;
+        };
+      },
+      set(target, name, value) {
+        calls.push({ id: canvas.id, name, value });
+        target[name] = value;
+        return true;
+      },
+    });
+  };
+  return { calls };
 }
 
 // Let the client's fetch promise chains run to completion: health, then the

@@ -13,6 +13,7 @@ import {
   Tooltip,
   type ChartConfiguration,
   type ChartOptions,
+  type LegendItem,
 } from "chart.js";
 import { requireElement } from "./dom";
 import { formatInt, formatRate } from "./format";
@@ -119,7 +120,27 @@ function chartColors(): ChartColors {
 
 }
 
-function baseChartOpts(colors: ChartColors): ChartOptions<"line"> {
+/**
+ * Gives each legend item its dataset's dash. With usePointStyle, Chart.js
+ * styles a legend item from the dataset's points, which have no dash, so the
+ * dashed Failures/s line would otherwise get a solid swatch.
+ */
+export function withLineDash(
+  items: LegendItem[],
+  datasets: ReadonlyArray<object>
+): LegendItem[] {
+  for (const item of items) {
+    const dataset = (item.datasetIndex == null ? undefined : datasets[item.datasetIndex]) as
+      | { borderDash?: unknown }
+      | undefined;
+    if (dataset && Array.isArray(dataset.borderDash)) {
+      item.lineDash = dataset.borderDash as number[];
+    }
+  }
+  return items;
+}
+
+export function baseChartOpts(colors: ChartColors): ChartOptions<"line"> {
   // Fresh object per chart so Chart.js cannot share/mutate nested scales.
   return {
     responsive: true,
@@ -128,7 +149,23 @@ function baseChartOpts(colors: ChartColors): ChartOptions<"line"> {
     interaction: { mode: "index", intersect: false },
     plugins: {
       legend: {
-        labels: { color: colors.tick, boxWidth: 12, font: { size: 11 } },
+        // Each swatch is a line drawn with its dataset's dash, so the legend
+        // tells the dashed Failures/s line apart without colour. The width is
+        // set because Chart.js otherwise caps a point style swatch at the font
+        // size, 11 px, too short to show a 6 on, 4 off dash.
+        labels: {
+          color: colors.tick,
+          boxWidth: 12,
+          font: { size: 11 },
+          usePointStyle: true,
+          pointStyle: "line",
+          pointStyleWidth: 30,
+          generateLabels: (chart) =>
+            withLineDash(
+              Chart.defaults.plugins.legend.labels.generateLabels(chart),
+              chart.data.datasets
+            ),
+        },
       },
     },
     scales: {
@@ -149,6 +186,36 @@ function baseChartOpts(colors: ChartColors): ChartOptions<"line"> {
   };
 }
 
+/**
+ * The RPS chart's two lines. Failures/s is dashed so the lines differ by more
+ * than colour.
+ */
+export function rpsDatasets(
+  colors: ChartColors
+): ChartConfiguration<"line", number[], string>["data"]["datasets"] {
+  return [
+    {
+      label: "RPS",
+      data: [],
+      borderColor: colors.rps,
+      backgroundColor: colors.rps,
+      borderWidth: 1.5,
+      pointRadius: 0,
+      tension: 0.15,
+    },
+    {
+      label: "Failures/s",
+      data: [],
+      borderColor: colors.fps,
+      backgroundColor: colors.fps,
+      borderWidth: 1.5,
+      borderDash: [6, 4],
+      pointRadius: 0,
+      tension: 0.15,
+    },
+  ];
+}
+
 export function ensureCharts(): void {
   const colors = chartColors();
 
@@ -157,26 +224,7 @@ export function ensureCharts(): void {
       type: "line",
       data: {
         labels: [],
-        datasets: [
-          {
-            label: "RPS",
-            data: [],
-            borderColor: colors.rps,
-            backgroundColor: colors.rps,
-            borderWidth: 1.5,
-            pointRadius: 0,
-            tension: 0.15,
-          },
-          {
-            label: "Failures/s",
-            data: [],
-            borderColor: colors.fps,
-            backgroundColor: colors.fps,
-            borderWidth: 1.5,
-            pointRadius: 0,
-            tension: 0.15,
-          },
-        ],
+        datasets: rpsDatasets(colors),
       },
       options: baseChartOpts(colors),
     };
@@ -357,4 +405,38 @@ export function updateCharts(
     chartLatency.data.datasets[0].data = lat;
     chartLatency.update("none");
   }
+}
+
+/**
+ * Sets every colour `baseChartOpts` and the datasets carry to `colors`, the
+ * datasets in `lines` order, and redraws the chart. The chart, its data and
+ * its other options stay as they are.
+ */
+function recolor(chart: LineChart | null, colors: ChartColors, lines: string[]): void {
+  if (!drawable(chart)) return;
+  chart.data.datasets.forEach((dataset, i) => {
+    dataset.borderColor = lines[i];
+    dataset.backgroundColor = lines[i];
+  });
+  const options = chart.options;
+  const labels = options.plugins && options.plugins.legend && options.plugins.legend.labels;
+  if (labels) labels.color = colors.tick;
+  const scales = options.scales || {};
+  for (const axis of [scales.x, scales.y]) {
+    if (!axis) continue;
+    if (axis.ticks) axis.ticks.color = colors.tick;
+    if (axis.grid) axis.grid.color = colors.grid;
+  }
+  chart.update("none");
+}
+
+/**
+ * Recolours the charts for the current theme, in place: their data stays and
+ * nothing is rebuilt.
+ */
+export function recolorCharts(): void {
+  const colors = chartColors();
+  recolor(chartRps, colors, [colors.rps, colors.fps]);
+  recolor(chartUsers, colors, [colors.users]);
+  recolor(chartLatency, colors, [colors.latency]);
 }

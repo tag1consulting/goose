@@ -460,13 +460,77 @@ export interface HeatmapLayout {
 /** The right margin holds the percentile lines' labels. */
 const MARGIN = { left: 52, right: 72, top: 6, bottom: 22 };
 
-/** The percentile lines: which, how wide, dashed or not, in drawing order. */
-const LINES: Array<{ key: "p50" | "p95" | "p99"; width: number; dash: number[] }> = [
-  { key: "p50", width: 1.5, dash: [] },
-  { key: "p99", width: 1.5, dash: [5, 4] },
-  // Last, so it sits on top.
-  { key: "p95", width: 2.5, dash: [] },
+export type PercentileKey = "p50" | "p95" | "p99";
+
+/**
+ * The percentile lines, in drawing order. All three share one colour and one
+ * width and differ by pattern alone, so they are told apart without colour:
+ * p50 solid, p95 dashed, p99 dotted. Where two lines meet in one row, the gaps
+ * of the line on top let the one below show through.
+ */
+export const PERCENTILE_LINES: ReadonlyArray<{ key: PercentileKey; width: number; dash: number[] }> = [
+  { key: "p50", width: 2, dash: [] },
+  { key: "p95", width: 2, dash: [7, 4] },
+  { key: "p99", width: 2, dash: [2, 3] },
 ];
+
+/**
+ * The newest drawn second's p50, p95 and p99, where the lines end, with no
+ * height yet; none when the window has no percentiles.
+ */
+export function newestPercentiles(
+  view: HeatmapView
+): Array<{ key: PercentileKey; value: number; y: number }> {
+  for (let c = view.columns - 1; c >= 0; c--) {
+    const percentiles = view.percentiles.get(view.startSecond + c);
+    if (percentiles) {
+      return PERCENTILE_LINES.map((line) => ({ key: line.key, value: percentiles[line.key], y: 0 }));
+    }
+  }
+  return [];
+}
+
+/** A label at the plot's right edge, for one or more lines ending in one row. */
+export interface PercentileLabel {
+  text: string;
+  y: number;
+}
+
+/** The caption over the right edge labels, which give the newest second. */
+export const LABELS_CAPTION = "last second";
+
+/**
+ * The right edge labels for the lines' newest points: lines that end at the
+ * same value share one label ("p95, p99: 4 ms"), so no label sits beside a
+ * line it does not name; labels run top to bottom by height, none above
+ * `minY` (room for the caption), nudged apart when two would sit closer than
+ * 12 pixels.
+ */
+export function percentileLabels(
+  newest: ReadonlyArray<{ key: PercentileKey; value: number; y: number }>,
+  minY = -Infinity
+): PercentileLabel[] {
+  const order: PercentileKey[] = ["p50", "p95", "p99"];
+  const byValue = new Map<number, { keys: PercentileKey[]; y: number }>();
+  for (const point of newest) {
+    const group = byValue.get(point.value);
+    if (group) group.keys.push(point.key);
+    else byValue.set(point.value, { keys: [point.key], y: point.y });
+  }
+  const labels = [...byValue.entries()].map(([value, group]) => ({
+    text:
+      group.keys.sort((a, b) => order.indexOf(a) - order.indexOf(b)).join(", ") +
+      ": " +
+      tickLabel(value),
+    y: group.y,
+  }));
+  labels.sort((a, b) => a.y - b.y);
+  if (labels.length && labels[0].y < minY) labels[0].y = minY;
+  for (let i = 1; i < labels.length; i++) {
+    if (labels[i].y - labels[i - 1].y < 12) labels[i].y = labels[i - 1].y + 12;
+  }
+  return labels;
+}
 
 
 function cellKey(column: number, bucket: number): string {
@@ -493,12 +557,26 @@ export function drawHeatmap(
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
   ctx.clearRect(0, 0, cssWidth, cssHeight);
 
+  const font = getComputedStyle(canvas).fontFamily;
+  // The right margin fits the widest label and the caption, so a shared one
+  // ("p50, p95, p99: 200 ms") is never cut off at the edge.
+  ctx.font = "11px " + font;
+  let labelWidth = 0;
+  const labelsNow = percentileLabels(newestPercentiles(view));
+  for (const label of labelsNow) {
+    labelWidth = Math.max(labelWidth, ctx.measureText(label.text).width);
+  }
+  if (labelsNow.length) {
+    ctx.font = "10px " + font;
+    labelWidth = Math.max(labelWidth, ctx.measureText(LABELS_CAPTION).width);
+  }
+  const right = Math.max(MARGIN.right, Math.ceil(labelWidth) + 12);
+
   const left = MARGIN.left;
   const top = MARGIN.top;
-  const width = Math.max(1, cssWidth - MARGIN.left - MARGIN.right);
+  const width = Math.max(1, cssWidth - MARGIN.left - right);
   const height = Math.max(1, cssHeight - MARGIN.top - MARGIN.bottom);
   const layout: HeatmapLayout = { view, left, top, width, height, cells: new Map() };
-  const font = getComputedStyle(canvas).fontFamily;
   const card =
     getComputedStyle(canvas).getPropertyValue("--card").trim() || (dark ? "#1a2332" : "#ffffff");
 
@@ -558,10 +636,11 @@ export function drawHeatmap(
   // in the middle of its bucket's row, broken at a second with no requests.
   const rowsByTime = new Map<number, HeatmapRow>();
   for (const row of view.rows) rowsByTime.set(row.time, row);
-  const labels: Array<{ key: string; value: number; y: number }> = [];
+  const newestPoints: Array<{ key: PercentileKey; value: number; y: number }> = [];
+  const lineSegments: Array<Array<Array<[number, number]>>> = [];
   ctx.lineJoin = "round";
   ctx.lineCap = "butt";
-  for (const line of LINES) {
+  for (const line of PERCENTILE_LINES) {
     const segments: Array<Array<[number, number]>> = [];
     let segment: Array<[number, number]> = [];
     let newest: { value: number; y: number } | null = null;
@@ -578,44 +657,55 @@ export function drawHeatmap(
       newest = { value: percentiles[line.key], y: pointY };
     }
     if (segment.length) segments.push(segment);
-    // A halo in the card's colour under the stroke keeps it clear of the cells.
-    for (const [stroke, lineWidth, dash] of [
-      [card, line.width + 3, [] as number[]],
-      [colors.percentile, line.width, line.dash],
-    ] as Array<[string, number, number[]]>) {
-      ctx.strokeStyle = stroke;
-      ctx.lineWidth = lineWidth;
-      ctx.setLineDash(dash);
-      for (const points of segments) {
-        ctx.beginPath();
-        if (points.length === 1) {
-          // A lone second: a short level line across its column.
-          const half = Math.max(1, columnWidth / 2);
-          ctx.moveTo(points[0][0] - half, points[0][1]);
-          ctx.lineTo(points[0][0] + half, points[0][1]);
-        } else {
-          ctx.moveTo(points[0][0], points[0][1]);
-          for (const [pointX, pointY] of points.slice(1)) ctx.lineTo(pointX, pointY);
-        }
-        ctx.stroke();
-      }
-    }
-    if (newest) labels.push({ key: line.key, value: newest.value, y: newest.y });
+    lineSegments.push(segments);
+    if (newest) newestPoints.push({ key: line.key, value: newest.value, y: newest.y });
   }
+  const strokeSegments = (segments: Array<Array<[number, number]>>): void => {
+    for (const points of segments) {
+      ctx.beginPath();
+      if (points.length === 1) {
+        // A lone second: a short level line across its column.
+        const half = Math.max(1, columnWidth / 2);
+        ctx.moveTo(points[0][0] - half, points[0][1]);
+        ctx.lineTo(points[0][0] + half, points[0][1]);
+      } else {
+        ctx.moveTo(points[0][0], points[0][1]);
+        for (const [pointX, pointY] of points.slice(1)) ctx.lineTo(pointX, pointY);
+      }
+      ctx.stroke();
+    }
+  };
+  // Halos in the card's colour keep the lines clear of the cells. Every halo
+  // goes down before any line, or a later line's halo would hide an earlier
+  // line in the same row.
+  ctx.strokeStyle = card;
+  ctx.setLineDash([]);
+  PERCENTILE_LINES.forEach((line, i) => {
+    ctx.lineWidth = line.width + 3;
+    strokeSegments(lineSegments[i]);
+  });
+  ctx.strokeStyle = colors.percentile;
+  PERCENTILE_LINES.forEach((line, i) => {
+    ctx.lineWidth = line.width;
+    ctx.setLineDash(line.dash);
+    strokeSegments(lineSegments[i]);
+  });
   ctx.setLineDash([]);
 
-  // Each line labelled at the right edge, beside its newest point, nudged
-  // apart when two would sit closer than 12 pixels.
-  labels.sort((a, b) => a.y - b.y);
-  for (let i = 1; i < labels.length; i++) {
-    if (labels[i].y - labels[i - 1].y < 12) labels[i].y = labels[i - 1].y + 12;
-  }
-  ctx.fillStyle = colors.percentile;
+  // The labels give the newest second's values, under a muted caption that
+  // says so, so they do not read as a second key.
+  const labels = percentileLabels(newestPoints, top + 19);
   ctx.textAlign = "left";
   ctx.textBaseline = "middle";
+  if (labels.length) {
+    ctx.fillStyle = colors.tick;
+    ctx.font = "10px " + font;
+    ctx.fillText(LABELS_CAPTION, left + width + 6, labels[0].y - 14);
+  }
+  ctx.fillStyle = colors.percentile;
+  ctx.font = "11px " + font;
   for (const label of labels) {
-    ctx.font = (label.key === "p95" ? "600 " : "") + "11px " + font;
-    ctx.fillText(label.key + " " + tickLabel(label.value), left + width + 6, label.y);
+    ctx.fillText(label.text, left + width + 6, label.y);
   }
   return layout;
 }

@@ -94,7 +94,7 @@ Additional control rules:
 |------|----------------------------|-------|
 | `GET /` (SPA shell) | **Public** | |
 | `GET /static/*` | **Public** | |
-| `GET /api/v1/health` | **Public** | Liveness + ops counters; includes `control_enabled` (no load-test metrics) |
+| `GET /api/v1/health` | **Public** | Liveness + ops counters; includes `control_enabled` and the Controller addresses (no load-test metrics) |
 | `GET /api/v1/snapshot` | **Required** | |
 | `GET /api/v1/events` (SSE) | **Required** | |
 | `GET /api/v1/series` | **Required** | One request's response time heatmap; see [Request heatmap endpoint](#request-heatmap-endpoint) |
@@ -323,7 +323,8 @@ TLS termination is not provided by Goose; use an SSH tunnel or reverse proxy whe
   "last_build_ms": 2,
   "build_count": 42,
   "active_sse_clients": 1,
-  "control_enabled": false
+  "control_enabled": false,
+  "controllers": { "telnet": "0.0.0.0:5116", "websocket": null }
 }
 ```
 
@@ -335,28 +336,29 @@ TLS termination is not provided by Goose; use an SSH tunnel or reverse proxy whe
 | `build_count` | Successful hub snapshot builds since process start |
 | `active_sse_clients` | Concurrent SSE clients currently holding a slot |
 | `control_enabled` | Whether the Start/Stop/Users/Quit and Delete routes are registered (`--dashboard-control`) |
+| `controllers` | The `host:port` the telnet and WebSocket Controllers are configured to listen on, after defaults (`0.0.0.0:5116` and `0.0.0.0:5117` unless set), or `null` for one turned off with `--no-telnet` or `--no-websocket`; the page footer names them |
 
-These counters are ops-safe (timing and client counts only). The response does **not** include rates, hosts under test, request names, or error strings. Snapshot build duration is also logged at `debug` with a `[dashboard]` prefix when a build completes.
+These counters are ops-safe (timing and client counts only). The response does **not** include rates, hosts under test, request names, or error strings. `controllers` names this process's own listeners, which take no authentication; it reveals only where they listen. Snapshot build duration is also logged at `debug` with a `[dashboard]` prefix when a build completes.
 
 ## What the UI shows
 
 - **Phase badge** — `idle` (gray), `increase` (blue), `maintain` (green), `decrease` (orange), `shutdown` (red)
 - **Connection indicator** — green for SSE, yellow for poll fallback, red when disconnected
 - **KPI strip**: users, RPS, fail %, and the whole run p95 and average latency
-- **Charts**: trailing series window (default 300 seconds) for RPS and failures per second and active users, and the response time heatmap; see [The response time heatmap](#the-response-time-heatmap).
-- **Whole run** card: requests, failures, RPS, fail %, average and p50, p95 and p99 response times
-- **Sortable tables** — Scenarios, Transactions, Requests and Errors. The scenario and transaction tables list every registered scenario and transaction and are never truncated; the request and error tables show the top rows (truncated server-side for large runs)
+- **Charts**: trailing series window (default 300 seconds) for RPS and failures per second and active users, and the response time heatmap; see [The response time heatmap](#the-response-time-heatmap). Their colours follow the system's light or dark theme, and change with it while the page is open.
+- **Whole run** card: requests, failures, RPS, failures per second, fail %, average, p50, p95 and p99, and minimum and maximum response times
+- **Sortable tables**: Scenarios, Transactions, Requests and Errors. The scenario and transaction tables list every registered scenario and transaction and are never truncated; the request and error tables show the top rows (truncated server-side for large runs). The Transactions and Requests tables show failures per second and minimum and maximum response times, and the Requests table each request's status codes, most frequent first: the top three and how many more, such as `200 9,812 · 404 3 · +1`, with every code on hover (empty with `--no-status-codes`)
 - **Control panel** (only when `--dashboard-control`): Start / Stop / Quit / target users; see [Controlling a load test from the dashboard](#controlling-a-load-test-from-the-dashboard)
 - **Save state** in the header: `Saving to goose-runs`, `Not saving (turned off)`, or `Not saving: can't create goose-runs (reason)`; see [Saved runs](#saved-runs)
 - **Saved runs panel**: every saved run, with downloads and comparisons, and with `--dashboard-control` a Delete button for each
 
-Every figure in the KPI strip, the **Whole run** card and the tables covers the whole run, since the test started or since metrics were last reset; the labels say so, and hovering a table's `avg ms`, `p50`, `p95` or `p99` heading says "Whole run". Only the charts and the heatmap are by second. Goose measures response times in whole milliseconds, so a response under a millisecond counts as 0 ms.
+Every figure in the KPI strip, the **Whole run** card and the tables covers the whole run, since the test started or since metrics were last reset; the labels say so, and hovering a table's `avg ms`, `min ms`, `p50`, `p95`, `p99`, `max ms` or `status codes` heading says "Whole run". Only the charts and the heatmap are by second. Goose measures response times in whole milliseconds, so a response under a millisecond counts as 0 ms.
 
 Transaction times cover the whole transaction function, so they include `--throttle-requests` delays and any sleep inside it, and scenario times include the wait after each transaction. Every registered scenario and transaction has a row, so a scenario excluded by `--scenarios`, or one no user was assigned to, stays at 0 runs.
 
-When control is off there are **no control buttons**. Use the Controllers (or enable dashboard control) to change the running test.
+When control is off there are **no control buttons**. Use the Controllers (or enable dashboard control) to change the running test. The page footer names the address each Controller listens on, as `GET /api/v1/health` reports it, or says none is running.
 
-When coordinated omission mitigation is on (`--co-mitigation`) and has recorded at least one event, the KPI strip, the **Whole run** card and the requests table show adjusted response times, which include the synthetic times mitigation adds for requests a stalled user could not send. They are labelled "adjusted", and hovering a value shows the measured one. The **Whole run** card shows both. The adjusted aggregate includes every request, using measured times for requests that never needed backfill, as the printed metrics and the reports do.
+When coordinated omission mitigation is on (`--co-mitigation`) and has recorded at least one event, the KPI strip, the **Whole run** card and the requests table show adjusted response times, which include the synthetic times mitigation adds for requests a stalled user could not send. They are labelled "adjusted", and hovering a value shows the measured one. The **Whole run** card shows both. The maximum is adjusted too; the minimum has no adjusted value and is always the measured one. The adjusted aggregate includes every request, using measured times for requests that never needed backfill, as the printed metrics and the reports do.
 
 ### The response time heatmap
 

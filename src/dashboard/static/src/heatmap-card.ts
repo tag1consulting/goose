@@ -335,6 +335,11 @@ export function updateHeatmapCard(snap: DashboardSnapshot): boolean {
   return false;
 }
 
+/** Redraws the heatmap in the current theme; nothing while it is off. */
+export function redrawHeatmapCard(): void {
+  if (percentilesOn) draw();
+}
+
 export function initHeatmapCard(): void {
   setViewButtons();
   selectEl.addEventListener("change", () => {

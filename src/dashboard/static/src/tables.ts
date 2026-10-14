@@ -161,6 +161,16 @@ function sortableTable<R>(options: TableOptions<R>): SortableTable<R> {
     );
     for (let i = 0; i < ths.length; i++) {
       const th = ths[i];
+      // A button in the header makes it focusable and pressable; aria-sort
+      // goes on the th, where it is valid. The button's click bubbles here.
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = th.textContent;
+      th.textContent = "";
+      th.appendChild(button);
+      if (th.getAttribute("data-sort") === sort.key) {
+        th.setAttribute("aria-sort", sort.dir === "asc" ? "ascending" : "descending");
+      }
       th.addEventListener("click", () => {
         const attr = th.getAttribute("data-sort");
         const column = columns.find((c) => c.key === attr);
@@ -176,8 +186,10 @@ function sortableTable<R>(options: TableOptions<R>): SortableTable<R> {
         }
         for (let j = 0; j < ths.length; j++) {
           ths[j].classList.remove("sorted", "asc", "desc");
+          ths[j].removeAttribute("aria-sort");
         }
         th.classList.add("sorted", sort.dir);
+        th.setAttribute("aria-sort", sort.dir === "asc" ? "ascending" : "descending");
         render();
       });
     }
@@ -264,16 +276,20 @@ interface FlatTransactionRow {
   run_count: number;
   failure_count: number;
   runs_per_second: number;
+  failures_per_second: number;
   response_time_avg_ms: number;
+  response_time_min_ms: number;
   p50: number;
   p95: number;
   p99: number;
+  response_time_max_ms: number;
 }
 
 /**
  * The RequestRow fields the requests table shows, percentiles inlined. The
  * response times are the adjusted ones when the row has them, so the table
- * sorts on what it shows, and `measured` holds each one's hover text.
+ * sorts on what it shows, and `measured` holds each one's hover text. The
+ * minimum has no adjusted value and is always measured.
  */
 interface FlatRequestRow {
   method: string;
@@ -281,16 +297,55 @@ interface FlatRequestRow {
   request_count: number;
   failure_count: number;
   requests_per_second: number;
+  failures_per_second: number;
   response_time_avg_ms: number;
+  response_time_min_ms: number;
   p50: number;
   p95: number;
   p99: number;
+  response_time_max_ms: number;
+  /**
+   * The sort key for the status codes cell: every code and count, most
+   * frequent first, zero padded so 9,812 sorts below 10,000.
+   */
+  status_codes: string;
+  /** The most frequent status codes, as shown. */
+  status_codes_text: string;
   measured: {
     response_time_avg_ms: string | null;
     p50: string | null;
     p95: string | null;
     p99: string | null;
+    response_time_max_ms: string | null;
   };
+  /** Every status code, for the cell's hover, or null when there are none. */
+  status_codes_title: string | null;
+}
+
+/** How many status codes a requests table cell shows before `+N`. */
+const STATUS_CODES_SHOWN = 3;
+
+/**
+ * A request's status codes as "200 9,812 · 404 3", most frequent first (equal
+ * counts by code): the first STATUS_CODES_SHOWN and how many more, and every
+ * one for the hover. Empty under --no-status-codes, which sends none.
+ */
+function statusCodesText(codes: Array<[number, number]>): {
+  shown: string;
+  title: string | null;
+  sort: string;
+} {
+  if (codes.length === 0) return { shown: "", title: null, sort: "" };
+  const sorted = codes.slice().sort((a, b) => b[1] - a[1] || a[0] - b[0]);
+  const parts = sorted.map(([code, count]) => code + " " + formatInt(count));
+  const shown = parts.slice(0, STATUS_CODES_SHOWN);
+  if (parts.length > STATUS_CODES_SHOWN) {
+    shown.push("+" + (parts.length - STATUS_CODES_SHOWN));
+  }
+  const sort = sorted
+    .map(([code, count]) => String(code).padStart(5, "0") + ":" + String(count).padStart(16, "0"))
+    .join(" ");
+  return { shown: shown.join(" · "), title: parts.join(" · "), sort };
 }
 
 function flattenScenario(r: ScenarioRow): FlatScenarioRow {
@@ -320,10 +375,13 @@ function flattenTransaction(r: TransactionRow): FlatTransactionRow {
     run_count: r.run_count,
     failure_count: r.failure_count,
     runs_per_second: r.runs_per_second,
+    failures_per_second: r.failures_per_second,
     response_time_avg_ms: r.response_time_avg_ms,
+    response_time_min_ms: r.response_time_min_ms,
     p50: p.p50,
     p95: p.p95,
     p99: p.p99,
+    response_time_max_ms: r.response_time_max_ms,
   };
 }
 
@@ -339,22 +397,35 @@ function flattenRequest(r: RequestRow): FlatRequestRow {
   const p50 = shownTime(p.p50, cp ? cp.p50 : null, formatInt);
   const p95 = shownTime(p.p95, cp ? cp.p95 : null, formatInt);
   const p99 = shownTime(p.p99, cp ? cp.p99 : null, formatInt);
+  const max = shownTime(
+    r.response_time_max_ms,
+    co ? co.response_time_max_ms : null,
+    formatInt
+  );
+  const codes = statusCodesText(r.status_codes);
   return {
     method: r.method,
     name: r.name,
     request_count: r.request_count,
     failure_count: r.failure_count,
     requests_per_second: r.requests_per_second,
+    failures_per_second: r.failures_per_second,
     response_time_avg_ms: avg.value,
+    response_time_min_ms: r.response_time_min_ms,
     p50: p50.value,
     p95: p95.value,
     p99: p99.value,
+    response_time_max_ms: max.value,
+    status_codes: codes.sort,
+    status_codes_text: codes.shown,
     measured: {
       response_time_avg_ms: avg.title,
       p50: p50.title,
       p95: p95.title,
       p99: p99.title,
+      response_time_max_ms: max.title,
     },
+    status_codes_title: codes.title,
   };
 }
 
@@ -420,13 +491,28 @@ const transactionsTable = sortableTable<FlatTransactionRow>({
       format: (r) => formatRate(r.runs_per_second),
     },
     {
+      key: "failures_per_second",
+      type: "num",
+      format: (r) => formatRate(r.failures_per_second),
+    },
+    {
       key: "response_time_avg_ms",
       type: "num",
       format: (r) => timing(r.run_count, formatRate(r.response_time_avg_ms)),
     },
+    {
+      key: "response_time_min_ms",
+      type: "num",
+      format: (r) => timing(r.run_count, formatInt(r.response_time_min_ms)),
+    },
     { key: "p50", type: "num", format: (r) => timing(r.run_count, formatInt(r.p50)) },
     { key: "p95", type: "num", format: (r) => timing(r.run_count, formatInt(r.p95)) },
     { key: "p99", type: "num", format: (r) => timing(r.run_count, formatInt(r.p99)) },
+    {
+      key: "response_time_max_ms",
+      type: "num",
+      format: (r) => timing(r.run_count, formatInt(r.response_time_max_ms)),
+    },
   ],
   sort: { key: "order", type: "num", dir: "asc" },
   rowKey: (r) => String(r.order),
@@ -460,10 +546,20 @@ const requestsTable = sortableTable<FlatRequestRow>({
       format: (r) => formatRate(r.requests_per_second),
     },
     {
+      key: "failures_per_second",
+      type: "num",
+      format: (r) => formatRate(r.failures_per_second),
+    },
+    {
       key: "response_time_avg_ms",
       type: "num",
       format: (r) => formatRate(r.response_time_avg_ms),
       title: (r) => r.measured.response_time_avg_ms,
+    },
+    {
+      key: "response_time_min_ms",
+      type: "num",
+      format: (r) => formatInt(r.response_time_min_ms),
     },
     {
       key: "p50",
@@ -482,6 +578,18 @@ const requestsTable = sortableTable<FlatRequestRow>({
       type: "num",
       format: (r) => formatInt(r.p99),
       title: (r) => r.measured.p99,
+    },
+    {
+      key: "response_time_max_ms",
+      type: "num",
+      format: (r) => formatInt(r.response_time_max_ms),
+      title: (r) => r.measured.response_time_max_ms,
+    },
+    {
+      key: "status_codes",
+      type: "str",
+      format: (r) => r.status_codes_text,
+      title: (r) => r.status_codes_title,
     },
   ],
   sort: { key: "request_count", type: "num", dir: "desc" },

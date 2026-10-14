@@ -885,6 +885,8 @@ struct DashboardState {
     /// The runs directory as given, or the default: the saved run routes
     /// read it, and only them.
     runs_dir: String,
+    /// The controller addresses `GET /api/v1/health` reports.
+    controllers: HealthControllers,
 }
 
 #[derive(Debug, Deserialize)]
@@ -931,7 +933,10 @@ type SeriesCache = HashMap<SeriesKey, (Instant, Bytes)>;
 ///
 /// `last_build_ms` is the wall-clock duration of the last successful hub build,
 /// not a Unix timestamp. Fields are always present so external monitors can
-/// scrape them without auth; they do not leak request names, hosts, or rates.
+/// scrape them without auth; they do not leak request names, target hosts, or
+/// rates. `controllers` names this process's own telnet and WebSocket
+/// listeners, which take no authentication; it reveals only where they
+/// listen.
 #[derive(Debug, Serialize)]
 struct HealthResponse {
     ok: bool,
@@ -944,6 +949,16 @@ struct HealthResponse {
     active_sse_clients: usize,
     /// Whether the Start/Stop/Users/Quit control and Delete endpoints are registered.
     control_enabled: bool,
+    /// Where the telnet and WebSocket Controllers listen.
+    controllers: HealthControllers,
+}
+
+/// The `host:port` each Controller is configured to listen on, or `None` when
+/// it is off (`--no-telnet`, `--no-websocket`).
+#[derive(Debug, Clone, Serialize)]
+struct HealthControllers {
+    telnet: Option<String>,
+    websocket: Option<String>,
 }
 
 /// Format `host:port` for [`TcpListener::bind`], bracketing bare IPv6 literals.
@@ -1037,6 +1052,16 @@ pub(crate) async fn setup_dashboard(
         series_in_flight: Arc::new(AtomicUsize::new(0)),
         series_cache: Arc::new(Mutex::new(HashMap::new())),
         runs_dir: configuration.runs_dir_or_default().to_string(),
+        // setup_controllers has already resolved an empty host or a 0 port
+        // to its default.
+        controllers: HealthControllers {
+            telnet: (!configuration.no_telnet).then(|| {
+                format_bind_address(&configuration.telnet_host, configuration.telnet_port)
+            }),
+            websocket: (!configuration.no_websocket).then(|| {
+                format_bind_address(&configuration.websocket_host, configuration.websocket_port)
+            }),
+        },
     };
 
     // Loopback by the configured name, the same rule that lets the dashboard
@@ -1346,6 +1371,7 @@ async fn health_handler(State(state): State<Arc<DashboardState>>) -> impl IntoRe
         build_count: state.hub.build_count(),
         active_sse_clients: state.hub.active_sse_clients(),
         control_enabled: state.control_enabled,
+        controllers: state.controllers.clone(),
     })
 }
 
@@ -1558,6 +1584,9 @@ async fn events_handler(
                         break;
                     }
                 }
+                // The client disconnected and its body stream was dropped:
+                // free the slot now, not on the next snapshot (#696).
+                _ = event_tx.closed() => break,
             }
         }
     });
@@ -2988,6 +3017,75 @@ mod tests {
         parent.abort();
     }
 
+    #[tokio::test]
+    async fn health_reports_controller_addresses() {
+        // (no_telnet, no_websocket, expected controllers). Hosts and ports are
+        // set as setup_controllers leaves them; an IPv6 host is bracketed.
+        let cases = [
+            (
+                false,
+                false,
+                serde_json::json!({"telnet": "0.0.0.0:5116", "websocket": "[::1]:6117"}),
+            ),
+            (
+                true,
+                false,
+                serde_json::json!({"telnet": null, "websocket": "[::1]:6117"}),
+            ),
+            (
+                true,
+                true,
+                serde_json::json!({"telnet": null, "websocket": null}),
+            ),
+        ];
+        let client = reqwest::Client::new();
+        for (no_telnet, no_websocket, expected) in cases {
+            let config = GooseConfiguration {
+                dashboard: true,
+                dashboard_host: "127.0.0.1".to_string(),
+                dashboard_port: 0,
+                no_telnet,
+                telnet_host: "0.0.0.0".to_string(),
+                telnet_port: 5116,
+                no_websocket,
+                websocket_host: "::1".to_string(),
+                websocket_port: 6117,
+                ..Default::default()
+            };
+            let setup = setup_dashboard(&config)
+                .await
+                .expect("bind")
+                .expect("enabled");
+            let health: serde_json::Value = client
+                .get(format!(
+                    "http://127.0.0.1:{}/api/v1/health",
+                    setup.bound_port
+                ))
+                .send()
+                .await
+                .expect("health")
+                .json()
+                .await
+                .expect("json");
+            assert_eq!(
+                health["controllers"], expected,
+                "no_telnet {}, no_websocket {}",
+                no_telnet, no_websocket
+            );
+            // The fields health had before stay.
+            assert_eq!(health["ok"], true);
+            assert_eq!(health["control_enabled"], false);
+            for field in [
+                "version",
+                "last_build_ms",
+                "build_count",
+                "active_sse_clients",
+            ] {
+                assert!(!health[field].is_null(), "{} missing", field);
+            }
+        }
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn events_require_token_when_configured() {
         let token = "sse-secret";
@@ -4360,5 +4458,58 @@ mod tests {
         }
         assert!(served, "a closed connection must free its slot");
         parent.abort();
+    }
+
+    /// Poll `/api/v1/health` until `active_sse_clients` equals `want` or
+    /// `within` elapses; returns the last count read.
+    async fn wait_active_sse(base: &str, want: u64, within: Duration) -> u64 {
+        let client = reqwest::Client::new();
+        let deadline = Instant::now() + within;
+        loop {
+            let health: serde_json::Value = client
+                .get(format!("{base}/api/v1/health"))
+                .send()
+                .await
+                .expect("health")
+                .json()
+                .await
+                .expect("health json");
+            let active = health["active_sse_clients"].as_u64().expect("count");
+            if active == want || Instant::now() >= deadline {
+                return active;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    /// Regression for #696: a client that disconnects frees its SSE slot at
+    /// once, even while no snapshot is published, so browsers reconnecting
+    /// while the main loop is busy cannot fill the cap and lock viewers out.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sse_slot_freed_on_disconnect_without_snapshots() {
+        let cap = 2u32;
+        // Nothing reads `request_rx`, like a main loop busy in a long
+        // `test_start`, so no snapshot is ever published.
+        let (_setup, base) = bind_dashboard_with("", cap, false).await;
+        let client = reqwest::Client::new();
+
+        let mut held = Vec::new();
+        for i in 0..cap {
+            let resp = client
+                .get(format!("{base}/api/v1/events"))
+                .send()
+                .await
+                .expect("connect");
+            assert_eq!(resp.status(), 200, "client {i} should be accepted");
+            held.push(resp);
+        }
+
+        drop(held);
+        // Well inside the 15 s heartbeat, so its write cannot free the slots.
+        assert_eq!(
+            wait_active_sse(&base, 0, Duration::from_secs(2)).await,
+            0,
+            "disconnected clients must free their slots"
+        );
     }
 }

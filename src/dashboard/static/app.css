@@ -113,6 +113,7 @@ body {
 
 .phase-badge.phase-increase {
   background: var(--phase-increase);
+  color: #06142b;
 }
 
 .phase-badge.phase-maintain {
@@ -127,11 +128,14 @@ body {
 
 .phase-badge.phase-shutdown {
   background: var(--phase-shutdown);
+  color: #2a0a0c;
 }
 
 @media (prefers-color-scheme: light) {
+  .phase-badge.phase-increase,
   .phase-badge.phase-maintain,
-  .phase-badge.phase-decrease {
+  .phase-badge.phase-decrease,
+  .phase-badge.phase-shutdown {
     color: #fff;
   }
 }
@@ -260,7 +264,7 @@ body {
 .control-label input {
   background: var(--bg);
   color: var(--text);
-  border: 1px solid var(--border);
+  border: 1px solid var(--muted);
   border-radius: 6px;
   padding: 0.3rem 0.45rem;
   font: inherit;
@@ -284,22 +288,31 @@ body {
   cursor: pointer;
 }
 
-.ctrl-btn:hover:not(:disabled) {
+.ctrl-btn:hover:not([aria-disabled="true"]) {
   border-color: var(--accent);
   color: var(--accent);
 }
 
-.ctrl-btn:disabled {
-  opacity: 0.45;
+/* An unavailable button keeps focus, so it is dimmed by colour: opacity would
+   dim its focus ring too. The mixes match the old 0.45 opacity on a card. */
+.ctrl-btn[aria-disabled="true"] {
+  background: color-mix(in srgb, var(--bg) 45%, var(--card));
+  border-color: color-mix(in srgb, var(--border) 45%, var(--card));
+  color: color-mix(in srgb, var(--text) 45%, var(--card));
   cursor: not-allowed;
 }
 
-.ctrl-btn.ctrl-start:not(:disabled) {
+.ctrl-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.ctrl-btn.ctrl-start:not([aria-disabled="true"]) {
   border-color: color-mix(in srgb, var(--ok) 55%, var(--border));
   color: var(--ok);
 }
 
-.ctrl-btn.ctrl-stop:not(:disabled) {
+.ctrl-btn.ctrl-stop:not([aria-disabled="true"]) {
   border-color: color-mix(in srgb, var(--err) 55%, var(--border));
   color: var(--err);
 }
@@ -451,7 +464,7 @@ body {
 .chart-controls select {
   max-width: 22rem;
   padding: 0.2rem 0.4rem;
-  border: 1px solid var(--border);
+  border: 1px solid var(--muted);
   border-radius: 6px;
   background: var(--card);
   color: var(--text);
@@ -477,9 +490,17 @@ body {
   cursor: pointer;
 }
 
+/* Dark text on the dark theme's light accent, as on the increase badge;
+   white text was 3.33:1. */
 .segmented button[aria-pressed="true"] {
   background: var(--accent);
-  color: #fff;
+  color: #06142b;
+}
+
+@media (prefers-color-scheme: light) {
+  .segmented button[aria-pressed="true"] {
+    color: #fff;
+  }
 }
 
 .segmented button:focus-visible {
@@ -535,7 +556,8 @@ body {
   border-radius: 3px;
 }
 
-/* A short sample of each percentile line's stroke, as the heatmap draws it. */
+/* A short sample of each percentile line's stroke, as the heatmap draws it:
+   p50 solid, p95 dashed, p99 dotted, one width. */
 .heatmap-key {
   display: inline-flex;
   align-items: center;
@@ -547,15 +569,15 @@ body {
   content: "";
   display: inline-block;
   width: 1.5rem;
-  border-top: 1.5px solid var(--percentile);
+  border-top: 2px solid var(--percentile);
 }
 
 .heatmap-key-p95::before {
-  border-top-width: 2.5px;
+  border-top-style: dashed;
 }
 
 .heatmap-key-p99::before {
-  border-top-style: dashed;
+  border-top-style: dotted;
 }
 
 
@@ -598,7 +620,7 @@ body {
 .filter-label input {
   background: var(--bg);
   color: var(--text);
-  border: 1px solid var(--border);
+  border: 1px solid var(--muted);
   border-radius: 6px;
   padding: 0.3rem 0.5rem;
   font: inherit;
@@ -607,6 +629,11 @@ body {
 
 .table-wrap {
   overflow-x: auto;
+}
+
+.table-wrap:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 table {
@@ -639,13 +666,31 @@ th.sorted {
   color: var(--accent);
 }
 
-th.sorted.asc::after {
+th button {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+th button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* The "/ ''" alt text keeps the arrow out of the button's accessible name;
+   aria-sort on the th says the order. The first line is the fallback. */
+th.sorted.asc button::after {
   content: " ▲";
+  content: " ▲" / "";
   font-size: 0.7em;
 }
 
-th.sorted.desc::after {
+th.sorted.desc button::after {
   content: " ▼";
+  content: " ▼" / "";
   font-size: 0.7em;
 }
 

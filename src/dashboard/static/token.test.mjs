@@ -147,7 +147,7 @@ test("a control 401 clears the stored token", async () => {
 
   // Metrics still accept the token, so only the control 401 can clear it.
   const start = page.window.document.getElementById("ctrl-start");
-  assert.equal(start.disabled, false, "Start is enabled with a token");
+  assert.equal(start.getAttribute("aria-disabled"), "false", "Start is enabled with a token");
   const server = stubServer("s3cret", {
     controlEnabled: true,
     controlToken: "other",
