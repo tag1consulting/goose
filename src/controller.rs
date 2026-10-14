@@ -1064,6 +1064,8 @@ mod tests {
             ("increaserate NaN", INCREASE_RATE),
             ("host http:foo", HOST),
             ("testplan 10,1s\u{1b}[2J", TEST_PLAN),
+            ("testplan  10,1s", TEST_PLAN),
+            ("testplan 10,1s ;5,1s", TEST_PLAN),
             // In the grammar, but infinite as an f32: the finite check refuses it.
             (FORTY_DIGITS, INCREASE_RATE),
         ];

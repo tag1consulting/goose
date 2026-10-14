@@ -1,6 +1,5 @@
 //! Utility functions used by Goose, and available when writing load tests.
 
-use lazy_static::lazy_static;
 use regex::Regex;
 use std::cmp::{max, min};
 use std::collections::BTreeMap;
@@ -34,19 +33,11 @@ use crate::{is_killswitch_triggered, reset_killswitch, trigger_killswitch, Goose
 /// // Invalid value is 0 seconds.
 /// assert_eq!(util::parse_timespan("foo"), Some(0));
 ///
-/// // Too long, or a digit of another script, is an error.
+/// // Too long, or a digit of another script before a unit, is an error.
 /// assert_eq!(util::parse_timespan("99999999999999999999h"), None);
 /// assert_eq!(util::parse_timespan("\u{661}h"), None);
 /// ```
 pub fn parse_timespan(time_str: &str) -> Option<usize> {
-    lazy_static! {
-        // A decimal digit of another script, which `\d` also matches.
-        static ref OTHER_DIGIT: Regex = Regex::new(r"[\d&&[^0-9]]").unwrap();
-    }
-    // It would read as no number at all: refuse it.
-    if OTHER_DIGIT.is_match(time_str) {
-        return None;
-    }
     let seconds = match usize::from_str(time_str) {
         // If an integer is passed in, assume it's seconds
         Ok(t) => t,
@@ -474,11 +465,20 @@ mod tests {
         assert_eq!(parse_timespan("24h"), Some(86400));
         assert_eq!(parse_timespan("88h88m88s"), Some(322168));
         assert_eq!(parse_timespan("100hourblah"), Some(360000));
+        // A digit of another script matches `\d` but is no `usize` digit: an
+        // error before a unit, where main panicked, otherwise no number at all,
+        // as on main.
         assert_eq!(parse_timespan("١h"), None);
         assert_eq!(parse_timespan("1h١m"), None);
-        assert_eq!(parse_timespan("١"), None);
+        assert_eq!(parse_timespan("١"), Some(0));
+        assert_eq!(parse_timespan("x١"), Some(0));
+        assert_eq!(parse_timespan("1h2m٣"), Some(3720));
         // Other numeric characters are not digits: `\d` skips them, as on main.
         assert_eq!(parse_timespan("2h²"), Some(7200));
+        // Parts that each fit but overflow when added, and seconds too many
+        // for a `usize`.
+        assert_eq!(parse_timespan("5124095576030431h100s"), None);
+        assert_eq!(parse_timespan("99999999999999999999"), None);
     }
 
     #[test]

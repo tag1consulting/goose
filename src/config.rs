@@ -3516,6 +3516,8 @@ mod test {
         use crate::goose::{Scenario, Transaction};
 
         async fn noop(_user: &mut crate::goose::GooseUser) -> crate::goose::TransactionResult {
+            // Yield, so a load test that wrongly starts leaves the timer running.
+            tokio::task::yield_now().await;
             Ok(())
         }
         let base = [
@@ -3535,16 +3537,22 @@ mod test {
                 "99999999999999999999h",
                 "9999999999999999h",
                 "18446744073709552",
+                "5124095576030431h100s",
             ] {
                 let mut args = base.to_vec();
                 args.extend([option, value]);
                 let configuration = GooseConfiguration::parse_args_default(&args).unwrap();
-                let result = GooseAttack::initialize_with_config(configuration)
-                    .unwrap()
-                    .register_scenario(scenario())
-                    .execute()
-                    .await;
-                assert!(result.is_err(), "{} {}", option, value);
+                // A value that wraps instead of failing starts a load test that
+                // never ends: time it out so the row fails instead of hanging.
+                let result = tokio::time::timeout(
+                    std::time::Duration::from_secs(10),
+                    GooseAttack::initialize_with_config(configuration)
+                        .unwrap()
+                        .register_scenario(scenario())
+                        .execute(),
+                )
+                .await;
+                assert!(matches!(result, Ok(Err(_))), "{} {}", option, value);
             }
         }
         for (name, key) in [
