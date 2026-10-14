@@ -476,7 +476,7 @@ test("lines ending at one value share one label", () => {
     { key: "p95", value: 1, y: 100 },
     { key: "p99", value: 1, y: 100 },
   ]);
-  assert.deepEqual(labels, [{ text: "p50 p95 p99 1 ms", y: 100 }]);
+  assert.deepEqual(labels, [{ text: "p50, p95, p99: 1 ms", y: 100 }]);
 });
 
 test("labels run top to bottom by height, tied lines grouped", () => {
@@ -487,7 +487,7 @@ test("labels run top to bottom by height, tied lines grouped", () => {
   ]);
   assert.deepEqual(
     labels.map((l) => l.text),
-    ["p95 p99 4 ms", "p50 1 ms"]
+    ["p95, p99: 4 ms", "p50: 1 ms"]
   );
 });
 
@@ -500,9 +500,9 @@ test("labels closer than 12 pixels are nudged apart, in order", () => {
   assert.deepEqual(
     labels.map((l) => [l.text, l.y]),
     [
-      ["p99 3 ms", 92],
-      ["p95 2 ms", 104],
-      ["p50 1 ms", 116],
+      ["p99: 3 ms", 92],
+      ["p95: 2 ms", 104],
+      ["p50: 1 ms", 116],
     ]
   );
 });
@@ -601,7 +601,7 @@ test("the right margin fits the widest percentile label", () => {
   };
   assert.deepEqual(
     heatmap.percentileLabels(heatmap.newestPercentiles(view)).map((l) => l.text),
-    ["p50 p95 p99 200 ms"]
+    ["p50, p95, p99: 200 ms"]
   );
   const ctx = { measureText: (text) => ({ width: text.length * 6 }) };
   const canvas = {
@@ -624,5 +624,74 @@ test("the right margin fits the widest percentile label", () => {
     [globalThis.window, globalThis.getComputedStyle] = saved;
   }
   const labelRoom = 600 - (layout.left + layout.width) - 6;
-  assert.ok(labelRoom >= "p50 p95 p99 200 ms".length * 6, `${labelRoom} px for the label`);
+  assert.ok(labelRoom >= "p50, p95, p99: 200 ms".length * 6, `${labelRoom} px for the label`);
+});
+
+test("labels never sit above the room left for the caption", () => {
+  const labels = heatmap.percentileLabels(
+    [
+      { key: "p99", value: 200, y: 2 },
+      { key: "p50", value: 5, y: 8 },
+    ],
+    25
+  );
+  assert.deepEqual(
+    labels.map((l) => [l.text, l.y]),
+    [
+      ["p99: 200 ms", 25],
+      ["p50: 5 ms", 37],
+    ]
+  );
+});
+
+test("a muted caption says the labels are the last second's", () => {
+  const texts = [];
+  const ctx = {
+    measureText: (text) => ({ width: text.length * 6 }),
+    fillText(text, x, y) {
+      texts.push({ text, y, fill: ctx.fillStyle });
+    },
+  };
+  const canvas = {
+    clientWidth: 600,
+    clientHeight: 300,
+    getContext: () =>
+      new Proxy(ctx, {
+        get: (t, p) => (p in t ? t[p] : () => {}),
+        set: (t, p, v) => {
+          t[p] = v;
+          return true;
+        },
+      }),
+  };
+  const row = { bucket: 0, time: 5, lowest: 5, highest: 5, top: 0.4, bottom: 0.6 };
+  const view = {
+    startSecond: 0,
+    columns: 1,
+    rows: [row],
+    cells: [],
+    minCount: 0,
+    maxCount: 0,
+    ticks: [],
+    secondTotals: new Map(),
+    percentiles: new Map([[0, { second: 0, p50: 5, p95: 5, p99: 5 }]]),
+  };
+  const saved = [globalThis.window, globalThis.getComputedStyle];
+  globalThis.window = { devicePixelRatio: 1 };
+  globalThis.getComputedStyle = () => ({ fontFamily: "x", getPropertyValue: () => "" });
+  try {
+    heatmap.drawHeatmap(canvas, view, true, {
+      tick: "#9aa7b8",
+      grid: "#333333",
+      percentile: "#ff8f45",
+    });
+  } finally {
+    [globalThis.window, globalThis.getComputedStyle] = saved;
+  }
+  const caption = texts.find((t) => t.text === heatmap.LABELS_CAPTION);
+  const label = texts.find((t) => t.text === "p50, p95, p99: 5 ms");
+  assert.ok(caption, "the caption is drawn");
+  assert.ok(label, "the shared label is drawn");
+  assert.equal(caption.fill, "#9aa7b8", "the caption is muted");
+  assert.ok(caption.y < label.y, "the caption sits above the labels");
 });

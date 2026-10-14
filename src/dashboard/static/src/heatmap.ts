@@ -496,14 +496,19 @@ export interface PercentileLabel {
   y: number;
 }
 
+/** The caption over the right edge labels, which give the newest second. */
+export const LABELS_CAPTION = "last second";
+
 /**
  * The right edge labels for the lines' newest points: lines that end at the
- * same value share one label ("p95 p99 4 ms"), so no label sits beside a line
- * it does not name; labels run top to bottom by height, nudged apart when two
- * would sit closer than 12 pixels.
+ * same value share one label ("p95, p99: 4 ms"), so no label sits beside a
+ * line it does not name; labels run top to bottom by height, none above
+ * `minY` (room for the caption), nudged apart when two would sit closer than
+ * 12 pixels.
  */
 export function percentileLabels(
-  newest: ReadonlyArray<{ key: PercentileKey; value: number; y: number }>
+  newest: ReadonlyArray<{ key: PercentileKey; value: number; y: number }>,
+  minY = -Infinity
 ): PercentileLabel[] {
   const order: PercentileKey[] = ["p50", "p95", "p99"];
   const byValue = new Map<number, { keys: PercentileKey[]; y: number }>();
@@ -514,12 +519,13 @@ export function percentileLabels(
   }
   const labels = [...byValue.entries()].map(([value, group]) => ({
     text:
-      group.keys.sort((a, b) => order.indexOf(a) - order.indexOf(b)).join(" ") +
-      " " +
+      group.keys.sort((a, b) => order.indexOf(a) - order.indexOf(b)).join(", ") +
+      ": " +
       tickLabel(value),
     y: group.y,
   }));
   labels.sort((a, b) => a.y - b.y);
+  if (labels.length && labels[0].y < minY) labels[0].y = minY;
   for (let i = 1; i < labels.length; i++) {
     if (labels[i].y - labels[i - 1].y < 12) labels[i].y = labels[i - 1].y + 12;
   }
@@ -552,12 +558,17 @@ export function drawHeatmap(
   ctx.clearRect(0, 0, cssWidth, cssHeight);
 
   const font = getComputedStyle(canvas).fontFamily;
-  // The right margin fits the widest label, so a shared one ("p50 p95 p99
-  // 200 ms") is never cut off at the edge.
+  // The right margin fits the widest label and the caption, so a shared one
+  // ("p50, p95, p99: 200 ms") is never cut off at the edge.
   ctx.font = "11px " + font;
   let labelWidth = 0;
-  for (const label of percentileLabels(newestPercentiles(view))) {
+  const labelsNow = percentileLabels(newestPercentiles(view));
+  for (const label of labelsNow) {
     labelWidth = Math.max(labelWidth, ctx.measureText(label.text).width);
+  }
+  if (labelsNow.length) {
+    ctx.font = "10px " + font;
+    labelWidth = Math.max(labelWidth, ctx.measureText(LABELS_CAPTION).width);
   }
   const right = Math.max(MARGIN.right, Math.ceil(labelWidth) + 12);
 
@@ -681,11 +692,19 @@ export function drawHeatmap(
   });
   ctx.setLineDash([]);
 
-  ctx.fillStyle = colors.percentile;
+  // The labels give the newest second's values, under a muted caption that
+  // says so, so they do not read as a second key.
+  const labels = percentileLabels(newestPoints, top + 19);
   ctx.textAlign = "left";
   ctx.textBaseline = "middle";
+  if (labels.length) {
+    ctx.fillStyle = colors.tick;
+    ctx.font = "10px " + font;
+    ctx.fillText(LABELS_CAPTION, left + width + 6, labels[0].y - 14);
+  }
+  ctx.fillStyle = colors.percentile;
   ctx.font = "11px " + font;
-  for (const label of percentileLabels(newestPoints)) {
+  for (const label of labels) {
     ctx.fillText(label.text, left + width + 6, label.y);
   }
   return layout;
