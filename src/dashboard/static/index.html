@@ -24,6 +24,7 @@
     </div>
   </header>
 
+  <main>
   <section id="banner" class="banner hidden" role="status"></section>
 
   <div id="run-banner" class="run-banner" aria-live="polite"></div>
@@ -44,8 +45,8 @@
         <input id="ctrl-target" type="number" min="1" step="1" inputmode="numeric" autocomplete="off">
       </label>
       <button type="button" id="ctrl-apply" class="ctrl-btn">Apply</button>
-      <button type="button" id="ctrl-minus" class="ctrl-btn ctrl-step-btn" title="Decrease target by step">−</button>
-      <button type="button" id="ctrl-plus" class="ctrl-btn ctrl-step-btn" title="Increase target by step">+</button>
+      <button type="button" id="ctrl-minus" class="ctrl-btn ctrl-step-btn" title="Decrease target by step" aria-label="Decrease target by step">−</button>
+      <button type="button" id="ctrl-plus" class="ctrl-btn ctrl-step-btn" title="Increase target by step" aria-label="Increase target by step">+</button>
       <label class="control-label" for="ctrl-step">
         step
         <input id="ctrl-step" type="number" min="1" step="1" value="10" inputmode="numeric" autocomplete="off">
@@ -80,11 +81,11 @@
   <section id="charts" class="charts-grid">
     <div class="card chart-card">
       <h2>Requests / failures per second</h2>
-      <canvas id="chart-rps" aria-label="RPS and failures chart"></canvas>
+      <canvas id="chart-rps" role="img" aria-label="RPS and failures chart"></canvas>
     </div>
     <div class="card chart-card">
       <h2>Active users</h2>
-      <canvas id="chart-users" aria-label="Active users chart"></canvas>
+      <canvas id="chart-users" role="img" aria-label="Active users chart"></canvas>
     </div>
     <div id="chart-latency-card" class="card chart-card chart-wide">
       <div class="chart-head">
@@ -102,7 +103,7 @@
       <p id="chart-latency-note" class="note" hidden></p>
       <p id="heatmap-note" class="note">Each column is one second. Color shows how many requests took that long; the lines are that second's p50, p95 and p99.</p>
       <div id="heatmap-wrap" class="heatmap-wrap">
-        <canvas id="chart-heatmap" aria-label="Response times by second, heatmap"></canvas>
+        <canvas id="chart-heatmap" role="img" aria-label="Response times by second, heatmap"></canvas>
         <div id="heatmap-tooltip" class="heatmap-tooltip" role="tooltip" hidden></div>
       </div>
       <div id="heatmap-legend" class="heatmap-legend">
@@ -118,7 +119,7 @@
 
       <!-- Chart.js sets its canvas to display: block, so the wrapper hides it. -->
       <div id="chart-latency-wrap" hidden>
-        <canvas id="chart-latency" aria-label="Average latency chart"></canvas>
+        <canvas id="chart-latency" role="img" aria-label="Average latency chart"></canvas>
       </div>
     </div>
   </section>
@@ -264,6 +265,7 @@
     <p id="runs-error" class="runs-error" role="status" hidden></p>
     <p id="runs-footer" class="table-note"></p>
   </section>
+  </main>
 
   <footer>
     <p id="footer-note">Control this test via telnet :5116 or WebSocket :5117. This dashboard is read-only.</p>
