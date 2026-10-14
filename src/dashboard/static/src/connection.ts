@@ -1,7 +1,7 @@
 // The connection to the dashboard server: the access token, the SSE stream,
 // the poll fallback and the snapshot fetch, ending at the JSON boundary.
 
-import { setBanner, setConnection, type ConnectionMode } from "./status";
+import { setBanner, setConnection, showPolling, type ConnectionMode } from "./status";
 
 /**
  * Called once when Goose exits, with the `closed` event's data: the save
@@ -32,6 +32,9 @@ const TOKEN_STORAGE_KEY = "goose-dashboard-token";
 let token = "";
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
+// Each poll's number, and the highest whose snapshot arrived.
+let pollSeq = 0;
+let pollAnswered = 0;
 let eventSource: EventSource | null = null;
 let usingPoll = false;
 let authRequired = false;
@@ -273,7 +276,7 @@ function fetchSnapshotOnce(
     });
 }
 
-function startPollFallback(reason?: string): void {
+function startPollFallback(): void {
   if (finished || authBlocked) return;
   if (usingPoll && pollTimer != null) return;
   usingPoll = true;
@@ -285,20 +288,26 @@ function startPollFallback(reason?: string): void {
     }
     eventSource = null;
   }
-  setConnection("poll");
-  if (reason && !authRequired) {
-    setBanner(reason + " — polling every 2s…", "warn");
-  }
+  // The pill alone: setConnection("poll") before the first poll answers
+  // would announce a recovery a failing poll then takes back.
+  showPolling();
   function tick(): void {
     if (authBlocked) {
       stopPoll();
       return;
     }
-    fetchSnapshotOnce("poll").catch((err: unknown) => {
-      if (authBlocked) return;
-      setConnection("disconnected");
-      setBanner("Poll failed: " + String(err), "error");
-    });
+    // A poll can take longer than the 2s between them; one that fails after a
+    // later one answered is old news and must not announce a loss.
+    const seq = ++pollSeq;
+    fetchSnapshotOnce("poll").then(
+      () => {
+        if (seq > pollAnswered) pollAnswered = seq;
+      },
+      () => {
+        if (authBlocked || seq < pollAnswered) return;
+        setConnection("disconnected");
+      }
+    );
   }
   tick();
   stopPoll();
@@ -315,7 +324,7 @@ export function startSse(handler: SnapshotHandler, closed?: ClosedHandler): void
   onSnapshot = handler;
   onClosed = closed || null;
   if (typeof EventSource === "undefined") {
-    startPollFallback("SSE unavailable");
+    startPollFallback();
     return;
   }
 
@@ -323,7 +332,7 @@ export function startSse(handler: SnapshotHandler, closed?: ClosedHandler): void
   try {
     eventSource = new EventSource(eventsUrl());
   } catch {
-    startPollFallback("SSE open failed");
+    startPollFallback();
     return;
   }
 
@@ -386,17 +395,17 @@ export function startSse(handler: SnapshotHandler, closed?: ClosedHandler): void
             showAuthMissing();
             return;
           }
-          startPollFallback("SSE failed");
+          startPollFallback();
         })
         .catch(() => {
-          startPollFallback("SSE failed");
+          startPollFallback();
         });
     } else {
       // Hard close (e.g. 503 at client cap, non-200 reconnect): EventSource
       // fires onerror once and does not reconnect. Fall back immediately.
       if (eventSource && eventSource.readyState === EventSource.CLOSED) {
         eventSource = null;
-        startPollFallback("SSE reconnect failed");
+        startPollFallback();
         return;
       }
       sseErrorStreak += 1;
@@ -408,7 +417,7 @@ export function startSse(handler: SnapshotHandler, closed?: ClosedHandler): void
           /* ignore */
         }
         eventSource = null;
-        startPollFallback("SSE reconnect failed");
+        startPollFallback();
       }
     }
   };

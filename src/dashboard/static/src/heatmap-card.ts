@@ -2,6 +2,7 @@
 // chosen in its select, the Adjusted and Measured toggle, and, when
 // percentiles over time are off, the average latency chart instead.
 
+import { recentTrend, setLatencySummary } from "./chart-data";
 import { chartTheme } from "./charts";
 import {
   catchUpHeatmap,
@@ -24,8 +25,10 @@ import {
   tooltipText,
   type HeatmapLayout,
   type HeatmapState,
+  type HeatmapView,
   type SelectedRequest,
 } from "./heatmap";
+import { chartDataTable } from "./tables";
 
 /** The card's title when it shows the average latency chart, as before #713. */
 const AVERAGE_TITLE = "Average latency (ms)";
@@ -45,6 +48,27 @@ const legendMin = requireElement("heatmap-legend-min", HTMLElement);
 const legendBar = requireElement("heatmap-legend-bar", HTMLElement);
 const legendMax = requireElement("heatmap-legend-max", HTMLElement);
 const averageWrap = requireElement("chart-latency-wrap", HTMLElement);
+const heatmapTable = requireElement("heatmap-table", HTMLTableElement);
+const averageTable = requireElement("chart-latency-table", HTMLTableElement);
+
+/**
+ * The heatmap's "Show data" table: each drawn second's requests and its p50,
+ * p95 and p99, the lines the picture draws. Every cell would be hundreds of
+ * seconds times dozens of buckets, too many to read.
+ */
+const showHeatmapData = chartDataTable<{
+  second: number;
+  requests: number;
+  p50: number;
+  p95: number;
+  p99: number;
+}>("chart-latency-details", "heatmap", [
+  { key: "second", type: "num", format: (r) => String(r.second) },
+  { key: "requests", type: "num", format: (r) => formatInt(r.requests) },
+  { key: "p50", type: "num", format: (r) => formatInt(r.p50) },
+  { key: "p95", type: "num", format: (r) => formatInt(r.p95) },
+  { key: "p99", type: "num", format: (r) => formatInt(r.p99) },
+]);
 
 const FORMATS = { int: formatInt, pct: formatPct };
 
@@ -182,6 +206,29 @@ function setViewButtons(): void {
   measuredButton.setAttribute("aria-pressed", adjustedView ? "false" : "true");
 }
 
+/**
+ * The card's summary and data table from the heatmap shown: the mean of the
+ * last 10 drawn seconds' percentiles, and whether p95 is rising or falling.
+ */
+function showData(view: HeatmapView): void {
+  const seconds = Array.from(view.percentiles.values());
+  showHeatmapData(
+    seconds.map((p) => ({ ...p, requests: view.secondTotals.get(p.second) || 0 }))
+  );
+  if (seconds.length === 0) {
+    setLatencySummary("No data yet.");
+    return;
+  }
+  const p50 = recentTrend(seconds.map((p) => p.p50));
+  const p95 = recentTrend(seconds.map((p) => p.p95));
+  const p99 = recentTrend(seconds.map((p) => p.p99));
+  const text =
+    "p50 " + formatInt(p50.mean) + " ms, p95 " + formatInt(p95.mean) +
+    " ms, p99 " + formatInt(p99.mean) + " ms";
+  const trend = p95.trend === null ? "" : "; p95 " + p95.trend;
+  setLatencySummary(text + trend + ".");
+}
+
 function hideTooltip(): void {
   tooltipEl.hidden = true;
 }
@@ -199,6 +246,7 @@ function draw(): void {
   canvas.setAttribute("aria-label", ARIA_LABEL);
   const theme = chartTheme();
   layout = drawHeatmap(canvas, view, theme.dark, theme);
+  showData(view);
   const stops: string[] = [];
   for (let i = 0; i <= 4; i++) stops.push(scaleColor(i / 4, theme.dark));
   legendBar.style.background = "linear-gradient(to right, " + stops.join(", ") + ")";
@@ -244,6 +292,8 @@ function showAverage(metricsDisabled: boolean): void {
   wrapEl.hidden = true;
   legendEl.hidden = true;
   averageWrap.hidden = false;
+  heatmapTable.hidden = true;
+  averageTable.hidden = false;
 }
 
 function showHeatmap(): void {
@@ -252,6 +302,8 @@ function showHeatmap(): void {
   wrapEl.hidden = false;
   legendEl.hidden = false;
   averageWrap.hidden = true;
+  heatmapTable.hidden = false;
+  averageTable.hidden = true;
 }
 
 /**
