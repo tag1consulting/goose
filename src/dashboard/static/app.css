@@ -293,9 +293,18 @@ body {
   color: var(--accent);
 }
 
+/* An unavailable button keeps focus, so it is dimmed by colour: opacity would
+   dim its focus ring too. The mixes match the old 0.45 opacity on a card. */
 .ctrl-btn[aria-disabled="true"] {
-  opacity: 0.45;
+  background: color-mix(in srgb, var(--bg) 45%, var(--card));
+  border-color: color-mix(in srgb, var(--border) 45%, var(--card));
+  color: color-mix(in srgb, var(--text) 45%, var(--card));
   cursor: not-allowed;
+}
+
+.ctrl-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .ctrl-btn.ctrl-start:not([aria-disabled="true"]) {

@@ -156,6 +156,23 @@ for (const theme of Object.keys(THEMES)) {
       );
     }
   });
+
+  // An unavailable control button keeps focus (#710), so no rule may dim it
+  // with opacity, which would dim its focus ring too.
+  test(`a focused control button shows a full strength accent ring in the ${theme} theme`, () => {
+    const vars = tokens(theme);
+    const ring = cascaded(theme, [".ctrl-btn", ".ctrl-btn:focus-visible"], "outline");
+    assert.ok(ring, "a .ctrl-btn:focus-visible outline");
+    const color = resolve(ring.split(/\s+/).pop(), vars);
+    assert.equal(color, resolve("var(--accent)", vars));
+    const ratio = contrast(color, resolve("var(--card)", vars));
+    assert.ok(ratio >= 3, `ring ${color} on card is ${ratio.toFixed(2)}:1`);
+    for (const rule of themeRules(theme)) {
+      if (rule.selectors.some((s) => s.startsWith(".ctrl-btn"))) {
+        assert.equal(rule.decls.opacity, undefined, rule.selectors.join(", ") + " sets opacity");
+      }
+    }
+  });
 }
 
 // The page.
