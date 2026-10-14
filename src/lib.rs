@@ -66,7 +66,7 @@ use std::time::{self, Duration};
 use std::{fmt, io};
 
 use crate::config::{GooseConfiguration, GooseDefaults};
-use crate::controller::{ControllerProtocol, ControllerRequest};
+use crate::controller::{ControlRequest, ControllerProtocol};
 use crate::goose::{GooseUser, GooseUserCommand, Scenario, Transaction, TransactionName};
 use crate::graph::GraphData;
 use crate::logger::{GooseLoggerJoinHandle, GooseLoggerTx};
@@ -80,14 +80,6 @@ const DEFAULT_TELNET_PORT: &str = "5116";
 
 /// Constant defining Goose's default WebSocket Controller port.
 const DEFAULT_WEBSOCKET_PORT: &str = "5117";
-
-/// Most users the telnet and WebSocket `users` command or the dashboard can
-/// set. One command allocates the added users on the main loop, so a larger
-/// value can exhaust memory or overflow the user arithmetic.
-pub(crate) const MAX_CONTROL_USERS: usize = 100_000;
-
-/// Refusal for a user count outside 1 to [`MAX_CONTROL_USERS`].
-pub(crate) const INVALID_USERS_MSG: &str = "users must be an integer between 1 and 100000";
 
 lazy_static! {
     // WORKER_ID is used to identify different works when running a gaggle.
@@ -349,20 +341,19 @@ pub(crate) fn attack_phase_str(phase: AttackPhase) -> &'static str {
 /// Machine-readable outcome of a control action (soft success/failure).
 ///
 /// Soft failures (expected rejections such as wrong phase or prepare failure)
-/// are returned as `ok: false` with a stable `error` code. Hard failures that
-/// Controllers already surface as `GooseError` (e.g. `weight_scenario_users`,
-/// `reset_run_state` after a successful Start reply) remain `Result::Err`.
+/// are returned as `ok: false` with a stable `error` code. Hard failures (e.g.
+/// `weight_scenario_users`, `reset_run_state` after a successful Start reply)
+/// remain `Result::Err`.
 ///
-/// Controllers currently map only `ok` → Bool; remaining fields are populated
-/// for the dashboard control surface (and debug use).
+/// Telnet and WebSocket show `ok` and `message`; the dashboard returns every
+/// field.
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // fields beyond `ok` reserved for dashboard control JSON
 pub(crate) struct ControlOutcome {
     pub ok: bool,
     /// Stable code when !ok, soft failures only (`invalid_phase`, `invalid_users`,
     /// `prepare_failed`).
     pub error: Option<&'static str>,
-    /// Human message (Controller wire protocol still maps only `ok` → Bool).
+    /// Human message, the reply every front end shows.
     pub message: String,
     /// Attack phase *after* the soft attempt (lowercase).
     pub phase: String,
@@ -440,8 +431,9 @@ struct GooseAttackRunState {
     throttle_threads_tx: Option<flume::Sender<bool>>,
     /// Optional sender for throttle thread, if enabled.
     parent_to_throttle_tx: Option<flume::Sender<bool>>,
-    /// Optional channel allowing controller thread to make requests, if not disabled.
-    controller_channel_rx: Option<flume::Receiver<ControllerRequest>>,
+    /// The one channel telnet, WebSocket and dashboard control send commands on,
+    /// when any of them is enabled.
+    controller_channel_rx: Option<flume::Receiver<ControlRequest>>,
     /// Optional channel allowing the dashboard HTTP task to request snapshots.
     #[cfg(feature = "dashboard")]
     dashboard_channel_rx: Option<flume::Receiver<dashboard::DashboardRequest>>,
@@ -1215,7 +1207,7 @@ impl GooseAttack {
         }
 
         // Configure GooseConfiguration.
-        self.configuration.configure(&self.defaults);
+        self.configuration.configure(&self.defaults)?;
 
         // Validate GooseConfiguration.
         self.configuration.validate()?;
@@ -1245,7 +1237,7 @@ impl GooseAttack {
         }
 
         // Build TestPlan.
-        self.test_plan = TestPlan::build(&self.configuration);
+        self.test_plan = TestPlan::build(&self.configuration)?;
 
         // With a validated GooseConfiguration, enter a run mode.
         self.attack_mode = AttackMode::StandAlone;
@@ -1326,6 +1318,15 @@ impl GooseAttack {
     fn prepare_load_test(&mut self) -> Result<(), GooseError> {
         // Be sure a valid host has been defined before building configuration.
         self.validate_host()?;
+
+        // A load test with no users never starts: weighting zero users never ends.
+        if self.test_plan.total_users() == 0 {
+            return Err(GooseError::InvalidOption {
+                option: "`configuration.users`".to_string(),
+                value: "0".to_string(),
+                detail: "There are no users to start: configure users or a test plan.".to_string(),
+            });
+        }
 
         // Apply weights to transactions in each scenario.
         for scenario in &mut self.scenarios {
@@ -1416,22 +1417,9 @@ impl GooseAttack {
     }
 
     // Helper to optionally spawn a telnet and/or WebSocket Controller thread. The Controller
-    // threads share a control channel, allowing it to send requests to the parent process. When
-    // a response is required, the Controller will also send a one-shot channel allowing a direct
-    // reply.
-    async fn setup_controllers(&mut self) -> Option<flume::Receiver<ControllerRequest>> {
-        // If the telnet controller is disabled, return immediately.
-        if self.configuration.no_telnet && self.configuration.no_websocket {
-            return None;
-        }
-
-        // Create an unbounded channel for controller threads to send requests to the parent
-        // process.
-        let (all_threads_controller_request_tx, controller_request_rx): (
-            flume::Sender<ControllerRequest>,
-            flume::Receiver<ControllerRequest>,
-        ) = flume::unbounded();
-
+    // threads send commands to the parent process on `control_tx`, each with a one-shot
+    // channel for the reply.
+    async fn setup_controllers(&mut self, control_tx: &flume::Sender<ControlRequest>) {
         // Configured telnet Controller if not disabled.
         if !self.configuration.no_telnet {
             // Configure telnet_host, using default if run-time option is not set.
@@ -1457,7 +1445,7 @@ impl GooseAttack {
             // There is no need to rejoin this thread when the load test ends.
             let _ = Some(tokio::spawn(controller::controller_main(
                 self.configuration.clone(),
-                all_threads_controller_request_tx.clone(),
+                control_tx.clone(),
                 ControllerProtocol::Telnet,
             )));
         }
@@ -1488,26 +1476,10 @@ impl GooseAttack {
             // There is no need to rejoin this thread when the load test ends.
             let _ = Some(tokio::spawn(controller::controller_main(
                 self.configuration.clone(),
-                all_threads_controller_request_tx,
+                control_tx.clone(),
                 ControllerProtocol::WebSocket,
             )));
         }
-
-        // Return the parent end of the Controller channel.
-        Some(controller_request_rx)
-    }
-
-    /// Optionally spawn the read-only dashboard HTTP server.
-    ///
-    /// Mirrors [`setup_controllers`]: returns the parent end of a flume channel
-    /// the dashboard task uses to request snapshots. Only compiled when the
-    /// `dashboard` feature is enabled.
-    ///
-    /// Bind failure is a hard error when `--dashboard` is set (opt-in server
-    /// must not silently disappear).
-    #[cfg(feature = "dashboard")]
-    async fn setup_dashboard(&mut self) -> Result<Option<dashboard::DashboardSetup>, GooseError> {
-        dashboard::setup_dashboard(&self.configuration).await
     }
 
     /// After an autostarted run, whether to stay up for the dashboard: the
@@ -1571,10 +1543,12 @@ impl GooseAttack {
         }
     }
 
-    /// Handle dashboard snapshot and control requests from the HTTP server task.
+    /// Handle dashboard snapshot and series requests from the HTTP server task.
     ///
-    /// Drains up to a small batch per main-loop iteration. Control messages are
-    /// applied first; at most one snapshot is forwarded per tick (latest wins).
+    /// Drains up to a small batch per main-loop iteration; at most one
+    /// snapshot is forwarded per tick (latest wins). Dashboard control goes
+    /// through [`Self::handle_control_requests`], called after this, so a
+    /// snapshot forwarded here sees the phase before a command changes it.
     ///
     /// Snapshots are **non-blocking** for the attack loop: the parent forwards
     /// [`MetricsCommand::GetDashboardSnapshot`] with the hub's oneshot and does
@@ -1584,11 +1558,6 @@ impl GooseAttack {
     /// merges final metrics and returns to Idle until the next Start), a
     /// snapshot is built from the main-loop [`GooseMetrics`] / [`GraphData`] so
     /// poll/SSE clients still observe `phase: "idle"` and can re-enable Start.
-    ///
-    /// Control arms skip mutation when the HTTP oneshot is already closed (client
-    /// timed out / disconnected) so orphan Start/Stop/Users cannot apply after a
-    /// 503. When the client is still waiting, oneshots are always completed (soft
-    /// outcome or `internal`); Start replies before `control_start_finish`.
     #[cfg(feature = "dashboard")]
     async fn handle_dashboard_requests(
         &mut self,
@@ -1597,10 +1566,7 @@ impl GooseAttack {
         /// Cap messages drained per tick so a flood cannot monopolize the loop.
         const MAX_DRAIN: usize = 16;
 
-        let mut control_batch: Vec<dashboard::DashboardRequest> = Vec::new();
-        // Kept apart from `control_batch`: a non empty control batch answers
-        // pending snapshots locally, which polling a series must not cause.
-        let mut series_requests: Vec<dashboard::DashboardRequest> = Vec::new();
+        let mut series_requests = Vec::new();
         let mut pending_snapshot: Option<(
             tokio::sync::oneshot::Sender<metrics::DashboardSnapshot>,
             Option<metrics::dashboard_snapshot::HeatmapCursor>,
@@ -1619,15 +1585,15 @@ impl GooseAttack {
                         heatmap_since,
                     }) => {
                         // Coalesce: only the latest snapshot request is kept.
-                        if let Some(stale) = pending_snapshot.replace((respond, heatmap_since)) {
-                            drop(stale);
-                        }
+                        pending_snapshot = Some((respond, heatmap_since));
                     }
-                    Ok(series_req @ dashboard::DashboardRequest::GetRequestSeries { .. }) => {
-                        series_requests.push(series_req);
-                    }
-                    Ok(control_req) => {
-                        control_batch.push(control_req);
+                    Ok(dashboard::DashboardRequest::GetRequestSeries {
+                        method,
+                        name,
+                        since,
+                        respond,
+                    }) => {
+                        series_requests.push((method, name, since, respond));
                     }
                     Err(flume::TryRecvError::Empty) => break,
                     Err(flume::TryRecvError::Disconnected) => {
@@ -1640,121 +1606,6 @@ impl GooseAttack {
 
         if disconnected {
             goose_attack_run_state.dashboard_channel_rx = None;
-        }
-
-        // Control mutations can block the main loop (test_start, weight_scenario_users).
-        // Flush any coalesced snapshot first with a cheap local build so the hub/SSE
-        // clients observe the pre-mutation phase rather than stalling past timeouts.
-        if !control_batch.is_empty() {
-            if let Some((respond, heatmap_since)) = pending_snapshot.take() {
-                if !respond.is_closed() {
-                    self.update_duration();
-                    let phase = attack_phase_str(self.attack_phase).to_string();
-                    let active_users = goose_attack_run_state.active_users;
-                    let snapshot = self.build_local_dashboard_snapshot(
-                        phase,
-                        goose_attack_run_state.stopping,
-                        active_users,
-                        heatmap_since,
-                    );
-                    let _ = respond.send(snapshot);
-                }
-            }
-        }
-
-        // Control first so latency-sensitive Start/Stop/Users beat snapshot work.
-        for req in control_batch {
-            match req {
-                dashboard::DashboardRequest::GetSnapshot { .. } => {
-                    // GetSnapshot is coalesced above; should not appear here.
-                    unreachable!("snapshot requests are not pushed into control_batch");
-                }
-                dashboard::DashboardRequest::GetRequestSeries { .. } => {
-                    unreachable!("series requests are not pushed into control_batch");
-                }
-                dashboard::DashboardRequest::Start { respond } => {
-                    // Client already gone (HTTP timeout dropped the oneshot) — do not
-                    // mutate phase / start the test after a 503 response.
-                    if respond.is_closed() {
-                        debug!("[dashboard]: start skipped; client disconnected");
-                        continue;
-                    }
-                    match self.control_start_begin(goose_attack_run_state) {
-                        Ok(ControlStartBegin::Rejected(outcome)) => {
-                            let _ = respond
-                                .send(dashboard::ControlResult::from_outcome("start", outcome));
-                        }
-                        Ok(ControlStartBegin::Accepted(outcome)) => {
-                            let reply = dashboard::ControlResult::from_outcome("start", outcome);
-                            let _ = respond.send(reply);
-                            // HTTP already has ok:true; finish may run long test_start.
-                            if let Err(e) = self.control_start_finish(goose_attack_run_state).await
-                            {
-                                error!(
-                                    "[dashboard]: control_start_finish failed after success reply: {e}"
-                                );
-                                return Err(e);
-                            }
-                        }
-                        Err(e) => {
-                            let _ = respond.send(dashboard::ControlResult::internal(
-                                "start",
-                                attack_phase_str(self.attack_phase),
-                                goose_attack_run_state.active_users,
-                            ));
-                            return Err(e);
-                        }
-                    }
-                }
-                dashboard::DashboardRequest::Stop { respond } => {
-                    if respond.is_closed() {
-                        debug!("[dashboard]: stop skipped; client disconnected");
-                        continue;
-                    }
-                    match self.control_stop(goose_attack_run_state).await {
-                        Ok(outcome) => {
-                            let _ = respond
-                                .send(dashboard::ControlResult::from_outcome("stop", outcome));
-                        }
-                        Err(e) => {
-                            let _ = respond.send(dashboard::ControlResult::internal(
-                                "stop",
-                                attack_phase_str(self.attack_phase),
-                                goose_attack_run_state.active_users,
-                            ));
-                            return Err(e);
-                        }
-                    }
-                }
-                dashboard::DashboardRequest::Quit { respond } => {
-                    if respond.is_closed() {
-                        debug!("[dashboard]: quit skipped; client disconnected");
-                        continue;
-                    }
-                    let outcome = self.control_quit(goose_attack_run_state);
-                    let _ = respond.send(dashboard::ControlResult::from_outcome("quit", outcome));
-                }
-                dashboard::DashboardRequest::SetUsers { users, respond } => {
-                    if respond.is_closed() {
-                        debug!("[dashboard]: set users skipped; client disconnected");
-                        continue;
-                    }
-                    match self.control_set_users(goose_attack_run_state, users) {
-                        Ok(outcome) => {
-                            let _ = respond
-                                .send(dashboard::ControlResult::from_outcome("users", outcome));
-                        }
-                        Err(e) => {
-                            let _ = respond.send(dashboard::ControlResult::internal(
-                                "users",
-                                attack_phase_str(self.attack_phase),
-                                goose_attack_run_state.active_users,
-                            ));
-                            return Err(e);
-                        }
-                    }
-                }
-            }
         }
 
         // Forward at most one snapshot request without parking the attack loop.
@@ -1813,16 +1664,7 @@ impl GooseAttack {
         }
 
         // Then each series request, also without waiting for the processor.
-        for req in series_requests {
-            let dashboard::DashboardRequest::GetRequestSeries {
-                method,
-                name,
-                since,
-                respond,
-            } = req
-            else {
-                unreachable!("only series requests are pushed into series_requests");
-            };
+        for (method, name, since, respond) in series_requests {
             if respond.is_closed() {
                 continue;
             }
@@ -1995,8 +1837,22 @@ impl GooseAttack {
         let (all_threads_shutdown_tx, shutdown_rx): (flume::Sender<usize>, flume::Receiver<usize>) =
             flume::unbounded();
 
+        // One channel carries every command from telnet, WebSocket and dashboard
+        // control to the parent, when any of them is enabled.
+        let (control_tx, controller_channel_rx) = if !self.configuration.no_telnet
+            || !self.configuration.no_websocket
+            || self.configuration.dashboard_control
+        {
+            let (control_tx, control_rx) = flume::unbounded();
+            (Some(control_tx), Some(control_rx))
+        } else {
+            (None, None)
+        };
+
         // Optionally spawn a telnet and/or Websocket Controller thread.
-        let controller_channel_rx = self.setup_controllers().await;
+        if let Some(control_tx) = &control_tx {
+            self.setup_controllers(control_tx).await;
+        }
 
         // Optionally spawn the read-only live dashboard HTTP server.
         // Bind failure aborts attack init when --dashboard is set.
@@ -2008,7 +1864,7 @@ impl GooseAttack {
             dashboard_active_sse,
             dashboard_url,
             dashboard_server,
-        ) = match self.setup_dashboard().await? {
+        ) = match dashboard::setup_dashboard(&self.configuration, control_tx).await? {
             Some(setup) => (
                 Some(setup.request_rx),
                 Some(setup.close_tx),
@@ -2564,11 +2420,10 @@ impl GooseAttack {
     //
     // Soft vs hard errors:
     // - Soft: expected rejections → ControlOutcome { ok: false, error: Some(...) }
-    // - Hard: Result::Err(GooseError) where Controllers already used `?` today
-    //   (weight_scenario_users on Users increase; reset_run_state in start finish;
-    //    cancel_attack if it ever returns Err).
-    // Controllers map only outcome.ok → ControllerResponseMessage::Bool for soft paths.
-    // Dashboard maps ControlOutcome → ControlResult and always completes oneshots.
+    // - Hard: Result::Err(GooseError) (weight_scenario_users on a users or test
+    //   plan increase; reset_run_state in start finish; cancel_attack).
+    // `GooseAttack::control` replies with the outcome, or `internal` on a hard
+    // error before returning it, so every caller still waiting gets an answer.
     // ========================================================================
 
     /// Build a [`ControlOutcome`] snapshot from the current attack/run state.
@@ -2610,8 +2465,11 @@ impl GooseAttack {
             )));
         }
 
-        self.test_plan = TestPlan::build(&self.configuration);
-        if self.prepare_load_test().is_err() {
+        let prepared = TestPlan::build(&self.configuration).and_then(|test_plan| {
+            self.test_plan = test_plan;
+            self.prepare_load_test()
+        });
+        if prepared.is_err() {
             // Soft: do not move to Increase if unable to prepare load test.
             return Ok(ControlStartBegin::Rejected(self.control_outcome(
                 goose_attack_run_state,
@@ -2698,7 +2556,6 @@ impl GooseAttack {
     ///
     /// Soft failure: `invalid_phase` in any phase but Idle, so a running load
     /// test must be stopped first.
-    #[cfg(feature = "dashboard")]
     pub(crate) fn control_quit(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
@@ -2712,7 +2569,7 @@ impl GooseAttack {
                 None,
             );
         }
-        info!("[dashboard]: quit, shutting down");
+        info!("quit, shutting down");
         self.shutdown_from_idle(goose_attack_run_state);
         self.control_outcome(
             goose_attack_run_state,
@@ -2723,13 +2580,35 @@ impl GooseAttack {
         )
     }
 
-    /// Set absolute target user count (Controller `users` command).
+    /// Refuse to reconfigure `what` (users or the test plan) while a cancel
+    /// (Stop, `shutdown`, Ctrl-C) is in progress: rebuilding the plan then
+    /// would replace its ramp to zero and leave the load test running. Also
+    /// refused in Shutdown, where there is no plan left to change.
+    fn refuse_reconfigure(
+        &self,
+        goose_attack_run_state: &GooseAttackRunState,
+        what: &str,
+    ) -> Option<ControlOutcome> {
+        let message = if goose_attack_run_state.stopping {
+            format!("load test is stopping, failed to reconfigure {what}")
+        } else if self.attack_phase == AttackPhase::Shutdown {
+            format!("load test not idle, failed to reconfigure {what}")
+        } else {
+            return None;
+        };
+        Some(self.control_outcome(
+            goose_attack_run_state,
+            false,
+            Some("invalid_phase"),
+            message,
+            None,
+        ))
+    }
+
+    /// Set absolute target user count (Controller `users` command), already
+    /// bounded by [`ControllerCommand::users`](controller::ControllerCommand).
     ///
-    /// Soft failure: `invalid_users` unless `new_users` is from 1 to
-    /// [`MAX_CONTROL_USERS`], the one bound for every front end's `users`
-    /// command; `invalid_phase` while a cancel (Stop, `shutdown`, Ctrl-C) is in
-    /// progress, and in Shutdown (or any phase other than
-    /// Idle/Increase/Decrease/Maintain).
+    /// Soft failure: `invalid_phase` as [`Self::refuse_reconfigure`] says.
     /// A test plan's own ramp down is not a cancel and still accepts a new count.
     /// Hard error: `weight_scenario_users` when increasing while running.
     pub(crate) fn control_set_users(
@@ -2737,122 +2616,123 @@ impl GooseAttack {
         goose_attack_run_state: &mut GooseAttackRunState,
         new_users: usize,
     ) -> Result<ControlOutcome, GooseError> {
-        // Zero users set while idle makes the next start weight users forever,
-        // and a huge count wraps the user difference below or exhausts memory.
-        if !(1..=MAX_CONTROL_USERS).contains(&new_users) {
-            return Ok(self.control_outcome(
-                goose_attack_run_state,
-                false,
-                Some("invalid_users"),
-                INVALID_USERS_MSG,
-                None,
-            ));
+        if let Some(refused) = self.refuse_reconfigure(goose_attack_run_state, "users") {
+            return Ok(refused);
         }
-        // Rebuilding the plan during a cancel would replace its ramp to zero
-        // and leave the load test running.
-        if goose_attack_run_state.stopping {
-            return Ok(self.control_outcome(
-                goose_attack_run_state,
-                false,
-                Some("invalid_phase"),
-                "load test is stopping, failed to reconfigure users",
-                None,
-            ));
-        }
-        match self.attack_phase {
+        // Clear configured test plan only when the command is accepted:
+        // refusals must not destroy an existing plan.
+        self.configuration.test_plan = None;
+        if self.attack_phase == AttackPhase::Idle {
             // If the load test is idle, simply update the configuration.
-            AttackPhase::Idle => {
-                // Clear configured test plan only when the command is accepted —
-                // soft rejects must not destroy an existing plan.
-                self.configuration.test_plan = None;
-                // Safe when `current` has advanced past the last plan step.
-                let current_users = self.current_target_users();
-                info!("changing users from {current_users:?} to {new_users}");
-                self.configuration.users = Some(new_users);
-                Ok(self.control_outcome(
-                    goose_attack_run_state,
-                    true,
-                    None,
-                    "users configured",
-                    Some(new_users),
-                ))
-            }
+            // Safe when `current` has advanced past the last plan step.
+            let current_users = self.current_target_users();
+            info!("changing users from {current_users:?} to {new_users}");
+        } else {
             // If the load test is running, rebuild the active test plan.
-            AttackPhase::Increase | AttackPhase::Decrease | AttackPhase::Maintain => {
-                // Clear configured test plan only when the command is accepted.
-                self.configuration.test_plan = None;
-                info!(
-                    "changing users from {} to {new_users}",
-                    goose_attack_run_state.active_users
-                );
-                // Determine how long has elapsed since this step started.
-                let elapsed = self.step_elapsed() as usize;
+            info!(
+                "changing users from {} to {new_users}",
+                goose_attack_run_state.active_users
+            );
+            // Determine how long has elapsed since this step started.
+            let elapsed = self.step_elapsed() as usize;
 
-                // Determine how many users to increase or decrease by.
-                let user_difference =
-                    (goose_attack_run_state.active_users as isize - new_users as isize).abs();
+            // Determine how many users to increase or decrease by.
+            let user_difference =
+                (goose_attack_run_state.active_users as isize - new_users as isize).abs();
 
-                // Determine how quickly to adjust user count, using
-                // increase_rate when adding users and decrease_rate when
-                // removing users.
-                let rate = if new_users > goose_attack_run_state.active_users {
-                    if let Some(increase_rate) = self.configuration.increase_rate.as_ref() {
-                        util::parse_rate(Some(increase_rate.to_string()))
-                    } else {
-                        util::parse_rate(None)
-                    }
-                } else if let Some(decrease_rate) = self.configuration.decrease_rate.as_ref() {
-                    util::parse_rate(Some(decrease_rate.to_string()))
-                } else if let Some(increase_rate) = self.configuration.increase_rate.as_ref() {
+            // Determine how quickly to adjust user count, using
+            // increase_rate when adding users and decrease_rate when
+            // removing users.
+            let rate = if new_users > goose_attack_run_state.active_users {
+                if let Some(increase_rate) = self.configuration.increase_rate.as_ref() {
                     util::parse_rate(Some(increase_rate.to_string()))
                 } else {
                     util::parse_rate(None)
-                };
-                // Convert rate to milliseconds.
-                let ms_rate = 1.0 / rate * 1_000.0;
-                // Multiply the user difference by the rate to get the total_time required.
-                let total_time = (ms_rate * user_difference as f32) as usize;
-
-                // Reset the test_plan to adjust to the newly specified users.
-                self.test_plan.steps = vec![
-                    // Record how many active users there are currently.
-                    (goose_attack_run_state.active_users, elapsed),
-                    // Configure the new user count.
-                    (new_users, total_time),
-                ];
-
-                // Reset the current step to what was happening when reconfiguration happened.
-                self.test_plan.current = 0;
-
-                // Allocate more users if increasing users (hard Err on failure).
-                if new_users > goose_attack_run_state.active_users {
-                    self.weighted_users = self.weight_scenario_users(user_difference as usize)?;
                 }
+            } else if let Some(decrease_rate) = self.configuration.decrease_rate.as_ref() {
+                util::parse_rate(Some(decrease_rate.to_string()))
+            } else if let Some(increase_rate) = self.configuration.increase_rate.as_ref() {
+                util::parse_rate(Some(increase_rate.to_string()))
+            } else {
+                util::parse_rate(None)
+            };
+            // Convert rate to milliseconds.
+            let ms_rate = 1.0 / rate * 1_000.0;
+            // Multiply the user difference by the rate to get the total_time required.
+            let total_time = (ms_rate * user_difference as f32) as usize;
 
-                // Also update the running configuration (this impacts if the test is
-                // stopped and then restarted through the controller).
-                self.configuration.users = Some(new_users);
+            // Reset the test_plan to adjust to the newly specified users.
+            self.test_plan.steps = vec![
+                // Record how many active users there are currently.
+                (goose_attack_run_state.active_users, elapsed),
+                // Configure the new user count.
+                (new_users, total_time),
+            ];
 
-                // Finally, advance to the next step to adjust user count.
-                self.advance_test_plan(goose_attack_run_state);
+            // Reset the current step to what was happening when reconfiguration happened.
+            self.test_plan.current = 0;
 
-                Ok(self.control_outcome(
-                    goose_attack_run_state,
-                    true,
-                    None,
-                    "users configured",
-                    Some(new_users),
-                ))
+            // Allocate more users if increasing users (hard Err on failure).
+            if new_users > goose_attack_run_state.active_users {
+                self.weighted_users = self.weight_scenario_users(user_difference as usize)?;
             }
-            // Shutdown (and any other unexpected phase): soft fail.
-            _ => Ok(self.control_outcome(
-                goose_attack_run_state,
-                false,
-                Some("invalid_phase"),
-                "load test not idle, failed to reconfigure users",
-                None,
-            )),
+
+            // Finally, advance to the next step to adjust user count.
+            self.advance_test_plan(goose_attack_run_state);
         }
+        // Also update the running configuration (this impacts if the test is
+        // stopped and then restarted through the controller).
+        self.configuration.users = Some(new_users);
+        Ok(self.control_outcome(
+            goose_attack_run_state,
+            true,
+            None,
+            "users configured",
+            Some(new_users),
+        ))
+    }
+
+    /// Replace the test plan (Controller `test-plan` command), already
+    /// bounded by the parser, and on a running load test switch to it.
+    ///
+    /// Soft failure: `invalid_phase` as [`Self::refuse_reconfigure`] says.
+    /// Hard error: `weight_scenario_users` when running.
+    pub(crate) fn control_set_plan(
+        &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+        test_plan: TestPlan,
+    ) -> Result<ControlOutcome, GooseError> {
+        if let Some(refused) = self.refuse_reconfigure(goose_attack_run_state, "test-plan") {
+            return Ok(refused);
+        }
+        // Switch the configuration to use the test plan.
+        self.configuration.test_plan = Some(test_plan.clone());
+        self.configuration.users = None;
+        self.configuration.increase_rate = None;
+        self.configuration.increase_time = "0".to_string();
+        self.configuration.decrease_rate = None;
+        self.configuration.decrease_time = "0".to_string();
+        self.configuration.run_time = "0".to_string();
+        // If the load test is running, rebuild the active test plan.
+        if self.attack_phase != AttackPhase::Idle {
+            self.test_plan = test_plan;
+            // Reallocate users.
+            self.weighted_users = self.weight_scenario_users(self.test_plan.total_users())?;
+            // Insert the current state of the test plan before the new test plan.
+            let elapsed = self.step_elapsed() as usize;
+            self.test_plan
+                .steps
+                .insert(0, (goose_attack_run_state.active_users, elapsed));
+            // Finally, advance to the next step to adjust user count.
+            self.advance_test_plan(goose_attack_run_state);
+        }
+        Ok(self.control_outcome(
+            goose_attack_run_state,
+            true,
+            None,
+            "test-plan configured",
+            None,
+        ))
     }
 
     // Quickly abort and shut down an active [`GooseAttack`](./struct.GooseAttack.html).
@@ -3124,14 +3004,14 @@ impl GooseAttack {
             // to the dedicated metrics processor task if so.
             self.sync_metrics(goose_attack_run_state);
 
-            // Check if a Controller has made a request.
-            self.handle_controller_requests(goose_attack_run_state)
-                .await?;
-
-            // Check if the dashboard has requested a snapshot.
+            // Check if the dashboard has requested a snapshot, before any command
+            // changes the phase it reports.
             #[cfg(feature = "dashboard")]
             self.handle_dashboard_requests(goose_attack_run_state)
                 .await?;
+
+            // Check if a Controller or the dashboard has sent a command.
+            self.handle_control_requests(goose_attack_run_state).await?;
 
             let mut message = goose_attack_run_state.shutdown_rx.try_recv();
             while message.is_ok() {
@@ -3564,10 +3444,13 @@ mod tests {
     }
 
     /// Users outside 1 to MAX_CONTROL_USERS is refused while idle and while
-    /// running, and leaves the configuration and test plan as they were.
+    /// running, and leaves the configuration and test plan as they were. The
+    /// bound is in the one constructor every front end builds `users` with.
     #[tokio::test]
     #[serial_test::serial]
     async fn test_set_users_out_of_bounds_refused() {
+        use crate::controller::{ControllerCommand, INVALID_USERS_MSG, MAX_CONTROL_USERS};
+
         let configuration = GooseConfiguration::parse_args_default(&[
             "--no-save",
             "--no-telnet",
@@ -3586,13 +3469,15 @@ mod tests {
 
         for phase in [AttackPhase::Idle, AttackPhase::Maintain] {
             goose_attack.set_attack_phase(&mut run_state, phase);
-            for users in [0, MAX_CONTROL_USERS + 1, usize::MAX] {
-                let outcome = goose_attack
-                    .control_set_users(&mut run_state, users)
-                    .unwrap();
-                assert!(!outcome.ok, "{:?} must refuse {} users", phase, users);
-                assert_eq!(outcome.error, Some("invalid_users"));
-                assert_eq!(outcome.message, INVALID_USERS_MSG);
+            for users in [0, MAX_CONTROL_USERS as u64 + 1, u64::MAX] {
+                let line = format!("users {users}");
+                let refused = !control(&mut goose_attack, &mut run_state, &line).await;
+                assert!(refused, "{:?} must refuse {} users", phase, users);
+                assert!(
+                    matches!(ControllerCommand::users(users), Err(INVALID_USERS_MSG)),
+                    "{} users",
+                    users
+                );
                 assert_eq!(goose_attack.configuration.users, None);
                 // Accepting users clears the configured test plan.
                 assert!(goose_attack.configuration.test_plan.is_some());
@@ -3603,14 +3488,9 @@ mod tests {
         // The bounds themselves are accepted.
         goose_attack.set_attack_phase(&mut run_state, AttackPhase::Idle);
         for users in [1, MAX_CONTROL_USERS] {
-            let outcome = goose_attack
-                .control_set_users(&mut run_state, users)
-                .unwrap();
-            assert!(
-                outcome.ok,
-                "idle must accept {} users: {:?}",
-                users, outcome
-            );
+            let line = format!("users {users}");
+            let accepted = control(&mut goose_attack, &mut run_state, &line).await;
+            assert!(accepted, "idle must accept {} users", users);
             assert_eq!(goose_attack.configuration.users, Some(users));
         }
     }
@@ -3620,8 +3500,6 @@ mod tests {
     #[tokio::test]
     #[serial_test::serial]
     async fn test_shutdown_while_idle_sets_stopping() {
-        use crate::controller::{ControllerCommand, ControllerRequestMessage};
-
         async fn noop(_user: &mut GooseUser) -> crate::goose::TransactionResult {
             Ok(())
         }
@@ -3640,23 +3518,7 @@ mod tests {
             .unwrap()
             .register_scenario(scenario!("Idle").register_transaction(transaction!(noop)));
         let mut run_state = goose_attack.initialize_attack().await.unwrap();
-        let (controller_tx, controller_rx) = flume::unbounded();
-        run_state.controller_channel_rx = Some(controller_rx);
-
-        controller_tx
-            .send(ControllerRequest {
-                response_channel: None,
-                client_id: 0,
-                request: ControllerRequestMessage {
-                    command: ControllerCommand::Shutdown,
-                    value: None,
-                },
-            })
-            .unwrap();
-        goose_attack
-            .handle_controller_requests(&mut run_state)
-            .await
-            .unwrap();
+        control(&mut goose_attack, &mut run_state, "shutdown").await;
         assert_eq!(goose_attack.attack_phase, AttackPhase::Decrease);
         assert!(run_state.stopping);
         let outcome = goose_attack.control_set_users(&mut run_state, 5).unwrap();
@@ -3669,39 +3531,18 @@ mod tests {
     #[tokio::test]
     #[serial_test::serial]
     async fn test_controller_users_overflow_refused() {
-        use crate::controller::{
-            ControllerCommand, ControllerRequestMessage, ControllerResponseMessage,
-        };
-
         let configuration =
             GooseConfiguration::parse_args_default(&["--no-telnet", "--no-websocket", "--no-save"])
                 .unwrap();
         let mut goose_attack = GooseAttack::initialize_with_config(configuration).unwrap();
         let mut run_state = goose_attack.initialize_attack().await.unwrap();
-        let (controller_tx, controller_rx) = flume::unbounded();
-        run_state.controller_channel_rx = Some(controller_rx);
-        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
-
-        controller_tx
-            .send(ControllerRequest {
-                response_channel: Some(response_tx),
-                client_id: 0,
-                request: ControllerRequestMessage {
-                    command: ControllerCommand::Users,
-                    value: Some("99999999999999999999".to_string()),
-                },
-            })
-            .unwrap();
-        goose_attack
-            .handle_controller_requests(&mut run_state)
-            .await
-            .unwrap();
-        let reply = response_rx.await.unwrap().response;
-        assert!(
-            matches!(reply, ControllerResponseMessage::Bool(false)),
-            "users overflow must be refused: {:?}",
-            reply
-        );
+        let accepted = control(
+            &mut goose_attack,
+            &mut run_state,
+            "users 99999999999999999999",
+        )
+        .await;
+        assert!(!accepted, "users overflow must be refused");
         assert_eq!(goose_attack.configuration.users, None);
     }
 
@@ -3755,30 +3596,21 @@ mod tests {
         run_state: &mut GooseAttackRunState,
         line: &str,
     ) -> bool {
-        use crate::controller::{
-            ControllerCommand, ControllerRequestMessage, ControllerResponseMessage,
-        };
+        use crate::controller::{ControlReply, ControllerCommand};
 
         let Ok(command) = line.parse::<ControllerCommand>() else {
             return false;
         };
-        let value = line.split_once(' ').map(|(_, value)| value.to_string());
         let (controller_tx, controller_rx) = flume::unbounded();
         run_state.controller_channel_rx = Some(controller_rx);
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
-        controller_tx
-            .send(ControllerRequest {
-                response_channel: Some(response_tx),
-                client_id: 0,
-                request: ControllerRequestMessage { command, value },
-            })
-            .unwrap();
+        controller_tx.send((command, response_tx)).unwrap();
         goose_attack
-            .handle_controller_requests(run_state)
+            .handle_control_requests(run_state)
             .await
             .unwrap();
-        match response_rx.await.expect("the parent must reply").response {
-            ControllerResponseMessage::Bool(ok) => ok,
+        match response_rx.await.expect("the parent must reply") {
+            ControlReply::Outcome(outcome) => outcome.ok,
             _ => true,
         }
     }
@@ -3974,7 +3806,7 @@ mod tests {
         finishes(|| async {
             let (mut goose_attack, mut run_state) =
                 idle_attack(&["--no-autostart", "--test-plan", "10,1s"]).await;
-            goose_attack.test_plan = TestPlan::build(&goose_attack.configuration);
+            goose_attack.test_plan = TestPlan::build(&goose_attack.configuration).unwrap();
             let started = std::time::Instant::now();
             assert!(control(&mut goose_attack, &mut run_state, "shutdown").await);
             assert!(
@@ -4020,39 +3852,30 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn test_control_drains_batch_and_skips_gone_clients() {
-        use crate::controller::{
-            ControllerCommand, ControllerRequestMessage, ControllerResponseMessage,
-        };
+        use crate::controller::{ControlReply, ControllerCommand};
 
         finishes(|| async {
             let (mut goose_attack, mut run_state) = idle_attack(&[]).await;
             let (controller_tx, controller_rx) = flume::unbounded();
             run_state.controller_channel_rx = Some(controller_rx);
             let mut replies = Vec::new();
-            for (users, gone) in [("6", false), ("7", false), ("5", true)] {
+            for (users, gone) in [(6, false), (7, false), (5, true)] {
                 let (response_tx, response_rx) = tokio::sync::oneshot::channel();
                 controller_tx
-                    .send(ControllerRequest {
-                        response_channel: Some(response_tx),
-                        client_id: 0,
-                        request: ControllerRequestMessage {
-                            command: ControllerCommand::Users,
-                            value: Some(users.to_string()),
-                        },
-                    })
+                    .send((ControllerCommand::Users(users), response_tx))
                     .unwrap();
                 if !gone {
                     replies.push(response_rx);
                 }
             }
             goose_attack
-                .handle_controller_requests(&mut run_state)
+                .handle_control_requests(&mut run_state)
                 .await
                 .unwrap();
             for mut reply in replies {
                 assert!(matches!(
-                    reply.try_recv().map(|r| r.response),
-                    Ok(ControllerResponseMessage::Bool(true))
+                    reply.try_recv(),
+                    Ok(ControlReply::Outcome(ControlOutcome { ok: true, .. }))
                 ));
             }
             assert_eq!(goose_attack.configuration.users, Some(7));
@@ -4061,7 +3884,8 @@ mod tests {
 
     /// Every snapshot the main loop serves carries the stopping flag: the one
     /// forwarded to the metrics processor, the local fallback when the
-    /// processor is gone, and the one flushed before a control batch.
+    /// processor is gone, and the one served in the tick of a command, which
+    /// the stopping flag then refuses.
     #[cfg(feature = "dashboard")]
     #[tokio::test]
     #[serial_test::serial]
@@ -4119,7 +3943,7 @@ mod tests {
             .unwrap();
         assert!(snapshot_rx.await.unwrap().stopping);
 
-        // Flushed before a control batch, which then refuses Users.
+        // Served in the tick of a command, which then refuses Users.
         let (respond, snapshot_rx) = tokio::sync::oneshot::channel();
         dashboard_tx
             .send(dashboard::DashboardRequest::GetSnapshot {
@@ -4127,16 +3951,12 @@ mod tests {
                 heatmap_since: None,
             })
             .unwrap();
-        let (respond, users_rx) = tokio::sync::oneshot::channel();
-        dashboard_tx
-            .send(dashboard::DashboardRequest::SetUsers { users: 5, respond })
-            .unwrap();
         goose_attack
             .handle_dashboard_requests(&mut run_state)
             .await
             .unwrap();
         assert!(snapshot_rx.await.unwrap().stopping);
-        assert!(!users_rx.await.unwrap().ok);
+        assert!(!control(&mut goose_attack, &mut run_state, "users 5").await);
     }
 
     #[test]

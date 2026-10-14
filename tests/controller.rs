@@ -9,9 +9,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use goose::config::GooseConfiguration;
-use goose::controller::{
-    ControllerCommand, ControllerWebSocketRequest, ControllerWebSocketResponse,
-};
+use goose::controller::{ControllerWebSocketRequest, ControllerWebSocketResponse};
 use goose::prelude::*;
 
 mod common;
@@ -43,16 +41,38 @@ enum TestType {
     Telnet,
 }
 
+// The Controller commands tested, each in one or more steps.
+#[derive(Clone, Debug)]
+enum Command {
+    Exit,
+    Help,
+    Host,
+    TestPlan,
+    Users,
+    IncreaseRate,
+    IncreaseTime,
+    DecreaseRate,
+    DecreaseTime,
+    RunTime,
+    Start,
+    Config,
+    ConfigJson,
+    Metrics,
+    MetricsJson,
+    Stop,
+    Shutdown,
+}
+
 // State machine for tracking Controller state during tests.
 struct TestState {
     // A buffer for the telnet Controller.
     buf: [u8; 2048],
-    // Track iterations through ControllerCommands.
+    // Track iterations through the commands tested.
     position: usize,
     // Track the steps within a given iteration.
     step: usize,
     // The Controller command currently being tested.
-    command: ControllerCommand,
+    command: Command,
     // A TCP socket if testing the telnet Controller.
     telnet_stream: Option<TcpStream>,
     // The receiver side of a split TCP socket if testing the WebSocket Controller.
@@ -240,7 +260,7 @@ async fn run_standalone_test(test_type: TestType) {
 
             //println!("{:?}: {}", test_state.command, response);
             match test_state.command {
-                ControllerCommand::Exit => {
+                Command::Exit => {
                     match test_state.step {
                         // Exit the Controller.
                         0 => {
@@ -258,7 +278,7 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                     }
                 }
-                ControllerCommand::Help => {
+                Command::Help => {
                     match test_state.step {
                         0 => {
                             // Request the help text.
@@ -280,7 +300,7 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                     }
                 }
-                ControllerCommand::Host => {
+                Command::Host => {
                     match test_state.step {
                         // Set the host to be load tested.
                         0 => {
@@ -294,25 +314,23 @@ async fn run_standalone_test(test_type: TestType) {
                             // Then try and set an invalid host.
                             make_request(&mut test_state, "host foobar\r\n").await;
                         }
-                        // Confirm that we can't configure an invalid host that doesn't
-                        // match the regex.
+                        // Confirm that an invalid host is refused.
                         2 => {
-                            assert!(response.starts_with("unrecognized command"));
+                            assert!(response.starts_with("host must be a valid url"));
 
                             // Try again to set an invalid host.
                             make_request(&mut test_state, "host http://$[foo\r\n").await;
                         }
-                        // Confirm that we can't configure an invalid host that does
-                        // match the regex.
+                        // Confirm that a host that is not a valid url is refused.
                         _ => {
-                            assert!(response.starts_with("failed to reconfigure host"));
+                            assert!(response.starts_with("host must be a valid url"));
 
                             // Move onto the next command.
                             test_state = update_state(Some(test_state), &test_type).await;
                         }
                     }
                 }
-                ControllerCommand::TestPlan => {
+                Command::TestPlan => {
                     match test_state.step {
                         // Try and set an invalid testplan.
                         0 => {
@@ -320,7 +338,7 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                         1 => {
                             // Confirm that an invalid testplan fails.
-                            assert!(response.starts_with("unrecognized command"));
+                            assert!(response.starts_with("test-plan must be"));
 
                             // Set a valid test plan.
                             make_request(&mut test_state, "test_plan 10,2s;10,30m5s;0,1h2s\r\n")
@@ -335,7 +353,7 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                     }
                 }
-                ControllerCommand::Users => {
+                Command::Users => {
                     match test_state.step {
                         // Reconfigure the number of users simulated by the load test.
                         0 => {
@@ -354,14 +372,16 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                         // Confirm zero users is refused.
                         2 => {
-                            assert!(response.starts_with("failed to reconfigure users"));
+                            assert!(response
+                                .starts_with("users must be an integer between 1 and 100000"));
 
                             // Attempt to configure more than the maximum users.
                             make_request(&mut test_state, "users 100001\r\n").await;
                         }
                         // Confirm more than the maximum is refused.
                         3 => {
-                            assert!(response.starts_with("failed to reconfigure users"));
+                            assert!(response
+                                .starts_with("users must be an integer between 1 and 100000"));
 
                             // Attempt to reconfigure users with bad data.
                             make_request(&mut test_state, "users 1.1\r\n").await;
@@ -370,14 +390,15 @@ async fn run_standalone_test(test_type: TestType) {
                         _ => {
                             // The number of users started is verified when the load test finishes,
                             // so no further validation required here.
-                            assert!(response.starts_with("unrecognized command"));
+                            assert!(response
+                                .starts_with("users must be an integer between 1 and 100000"));
 
                             // Move onto the next command.
                             test_state = update_state(Some(test_state), &test_type).await;
                         }
                     }
                 }
-                ControllerCommand::IncreaseRate => {
+                Command::IncreaseRate => {
                     match test_state.step {
                         // Configure a decimal increase_rate.
                         0 => {
@@ -399,7 +420,7 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                         // Confirm increase_rate is not configured.
                         3 => {
-                            assert!(response.starts_with("unrecognized command"));
+                            assert!(response.starts_with("increase_rate must be a number above 0"));
 
                             // Configure increase_rate with a single integer.
                             make_request(
@@ -420,7 +441,7 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                     }
                 }
-                ControllerCommand::IncreaseTime => {
+                Command::IncreaseTime => {
                     match test_state.step {
                         // Try to configure a decimal IncreaseTime.
                         0 => {
@@ -428,7 +449,7 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                         // Configure an IncreaseTime with hms notation.
                         1 => {
-                            assert!(response.starts_with("unrecognized command"));
+                            assert!(response.starts_with("increase_time must be a time span"));
 
                             make_request(&mut test_state, "increase-time 1h2m3s\r\n").await;
                         }
@@ -461,7 +482,7 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                     }
                 }
-                ControllerCommand::DecreaseRate => {
+                Command::DecreaseRate => {
                     match test_state.step {
                         // Configure a decimal decrease_rate.
                         0 => {
@@ -476,7 +497,7 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                         // Confirm decrease_rate is not configured.
                         2 => {
-                            assert!(response.starts_with("unrecognized command"));
+                            assert!(response.starts_with("decrease_rate must be a number above 0"));
 
                             // Configure decrease_rate with a single integer.
                             make_request(&mut test_state, "decreaserate 2\r\n").await;
@@ -490,7 +511,7 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                     }
                 }
-                ControllerCommand::DecreaseTime => {
+                Command::DecreaseTime => {
                     match test_state.step {
                         // Try to configure a decimal DecreaseTime.
                         0 => {
@@ -498,7 +519,7 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                         // Configure a DecreaseTime with hms notation.
                         1 => {
-                            assert!(response.starts_with("unrecognized command"));
+                            assert!(response.starts_with("decrease_time must be a time span"));
 
                             make_request(&mut test_state, "decrease-time 1h2m3s\r\n").await;
                         }
@@ -531,7 +552,7 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                     }
                 }
-                ControllerCommand::RunTime => {
+                Command::RunTime => {
                     match test_state.step {
                         // Configure run_time using h:m:s format.
                         0 => {
@@ -568,7 +589,7 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                         // Confirm the run_time is not configured.
                         5 => {
-                            assert!(response.starts_with("unrecognized command"));
+                            assert!(response.starts_with("run_time must be a time span"));
 
                             // Set run_time with seconds alone, and no "s".
                             make_request(
@@ -590,7 +611,7 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                     }
                 }
-                ControllerCommand::Config => {
+                Command::Config => {
                     match test_state.step {
                         // Request the configuration.
                         0 => {
@@ -611,7 +632,7 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                     }
                 }
-                ControllerCommand::ConfigJson => {
+                Command::ConfigJson => {
                     match test_state.step {
                         // Request the configuration in json format.
                         0 => {
@@ -627,7 +648,7 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                     }
                 }
-                ControllerCommand::Metrics => {
+                Command::Metrics => {
                     match test_state.step {
                         // Request the running metrics.
                         0 => {
@@ -648,7 +669,7 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                     }
                 }
-                ControllerCommand::MetricsJson => {
+                Command::MetricsJson => {
                     match test_state.step {
                         // Request the running metrics in json format.
                         0 => {
@@ -663,7 +684,7 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                     }
                 }
-                ControllerCommand::Start => {
+                Command::Start => {
                     match test_state.step {
                         // Try to stop an idle load test.
                         0 => {
@@ -692,7 +713,7 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                     }
                 }
-                ControllerCommand::Stop => {
+                Command::Stop => {
                     match test_state.step {
                         // Try to configure host on a running load test.
                         0 => {
@@ -707,7 +728,8 @@ async fn run_standalone_test(test_type: TestType) {
                         // The overflow is refused and the load test keeps running, then
                         // reconfigure the number of users, increasing.
                         2 => {
-                            assert!(response.starts_with("failed to reconfigure users"));
+                            assert!(response
+                                .starts_with("users must be an integer between 1 and 100000"));
 
                             make_request(
                                 &mut test_state,
@@ -750,7 +772,7 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                     }
                 }
-                ControllerCommand::Shutdown => {
+                Command::Shutdown => {
                     match test_state.step {
                         // Shut down the load test.
                         0 => {
@@ -799,23 +821,23 @@ async fn run_standalone_test(test_type: TestType) {
 async fn update_state(test_state: Option<TestState>, test_type: &TestType) -> TestState {
     // The commands being tested, and the order they are tested.
     let commands_to_test = [
-        ControllerCommand::Exit,
-        ControllerCommand::Help,
-        ControllerCommand::Host,
-        ControllerCommand::TestPlan,
-        ControllerCommand::Users,
-        ControllerCommand::IncreaseRate,
-        ControllerCommand::IncreaseTime,
-        ControllerCommand::DecreaseRate,
-        ControllerCommand::DecreaseTime,
-        ControllerCommand::RunTime,
-        ControllerCommand::Start,
-        ControllerCommand::Config,
-        ControllerCommand::ConfigJson,
-        ControllerCommand::Metrics,
-        ControllerCommand::MetricsJson,
-        ControllerCommand::Stop,
-        ControllerCommand::Shutdown,
+        Command::Exit,
+        Command::Help,
+        Command::Host,
+        Command::TestPlan,
+        Command::Users,
+        Command::IncreaseRate,
+        Command::IncreaseTime,
+        Command::DecreaseRate,
+        Command::DecreaseTime,
+        Command::RunTime,
+        Command::Start,
+        Command::Config,
+        Command::ConfigJson,
+        Command::Metrics,
+        Command::MetricsJson,
+        Command::Stop,
+        Command::Shutdown,
     ];
 
     if let Some(mut state) = test_state {

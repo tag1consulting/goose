@@ -10,7 +10,7 @@ use std::cmp::Ordering;
 use std::str::FromStr;
 use std::time;
 
-use crate::config::GooseConfiguration;
+use crate::config::{timespan, GooseConfiguration};
 use crate::util;
 use crate::{AttackPhase, GooseAttack, GooseAttackRunState, GooseError};
 
@@ -43,80 +43,90 @@ impl TestPlan {
     }
 
     /// Build a test plan from current configuration.
-    pub(crate) fn build(configuration: &GooseConfiguration) -> TestPlan {
+    ///
+    /// Fails when a configured time span is too long for a `usize` in
+    /// milliseconds.
+    pub(crate) fn build(configuration: &GooseConfiguration) -> Result<TestPlan, GooseError> {
         if let Some(test_plan) = configuration.test_plan.as_ref() {
             // Test plan was manually defined, clone and return as is.
-            test_plan.clone()
-        } else {
-            let mut steps: Vec<(usize, usize)> = Vec::new();
+            return Ok(test_plan.clone());
+        }
+        let mut steps: Vec<(usize, usize)> = Vec::new();
 
-            // Build a simple test plan from configured options if possible.
-            if let Some(users) = configuration.users {
-                if configuration.increase_time != "0" {
-                    // Load test is configured with --increase-time.
-                    steps.push((
-                        users,
-                        util::parse_timespan(&configuration.increase_time) * 1_000,
-                    ));
-                } else {
-                    // Load test is configured with --increase-rate.
-                    let increase_rate =
-                        if let Some(increase_rate) = configuration.increase_rate.as_ref() {
-                            util::parse_rate(Some(increase_rate.to_string()))
-                        } else {
-                            util::parse_rate(None)
-                        };
-                    // Convert increase_rate to milliseconds.
-                    let ms_increase_rate = 1.0 / increase_rate * 1_000.0;
-                    // Finally, multiply the increase rate by the number of users to start.
-                    let total_time = ms_increase_rate * users as f32;
-                    steps.push((users, total_time as usize));
-                }
-
-                // If a run-time is set, maintain users for the configured duration.
-                if configuration.run_time != "0" {
-                    steps.push((users, util::parse_timespan(&configuration.run_time) * 1_000));
-                }
-
-                // Ramp down using --decrease-time or --decrease-rate if configured.
-                // This applies whether or not --run-time is set (e.g. ramp up then
-                // immediately ramp down).
-                if configuration.decrease_time != "0" {
-                    // Decrease users over the configured decrease-time.
-                    steps.push((
-                        0,
-                        util::parse_timespan(&configuration.decrease_time) * 1_000,
-                    ));
-                } else if let Some(decrease_rate) = configuration.decrease_rate.as_ref() {
-                    // Calculate decrease time from rate.
-                    let rate = util::parse_rate(Some(decrease_rate.to_string()));
-                    let ms_decrease_rate = 1.0 / rate * 1_000.0;
-                    let total_time = ms_decrease_rate * users as f32;
-                    steps.push((0, total_time as usize));
-                } else if configuration.run_time != "0" {
-                    // No decrease option set but run-time is configured: shut down
-                    // as quickly as possible once run-time elapses.
-                    steps.push((0, 0));
-                }
+        // Build a simple test plan from configured options if possible.
+        if let Some(users) = configuration.users {
+            if configuration.increase_time != "0" {
+                // Load test is configured with --increase-time.
+                steps.push((
+                    users,
+                    timespan("increase_time", &configuration.increase_time)? * 1_000,
+                ));
+            } else {
+                // Load test is configured with --increase-rate.
+                let increase_rate =
+                    if let Some(increase_rate) = configuration.increase_rate.as_ref() {
+                        util::parse_rate(Some(increase_rate.to_string()))
+                    } else {
+                        util::parse_rate(None)
+                    };
+                // Convert increase_rate to milliseconds.
+                let ms_increase_rate = 1.0 / increase_rate * 1_000.0;
+                // Finally, multiply the increase rate by the number of users to start.
+                let total_time = ms_increase_rate * users as f32;
+                steps.push((users, total_time as usize));
             }
 
-            // Define test plan from options.
-            TestPlan { steps, current: 0 }
+            // If a run-time is set, maintain users for the configured duration.
+            if configuration.run_time != "0" {
+                steps.push((
+                    users,
+                    timespan("run_time", &configuration.run_time)? * 1_000,
+                ));
+            }
+
+            // Ramp down using --decrease-time or --decrease-rate if configured.
+            // This applies whether or not --run-time is set (e.g. ramp up then
+            // immediately ramp down).
+            if configuration.decrease_time != "0" {
+                // Decrease users over the configured decrease-time.
+                steps.push((
+                    0,
+                    timespan("decrease_time", &configuration.decrease_time)? * 1_000,
+                ));
+            } else if let Some(decrease_rate) = configuration.decrease_rate.as_ref() {
+                // Calculate decrease time from rate.
+                let rate = util::parse_rate(Some(decrease_rate.to_string()));
+                let ms_decrease_rate = 1.0 / rate * 1_000.0;
+                let total_time = ms_decrease_rate * users as f32;
+                steps.push((0, total_time as usize));
+            } else if configuration.run_time != "0" {
+                // No decrease option set but run-time is configured: shut down
+                // as quickly as possible once run-time elapses.
+                steps.push((0, 0));
+            }
         }
+
+        // Define test plan from options.
+        Ok(TestPlan { steps, current: 0 })
     }
 
     // Determine the total number of users required by the test plan.
     pub fn total_users(&self) -> usize {
-        let mut total_users: usize = 0;
+        self.checked_total_users().unwrap_or(usize::MAX)
+    }
+
+    /// The total number of users the test plan starts, `None` if it does not
+    /// fit in a `usize`.
+    fn checked_total_users(&self) -> Option<usize> {
         let mut previous: usize = 0;
-        for step in &self.steps {
-            // Add to total_users every time there is an increase.
-            if step.0 > previous {
-                total_users += step.0 - previous;
-            }
-            previous = step.0
-        }
-        total_users
+        self.steps
+            .iter()
+            .try_fold(0usize, |total_users, &(users, _)| {
+                // Add to total_users every time there is an increase.
+                let increase = users.saturating_sub(previous);
+                previous = users;
+                total_users.checked_add(increase)
+            })
     }
 }
 
@@ -135,16 +145,20 @@ impl FromStr for TestPlan {
         // Convert string into a TestPlan.
         let mut steps: Vec<(usize, usize)> = Vec::new();
         // Each line of the test plan must be in the format "{users},{timespan}", white space is ignored
-        let re = Regex::new(r"^\s*(\d+)\s*,\s*(\d+|((\d+?)h)?((\d+?)m)?((\d+?)s)?)\s*$").unwrap();
+        let re =
+            Regex::new(r"^\s*([0-9]+)\s*,\s*([0-9]+|(([0-9]+?)h)?(([0-9]+?)m)?(([0-9]+?)s)?)\s*$")
+                .unwrap();
         // A test plan can have multiple lines split by the semicolon ";".
-        let lines = s.split(';');
-        for line in lines {
-            if let Some(cap) = re.captures(line) {
-                let left = cap[1]
-                    .parse::<usize>()
-                    .expect("failed to convert \\d to usize");
-                let right = util::parse_timespan(&cap[2]) * 1_000;
-                steps.push((left, right));
+        for line in s.split(';') {
+            // Users and milliseconds, unless either is too large for a usize.
+            let step = re.captures(line).and_then(|cap| {
+                Some((
+                    cap[1].parse::<usize>().ok()?,
+                    util::parse_timespan(&cap[2])? * 1_000,
+                ))
+            });
+            if let Some(step) = step {
+                steps.push(step);
             } else {
                 // Logger isn't initialized yet, provide helpful debug output.
                 eprintln!("ERROR: invalid `configuration.test_plan` value: '{line}'");
@@ -158,8 +172,16 @@ impl FromStr for TestPlan {
                 });
             }
         }
-        // The steps are only valid if the logic gets this far.
-        Ok(TestPlan { steps, current: 0 })
+        let test_plan = TestPlan { steps, current: 0 };
+        // A plan with no users never starts: weighting zero users never ends.
+        match test_plan.checked_total_users() {
+            Some(total) if total > 0 => Ok(test_plan),
+            _ => Err(GooseError::InvalidOption {
+                option: "`configuration.test_plan".to_string(),
+                value: s.to_string(),
+                detail: "`configuration.test_plan` must start at least one user, and no more than fit in a usize.".to_string(),
+            }),
+        }
     }
 }
 

@@ -17,48 +17,48 @@ use crate::{is_killswitch_triggered, reset_killswitch, trigger_killswitch, Goose
 ///
 /// Valid formats include: 20, 20s, 3m, 2h, 1h20m, 3h30m10s, etc.
 ///
+/// Returns `None` when the span is too long: a number does not fit in a
+/// `usize`, or the span in milliseconds does not.
+///
 /// # Example
 /// ```rust
 /// use goose::util;
 ///
 /// // 1 hour 2 minutes and 3 seconds is 3,723 seconds.
-/// assert_eq!(util::parse_timespan("1h2m3s"), 3_723);
+/// assert_eq!(util::parse_timespan("1h2m3s"), Some(3_723));
 ///
 /// // 45 seconds is 45 seconds.
-/// assert_eq!(util::parse_timespan("45"), 45);
+/// assert_eq!(util::parse_timespan("45"), Some(45));
 ///
 /// // Invalid value is 0 seconds.
-/// assert_eq!(util::parse_timespan("foo"), 0);
+/// assert_eq!(util::parse_timespan("foo"), Some(0));
+///
+/// // Too long is an error.
+/// assert_eq!(util::parse_timespan("99999999999999999999h"), None);
 /// ```
-pub fn parse_timespan(time_str: &str) -> usize {
-    match usize::from_str(time_str) {
+pub fn parse_timespan(time_str: &str) -> Option<usize> {
+    let seconds = match usize::from_str(time_str) {
         // If an integer is passed in, assume it's seconds
-        Ok(t) => {
-            trace!("{time_str} is integer: {t} seconds");
-            t
-        }
+        Ok(t) => t,
+        Err(e) if *e.kind() == std::num::IntErrorKind::PosOverflow => return None,
         // Otherwise use a regex to extract hours, minutes and seconds from string.
         Err(_) => {
-            let re = Regex::new(r"((?P<hours>\d+?)h)?((?P<minutes>\d+?)m)?((?P<seconds>\d+?)s)?")
-                .unwrap();
-            let time_matches = re.captures(time_str).unwrap();
-            let hours = match time_matches.name("hours") {
-                Some(_) => usize::from_str(&time_matches["hours"]).unwrap(),
-                None => 0,
+            let re = Regex::new(
+                r"((?P<hours>[0-9]+?)h)?((?P<minutes>[0-9]+?)m)?((?P<seconds>[0-9]+?)s)?",
+            )
+            .unwrap();
+            let time_matches = re.captures(time_str)?;
+            let part = |name: &str, unit: usize| match time_matches.name(name) {
+                Some(n) => usize::from_str(n.as_str()).ok()?.checked_mul(unit),
+                None => Some(0),
             };
-            let minutes = match time_matches.name("minutes") {
-                Some(_) => usize::from_str(&time_matches["minutes"]).unwrap(),
-                None => 0,
-            };
-            let seconds = match time_matches.name("seconds") {
-                Some(_) => usize::from_str(&time_matches["seconds"]).unwrap(),
-                None => 0,
-            };
-            let total = hours * 60 * 60 + minutes * 60 + seconds;
-            trace!("{hours} hours {minutes} minutes {seconds} seconds: {total} seconds");
-            total
+            part("hours", 3600)?
+                .checked_add(part("minutes", 60)?)?
+                .checked_add(part("seconds", 1)?)?
         }
-    }
+    };
+    trace!("{time_str} is {seconds} seconds");
+    seconds.checked_mul(1_000).map(|_| seconds)
 }
 
 /// Sleep for a specified duration, minus the time spent doing other things.
@@ -443,29 +443,29 @@ mod tests {
 
     #[test]
     fn timespan() {
-        assert_eq!(parse_timespan("0"), 0);
-        assert_eq!(parse_timespan("foo"), 0);
-        assert_eq!(parse_timespan("1"), 1);
-        assert_eq!(parse_timespan("1s"), 1);
-        assert_eq!(parse_timespan("1m"), 60);
-        assert_eq!(parse_timespan("61"), 61);
-        assert_eq!(parse_timespan("1m1s"), 61);
-        assert_eq!(parse_timespan("10m"), 600);
-        assert_eq!(parse_timespan("10m5s"), 605);
-        assert_eq!(parse_timespan("15mins"), 900);
-        assert_eq!(parse_timespan("60m"), 3600);
-        assert_eq!(parse_timespan("1h"), 3600);
-        assert_eq!(parse_timespan("1h15s"), 3615);
-        assert_eq!(parse_timespan("1h5m"), 3900);
-        assert_eq!(parse_timespan("1h5m13s"), 3913);
-        assert_eq!(parse_timespan("2h3min"), 7380);
-        assert_eq!(parse_timespan("3h3m"), 10980);
-        assert_eq!(parse_timespan("3h3m5s"), 10985);
-        assert_eq!(parse_timespan("5hours"), 18000);
-        assert_eq!(parse_timespan("450m"), 27000);
-        assert_eq!(parse_timespan("24h"), 86400);
-        assert_eq!(parse_timespan("88h88m88s"), 322168);
-        assert_eq!(parse_timespan("100hourblah"), 360000);
+        assert_eq!(parse_timespan("0"), Some(0));
+        assert_eq!(parse_timespan("foo"), Some(0));
+        assert_eq!(parse_timespan("1"), Some(1));
+        assert_eq!(parse_timespan("1s"), Some(1));
+        assert_eq!(parse_timespan("1m"), Some(60));
+        assert_eq!(parse_timespan("61"), Some(61));
+        assert_eq!(parse_timespan("1m1s"), Some(61));
+        assert_eq!(parse_timespan("10m"), Some(600));
+        assert_eq!(parse_timespan("10m5s"), Some(605));
+        assert_eq!(parse_timespan("15mins"), Some(900));
+        assert_eq!(parse_timespan("60m"), Some(3600));
+        assert_eq!(parse_timespan("1h"), Some(3600));
+        assert_eq!(parse_timespan("1h15s"), Some(3615));
+        assert_eq!(parse_timespan("1h5m"), Some(3900));
+        assert_eq!(parse_timespan("1h5m13s"), Some(3913));
+        assert_eq!(parse_timespan("2h3min"), Some(7380));
+        assert_eq!(parse_timespan("3h3m"), Some(10980));
+        assert_eq!(parse_timespan("3h3m5s"), Some(10985));
+        assert_eq!(parse_timespan("5hours"), Some(18000));
+        assert_eq!(parse_timespan("450m"), Some(27000));
+        assert_eq!(parse_timespan("24h"), Some(86400));
+        assert_eq!(parse_timespan("88h88m88s"), Some(322168));
+        assert_eq!(parse_timespan("100hourblah"), Some(360000));
     }
 
     #[test]

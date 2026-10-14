@@ -696,9 +696,7 @@ impl GooseDefaultType<&str> for GooseAttack {
                 self.defaults.scenarios = Some(value.parse::<Scenarios>().unwrap())
             }
             GooseDefault::TelnetHost => self.defaults.telnet_host = Some(value.to_string()),
-            GooseDefault::TestPlan => {
-                self.defaults.test_plan = Some(value.parse::<TestPlan>().unwrap())
-            }
+            GooseDefault::TestPlan => self.defaults.test_plan = Some(value.parse::<TestPlan>()?),
             GooseDefault::Timeout => self.defaults.timeout = Some(value.to_string()),
             GooseDefault::TransactionLog => self.defaults.transaction_log = Some(value.to_string()),
             GooseDefault::WebSocketHost => self.defaults.websocket_host = Some(value.to_string()),
@@ -1528,9 +1526,21 @@ impl GooseConfigure<Scenarios> for GooseConfiguration {
     }
 }
 
+/// The seconds in time span option `option`, refused when the span is too long
+/// for a `usize` in milliseconds.
+pub(crate) fn timespan(option: &str, value: &str) -> Result<usize, GooseError> {
+    util::parse_timespan(value).ok_or_else(|| GooseError::InvalidOption {
+        option: format!("`configuration.{option}`"),
+        value: value.to_string(),
+        detail: format!("`configuration.{option}` is too long."),
+    })
+}
+
 impl GooseConfiguration {
     /// Implement precedence rules for all [`GooseConfiguration`] values.
-    pub(crate) fn configure(&mut self, defaults: &GooseDefaults) {
+    ///
+    /// Fails when a time span is too long.
+    pub(crate) fn configure(&mut self, defaults: &GooseDefaults) -> Result<(), GooseError> {
         // Configure `quiet`.
         self.quiet = self
             .get_value(vec![
@@ -1658,12 +1668,13 @@ impl GooseConfiguration {
         ]);
 
         // Configure `increase_time`.
+        let increase_time = timespan("increase_time", &self.increase_time)?;
         self.increase_time = self
             .get_value(vec![
                 // Use --increase-time if set.
                 GooseValue {
-                    value: Some(util::parse_timespan(&self.increase_time)),
-                    filter: util::parse_timespan(&self.increase_time) == 0,
+                    value: Some(increase_time),
+                    filter: increase_time == 0,
                     message: "increase_time",
                 },
                 // Otherwise use GooseDefault if set and not on Worker.
@@ -1674,14 +1685,17 @@ impl GooseConfiguration {
                 },
             ])
             .map_or_else(|| "0".to_string(), |v| v.to_string());
+        // A default can be too long as well.
+        timespan("increase_time", &self.increase_time)?;
 
         // Configure `decrease_time`.
+        let decrease_time = timespan("decrease_time", &self.decrease_time)?;
         self.decrease_time = self
             .get_value(vec![
                 // Use --decrease-time if set.
                 GooseValue {
-                    value: Some(util::parse_timespan(&self.decrease_time)),
-                    filter: util::parse_timespan(&self.decrease_time) == 0,
+                    value: Some(decrease_time),
+                    filter: decrease_time == 0,
                     message: "decrease_time",
                 },
                 // Otherwise use GooseDefault if set and not on Worker.
@@ -1692,14 +1706,17 @@ impl GooseConfiguration {
                 },
             ])
             .map_or_else(|| "0".to_string(), |v| v.to_string());
+        // A default can be too long as well.
+        timespan("decrease_time", &self.decrease_time)?;
 
         // Configure `run_time`.
+        let run_time = timespan("run_time", &self.run_time)?;
         self.run_time = self
             .get_value(vec![
                 // Use --run-time if set.
                 GooseValue {
-                    value: Some(util::parse_timespan(&self.run_time)),
-                    filter: util::parse_timespan(&self.run_time) == 0,
+                    value: Some(run_time),
+                    filter: run_time == 0,
                     message: "run_time",
                 },
                 // Otherwise use GooseDefault if set and not on Worker.
@@ -1710,6 +1727,8 @@ impl GooseConfiguration {
                 },
             ])
             .map_or_else(|| "0".to_string(), |v| v.to_string());
+        // A default can be too long as well.
+        timespan("run_time", &self.run_time)?;
 
         // Configure `increase_rate`.
         self.increase_rate = self
@@ -2354,6 +2373,8 @@ impl GooseConfiguration {
                 ])
                 .unwrap_or(60);
         }
+
+        Ok(())
     }
 
     /// Validate configured [`GooseConfiguration`] values.
@@ -3182,7 +3203,7 @@ mod test {
             dashboard: true,
             ..Default::default()
         };
-        config.configure(&GooseDefaults::default());
+        config.configure(&GooseDefaults::default()).unwrap();
         assert!(config.dashboard);
         assert!(!config.dashboard_control);
         assert_eq!(config.dashboard_host, "127.0.0.1");
@@ -3193,7 +3214,7 @@ mod test {
 
         // Dashboard disabled → host stays empty, port stays 0, max clients stays 0.
         let mut config = GooseConfiguration::default();
-        config.configure(&GooseDefaults::default());
+        config.configure(&GooseDefaults::default()).unwrap();
         assert!(!config.dashboard);
         assert!(!config.dashboard_control);
         assert!(config.dashboard_host.is_empty());
@@ -3217,7 +3238,7 @@ mod test {
             dashboard_max_clients: Some(64),
             ..GooseDefaults::default()
         };
-        config.configure(&defaults);
+        config.configure(&defaults).unwrap();
         assert_eq!(config.dashboard_host, "192.168.1.10");
         assert_eq!(config.dashboard_port, 9999);
         assert_eq!(config.dashboard_auth_token, "cli-token");
@@ -3232,7 +3253,7 @@ mod test {
             dashboard_port: Some(6000),
             ..GooseDefaults::default()
         };
-        config.configure(&defaults);
+        config.configure(&defaults).unwrap();
         assert!(config.dashboard);
         assert_eq!(config.dashboard_host, "0.0.0.0");
         assert_eq!(config.dashboard_port, 6000);
@@ -3251,7 +3272,7 @@ mod test {
             dashboard_max_clients: Some(16),
             ..GooseDefaults::default()
         };
-        config.configure(&defaults);
+        config.configure(&defaults).unwrap();
         assert_eq!(config.dashboard_auth_token, "from-default");
         assert_eq!(config.dashboard_max_clients, 16);
         assert!(config.validate_dashboard_config().is_ok());
@@ -3266,7 +3287,7 @@ mod test {
             dashboard_control: Some(true),
             ..GooseDefaults::default()
         };
-        config.configure(&defaults);
+        config.configure(&defaults).unwrap();
         assert!(config.dashboard_control);
         assert!(config.validate_dashboard_config().is_ok());
 
@@ -3281,7 +3302,7 @@ mod test {
             dashboard_control: Some(false),
             ..GooseDefaults::default()
         };
-        config.configure(&defaults);
+        config.configure(&defaults).unwrap();
         assert!(config.dashboard_control);
         assert!(config.validate_dashboard_config().is_ok());
     }
@@ -3429,18 +3450,18 @@ mod test {
             dashboard: true,
             ..Default::default()
         };
-        config.configure(&goose_attack.defaults);
+        config.configure(&goose_attack.defaults).unwrap();
         assert!(config.no_percentiles_over_time);
 
         // Without the dashboard the default is ignored, while the flag on
         // the command line is still refused.
         let mut config = GooseConfiguration::default();
-        config.configure(&goose_attack.defaults);
+        config.configure(&goose_attack.defaults).unwrap();
         assert!(!config.no_percentiles_over_time);
         assert!(config.validate().is_ok());
         let mut config =
             GooseConfiguration::parse_args_default(&["--no-percentiles-over-time"]).unwrap();
-        config.configure(&goose_attack.defaults);
+        config.configure(&goose_attack.defaults).unwrap();
         assert!(config.validate().is_err());
     }
 

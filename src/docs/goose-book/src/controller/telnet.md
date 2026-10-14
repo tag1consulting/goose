@@ -37,6 +37,18 @@ goodbye!
 goose> Connection closed by foreign host.
 ```
 
+A command whose value can't be used is refused with what the value must be, and changes nothing:
+```bash
+goose> users 0
+users must be an integer between 1 and 100000
+goose> increaserate 0
+increase_rate must be a number above 0
+goose> runtime 10d
+run_time must be a time span such as 1h30m5s
+```
+
+`host`, `runtime`, `increase-time` and `decrease-time` are accepted only while the load test is idle, as they are read when it starts. `users`, `test-plan` and the rates also change a running load test. A test plan must start 1 to 100000 users in total, and `users` and `test-plan` are refused while a `stop`, `shutdown` or Ctrl-C is ramping the load test down. A command that gets no answer within 15 seconds is reported as timed out, and may still apply.
+
 ## Example
 
 One possible use-case for the controller is to dynamically reconfigure the number of users being simulated by the load test. In the following example, the load test was launched with the following parameters:
