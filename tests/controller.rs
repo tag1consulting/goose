@@ -305,7 +305,8 @@ async fn run_standalone_test(test_type: TestType) {
                                     response.starts_with("unrecognized command, see Goose book")
                                 );
                             } else {
-                                assert!(response.starts_with("unrecognized command"));
+                                // The buffer is reused, so only the start is this reply.
+                                assert!(response.starts_with("unrecognized command\ngoose> "));
                             }
 
                             // Move onto the next command.

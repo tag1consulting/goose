@@ -3520,9 +3520,11 @@ mod test {
             tokio::task::yield_now().await;
             Ok(())
         }
+        // Two users, so the rule that increase and decrease times need at least
+        // two users can not refuse a row in place of the overflow check.
         let base = [
             "--users",
-            "1",
+            "2",
             "--no-telnet",
             "--no-websocket",
             "--no-save",
@@ -3532,7 +3534,23 @@ mod test {
         ];
         let scenario =
             || crate::scenario!("Overflow").register_transaction(crate::transaction!(noop));
-        for option in ["--run-time", "--increase-time", "--decrease-time"] {
+        // Every row must be refused as too long, not by another rule. A value that
+        // wraps instead of failing starts a load test that never ends, so each
+        // row runs under a timeout and fails instead of hanging. Failures are
+        // collected so the report names every failing row.
+        let mut failures = Vec::new();
+        let mut check = |row: String, option: &str, result| match result {
+            Ok(Err(GooseError::InvalidOption { detail, .. }))
+                if detail == format!("`configuration.{}` is too long.", option) => {}
+            Ok(other) => failures.push(format!("{}: {:?}", row, other.map(|_| ()))),
+            Err(_) => failures.push(format!("{}: started a load test", row)),
+        };
+        let timeout = std::time::Duration::from_secs(10);
+        for (flag, option) in [
+            ("--run-time", "run_time"),
+            ("--increase-time", "increase_time"),
+            ("--decrease-time", "decrease_time"),
+        ] {
             for value in [
                 "99999999999999999999h",
                 "9999999999999999h",
@@ -3540,35 +3558,29 @@ mod test {
                 "5124095576030431h100s",
             ] {
                 let mut args = base.to_vec();
-                args.extend([option, value]);
+                args.extend([flag, value]);
                 let configuration = GooseConfiguration::parse_args_default(&args).unwrap();
-                // A value that wraps instead of failing starts a load test that
-                // never ends: time it out so the row fails instead of hanging.
-                let result = tokio::time::timeout(
-                    std::time::Duration::from_secs(10),
-                    GooseAttack::initialize_with_config(configuration)
-                        .unwrap()
-                        .register_scenario(scenario())
-                        .execute(),
-                )
-                .await;
-                assert!(matches!(result, Ok(Err(_))), "{} {}", option, value);
+                let attack = GooseAttack::initialize_with_config(configuration)
+                    .unwrap()
+                    .register_scenario(scenario());
+                let result = tokio::time::timeout(timeout, attack.execute()).await;
+                check(format!("{} {}", flag, value), option, result);
             }
         }
-        for (name, key) in [
-            ("run time", GooseDefault::RunTime),
-            ("increase time", GooseDefault::IncreaseTime),
-            ("decrease time", GooseDefault::DecreaseTime),
+        for (option, key) in [
+            ("run_time", GooseDefault::RunTime),
+            ("increase_time", GooseDefault::IncreaseTime),
+            ("decrease_time", GooseDefault::DecreaseTime),
         ] {
             let configuration = GooseConfiguration::parse_args_default(&base).unwrap();
-            let result = GooseAttack::initialize_with_config(configuration)
+            let attack = GooseAttack::initialize_with_config(configuration)
                 .unwrap()
                 .register_scenario(scenario())
                 .set_default(key, usize::MAX)
-                .unwrap()
-                .execute()
-                .await;
-            assert!(result.is_err(), "{}", name);
+                .unwrap();
+            let result = tokio::time::timeout(timeout, attack.execute()).await;
+            check(format!("default {}", option), option, result);
         }
+        assert!(failures.is_empty(), "{:#?}", failures);
     }
 }
