@@ -208,7 +208,8 @@ pub enum GooseError {
         /// An optional explanation of the error.
         detail: String,
     },
-    /// Invalid controller command.
+    /// Invalid controller command. No longer returned: a Controller answers a
+    /// command it refuses with a message, and the variant is kept for callers.
     InvalidControllerCommand {
         /// An optional explanation of the error.
         detail: String,
@@ -1566,9 +1567,6 @@ impl GooseAttack {
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> Result<(), GooseError> {
-        /// Cap messages drained per tick so a flood cannot monopolize the loop.
-        const MAX_DRAIN: usize = 16;
-
         let mut series_requests = Vec::new();
         let mut pending_snapshot: Option<(
             tokio::sync::oneshot::Sender<metrics::DashboardSnapshot>,
@@ -1581,7 +1579,7 @@ impl GooseAttack {
                 return Ok(());
             };
 
-            for _ in 0..MAX_DRAIN {
+            for _ in 0..controller::MAX_DRAIN {
                 match rx.try_recv() {
                     Ok(dashboard::DashboardRequest::GetSnapshot {
                         respond,
@@ -1842,15 +1840,11 @@ impl GooseAttack {
 
         // One channel carries every command from telnet, WebSocket and dashboard
         // control to the parent, when any of them is enabled.
-        let (control_tx, controller_channel_rx) = if !self.configuration.no_telnet
+        let (control_tx, controller_channel_rx) = (!self.configuration.no_telnet
             || !self.configuration.no_websocket
-            || self.configuration.dashboard_control
-        {
-            let (control_tx, control_rx) = flume::unbounded();
-            (Some(control_tx), Some(control_rx))
-        } else {
-            (None, None)
-        };
+            || self.configuration.dashboard_control)
+            .then(flume::unbounded)
+            .unzip();
 
         // Optionally spawn a telnet and/or Websocket Controller thread.
         if let Some(control_tx) = &control_tx {
@@ -1867,7 +1861,12 @@ impl GooseAttack {
             dashboard_active_sse,
             dashboard_url,
             dashboard_server,
-        ) = match dashboard::setup_dashboard(&self.configuration, control_tx).await? {
+        ) = match dashboard::setup_dashboard(
+            &self.configuration,
+            control_tx.filter(|_| self.configuration.dashboard_control),
+        )
+        .await?
+        {
             Some(setup) => (
                 Some(setup.request_rx),
                 Some(setup.close_tx),
@@ -2474,7 +2473,8 @@ impl GooseAttack {
         });
         if let Err(e) = prepared {
             // Soft: do not move to Increase if unable to prepare load test. Name
-            // the cause: prepare_load_test refuses no host and no users itself.
+            // the cause: prepare_load_test refuses no host (option `--host`) and no
+            // users (option `configuration.users`) itself, matched here by name.
             let reason = match e {
                 GooseError::InvalidOption { option, .. } if option == "--host" => {
                     "no host is configured".to_string()
@@ -2583,7 +2583,7 @@ impl GooseAttack {
                 None,
             );
         }
-        info!("quit, shutting down");
+        info!("[control]: quit, shutting down");
         self.shutdown_from_idle(goose_attack_run_state);
         self.control_outcome(
             goose_attack_run_state,
@@ -2755,7 +2755,7 @@ impl GooseAttack {
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> Result<(), GooseError> {
         if goose_attack_run_state.active_users == 0 {
-            // A stop in the tick of its start, or a second shutdown from Idle:
+            // A stop or Ctrl-C in the tick of its start, or a second shutdown from Idle:
             // a plan maintaining 0 users would never end.
             goose_attack_run_state.adjust_user_in_ms = 0;
             self.stop_without_users(goose_attack_run_state);
@@ -3454,6 +3454,9 @@ mod tests {
         goose_attack.configuration.host = "http://127.0.0.1".to_string();
         goose_attack.configuration.users = None;
         goose_attack.configuration.test_plan = None;
+        // With no scenario, a Start that got past the users check would fail
+        // the test instead of weighting zero users forever.
+        goose_attack.scenarios.clear();
         assert_eq!(
             refusal(&mut goose_attack),
             (
@@ -3595,7 +3598,10 @@ mod tests {
             .unwrap()
             .register_scenario(scenario!("Idle").register_transaction(transaction!(noop)));
         let mut run_state = goose_attack.initialize_attack().await.unwrap();
-        control(&mut goose_attack, &mut run_state, "shutdown").await;
+        assert_eq!(
+            reply(&mut goose_attack, &mut run_state, "shutdown").await,
+            (true, "load test shut down".to_string())
+        );
         assert_eq!(goose_attack.attack_phase, AttackPhase::Decrease);
         assert!(run_state.stopping);
         let outcome = goose_attack.control_set_users(&mut run_state, 5).unwrap();
@@ -3673,10 +3679,21 @@ mod tests {
         run_state: &mut GooseAttackRunState,
         line: &str,
     ) -> bool {
+        reply(goose_attack, run_state, line).await.0
+    }
+
+    /// As [`control`], with the message the client is sent: the outcome's,
+    /// the client's own refusal, or empty for configuration and metrics.
+    async fn reply(
+        goose_attack: &mut GooseAttack,
+        run_state: &mut GooseAttackRunState,
+        line: &str,
+    ) -> (bool, String) {
         use crate::controller::{ControlReply, ControllerCommand};
 
-        let Ok(command) = line.parse::<ControllerCommand>() else {
-            return false;
+        let command = match line.parse::<ControllerCommand>() {
+            Ok(command) => command,
+            Err(refusal) => return (false, refusal.to_string()),
         };
         let (controller_tx, controller_rx) = flume::unbounded();
         run_state.controller_channel_rx = Some(controller_rx);
@@ -3687,8 +3704,8 @@ mod tests {
             .await
             .unwrap();
         match response_rx.await.expect("the parent must reply") {
-            ControlReply::Outcome(outcome) => outcome.ok,
-            _ => true,
+            ControlReply::Outcome(outcome) => (outcome.ok, outcome.message),
+            _ => (true, String::new()),
         }
     }
 
@@ -3848,25 +3865,46 @@ mod tests {
     fn test_control_run_time_refused_unless_idle() {
         finishes(|| async {
             let (mut goose_attack, mut run_state) = idle_attack(&[]).await;
-            goose_attack.set_attack_phase(&mut run_state, AttackPhase::Maintain);
             let configuration = format!("{:?}", goose_attack.configuration);
-            for line in [
-                "runtime 10",
-                "increasetime 10",
-                "decreasetime 10",
-                "host http://127.0.0.1/",
+            for phase in [
+                AttackPhase::Increase,
+                AttackPhase::Maintain,
+                AttackPhase::Decrease,
             ] {
-                assert!(
-                    !control(&mut goose_attack, &mut run_state, line).await,
-                    "{}",
-                    line
-                );
-                assert_eq!(
-                    format!("{:?}", goose_attack.configuration),
-                    configuration,
-                    "{}",
-                    line
-                );
+                goose_attack.set_attack_phase(&mut run_state, phase);
+                for (line, refusal) in [
+                    (
+                        "runtime 10",
+                        "failed to configure run_time, be sure load test is idle",
+                    ),
+                    (
+                        "increasetime 10",
+                        "failed to configure increase_time, be sure load test is idle",
+                    ),
+                    (
+                        "decreasetime 10",
+                        "failed to configure decrease_time, be sure load test is idle",
+                    ),
+                    (
+                        "host http://127.0.0.1/",
+                        "failed to reconfigure host, load test is not idle",
+                    ),
+                ] {
+                    assert_eq!(
+                        reply(&mut goose_attack, &mut run_state, line).await,
+                        (false, refusal.to_string()),
+                        "{} in {:?}",
+                        line,
+                        phase
+                    );
+                    assert_eq!(
+                        format!("{:?}", goose_attack.configuration),
+                        configuration,
+                        "{} in {:?}",
+                        line,
+                        phase
+                    );
+                }
             }
             goose_attack.set_attack_phase(&mut run_state, AttackPhase::Idle);
             assert!(control(&mut goose_attack, &mut run_state, "runtime 10").await);
@@ -3920,6 +3958,26 @@ mod tests {
         });
     }
 
+    /// A `shutdown` once Goose is shutting down is answered and changes
+    /// nothing.
+    #[test]
+    #[serial_test::serial]
+    fn test_control_shutdown_in_shutdown_phase() {
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) = idle_attack(&["--no-autostart"]).await;
+            goose_attack.set_attack_phase(&mut run_state, AttackPhase::Shutdown);
+            let steps = goose_attack.test_plan.steps.clone();
+            assert_eq!(
+                reply(&mut goose_attack, &mut run_state, "shutdown").await,
+                (true, "load test shut down".to_string())
+            );
+            assert_eq!(goose_attack.attack_phase, AttackPhase::Shutdown);
+            assert!(!run_state.stopping);
+            assert!(!run_state.shutdown_after_stop);
+            assert_eq!(goose_attack.test_plan.steps, steps);
+        });
+    }
+
     /// A cancel with no user running, as a second `shutdown` from Idle or a
     /// `stop` in the tick of its `start` sends, ends the load test instead
     /// of maintaining zero users with no end.
@@ -3969,6 +4027,7 @@ mod tests {
             ends_in(&mut goose_attack, &mut run_state, AttackPhase::Idle).await;
             // The run ended through report writing, recorded as canceled.
             assert!(!goose_attack.run_in_progress);
+            assert!(!run_state.stopping);
             let actions: Vec<_> = goose_attack
                 .metrics
                 .history
@@ -3983,6 +4042,18 @@ mod tests {
                 "{:?}",
                 actions
             );
+
+            // A stop while maintaining no users, as a plan step to 0 users
+            // leaves the run, ends it too.
+            let (mut goose_attack, mut run_state) = idle_attack(&["--no-autostart"]).await;
+            goose_attack.set_attack_phase(&mut run_state, AttackPhase::Maintain);
+            goose_attack.run_in_progress = true;
+            run_state.active_users = 0;
+            assert!(control(&mut goose_attack, &mut run_state, "stop").await);
+            assert_eq!(goose_attack.attack_phase, AttackPhase::Decrease);
+            assert_eq!(goose_attack.test_plan.steps, vec![(0, 0)]);
+            ends_in(&mut goose_attack, &mut run_state, AttackPhase::Idle).await;
+            assert!(!run_state.stopping);
         });
     }
 

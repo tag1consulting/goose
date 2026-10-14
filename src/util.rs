@@ -479,6 +479,11 @@ mod tests {
         // for a `usize`.
         assert_eq!(parse_timespan("5124095576030431h100s"), None);
         assert_eq!(parse_timespan("99999999999999999999"), None);
+        // The longest span a `usize` holds in milliseconds, and a second more
+        // (18446744073709551 and 18446744073709552 on 64 bit).
+        let longest = usize::MAX / 1_000;
+        assert_eq!(parse_timespan(&longest.to_string()), Some(longest));
+        assert_eq!(parse_timespan(&(longest + 1).to_string()), None);
     }
 
     #[test]

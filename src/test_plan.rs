@@ -49,65 +49,66 @@ impl TestPlan {
     pub(crate) fn build(configuration: &GooseConfiguration) -> Result<TestPlan, GooseError> {
         if let Some(test_plan) = configuration.test_plan.as_ref() {
             // Test plan was manually defined, clone and return as is.
-            return Ok(test_plan.clone());
+            Ok(test_plan.clone())
+        } else {
+            let mut steps: Vec<(usize, usize)> = Vec::new();
+
+            // Build a simple test plan from configured options if possible.
+            if let Some(users) = configuration.users {
+                if configuration.increase_time != "0" {
+                    // Load test is configured with --increase-time.
+                    steps.push((
+                        users,
+                        timespan("increase_time", &configuration.increase_time)? * 1_000,
+                    ));
+                } else {
+                    // Load test is configured with --increase-rate.
+                    let increase_rate =
+                        if let Some(increase_rate) = configuration.increase_rate.as_ref() {
+                            util::parse_rate(Some(increase_rate.to_string()))
+                        } else {
+                            util::parse_rate(None)
+                        };
+                    // Convert increase_rate to milliseconds.
+                    let ms_increase_rate = 1.0 / increase_rate * 1_000.0;
+                    // Finally, multiply the increase rate by the number of users to start.
+                    let total_time = ms_increase_rate * users as f32;
+                    steps.push((users, total_time as usize));
+                }
+
+                // If a run-time is set, maintain users for the configured duration.
+                if configuration.run_time != "0" {
+                    steps.push((
+                        users,
+                        timespan("run_time", &configuration.run_time)? * 1_000,
+                    ));
+                }
+
+                // Ramp down using --decrease-time or --decrease-rate if configured.
+                // This applies whether or not --run-time is set (e.g. ramp up then
+                // immediately ramp down).
+                if configuration.decrease_time != "0" {
+                    // Decrease users over the configured decrease-time.
+                    steps.push((
+                        0,
+                        timespan("decrease_time", &configuration.decrease_time)? * 1_000,
+                    ));
+                } else if let Some(decrease_rate) = configuration.decrease_rate.as_ref() {
+                    // Calculate decrease time from rate.
+                    let rate = util::parse_rate(Some(decrease_rate.to_string()));
+                    let ms_decrease_rate = 1.0 / rate * 1_000.0;
+                    let total_time = ms_decrease_rate * users as f32;
+                    steps.push((0, total_time as usize));
+                } else if configuration.run_time != "0" {
+                    // No decrease option set but run-time is configured: shut down
+                    // as quickly as possible once run-time elapses.
+                    steps.push((0, 0));
+                }
+            }
+
+            // Define test plan from options.
+            Ok(TestPlan { steps, current: 0 })
         }
-        let mut steps: Vec<(usize, usize)> = Vec::new();
-
-        // Build a simple test plan from configured options if possible.
-        if let Some(users) = configuration.users {
-            if configuration.increase_time != "0" {
-                // Load test is configured with --increase-time.
-                steps.push((
-                    users,
-                    timespan("increase_time", &configuration.increase_time)? * 1_000,
-                ));
-            } else {
-                // Load test is configured with --increase-rate.
-                let increase_rate =
-                    if let Some(increase_rate) = configuration.increase_rate.as_ref() {
-                        util::parse_rate(Some(increase_rate.to_string()))
-                    } else {
-                        util::parse_rate(None)
-                    };
-                // Convert increase_rate to milliseconds.
-                let ms_increase_rate = 1.0 / increase_rate * 1_000.0;
-                // Finally, multiply the increase rate by the number of users to start.
-                let total_time = ms_increase_rate * users as f32;
-                steps.push((users, total_time as usize));
-            }
-
-            // If a run-time is set, maintain users for the configured duration.
-            if configuration.run_time != "0" {
-                steps.push((
-                    users,
-                    timespan("run_time", &configuration.run_time)? * 1_000,
-                ));
-            }
-
-            // Ramp down using --decrease-time or --decrease-rate if configured.
-            // This applies whether or not --run-time is set (e.g. ramp up then
-            // immediately ramp down).
-            if configuration.decrease_time != "0" {
-                // Decrease users over the configured decrease-time.
-                steps.push((
-                    0,
-                    timespan("decrease_time", &configuration.decrease_time)? * 1_000,
-                ));
-            } else if let Some(decrease_rate) = configuration.decrease_rate.as_ref() {
-                // Calculate decrease time from rate.
-                let rate = util::parse_rate(Some(decrease_rate.to_string()));
-                let ms_decrease_rate = 1.0 / rate * 1_000.0;
-                let total_time = ms_decrease_rate * users as f32;
-                steps.push((0, total_time as usize));
-            } else if configuration.run_time != "0" {
-                // No decrease option set but run-time is configured: shut down
-                // as quickly as possible once run-time elapses.
-                steps.push((0, 0));
-            }
-        }
-
-        // Define test plan from options.
-        Ok(TestPlan { steps, current: 0 })
     }
 
     // Determine the total number of users required by the test plan.
@@ -128,46 +129,7 @@ impl TestPlan {
                 total_users.checked_add(increase)
             })
     }
-}
 
-/// Implement [`FromStr`] to convert `"users,timespan"` string formatted test plans to Goose's
-/// internal representation of Vec<(usize, usize)>.
-///
-/// Users are represented simply as an integer.
-///
-/// Time span can be specified as an integer, indicating seconds. Or can use integers together
-/// with one or more of "h", "m", and "s", in that order, indicating "hours", "minutes", and
-/// "seconds". Valid formats include: 20, 20s, 3m, 2h, 1h20m, 3h30m10s, etc.
-impl FromStr for TestPlan {
-    type Err = GooseError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        // Logger isn't initialized yet, print why the plan is refused.
-        TestPlan::parse(s).inspect_err(|e| eprint!("{}", refusal(e)))
-    }
-}
-
-/// What the command line prints for a refused test plan: the format for a
-/// step that does not parse, otherwise the reason it was refused.
-fn refusal(e: &GooseError) -> String {
-    match e {
-        GooseError::InvalidOption { value, detail, .. } if detail == INVALID_STEP => format!(
-            "ERROR: invalid `configuration.test_plan` value: '{value}'\n  \
-             Expected format: --test-plan \"{{users}},{{timespan}};{{users}},{{timespan}}\"\n    \
-             {{users}} must be an integer, ie \"100\"\n    \
-             {{timespan}} can be integer seconds or \"30s\", \"20m\", \"3h\", \"1h30m\", etc\n"
-        ),
-        GooseError::InvalidOption { value, detail, .. } => {
-            format!("ERROR: invalid `configuration.test_plan` value: '{value}': {detail}\n")
-        }
-        e => format!("ERROR: {e}\n"),
-    }
-}
-
-/// The detail of a test plan step that does not parse.
-const INVALID_STEP: &str = "invalid `configuration.test_plan` value.";
-
-impl TestPlan {
     /// Parse a test plan as [`FromStr`] does, without printing anything: the
     /// Controllers parse client text with this.
     pub(crate) fn parse(s: &str) -> Result<TestPlan, GooseError> {
@@ -209,6 +171,43 @@ impl TestPlan {
         }
     }
 }
+
+/// Implement [`FromStr`] to convert `"users,timespan"` string formatted test plans to Goose's
+/// internal representation of Vec<(usize, usize)>.
+///
+/// Users are represented simply as an integer.
+///
+/// Time span can be specified as an integer, indicating seconds. Or can use integers together
+/// with one or more of "h", "m", and "s", in that order, indicating "hours", "minutes", and
+/// "seconds". Valid formats include: 20, 20s, 3m, 2h, 1h20m, 3h30m10s, etc.
+impl FromStr for TestPlan {
+    type Err = GooseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        // Logger isn't initialized yet, print why the plan is refused.
+        TestPlan::parse(s).inspect_err(|e| eprint!("{}", refusal(e)))
+    }
+}
+
+/// What the command line prints for a refused test plan: the format for a
+/// step that does not parse, otherwise the reason it was refused.
+fn refusal(e: &GooseError) -> String {
+    match e {
+        GooseError::InvalidOption { value, detail, .. } if detail == INVALID_STEP => format!(
+            "ERROR: invalid `configuration.test_plan` value: '{value}'\n  \
+             Expected format: --test-plan \"{{users}},{{timespan}};{{users}},{{timespan}}\"\n    \
+             {{users}} must be an integer, ie \"100\"\n    \
+             {{timespan}} can be integer seconds or \"30s\", \"20m\", \"3h\", \"1h30m\", etc\n"
+        ),
+        GooseError::InvalidOption { value, detail, .. } => {
+            format!("ERROR: invalid `configuration.test_plan` value: '{value}': {detail}\n")
+        }
+        e => format!("ERROR: {e}\n"),
+    }
+}
+
+/// The detail of a test plan step that does not parse.
+const INVALID_STEP: &str = "invalid `configuration.test_plan` value.";
 
 /// A test plan is a series of steps performing one of the following actions.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]

@@ -330,7 +330,10 @@ async fn test_control_agreement() {
     // Quit: `quit` disconnects a telnet or WebSocket client and leaves the
     // run alone; the dashboard Quit is refused while running and shuts Goose
     // down from Idle.
-    assert!(front.send(Via::Dashboard, "start", "start", "{}").await.0 == Some(true));
+    assert_eq!(
+        front.send(Via::Dashboard, "start", "start", "{}").await,
+        (Some(true), "load test started".to_string())
+    );
     wait_for_phase(&front.client, &["increase", "maintain"]).await;
     assert_eq!(
         dashboard_post(&front.client, "quit", "{}").await,
@@ -350,6 +353,14 @@ async fn test_control_agreement() {
         (true, "load test stopped".to_string())
     );
     wait_for_phase(&front.client, &["idle"]).await;
+    // A Controller `quit` in Idle also only disconnects its client.
+    assert_eq!(Telnet::connect().await.send("quit").await, "goodbye!");
+    assert_eq!(
+        websocket_send(&mut websocket_connect().await, "quit").await,
+        (true, "goodbye!".to_string())
+    );
+    wait_for_phase(&front.client, &["idle"]).await;
+    assert!(!load.is_finished(), "a Controller quit ended Goose");
     assert_eq!(
         dashboard_post(&front.client, "quit", "{}").await,
         (true, "goose is shutting down".to_string())

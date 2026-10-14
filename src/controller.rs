@@ -88,8 +88,7 @@ const HELP: &str = concat!(
 ///  2. Parse it in `ControllerCommand::from_str`, with a value parser that
 ///     returns the error a client is sent, and add a line to `HELP`.
 ///  3. Apply it in `GooseAttack::control` (also in this file), which answers
-///     with a `ControlOutcome` whose message
-///     every front end shows.
+///     with a `ControlOutcome` whose message every front end shows.
 ///  4. Add it to the parse table test in this file, and a test for the new
 ///     command in tests/controller.rs.
 #[derive(Clone, Debug)]
@@ -107,7 +106,7 @@ pub enum ControllerCommand {
     /// Stop a running test, putting it into an idle state.
     ///
     /// # Example
-    /// Stops a running (or stating) load test.
+    /// Stops a running (or starting) load test.
     /// ```notest
     /// stop
     /// ```
@@ -277,23 +276,19 @@ lazy_static! {
     static ref RATE: Regex = Regex::new(r"^[0-9]*(\.[0-9]*)?$").unwrap();
     static ref TIME: Regex = Regex::new(r"(?i-u)^([0-9]+|([0-9]+h)?([0-9]+m)?([0-9]+s)?)$").unwrap();
     static ref PLAN: Regex = Regex::new(
-        r"(?i-u)^(([0-9]+)\s*,\s*([0-9]+|([0-9]+h)?([0-9]+m)?([0-9]+s)?)*;*)+$"
+        r"(?-u)^(([0-9]+)\s*,\s*([0-9]+|([0-9]+h)?([0-9]+m)?([0-9]+s)?)*;*)+$"
     )
     .unwrap();
     static ref HOST: Regex = Regex::new(r"(?i)^https?://.+$").unwrap();
 }
 
-/// `value` when `grammar` accepts it, otherwise `error`.
+/// `value` when `regex` accepts it, otherwise `error`.
 fn grammar<'a>(
-    grammar: &Regex,
+    regex: &Regex,
     value: &'a str,
     error: &'static str,
 ) -> Result<&'a str, &'static str> {
-    if grammar.is_match(value) {
-        Ok(value)
-    } else {
-        Err(error)
-    }
+    regex.is_match(value).then_some(value).ok_or(error)
 }
 
 /// A rate: a finite number of users per second above 0.
@@ -390,35 +385,45 @@ pub(crate) enum ControlReply {
 /// telnet, WebSocket and the dashboard share.
 pub(crate) type ControlRequest = (ControllerCommand, oneshot::Sender<ControlReply>);
 
+/// Why [`send_command`] has no reply.
+pub(crate) enum SendError {
+    /// The parent has gone or dropped the request.
+    Unavailable,
+    /// The parent did not answer within [`CONTROL_TIMEOUT`].
+    Timeout,
+}
+
 /// Send `command` to the parent and wait up to [`CONTROL_TIMEOUT`] for its
-/// reply. Fails with `"unavailable"` when the parent has gone or dropped
-/// the request, and `"timeout"` when it did not answer in time.
+/// reply.
 pub(crate) async fn send_command(
     channel_tx: &flume::Sender<ControlRequest>,
     command: ControllerCommand,
-) -> Result<ControlReply, &'static str> {
+) -> Result<ControlReply, SendError> {
     let (respond, reply) = oneshot::channel();
     channel_tx
         .send((command, respond))
-        .map_err(|_| "unavailable")?;
+        .map_err(|_| SendError::Unavailable)?;
     match tokio::time::timeout(CONTROL_TIMEOUT, reply).await {
         Ok(Ok(reply)) => Ok(reply),
-        Ok(Err(_)) => Err("unavailable"),
-        Err(_) => Err("timeout"),
+        Ok(Err(_)) => Err(SendError::Unavailable),
+        Err(_) => Err(SendError::Timeout),
     }
 }
 
+/// Most requests the parent answers per tick, on the control channel and on
+/// the dashboard's, so a flood cannot hold the main loop.
+pub(crate) const MAX_DRAIN: usize = 16;
+
 /// The parent process side of the Controller functionality.
 impl GooseAttack {
-    /// Answer up to 16 queued control requests, from telnet, WebSocket and
-    /// the dashboard alike, so a flood cannot hold the main loop. A request
-    /// whose client has gone (timed out or disconnected) is skipped, so it
+    /// Answer up to [`MAX_DRAIN`] queued control requests, from telnet,
+    /// WebSocket and the dashboard alike. A request whose client has gone (timed out or disconnected) is skipped, so it
     /// is not applied after the client was told it failed.
     pub(crate) async fn handle_control_requests(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> Result<(), GooseError> {
-        for _ in 0..16 {
+        for _ in 0..MAX_DRAIN {
             let Some(Ok((command, respond))) = goose_attack_run_state
                 .controller_channel_rx
                 .as_ref()
@@ -441,14 +446,20 @@ impl GooseAttack {
     /// `internal` outcome, then returned.
     async fn control(
         &mut self,
-        rs: &mut GooseAttackRunState,
+        goose_attack_run_state: &mut GooseAttackRunState,
         command: ControllerCommand,
         respond: oneshot::Sender<ControlReply>,
     ) -> Result<(), GooseError> {
         let idle = self.attack_phase == AttackPhase::Idle;
-        let refused = |goose: &Self, rs: &GooseAttackRunState, message| {
-            goose.control_outcome(rs, false, Some("invalid_phase"), message, None)
+        let refused = |goose: &Self, run_state: &GooseAttackRunState, message| {
+            Ok(goose.control_outcome(run_state, false, Some("invalid_phase"), message, None))
         };
+        let configured = |goose: &Self, run_state: &GooseAttackRunState, message| {
+            Ok(goose.control_outcome(run_state, true, None, message, None))
+        };
+        // An accepted Start is answered first and then finished, so the
+        // client is not blocked on reset_run_state and test_start.
+        let mut start = false;
         let outcome = match command {
             ControllerCommand::Config | ControllerCommand::ConfigJson => {
                 let config = Box::new(self.configuration.clone());
@@ -456,77 +467,79 @@ impl GooseAttack {
                 return Ok(());
             }
             ControllerCommand::Metrics | ControllerCommand::MetricsJson => {
-                let metrics = self.metrics_for_controller(rs).await;
+                let metrics = self.metrics_for_controller(goose_attack_run_state).await;
                 let _ = respond.send(ControlReply::Metrics(Box::new(metrics)));
                 return Ok(());
             }
-            ControllerCommand::Start => match self.control_start_begin(rs) {
-                // Reply before control_start_finish, so the client is not
-                // blocked on reset_run_state and test_start.
+            ControllerCommand::Start => match self.control_start_begin(goose_attack_run_state) {
                 Ok(ControlStartBegin::Accepted(outcome)) => {
-                    let _ = respond.send(ControlReply::Outcome(outcome));
-                    return self.control_start_finish(rs).await;
+                    start = true;
+                    Ok(outcome)
                 }
                 Ok(ControlStartBegin::Rejected(outcome)) => Ok(outcome),
                 Err(e) => Err(e),
             },
-            ControllerCommand::Stop => self.control_stop(rs).await,
-            ControllerCommand::Quit => Ok(self.control_quit(rs)),
-            ControllerCommand::Shutdown => self.control_shutdown(rs).await,
-            ControllerCommand::Users(users) => self.control_set_users(rs, users),
-            ControllerCommand::TestPlan(plan) => self.control_set_plan(rs, plan),
+            ControllerCommand::Stop => self.control_stop(goose_attack_run_state).await,
+            ControllerCommand::Quit => Ok(self.control_quit(goose_attack_run_state)),
+            ControllerCommand::Shutdown => self.control_shutdown(goose_attack_run_state).await,
+            ControllerCommand::Users(users) => {
+                self.control_set_users(goose_attack_run_state, users)
+            }
+            ControllerCommand::TestPlan(plan) => {
+                self.control_set_plan(goose_attack_run_state, plan)
+            }
             ControllerCommand::IncreaseRate(rate) => {
                 self.configuration.increase_time = "0".to_string();
                 self.configuration.increase_rate = Some(rate.to_string());
                 self.configuration.test_plan = None;
-                Ok(self.control_outcome(rs, true, None, "increase_rate configured", None))
+                configured(self, goose_attack_run_state, "increase_rate configured")
             }
             ControllerCommand::DecreaseRate(rate) => {
                 self.configuration.decrease_time = "0".to_string();
                 self.configuration.decrease_rate = Some(rate.to_string());
                 self.configuration.test_plan = None;
-                Ok(self.control_outcome(rs, true, None, "decrease_rate configured", None))
+                configured(self, goose_attack_run_state, "decrease_rate configured")
             }
-            ControllerCommand::Host(_) if !idle => Ok(refused(
+            ControllerCommand::Host(_) if !idle => refused(
                 self,
-                rs,
+                goose_attack_run_state,
                 "failed to reconfigure host, load test is not idle",
-            )),
-            ControllerCommand::IncreaseTime(_) if !idle => Ok(refused(
+            ),
+            ControllerCommand::IncreaseTime(_) if !idle => refused(
                 self,
-                rs,
+                goose_attack_run_state,
                 "failed to configure increase_time, be sure load test is idle",
-            )),
-            ControllerCommand::DecreaseTime(_) if !idle => Ok(refused(
+            ),
+            ControllerCommand::DecreaseTime(_) if !idle => refused(
                 self,
-                rs,
+                goose_attack_run_state,
                 "failed to configure decrease_time, be sure load test is idle",
-            )),
-            ControllerCommand::RunTime(_) if !idle => Ok(refused(
+            ),
+            ControllerCommand::RunTime(_) if !idle => refused(
                 self,
-                rs,
+                goose_attack_run_state,
                 "failed to configure run_time, be sure load test is idle",
-            )),
+            ),
             ControllerCommand::Host(host) => {
                 self.configuration.host = host;
-                Ok(self.control_outcome(rs, true, None, "host configured", None))
+                configured(self, goose_attack_run_state, "host configured")
             }
             ControllerCommand::IncreaseTime(seconds) => {
                 self.configuration.increase_rate = None;
                 self.configuration.increase_time = seconds.to_string();
                 self.configuration.test_plan = None;
-                Ok(self.control_outcome(rs, true, None, "increase_time configured", None))
+                configured(self, goose_attack_run_state, "increase_time configured")
             }
             ControllerCommand::DecreaseTime(seconds) => {
                 self.configuration.decrease_rate = None;
                 self.configuration.decrease_time = seconds.to_string();
                 self.configuration.test_plan = None;
-                Ok(self.control_outcome(rs, true, None, "decrease_time configured", None))
+                configured(self, goose_attack_run_state, "decrease_time configured")
             }
             ControllerCommand::RunTime(seconds) => {
                 self.configuration.run_time = seconds.to_string();
                 self.configuration.test_plan = None;
-                Ok(self.control_outcome(rs, true, None, "run_time configured", None))
+                configured(self, goose_attack_run_state, "run_time configured")
             }
         };
         match outcome {
@@ -541,11 +554,16 @@ impl GooseAttack {
                     outcome.message
                 );
                 let _ = respond.send(ControlReply::Outcome(outcome));
-                Ok(())
+                if !start {
+                    return Ok(());
+                }
+                self.control_start_finish(goose_attack_run_state)
+                    .await
+                    .inspect_err(|e| warn!("[control]: start failed after it was accepted: {e}"))
             }
             Err(e) => {
                 let internal = self.control_outcome(
-                    rs,
+                    goose_attack_run_state,
                     false,
                     Some("internal"),
                     "internal control error",
@@ -658,19 +676,15 @@ pub(crate) async fn controller_main(
         // ignored as the thread simply runs until the client exits or Goose shuts down.
         // Don't .await the tokio::spawn or Goose can't handle multiple simultaneous
         // connections.
-        let _ignored_joinhandle = tokio::spawn(serve_client(
-            stream,
-            protocol.clone(),
-            channel_tx.clone(),
-            client,
-        ));
+        let _ignored_joinhandle =
+            tokio::spawn(serve_client(stream, protocol, channel_tx.clone(), client));
     }
 
     Ok(())
 }
 
 /// Goose supports two different Controller protocols: telnet and WebSocket.
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) enum ControllerProtocol {
     /// Allows control of Goose via telnet.
     Telnet,
@@ -689,6 +703,10 @@ enum Transport {
 const INVALID_JSON: &str =
     "invalid json, see Goose book https://book.goose.rs/controller/websocket.html";
 
+/// Reply to a WebSocket request that is not a command.
+const WS_UNRECOGNIZED: &str =
+    "unrecognized command, see Goose book https://book.goose.rs/controller/websocket.html";
+
 impl Transport {
     /// The next line the client sent; `None` once the client has gone,
     /// `Some(Err(reply))` for a message that holds no line.
@@ -698,7 +716,9 @@ impl Transport {
                 let mut buf = [0; 1024];
                 let n = socket.read(&mut buf).await.ok().filter(|n| *n > 0)?;
                 // Invalid utf-8 is a corrupted request: disconnect.
-                let text = str::from_utf8(&buf[..n]).ok()?;
+                let text = str::from_utf8(&buf[..n])
+                    .inspect_err(|e| info!("ignoring unexpected input from telnet controller: {e}"))
+                    .ok()?;
                 Some(Ok(text.lines().next().unwrap_or_default().to_string()))
             }
             Transport::WebSocket(stream) => {
@@ -794,13 +814,11 @@ async fn serve_client(
         }
         let command = match line.parse::<ControllerCommand>() {
             Ok(command) => command,
-            Err(UNRECOGNIZED) if websocket => {
-                let reply = "unrecognized command, see Goose book https://book.goose.rs/controller/websocket.html";
-                transport.write(false, reply).await;
-                continue;
-            }
             Err(reply) => {
-                transport.write(false, reply).await;
+                let book = websocket && reply == UNRECOGNIZED;
+                transport
+                    .write(false, if book { WS_UNRECOGNIZED } else { reply })
+                    .await;
                 continue;
             }
         };
@@ -817,12 +835,12 @@ async fn serve_client(
             Ok(ControlReply::Config(config)) => (true, format!("{config:#?}")),
             Ok(ControlReply::Metrics(metrics)) if json => (true, to_json(&metrics)),
             Ok(ControlReply::Metrics(metrics)) => (true, metrics.to_string()),
-            Err("timeout") => (
+            Err(SendError::Timeout) => (
                 false,
                 "control timed out, it may still apply: check before retrying".to_string(),
             ),
             // The parent has gone: disconnect.
-            Err(_) => {
+            Err(SendError::Unavailable) => {
                 transport
                     .write(false, "parent process has closed the controller channel")
                     .await;
@@ -841,10 +859,13 @@ async fn serve_client(
 /// A reply the Controller gives itself, and whether the client then exits:
 /// `help` and `exit` never reach the parent.
 fn local_reply(line: &str) -> Option<(&'static str, bool)> {
-    match line.trim().to_ascii_lowercase().as_str() {
-        "help" | "?" => Some((HELP, false)),
-        "exit" | "quit" | "q" => Some(("goodbye!", true)),
-        _ => None,
+    let is = |words: &[&str]| words.iter().any(|w| line.trim().eq_ignore_ascii_case(w));
+    if is(&["help", "?"]) {
+        Some((HELP, false))
+    } else if is(&["exit", "quit", "q"]) {
+        Some(("goodbye!", true))
+    } else {
+        None
     }
 }
 
@@ -917,6 +938,32 @@ pub struct ControllerWebSocketResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A telnet client that goes ends the task serving it.
+    #[tokio::test]
+    async fn telnet_client_gone_ends_serve_client() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (socket, _) = listener.accept().await.unwrap();
+        let (channel_tx, _channel_rx) = flume::unbounded();
+        let served = tokio::spawn(serve_client(
+            socket,
+            ControllerProtocol::Telnet,
+            channel_tx,
+            "telnet client".to_string(),
+        ));
+        let mut prompt = [0; 7];
+        client.read_exact(&mut prompt).await.unwrap();
+        assert_eq!(&prompt, b"goose> ");
+        // End of file, with the client still reading, so only the read ends it.
+        client.shutdown().await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), served)
+            .await
+            .expect("serve_client must end once its client has gone")
+            .unwrap();
+    }
 
     /// What a client line becomes: the typed command written out, or the
     /// error the client is sent back.

@@ -20,7 +20,7 @@
 //! latency.
 
 use crate::controller::{
-    send_command, ControlReply, ControlRequest, ControllerCommand, CONTROL_TIMEOUT,
+    send_command, ControlReply, ControlRequest, ControllerCommand, SendError, CONTROL_TIMEOUT,
 };
 use crate::metrics::dashboard_snapshot::{
     Heatmap, HeatmapColumn, HeatmapCursor, RequestSeries, SnapshotSave,
@@ -170,21 +170,21 @@ pub(crate) enum DashboardRequest {
 
 /// JSON body returned by control endpoints after the main loop answers.
 #[derive(Debug, Clone, Serialize)]
-pub(crate) struct ControlResult {
-    pub ok: bool,
-    pub command: String,
+struct ControlResult {
+    ok: bool,
+    command: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-    pub message: String,
-    pub phase: String,
-    pub active_users: u64,
+    error: Option<String>,
+    message: String,
+    phase: String,
+    active_users: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub target_users: Option<u64>,
+    target_users: Option<u64>,
 }
 
 impl ControlResult {
-    /// Map a soft [`ControlOutcome`] from the shared control helpers.
-    pub(crate) fn from_outcome(command: &str, outcome: ControlOutcome) -> Self {
+    /// The body for the main loop's outcome of the `command` endpoint.
+    fn from_outcome(command: &str, outcome: ControlOutcome) -> Self {
         Self {
             ok: outcome.ok,
             command: command.to_string(),
@@ -834,12 +834,11 @@ struct DashboardState {
     /// Clone of the flume sender for series requests (same channel as the hub).
     request_tx: flume::Sender<DashboardRequest>,
     /// The channel control commands go to the main loop on, shared with the
-    /// telnet and WebSocket Controllers.
+    /// telnet and WebSocket Controllers: `Some` only with dashboard control,
+    /// when the control routes are registered and require a non-empty token.
     control_tx: Option<flume::Sender<ControlRequest>>,
     /// Auth token; empty means observe auth is disabled (loopback-only runs).
     auth_token: String,
-    /// When true, control routes are registered and require a non-empty token.
-    control_enabled: bool,
     /// Concurrent control POSTs currently waiting on the main loop.
     control_in_flight: Arc<AtomicUsize>,
     /// Concurrent `GET /api/v1/series` requests waiting on the main loop.
@@ -945,6 +944,7 @@ fn format_bind_address(host: &str, port: u16) -> String {
 ///
 /// When `--dashboard` is set, bind failure is a hard error (opt-in server must
 /// not silently disappear). When the dashboard is disabled, returns `Ok(None)`.
+/// `control_tx`, given only with dashboard control, registers the control routes.
 ///
 /// When/if multi-mode (Gaggle) returns, the dashboard should only run on the
 /// standalone/manager process — currently AttackMode is StandAlone only.
@@ -999,7 +999,7 @@ pub(crate) async fn setup_dashboard(
     } else {
         configuration.dashboard_max_clients as usize
     };
-    // Clone sender for hub + control handlers (same channel).
+    // Clone sender for the hub and the series handler (same channel).
     let hub = SnapshotHub::new(
         request_tx.clone(),
         Arc::clone(&build_count),
@@ -1008,13 +1008,12 @@ pub(crate) async fn setup_dashboard(
         Arc::clone(&active_sse),
         closed_data.clone(),
     );
-    let control_enabled = configuration.dashboard_control;
+    let control_enabled = control_tx.is_some();
     let state = DashboardState {
         hub,
         request_tx,
         control_tx,
         auth_token: configuration.dashboard_auth_token.clone(),
-        control_enabled,
         control_in_flight: Arc::new(AtomicUsize::new(0)),
         series_in_flight: Arc::new(AtomicUsize::new(0)),
         series_cache: Arc::new(Mutex::new(HashMap::new())),
@@ -1221,12 +1220,12 @@ fn is_connection_error(e: &std::io::Error) -> bool {
 
 /// Build the axum router with public shell/static/health and auth-gated metrics.
 ///
-/// Control routes are registered only when `state.control_enabled` is true
+/// Control routes are registered only when `state.control_tx` is set
 /// (otherwise POST /api/v1/control/* and DELETE /api/v1/runs/{id} → 404). On a loopback bind every request
 /// must carry a loopback `Host`, so a page that rebinds its own domain to
 /// 127.0.0.1 cannot read the API.
 fn build_router(state: DashboardState, loopback_bind: bool) -> Router {
-    let control_enabled = state.control_enabled;
+    let control_enabled = state.control_tx.is_some();
     let mut router = Router::new()
         .route("/", get(index_handler))
         .route("/static/app.js", get(app_js_handler))
@@ -1337,7 +1336,7 @@ async fn health_handler(State(state): State<Arc<DashboardState>>) -> impl IntoRe
         last_build_ms: state.hub.last_build_ms(),
         build_count: state.hub.build_count(),
         active_sse_clients: state.hub.active_sse_clients(),
-        control_enabled: state.control_enabled,
+        control_enabled: state.control_tx.is_some(),
         controllers: state.controllers.clone(),
     })
 }
@@ -1978,9 +1977,9 @@ fn parse_users_body(body: &[u8]) -> Result<ControllerCommand, (&'static str, &'s
     let obj = value
         .as_object()
         .ok_or(("bad_request", "request body must be a JSON object"))?;
-    // Only a JSON integer: a missing count, a float, a string or a negative
-    // number becomes 0, which the bound refuses. Extra fields are tolerated
-    // for forward compat.
+    // Anything but a non negative JSON integer (a missing count, a float, a
+    // string, a negative number) becomes 0, which the bound refuses. Extra
+    // fields are tolerated for forward compat.
     let users = obj
         .get("users")
         .and_then(serde_json::Value::as_u64)
@@ -2056,15 +2055,12 @@ async fn dispatch_control(
             "too many control requests in flight — wait and retry",
         );
     };
-    let Some(control_tx) = state.control_tx.as_ref() else {
-        return control_http_error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            name,
-            "unavailable",
-            "control unavailable",
-        );
+    // Control routes are registered only with a channel.
+    let reply = match state.control_tx.as_ref() {
+        Some(control_tx) => send_command(control_tx, command).await,
+        None => Err(SendError::Unavailable),
     };
-    match send_command(control_tx, command).await {
+    match reply {
         Ok(ControlReply::Outcome(outcome)) => {
             let result = ControlResult::from_outcome(name, outcome);
             if result.ok {
@@ -2080,7 +2076,7 @@ async fn dispatch_control(
             }
             (StatusCode::OK, Json(result)).into_response()
         }
-        Err("timeout") => {
+        Err(SendError::Timeout) => {
             warn!("[dashboard]: control timed out ({name}); skipped if still queued");
             control_http_error(
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -2089,7 +2085,8 @@ async fn dispatch_control(
                 "control timed out — action may still be applying; check phase/users before retrying",
             )
         }
-        // The main loop has gone, or dropped the request.
+        // The main loop has gone or dropped the request; or it sent a Config
+        // or Metrics reply, which only Controllers ask for.
         _ => {
             warn!("[dashboard]: control unavailable ({name})");
             control_http_error(
@@ -2360,7 +2357,8 @@ mod tests {
             ControllerCommand::Users(users) => {
                 outcome(true, None, "users configured", "idle", 0, Some(users))
             }
-            _ => None,
+            // The dashboard sends only the four commands above.
+            other => panic!("unexpected dashboard command {:?}", other),
         }
     }
 

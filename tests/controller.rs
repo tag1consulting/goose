@@ -228,6 +228,8 @@ async fn run_standalone_test(test_type: TestType) {
             // Process data received from the client in a loop.
             let response;
             let websocket_response: ControllerWebSocketResponse;
+            // The WebSocket success flag; telnet has none.
+            let mut success = None;
             if let Some(stream) = test_state.telnet_stream.as_mut() {
                 let _ = match stream.read(&mut test_state.buf).await {
                     Ok(data) => data,
@@ -253,6 +255,7 @@ async fn run_standalone_test(test_type: TestType) {
                         Err(e) => panic!("invalid response from server: {}", e),
                     };
                     response = &websocket_response.response;
+                    success = Some(websocket_response.success);
                 }
             } else {
                 unreachable!();
@@ -292,6 +295,7 @@ async fn run_standalone_test(test_type: TestType) {
                             make_request(&mut test_state, "?\r\n").await;
                         }
                         2 => {
+                            assert!(success.unwrap_or(true), "help must succeed");
                             // Be sure we actually received the help text.
                             assert!(response.contains("controller commands:"));
 
@@ -299,6 +303,7 @@ async fn run_standalone_test(test_type: TestType) {
                             make_request(&mut test_state, "foo\r\n").await;
                         }
                         _ => {
+                            assert_eq!(success, test_state.websocket_controller.then_some(false));
                             // The WebSocket reply also points to the book.
                             if test_state.websocket_controller {
                                 assert!(
@@ -632,6 +637,7 @@ async fn run_standalone_test(test_type: TestType) {
                             make_request(&mut test_state, "config\r\n").await;
                         }
                         _ => {
+                            assert!(success.unwrap_or(true), "config must succeed");
                             // Confirm the configuration is returned in jsonformat.
                             if test_state.websocket_controller {
                                 assert!(response
@@ -720,7 +726,9 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                         // Confirm a running load test can not be started.
                         _ => {
-                            assert!(response.starts_with("unable to start load test"));
+                            assert!(
+                                response.starts_with("unable to start load test, it is not idle")
+                            );
 
                             // Move onto the next command.
                             test_state = update_state(Some(test_state), &test_type).await;

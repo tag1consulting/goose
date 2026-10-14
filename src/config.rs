@@ -1685,8 +1685,6 @@ impl GooseConfiguration {
                 },
             ])
             .map_or_else(|| "0".to_string(), |v| v.to_string());
-        // A default can be too long as well.
-        timespan("increase_time", &self.increase_time)?;
 
         // Configure `decrease_time`.
         let decrease_time = timespan("decrease_time", &self.decrease_time)?;
@@ -1706,8 +1704,6 @@ impl GooseConfiguration {
                 },
             ])
             .map_or_else(|| "0".to_string(), |v| v.to_string());
-        // A default can be too long as well.
-        timespan("decrease_time", &self.decrease_time)?;
 
         // Configure `run_time`.
         let run_time = timespan("run_time", &self.run_time)?;
@@ -1727,8 +1723,6 @@ impl GooseConfiguration {
                 },
             ])
             .map_or_else(|| "0".to_string(), |v| v.to_string());
-        // A default can be too long as well.
-        timespan("run_time", &self.run_time)?;
 
         // Configure `increase_rate`.
         self.increase_rate = self
