@@ -86,6 +86,20 @@ function setControlStatus(text: string, kind?: ControlStatusKind): void {
   ctrlStatus.className = "control-status" + (kind ? " " + kind : "");
 }
 
+// Mark the Target field invalid and described by the status line, or clear
+// both: the status line also carries other results, so it describes the field
+// only while the field is invalid.
+function setTargetInvalid(invalid: boolean): void {
+  if (!ctrlTarget) return;
+  if (invalid) {
+    ctrlTarget.setAttribute("aria-invalid", "true");
+    ctrlTarget.setAttribute("aria-describedby", "ctrl-status");
+  } else {
+    ctrlTarget.removeAttribute("aria-invalid");
+    ctrlTarget.removeAttribute("aria-describedby");
+  }
+}
+
 function displayTargetFromSnap(snap: DashboardSnapshot | null): number | null {
   if (lastTarget != null) return lastTarget;
   if (!snap) return null;
@@ -111,6 +125,15 @@ function readStep(): number {
   return step;
 }
 
+// aria-disabled, not disabled: a disabled button drops keyboard focus.
+function setAvailable(button: HTMLButtonElement | null, on: boolean): void {
+  if (button) button.setAttribute("aria-disabled", on ? "false" : "true");
+}
+
+function unavailable(button: HTMLButtonElement | null): boolean {
+  return !button || button.getAttribute("aria-disabled") === "true";
+}
+
 function updateControlEnablement(): void {
   if (!controlPanel || !controlEnabled) return;
 
@@ -128,16 +151,19 @@ function updateControlEnablement(): void {
       phase === "maintain" ||
       phase === "decrease");
 
-  if (ctrlStart) ctrlStart.disabled = !canStart;
-  if (ctrlStop) ctrlStop.disabled = !canStop;
-  // Quit only shuts Goose down from idle, so it shows only then.
+  setAvailable(ctrlStart, canStart);
+  setAvailable(ctrlStop, canStop);
+  // Quit only shuts Goose down from idle, so it shows only then. A focused
+  // Quit that hides hands focus to Start, the first button in its row.
   if (ctrlQuit) {
+    const focused = document.activeElement === ctrlQuit;
     ctrlQuit.hidden = phase !== "idle";
-    ctrlQuit.disabled = !hasToken || inFlight;
+    setAvailable(ctrlQuit, hasToken && !inFlight);
+    if (focused && ctrlQuit.hidden && ctrlStart) ctrlStart.focus();
   }
-  if (ctrlApply) ctrlApply.disabled = !canUsers;
-  if (ctrlMinus) ctrlMinus.disabled = !canUsers;
-  if (ctrlPlus) ctrlPlus.disabled = !canUsers;
+  setAvailable(ctrlApply, canUsers);
+  setAvailable(ctrlMinus, canUsers);
+  setAvailable(ctrlPlus, canUsers);
   if (ctrlTarget) ctrlTarget.disabled = !hasToken || inFlight;
   if (ctrlStep) ctrlStep.disabled = !hasToken || inFlight;
 
@@ -162,6 +188,7 @@ export function updateControlFromSnapshot(snap: DashboardSnapshot): void {
     if (dt != null) {
       ctrlTarget.value = String(dt);
       lastDisplayTarget = dt;
+      setTargetInvalid(false);
     }
   }
 
@@ -295,6 +322,8 @@ function runControl(
   if (inFlight || !getToken()) return;
   inFlight = true;
   updateControlEnablement();
+  // The status line is about to stop describing an invalid Target.
+  setTargetInvalid(false);
   setControlStatus("Sending…", "info");
   postControl(path, body)
     .then((res) => handleControlResponse(res, appliedUsers))
@@ -308,27 +337,33 @@ function runControl(
 }
 
 function onStartClick(): void {
+  if (unavailable(ctrlStart)) return;
   runControl("/api/v1/control/start");
 }
 
 function onStopClick(): void {
+  if (unavailable(ctrlStop)) return;
   runControl("/api/v1/control/stop");
 }
 
 function onQuitClick(): void {
+  if (unavailable(ctrlQuit)) return;
   runControl("/api/v1/control/quit");
 }
 
 function onApplyClick(): void {
+  if (unavailable(ctrlApply)) return;
   const n = parseInt(ctrlTarget && ctrlTarget.value ? ctrlTarget.value : "", 10);
   if (!isFinite(n) || n < 1) {
     setControlStatus("Target must be an integer ≥ 1", "error");
+    setTargetInvalid(true);
     return;
   }
   runControl("/api/v1/control/users", { users: n }, n);
 }
 
 function onStepClick(delta: number): void {
+  if (unavailable(delta < 0 ? ctrlMinus : ctrlPlus)) return;
   readStep();
   let base: number;
   if (dirty) {
@@ -445,6 +480,7 @@ export function initControlPanel(): Promise<boolean> {
     });
     ctrlTarget.addEventListener("input", () => {
       dirty = true;
+      setTargetInvalid(false);
     });
     ctrlTarget.addEventListener("blur", () => {
       if (!dirty) return;

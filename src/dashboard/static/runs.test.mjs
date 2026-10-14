@@ -263,7 +263,7 @@ test("Quit shows only with control on while idle and sends a Bearer POST", async
   const doc = page.window.document;
   const quit = doc.getElementById("ctrl-quit");
   assert.equal(quit.hidden, false);
-  assert.equal(quit.disabled, false);
+  assert.equal(quit.getAttribute("aria-disabled"), "false");
   quit.click();
   await settle(page.window);
   const posts = page.requests.filter((r) => r.method === "POST");

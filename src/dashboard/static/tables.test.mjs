@@ -644,3 +644,67 @@ test("the new transaction columns sort like the others", async () => {
     ["response_time_max_ms", "desc"],
   ]);
 });
+
+// Keyboard and screen reader access: each sortable header holds a button,
+// the th carries aria-sort, and the scroll areas take focus.
+
+/** [data-sort, aria-sort] of every header in this table that has aria-sort. */
+function ariaSorted(window, tableId) {
+  return Array.from(
+    window.document.querySelectorAll("#" + tableId + " thead th[aria-sort]")
+  ).map((th) => [th.getAttribute("data-sort"), th.getAttribute("aria-sort")]);
+}
+
+test("each sortable header holds a button and the sorted th carries aria-sort", async () => {
+  const window = await load(snapshotWith({ requests: REQUESTS }));
+  const ths = window.document.querySelectorAll("thead th[data-sort]");
+  assert.ok(ths.length > 0);
+  for (const th of ths) {
+    const buttons = th.querySelectorAll("button");
+    assert.equal(buttons.length, 1, "one button in " + th.getAttribute("data-sort"));
+    const button = buttons[0];
+    assert.equal(button.type, "button");
+    assert.equal(button.textContent, th.textContent);
+    assert.ok(button.textContent.length > 0);
+    assert.ok(!/[▲▼]/.test(button.textContent), "no arrow in the button text");
+    assert.equal(button.hasAttribute("aria-sort"), false);
+  }
+  assert.deepEqual(ariaSorted(window, "scenarios-table"), [["scenario_index", "ascending"]]);
+  assert.deepEqual(ariaSorted(window, "transactions-table"), [["order", "ascending"]]);
+  assert.deepEqual(ariaSorted(window, "requests-table"), [["request_count", "descending"]]);
+  assert.deepEqual(ariaSorted(window, "errors-table"), [["occurrences", "descending"]]);
+});
+
+test("a header button press sorts and moves aria-sort", async () => {
+  const window = await load(snapshotWith({ requests: REQUESTS }));
+  const button = (key) => header(window, "requests-table", key).querySelector("button");
+
+  button("name").click();
+  assert.deepEqual(column(window, "requests-body", 1), ["/login", "/middle", "/small"]);
+  assert.deepEqual(ariaSorted(window, "requests-table"), [["name", "ascending"]]);
+  assert.deepEqual(sortedHeaders(window, "requests-table"), [["name", "asc"]]);
+
+  button("name").click();
+  assert.deepEqual(column(window, "requests-body", 1), ["/small", "/middle", "/login"]);
+  assert.deepEqual(ariaSorted(window, "requests-table"), [["name", "descending"]]);
+
+  button("failure_count").click();
+  assert.deepEqual(ariaSorted(window, "requests-table"), [["failure_count", "descending"]]);
+  assert.equal(header(window, "requests-table", "name").hasAttribute("aria-sort"), false);
+});
+
+test("every table scroll area is a focusable, labelled region", async () => {
+  const window = await load(snapshotWith({ requests: REQUESTS }));
+  const wraps = window.document.querySelectorAll(".table-wrap");
+  assert.equal(wraps.length, 5);
+  const labels = new Set();
+  for (const wrap of wraps) {
+    assert.equal(wrap.getAttribute("tabindex"), "0");
+    assert.equal(wrap.tabIndex, 0);
+    assert.equal(wrap.getAttribute("role"), "region");
+    const label = wrap.getAttribute("aria-label") || "";
+    assert.ok(label.trim().length > 0, "aria-label on .table-wrap");
+    labels.add(label);
+  }
+  assert.equal(labels.size, 5, "each region has its own label");
+});
