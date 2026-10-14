@@ -1007,6 +1007,11 @@ mod tests {
                 "plan 50000,1s;100000,1s",
                 "TestPlan(TestPlan { steps: [(50000, 1000), (100000, 1000)], current: 0 })",
             ),
+            // Main's grammar allows ASCII white space around the comma.
+            (
+                "testplan 10 , 5s;0,\t1s",
+                "TestPlan(TestPlan { steps: [(10, 5000), (0, 1000)], current: 0 })",
+            ),
         ];
         let refused: &[(&str, &str)] = &[
             ("", UNRECOGNIZED),
