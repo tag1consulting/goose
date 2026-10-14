@@ -142,17 +142,25 @@ impl FromStr for TestPlan {
     type Err = GooseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        TestPlan::parse(s).inspect_err(|e| {
-            if let GooseError::InvalidOption { value, detail, .. } = e {
-                if detail == INVALID_STEP {
-                    // Logger isn't initialized yet, provide helpful debug output.
-                    eprintln!("ERROR: invalid `configuration.test_plan` value: '{value}'");
-                    eprintln!("  Expected format: --test-plan \"{{users}},{{timespan}};{{users}},{{timespan}}\"");
-                    eprintln!("    {{users}} must be an integer, ie \"100\"");
-                    eprintln!("    {{timespan}} can be integer seconds or \"30s\", \"20m\", \"3h\", \"1h30m\", etc");
-                }
-            }
-        })
+        // Logger isn't initialized yet, print why the plan is refused.
+        TestPlan::parse(s).inspect_err(|e| eprint!("{}", refusal(e)))
+    }
+}
+
+/// What the command line prints for a refused test plan: the format for a
+/// step that does not parse, otherwise the reason it was refused.
+fn refusal(e: &GooseError) -> String {
+    match e {
+        GooseError::InvalidOption { value, detail, .. } if detail == INVALID_STEP => format!(
+            "ERROR: invalid `configuration.test_plan` value: '{value}'\n  \
+             Expected format: --test-plan \"{{users}},{{timespan}};{{users}},{{timespan}}\"\n    \
+             {{users}} must be an integer, ie \"100\"\n    \
+             {{timespan}} can be integer seconds or \"30s\", \"20m\", \"3h\", \"1h30m\", etc\n"
+        ),
+        GooseError::InvalidOption { value, detail, .. } => {
+            format!("ERROR: invalid `configuration.test_plan` value: '{value}': {detail}\n")
+        }
+        e => format!("ERROR: {e}\n"),
     }
 }
 
@@ -287,5 +295,30 @@ impl GooseAttack {
 
         // Always advance the TestPlan step
         self.test_plan.current += 1;
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    /// The command line says why it refuses a plan, not only that it did.
+    #[test]
+    fn refusal_names_reason() {
+        let reason = |plan: &str| refusal(&TestPlan::parse(plan).unwrap_err());
+        let no_users = "`configuration.test_plan` must start at least one user, and no more than fit in a usize.";
+        assert_eq!(
+            reason("0,1s"),
+            format!("ERROR: invalid `configuration.test_plan` value: '0,1s': {no_users}\n")
+        );
+        let overflow = "18446744073709551615,1s;0,1s;1,1s";
+        assert_eq!(
+            reason(overflow),
+            format!("ERROR: invalid `configuration.test_plan` value: '{overflow}': {no_users}\n")
+        );
+        // A step that does not parse still prints the format.
+        assert!(reason("10,1s;x").starts_with(
+            "ERROR: invalid `configuration.test_plan` value: 'x'\n  Expected format: --test-plan \"{users},{timespan};{users},{timespan}\"\n"
+        ));
     }
 }

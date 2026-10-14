@@ -319,10 +319,7 @@ async fn test_control_agreement() {
         };
         let expected = [
             (ok(true), "load test started"),
-            (
-                ok(false),
-                "unable to start load test, be sure it is idle and host is configured",
-            ),
+            (ok(false), "unable to start load test, it is not idle"),
             (ok(true), "users configured"),
             (ok(true), "load test stopped"),
         ]

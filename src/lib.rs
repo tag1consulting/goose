@@ -2463,7 +2463,7 @@ impl GooseAttack {
                 goose_attack_run_state,
                 false,
                 Some("invalid_phase"),
-                "unable to start load test, be sure it is idle and host is configured",
+                "unable to start load test, it is not idle",
                 None,
             )));
         }
@@ -2472,13 +2472,24 @@ impl GooseAttack {
             self.test_plan = test_plan;
             self.prepare_load_test()
         });
-        if prepared.is_err() {
-            // Soft: do not move to Increase if unable to prepare load test.
+        if let Err(e) = prepared {
+            // Soft: do not move to Increase if unable to prepare load test. Name
+            // the cause: prepare_load_test refuses no host and no users itself.
+            let reason = match e {
+                GooseError::InvalidOption { option, .. } if option == "--host" => {
+                    "no host is configured".to_string()
+                }
+                GooseError::InvalidOption { option, .. } if option == "`configuration.users`" => {
+                    "there are no users to start".to_string()
+                }
+                GooseError::InvalidOption { detail, .. } => detail,
+                e => e.to_string(),
+            };
             return Ok(ControlStartBegin::Rejected(self.control_outcome(
                 goose_attack_run_state,
                 false,
                 Some("prepare_failed"),
-                "unable to start load test, be sure it is idle and host is configured",
+                format!("unable to start load test, {reason}"),
                 None,
             )));
         }
@@ -3406,6 +3417,58 @@ mod tests {
         assert!(
             !is_killswitch_triggered(),
             "Killswitch should be false after reset"
+        );
+    }
+
+    /// A refused Start names its one cause: not idle, no host, or no users.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_control_start_refusal_names_cause() {
+        async fn noop(_user: &mut GooseUser) -> crate::goose::TransactionResult {
+            Ok(())
+        }
+        let configuration =
+            GooseConfiguration::parse_args_default(&["--no-telnet", "--no-websocket", "--no-save"])
+                .unwrap();
+        let mut goose_attack = GooseAttack::initialize_with_config(configuration)
+            .unwrap()
+            .register_scenario(scenario!("NoHost").register_transaction(transaction!(noop)));
+        let mut run_state = goose_attack.initialize_attack().await.unwrap();
+        let mut refusal = |goose_attack: &mut GooseAttack| match goose_attack
+            .control_start_begin(&mut run_state)
+            .unwrap()
+        {
+            ControlStartBegin::Rejected(outcome) => (outcome.error, outcome.message),
+            ControlStartBegin::Accepted(outcome) => panic!("accepted: {:?}", outcome),
+        };
+
+        goose_attack.configuration.users = Some(1);
+        assert_eq!(
+            refusal(&mut goose_attack),
+            (
+                Some("prepare_failed"),
+                "unable to start load test, no host is configured".to_string()
+            )
+        );
+
+        goose_attack.configuration.host = "http://127.0.0.1".to_string();
+        goose_attack.configuration.users = None;
+        goose_attack.configuration.test_plan = None;
+        assert_eq!(
+            refusal(&mut goose_attack),
+            (
+                Some("prepare_failed"),
+                "unable to start load test, there are no users to start".to_string()
+            )
+        );
+
+        goose_attack.attack_phase = AttackPhase::Maintain;
+        assert_eq!(
+            refusal(&mut goose_attack),
+            (
+                Some("invalid_phase"),
+                "unable to start load test, it is not idle".to_string()
+            )
         );
     }
 

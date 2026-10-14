@@ -490,7 +490,7 @@ impl GooseAttack {
             ControllerCommand::Host(_) if !idle => Ok(refused(
                 self,
                 rs,
-                "failed to reconfigure host, be sure host is valid and load test is idle",
+                "failed to reconfigure host, load test is not idle",
             )),
             ControllerCommand::IncreaseTime(_) if !idle => Ok(refused(
                 self,

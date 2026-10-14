@@ -735,7 +735,8 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                         // Setting host fails, then try a user count too large for a usize.
                         1 => {
-                            assert!(response.starts_with("failed to reconfigure host"));
+                            assert!(response
+                                .starts_with("failed to reconfigure host, load test is not idle"));
 
                             make_request(&mut test_state, "users 99999999999999999999\r\n").await;
                         }

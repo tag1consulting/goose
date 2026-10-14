@@ -2641,6 +2641,17 @@ mod tests {
 
         let err = parse_users_body(b"{\"users\":\"10\"}").unwrap_err();
         assert_eq!(err.0, "invalid_users");
+
+        // An integer too large for a u64 is read as an f64 (no
+        // arbitrary_precision), so it is refused by the bound up to f64::MAX;
+        // above that serde_json refuses the body as "number out of range".
+        let users = |digits: usize| format!("{{\"users\":{}}}", "9".repeat(digits));
+        let err = parse_users_body(users(76).as_bytes()).unwrap_err();
+        assert_eq!(err.0, "invalid_users");
+        let err = parse_users_body(users(308).as_bytes()).unwrap_err();
+        assert_eq!(err.0, "invalid_users");
+        let err = parse_users_body(users(309).as_bytes()).unwrap_err();
+        assert_eq!(err, ("bad_request", "malformed JSON body"));
     }
 
     #[test]
