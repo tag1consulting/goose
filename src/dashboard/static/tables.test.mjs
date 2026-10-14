@@ -39,7 +39,7 @@ function requestRow(method, name, request_count, failure_count, extra = {}) {
     failures_per_second: failure_count / 10,
     response_time_avg_ms: 12.5,
     response_time_min_ms: 1,
-    response_time_max_ms: 40,
+    response_time_max_ms: 50,
     percentile_ms: { p50: 10, p95: 30, p99: 40 },
     status_codes: [],
     ...extra,
@@ -258,7 +258,7 @@ function transactionRow(
     failures_per_second: failure_count / 10,
     response_time_avg_ms: run_count ? 12.25 : 0,
     response_time_min_ms: run_count ? 5 : 0,
-    response_time_max_ms: run_count ? 30 : 0,
+    response_time_max_ms: run_count ? 35 : 0,
     percentile_ms: run_count
       ? { p50: 10, p95: 25, p99: 30 }
       : { p50: 0, p95: 0, p99: 0 },
@@ -403,10 +403,13 @@ test("rows render in # order, counted from 1", async () => {
     int(4),
     int(1),
     rate(0.4),
+    rate(0.1),
     rate(12.25),
+    int(5),
     int(10),
     int(25),
     int(30),
+    int(35),
   ]);
 });
 
@@ -436,6 +439,9 @@ test("a never run row shows 0 counts and empty timing cells", async () => {
     int(0),
     int(0),
     rate(0),
+    rate(0),
+    "",
+    "",
     "",
     "",
     "",
@@ -502,6 +508,175 @@ test("a transaction name is rendered as text, never as markup", async () => {
   assert.equal(rows(window, "transactions-body")[0][2], name);
   assert.equal(rows(window, "scenarios-body")[0][1], name);
   assert.equal(window.document.querySelectorAll("img").length, 0);
+});
+
+// Failures per second, min and max times and status codes (#708).
+
+test("a request row shows failures/s, min, max and its status codes", async () => {
+  const codes = requestRow("GET", "/codes", 9900, 47, {
+    status_codes: [
+      [200, 9812],
+      [302, 1],
+      [404, 3],
+      [500, 40],
+      [503, 44],
+    ],
+  });
+  const window = await load(snapshotWith({ requests: [codes] }));
+  assert.deepEqual(rows(window, "requests-body")[0], [
+    "GET",
+    "/codes",
+    int(9900),
+    int(47),
+    rate(990),
+    rate(4.7),
+    rate(12.5),
+    int(1),
+    int(10),
+    int(30),
+    int(40),
+    int(50),
+    // By count, most first, the top three and how many more.
+    "200 " + int(9812) + " · 503 44 · 500 40 · +2",
+  ]);
+  const cell = window.document.getElementById("requests-body").rows[0].cells[12];
+  assert.equal(
+    cell.title,
+    "200 " + int(9812) + " · 503 44 · 500 40 · 404 3 · 302 1"
+  );
+});
+
+test("status codes with equal counts list by code, and three show in full", async () => {
+  const window = await load(
+    snapshotWith({
+      requests: [
+        requestRow("GET", "/ties", 10, 0, {
+          status_codes: [
+            [404, 5],
+            [200, 5],
+          ],
+        }),
+        requestRow("GET", "/three", 6, 0, {
+          status_codes: [
+            [200, 3],
+            [301, 2],
+            [302, 1],
+          ],
+        }),
+      ],
+    })
+  );
+  const body = window.document.getElementById("requests-body");
+  assert.equal(body.rows[0].cells[12].textContent, "200 5 · 404 5");
+  assert.equal(body.rows[1].cells[12].textContent, "200 3 · 301 2 · 302 1");
+  assert.equal(body.rows[1].cells[12].title, "200 3 · 301 2 · 302 1");
+});
+
+test("a request without status codes (--no-status-codes) shows an empty cell", async () => {
+  const window = await load(snapshotWith({ requests: REQUESTS }));
+  const cell = window.document.getElementById("requests-body").rows[0].cells[12];
+  assert.equal(cell.textContent, "");
+  assert.equal(cell.hasAttribute("title"), false);
+});
+
+test("the new request columns sort like the others", async () => {
+  const window = await load(
+    snapshotWith({
+      requests: [
+        requestRow("GET", "/a", 10, 5, {
+          response_time_min_ms: 3,
+          response_time_max_ms: 900,
+          status_codes: [[500, 10]],
+        }),
+        requestRow("GET", "/b", 20, 1, {
+          response_time_min_ms: 7,
+          response_time_max_ms: 80,
+          status_codes: [[200, 20]],
+        }),
+        requestRow("GET", "/c", 30, 30, {
+          response_time_min_ms: 1,
+          response_time_max_ms: 5000,
+          status_codes: [[404, 30]],
+        }),
+      ],
+    })
+  );
+  header(window, "requests-table", "failures_per_second").click();
+  assert.deepEqual(column(window, "requests-body", 1), ["/c", "/a", "/b"]);
+  assert.deepEqual(sortedHeaders(window, "requests-table"), [
+    ["failures_per_second", "desc"],
+  ]);
+  header(window, "requests-table", "response_time_min_ms").click();
+  assert.deepEqual(column(window, "requests-body", 1), ["/b", "/a", "/c"]);
+  header(window, "requests-table", "response_time_max_ms").click();
+  assert.deepEqual(column(window, "requests-body", 1), ["/c", "/a", "/b"]);
+  header(window, "requests-table", "response_time_max_ms").click();
+  assert.deepEqual(column(window, "requests-body", 1), ["/b", "/a", "/c"]);
+  header(window, "requests-table", "status_codes").click();
+  assert.deepEqual(column(window, "requests-body", 1), ["/b", "/c", "/a"]);
+  assert.deepEqual(sortedHeaders(window, "requests-table"), [
+    ["status_codes", "asc"],
+  ]);
+});
+
+test("status codes sort by count as a number within one code", async () => {
+  // As text, "200 10,000" sorts below "200 9,812"; the sort key pads counts.
+  const window = await load(
+    snapshotWith({
+      requests: [
+        requestRow("GET", "/many", 10000, 0, { status_codes: [[200, 10000]] }),
+        requestRow("GET", "/fewer", 9812, 0, { status_codes: [[200, 9812]] }),
+        requestRow("GET", "/least", 950, 0, { status_codes: [[200, 950]] }),
+        requestRow("GET", "/none", 5, 0, { status_codes: [] }),
+      ],
+    })
+  );
+  header(window, "requests-table", "status_codes").click();
+  assert.deepEqual(column(window, "requests-body", 1), [
+    "/none",
+    "/least",
+    "/fewer",
+    "/many",
+  ]);
+  assert.deepEqual(column(window, "requests-body", 12), [
+    "",
+    "200 950",
+    "200 9,812",
+    "200 10,000",
+  ]);
+  header(window, "requests-table", "status_codes").click();
+  assert.deepEqual(column(window, "requests-body", 1), [
+    "/many",
+    "/fewer",
+    "/least",
+    "/none",
+  ]);
+});
+
+test("the new transaction columns sort like the others", async () => {
+  const window = await load(
+    snapshotWith({ scenarios: SCENARIOS, transactions: TRANSACTIONS })
+  );
+  for (const key of [
+    "failures_per_second",
+    "response_time_min_ms",
+    "response_time_max_ms",
+  ]) {
+    assert.equal(header(window, "transactions-table", key).getAttribute("data-type"), "num");
+  }
+  header(window, "transactions-table", "failures_per_second").click();
+  assert.equal(column(window, "transactions-body", 2)[0], "edit");
+  assert.equal(column(window, "transactions-body", 6)[0], rate(0.1));
+  assert.deepEqual(sortedHeaders(window, "transactions-table"), [
+    ["failures_per_second", "desc"],
+  ]);
+  header(window, "transactions-table", "response_time_min_ms").click();
+  // The never run row sorts as 0 and shows an empty cell.
+  assert.deepEqual(column(window, "transactions-body", 8).slice(-1), [""]);
+  header(window, "transactions-table", "response_time_max_ms").click();
+  assert.deepEqual(sortedHeaders(window, "transactions-table"), [
+    ["response_time_max_ms", "desc"],
+  ]);
 });
 
 // Keyboard and screen reader access: each sortable header holds a button,

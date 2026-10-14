@@ -288,3 +288,37 @@ export function updateCharts(series: SeriesWindow, averageLatency: boolean): voi
     chartLatency.update("none");
   }
 }
+
+/**
+ * Sets every colour `baseChartOpts` and the datasets carry to `colors`, the
+ * datasets in `lines` order, and redraws the chart. The chart, its data and
+ * its other options stay as they are.
+ */
+function recolor(chart: LineChart | null, colors: ChartColors, lines: string[]): void {
+  if (!drawable(chart)) return;
+  chart.data.datasets.forEach((dataset, i) => {
+    dataset.borderColor = lines[i];
+    dataset.backgroundColor = lines[i];
+  });
+  const options = chart.options;
+  const labels = options.plugins && options.plugins.legend && options.plugins.legend.labels;
+  if (labels) labels.color = colors.tick;
+  const scales = options.scales || {};
+  for (const axis of [scales.x, scales.y]) {
+    if (!axis) continue;
+    if (axis.ticks) axis.ticks.color = colors.tick;
+    if (axis.grid) axis.grid.color = colors.grid;
+  }
+  chart.update("none");
+}
+
+/**
+ * Recolours the charts for the current theme, in place: their data stays and
+ * nothing is rebuilt.
+ */
+export function recolorCharts(): void {
+  const colors = chartColors();
+  recolor(chartRps, colors, [colors.rps, colors.fps]);
+  recolor(chartUsers, colors, [colors.users]);
+  recolor(chartLatency, colors, [colors.latency]);
+}

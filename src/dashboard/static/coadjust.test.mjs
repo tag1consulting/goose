@@ -41,7 +41,7 @@ test("an adjusted value of 0 is still adjusted", () => {
 
 const CO_ADJUSTED = {
   response_time_avg_ms: 325,
-  response_time_max_ms: 5000,
+  response_time_max_ms: 6000,
   percentile_ms: { p50: 10, p95: 20, p99: 5000 },
 };
 
@@ -55,7 +55,7 @@ function requestRow(name, co_adjusted) {
     failures_per_second: 0,
     response_time_avg_ms: 10,
     response_time_min_ms: 10,
-    response_time_max_ms: 10,
+    response_time_max_ms: 12,
     percentile_ms: { p50: 10, p95: 10, p99: 10 },
     status_codes: [],
     co_adjusted,
@@ -68,7 +68,10 @@ function snapshot(coAdjusted) {
     phase: "maintain",
     aggregate: {
       ...IDLE_SNAPSHOT.aggregate,
+      failures_per_second: 0.5,
       response_time_avg_ms: 13.33,
+      response_time_min_ms: 2,
+      response_time_max_ms: 30,
       percentile_ms: { p50: 10, p95: 20, p99: 20 },
       co_active: coAdjusted !== null,
       co_adjusted: coAdjusted,
@@ -124,11 +127,11 @@ test("a snapshot with adjusted times labels them and shows the table note", asyn
   // "/a" shows its adjusted p99 with the measured one on hover; "/b" has no
   // adjusted times and shows its measured ones with no hover.
   const a = requestCells(doc, "/a");
-  assert.equal(a[8].textContent, (5000).toLocaleString());
-  assert.equal(a[8].title, "Measured: 10 ms");
+  assert.equal(a[10].textContent, (5000).toLocaleString());
+  assert.equal(a[10].title, "Measured: 10 ms");
   const b = requestCells(doc, "/b");
-  assert.equal(b[8].textContent, "10");
-  assert.equal(b[8].title, "");
+  assert.equal(b[10].textContent, "10");
+  assert.equal(b[10].title, "");
 });
 
 test("a snapshot without adjusted times shows neither the label nor the note", async () => {
@@ -142,5 +145,55 @@ test("a snapshot without adjusted times shows neither the label nor the note", a
   ).map((k) => k.textContent);
   assert.ok(labels.includes("Avg ms"));
   assert.ok(!labels.some((l) => l.includes("adjusted")));
-  assert.equal(requestCells(doc, "/a")[8].title, "");
+  assert.equal(requestCells(doc, "/a")[10].title, "");
+});
+
+/** The value of the aggregate panel line with this label, or undefined. */
+function aggregateValue(doc, label) {
+  const line = Array.from(doc.querySelectorAll("#aggregate-body .kv")).find(
+    (kv) => kv.querySelector(".k").textContent === label
+  );
+  return line ? line.querySelector(".v").textContent : undefined;
+}
+
+test("the max column shows the adjusted max, the measured one on hover", async () => {
+  // The adjusted max goes with the adjusted percentiles, or a row's max could
+  // sit below its own p99; min has no adjusted value and stays measured.
+  const doc = await load(snapshot(CO_ADJUSTED));
+  const a = requestCells(doc, "/a");
+  assert.equal(a[11].textContent, (6000).toLocaleString());
+  assert.equal(a[11].title, "Measured: 12 ms");
+  assert.equal(a[7].textContent, "10");
+  assert.equal(a[7].title, "");
+  const b = requestCells(doc, "/b");
+  assert.equal(b[11].textContent, "12");
+  assert.equal(b[11].title, "");
+
+  const measured = await load(snapshot(null));
+  assert.equal(requestCells(measured, "/a")[11].textContent, "12");
+  assert.equal(requestCells(measured, "/a")[11].title, "");
+});
+
+test("the aggregate panel shows failures/s and min / max, adjusted when there are adjusted times", async () => {
+  const doc = await load(snapshot(CO_ADJUSTED));
+  const rate = (0.5).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  assert.equal(aggregateValue(doc, "Failures/s"), rate);
+  const labels = Array.from(doc.querySelectorAll("#aggregate-body .kv .k")).map(
+    (k) => k.textContent
+  );
+  assert.deepEqual(labels.slice(2, 5), ["RPS", "Failures/s", "Fail %"]);
+  assert.equal(
+    aggregateValue(doc, "Min / max ms (adjusted)"),
+    "2 / " + (6000).toLocaleString()
+  );
+  assert.equal(aggregateValue(doc, "Min / max ms (measured)"), "2 / 30");
+  assert.equal(aggregateValue(doc, "Min / max ms"), undefined);
+
+  const measured = await load(snapshot(null));
+  assert.equal(aggregateValue(measured, "Failures/s"), rate);
+  assert.equal(aggregateValue(measured, "Min / max ms"), "2 / 30");
+  assert.equal(aggregateValue(measured, "Min / max ms (adjusted)"), undefined);
 });
