@@ -401,3 +401,18 @@ test("the failures line is dashed and the RPS line solid", () => {
   assert.equal(rps.borderColor, "#3d8bfd");
   assert.equal(failures.borderColor, "#f07178");
 });
+
+test("the legend draws each swatch as a line, so it shows the dash", () => {
+  const opts = charts.baseChartOpts({
+    rps: "#3d8bfd",
+    fps: "#f07178",
+    users: "#3dd68c",
+    latency: "#e6b450",
+    grid: "rgba(0, 0, 0, 0.2)",
+    tick: "#9aa7b8",
+    percentile: "#ff8f45",
+  });
+  const labels = opts.plugins.legend.labels;
+  assert.equal(labels.usePointStyle, true, "the legend uses a point style");
+  assert.equal(labels.pointStyle, "line", "the point style is a line");
+});

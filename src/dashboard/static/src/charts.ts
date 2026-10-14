@@ -84,7 +84,7 @@ function chartColors(): ChartColors {
 
 }
 
-function baseChartOpts(colors: ChartColors): ChartOptions<"line"> {
+export function baseChartOpts(colors: ChartColors): ChartOptions<"line"> {
   // Fresh object per chart so Chart.js cannot share/mutate nested scales.
   return {
     responsive: true,
@@ -93,7 +93,15 @@ function baseChartOpts(colors: ChartColors): ChartOptions<"line"> {
     interaction: { mode: "index", intersect: false },
     plugins: {
       legend: {
-        labels: { color: colors.tick, boxWidth: 12, font: { size: 11 } },
+        // Each swatch is a short line drawn with its dataset's dash, so the
+        // legend tells the dashed Failures/s line apart without colour.
+        labels: {
+          color: colors.tick,
+          boxWidth: 12,
+          font: { size: 11 },
+          usePointStyle: true,
+          pointStyle: "line",
+        },
       },
     },
     scales: {
