@@ -458,9 +458,17 @@ body {
   cursor: pointer;
 }
 
+/* Dark text on the dark theme's light accent, as on the increase badge;
+   white text was 3.33:1. */
 .segmented button[aria-pressed="true"] {
   background: var(--accent);
-  color: #fff;
+  color: #06142b;
+}
+
+@media (prefers-color-scheme: light) {
+  .segmented button[aria-pressed="true"] {
+    color: #fff;
+  }
 }
 
 .segmented button:focus-visible {

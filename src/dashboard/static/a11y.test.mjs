@@ -128,6 +128,15 @@ for (const theme of Object.keys(THEMES)) {
     }
   });
 
+  test(`the pressed heatmap toggle is at least 4.5:1 in the ${theme} theme`, () => {
+    const vars = tokens(theme);
+    const selectors = [".segmented button", '.segmented button[aria-pressed="true"]'];
+    const fg = resolve(cascaded(theme, selectors, "color"), vars);
+    const bg = resolve(cascaded(theme, selectors, "background"), vars);
+    const ratio = contrast(fg, bg);
+    assert.ok(ratio >= 4.5, `${fg} on ${bg} is ${ratio.toFixed(2)}:1`);
+  });
+
   test(`input borders are at least 3:1 against the card in the ${theme} theme`, () => {
     const vars = tokens(theme);
     for (const selector of [
