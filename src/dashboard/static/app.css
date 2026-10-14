@@ -516,7 +516,8 @@ body {
   border-radius: 3px;
 }
 
-/* A short sample of each percentile line's stroke, as the heatmap draws it. */
+/* A short sample of each percentile line's stroke, as the heatmap draws it:
+   p50 solid, p95 dashed, p99 dotted, one width. */
 .heatmap-key {
   display: inline-flex;
   align-items: center;
@@ -528,15 +529,15 @@ body {
   content: "";
   display: inline-block;
   width: 1.5rem;
-  border-top: 1.5px solid var(--percentile);
+  border-top: 2px solid var(--percentile);
 }
 
 .heatmap-key-p95::before {
-  border-top-width: 2.5px;
+  border-top-style: dashed;
 }
 
 .heatmap-key-p99::before {
-  border-top-style: dashed;
+  border-top-style: dotted;
 }
 
 

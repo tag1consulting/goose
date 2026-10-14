@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { JSDOM } from "jsdom";
 import * as charts from "./test-build/charts.mjs";
+import * as heatmap from "./test-build/heatmap.mjs";
 import { IDLE_SNAPSHOT } from "./idle-snapshot.mjs";
 import { FRESH, openPage, openPages, settle } from "./test-harness.mjs";
 
@@ -439,4 +440,189 @@ test("the Failures/s legend item carries its line's dash", () => {
   );
   assert.equal(items[0].lineDash, undefined, "RPS stays solid");
   assert.deepEqual(items[1].lineDash, datasets[1].borderDash, "Failures/s is dashed");
+});
+
+// The heatmap's percentile lines (#709): one colour, so told apart by pattern.
+
+test("the heatmap's percentile lines differ by pattern, not width", () => {
+  const lines = heatmap.PERCENTILE_LINES;
+  assert.deepEqual(
+    lines.map((l) => l.key),
+    ["p50", "p95", "p99"]
+  );
+  assert.equal(new Set(lines.map((l) => l.width)).size, 1, "one width");
+  assert.deepEqual(lines[0].dash, [], "p50 is solid");
+  assert.ok(lines[1].dash.length && lines[2].dash.length, "p95 and p99 are broken");
+  assert.notDeepEqual(lines[1].dash, lines[2].dash, "p95 and p99 differ");
+});
+
+for (const theme of Object.keys(THEMES)) {
+  test(`the heatmap key draws p50 solid, p95 dashed, p99 dotted in the ${theme} theme`, () => {
+    const style = (key) =>
+      cascaded(
+        theme,
+        [".heatmap-key::before", `.heatmap-key-${key}::before`],
+        "border-top-style"
+      ) || cascaded(theme, [".heatmap-key::before"], "border-top").split(/\s+/)[1];
+    assert.equal(style("p50"), "solid");
+    assert.equal(style("p95"), "dashed");
+    assert.equal(style("p99"), "dotted");
+  });
+}
+
+test("lines ending at one value share one label", () => {
+  const labels = heatmap.percentileLabels([
+    { key: "p50", value: 1, y: 100 },
+    { key: "p95", value: 1, y: 100 },
+    { key: "p99", value: 1, y: 100 },
+  ]);
+  assert.deepEqual(labels, [{ text: "p50 p95 p99 1 ms", y: 100 }]);
+});
+
+test("labels run top to bottom by height, tied lines grouped", () => {
+  const labels = heatmap.percentileLabels([
+    { key: "p50", value: 1, y: 100 },
+    { key: "p99", value: 4, y: 60 },
+    { key: "p95", value: 4, y: 60 },
+  ]);
+  assert.deepEqual(
+    labels.map((l) => l.text),
+    ["p95 p99 4 ms", "p50 1 ms"]
+  );
+});
+
+test("labels closer than 12 pixels are nudged apart, in order", () => {
+  const labels = heatmap.percentileLabels([
+    { key: "p50", value: 1, y: 100 },
+    { key: "p95", value: 2, y: 95 },
+    { key: "p99", value: 3, y: 92 },
+  ]);
+  assert.deepEqual(
+    labels.map((l) => [l.text, l.y]),
+    [
+      ["p99 3 ms", 92],
+      ["p95 2 ms", 104],
+      ["p50 1 ms", 116],
+    ]
+  );
+});
+
+// drawHeatmap against a context that records each stroke.
+function recordStrokes(view) {
+  const strokes = [];
+  let dash = [];
+  const ctx = new Proxy(
+    {
+      setLineDash: (d) => {
+        dash = d;
+      },
+      measureText: (text) => ({ width: text.length * 6 }),
+      stroke() {
+        strokes.push({ style: ctx.strokeStyle, width: ctx.lineWidth, dash });
+      },
+    },
+    {
+      get: (target, prop) => (prop in target ? target[prop] : () => {}),
+      set: (target, prop, value) => {
+        target[prop] = value;
+        return true;
+      },
+    }
+  );
+  const canvas = { clientWidth: 600, clientHeight: 300, getContext: () => ctx };
+  const saved = [globalThis.window, globalThis.getComputedStyle];
+  globalThis.window = { devicePixelRatio: 1 };
+  globalThis.getComputedStyle = () => ({
+    fontFamily: "sans-serif",
+    getPropertyValue: () => "#1a2332",
+  });
+  try {
+    heatmap.drawHeatmap(canvas, view, true, {
+      tick: "#9aa7b8",
+      grid: "#333333",
+      percentile: "#ff8f45",
+    });
+  } finally {
+    [globalThis.window, globalThis.getComputedStyle] = saved;
+  }
+  return strokes;
+}
+
+test("every halo is drawn before any percentile line", () => {
+  const row = (bucket, time, top) => ({
+    bucket,
+    time,
+    lowest: time,
+    highest: time,
+    top,
+    bottom: top + 0.2,
+  });
+  const percentiles = new Map();
+  for (const second of [0, 1]) {
+    // p95 and p99 in one row: p99's halo must not hide p95.
+    percentiles.set(second, { second, p50: 1, p95: 4, p99: 4 });
+  }
+  const strokes = recordStrokes({
+    startSecond: 0,
+    columns: 2,
+    rows: [row(0, 1, 0.6), row(1, 4, 0.2)],
+    cells: [],
+    minCount: 0,
+    maxCount: 0,
+    ticks: [],
+    secondTotals: new Map(),
+    percentiles,
+  });
+  const lines = strokes.filter((s) => s.style === "#ff8f45");
+  const halos = strokes.filter((s) => s.style === "#1a2332");
+  assert.equal(lines.length, 3, "one stroke per line");
+  assert.equal(halos.length, 3, "one halo per line");
+  const firstLine = strokes.findIndex((s) => s.style === "#ff8f45");
+  const lastHalo = strokes.map((s) => s.style).lastIndexOf("#1a2332");
+  assert.ok(lastHalo < firstLine, "halos come first");
+  assert.deepEqual(
+    lines.map((s) => s.dash),
+    heatmap.PERCENTILE_LINES.map((l) => l.dash)
+  );
+});
+
+test("the right margin fits the widest percentile label", () => {
+  const percentiles = new Map([[0, { second: 0, p50: 200, p95: 200, p99: 200 }]]);
+  const view = {
+    startSecond: 0,
+    columns: 1,
+    rows: [],
+    cells: [],
+    minCount: 0,
+    maxCount: 0,
+    ticks: [],
+    secondTotals: new Map(),
+    percentiles,
+  };
+  assert.deepEqual(
+    heatmap.percentileLabels(heatmap.newestPercentiles(view)).map((l) => l.text),
+    ["p50 p95 p99 200 ms"]
+  );
+  const ctx = { measureText: (text) => ({ width: text.length * 6 }) };
+  const canvas = {
+    clientWidth: 600,
+    clientHeight: 300,
+    getContext: () =>
+      new Proxy(ctx, { get: (t, p) => (p in t ? t[p] : () => {}), set: () => true }),
+  };
+  const saved = [globalThis.window, globalThis.getComputedStyle];
+  globalThis.window = { devicePixelRatio: 1 };
+  globalThis.getComputedStyle = () => ({ fontFamily: "x", getPropertyValue: () => "" });
+  let layout;
+  try {
+    layout = heatmap.drawHeatmap(canvas, view, true, {
+      tick: "#000000",
+      grid: "#000000",
+      percentile: "#000000",
+    });
+  } finally {
+    [globalThis.window, globalThis.getComputedStyle] = saved;
+  }
+  const labelRoom = 600 - (layout.left + layout.width) - 6;
+  assert.ok(labelRoom >= "p50 p95 p99 200 ms".length * 6, `${labelRoom} px for the label`);
 });
