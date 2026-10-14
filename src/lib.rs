@@ -3797,6 +3797,27 @@ mod tests {
         });
     }
 
+    /// A Controller time of 0 written with units is stored as "0", which
+    /// means unset, as the command line already normalised it; on main the
+    /// raw "0s" was stored and read as a real span.
+    #[test]
+    #[serial_test::serial]
+    fn test_control_zero_time_is_unset() {
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) = idle_attack(&[]).await;
+            for line in ["runtime 0s", "increasetime 0m", "decreasetime 00"] {
+                assert!(
+                    control(&mut goose_attack, &mut run_state, line).await,
+                    "{}",
+                    line
+                );
+            }
+            assert_eq!(goose_attack.configuration.run_time, "0");
+            assert_eq!(goose_attack.configuration.increase_time, "0");
+            assert_eq!(goose_attack.configuration.decrease_time, "0");
+        });
+    }
+
     /// Gap 8: a controller `shutdown` from Idle shuts down as Ctrl-C and
     /// dashboard Quit do there, with a plan that has nothing left to run, and
     /// does not hold the main loop.

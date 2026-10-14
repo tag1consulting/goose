@@ -1,5 +1,6 @@
 //! Utility functions used by Goose, and available when writing load tests.
 
+use lazy_static::lazy_static;
 use regex::Regex;
 use std::cmp::{max, min};
 use std::collections::BTreeMap;
@@ -38,11 +39,12 @@ use crate::{is_killswitch_triggered, reset_killswitch, trigger_killswitch, Goose
 /// assert_eq!(util::parse_timespan("\u{661}h"), None);
 /// ```
 pub fn parse_timespan(time_str: &str) -> Option<usize> {
-    // A digit of another script would read as no number at all: refuse it.
-    if time_str
-        .chars()
-        .any(|c| c.is_numeric() && !c.is_ascii_digit())
-    {
+    lazy_static! {
+        // A decimal digit of another script, which `\d` also matches.
+        static ref OTHER_DIGIT: Regex = Regex::new(r"[\d&&[^0-9]]").unwrap();
+    }
+    // It would read as no number at all: refuse it.
+    if OTHER_DIGIT.is_match(time_str) {
         return None;
     }
     let seconds = match usize::from_str(time_str) {
@@ -475,6 +477,8 @@ mod tests {
         assert_eq!(parse_timespan("١h"), None);
         assert_eq!(parse_timespan("1h١m"), None);
         assert_eq!(parse_timespan("١"), None);
+        // Other numeric characters are not digits: `\d` skips them, as on main.
+        assert_eq!(parse_timespan("2h²"), Some(7200));
     }
 
     #[test]
