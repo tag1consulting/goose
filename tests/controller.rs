@@ -291,9 +291,22 @@ async fn run_standalone_test(test_type: TestType) {
                             // Request the help text, using the short form.
                             make_request(&mut test_state, "?\r\n").await;
                         }
-                        _ => {
+                        2 => {
                             // Be sure we actually received the help text.
                             assert!(response.contains("controller commands:"));
+
+                            // Send a line that is not a command.
+                            make_request(&mut test_state, "foo\r\n").await;
+                        }
+                        _ => {
+                            // The WebSocket reply also points to the book.
+                            if test_state.websocket_controller {
+                                assert!(
+                                    response.starts_with("unrecognized command, see Goose book")
+                                );
+                            } else {
+                                assert!(response.starts_with("unrecognized command"));
+                            }
 
                             // Move onto the next command.
                             test_state = update_state(Some(test_state), &test_type).await;

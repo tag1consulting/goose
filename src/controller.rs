@@ -269,9 +269,36 @@ impl ControllerCommand {
     }
 }
 
+lazy_static! {
+    // The values the Controller regexes on main accepted, in ASCII digits
+    // only: a value outside them is refused before it is parsed, so no other
+    // text reaches a parser.
+    static ref USERS: Regex = Regex::new(r"^[0-9]+$").unwrap();
+    static ref RATE: Regex = Regex::new(r"^[0-9]*(\.[0-9]*)?$").unwrap();
+    static ref TIME: Regex = Regex::new(r"(?i-u)^([0-9]+|([0-9]+h)?([0-9]+m)?([0-9]+s)?)$").unwrap();
+    static ref PLAN: Regex = Regex::new(
+        r"(?i-u)^(([0-9]+)\s*,\s*([0-9]+|([0-9]+h)?([0-9]+m)?([0-9]+s)?)*;*)+$"
+    )
+    .unwrap();
+    static ref HOST: Regex = Regex::new(r"(?i)^https?://.+$").unwrap();
+}
+
+/// `value` when `grammar` accepts it, otherwise `error`.
+fn grammar<'a>(
+    grammar: &Regex,
+    value: &'a str,
+    error: &'static str,
+) -> Result<&'a str, &'static str> {
+    if grammar.is_match(value) {
+        Ok(value)
+    } else {
+        Err(error)
+    }
+}
+
 /// A rate: a finite number of users per second above 0.
 fn rate(value: &str, error: &'static str) -> Result<f32, &'static str> {
-    match value.parse::<f32>() {
+    match grammar(&RATE, value, error)?.parse::<f32>() {
         Ok(rate) if rate.is_finite() && rate > 0.0 => Ok(rate),
         _ => Err(error),
     }
@@ -280,13 +307,10 @@ fn rate(value: &str, error: &'static str) -> Result<f32, &'static str> {
 /// A time span in seconds: whole seconds, or hours, minutes and seconds in
 /// that order, short enough for a `usize` in milliseconds.
 fn time(value: &str, error: &'static str) -> Result<usize, &'static str> {
-    lazy_static! {
-        static ref TIME: Regex = Regex::new(r"^([0-9]+|([0-9]+h)?([0-9]+m)?([0-9]+s)?)$").unwrap();
-    }
-    let value = value.to_ascii_lowercase();
-    if value.is_empty() || !TIME.is_match(&value) {
+    if value.is_empty() {
         return Err(error);
     }
+    let value = grammar(&TIME, value, error)?.to_ascii_lowercase();
     crate::util::parse_timespan(&value).ok_or(error)
 }
 
@@ -296,10 +320,9 @@ impl FromStr for ControllerCommand {
     type Err = &'static str;
 
     fn from_str(line: &str) -> Result<Self, Self::Err> {
+        // A verb, then one space and its value if it takes one.
         let line = line.trim();
-        let (verb, value) = line
-            .split_once(char::is_whitespace)
-            .map_or((line, ""), |(verb, value)| (verb, value.trim()));
+        let (verb, value) = line.split_once(' ').unwrap_or((line, ""));
         // A command that takes no value.
         let alone = |command| match value {
             "" => Ok(command),
@@ -313,13 +336,13 @@ impl FromStr for ControllerCommand {
             "configjson" | "config-json" => alone(Self::ConfigJson),
             "metrics" | "stats" => alone(Self::Metrics),
             "metricsjson" | "metrics-json" | "statsjson" | "stats-json" => alone(Self::MetricsJson),
-            "host" | "hostname" | "host_name" | "host-name" => match url::Url::parse(value) {
-                Ok(url) if ["http", "https"].contains(&url.scheme()) => {
-                    Ok(Self::Host(value.to_string()))
-                }
-                _ => Err("host must be a valid url starting with http:// or https://"),
-            },
-            "users" | "user" => value
+            "host" | "hostname" | "host_name" | "host-name" => {
+                let error = "host must be a valid url starting with http:// or https://";
+                let host = grammar(&HOST, value, error)?;
+                url::Url::parse(host).map_err(|_| error)?;
+                Ok(Self::Host(host.to_string()))
+            }
+            "users" | "user" => grammar(&USERS, value, INVALID_USERS_MSG)?
                 .parse()
                 .map_err(|_| INVALID_USERS_MSG)
                 .and_then(Self::users),
@@ -329,23 +352,25 @@ impl FromStr for ControllerCommand {
             "decreaserate" | "decrease_rate" | "decrease-rate" => {
                 rate(value, "decrease_rate must be a number above 0").map(Self::DecreaseRate)
             }
-            "increasetime" | "increase_time" | "increase-time" => time(
-                value,
-                "increase_time must be a time span such as 1h30m5s",
-            )
-            .map(Self::IncreaseTime),
-            "decreasetime" | "decrease_time" | "decrease-time" => time(
-                value,
-                "decrease_time must be a time span such as 1h30m5s",
-            )
-            .map(Self::DecreaseTime),
+            "increasetime" | "increase_time" | "increase-time" => {
+                time(value, "increase_time must be a time span such as 1h30m5s")
+                    .map(Self::IncreaseTime)
+            }
+            "decreasetime" | "decrease_time" | "decrease-time" => {
+                time(value, "decrease_time must be a time span such as 1h30m5s")
+                    .map(Self::DecreaseTime)
+            }
             "run" | "runtime" | "run_time" | "run-time" => {
                 time(value, "run_time must be a time span such as 1h30m5s").map(Self::RunTime)
             }
-            "testplan" | "test_plan" | "test-plan" | "plan" => match value.parse::<TestPlan>() {
-                Ok(plan) if plan.total_users() <= MAX_CONTROL_USERS => Ok(Self::TestPlan(plan)),
-                _ => Err("test-plan must be users,time steps such as 10,5m;10,1h;0,30s, with 1 to 100000 users in total"),
-            },
+            "testplan" | "test_plan" | "test-plan" | "plan" => {
+                let error = "test-plan must be users,time steps such as 10,5m;10,1h;0,30s, with 1 to 100000 users in total";
+                // The quiet parse: the command line's prints the line it refuses.
+                match TestPlan::parse(grammar(&PLAN, value, error)?) {
+                    Ok(plan) if plan.total_users() <= MAX_CONTROL_USERS => Ok(Self::TestPlan(plan)),
+                    _ => Err(error),
+                }
+            }
             _ => Err(UNRECOGNIZED),
         }
     }
@@ -393,10 +418,14 @@ impl GooseAttack {
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> Result<(), GooseError> {
-        let Some(channel_rx) = goose_attack_run_state.controller_channel_rx.clone() else {
-            return Ok(());
-        };
-        for (command, respond) in channel_rx.try_iter().take(16) {
+        for _ in 0..16 {
+            let Some(Ok((command, respond))) = goose_attack_run_state
+                .controller_channel_rx
+                .as_ref()
+                .map(flume::Receiver::try_recv)
+            else {
+                break;
+            };
             if respond.is_closed() {
                 debug!("[control]: {command:?} skipped, its client has gone");
                 continue;
@@ -912,6 +941,7 @@ mod tests {
         const INCREASE_TIME: &str = "increase_time must be a time span such as 1h30m5s";
         const DECREASE_TIME: &str = "decrease_time must be a time span such as 1h30m5s";
         const RUN_TIME: &str = "run_time must be a time span such as 1h30m5s";
+        const FORTY_DIGITS: &str = "increaserate 1000000000000000000000000000000000000000";
         const TEST_PLAN: &str =
             "test-plan must be users,time steps such as 10,5m;10,1h;0,30s, with 1 to 100000 users in total";
 
@@ -1022,6 +1052,17 @@ mod tests {
             ("runtime ١h", RUN_TIME),
             ("users 9999999999999999999999999999", USERS),
             ("testplan 9999999999999999999999999999,1s", TEST_PLAN),
+            // Only what the Controller regexes on main accepted: a sign, a second
+            // space, an exponent, a word for a number, or a host without `//`.
+            ("users +5", USERS),
+            ("users  5", USERS),
+            ("increaserate 1e3", INCREASE_RATE),
+            ("increaserate inf", INCREASE_RATE),
+            ("increaserate NaN", INCREASE_RATE),
+            ("host http:foo", HOST),
+            ("testplan 10,1s\u{1b}[2J", TEST_PLAN),
+            // In the grammar, but infinite as an f32: the finite check refuses it.
+            (FORTY_DIGITS, INCREASE_RATE),
         ];
 
         // Collect every mismatch, so one run shows the whole table.
@@ -1041,6 +1082,12 @@ mod tests {
                 mismatches.push(format!("{line:?}: expected {expected:?}, got {got:?}"));
             }
         }
+        // The grammar, not a parser, refuses the escape sequence, so it never
+        // reaches a parser that could print it; and the forty digit rate is
+        // in the grammar, so the finite check is what refuses it.
+        assert!(!PLAN.is_match("10,1s\u{1b}[2J"));
+        assert!(RATE.is_match(&FORTY_DIGITS[13..]));
+
         // A long line is refused like a short one.
         let long = format!("users {}", "1".repeat(10_000));
         if parse(&long) != Err(USERS.to_string()) {

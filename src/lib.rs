@@ -3882,6 +3882,52 @@ mod tests {
         });
     }
 
+    /// The parent answers at most 16 commands a tick, so a flood cannot
+    /// hold the main loop; the rest wait for the next tick.
+    #[test]
+    #[serial_test::serial]
+    fn test_control_drain_cap() {
+        use crate::controller::{ControlReply, ControllerCommand};
+        use tokio::sync::oneshot::error::TryRecvError;
+
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) = idle_attack(&[]).await;
+            let (controller_tx, controller_rx) = flume::unbounded();
+            run_state.controller_channel_rx = Some(controller_rx);
+            let mut replies = Vec::new();
+            for users in 1..=17 {
+                let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+                controller_tx
+                    .send((ControllerCommand::Users(users), response_tx))
+                    .unwrap();
+                replies.push(response_rx);
+            }
+            goose_attack
+                .handle_control_requests(&mut run_state)
+                .await
+                .unwrap();
+            let mut last = replies.pop().unwrap();
+            for mut reply in replies {
+                assert!(matches!(
+                    reply.try_recv(),
+                    Ok(ControlReply::Outcome(ControlOutcome { ok: true, .. }))
+                ));
+            }
+            assert!(matches!(last.try_recv(), Err(TryRecvError::Empty)));
+            assert_eq!(goose_attack.configuration.users, Some(16));
+
+            goose_attack
+                .handle_control_requests(&mut run_state)
+                .await
+                .unwrap();
+            assert!(matches!(
+                last.try_recv(),
+                Ok(ControlReply::Outcome(ControlOutcome { ok: true, .. }))
+            ));
+            assert_eq!(goose_attack.configuration.users, Some(17));
+        });
+    }
+
     /// Every snapshot the main loop serves carries the stopping flag: the one
     /// forwarded to the metrics processor, the local fallback when the
     /// processor is gone, and the one served in the tick of a command, which

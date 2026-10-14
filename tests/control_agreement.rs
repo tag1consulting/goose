@@ -278,6 +278,10 @@ async fn test_control_agreement() {
     for (line, body) in [
         ("users 0", r#"{"users":0}"#),
         ("users 100001", r#"{"users":100001}"#),
+        (
+            "users 99999999999999999999",
+            r#"{"users":99999999999999999999}"#,
+        ),
     ] {
         let (ok, message) = front.agree(line, "users", body).await;
         assert!(!ok, "{}", line);
@@ -299,31 +303,31 @@ async fn test_control_agreement() {
     let mut runs = Vec::new();
     for via in [Via::Telnet, Via::WebSocket, Via::Dashboard] {
         let mut replies = Vec::new();
-        replies.push(front.send(via, "start", "start", "{}").await.1);
+        replies.push(front.send(via, "start", "start", "{}").await);
         wait_for_phase(&front.client, &["increase", "maintain"]).await;
-        replies.push(front.send(via, "start", "start", "{}").await.1);
-        replies.push(
-            front
-                .send(via, "users 4", "users", r#"{"users":4}"#)
-                .await
-                .1,
-        );
-        replies.push(front.send(via, "stop", "stop", "{}").await.1);
+        replies.push(front.send(via, "start", "start", "{}").await);
+        replies.push(front.send(via, "users 4", "users", r#"{"users":4}"#).await);
+        replies.push(front.send(via, "stop", "stop", "{}").await);
         wait_for_phase(&front.client, &["idle"]).await;
         runs.push((via, replies));
     }
     for (via, replies) in &runs {
-        assert_eq!(
-            replies,
-            &[
-                "load test started",
+        // Telnet has no success flag; the others must accept and refuse alike.
+        let ok = |decision: bool| match via {
+            Via::Telnet => None,
+            _ => Some(decision),
+        };
+        let expected = [
+            (ok(true), "load test started"),
+            (
+                ok(false),
                 "unable to start load test, be sure it is idle and host is configured",
-                "users configured",
-                "load test stopped",
-            ],
-            "{:?}",
-            via
-        );
+            ),
+            (ok(true), "users configured"),
+            (ok(true), "load test stopped"),
+        ]
+        .map(|(decision, message)| (decision, message.to_string()));
+        assert_eq!(replies, &expected.to_vec(), "{:?}", via);
     }
 
     // Quit: `quit` disconnects a telnet or WebSocket client and leaves the

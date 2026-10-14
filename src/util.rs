@@ -33,20 +33,26 @@ use crate::{is_killswitch_triggered, reset_killswitch, trigger_killswitch, Goose
 /// // Invalid value is 0 seconds.
 /// assert_eq!(util::parse_timespan("foo"), Some(0));
 ///
-/// // Too long is an error.
+/// // Too long, or a digit of another script, is an error.
 /// assert_eq!(util::parse_timespan("99999999999999999999h"), None);
+/// assert_eq!(util::parse_timespan("\u{661}h"), None);
 /// ```
 pub fn parse_timespan(time_str: &str) -> Option<usize> {
+    // A digit of another script would read as no number at all: refuse it.
+    if time_str
+        .chars()
+        .any(|c| c.is_numeric() && !c.is_ascii_digit())
+    {
+        return None;
+    }
     let seconds = match usize::from_str(time_str) {
         // If an integer is passed in, assume it's seconds
         Ok(t) => t,
         Err(e) if *e.kind() == std::num::IntErrorKind::PosOverflow => return None,
         // Otherwise use a regex to extract hours, minutes and seconds from string.
         Err(_) => {
-            let re = Regex::new(
-                r"((?P<hours>[0-9]+?)h)?((?P<minutes>[0-9]+?)m)?((?P<seconds>[0-9]+?)s)?",
-            )
-            .unwrap();
+            let re = Regex::new(r"((?P<hours>\d+?)h)?((?P<minutes>\d+?)m)?((?P<seconds>\d+?)s)?")
+                .unwrap();
             let time_matches = re.captures(time_str)?;
             let part = |name: &str, unit: usize| match time_matches.name(name) {
                 Some(n) => usize::from_str(n.as_str()).ok()?.checked_mul(unit),
@@ -466,6 +472,9 @@ mod tests {
         assert_eq!(parse_timespan("24h"), Some(86400));
         assert_eq!(parse_timespan("88h88m88s"), Some(322168));
         assert_eq!(parse_timespan("100hourblah"), Some(360000));
+        assert_eq!(parse_timespan("١h"), None);
+        assert_eq!(parse_timespan("1h١m"), None);
+        assert_eq!(parse_timespan("١"), None);
     }
 
     #[test]

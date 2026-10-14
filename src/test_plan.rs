@@ -142,6 +142,27 @@ impl FromStr for TestPlan {
     type Err = GooseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
+        TestPlan::parse(s).inspect_err(|e| {
+            if let GooseError::InvalidOption { value, detail, .. } = e {
+                if detail == INVALID_STEP {
+                    // Logger isn't initialized yet, provide helpful debug output.
+                    eprintln!("ERROR: invalid `configuration.test_plan` value: '{value}'");
+                    eprintln!("  Expected format: --test-plan \"{{users}},{{timespan}};{{users}},{{timespan}}\"");
+                    eprintln!("    {{users}} must be an integer, ie \"100\"");
+                    eprintln!("    {{timespan}} can be integer seconds or \"30s\", \"20m\", \"3h\", \"1h30m\", etc");
+                }
+            }
+        })
+    }
+}
+
+/// The detail of a test plan step that does not parse.
+const INVALID_STEP: &str = "invalid `configuration.test_plan` value.";
+
+impl TestPlan {
+    /// Parse a test plan as [`FromStr`] does, without printing anything: the
+    /// Controllers parse client text with this.
+    pub(crate) fn parse(s: &str) -> Result<TestPlan, GooseError> {
         // Convert string into a TestPlan.
         let mut steps: Vec<(usize, usize)> = Vec::new();
         // Each line of the test plan must be in the format "{users},{timespan}", white space is ignored
@@ -157,19 +178,15 @@ impl FromStr for TestPlan {
                     util::parse_timespan(&cap[2])? * 1_000,
                 ))
             });
-            if let Some(step) = step {
-                steps.push(step);
-            } else {
-                // Logger isn't initialized yet, provide helpful debug output.
-                eprintln!("ERROR: invalid `configuration.test_plan` value: '{line}'");
-                eprintln!("  Expected format: --test-plan \"{{users}},{{timespan}};{{users}},{{timespan}}\"");
-                eprintln!("    {{users}} must be an integer, ie \"100\"");
-                eprintln!("    {{timespan}} can be integer seconds or \"30s\", \"20m\", \"3h\", \"1h30m\", etc");
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.test_plan".to_string(),
-                    value: line.to_string(),
-                    detail: "invalid `configuration.test_plan` value.".to_string(),
-                });
+            match step {
+                Some(step) => steps.push(step),
+                None => {
+                    return Err(GooseError::InvalidOption {
+                        option: "`configuration.test_plan".to_string(),
+                        value: line.to_string(),
+                        detail: INVALID_STEP.to_string(),
+                    })
+                }
             }
         }
         let test_plan = TestPlan { steps, current: 0 };
