@@ -401,9 +401,12 @@ body {
 }
 
 /* Charts */
+/* minmax(0, 1fr), not 1fr: a 1fr track never shrinks below its widest
+   content, so an open "Show data" table would widen the page instead of
+   scrolling inside its .table-wrap. */
 .charts-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 0.75rem;
   margin-top: 0.85rem;
 }
@@ -416,6 +419,39 @@ body {
 .chart-card canvas {
   width: 100% !important;
   max-height: 220px;
+}
+
+/* A chart's one sentence summary and its "Show data" table. */
+.chart-summary {
+  margin: 0.5rem 0 0;
+  font-size: 0.85rem;
+}
+
+.chart-data {
+  margin-top: 0.35rem;
+  font-size: 0.85rem;
+}
+
+.chart-data summary {
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.chart-data th {
+  cursor: default;
+}
+
+/* Up to 300 rows, one a second: the table scrolls in its own box, which is
+   a focusable region, with its header kept in view. */
+.chart-data .table-wrap {
+  max-height: 18rem;
+  overflow-y: auto;
+}
+
+.chart-data thead th {
+  position: sticky;
+  top: 0;
+  background: var(--card);
 }
 
 .chart-wide {
@@ -560,7 +596,7 @@ body {
 
 @media (max-width: 720px) {
   .charts-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .chart-wide {
@@ -762,4 +798,17 @@ footer {
 .run-banner button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
 }

@@ -6,6 +6,7 @@
 // declarations in snapshot.d.ts, generated from
 // src/metrics/dashboard_snapshot.rs; edit the Rust structs, not those types.
 
+import { updateChartData } from "./chart-data";
 import { ensureCharts, recolorCharts, updateCharts } from "./charts";
 import { shownTime } from "./coadjust";
 import {
@@ -74,6 +75,13 @@ function renderSnapshot(
   modeLabel?: ConnectionMode | string
 ): void {
   const flags = snap.flags;
+  // The connection first: announce() joins this task's messages, so a
+  // recovery reads "Connection restored. Test finished.".
+  if (modeLabel === "live") {
+    setConnection("live");
+  } else if (modeLabel === "poll") {
+    setConnection("poll");
+  }
   setPhase(snap.phase);
   hostsEl.textContent = snap.hosts.length ? snap.hosts.join(", ") : "—";
   durationEl.textContent = formatDuration(snap.duration_secs);
@@ -165,7 +173,9 @@ function renderSnapshot(
   setTableData(snap);
   // The response time card shows the heatmap, or with percentiles over time
   // off the average latency chart, which updateCharts then draws.
-  updateCharts(snap.series, updateHeatmapCard(snap));
+  const averageLatency = updateHeatmapCard(snap);
+  updateChartData(snap.series, averageLatency, snap.target_users);
+  updateCharts(snap.series, averageLatency);
   updateControlFromSnapshot(snap);
 
   // Prefer metrics/auth banners.
@@ -191,12 +201,6 @@ function renderSnapshot(
     clearAuthRequired();
   } else {
     setBanner("");
-  }
-
-  if (modeLabel === "live") {
-    setConnection("live");
-  } else if (modeLabel === "poll") {
-    setConnection("poll");
   }
 }
 

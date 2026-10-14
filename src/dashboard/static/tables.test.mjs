@@ -729,8 +729,9 @@ test("a header button press sorts and moves aria-sort", async () => {
 
 test("every table scroll area is a focusable, labelled region", async () => {
   const window = await load(snapshotWith({ requests: REQUESTS }));
+  // The five tables, and the three charts' "Show data" tables (#711).
   const wraps = window.document.querySelectorAll(".table-wrap");
-  assert.equal(wraps.length, 5);
+  assert.equal(wraps.length, 8);
   const labels = new Set();
   for (const wrap of wraps) {
     assert.equal(wrap.getAttribute("tabindex"), "0");
@@ -740,5 +741,5 @@ test("every table scroll area is a focusable, labelled region", async () => {
     assert.ok(label.trim().length > 0, "aria-label on .table-wrap");
     labels.add(label);
   }
-  assert.equal(labels.size, 5, "each region has its own label");
+  assert.equal(labels.size, 8, "each region has its own label");
 });

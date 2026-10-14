@@ -27,6 +27,7 @@
 
   <main>
   <section id="banner" class="banner hidden" role="status"></section>
+  <p id="announce" class="visually-hidden" role="status"></p>
 
   <div id="run-banner" class="run-banner" aria-live="polite"></div>
 
@@ -83,10 +84,30 @@
     <div class="card chart-card">
       <h2>Requests / failures per second</h2>
       <canvas id="chart-rps" role="img" aria-label="RPS and failures chart"></canvas>
+      <p id="chart-rps-summary" class="chart-summary">No data yet.</p>
+      <details id="chart-rps-details" class="chart-data">
+        <summary>Show data</summary>
+        <div class="table-wrap" tabindex="0" role="region" aria-label="Requests per second data table">
+          <table id="chart-rps-table">
+            <thead><tr><th>Second</th><th>RPS</th><th>Failures/s</th></tr></thead>
+            <tbody id="chart-rps-rows"></tbody>
+          </table>
+        </div>
+      </details>
     </div>
     <div class="card chart-card">
       <h2>Active users</h2>
       <canvas id="chart-users" role="img" aria-label="Active users chart"></canvas>
+      <p id="chart-users-summary" class="chart-summary">No data yet.</p>
+      <details id="chart-users-details" class="chart-data">
+        <summary>Show data</summary>
+        <div class="table-wrap" tabindex="0" role="region" aria-label="Active users data table">
+          <table id="chart-users-table">
+            <thead><tr><th>Second</th><th>Users</th></tr></thead>
+            <tbody id="chart-users-rows"></tbody>
+          </table>
+        </div>
+      </details>
     </div>
     <div id="chart-latency-card" class="card chart-card chart-wide">
       <div class="chart-head">
@@ -122,6 +143,21 @@
       <div id="chart-latency-wrap" hidden>
         <canvas id="chart-latency" role="img" aria-label="Average latency chart"></canvas>
       </div>
+      <p id="chart-latency-summary" class="chart-summary">No data yet.</p>
+      <!-- The table follows the chart the card shows. -->
+      <details id="chart-latency-details" class="chart-data">
+        <summary>Show data</summary>
+        <div class="table-wrap" tabindex="0" role="region" aria-label="Response time data table">
+          <table id="heatmap-table">
+            <thead><tr><th>Second</th><th>Requests</th><th>p50 ms</th><th>p95 ms</th><th>p99 ms</th></tr></thead>
+            <tbody id="heatmap-rows"></tbody>
+          </table>
+          <table id="chart-latency-table" hidden>
+            <thead><tr><th>Second</th><th>Avg ms</th></tr></thead>
+            <tbody id="chart-latency-rows"></tbody>
+          </table>
+        </div>
+      </details>
     </div>
   </section>
 
