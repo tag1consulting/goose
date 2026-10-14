@@ -31,6 +31,7 @@
     o the dashboard snapshot adds `stopping`, and the control panel disables the user controls while it is set
  - [#695](https://github.com/tag1consulting/goose/issues/695) stop the dashboard HTTP server when `execute()` returns, on every return path; the server task was detached and held the port and its connections until the Tokio runtime shut down, so a second `GooseAttack` in the same runtime could not bind
     o at shutdown idle connections close at once and a request in flight gets up to one second before it is closed; `execute()` returns when they are closed
+ - [#696](https://github.com/tag1consulting/goose/issues/696) free a dashboard SSE client slot as soon as the client disconnects; the slot was freed only when the next snapshot failed to send, so while the main loop published none (a long `test_start`), reconnecting browsers could fill `--dashboard-max-clients` and lock viewers out
  - [#697](https://github.com/tag1consulting/goose/issues/697) harden the dashboard HTTP server; it had no Host check, no header read timeout and no connection limit
     o on a loopback bind, a request with a missing or non loopback `Host` gets 403
     o a connection that does not finish sending request headers within 10 seconds is closed, which also closes keep alive connections idle for 10 seconds
