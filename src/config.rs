@@ -3612,10 +3612,13 @@ mod test {
             ("--increase-rate", "increase_rate"),
             ("--decrease-rate", "decrease_rate"),
         ] {
+            // Not below one user a day, so accepted as on main.
             for (value, refused) in [
                 ("0.0000001", true),
                 ("0.00001157", true),
                 ("0.0000116", false),
+                ("inf", false),
+                ("NaN", false),
             ] {
                 let mut config =
                     GooseConfiguration::parse_args_default(&["--users", "2", flag, value]).unwrap();
@@ -3630,6 +3633,17 @@ mod test {
                     Ok(()) if !refused => {}
                     other => panic!("{} {}: {:?}", flag, value, other),
                 }
+            }
+            // Zero keeps its own refusal.
+            let mut config =
+                GooseConfiguration::parse_args_default(&["--users", "2", flag, "0"]).unwrap();
+            config.configure(&GooseDefaults::default()).unwrap();
+            match config.validate() {
+                Err(GooseError::InvalidOption { detail, .. }) => assert_eq!(
+                    detail,
+                    format!("`configuration.{}` must be non-zero.", option)
+                ),
+                other => panic!("{} 0: {:?}", flag, other),
             }
         }
     }

@@ -2057,7 +2057,7 @@ async fn dispatch_control(
     };
     // Control routes are registered only with a channel.
     let reply = match state.control_tx.as_ref() {
-        Some(control_tx) => send_command(control_tx, command).await,
+        Some(control_tx) => send_command(control_tx, command, CONTROL_TIMEOUT).await,
         None => Err(SendError::Unavailable),
     };
     match reply {

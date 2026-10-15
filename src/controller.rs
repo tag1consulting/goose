@@ -403,18 +403,9 @@ pub(crate) enum SendError {
     Timeout,
 }
 
-/// Send `command` to the parent and wait up to [`CONTROL_TIMEOUT`] for its
-/// reply: the dashboard's way in.
-#[cfg(feature = "dashboard")]
+/// Send `command` to the parent and wait up to `timeout`, [`CONTROL_TIMEOUT`]
+/// outside tests, for its reply.
 pub(crate) async fn send_command(
-    channel_tx: &flume::Sender<ControlRequest>,
-    command: ControllerCommand,
-) -> Result<ControlReply, SendError> {
-    send_command_within(channel_tx, command, CONTROL_TIMEOUT).await
-}
-
-/// Send `command` to the parent and wait up to `timeout` for its reply.
-async fn send_command_within(
     channel_tx: &flume::Sender<ControlRequest>,
     command: ControllerCommand,
     timeout: Duration,
@@ -430,8 +421,9 @@ async fn send_command_within(
     }
 }
 
-/// Most requests the parent answers per tick, on the control channel and on
-/// the dashboard's, so a flood cannot hold the main loop.
+/// Most requests the parent answers in one turn, so a flood cannot hold the
+/// main loop: a tick has two control turns, the dashboard's and then the
+/// Controllers', and one turn on the dashboard's snapshot channel.
 pub(crate) const MAX_DRAIN: usize = 16;
 
 /// The parent process side of the Controller functionality.
@@ -441,9 +433,12 @@ impl GooseAttack {
     /// dashboard first, and again before each Controller command, as the
     /// Controllers take no authentication. A request whose client has gone
     /// (timed out or disconnected) is skipped, so it is not applied after the
-    /// client was told it failed, and does not count toward [`MAX_DRAIN`].
-    /// Every `metrics` and `metrics-json` in the
-    /// tick is answered from one metrics processor request.
+    /// client was told it failed, and does not count toward [`MAX_DRAIN`]; no
+    /// more of them are skipped in a turn than were queued when it began.
+    ///
+    /// Every `metrics` and `metrics-json` in the tick is answered from one
+    /// metrics processor request, made after the tick's commands, so it shows
+    /// the metrics as they stand at the end of the tick.
     pub(crate) async fn handle_control_requests(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
@@ -460,9 +455,10 @@ impl GooseAttack {
             // were queued when the turn began, so the turn ends however fast
             // more arrive.
             let mut skips = queued(&goose_attack_run_state.dashboard_control_rx)
-                + match dashboard {
-                    true => 0,
-                    false => queued(&goose_attack_run_state.controller_channel_rx),
+                + if dashboard {
+                    0
+                } else {
+                    queued(&goose_attack_run_state.controller_channel_rx)
                 };
             let mut answered = 0;
             while answered < MAX_DRAIN {
@@ -784,13 +780,15 @@ enum Transport {
 /// pages), so a test plan the command line takes there fits, less the few
 /// bytes of the JSON request around it. A longer
 /// message gets a 1009 close. A connection accepts messages and frames of up
-/// to twice this, so it reads into under 1 MiB: a message being assembled,
-/// its next frame, and one read ahead.
+/// to twice this, so it reads into about 1 MiB at most: a message being
+/// assembled, its next frame, and one read ahead.
 pub(crate) const MAX_CONTROLLER_MESSAGE: usize = 128 * 1024;
 
 /// Reason in the close a WebSocket message over [`MAX_CONTROLLER_MESSAGE`]
 /// gets.
 const MESSAGE_TOO_BIG: &str = "message too big, at most 131072 bytes";
+// The reason names the limit, so the two change together.
+const _: () = assert!(MAX_CONTROLLER_MESSAGE == 131_072);
 
 /// Reply to a WebSocket message that is not a json request.
 const INVALID_JSON: &str =
@@ -946,7 +944,7 @@ async fn serve_client(
                 command,
                 ControllerCommand::ConfigJson | ControllerCommand::MetricsJson
             );
-        let (success, response) = match send_command_within(&channel_tx, command, timeout).await {
+        let (success, response) = match send_command(&channel_tx, command, timeout).await {
             Ok(ControlReply::Outcome(outcome)) => (outcome.ok, outcome.message),
             Ok(ControlReply::Config(config)) if json => (true, to_json(&config)),
             Ok(ControlReply::Config(config)) => (true, format!("{config:#?}")),
@@ -1555,7 +1553,7 @@ pub(crate) mod tests {
         });
     }
 
-    /// Gap 5: a rate must be a number above 0, as on the command line.
+    /// Gap 5: a rate must be at least one user a day, as on the command line.
     #[test]
     #[serial_test::serial]
     fn test_control_rate_zero_refused() {
@@ -2145,7 +2143,10 @@ pub(crate) mod tests {
         let mut text = Vec::new();
         let mut buf = [0; 1024];
         while !text.ends_with(b"goose> ") {
-            let n = client.read(&mut buf).await.unwrap();
+            let n = tokio::time::timeout(Duration::from_secs(10), client.read(&mut buf))
+                .await
+                .expect("the telnet Controller must answer")
+                .unwrap();
             assert!(n > 0, "telnet Controller closed: {:?}", text);
             text.extend_from_slice(&buf[..n]);
         }
@@ -2170,7 +2171,11 @@ pub(crate) mod tests {
         ));
         assert_eq!(telnet_reply(&mut client).await, "goose> ");
         client.write_all(b"users 5").await.unwrap();
-        let (command, respond) = channel_rx.recv_async().await.unwrap();
+        let (command, respond) =
+            tokio::time::timeout(Duration::from_secs(10), channel_rx.recv_async())
+                .await
+                .expect("the command must reach the parent")
+                .unwrap();
         assert!(matches!(command, ControllerCommand::Users(5)));
         let _ = respond.send(ControlReply::Outcome(ControlOutcome {
             ok: true,
@@ -2242,21 +2247,25 @@ pub(crate) mod tests {
             .and_then(Result::ok)
     }
 
-    /// A WebSocket text message longer than [`MAX_CONTROLLER_MESSAGE`] is
-    /// answered with a 1009 close naming the limit, and the connection ends.
+    /// A WebSocket text or binary message longer than [`MAX_CONTROLLER_MESSAGE`]
+    /// is answered with a 1009 close naming the limit, and the connection ends.
     #[tokio::test]
     async fn websocket_message_too_big_closed() {
-        let (mut client, _channel_rx) = websocket_client().await;
-        let text = "x".repeat(131_073);
-        client.send(Message::Text(text.into())).await.unwrap();
-        match next_frame(&mut client).await {
-            Some(Message::Close(Some(frame))) => {
-                assert_eq!(frame.code, CloseCode::Size);
-                assert_eq!(frame.reason, "message too big, at most 131072 bytes");
+        for message in [
+            Message::Text("x".repeat(131_073).into()),
+            Message::Binary(vec![b'x'; 131_073].into()),
+        ] {
+            let (mut client, _channel_rx) = websocket_client().await;
+            client.send(message).await.unwrap();
+            match next_frame(&mut client).await {
+                Some(Message::Close(Some(frame))) => {
+                    assert_eq!(frame.code, CloseCode::Size);
+                    assert_eq!(frame.reason, "message too big, at most 131072 bytes");
+                }
+                other => panic!("expected a 1009 close, got {:?}", other),
             }
-            other => panic!("expected a 1009 close, got {:?}", other),
+            assert!(next_frame(&mut client).await.is_none());
         }
-        assert!(next_frame(&mut client).await.is_none());
     }
 
     /// A WebSocket frame announcing more than twice the limit ends the

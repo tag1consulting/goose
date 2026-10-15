@@ -43,7 +43,7 @@ pub fn parse_timespan(time_str: &str) -> Option<usize> {
 }
 
 /// Why a time span is refused.
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub(crate) enum SpanError {
     /// A number, or the span in milliseconds, does not fit in a `usize`.
     TooLong,
@@ -66,7 +66,9 @@ pub(crate) fn timespan_seconds(time_str: &str) -> Result<usize, SpanError> {
     let seconds = match usize::from_str(time_str) {
         // If an integer is passed in, assume it's seconds
         Ok(t) => t,
-        Err(e) if cause(&e) == SpanError::TooLong => return Err(SpanError::TooLong),
+        Err(e) if *e.kind() == std::num::IntErrorKind::PosOverflow => {
+            return Err(SpanError::TooLong)
+        }
         // Otherwise use a regex to extract hours, minutes and seconds from string.
         Err(_) => {
             let time_matches = TIMESPAN.captures(time_str);
