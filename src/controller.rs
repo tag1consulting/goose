@@ -434,18 +434,6 @@ async fn send_command_within(
 /// the dashboard's, so a flood cannot hold the main loop.
 pub(crate) const MAX_DRAIN: usize = 16;
 
-/// The next queued request: the dashboard's, or when there is none and
-/// `controllers` is given, the Controllers'. Checking the dashboard before
-/// each Controller command means a dashboard command that arrives while
-/// Controller commands run waits for one of them at most.
-fn next_request(
-    dashboard: &Option<flume::Receiver<ControlRequest>>,
-    controllers: Option<&Option<flume::Receiver<ControlRequest>>>,
-) -> Option<ControlRequest> {
-    let pending = |rx: &Option<flume::Receiver<ControlRequest>>| rx.as_ref()?.try_recv().ok();
-    pending(dashboard).or_else(|| controllers.and_then(pending))
-}
-
 /// The parent process side of the Controller functionality.
 impl GooseAttack {
     /// Answer up to [`MAX_DRAIN`] queued dashboard commands, then up to
@@ -453,7 +441,7 @@ impl GooseAttack {
     /// dashboard first, and again before each Controller command, as the
     /// Controllers take no authentication. A request whose client has gone
     /// (timed out or disconnected) is skipped, so it is not applied after the
-    /// client was told it failed. Every `metrics` and `metrics-json` in the
+    /// client was told it failed, and does not count toward [`MAX_DRAIN`]. Every `metrics` and `metrics-json` in the
     /// tick is answered from one metrics processor request.
     pub(crate) async fn handle_control_requests(
         &mut self,
@@ -461,19 +449,27 @@ impl GooseAttack {
     ) -> Result<(), GooseError> {
         let mut metrics_waiters = Vec::new();
         let mut result = Ok(());
+        let pending = |rx: &Option<flume::Receiver<ControlRequest>>| rx.as_ref()?.try_recv().ok();
         'drain: for dashboard in [true, false] {
-            for _ in 0..MAX_DRAIN {
-                let controllers =
-                    (!dashboard).then_some(&goose_attack_run_state.controller_channel_rx);
-                let Some((command, respond)) =
-                    next_request(&goose_attack_run_state.dashboard_control_rx, controllers)
-                else {
+            // A skipped request is not counted, so requests whose clients
+            // have gone leave the queue at once however many there are.
+            let mut answered = 0;
+            while answered < MAX_DRAIN {
+                // The dashboard's next request, else in the Controllers' turn
+                // theirs: a dashboard command that arrives while Controller
+                // commands run waits for one of them, and the tick's one
+                // metrics request, at most.
+                let state = &*goose_attack_run_state;
+                let next = pending(&state.dashboard_control_rx)
+                    .or_else(|| (!dashboard).then(|| pending(&state.controller_channel_rx))?);
+                let Some((command, respond)) = next else {
                     break;
                 };
                 if respond.is_closed() {
                     debug!("[control]: {command:?} skipped, its client has gone");
                     continue;
                 }
+                answered += 1;
                 info!("[control]: {command:?}");
                 result = self
                     .control(
@@ -771,8 +767,8 @@ enum Transport {
 /// limit on one command line argument (`MAX_ARG_STRLEN`, 128 KiB with 4 KiB
 /// pages), so any test plan the command line takes there fits. A longer
 /// message gets a 1009 close. A connection accepts messages and frames of up
-/// to twice this, so it buffers about four times this at most: a message
-/// being assembled and its next frame.
+/// to twice this, so it buffers under 1 MiB: a message being assembled, its
+/// next frame, and one read ahead.
 pub(crate) const MAX_CONTROLLER_MESSAGE: usize = 128 * 1024;
 
 /// Reason in the close a WebSocket message over [`MAX_CONTROLLER_MESSAGE`]
@@ -1954,29 +1950,83 @@ pub(crate) mod tests {
         });
     }
 
-    /// With commands queued on both, the dashboard's comes next, in the
-    /// Controllers' turn too, so one arriving while Controller commands run
-    /// is answered after one of them at most.
+    /// A dashboard command beyond a full dashboard turn is still answered in
+    /// the tick, ahead of the Controllers': the dashboard is checked before
+    /// each Controller command, not only in its own turn.
     #[test]
-    fn next_request_prefers_the_dashboard() {
-        let (controller_tx, controller_rx) = flume::unbounded();
-        let (dashboard_tx, dashboard_rx) = flume::unbounded();
-        let (controller_rx, dashboard_rx) = (Some(controller_rx), Some(dashboard_rx));
-        let (respond, _reply) = oneshot::channel();
-        controller_tx
-            .send((ControllerCommand::Users(1), respond))
-            .unwrap();
-        let (respond, _reply) = oneshot::channel();
-        dashboard_tx
-            .send((ControllerCommand::Users(2), respond))
-            .unwrap();
-        let next = |controllers| {
-            next_request(&dashboard_rx, controllers).map(|(command, _)| format!("{:?}", command))
-        };
-        assert_eq!(next(Some(&controller_rx)).as_deref(), Some("Users(2)"));
-        assert_eq!(next(None), None);
-        assert_eq!(next(Some(&controller_rx)).as_deref(), Some("Users(1)"));
-        assert_eq!(next(Some(&controller_rx)), None);
+    #[serial_test::serial]
+    fn test_control_dashboard_checked_before_each_controller_command() {
+        use tokio::sync::oneshot::error::TryRecvError;
+
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) = idle_attack(&[]).await;
+            let (controller_tx, controller_rx) = flume::unbounded();
+            run_state.controller_channel_rx = Some(controller_rx);
+            let (dashboard_tx, dashboard_rx) = flume::unbounded();
+            run_state.dashboard_control_rx = Some(dashboard_rx);
+            let mut controller = Vec::new();
+            for users in 1..=MAX_DRAIN {
+                let (respond, reply) = oneshot::channel();
+                controller_tx
+                    .send((ControllerCommand::Users(users), respond))
+                    .unwrap();
+                controller.push(reply);
+            }
+            let mut dashboard = Vec::new();
+            for users in 100..=100 + MAX_DRAIN {
+                let (respond, reply) = oneshot::channel();
+                dashboard_tx
+                    .send((ControllerCommand::Users(users), respond))
+                    .unwrap();
+                dashboard.push(reply);
+            }
+            goose_attack
+                .handle_control_requests(&mut run_state)
+                .await
+                .unwrap();
+            for mut reply in dashboard {
+                assert!(matches!(
+                    reply.try_recv(),
+                    Ok(ControlReply::Outcome(ControlOutcome { ok: true, .. }))
+                ));
+            }
+            // The 17th dashboard command took a Controller slot.
+            let mut last = controller.pop().unwrap();
+            assert!(matches!(last.try_recv(), Err(TryRecvError::Empty)));
+            assert_eq!(goose_attack.configuration.users, Some(MAX_DRAIN - 1));
+        });
+    }
+
+    /// Requests whose clients have gone do not use up a tick: a live request
+    /// behind more than [`MAX_DRAIN`] of them is answered in the same tick.
+    #[test]
+    #[serial_test::serial]
+    fn test_control_gone_clients_do_not_count() {
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) = idle_attack(&[]).await;
+            let (controller_tx, controller_rx) = flume::unbounded();
+            run_state.controller_channel_rx = Some(controller_rx);
+            for users in 1..=MAX_DRAIN + 1 {
+                // The reply's receiver is dropped: the client has gone.
+                let (respond, _) = oneshot::channel();
+                controller_tx
+                    .send((ControllerCommand::Users(users), respond))
+                    .unwrap();
+            }
+            let (respond, mut reply) = oneshot::channel();
+            controller_tx
+                .send((ControllerCommand::Users(42), respond))
+                .unwrap();
+            goose_attack
+                .handle_control_requests(&mut run_state)
+                .await
+                .unwrap();
+            assert!(matches!(
+                reply.try_recv(),
+                Ok(ControlReply::Outcome(ControlOutcome { ok: true, .. }))
+            ));
+            assert_eq!(goose_attack.configuration.users, Some(42));
+        });
     }
 
     /// Every `metrics` and `metrics-json` queued in one tick is answered from
