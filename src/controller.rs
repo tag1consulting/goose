@@ -441,7 +441,8 @@ impl GooseAttack {
     /// dashboard first, and again before each Controller command, as the
     /// Controllers take no authentication. A request whose client has gone
     /// (timed out or disconnected) is skipped, so it is not applied after the
-    /// client was told it failed, and does not count toward [`MAX_DRAIN`]. Every `metrics` and `metrics-json` in the
+    /// client was told it failed, and does not count toward [`MAX_DRAIN`].
+    /// Every `metrics` and `metrics-json` in the
     /// tick is answered from one metrics processor request.
     pub(crate) async fn handle_control_requests(
         &mut self,
@@ -450,23 +451,38 @@ impl GooseAttack {
         let mut metrics_waiters = Vec::new();
         let mut result = Ok(());
         let pending = |rx: &Option<flume::Receiver<ControlRequest>>| rx.as_ref()?.try_recv().ok();
+        let queued = |rx: &Option<flume::Receiver<ControlRequest>>| {
+            rx.as_ref().map_or(0, flume::Receiver::len)
+        };
         'drain: for dashboard in [true, false] {
             // A skipped request is not counted, so requests whose clients
-            // have gone leave the queue at once however many there are.
+            // have gone leave the queue at once, but no more of them than
+            // were queued when the turn began, so the turn ends however fast
+            // more arrive.
+            let mut skips = queued(&goose_attack_run_state.dashboard_control_rx)
+                + match dashboard {
+                    true => 0,
+                    false => queued(&goose_attack_run_state.controller_channel_rx),
+                };
             let mut answered = 0;
             while answered < MAX_DRAIN {
                 // The dashboard's next request, else in the Controllers' turn
-                // theirs: a dashboard command that arrives while Controller
-                // commands run waits for one of them, and the tick's one
-                // metrics request, at most.
+                // theirs, so no queued Controller command runs ahead of a
+                // dashboard command.
                 let state = &*goose_attack_run_state;
-                let next = pending(&state.dashboard_control_rx)
-                    .or_else(|| (!dashboard).then(|| pending(&state.controller_channel_rx))?);
+                let next = match pending(&state.dashboard_control_rx) {
+                    None if !dashboard => pending(&state.controller_channel_rx),
+                    next => next,
+                };
                 let Some((command, respond)) = next else {
                     break;
                 };
                 if respond.is_closed() {
                     debug!("[control]: {command:?} skipped, its client has gone");
+                    if skips == 0 {
+                        break;
+                    }
+                    skips -= 1;
                     continue;
                 }
                 answered += 1;
@@ -765,10 +781,11 @@ enum Transport {
 
 /// Longest WebSocket message a Controller reads, in bytes. It matches Linux's
 /// limit on one command line argument (`MAX_ARG_STRLEN`, 128 KiB with 4 KiB
-/// pages), so any test plan the command line takes there fits. A longer
+/// pages), so a test plan the command line takes there fits, less the few
+/// bytes of the JSON request around it. A longer
 /// message gets a 1009 close. A connection accepts messages and frames of up
-/// to twice this, so it buffers under 1 MiB: a message being assembled, its
-/// next frame, and one read ahead.
+/// to twice this, so it reads into under 1 MiB: a message being assembled,
+/// its next frame, and one read ahead.
 pub(crate) const MAX_CONTROLLER_MESSAGE: usize = 128 * 1024;
 
 /// Reason in the close a WebSocket message over [`MAX_CONTROLLER_MESSAGE`]
@@ -2269,49 +2286,50 @@ pub(crate) mod tests {
     }
 
     /// A test plan in a WebSocket message of exactly [`MAX_CONTROLLER_MESSAGE`]
-    /// bytes is parsed and reaches the parent.
-    #[tokio::test]
-    async fn websocket_test_plan_at_limit_applied() {
-        let (mut client, channel_rx) = websocket_client().await;
-        // One user up and down per two steps, so 13,000 users in total.
-        let mut plan = "1,1s;0,1s;".repeat(13_000);
-        plan.push_str("0,");
-        let wrapper = r#"{"request":"testplan "}"#.len();
-        let padding = 131_072 - wrapper - plan.len() - 2;
-        plan.push_str(&"0".repeat(padding));
-        plan.push_str("1s");
-        let request = format!(r#"{{"request":"testplan {plan}"}}"#);
-        assert_eq!(request.len(), 131_072);
-        client.send(Message::Text(request.into())).await.unwrap();
-        let (command, respond) =
-            tokio::time::timeout(Duration::from_secs(10), channel_rx.recv_async())
-                .await
-                .unwrap()
-                .unwrap();
-        match command {
-            ControllerCommand::TestPlan(plan) => {
-                assert_eq!(plan.steps.len(), 26_001);
-                assert_eq!(plan.total_users(), 13_000);
+    /// bytes is parsed and applied.
+    #[test]
+    #[serial_test::serial]
+    fn websocket_test_plan_at_limit_applied() {
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) = idle_attack(&[]).await;
+            let (mut client, channel_rx) = websocket_client().await;
+            run_state.controller_channel_rx = Some(channel_rx);
+            // One user up and down per two steps, so 13,000 users in total.
+            let mut plan = "1,1s;0,1s;".repeat(13_000);
+            plan.push_str("0,");
+            let wrapper = r#"{"request":"testplan "}"#.len();
+            let padding = 131_072 - wrapper - plan.len() - 2;
+            plan.push_str(&"0".repeat(padding));
+            plan.push_str("1s");
+            let request = format!(r#"{{"request":"testplan {}"}}"#, plan);
+            assert_eq!(request.len(), 131_072);
+            client.send(Message::Text(request.into())).await.unwrap();
+            // Answer commands as the main loop does until the plan arrives.
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+            while goose_attack.configuration.test_plan.is_none() {
+                assert!(
+                    tokio::time::Instant::now() < deadline,
+                    "no test plan arrived"
+                );
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                goose_attack
+                    .handle_control_requests(&mut run_state)
+                    .await
+                    .unwrap();
             }
-            other => panic!("expected a test plan, got {:?}", other),
-        }
-        let _ = respond.send(ControlReply::Outcome(ControlOutcome {
-            ok: true,
-            error: None,
-            message: "test-plan configured".to_string(),
-            phase: "idle".to_string(),
-            active_users: 0,
-            target_users: None,
-        }));
-        match next_frame(&mut client).await {
-            Some(Message::Text(text)) => assert_eq!(
-                serde_json::from_str::<ControllerWebSocketResponse>(&text)
-                    .unwrap()
-                    .response,
-                "test-plan configured"
-            ),
-            other => panic!("expected a reply, got {:?}", other),
-        }
+            let applied = goose_attack.configuration.test_plan.as_ref().unwrap();
+            assert_eq!(applied.steps.len(), 26_001);
+            assert_eq!(applied.total_users(), 13_000);
+            match next_frame(&mut client).await {
+                Some(Message::Text(text)) => assert_eq!(
+                    serde_json::from_str::<ControllerWebSocketResponse>(&text)
+                        .unwrap()
+                        .response,
+                    "test-plan configured"
+                ),
+                other => panic!("expected a reply, got {:?}", other),
+            }
+        });
     }
 
     /// A binary WebSocket message is answered as main answered it.

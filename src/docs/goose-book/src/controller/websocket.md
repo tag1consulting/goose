@@ -16,7 +16,7 @@ For example, a client should send the follow json to request the current load te
 {"request":"metrics"}
 ```
 
-A request may be at most 131,072 bytes (128 KiB), the longest single command line argument Linux takes with 4 KiB pages, so any test plan the `--test-plan` option takes there fits. A longer message is answered with a close frame, code 1009 (message too big), with the reason `message too big, at most 131072 bytes`, and the connection ends.
+A request may be at most 131,072 bytes (128 KiB), the longest single command line argument Linux takes with 4 KiB pages, so a test plan the `--test-plan` option takes there fits, less the few bytes of the JSON request around it. A longer message is answered with a close frame, code 1009 (message too big), with the reason `message too big, at most 131072 bytes`, and the connection ends.
 
 Responses will always be in the following format:
 ```json
