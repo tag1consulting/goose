@@ -299,7 +299,7 @@ use std::fmt::{self, Debug, Formatter, Write as _};
 use std::hash::{Hash, Hasher};
 use std::str;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use std::{future::Future, pin::Pin, time::Instant};
 use url::Url;
@@ -3864,7 +3864,9 @@ impl TransactionName {
         }
     }
     pub fn default_value() -> Self {
-        Self::TransactionOnly(Arc::from(""))
+        // One shared empty name, so an unnamed transaction does not allocate.
+        static EMPTY: OnceLock<Arc<str>> = OnceLock::new();
+        Self::TransactionOnly(EMPTY.get_or_init(|| Arc::from("")).clone())
     }
 }
 
@@ -6720,6 +6722,23 @@ mod tests {
         )
         .await;
         assert!(Arc::ptr_eq(&metric.name, &name));
+    }
+
+    /// Every unnamed transaction shares one empty name, which serializes as
+    /// it always has.
+    #[test]
+    fn default_transaction_name_is_shared() {
+        let (TransactionName::TransactionOnly(first), TransactionName::TransactionOnly(second)) = (
+            TransactionName::default_value(),
+            TransactionName::default_value(),
+        ) else {
+            panic!("the default transaction name is TransactionOnly");
+        };
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(
+            serde_json::json!(TransactionName::default_value()).to_string(),
+            r#"{"TransactionOnly":""}"#
+        );
     }
 
     /// The error strings `request()` writes name the request as it is
