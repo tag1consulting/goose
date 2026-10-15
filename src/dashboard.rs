@@ -833,9 +833,10 @@ struct DashboardState {
     hub: SnapshotHub,
     /// Clone of the flume sender for series requests (same channel as the hub).
     request_tx: flume::Sender<DashboardRequest>,
-    /// The channel control commands go to the main loop on, shared with the
-    /// telnet and WebSocket Controllers: `Some` only with dashboard control,
-    /// when the control routes are registered and require a non-empty token.
+    /// The channel control commands go to the main loop on, apart from the
+    /// telnet and WebSocket Controllers' so the main loop answers it first:
+    /// `Some` only with dashboard control, when the control routes are
+    /// registered and require a non-empty token.
     control_tx: Option<flume::Sender<ControlRequest>>,
     /// Auth token; empty means observe auth is disabled (loopback-only runs).
     auth_token: String,
