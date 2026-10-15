@@ -1527,12 +1527,18 @@ impl GooseConfigure<Scenarios> for GooseConfiguration {
 }
 
 /// The seconds in time span option `option`, refused when the span is too long
-/// for a `usize` in milliseconds.
+/// for a `usize` in milliseconds or has a digit of another script before a
+/// unit, naming which.
 pub(crate) fn timespan(option: &str, value: &str) -> Result<usize, GooseError> {
-    util::parse_timespan(value).ok_or_else(|| GooseError::InvalidOption {
+    util::timespan_seconds(value).map_err(|e| GooseError::InvalidOption {
         option: format!("`configuration.{option}`"),
         value: value.to_string(),
-        detail: format!("`configuration.{option}` is too long."),
+        detail: match e {
+            util::SpanError::TooLong => format!("`configuration.{option}` is too long."),
+            util::SpanError::ForeignDigit => {
+                format!("`configuration.{option}` must use the ASCII digits 0 to 9.")
+            }
+        },
     })
 }
 
@@ -2426,7 +2432,7 @@ impl GooseConfiguration {
             });
         }
 
-        // If set, increase rate must be non-zero.
+        // If set, increase rate must be non-zero, and at least one user a day.
         if let Some(increase_rate) = self.increase_rate.as_ref() {
             if increase_rate == "0" {
                 return Err(GooseError::InvalidOption {
@@ -2435,15 +2441,35 @@ impl GooseConfiguration {
                     detail: "`configuration.increase_rate` must be non-zero.".to_string(),
                 });
             }
+            if increase_rate
+                .parse::<f32>()
+                .is_ok_and(util::below_one_user_a_day)
+            {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.increase_rate`".to_string(),
+                    value: increase_rate.to_string(),
+                    detail: "`configuration.increase_rate` must be a number of at least 0.0000116 (one user a day).".to_string(),
+                });
+            }
         }
 
-        // If set, decrease rate must be non-zero.
+        // If set, decrease rate must be non-zero, and at least one user a day.
         if let Some(decrease_rate) = self.decrease_rate.as_ref() {
             if decrease_rate == "0" {
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.decrease_rate`".to_string(),
                     value: decrease_rate.to_string(),
                     detail: "`configuration.decrease_rate` must be non-zero.".to_string(),
+                });
+            }
+            if decrease_rate
+                .parse::<f32>()
+                .is_ok_and(util::below_one_user_a_day)
+            {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.decrease_rate`".to_string(),
+                    value: decrease_rate.to_string(),
+                    detail: "`configuration.decrease_rate` must be a number of at least 0.0000116 (one user a day).".to_string(),
                 });
             }
         }

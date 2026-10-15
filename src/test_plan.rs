@@ -4,6 +4,7 @@
 
 use chrono::prelude::*;
 use gumdrop::Options;
+use lazy_static::lazy_static;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
@@ -27,6 +28,13 @@ impl Default for TestPlan {
     fn default() -> Self {
         Self::new()
     }
+}
+
+lazy_static! {
+    // Each step of a test plan is "{users},{timespan}"; white space is ignored.
+    static ref STEP: Regex =
+        Regex::new(r"^\s*([0-9]+)\s*,\s*([0-9]+|(([0-9]+?)h)?(([0-9]+?)m)?(([0-9]+?)s)?)\s*$")
+            .unwrap();
 }
 
 /// Automatically represent all load tests internally as a test plan.
@@ -135,14 +143,10 @@ impl TestPlan {
     pub(crate) fn parse(s: &str) -> Result<TestPlan, GooseError> {
         // Convert string into a TestPlan.
         let mut steps: Vec<(usize, usize)> = Vec::new();
-        // Each line of the test plan must be in the format "{users},{timespan}", white space is ignored
-        let re =
-            Regex::new(r"^\s*([0-9]+)\s*,\s*([0-9]+|(([0-9]+?)h)?(([0-9]+?)m)?(([0-9]+?)s)?)\s*$")
-                .unwrap();
         // A test plan can have multiple lines split by the semicolon ";".
         for line in s.split(';') {
             // Users and milliseconds, unless either is too large for a usize.
-            let step = re.captures(line).and_then(|cap| {
+            let step = STEP.captures(line).and_then(|cap| {
                 Some((
                     cap[1].parse::<usize>().ok()?,
                     util::parse_timespan(&cap[2])? * 1_000,

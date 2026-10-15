@@ -15,12 +15,15 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::str::{self, FromStr};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::oneshot;
-use tokio_tungstenite::tungstenite::protocol::{frame::coding::CloseCode, CloseFrame};
-use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::protocol::{
+    frame::coding::CloseCode, CloseFrame, WebSocketConfig,
+};
+use tokio_tungstenite::tungstenite::{Error as WebSocketError, Message};
 use tokio_tungstenite::WebSocketStream;
 
 /// Most users any front end can set: `users`, a test plan's total, and the
@@ -139,7 +142,8 @@ pub enum ControllerCommand {
     /// Goose must be idle to process this command.
     Host(String),
     /// Configure how quickly new [`GooseUser`](../goose/struct.GooseUser.html)s
-    /// are launched, per second: a finite number above 0.
+    /// are launched, per second: a finite number of at least 0.0000116, one
+    /// user a day.
     ///
     /// # Example
     /// Tells Goose to launch a new user every 1.25 seconds.
@@ -161,7 +165,8 @@ pub enum ControllerCommand {
     /// Goose must be idle to process this command.
     IncreaseTime(usize),
     /// Configure how quickly [`GooseUser`](../goose/struct.GooseUser.html)s are
-    /// stopped, per second: a finite number above 0.
+    /// stopped, per second: a finite number of at least 0.0000116, one user a
+    /// day.
     ///
     /// # Example
     /// Tells Goose to stop one user every 2 seconds.
@@ -212,7 +217,7 @@ pub enum ControllerCommand {
     /// Tells Goose to launch 10 users in 5 seconds, maintain them for 30 seconds, and then spend 5 seconds
     /// stopping them.
     /// ```notest
-    /// testplan "10,5s;10,30s;0,5s"
+    /// testplan 10,5s;10,30s;0,5s
     /// ```
     ///
     /// Can be configured on an idle or running load test.
@@ -291,10 +296,10 @@ fn grammar<'a>(
     regex.is_match(value).then_some(value).ok_or(error)
 }
 
-/// A rate: a finite number of users per second above 0.
+/// A rate: a finite number of users per second, at least one user a day.
 fn rate(value: &str, error: &'static str) -> Result<f32, &'static str> {
     match grammar(&RATE, value, error)?.parse::<f32>() {
-        Ok(rate) if rate.is_finite() && rate > 0.0 => Ok(rate),
+        Ok(rate) if rate.is_finite() && !crate::util::below_one_user_a_day(rate) => Ok(rate),
         _ => Err(error),
     }
 }
@@ -341,12 +346,16 @@ impl FromStr for ControllerCommand {
                 .parse()
                 .map_err(|_| INVALID_USERS_MSG)
                 .and_then(Self::users),
-            "increaserate" | "increase_rate" | "increase-rate" => {
-                rate(value, "increase_rate must be a number above 0").map(Self::IncreaseRate)
-            }
-            "decreaserate" | "decrease_rate" | "decrease-rate" => {
-                rate(value, "decrease_rate must be a number above 0").map(Self::DecreaseRate)
-            }
+            "increaserate" | "increase_rate" | "increase-rate" => rate(
+                value,
+                "increase_rate must be a number of at least 0.0000116 (one user a day)",
+            )
+            .map(Self::IncreaseRate),
+            "decreaserate" | "decrease_rate" | "decrease-rate" => rate(
+                value,
+                "decrease_rate must be a number of at least 0.0000116 (one user a day)",
+            )
+            .map(Self::DecreaseRate),
             "increasetime" | "increase_time" | "increase-time" => {
                 time(value, "increase_time must be a time span such as 1h30m5s")
                     .map(Self::IncreaseTime)
@@ -377,8 +386,9 @@ pub(crate) enum ControlReply {
     Outcome(ControlOutcome),
     /// The load test configuration, for `config` and `config-json`.
     Config(Box<GooseConfiguration>),
-    /// Current load test metrics, for `metrics` and `metrics-json`.
-    Metrics(Box<GooseMetrics>),
+    /// Current load test metrics, for `metrics` and `metrics-json`, shared
+    /// by every client that asked in the same tick.
+    Metrics(Arc<GooseMetrics>),
 }
 
 /// A command and where to send the parent's reply, on the one channel that
@@ -394,16 +404,26 @@ pub(crate) enum SendError {
 }
 
 /// Send `command` to the parent and wait up to [`CONTROL_TIMEOUT`] for its
-/// reply.
+/// reply: the dashboard's way in.
+#[cfg(feature = "dashboard")]
 pub(crate) async fn send_command(
     channel_tx: &flume::Sender<ControlRequest>,
     command: ControllerCommand,
+) -> Result<ControlReply, SendError> {
+    send_command_within(channel_tx, command, CONTROL_TIMEOUT).await
+}
+
+/// Send `command` to the parent and wait up to `timeout` for its reply.
+async fn send_command_within(
+    channel_tx: &flume::Sender<ControlRequest>,
+    command: ControllerCommand,
+    timeout: Duration,
 ) -> Result<ControlReply, SendError> {
     let (respond, reply) = oneshot::channel();
     channel_tx
         .send((command, respond))
         .map_err(|_| SendError::Unavailable)?;
-    match tokio::time::timeout(CONTROL_TIMEOUT, reply).await {
+    match tokio::time::timeout(timeout, reply).await {
         Ok(Ok(reply)) => Ok(reply),
         Ok(Err(_)) => Err(SendError::Unavailable),
         Err(_) => Err(SendError::Timeout),
@@ -416,39 +436,66 @@ pub(crate) const MAX_DRAIN: usize = 16;
 
 /// The parent process side of the Controller functionality.
 impl GooseAttack {
-    /// Answer up to [`MAX_DRAIN`] queued control requests, from telnet,
-    /// WebSocket and the dashboard alike. A request whose client has gone (timed out or disconnected) is skipped, so it
-    /// is not applied after the client was told it failed.
+    /// Answer up to [`MAX_DRAIN`] queued dashboard commands, then up to
+    /// [`MAX_DRAIN`] telnet and WebSocket commands: the dashboard first, as
+    /// the Controllers take no authentication. A request whose client has gone
+    /// (timed out or disconnected) is skipped, so it is not applied after the
+    /// client was told it failed. Every `metrics` and `metrics-json` in the
+    /// tick is answered from one metrics processor request.
     pub(crate) async fn handle_control_requests(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> Result<(), GooseError> {
-        for _ in 0..MAX_DRAIN {
-            let Some(Ok((command, respond))) = goose_attack_run_state
-                .controller_channel_rx
-                .as_ref()
-                .map(flume::Receiver::try_recv)
-            else {
-                break;
-            };
-            if respond.is_closed() {
-                debug!("[control]: {command:?} skipped, its client has gone");
-                continue;
+        let mut metrics_waiters = Vec::new();
+        let mut result = Ok(());
+        'drain: for dashboard in [true, false] {
+            for _ in 0..MAX_DRAIN {
+                let receiver = if dashboard {
+                    &goose_attack_run_state.dashboard_control_rx
+                } else {
+                    &goose_attack_run_state.controller_channel_rx
+                };
+                let Some(Ok((command, respond))) = receiver.as_ref().map(flume::Receiver::try_recv)
+                else {
+                    break;
+                };
+                if respond.is_closed() {
+                    debug!("[control]: {command:?} skipped, its client has gone");
+                    continue;
+                }
+                info!("[control]: {command:?}");
+                result = self
+                    .control(
+                        goose_attack_run_state,
+                        command,
+                        respond,
+                        &mut metrics_waiters,
+                    )
+                    .await;
+                if result.is_err() {
+                    break 'drain;
+                }
             }
-            info!("[control]: {command:?}");
-            self.control(goose_attack_run_state, command, respond)
-                .await?;
         }
-        Ok(())
+        // Answered even after a hard error, so no client waits for nothing.
+        if !metrics_waiters.is_empty() {
+            let metrics = Arc::new(self.metrics_for_controller(goose_attack_run_state).await);
+            for respond in metrics_waiters {
+                let _ = respond.send(ControlReply::Metrics(Arc::clone(&metrics)));
+            }
+        }
+        result
     }
 
     /// Apply one command and reply to it. A hard error is answered as an
-    /// `internal` outcome, then returned.
+    /// `internal` outcome, then returned. `metrics` and `metrics-json` are
+    /// added to `metrics_waiters`, all answered at the end of the tick.
     async fn control(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
         command: ControllerCommand,
         respond: oneshot::Sender<ControlReply>,
+        metrics_waiters: &mut Vec<oneshot::Sender<ControlReply>>,
     ) -> Result<(), GooseError> {
         let idle = self.attack_phase == AttackPhase::Idle;
         let refused = |goose: &Self, run_state: &GooseAttackRunState, message| {
@@ -467,8 +514,7 @@ impl GooseAttack {
                 return Ok(());
             }
             ControllerCommand::Metrics | ControllerCommand::MetricsJson => {
-                let metrics = self.metrics_for_controller(goose_attack_run_state).await;
-                let _ = respond.send(ControlReply::Metrics(Box::new(metrics)));
+                metrics_waiters.push(respond);
                 return Ok(());
             }
             ControllerCommand::Start => match self.control_start_begin(goose_attack_run_state) {
@@ -491,14 +537,20 @@ impl GooseAttack {
             ControllerCommand::IncreaseRate(rate) => {
                 self.configuration.increase_time = "0".to_string();
                 self.configuration.increase_rate = Some(rate.to_string());
-                self.configuration.test_plan = None;
-                configured(self, goose_attack_run_state, "increase_rate configured")
+                let message = match self.configuration.test_plan.take() {
+                    Some(_) => "increase_rate configured, test plan cleared",
+                    None => "increase_rate configured",
+                };
+                configured(self, goose_attack_run_state, message)
             }
             ControllerCommand::DecreaseRate(rate) => {
                 self.configuration.decrease_time = "0".to_string();
                 self.configuration.decrease_rate = Some(rate.to_string());
-                self.configuration.test_plan = None;
-                configured(self, goose_attack_run_state, "decrease_rate configured")
+                let message = match self.configuration.test_plan.take() {
+                    Some(_) => "decrease_rate configured, test plan cleared",
+                    None => "decrease_rate configured",
+                };
+                configured(self, goose_attack_run_state, message)
             }
             ControllerCommand::Host(_) if !idle => refused(
                 self,
@@ -544,7 +596,7 @@ impl GooseAttack {
         };
         match outcome {
             Ok(outcome) => {
-                info!(
+                debug!(
                     "[control]: ok={} error={:?} phase={} active_users={} target_users={:?}: {}",
                     outcome.ok,
                     outcome.error,
@@ -676,8 +728,13 @@ pub(crate) async fn controller_main(
         // ignored as the thread simply runs until the client exits or Goose shuts down.
         // Don't .await the tokio::spawn or Goose can't handle multiple simultaneous
         // connections.
-        let _ignored_joinhandle =
-            tokio::spawn(serve_client(stream, protocol, channel_tx.clone(), client));
+        let _ignored_joinhandle = tokio::spawn(serve_client(
+            stream,
+            protocol,
+            channel_tx.clone(),
+            client,
+            CONTROL_TIMEOUT,
+        ));
     }
 
     Ok(())
@@ -698,6 +755,16 @@ enum Transport {
     Telnet(TcpStream),
     WebSocket(Box<WebSocketStream<TcpStream>>),
 }
+
+/// Longest WebSocket message a Controller reads, in bytes. It matches Linux's
+/// limit on one command line argument (`MAX_ARG_STRLEN`, 128 KiB with 4 KiB
+/// pages), so any test plan the command line takes there fits. A longer
+/// message gets a 1009 close; the connection buffers at most twice this.
+pub(crate) const MAX_CONTROLLER_MESSAGE: usize = 128 * 1024;
+
+/// Reason in the close a WebSocket message over [`MAX_CONTROLLER_MESSAGE`]
+/// gets.
+const MESSAGE_TOO_BIG: &str = "message too big, at most 131072 bytes";
 
 /// Reply to a WebSocket message that is not a json request.
 const INVALID_JSON: &str =
@@ -722,10 +789,23 @@ impl Transport {
                 Some(Ok(text.lines().next().unwrap_or_default().to_string()))
             }
             Transport::WebSocket(stream) => {
-                let request = match stream.next().await?.ok()? {
+                let message = match stream.next().await? {
+                    Ok(message) if message.len() <= MAX_CONTROLLER_MESSAGE => message,
+                    // Too big: refused unread, or over the hard bound and
+                    // never buffered; a close can usually still be written.
+                    Ok(_) | Err(WebSocketError::Capacity(_)) => {
+                        info!("WebSocket Controller message over {MAX_CONTROLLER_MESSAGE} bytes, closing");
+                        self.close(CloseCode::Size, MESSAGE_TOO_BIG).await;
+                        return None;
+                    }
+                    Err(_) => return None,
+                };
+                let request = match message {
                     Message::Text(text) => {
                         serde_json::from_str::<ControllerWebSocketRequest>(&text).ok()
                     }
+                    // The client is closing: there is nothing to answer.
+                    Message::Close(_) => return None,
                     _ => None,
                 };
                 Some(request.map(|r| r.request).ok_or(INVALID_JSON))
@@ -759,10 +839,10 @@ impl Transport {
     }
 
     /// Tell a WebSocket client the connection is closing, and why.
-    async fn close(&mut self, reason: &'static str) {
+    async fn close(&mut self, code: CloseCode, reason: &'static str) {
         if let Transport::WebSocket(stream) = self {
             let frame = CloseFrame {
-                code: CloseCode::Normal,
+                code,
                 reason: reason.into(),
             };
             if stream.send(Message::Close(Some(frame))).await.is_err() {
@@ -772,17 +852,28 @@ impl Transport {
     }
 }
 
-/// Talk to one Controller client until it exits, shuts Goose down, or goes.
+/// Talk to one Controller client until it exits, shuts Goose down, or goes,
+/// waiting up to `timeout` for the parent to answer each command.
 async fn serve_client(
     socket: TcpStream,
     protocol: ControllerProtocol,
     channel_tx: flume::Sender<ControlRequest>,
     client: String,
+    timeout: Duration,
 ) {
     info!("{client} connected");
     let mut transport = match protocol {
         ControllerProtocol::Telnet => Transport::Telnet(socket),
-        ControllerProtocol::WebSocket => match tokio_tungstenite::accept_async(socket).await {
+        ControllerProtocol::WebSocket => match tokio_tungstenite::accept_async_with_config(
+            socket,
+            Some(
+                WebSocketConfig::default()
+                    .max_message_size(Some(2 * MAX_CONTROLLER_MESSAGE))
+                    .max_frame_size(Some(2 * MAX_CONTROLLER_MESSAGE)),
+            ),
+        )
+        .await
+        {
             Ok(stream) => Transport::WebSocket(Box::new(stream)),
             Err(e) => {
                 info!("invalid WebSocket handshake: {e}");
@@ -807,7 +898,7 @@ async fn serve_client(
         if let Some((reply, exit)) = local_reply(&line) {
             transport.write(true, reply).await;
             if exit {
-                transport.close("exit").await;
+                transport.close(CloseCode::Normal, "exit").await;
                 break;
             }
             continue;
@@ -829,11 +920,11 @@ async fn serve_client(
                 command,
                 ControllerCommand::ConfigJson | ControllerCommand::MetricsJson
             );
-        let (success, response) = match send_command(&channel_tx, command).await {
+        let (success, response) = match send_command_within(&channel_tx, command, timeout).await {
             Ok(ControlReply::Outcome(outcome)) => (outcome.ok, outcome.message),
             Ok(ControlReply::Config(config)) if json => (true, to_json(&config)),
             Ok(ControlReply::Config(config)) => (true, format!("{config:#?}")),
-            Ok(ControlReply::Metrics(metrics)) if json => (true, to_json(&metrics)),
+            Ok(ControlReply::Metrics(metrics)) if json => (true, to_json(metrics.as_ref())),
             Ok(ControlReply::Metrics(metrics)) => (true, metrics.to_string()),
             Err(SendError::Timeout) => (
                 false,
@@ -849,7 +940,7 @@ async fn serve_client(
         };
         transport.write(success, &response).await;
         if shutdown {
-            transport.close("shutdown").await;
+            transport.close(CloseCode::Normal, "shutdown").await;
             break;
         }
     }
@@ -958,6 +1049,7 @@ pub(crate) mod tests {
             ControllerProtocol::Telnet,
             channel_tx,
             "telnet client".to_string(),
+            CONTROL_TIMEOUT,
         ));
         let mut prompt = [0; 7];
         client.read_exact(&mut prompt).await.unwrap();
@@ -1843,6 +1935,9 @@ pub(crate) mod tests {
                 reply.try_recv(),
                 Ok(ControlReply::Outcome(ControlOutcome { ok: true, .. }))
             ));
+            // The dashboard's command ran first, so the last Controller
+            // command answered in the tick stands.
+            assert_eq!(goose_attack.configuration.users, Some(MAX_DRAIN));
         });
     }
 

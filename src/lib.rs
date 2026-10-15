@@ -339,6 +339,14 @@ pub(crate) fn attack_phase_str(phase: AttackPhase) -> &'static str {
     }
 }
 
+/// The option a [`GooseError::InvalidOption`] names when no host is
+/// configured; a refused Start reads its cause from it.
+const NO_HOST_OPTION: &str = "--host";
+
+/// The option a [`GooseError::InvalidOption`] names when there are no users
+/// to start; a refused Start reads its cause from it.
+const NO_USERS_OPTION: &str = "`configuration.users`";
+
 /// Machine-readable outcome of a control action (soft success/failure).
 ///
 /// Soft failures (expected rejections such as wrong phase or prepare failure)
@@ -432,9 +440,12 @@ struct GooseAttackRunState {
     throttle_threads_tx: Option<flume::Sender<bool>>,
     /// Optional sender for throttle thread, if enabled.
     parent_to_throttle_tx: Option<flume::Sender<bool>>,
-    /// The one channel telnet, WebSocket and dashboard control send commands on,
-    /// when any of them is enabled.
+    /// The channel telnet and WebSocket send commands on, when either is
+    /// enabled.
     controller_channel_rx: Option<flume::Receiver<ControlRequest>>,
+    /// The channel dashboard control sends the same commands on, answered
+    /// before the Controllers' so they can not delay it.
+    dashboard_control_rx: Option<flume::Receiver<ControlRequest>>,
     /// Optional channel allowing the dashboard HTTP task to request snapshots.
     #[cfg(feature = "dashboard")]
     dashboard_channel_rx: Option<flume::Receiver<dashboard::DashboardRequest>>,
@@ -1299,7 +1310,7 @@ impl GooseAttack {
                         }
                         None => {
                             return Err(GooseError::InvalidOption {
-                                option: "--host".to_string(),
+                                option: NO_HOST_OPTION.to_string(),
                                 value: "".to_string(),
                                 detail: format!(
                                     "A host must be defined via the --host option, the GooseAttack.set_default() function, or the Scenario.set_host() function (no host defined for {}).",
@@ -1323,7 +1334,7 @@ impl GooseAttack {
         // A load test with no users never starts: weighting zero users never ends.
         if self.test_plan.total_users() == 0 {
             return Err(GooseError::InvalidOption {
-                option: "`configuration.users`".to_string(),
+                option: NO_USERS_OPTION.to_string(),
                 value: "0".to_string(),
                 detail: "There are no users to start: configure users or a test plan.".to_string(),
             });
@@ -1551,8 +1562,8 @@ impl GooseAttack {
     ///
     /// Drains up to a small batch per main-loop iteration; at most one
     /// snapshot is forwarded per tick (latest wins). Dashboard control goes
-    /// through [`Self::handle_control_requests`], called after this, so a
-    /// snapshot forwarded here sees the phase before a command changes it.
+    /// through [`Self::handle_control_requests`], called before this, so a
+    /// snapshot forwarded here sees the phase a command in the same tick set.
     ///
     /// Snapshots are **non-blocking** for the attack loop: the parent forwards
     /// [`MetricsCommand::GetDashboardSnapshot`] with the hub's oneshot and does
@@ -1838,13 +1849,20 @@ impl GooseAttack {
         let (all_threads_shutdown_tx, shutdown_rx): (flume::Sender<usize>, flume::Receiver<usize>) =
             flume::unbounded();
 
-        // One channel carries every command from telnet, WebSocket and dashboard
-        // control to the parent, when any of them is enabled.
+        // Telnet and WebSocket send commands to the parent on one channel, and
+        // dashboard control on another, which the parent answers first.
         let (control_tx, controller_channel_rx) = (!self.configuration.no_telnet
-            || !self.configuration.no_websocket
-            || self.configuration.dashboard_control)
+            || !self.configuration.no_websocket)
             .then(flume::unbounded)
             .unzip();
+        #[cfg(feature = "dashboard")]
+        let (dashboard_control_tx, dashboard_control_rx) = self
+            .configuration
+            .dashboard_control
+            .then(flume::unbounded)
+            .unzip();
+        #[cfg(not(feature = "dashboard"))]
+        let dashboard_control_rx = None;
 
         // Optionally spawn a telnet and/or Websocket Controller thread.
         if let Some(control_tx) = &control_tx {
@@ -1861,12 +1879,7 @@ impl GooseAttack {
             dashboard_active_sse,
             dashboard_url,
             dashboard_server,
-        ) = match dashboard::setup_dashboard(
-            &self.configuration,
-            control_tx.filter(|_| self.configuration.dashboard_control),
-        )
-        .await?
-        {
+        ) = match dashboard::setup_dashboard(&self.configuration, dashboard_control_tx).await? {
             Some(setup) => (
                 Some(setup.request_rx),
                 Some(setup.close_tx),
@@ -1929,6 +1942,7 @@ impl GooseAttack {
             throttle_threads_tx: None,
             parent_to_throttle_tx: None,
             controller_channel_rx,
+            dashboard_control_rx,
             #[cfg(feature = "dashboard")]
             dashboard_channel_rx,
             #[cfg(feature = "dashboard")]
@@ -2473,13 +2487,13 @@ impl GooseAttack {
         });
         if let Err(e) = prepared {
             // Soft: do not move to Increase if unable to prepare load test. Name
-            // the cause: prepare_load_test refuses no host (option `--host`) and no
-            // users (option `configuration.users`) itself, matched here by name.
+            // the cause: prepare_load_test refuses no host and no users itself,
+            // with the options these constants name.
             let reason = match e {
-                GooseError::InvalidOption { option, .. } if option == "--host" => {
+                GooseError::InvalidOption { option, .. } if option == NO_HOST_OPTION => {
                     "no host is configured".to_string()
                 }
-                GooseError::InvalidOption { option, .. } if option == "`configuration.users`" => {
+                GooseError::InvalidOption { option, .. } if option == NO_USERS_OPTION => {
                     "there are no users to start".to_string()
                 }
                 GooseError::InvalidOption { detail, .. } => detail,
@@ -3029,14 +3043,13 @@ impl GooseAttack {
             // to the dedicated metrics processor task if so.
             self.sync_metrics(goose_attack_run_state);
 
-            // Check if the dashboard has requested a snapshot, before any command
-            // changes the phase it reports.
+            // Check if the dashboard or a Controller has sent a command.
+            self.handle_control_requests(goose_attack_run_state).await?;
+
+            // Check if the dashboard has requested a snapshot.
             #[cfg(feature = "dashboard")]
             self.handle_dashboard_requests(goose_attack_run_state)
                 .await?;
-
-            // Check if a Controller or the dashboard has sent a command.
-            self.handle_control_requests(goose_attack_run_state).await?;
 
             let mut message = goose_attack_run_state.shutdown_rx.try_recv();
             while message.is_ok() {

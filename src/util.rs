@@ -1,5 +1,6 @@
 //! Utility functions used by Goose, and available when writing load tests.
 
+use lazy_static::lazy_static;
 use regex::Regex;
 use std::cmp::{max, min};
 use std::collections::BTreeMap;
@@ -38,26 +39,57 @@ use crate::{is_killswitch_triggered, reset_killswitch, trigger_killswitch, Goose
 /// assert_eq!(util::parse_timespan("\u{661}h"), None);
 /// ```
 pub fn parse_timespan(time_str: &str) -> Option<usize> {
+    timespan_seconds(time_str).ok()
+}
+
+/// Why a time span is refused.
+#[derive(Debug, PartialEq)]
+pub(crate) enum SpanError {
+    /// A number, or the span in milliseconds, does not fit in a `usize`.
+    TooLong,
+    /// A digit of another script stands before a unit.
+    ForeignDigit,
+}
+
+lazy_static! {
+    static ref TIMESPAN: Regex =
+        Regex::new(r"((?P<hours>\d+?)h)?((?P<minutes>\d+?)m)?((?P<seconds>\d+?)s)?").unwrap();
+}
+
+/// The seconds in a time span, as [`parse_timespan`] reads it, or why it is
+/// refused.
+pub(crate) fn timespan_seconds(time_str: &str) -> Result<usize, SpanError> {
+    let cause = |e: &std::num::ParseIntError| match e.kind() {
+        std::num::IntErrorKind::PosOverflow => SpanError::TooLong,
+        _ => SpanError::ForeignDigit,
+    };
     let seconds = match usize::from_str(time_str) {
         // If an integer is passed in, assume it's seconds
         Ok(t) => t,
-        Err(e) if *e.kind() == std::num::IntErrorKind::PosOverflow => return None,
+        Err(e) if cause(&e) == SpanError::TooLong => return Err(SpanError::TooLong),
         // Otherwise use a regex to extract hours, minutes and seconds from string.
         Err(_) => {
-            let re = Regex::new(r"((?P<hours>\d+?)h)?((?P<minutes>\d+?)m)?((?P<seconds>\d+?)s)?")
-                .unwrap();
-            let time_matches = re.captures(time_str)?;
-            let part = |name: &str, unit: usize| match time_matches.name(name) {
-                Some(n) => usize::from_str(n.as_str()).ok()?.checked_mul(unit),
-                None => Some(0),
-            };
+            let time_matches = TIMESPAN.captures(time_str);
+            let part =
+                |name: &str, unit: usize| match time_matches.as_ref().and_then(|m| m.name(name)) {
+                    Some(n) => usize::from_str(n.as_str())
+                        .map_err(|e| cause(&e))?
+                        .checked_mul(unit)
+                        .ok_or(SpanError::TooLong),
+                    None => Ok(0),
+                };
             part("hours", 3600)?
-                .checked_add(part("minutes", 60)?)?
-                .checked_add(part("seconds", 1)?)?
+                .checked_add(part("minutes", 60)?)
+                .ok_or(SpanError::TooLong)?
+                .checked_add(part("seconds", 1)?)
+                .ok_or(SpanError::TooLong)?
         }
     };
     trace!("{time_str} is {seconds} seconds");
-    seconds.checked_mul(1_000).map(|_| seconds)
+    seconds
+        .checked_mul(1_000)
+        .map(|_| seconds)
+        .ok_or(SpanError::TooLong)
 }
 
 /// Sleep for a specified duration, minus the time spent doing other things.
@@ -350,6 +382,16 @@ pub fn ms_timer_expired(started: time::Instant, elapsed: usize) -> bool {
 /// ```
 pub fn parse_rate(rate: Option<String>) -> f32 {
     get_float_from_string(rate).unwrap_or(1.0)
+}
+
+/// The slowest rate Goose takes, in users per second: one user a day. A
+/// slower rate ramps for months, and a small enough one never finishes.
+const MIN_RATE: f32 = 1.0 / 86_400.0;
+
+/// Whether `rate`, in users per second, is slower than one user a day: the
+/// check the Controllers and the command line share. `NaN` is not.
+pub(crate) fn below_one_user_a_day(rate: f32) -> bool {
+    rate < MIN_RATE
 }
 
 /// Convert optional string to f32, otherwise return None.

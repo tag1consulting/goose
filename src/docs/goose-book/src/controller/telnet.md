@@ -42,12 +42,12 @@ A command whose value can't be used is refused with what the value must be, and 
 goose> users 0
 users must be an integer between 1 and 100000
 goose> increaserate 0
-increase_rate must be a number above 0
+increase_rate must be a number of at least 0.0000116 (one user a day)
 goose> runtime 10d
 run_time must be a time span such as 1h30m5s
 ```
 
-`host`, `runtime`, `increase-time` and `decrease-time` are accepted only while the load test is idle, as they are read when it starts. `users`, `test-plan` and the rates also change a running load test. A test plan must start 1 to 100000 users in total, and `users` and `test-plan` are refused while a `stop`, `shutdown` or Ctrl-C is ramping the load test down. A command that gets no answer within 15 seconds is reported as timed out, and may still apply.
+`host`, `runtime`, `increase-time` and `decrease-time` are accepted only while the load test is idle, as they are read when it starts. `users` and `test-plan` also change a running load test. The rates are accepted at any time and stored: the next `users` change or Start uses them, so on a running load test set a rate, then `users`. A rate of at least one user a day (0.0000116 a second) is accepted. Setting a rate clears a configured test plan, and the reply then says so: `increase_rate configured, test plan cleared`. A test plan must start 1 to 100000 users in total, and `users` and `test-plan` are refused while a `stop`, `shutdown` or Ctrl-C is ramping the load test down. A command that gets no answer within 15 seconds is reported as timed out, and may still apply.
 
 ## Example
 
