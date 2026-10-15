@@ -818,7 +818,7 @@ impl GooseRequestMetric {
     pub(crate) fn new(
         raw: GooseRawRequest,
         transaction_detail: TransactionDetail,
-        name: &str,
+        name: impl Into<Arc<str>>,
         elapsed: u128,
         user: usize,
     ) -> Self {
@@ -829,7 +829,7 @@ impl GooseRequestMetric {
             transaction_index: transaction_detail.transaction_index.unwrap_or(usize::MAX),
             transaction_name: transaction_detail.transaction_name,
             raw,
-            name: Arc::from(name),
+            name: name.into(),
             final_url: "".to_string(),
             redirected: false,
             response_time: 0,

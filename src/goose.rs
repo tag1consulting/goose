@@ -1947,12 +1947,12 @@ impl GooseUser {
                     // Record a failure if the expected status code was not returned.
                     if status_code != expect_status_code {
                         request_metric.success = false;
-                        request_metric.error = format!("{status_code}: {request_name}");
+                        request_metric.error = format!("{status_code}: {}", request_metric.name);
                     }
                 // Otherwise record a failure if the returned status code was not a success.
                 } else if !status_code.is_success() {
                     request_metric.success = false;
-                    request_metric.error = format!("{status_code}: {request_name}");
+                    request_metric.error = format!("{status_code}: {}", request_metric.name);
                 }
 
                 // Load test user was redirected.
@@ -1981,7 +1981,7 @@ impl GooseUser {
                 warn!("{:?}: {}", request_log_path(&request_metric.raw.url), e);
                 request_metric.success = false;
                 request_metric.set_status_code(None);
-                request_metric.error = clean_reqwest_error(e, request_name);
+                request_metric.error = clean_reqwest_error(e, &request_metric.name);
             }
         };
 
@@ -2717,19 +2717,22 @@ impl GooseUser {
 
     /// If `request_name` is set, unwrap and use this. Otherwise, if the Transaction has a name
     /// set use it. Otherwise use the path.
-    fn get_request_name<'a>(&'a self, request: &'a GooseRequest) -> &'a str {
+    ///
+    /// A name inherited from the Transaction is shared with it, not copied.
+    fn get_request_name(&self, request: &GooseRequest) -> Arc<str> {
         match request.name {
             // If a request.name is set, unwrap and return it.
-            Some(rn) => rn,
+            Some(rn) => Arc::from(rn),
             None => {
                 // Otherwise determine if the current Transaction is named, and if so return it.
-                if let Some(transaction_name) = &self.transaction_name {
-                    let request_name = transaction_name.name_for_request();
+                if let Some(TransactionName::InheritNameByRequests(request_name)) =
+                    &self.transaction_name
+                {
                     if !request_name.is_empty() {
-                        return request_name;
+                        return request_name.clone();
                     }
                 }
-                request.path
+                Arc::from(request.path)
             }
         }
     }
@@ -4586,7 +4589,7 @@ mod tests {
         // When TransactionOnly is used, get_request_name should return the path
         let request_name = user.get_request_name(&request);
         assert_eq!(
-            request_name, "/test/path",
+            &*request_name, "/test/path",
             "TransactionOnly should not inherit name to requests"
         );
 
@@ -4597,7 +4600,7 @@ mod tests {
 
         let request_name = user.get_request_name(&request);
         assert_eq!(
-            request_name, "inherited_name",
+            &*request_name, "inherited_name",
             "InheritNameByRequests should inherit name to requests"
         );
 
@@ -4609,7 +4612,7 @@ mod tests {
 
         let request_name = user.get_request_name(&named_request);
         assert_eq!(
-            request_name, "explicit_request_name",
+            &*request_name, "explicit_request_name",
             "Explicitly named request should use its own name"
         );
 
@@ -4618,7 +4621,7 @@ mod tests {
 
         let request_name = user.get_request_name(&request);
         assert_eq!(
-            request_name, "/test/path",
+            &*request_name, "/test/path",
             "Without transaction name, should use path"
         );
     }
@@ -6543,5 +6546,239 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join("\n")
         );
+    }
+
+    // --- Request names (#641) ---
+
+    /// The request metric a request for `/a` records, named `request_name`
+    /// if given, while `transaction` runs, with the fields that change from
+    /// run to run fixed so its log lines can be compared.
+    async fn request_metric_named(
+        transaction: Option<TransactionName>,
+        request_name: Option<&str>,
+    ) -> GooseRequestMetric {
+        request_metric_named_status(transaction, request_name, 200, None).await
+    }
+
+    /// [`request_metric_named`] when the server returns `status` and the
+    /// request expects `expect`, if given.
+    async fn request_metric_named_status(
+        transaction: Option<TransactionName>,
+        request_name: Option<&str>,
+        status: u16,
+        expect: Option<u16>,
+    ) -> GooseRequestMetric {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(GET).path("/a");
+            then.status(status);
+        });
+        let mut user = setup_user(&server).unwrap();
+        let (tx, rx) = flume::unbounded();
+        user.metrics_channel = Some(tx);
+        user.scenario_name = Arc::from("Scenario One");
+        user.transaction_name = transaction;
+        user.transaction_index = user.transaction_name.as_ref().map(|_| 3);
+        let mut builder = GooseRequest::builder().path("/a");
+        if let Some(name) = request_name {
+            builder = builder.name(name);
+        }
+        if let Some(code) = expect {
+            builder = builder.expect_status_code(code);
+        }
+        user.request(builder.build()).await.unwrap();
+        user.flush_pending_request().unwrap();
+        mock.assert();
+        let mut metric = recv_request_metric(&rx);
+        metric.elapsed = 1234;
+        metric.response_time = 5;
+        metric.raw.url = "http://target/a".to_string();
+        metric.final_url = "http://target/a".to_string();
+        metric
+    }
+
+    /// The request log line for `metric` in each format.
+    fn request_log_lines(metric: &GooseRequestMetric) -> Vec<String> {
+        use crate::logger::{GooseLogFormat, GooseLogger};
+        [
+            GooseLogFormat::Json,
+            GooseLogFormat::Raw,
+            GooseLogFormat::Csv,
+        ]
+        .iter()
+        .map(|format| {
+            let mut configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
+            configuration.request_format = Some(format.clone());
+            configuration.format_message(metric.clone())
+        })
+        .collect()
+    }
+
+    /// For each way a request is named, the request metric's names and its
+    /// request log line in each format are what they were before the name
+    /// was shared with the transaction.
+    #[tokio::test]
+    async fn request_names_and_log_lines_match_each_naming_mode() {
+        // The mode, the transaction, the request's own name, the name it
+        // records, and its JSON, raw and CSV request log lines.
+        type NamingMode<'a> = (
+            &'a str,
+            Option<TransactionName>,
+            Option<&'a str>,
+            &'a str,
+            [&'a str; 3],
+        );
+        let modes: Vec<NamingMode> = vec![
+            (
+                "inheriting",
+                Some(TransactionName::InheritNameByRequests(Arc::from("Front Page"))),
+                None,
+                "Front Page",
+                [
+                    "{\"coordinated_omission_elapsed\":0,\"elapsed\":1234,\"error\":\"\",\"final_url\":\"http://target/a\",\"name\":\"Front Page\",\"raw\":{\"body\":\"\",\"custom_method\":\"\",\"headers\":[],\"method\":\"Get\",\"url\":\"http://target/a\"},\"redirected\":false,\"response_time\":5,\"scenario_index\":0,\"scenario_name\":\"Scenario One\",\"status_code\":200,\"success\":true,\"transaction_index\":3,\"transaction_name\":{\"InheritNameByRequests\":\"Front Page\"},\"update\":false,\"user\":0,\"user_cadence\":0}",
+                    "GooseRequestMetric { elapsed: 1234, scenario_index: 0, scenario_name: \"Scenario One\", transaction_index: 3, transaction_name: InheritNameByRequests(\"Front Page\"), raw: GooseRawRequest { method: Get, url: \"http://target/a\", headers: [], body: \"\", custom_method: \"\" }, name: \"Front Page\", final_url: \"http://target/a\", redirected: false, response_time: 5, status_code: 200, success: true, update: false, user: 0, error: \"\", coordinated_omission_elapsed: 0, user_cadence: 0 }",
+                    "1234,0,Scenario One,3,Front Page,\"GooseRawRequest { method: Get, url: \"\"http://target/a\"\", headers: [], body: \"\"\"\", custom_method: \"\"\"\" }\",Front Page,http://target/a,false,5,200,true,false,0,,0,0",
+                ],
+            ),
+            (
+                "transaction only",
+                Some(TransactionName::TransactionOnly(Arc::from("Front Page"))),
+                None,
+                "/a",
+                [
+                    "{\"coordinated_omission_elapsed\":0,\"elapsed\":1234,\"error\":\"\",\"final_url\":\"http://target/a\",\"name\":\"/a\",\"raw\":{\"body\":\"\",\"custom_method\":\"\",\"headers\":[],\"method\":\"Get\",\"url\":\"http://target/a\"},\"redirected\":false,\"response_time\":5,\"scenario_index\":0,\"scenario_name\":\"Scenario One\",\"status_code\":200,\"success\":true,\"transaction_index\":3,\"transaction_name\":{\"TransactionOnly\":\"Front Page\"},\"update\":false,\"user\":0,\"user_cadence\":0}",
+                    "GooseRequestMetric { elapsed: 1234, scenario_index: 0, scenario_name: \"Scenario One\", transaction_index: 3, transaction_name: TransactionOnly(\"Front Page\"), raw: GooseRawRequest { method: Get, url: \"http://target/a\", headers: [], body: \"\", custom_method: \"\" }, name: \"/a\", final_url: \"http://target/a\", redirected: false, response_time: 5, status_code: 200, success: true, update: false, user: 0, error: \"\", coordinated_omission_elapsed: 0, user_cadence: 0 }",
+                    "1234,0,Scenario One,3,,\"GooseRawRequest { method: Get, url: \"\"http://target/a\"\", headers: [], body: \"\"\"\", custom_method: \"\"\"\" }\",/a,http://target/a,false,5,200,true,false,0,,0,0",
+                ],
+            ),
+            (
+                "request named",
+                Some(TransactionName::InheritNameByRequests(Arc::from("Front Page"))),
+                Some("named request"),
+                "named request",
+                [
+                    "{\"coordinated_omission_elapsed\":0,\"elapsed\":1234,\"error\":\"\",\"final_url\":\"http://target/a\",\"name\":\"named request\",\"raw\":{\"body\":\"\",\"custom_method\":\"\",\"headers\":[],\"method\":\"Get\",\"url\":\"http://target/a\"},\"redirected\":false,\"response_time\":5,\"scenario_index\":0,\"scenario_name\":\"Scenario One\",\"status_code\":200,\"success\":true,\"transaction_index\":3,\"transaction_name\":{\"InheritNameByRequests\":\"Front Page\"},\"update\":false,\"user\":0,\"user_cadence\":0}",
+                    "GooseRequestMetric { elapsed: 1234, scenario_index: 0, scenario_name: \"Scenario One\", transaction_index: 3, transaction_name: InheritNameByRequests(\"Front Page\"), raw: GooseRawRequest { method: Get, url: \"http://target/a\", headers: [], body: \"\", custom_method: \"\" }, name: \"named request\", final_url: \"http://target/a\", redirected: false, response_time: 5, status_code: 200, success: true, update: false, user: 0, error: \"\", coordinated_omission_elapsed: 0, user_cadence: 0 }",
+                    "1234,0,Scenario One,3,Front Page,\"GooseRawRequest { method: Get, url: \"\"http://target/a\"\", headers: [], body: \"\"\"\", custom_method: \"\"\"\" }\",named request,http://target/a,false,5,200,true,false,0,,0,0",
+                ],
+            ),
+            (
+                "path only",
+                Some(TransactionName::TransactionOnly(Arc::from(""))),
+                None,
+                "/a",
+                [
+                    "{\"coordinated_omission_elapsed\":0,\"elapsed\":1234,\"error\":\"\",\"final_url\":\"http://target/a\",\"name\":\"/a\",\"raw\":{\"body\":\"\",\"custom_method\":\"\",\"headers\":[],\"method\":\"Get\",\"url\":\"http://target/a\"},\"redirected\":false,\"response_time\":5,\"scenario_index\":0,\"scenario_name\":\"Scenario One\",\"status_code\":200,\"success\":true,\"transaction_index\":3,\"transaction_name\":{\"TransactionOnly\":\"\"},\"update\":false,\"user\":0,\"user_cadence\":0}",
+                    "GooseRequestMetric { elapsed: 1234, scenario_index: 0, scenario_name: \"Scenario One\", transaction_index: 3, transaction_name: TransactionOnly(\"\"), raw: GooseRawRequest { method: Get, url: \"http://target/a\", headers: [], body: \"\", custom_method: \"\" }, name: \"/a\", final_url: \"http://target/a\", redirected: false, response_time: 5, status_code: 200, success: true, update: false, user: 0, error: \"\", coordinated_omission_elapsed: 0, user_cadence: 0 }",
+                    "1234,0,Scenario One,3,,\"GooseRawRequest { method: Get, url: \"\"http://target/a\"\", headers: [], body: \"\"\"\", custom_method: \"\"\"\" }\",/a,http://target/a,false,5,200,true,false,0,,0,0",
+                ],
+            ),
+            (
+                "inheriting empty",
+                Some(TransactionName::InheritNameByRequests(Arc::from(""))),
+                None,
+                "/a",
+                [
+                    "{\"coordinated_omission_elapsed\":0,\"elapsed\":1234,\"error\":\"\",\"final_url\":\"http://target/a\",\"name\":\"/a\",\"raw\":{\"body\":\"\",\"custom_method\":\"\",\"headers\":[],\"method\":\"Get\",\"url\":\"http://target/a\"},\"redirected\":false,\"response_time\":5,\"scenario_index\":0,\"scenario_name\":\"Scenario One\",\"status_code\":200,\"success\":true,\"transaction_index\":3,\"transaction_name\":{\"InheritNameByRequests\":\"\"},\"update\":false,\"user\":0,\"user_cadence\":0}",
+                    "GooseRequestMetric { elapsed: 1234, scenario_index: 0, scenario_name: \"Scenario One\", transaction_index: 3, transaction_name: InheritNameByRequests(\"\"), raw: GooseRawRequest { method: Get, url: \"http://target/a\", headers: [], body: \"\", custom_method: \"\" }, name: \"/a\", final_url: \"http://target/a\", redirected: false, response_time: 5, status_code: 200, success: true, update: false, user: 0, error: \"\", coordinated_omission_elapsed: 0, user_cadence: 0 }",
+                    "1234,0,Scenario One,3,,\"GooseRawRequest { method: Get, url: \"\"http://target/a\"\", headers: [], body: \"\"\"\", custom_method: \"\"\"\" }\",/a,http://target/a,false,5,200,true,false,0,,0,0",
+                ],
+            ),
+            (
+                "no transaction",
+                None,
+                None,
+                "/a",
+                [
+                    "{\"coordinated_omission_elapsed\":0,\"elapsed\":1234,\"error\":\"\",\"final_url\":\"http://target/a\",\"name\":\"/a\",\"raw\":{\"body\":\"\",\"custom_method\":\"\",\"headers\":[],\"method\":\"Get\",\"url\":\"http://target/a\"},\"redirected\":false,\"response_time\":5,\"scenario_index\":0,\"scenario_name\":\"Scenario One\",\"status_code\":200,\"success\":true,\"transaction_index\":18446744073709551615,\"transaction_name\":{\"TransactionOnly\":\"\"},\"update\":false,\"user\":0,\"user_cadence\":0}",
+                    "GooseRequestMetric { elapsed: 1234, scenario_index: 0, scenario_name: \"Scenario One\", transaction_index: 18446744073709551615, transaction_name: TransactionOnly(\"\"), raw: GooseRawRequest { method: Get, url: \"http://target/a\", headers: [], body: \"\", custom_method: \"\" }, name: \"/a\", final_url: \"http://target/a\", redirected: false, response_time: 5, status_code: 200, success: true, update: false, user: 0, error: \"\", coordinated_omission_elapsed: 0, user_cadence: 0 }",
+                    "1234,0,Scenario One,18446744073709551615,,\"GooseRawRequest { method: Get, url: \"\"http://target/a\"\", headers: [], body: \"\"\"\", custom_method: \"\"\"\" }\",/a,http://target/a,false,5,200,true,false,0,,0,0",
+                ],
+            ),
+        ];
+        for (mode, transaction, request_name, name, lines) in modes {
+            let metric = request_metric_named(transaction.clone(), request_name).await;
+            assert_eq!(metric.name.as_ref(), name, "{mode}");
+            assert_eq!(metric.scenario_name.as_ref(), "Scenario One", "{mode}");
+            assert_eq!(
+                metric.transaction_name,
+                transaction.unwrap_or(TransactionName::default_value()),
+                "{mode}"
+            );
+            assert_eq!(request_log_lines(&metric), lines, "{mode}");
+        }
+    }
+
+    /// A request named after its transaction shares the transaction's name
+    /// rather than copying it.
+    #[tokio::test]
+    async fn inherited_request_name_shares_the_transaction_name() {
+        let name: Arc<str> = Arc::from("Front Page");
+        let metric = request_metric_named(
+            Some(TransactionName::InheritNameByRequests(name.clone())),
+            None,
+        )
+        .await;
+        assert!(Arc::ptr_eq(&metric.name, &name));
+    }
+
+    /// The error strings `request()` writes name the request as it is
+    /// recorded, for a bad status, an unexpected status and a transport error.
+    #[tokio::test]
+    async fn request_error_strings_use_the_request_name() {
+        let inherit = || {
+            Some(TransactionName::InheritNameByRequests(Arc::from(
+                "Front Page",
+            )))
+        };
+        let m = request_metric_named_status(inherit(), None, 500, None).await;
+        assert_eq!(m.error, "500 Internal Server Error: Front Page");
+        let m = request_metric_named_status(inherit(), None, 200, Some(201)).await;
+        assert_eq!(m.error, "200 OK: Front Page");
+        let m = request_metric_named_status(inherit(), Some("named request"), 500, None).await;
+        assert_eq!(m.error, "500 Internal Server Error: named request");
+        let only = Some(TransactionName::TransactionOnly(Arc::from("Front Page")));
+        let m = request_metric_named_status(only, None, 500, None).await;
+        assert_eq!(m.error, "500 Internal Server Error: /a");
+
+        // Nothing listens on a port once its listener is dropped.
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let mut configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
+        configuration.co_mitigation = Some(GooseCoordinatedOmissionMitigation::Average);
+        let base_url = format!("http://127.0.0.1:{port}/").parse().unwrap();
+        let mut user = GooseUser::single(base_url, &configuration).unwrap();
+        let (tx, rx) = flume::unbounded();
+        user.metrics_channel = Some(tx);
+        user.transaction_name = inherit();
+        let _ = user
+            .request(GooseRequest::builder().path("/a").build())
+            .await;
+        user.flush_pending_request().unwrap();
+        let m = recv_request_metric(&rx);
+        assert!(!m.success);
+        assert!(
+            m.error.starts_with("error sending request Front Page"),
+            "{}",
+            m.error
+        );
+    }
+
+    /// A custom request inside an inheriting transaction keeps its own name.
+    #[tokio::test]
+    async fn record_custom_request_in_inheriting_transaction() {
+        let (mut user, rx) = setup_user_with_channel();
+        let transaction = TransactionName::InheritNameByRequests(Arc::from("Front Page"));
+        user.transaction_name = Some(transaction.clone());
+        user.record_custom_request("TCP", "my_op", 42, true, None, None)
+            .await
+            .unwrap();
+        user.flush_pending_request().unwrap();
+        let m = recv_request_metric(&rx);
+        assert_eq!(m.name.as_ref(), "my_op");
+        assert_eq!(m.transaction_name, transaction);
     }
 }
