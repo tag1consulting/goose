@@ -434,11 +434,24 @@ async fn send_command_within(
 /// the dashboard's, so a flood cannot hold the main loop.
 pub(crate) const MAX_DRAIN: usize = 16;
 
+/// The next queued request: the dashboard's, or when there is none and
+/// `controllers` is given, the Controllers'. Checking the dashboard before
+/// each Controller command means a dashboard command that arrives while
+/// Controller commands run waits for one of them at most.
+fn next_request(
+    dashboard: &Option<flume::Receiver<ControlRequest>>,
+    controllers: Option<&Option<flume::Receiver<ControlRequest>>>,
+) -> Option<ControlRequest> {
+    let pending = |rx: &Option<flume::Receiver<ControlRequest>>| rx.as_ref()?.try_recv().ok();
+    pending(dashboard).or_else(|| controllers.and_then(pending))
+}
+
 /// The parent process side of the Controller functionality.
 impl GooseAttack {
     /// Answer up to [`MAX_DRAIN`] queued dashboard commands, then up to
-    /// [`MAX_DRAIN`] telnet and WebSocket commands: the dashboard first, as
-    /// the Controllers take no authentication. A request whose client has gone
+    /// [`MAX_DRAIN`] more, telnet and WebSocket commands among them: the
+    /// dashboard first, and again before each Controller command, as the
+    /// Controllers take no authentication. A request whose client has gone
     /// (timed out or disconnected) is skipped, so it is not applied after the
     /// client was told it failed. Every `metrics` and `metrics-json` in the
     /// tick is answered from one metrics processor request.
@@ -450,12 +463,10 @@ impl GooseAttack {
         let mut result = Ok(());
         'drain: for dashboard in [true, false] {
             for _ in 0..MAX_DRAIN {
-                let receiver = if dashboard {
-                    &goose_attack_run_state.dashboard_control_rx
-                } else {
-                    &goose_attack_run_state.controller_channel_rx
-                };
-                let Some(Ok((command, respond))) = receiver.as_ref().map(flume::Receiver::try_recv)
+                let controllers =
+                    (!dashboard).then_some(&goose_attack_run_state.controller_channel_rx);
+                let Some((command, respond)) =
+                    next_request(&goose_attack_run_state.dashboard_control_rx, controllers)
                 else {
                     break;
                 };
@@ -759,7 +770,9 @@ enum Transport {
 /// Longest WebSocket message a Controller reads, in bytes. It matches Linux's
 /// limit on one command line argument (`MAX_ARG_STRLEN`, 128 KiB with 4 KiB
 /// pages), so any test plan the command line takes there fits. A longer
-/// message gets a 1009 close; the connection buffers at most twice this.
+/// message gets a 1009 close. A connection accepts messages and frames of up
+/// to twice this, so it buffers about four times this at most: a message
+/// being assembled and its next frame.
 pub(crate) const MAX_CONTROLLER_MESSAGE: usize = 128 * 1024;
 
 /// Reason in the close a WebSocket message over [`MAX_CONTROLLER_MESSAGE`]
@@ -1941,6 +1954,31 @@ pub(crate) mod tests {
         });
     }
 
+    /// With commands queued on both, the dashboard's comes next, in the
+    /// Controllers' turn too, so one arriving while Controller commands run
+    /// is answered after one of them at most.
+    #[test]
+    fn next_request_prefers_the_dashboard() {
+        let (controller_tx, controller_rx) = flume::unbounded();
+        let (dashboard_tx, dashboard_rx) = flume::unbounded();
+        let (controller_rx, dashboard_rx) = (Some(controller_rx), Some(dashboard_rx));
+        let (respond, _reply) = oneshot::channel();
+        controller_tx
+            .send((ControllerCommand::Users(1), respond))
+            .unwrap();
+        let (respond, _reply) = oneshot::channel();
+        dashboard_tx
+            .send((ControllerCommand::Users(2), respond))
+            .unwrap();
+        let next = |controllers| {
+            next_request(&dashboard_rx, controllers).map(|(command, _)| format!("{:?}", command))
+        };
+        assert_eq!(next(Some(&controller_rx)).as_deref(), Some("Users(2)"));
+        assert_eq!(next(None), None);
+        assert_eq!(next(Some(&controller_rx)).as_deref(), Some("Users(1)"));
+        assert_eq!(next(Some(&controller_rx)), None);
+    }
+
     /// Every `metrics` and `metrics-json` queued in one tick is answered from
     /// one metrics processor request.
     #[test]
@@ -2154,14 +2192,19 @@ pub(crate) mod tests {
         assert!(next_frame(&mut client).await.is_none());
     }
 
-    /// A WebSocket message over twice the limit ends the connection: with
-    /// the same 1009 close if one can still be written.
+    /// A WebSocket frame announcing more than twice the limit ends the
+    /// connection from its header, before any of it is buffered: with the
+    /// same 1009 close if one can still be written.
     #[tokio::test]
     async fn websocket_message_over_hard_bound_ends_connection() {
         let (mut client, _channel_rx) = websocket_client().await;
-        let text = "x".repeat(300 * 1024);
-        // The server may close before the whole message is written.
-        let _ = client.send(Message::Text(text.into())).await;
+        // A masked text frame header announcing 300 KiB, and no payload: only
+        // a limit read from the header answers it; a buffering server waits
+        // for the payload and the test times out.
+        let mut header = vec![0x81, 0xFF];
+        header.extend_from_slice(&(300u64 * 1024).to_be_bytes());
+        header.extend_from_slice(&[1, 2, 3, 4]);
+        client.get_mut().write_all(&header).await.unwrap();
         match next_frame(&mut client).await {
             None => {}
             Some(Message::Close(frame)) => {
