@@ -988,8 +988,10 @@ pub(crate) mod tests {
         const UNRECOGNIZED: &str = "unrecognized command";
         const USERS: &str = "users must be an integer between 1 and 100000";
         const HOST: &str = "host must be a valid url starting with http:// or https://";
-        const INCREASE_RATE: &str = "increase_rate must be a number above 0";
-        const DECREASE_RATE: &str = "decrease_rate must be a number above 0";
+        const INCREASE_RATE: &str =
+            "increase_rate must be a number of at least 0.0000116 (one user a day)";
+        const DECREASE_RATE: &str =
+            "decrease_rate must be a number of at least 0.0000116 (one user a day)";
         const INCREASE_TIME: &str = "increase_time must be a time span such as 1h30m5s";
         const DECREASE_TIME: &str = "decrease_time must be a time span such as 1h30m5s";
         const RUN_TIME: &str = "run_time must be a time span such as 1h30m5s";
@@ -1032,6 +1034,9 @@ pub(crate) mod tests {
             ("decreaserate 0.5", "DecreaseRate(0.5)"),
             ("decrease_rate 2", "DecreaseRate(2.0)"),
             ("decrease-rate 0.90", "DecreaseRate(0.9)"),
+            // One user a day is the slowest rate.
+            ("increaserate 0.0000116", "IncreaseRate(1.16e-5)"),
+            ("decreaserate 0.0000116", "DecreaseRate(1.16e-5)"),
             ("increasetime 30s", "IncreaseTime(30)"),
             ("increase_time 1h2m3s", "IncreaseTime(3723)"),
             ("increase-time 10", "IncreaseTime(10)"),
@@ -1085,6 +1090,11 @@ pub(crate) mod tests {
             ("increaserate -1", INCREASE_RATE),
             ("decreaserate 0", DECREASE_RATE),
             ("decreaserate .", DECREASE_RATE),
+            // Above 0, but slower than one user a day: a ramp of months.
+            ("increaserate 0.0000001", INCREASE_RATE),
+            ("increaserate 0.00001157", INCREASE_RATE),
+            ("decreaserate 0.0000001", DECREASE_RATE),
+            ("decreaserate 0.00001157", DECREASE_RATE),
             ("increasetime .1", INCREASE_TIME),
             ("increasetime 10d", INCREASE_TIME),
             ("increase-time 2m1h", INCREASE_TIME),
@@ -1800,5 +1810,337 @@ pub(crate) mod tests {
             ));
             assert_eq!(goose_attack.configuration.users, Some(17));
         });
+    }
+
+    /// Dashboard control is answered before queued Controller commands, so
+    /// Controller clients, which take no authentication, can not delay it.
+    #[test]
+    #[serial_test::serial]
+    fn test_control_dashboard_drained_first() {
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) = idle_attack(&[]).await;
+            let (controller_tx, controller_rx) = flume::unbounded();
+            run_state.controller_channel_rx = Some(controller_rx);
+            let (dashboard_tx, dashboard_rx) = flume::unbounded();
+            run_state.dashboard_control_rx = Some(dashboard_rx);
+            let mut queued = Vec::new();
+            for users in 1..=MAX_DRAIN + 1 {
+                let (respond, reply) = oneshot::channel();
+                controller_tx
+                    .send((ControllerCommand::Users(users), respond))
+                    .unwrap();
+                queued.push(reply);
+            }
+            let (respond, mut reply) = oneshot::channel();
+            dashboard_tx
+                .send((ControllerCommand::Users(42), respond))
+                .unwrap();
+            goose_attack
+                .handle_control_requests(&mut run_state)
+                .await
+                .unwrap();
+            assert!(matches!(
+                reply.try_recv(),
+                Ok(ControlReply::Outcome(ControlOutcome { ok: true, .. }))
+            ));
+        });
+    }
+
+    /// Every `metrics` and `metrics-json` queued in one tick is answered from
+    /// one metrics processor request.
+    #[test]
+    #[serial_test::serial]
+    fn test_control_metrics_fetched_once_per_tick() {
+        use crate::metrics::MetricsCommand;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) = idle_attack(&[]).await;
+            let (controller_tx, controller_rx) = flume::unbounded();
+            run_state.controller_channel_rx = Some(controller_rx);
+            let (metrics_cmd_tx, metrics_cmd_rx) = flume::unbounded();
+            run_state.metrics_cmd_tx = metrics_cmd_tx;
+            let requests = Arc::new(AtomicUsize::new(0));
+            let counted = Arc::clone(&requests);
+            tokio::spawn(async move {
+                while let Ok(command) = metrics_cmd_rx.recv_async().await {
+                    if let MetricsCommand::GetMetrics { respond, .. } = command {
+                        counted.fetch_add(1, Ordering::SeqCst);
+                        let _ = respond.send(GooseMetrics::default());
+                    }
+                }
+            });
+            let mut replies = Vec::new();
+            for command in [
+                ControllerCommand::Metrics,
+                ControllerCommand::MetricsJson,
+                ControllerCommand::Metrics,
+                ControllerCommand::MetricsJson,
+                ControllerCommand::Metrics,
+            ] {
+                let (respond, reply) = oneshot::channel();
+                controller_tx.send((command, respond)).unwrap();
+                replies.push(reply);
+            }
+            goose_attack
+                .handle_control_requests(&mut run_state)
+                .await
+                .unwrap();
+            assert_eq!(requests.load(Ordering::SeqCst), 1);
+            for mut reply in replies {
+                assert!(matches!(reply.try_recv(), Ok(ControlReply::Metrics(_))));
+            }
+        });
+    }
+
+    /// A rate that clears a configured test plan says so; with no plan the
+    /// reply is as before.
+    #[test]
+    #[serial_test::serial]
+    fn test_control_rate_reply_names_cleared_plan() {
+        finishes(|| async {
+            for (line, name) in [
+                ("increaserate 2", "increase_rate"),
+                ("decreaserate 2", "decrease_rate"),
+            ] {
+                let (mut goose_attack, mut run_state) =
+                    idle_attack(&["--no-autostart", "--test-plan", "2,1s"]).await;
+                assert_eq!(
+                    reply(&mut goose_attack, &mut run_state, line).await,
+                    (true, format!("{name} configured, test plan cleared"))
+                );
+                assert!(goose_attack.configuration.test_plan.is_none());
+                // The plan is gone, so a second rate clears nothing.
+                assert_eq!(
+                    reply(&mut goose_attack, &mut run_state, line).await,
+                    (true, format!("{name} configured"))
+                );
+            }
+        });
+    }
+
+    /// A rate set on a running load test is used by the next `users` change.
+    /// Users go down, as weighting added users with no scenario never ends;
+    /// with no decrease rate set, the increase rate paces it.
+    #[test]
+    #[serial_test::serial]
+    fn test_control_rate_then_users_on_running_test() {
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) = idle_attack(&[]).await;
+            goose_attack.set_attack_phase(&mut run_state, AttackPhase::Maintain);
+            run_state.active_users = 6;
+            assert_eq!(
+                reply(&mut goose_attack, &mut run_state, "increaserate 2").await,
+                (true, "increase_rate configured".to_string())
+            );
+            assert!(control(&mut goose_attack, &mut run_state, "users 2").await);
+            // Four fewer users at 2 a second take 2 seconds.
+            assert_eq!(goose_attack.test_plan.steps[1], (2, 2_000));
+        });
+    }
+
+    /// Read from a telnet Controller until its prompt.
+    async fn telnet_reply(client: &mut TcpStream) -> String {
+        let mut text = Vec::new();
+        let mut buf = [0; 1024];
+        while !text.ends_with(b"goose> ") {
+            let n = client.read(&mut buf).await.unwrap();
+            assert!(n > 0, "telnet Controller closed: {:?}", text);
+            text.extend_from_slice(&buf[..n]);
+        }
+        String::from_utf8(text).unwrap()
+    }
+
+    /// A telnet command sent with no line ending runs.
+    #[tokio::test]
+    async fn telnet_command_without_line_ending_runs() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (socket, _) = listener.accept().await.unwrap();
+        let (channel_tx, channel_rx) = flume::unbounded::<ControlRequest>();
+        tokio::spawn(serve_client(
+            socket,
+            ControllerProtocol::Telnet,
+            channel_tx,
+            "telnet client".to_string(),
+            CONTROL_TIMEOUT,
+        ));
+        assert_eq!(telnet_reply(&mut client).await, "goose> ");
+        client.write_all(b"users 5").await.unwrap();
+        let (command, respond) = channel_rx.recv_async().await.unwrap();
+        assert!(matches!(command, ControllerCommand::Users(5)));
+        let _ = respond.send(ControlReply::Outcome(ControlOutcome {
+            ok: true,
+            error: None,
+            message: "users configured".to_string(),
+            phase: "idle".to_string(),
+            active_users: 0,
+            target_users: Some(5),
+        }));
+        assert_eq!(telnet_reply(&mut client).await, "users configured\ngoose> ");
+    }
+
+    /// A Controller client whose command the parent never answers is told
+    /// so once the timeout passes.
+    #[tokio::test]
+    async fn telnet_command_unanswered_times_out() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (socket, _) = listener.accept().await.unwrap();
+        // Held and never read, so the command is never answered.
+        let (channel_tx, _channel_rx) = flume::unbounded::<ControlRequest>();
+        tokio::spawn(serve_client(
+            socket,
+            ControllerProtocol::Telnet,
+            channel_tx,
+            "telnet client".to_string(),
+            Duration::from_millis(100),
+        ));
+        assert_eq!(telnet_reply(&mut client).await, "goose> ");
+        client.write_all(b"users 5\n").await.unwrap();
+        assert_eq!(
+            telnet_reply(&mut client).await,
+            "control timed out, it may still apply: check before retrying\ngoose> "
+        );
+    }
+
+    /// A WebSocket Controller client served by [`serve_client`], and the
+    /// channel its commands arrive on.
+    async fn websocket_client() -> (WebSocketStream<TcpStream>, flume::Receiver<ControlRequest>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (channel_tx, channel_rx) = flume::unbounded();
+        tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            serve_client(
+                socket,
+                ControllerProtocol::WebSocket,
+                channel_tx,
+                "WebSocket client".to_string(),
+                CONTROL_TIMEOUT,
+            )
+            .await;
+        });
+        let stream = TcpStream::connect(address).await.unwrap();
+        let (client, _) = tokio_tungstenite::client_async(format!("ws://{address}/"), stream)
+            .await
+            .unwrap();
+        (client, channel_rx)
+    }
+
+    /// The next frame a WebSocket client gets, `None` once the connection
+    /// has ended.
+    async fn next_frame(client: &mut WebSocketStream<TcpStream>) -> Option<Message> {
+        tokio::time::timeout(Duration::from_secs(10), client.next())
+            .await
+            .expect("the WebSocket Controller must answer or end the connection")
+            .and_then(Result::ok)
+    }
+
+    /// A WebSocket text message longer than [`MAX_CONTROLLER_MESSAGE`] is
+    /// answered with a 1009 close naming the limit, and the connection ends.
+    #[tokio::test]
+    async fn websocket_message_too_big_closed() {
+        let (mut client, _channel_rx) = websocket_client().await;
+        let text = "x".repeat(131_073);
+        client.send(Message::Text(text.into())).await.unwrap();
+        match next_frame(&mut client).await {
+            Some(Message::Close(Some(frame))) => {
+                assert_eq!(frame.code, CloseCode::Size);
+                assert_eq!(frame.reason, "message too big, at most 131072 bytes");
+            }
+            other => panic!("expected a 1009 close, got {:?}", other),
+        }
+        assert!(next_frame(&mut client).await.is_none());
+    }
+
+    /// A WebSocket message over twice the limit ends the connection: with
+    /// the same 1009 close if one can still be written.
+    #[tokio::test]
+    async fn websocket_message_over_hard_bound_ends_connection() {
+        let (mut client, _channel_rx) = websocket_client().await;
+        let text = "x".repeat(300 * 1024);
+        // The server may close before the whole message is written.
+        let _ = client.send(Message::Text(text.into())).await;
+        match next_frame(&mut client).await {
+            None => {}
+            Some(Message::Close(frame)) => {
+                if let Some(frame) = frame {
+                    assert_eq!(frame.code, CloseCode::Size);
+                    assert_eq!(frame.reason, "message too big, at most 131072 bytes");
+                }
+                assert!(next_frame(&mut client).await.is_none());
+            }
+            Some(other) => panic!("expected the connection to end, got {:?}", other),
+        }
+    }
+
+    /// A test plan in a WebSocket message of exactly [`MAX_CONTROLLER_MESSAGE`]
+    /// bytes is parsed and reaches the parent.
+    #[tokio::test]
+    async fn websocket_test_plan_at_limit_applied() {
+        let (mut client, channel_rx) = websocket_client().await;
+        // One user up and down per two steps, so 13,000 users in total.
+        let mut plan = "1,1s;0,1s;".repeat(13_000);
+        plan.push_str("0,");
+        let wrapper = r#"{"request":"testplan "}"#.len();
+        let padding = 131_072 - wrapper - plan.len() - 2;
+        plan.push_str(&"0".repeat(padding));
+        plan.push_str("1s");
+        let request = format!(r#"{{"request":"testplan {plan}"}}"#);
+        assert_eq!(request.len(), 131_072);
+        client.send(Message::Text(request.into())).await.unwrap();
+        let (command, respond) =
+            tokio::time::timeout(Duration::from_secs(10), channel_rx.recv_async())
+                .await
+                .unwrap()
+                .unwrap();
+        match command {
+            ControllerCommand::TestPlan(plan) => {
+                assert_eq!(plan.steps.len(), 26_001);
+                assert_eq!(plan.total_users(), 13_000);
+            }
+            other => panic!("expected a test plan, got {:?}", other),
+        }
+        let _ = respond.send(ControlReply::Outcome(ControlOutcome {
+            ok: true,
+            error: None,
+            message: "test-plan configured".to_string(),
+            phase: "idle".to_string(),
+            active_users: 0,
+            target_users: None,
+        }));
+        match next_frame(&mut client).await {
+            Some(Message::Text(text)) => assert_eq!(
+                serde_json::from_str::<ControllerWebSocketResponse>(&text)
+                    .unwrap()
+                    .response,
+                "test-plan configured"
+            ),
+            other => panic!("expected a reply, got {:?}", other),
+        }
+    }
+
+    /// A binary WebSocket message is answered as main answered it.
+    #[tokio::test]
+    async fn websocket_binary_message_refused() {
+        let (mut client, _channel_rx) = websocket_client().await;
+        client
+            .send(Message::Binary(b"{\"request\":\"config\"}".to_vec().into()))
+            .await
+            .unwrap();
+        match next_frame(&mut client).await {
+            Some(Message::Text(text)) => {
+                let response: ControllerWebSocketResponse = serde_json::from_str(&text).unwrap();
+                assert!(!response.success);
+                assert_eq!(response.response, INVALID_JSON);
+            }
+            other => panic!("expected a reply, got {:?}", other),
+        }
     }
 }

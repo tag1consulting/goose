@@ -3577,4 +3577,59 @@ mod test {
         }
         assert!(failures.is_empty(), "{:#?}", failures);
     }
+
+    /// A command line rate slower than one user a day is refused, and one
+    /// user a day is accepted.
+    #[test]
+    fn rate_below_one_user_a_day_refused() {
+        for (flag, option) in [
+            ("--increase-rate", "increase_rate"),
+            ("--decrease-rate", "decrease_rate"),
+        ] {
+            for (value, refused) in [
+                ("0.0000001", true),
+                ("0.00001157", true),
+                ("0.0000116", false),
+            ] {
+                let mut config =
+                    GooseConfiguration::parse_args_default(&["--users", "2", flag, value]).unwrap();
+                config.configure(&GooseDefaults::default()).unwrap();
+                match config.validate() {
+                    Err(GooseError::InvalidOption { detail, .. }) if refused => assert_eq!(
+                        detail,
+                        format!(
+                            "`configuration.{option}` must be a number of at least 0.0000116 (one user a day)."
+                        )
+                    ),
+                    Ok(()) if !refused => {}
+                    other => panic!("{} {}: {:?}", flag, value, other),
+                }
+            }
+        }
+    }
+
+    /// A command line time span names why it is refused: a digit of another
+    /// script before a unit, or a span too long.
+    #[test]
+    fn time_span_error_names_cause() {
+        for (value, detail) in [
+            (
+                "\u{661}h",
+                "`configuration.run_time` must use the ASCII digits 0 to 9.",
+            ),
+            (
+                "99999999999999999999h",
+                "`configuration.run_time` is too long.",
+            ),
+        ] {
+            let mut config =
+                GooseConfiguration::parse_args_default(&["--run-time", value]).unwrap();
+            match config.configure(&GooseDefaults::default()) {
+                Err(GooseError::InvalidOption { detail: got, .. }) => {
+                    assert_eq!(got, detail, "{value}")
+                }
+                other => panic!("{}: {:?}", value, other),
+            }
+        }
+    }
 }
