@@ -459,7 +459,7 @@ Goose looks for a browser in this order:
 1. The `CHROME` environment variable. When it is set, Goose uses that binary and never downloads one.
 2. An installed Chrome, Chromium or Edge on `PATH`, or in the standard locations under `/Applications` on macOS.
 3. A Chrome for Testing headless shell that Goose downloaded earlier.
-4. A new download of the current stable Chrome for Testing headless shell. The archive is 100 to 125MB and unpacks to about 200MB; Goose unpacks it with the system `unzip` (`tar` on Windows).
+4. A new download of the current stable Chrome for Testing headless shell. The archive is 102 to 125MB and unpacks to 210 to 290MB; Goose unpacks it with the system `unzip` (`tar` on Windows).
 
 Downloads are kept in `goose/chrome` under the user cache directory: `~/.cache` (or `$XDG_CACHE_HOME`) on Linux, `~/Library/Caches` on macOS, and `%LOCALAPPDATA%` on Windows. Delete that directory to download a newer Chrome on the next PDF report.
 
