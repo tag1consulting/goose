@@ -451,12 +451,31 @@ cargo build --features pdf-reports
 
 PDF generation uses headless Chrome to convert HTML reports to PDF format. The system requirements are:
 
-- Chrome or Chromium browser (automatically downloaded if not available)
-- Sufficient disk space for Chrome download (~120MB on first use)
-- Network connectivity for initial Chrome download
+- Chrome or Chromium, installed or downloaded by Goose on first use
 - Write permissions for the output directory
 
-The first time you generate a PDF report, the system will automatically download and configure Chrome if it's not already available. This download may take a few minutes but only needs to happen once.
+Goose looks for a browser in this order:
+
+1. The `CHROME` environment variable. When it is set, Goose uses that binary and never downloads one. It must name an executable file: a directory is an error, and for a macOS app bundle such as `/Applications/Google Chrome.app` the error gives the binary inside it, `Contents/MacOS/Google Chrome`.
+2. An installed Chrome, Chromium or Edge on `PATH`, or in the standard locations under `/Applications` on macOS.
+3. A Chrome for Testing headless shell that Goose downloaded earlier.
+4. A new download of the current stable Chrome for Testing headless shell. The archive is over 100MB and unpacks to more than twice that; Goose unpacks it with the system `unzip` (`tar` on Windows), and checks that it runs before downloading.
+
+Goose does all of this before the load test starts. When any `--report-file` ends in `.pdf`, Goose finds Chrome, downloads it if needed, and renders a small test page to PDF with it, within `--pdf-timeout`. If that fails, the load test does not start, so a Chrome problem never costs you a finished run. The log names the Chrome it will use:
+
+```
+PDF reports will use Chrome 156.0.8078.35 at /Applications/Google Chrome.app/Contents/MacOS/Google Chrome (installed); checked in 2.6s
+```
+
+Downloads are kept in `goose/chrome` under the user cache directory: `~/.cache` (or `$XDG_CACHE_HOME`) on Linux, `~/Library/Caches` on macOS, and `%LOCALAPPDATA%` on Windows. Once a week Goose checks for a newer stable Chrome for Testing; when there is one, it downloads it and removes the older ones. If the check or the download fails, Goose logs a warning and uses the Chrome it has. Partial downloads left by a killed run are removed after an hour. Goose never updates or removes an installed browser or the binary `CHROME` names.
+
+Goose built for musl, such as on Alpine, never downloads Chrome, because Chrome for Testing builds need glibc. Install Chromium (`apk add chromium`) or set `CHROME`.
+
+To use a particular browser, or to stop Goose from downloading one, set `CHROME`:
+
+```bash
+CHROME=/opt/chromium/chrome cargo run --features pdf-reports --example simple -- --report-file report.pdf
+```
 
 #### Generating PDF Reports
 
@@ -476,7 +495,7 @@ cargo run --features pdf-reports --example simple -- --report-file report.pdf --
 #### Configuration Options
 
 - `--pdf-scale <FACTOR>`: Scale factor for PDF content (0.1-2.0, default: 0.8). Higher values create larger text and elements.
-- `--pdf-timeout <SECONDS>`: Chrome timeout for PDF generation (10-300s, default: 60). Controls how long to wait for Chrome operations during PDF creation.
+- `--pdf-timeout <SECONDS>`: Chrome timeout for PDF generation (10 to 600 seconds, default: 60). Controls how long to wait for Chrome operations during PDF creation.
 
 #### PDF Optimizations
 
@@ -491,9 +510,12 @@ PDF reports include several enhancements for better print output:
 If you encounter issues generating PDF reports:
 
 **Chrome-related problems:**
-- Ensure stable internet connection for Chrome download
-- Verify sufficient disk space (~120MB required)
-- Check network permissions (corporate firewalls may block downloads)
+- With no browser installed, Goose needs network access to download Chrome for Testing and `unzip` on `PATH`; corporate firewalls may block the download, so install Chrome or Chromium or set `CHROME` instead
+- On Linux the downloaded headless shell needs the shared libraries Chrome uses, such as `libnss3`; installing Chromium from your distribution brings them in
+- An "Exec format error" means the binary was built for another architecture; install one that matches this machine
+- When Chrome won't start, the error names the binary and how Goose found it. On Linux it also says when the binary's ELF interpreter is missing (usually a glibc binary on a musl system) and lists the shared libraries `ldd` can't find; otherwise it shows what the binary printed when run with `--version`
+- Without `unzip`, install it (`apt install unzip`, `dnf install unzip`, `apk add unzip` or `brew install unzip`) or set `CHROME`
+- If a PDF report fails at the end of a run, the other reports are still written, and the empty PDF file is removed
 - Try verbose logging: `cargo run --features pdf-reports -- --report-file report.pdf -v`
 
 **PDF generation failures:**

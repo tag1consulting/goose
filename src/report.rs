@@ -4,6 +4,8 @@ mod markdown;
 pub mod print;
 
 #[cfg(feature = "pdf-reports")]
+pub(crate) mod chrome;
+#[cfg(feature = "pdf-reports")]
 pub mod pdf;
 
 pub(crate) use markdown::write_markdown_report;

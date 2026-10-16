@@ -99,6 +99,25 @@ jobs:
       with:
         toolchain: stable
     
+    # headless_chrome's fetch feature pulled in zip 8.x. On 2026-10-16 every zip release but 9.0.3
+    # was yanked, so no Goose build resolved (#753). If a new dependency needs zip, confirm it
+    # resolves to an unyanked release, then remove or narrow this step.
+    - name: 🔎 No zip in the dependency graph
+      if: ${{ matrix.features == 'all-features' }}
+      run: |
+        # Pass: cargo tree finds no zip package. Fail: zip is in the graph, or cargo tree fails for another reason.
+        if out=$(cargo tree --all-features -i zip 2>&1); then
+          echo "$out"
+          echo "::error::zip is in the dependency graph again (see the cargo tree output above). headless_chrome's fetch feature pulled in zip 8.x, and on 2026-10-16 every zip release but 9.0.3 was yanked, so no Goose build resolved (#753). If a new dependency needs zip, confirm it resolves to an unyanked release, then remove or narrow this step."
+          exit 1
+        fi
+        if ! echo "$out" | grep -q "did not match any packages"; then
+          echo "$out"
+          echo "::error::cargo tree failed for a reason other than zip being absent"
+          exit 1
+        fi
+        echo "zip is not in the dependency graph"
+
     - name: 🔨 Build (no default features)
       if: ${{ matrix.features == '' }}
       uses: actions-rs/cargo@v1
@@ -150,6 +169,11 @@ jobs:
         command: test 
         args: --verbose --all-features
     
+    # The ubuntu-latest image ships Google Chrome, which these ignored tests need.
+    - name: 🔎 Test PDF reports with an installed Chrome
+      if: ${{ matrix.features == 'all-features' }}
+      run: cargo test --verbose --all-features --test pdf_chrome -- --include-ignored
+
     - name: 🔎 timezone-sensitive tests in non UTC (GMT-5)
       if: ${{ matrix.features == 'all-features' }}
       uses: actions-rs/cargo@v1
@@ -165,5 +189,102 @@ jobs:
         if [ -e goose-runs ]; then
           echo "::error::the tests wrote goose-runs/ in the checkout; set --no-save or GooseDefault::NoSave where they build a configuration"
           find goose-runs | head -50
+          exit 1
+        fi
+
+  # PDF reports with an installed browser and CHROME unset, the setup in #753:
+  # Google ships no arm64 Linux Chrome, so this job installs Chromium.
+  pdf-reports-arm64:
+    name: PDF report tests (arm64 Linux)
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: ⚡ Cache
+      uses: Swatinem/rust-cache@v1.3.0
+
+    - name: Install Rust toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+
+    - name: Install Chromium
+      run: |
+        sudo snap install chromium
+        # Pass: Goose can find chromium on PATH. Fail: it is not there.
+        command -v chromium
+        chromium --version
+
+    - name: 🔎 Test PDF reports
+      run: cargo test --verbose --features pdf-reports --test pdf_reports
+
+    # These tests set CHROME, so they download nothing.
+    - name: 🔎 Test Chrome failures with the installed Chromium
+      run: cargo test --verbose --features pdf-reports --test pdf_chrome -- --include-ignored
+
+    - name: 🔎 Installed Chromium was used
+      run: |
+        # Pass: nothing was downloaded. Fail: Goose missed the installed browser.
+        if [ -e ~/.cache/goose/chrome ]; then
+          ls -R ~/.cache/goose/chrome | head -20
+          echo "::error::Goose downloaded Chrome although Chromium is installed"
+          exit 1
+        fi
+
+  # PDF reports with no browser installed: Goose downloads Chrome for Testing.
+  pdf-reports-download:
+    name: PDF report tests (Chrome download, ${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: linux64
+          - runner: ubuntu-24.04-arm
+            platform: linux-arm64
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: ⚡ Cache
+      uses: Swatinem/rust-cache@v1.3.0
+
+    - name: Install Rust toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+
+    - name: Remove the installed browsers
+      run: |
+        # Every name headless_chrome looks for on PATH; the runner image ships Chrome and Edge.
+        names="google-chrome-stable google-chrome-beta google-chrome-dev google-chrome-unstable google-chrome
+          chromium chromium-browser microsoft-edge-stable microsoft-edge-beta microsoft-edge-dev
+          chrome chrome-browser msedge microsoft-edge"
+        for name in $names; do
+          for path in $(which -a "$name"); do
+            echo "removing $path"
+            sudo rm -f "$path"
+          done
+        done
+        hash -r
+        # Pass: none of the names resolve. Fail: a browser is still on PATH.
+        for name in $names; do
+          if command -v "$name"; then
+            echo "::error::$name is still on PATH"
+            exit 1
+          fi
+        done
+
+    - name: 🔎 Test PDF reports
+      run: cargo test --verbose --features pdf-reports --test pdf_reports
+
+    - name: 🔎 Chrome was downloaded
+      run: |
+        # Pass: a downloaded headless shell is in Goose's cache. Fail: the tests used some other browser.
+        if ! ls ~/.cache/goose/chrome/*-${{ matrix.platform }}/chrome-headless-shell-${{ matrix.platform }}/chrome-headless-shell; then
+          echo "::error::the PDF tests passed without downloading Chrome for Testing"
           exit 1
         fi
