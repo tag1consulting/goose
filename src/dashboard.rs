@@ -369,8 +369,16 @@ struct HubInner {
     last_poll_ms: AtomicU64,
     /// Unix-ms of the most recent successful build (0 = never). Used for freshness.
     last_build_at_ms: AtomicU64,
-    /// Wall-clock duration of the most recent successful build, in milliseconds.
+    /// Time the metrics processor spent on the most recent published snapshot,
+    /// draining metrics and building it, in milliseconds. Excludes waiting
+    /// for the main loop and the processor queue, and serialization.
     last_build_ms: AtomicU64,
+    /// Hub round trip of the most recent published snapshot, in milliseconds:
+    /// from sending the request to publishing the JSON.
+    last_snapshot_ms: AtomicU64,
+    /// Snapshot requests not answered within [`SNAPSHOT_BUILD_TIMEOUT`]. A
+    /// late reply is logged and dropped, never published.
+    snapshot_timeouts: AtomicU64,
     /// Successful hub builds (shared with [`DashboardSetup::build_count`]).
     build_count: Arc<AtomicU64>,
     /// True while a GetSnapshot request is outstanding (including after the hub
@@ -397,6 +405,14 @@ impl std::fmt::Debug for HubInner {
                 &self.last_build_at_ms.load(Ordering::Relaxed),
             )
             .field("last_build_ms", &self.last_build_ms.load(Ordering::Relaxed))
+            .field(
+                "last_snapshot_ms",
+                &self.last_snapshot_ms.load(Ordering::Relaxed),
+            )
+            .field(
+                "snapshot_timeouts",
+                &self.snapshot_timeouts.load(Ordering::Relaxed),
+            )
             .field(
                 "snapshot_in_flight",
                 &self.snapshot_in_flight.load(Ordering::Relaxed),
@@ -429,6 +445,8 @@ impl SnapshotHub {
             last_poll_ms: AtomicU64::new(0),
             last_build_at_ms: AtomicU64::new(0),
             last_build_ms: AtomicU64::new(0),
+            last_snapshot_ms: AtomicU64::new(0),
+            snapshot_timeouts: AtomicU64::new(0),
             build_count,
             snapshot_in_flight: AtomicBool::new(false),
             wake: Notify::new(),
@@ -497,9 +515,19 @@ impl SnapshotHub {
         self.inner.build_count.load(Ordering::Relaxed)
     }
 
-    /// Duration of the last successful snapshot build in milliseconds (0 if none).
+    /// Processor time of the last published snapshot in milliseconds (0 if none).
     fn last_build_ms(&self) -> u64 {
         self.inner.last_build_ms.load(Ordering::Relaxed)
+    }
+
+    /// Hub round trip of the last published snapshot in milliseconds (0 if none).
+    fn last_snapshot_ms(&self) -> u64 {
+        self.inner.last_snapshot_ms.load(Ordering::Relaxed)
+    }
+
+    /// Snapshot requests that timed out waiting for a reply.
+    fn snapshot_timeouts(&self) -> u64 {
+        self.inner.snapshot_timeouts.load(Ordering::Relaxed)
     }
 
     /// The data to send with `closed`.
@@ -764,17 +792,26 @@ async fn build_once(inner: &Arc<HubInner>) -> BuildOutcome {
             }
         }
         _ = tokio::time::sleep(SNAPSHOT_BUILD_TIMEOUT) => {
+            inner.snapshot_timeouts.fetch_add(1, Ordering::Relaxed);
             debug!(
                 "[dashboard]: snapshot build timed out after {SNAPSHOT_BUILD_TIMEOUT:?}; waiting in background"
             );
             let clear_flag = Arc::clone(inner);
             tokio::spawn(async move {
-                let _ = respond_rx.await;
+                // A late reply is stale by now: log it, never publish it.
+                if respond_rx.await.is_ok() {
+                    debug!(
+                        "[dashboard]: late snapshot reply arrived after {}ms; dropped",
+                        started.elapsed().as_millis()
+                    );
+                }
                 clear_flag.snapshot_in_flight.store(false, Ordering::Release);
             });
             return BuildOutcome::Transient;
         }
     };
+
+    let build_time = snapshot.build_time;
 
     // Keep the heatmap's columns for polls. SSE clients are sent the export as
     // it came: the columns changed since the previous build.
@@ -802,16 +839,19 @@ async fn build_once(inner: &Arc<HubInner>) -> BuildOutcome {
             // frozen — clients keep receiving a stale snapshot for the entire
             // load test after the first poll's receiver is dropped.
             let _ = inner.latest_tx.send_replace(Some(Bytes::from(json)));
-            let elapsed_ms = started.elapsed().as_millis() as u64;
+            let snapshot_ms = started.elapsed().as_millis() as u64;
+            let build_ms = build_time.as_millis() as u64;
             inner
                 .last_build_at_ms
                 .store(unix_now_ms(), Ordering::Release);
-            inner.last_build_ms.store(elapsed_ms, Ordering::Release);
+            inner.last_build_ms.store(build_ms, Ordering::Release);
+            inner.last_snapshot_ms.store(snapshot_ms, Ordering::Release);
             let count = inner.build_count.fetch_add(1, Ordering::Release) + 1;
             debug!(
-                "[dashboard]: snapshot build {} took {}ms (active_sse={})",
+                "[dashboard]: snapshot build {} took {}ms, round trip {}ms (active_sse={})",
                 count,
-                elapsed_ms,
+                build_ms,
+                snapshot_ms,
                 inner.active_sse.load(Ordering::Relaxed)
             );
             BuildOutcome::Built
@@ -896,8 +936,11 @@ type SeriesCache = HashMap<SeriesKey, (Instant, Bytes)>;
 
 /// Liveness plus lightweight operational counters (no load-test metrics).
 ///
-/// `last_build_ms` is the wall-clock duration of the last successful hub build,
-/// not a Unix timestamp. Fields are always present so external monitors can
+/// `last_build_ms` is the time the metrics processor spent draining metrics and
+/// building the last published snapshot; `last_snapshot_ms` is the hub's round
+/// trip for it, from request to published JSON. Both are durations, not Unix
+/// timestamps, and the difference is time spent waiting on the main loop and
+/// the processor queue, plus serialization. Fields are always present so external monitors can
 /// scrape them without auth; they do not leak request names, target hosts, or
 /// rates. `controllers` names this process's own telnet and WebSocket
 /// listeners, which take no authentication; it reveals only where they
@@ -906,8 +949,12 @@ type SeriesCache = HashMap<SeriesKey, (Instant, Bytes)>;
 struct HealthResponse {
     ok: bool,
     version: String,
-    /// Duration of the last successful snapshot build in milliseconds (0 if none).
+    /// Processor time of the last published snapshot in milliseconds (0 if none).
     last_build_ms: u64,
+    /// Hub round trip of the last published snapshot in milliseconds (0 if none).
+    last_snapshot_ms: u64,
+    /// Snapshot requests that timed out since process start.
+    snapshot_timeouts: u64,
     /// Total successful hub snapshot builds since process start.
     build_count: u64,
     /// Concurrent SSE clients currently holding a slot.
@@ -1335,6 +1382,8 @@ async fn health_handler(State(state): State<Arc<DashboardState>>) -> impl IntoRe
         ok: true,
         version: env!("CARGO_PKG_VERSION").to_string(),
         last_build_ms: state.hub.last_build_ms(),
+        last_snapshot_ms: state.hub.last_snapshot_ms(),
+        snapshot_timeouts: state.hub.snapshot_timeouts(),
         build_count: state.hub.build_count(),
         active_sse_clients: state.hub.active_sse_clients(),
         control_enabled: state.control_tx.is_some(),
@@ -2287,6 +2336,7 @@ mod tests {
                 percentiles_over_time: false,
             },
             save: SnapshotSave::off("goose-runs"),
+            build_time: Duration::ZERO,
         }
     }
 
@@ -2921,6 +2971,8 @@ mod tests {
         assert!(!idle_json["version"].as_str().unwrap().is_empty());
         assert_eq!(idle_json["build_count"], 0);
         assert_eq!(idle_json["last_build_ms"], 0);
+        assert_eq!(idle_json["last_snapshot_ms"], 0);
+        assert_eq!(idle_json["snapshot_timeouts"], 0);
         assert_eq!(idle_json["active_sse_clients"], 0);
 
         // Trigger a snapshot build via one-shot poll.
@@ -2963,6 +3015,126 @@ mod tests {
         );
         assert_eq!(after_json["active_sse_clients"], 0);
 
+        parent.abort();
+    }
+
+    /// A hub with no HTTP server, for driving [`build_once`] directly.
+    fn bare_hub() -> (SnapshotHub, flume::Receiver<DashboardRequest>) {
+        let (request_tx, request_rx) = flume::unbounded();
+        let (shutdown_tx, _) = watch::channel(false);
+        let hub = SnapshotHub::new(
+            request_tx,
+            Arc::new(AtomicU64::new(0)),
+            shutdown_tx,
+            0,
+            Arc::new(AtomicUsize::new(0)),
+            ClosedData::new(&SnapshotSave::off("goose-runs")),
+        );
+        (hub, request_rx)
+    }
+
+    #[tokio::test]
+    async fn build_records_processor_time_and_round_trip() {
+        let (hub, request_rx) = bare_hub();
+        // Report the time spent "building" as the processor does, so the
+        // round trip, which starts before the request is sent, contains it.
+        let parent = tokio::spawn(async move {
+            while let Ok(msg) = request_rx.recv_async().await {
+                if let DashboardRequest::GetSnapshot { respond, .. } = msg {
+                    let started = Instant::now();
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                    let mut snapshot = dummy_snapshot(0);
+                    snapshot.build_time = started.elapsed();
+                    let _ = respond.send(snapshot);
+                }
+            }
+        });
+
+        assert!(matches!(build_once(&hub.inner).await, BuildOutcome::Built));
+        let build_ms = hub.last_build_ms();
+        let snapshot_ms = hub.last_snapshot_ms();
+        assert!(build_ms >= 5, "last_build_ms {}", build_ms);
+        assert!(
+            build_ms <= snapshot_ms,
+            "last_build_ms {} > last_snapshot_ms {}",
+            build_ms,
+            snapshot_ms
+        );
+        assert_eq!(hub.snapshot_timeouts(), 0);
+        assert!(!hub.inner.snapshot_in_flight.load(Ordering::Acquire));
+        // The published JSON never carries the processor time.
+        let json = hub.inner.latest_tx.borrow().clone().expect("published");
+        assert!(!String::from_utf8_lossy(&json).contains("build_time"));
+        parent.abort();
+    }
+
+    #[tokio::test]
+    async fn snapshot_timeout_is_counted_and_late_reply_dropped() {
+        let (hub, request_rx) = bare_hub();
+        // Hold the reply until after the hub has given up on it, and keep the
+        // channel open so the hub does not see a closed parent.
+        let parent = tokio::spawn(async move {
+            match request_rx.recv_async().await {
+                Ok(DashboardRequest::GetSnapshot { respond, .. }) => (respond, request_rx),
+                _ => panic!("expected GetSnapshot"),
+            }
+        });
+
+        assert!(matches!(
+            build_once(&hub.inner).await,
+            BuildOutcome::Transient
+        ));
+        assert_eq!(hub.snapshot_timeouts(), 1);
+        assert!(hub.inner.snapshot_in_flight.load(Ordering::Acquire));
+        // While the late reply is outstanding, no new request is sent.
+        assert!(matches!(
+            build_once(&hub.inner).await,
+            BuildOutcome::Transient
+        ));
+        assert_eq!(hub.snapshot_timeouts(), 1);
+
+        let (respond, _request_rx) = parent.await.expect("parent");
+        let _ = respond.send(dummy_snapshot(0));
+        for _ in 0..50 {
+            if !hub.inner.snapshot_in_flight.load(Ordering::Acquire) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(!hub.inner.snapshot_in_flight.load(Ordering::Acquire));
+        // The late snapshot is not published and does not count as a build.
+        assert!(hub.inner.latest_tx.borrow().is_none());
+        assert_eq!(hub.build_count(), 0);
+        assert_eq!(hub.last_build_ms(), 0);
+        assert_eq!(hub.last_snapshot_ms(), 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn poll_and_sse_json_omit_build_time() {
+        let (_hub_builds, _parent_builds, parent, base, _server) = setup_with_mock("").await;
+        let client = reqwest::Client::new();
+        let poll = client
+            .get(format!("{base}/api/v1/snapshot"))
+            .send()
+            .await
+            .expect("snapshot")
+            .text()
+            .await
+            .expect("body");
+        assert!(poll.contains("\"version\""), "{}", poll);
+        assert!(!poll.contains("build_time"), "{}", poll);
+
+        let mut sse = client
+            .get(format!("{base}/api/v1/events"))
+            .send()
+            .await
+            .expect("events");
+        let body = read_sse_until(&mut sse, Duration::from_secs(5), |b| {
+            b.contains("\"version\"")
+        })
+        .await;
+        assert!(body.contains("\"version\""), "{}", body);
+        assert!(!body.contains("build_time"), "{}", body);
         parent.abort();
     }
 
@@ -3027,6 +3199,8 @@ mod tests {
             for field in [
                 "version",
                 "last_build_ms",
+                "last_snapshot_ms",
+                "snapshot_timeouts",
                 "build_count",
                 "active_sse_clients",
             ] {

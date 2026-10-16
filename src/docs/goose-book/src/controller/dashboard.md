@@ -321,6 +321,8 @@ TLS termination is not provided by Goose; use an SSH tunnel or reverse proxy whe
   "ok": true,
   "version": "<goose package version>",
   "last_build_ms": 2,
+  "last_snapshot_ms": 180,
+  "snapshot_timeouts": 0,
   "build_count": 42,
   "active_sse_clients": 1,
   "control_enabled": false,
@@ -332,13 +334,15 @@ TLS termination is not provided by Goose; use an SSH tunnel or reverse proxy whe
 |-------|---------|
 | `ok` | Always `true` when the handler runs |
 | `version` | Goose crate package version (`CARGO_PKG_VERSION`) |
-| `last_build_ms` | Wall-clock duration of the last successful snapshot build in milliseconds (`0` if none yet) |
+| `last_build_ms` | Time the metrics processor spent on the last published snapshot, draining pending metrics and building it, in milliseconds (`0` if none yet) |
+| `last_snapshot_ms` | Round trip of the last published snapshot in milliseconds, from the dashboard's request to the published JSON (`0` if none yet) |
+| `snapshot_timeouts` | Snapshot requests not answered within 4 seconds since process start; a late answer is dropped, never published |
 | `build_count` | Successful hub snapshot builds since process start |
 | `active_sse_clients` | Concurrent SSE clients currently holding a slot |
 | `control_enabled` | Whether the Start/Stop/Users/Quit and Delete routes are registered (`--dashboard-control`) |
 | `controllers` | The `host:port` the telnet and WebSocket Controllers are configured to listen on, after defaults (`0.0.0.0:5116` and `0.0.0.0:5117` unless set), or `null` for one turned off with `--no-telnet` or `--no-websocket`; the page footer names them |
 
-These counters are ops-safe (timing and client counts only). The response does **not** include rates, hosts under test, request names, or error strings. `controllers` names this process's own listeners, which take no authentication; it reveals only where they listen. Snapshot build duration is also logged at `debug` with a `[dashboard]` prefix when a build completes.
+These counters are ops-safe (timing and client counts only). The response does **not** include rates, hosts under test, request names, or error strings. `controllers` names this process's own listeners, which take no authentication; it reveals only where they listen. `last_snapshot_ms` minus `last_build_ms` is time spent waiting on the main loop and the metrics processor's queue, plus serializing the JSON. The main loop answers the dashboard between steps and sleeps up to 500 ms between them, so this difference can reach about 500 ms by design; a large `last_build_ms` is the one that points at the metrics processor. Both durations are also logged at `debug` with a `[dashboard]` prefix when a build completes, and a late answer to a timed out request is logged with its round trip.
 
 ## What the UI shows
 
