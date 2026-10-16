@@ -699,7 +699,7 @@ async fn hub_loop(inner: Arc<HubInner>) {
             }
         }
 
-        match build_once(&inner).await {
+        match build_once(&inner, SNAPSHOT_BUILD_TIMEOUT).await {
             BuildOutcome::Built => {}
             BuildOutcome::Transient => {
                 // Metrics/main-loop blip or in-flight wait: do not kill the hub.
@@ -741,8 +741,10 @@ async fn hub_loop(inner: Arc<HubInner>) {
     }
 }
 
-/// Request one snapshot from the parent and publish pre-serialized JSON.
-async fn build_once(inner: &Arc<HubInner>) -> BuildOutcome {
+/// Request one snapshot from the parent and publish pre-serialized JSON,
+/// waiting up to `timeout` for the reply ([`SNAPSHOT_BUILD_TIMEOUT`] outside
+/// tests).
+async fn build_once(inner: &Arc<HubInner>, timeout: Duration) -> BuildOutcome {
     if inner.request_tx.is_disconnected() {
         return BuildOutcome::Fatal;
     }
@@ -778,7 +780,7 @@ async fn build_once(inner: &Arc<HubInner>) -> BuildOutcome {
         return BuildOutcome::Fatal;
     }
 
-    // Wait up to SNAPSHOT_BUILD_TIMEOUT; on timeout keep the oneshot alive in a
+    // Wait up to `timeout`; on timeout keep the oneshot alive in a
     // background task so in_flight stays set until the metrics reply is drained.
     let snapshot = tokio::select! {
         result = &mut respond_rx => {
@@ -791,10 +793,10 @@ async fn build_once(inner: &Arc<HubInner>) -> BuildOutcome {
                 }
             }
         }
-        _ = tokio::time::sleep(SNAPSHOT_BUILD_TIMEOUT) => {
+        _ = tokio::time::sleep(timeout) => {
             inner.snapshot_timeouts.fetch_add(1, Ordering::Relaxed);
             debug!(
-                "[dashboard]: snapshot build timed out after {SNAPSHOT_BUILD_TIMEOUT:?}; waiting in background"
+                "[dashboard]: snapshot build timed out after {timeout:?}; waiting in background"
             );
             let clear_flag = Arc::clone(inner);
             tokio::spawn(async move {
@@ -3050,7 +3052,10 @@ mod tests {
             }
         });
 
-        assert!(matches!(build_once(&hub.inner).await, BuildOutcome::Built));
+        assert!(matches!(
+            build_once(&hub.inner, SNAPSHOT_BUILD_TIMEOUT).await,
+            BuildOutcome::Built
+        ));
         let build_ms = hub.last_build_ms();
         let snapshot_ms = hub.last_snapshot_ms();
         assert!(build_ms >= 5, "last_build_ms {}", build_ms);
@@ -3070,6 +3075,10 @@ mod tests {
 
     #[tokio::test]
     async fn snapshot_timeout_is_counted_and_late_reply_dropped() {
+        // The hub waits SNAPSHOT_BUILD_TIMEOUT in production; a short timeout
+        // exercises the same path without a 4 second wait.
+        assert_eq!(SNAPSHOT_BUILD_TIMEOUT, Duration::from_secs(4));
+        let timeout = Duration::from_millis(50);
         let (hub, request_rx) = bare_hub();
         // Hold the reply until after the hub has given up on it, and keep the
         // channel open so the hub does not see a closed parent.
@@ -3081,14 +3090,14 @@ mod tests {
         });
 
         assert!(matches!(
-            build_once(&hub.inner).await,
+            build_once(&hub.inner, timeout).await,
             BuildOutcome::Transient
         ));
         assert_eq!(hub.snapshot_timeouts(), 1);
         assert!(hub.inner.snapshot_in_flight.load(Ordering::Acquire));
         // While the late reply is outstanding, no new request is sent.
         assert!(matches!(
-            build_once(&hub.inner).await,
+            build_once(&hub.inner, timeout).await,
             BuildOutcome::Transient
         ));
         assert_eq!(hub.snapshot_timeouts(), 1);
