@@ -13,7 +13,7 @@ use log::{debug, LevelFilter};
 use std::{
     ffi::OsStr,
     fs,
-    path::Path,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
@@ -33,15 +33,17 @@ mod pdf_errors {
 
     /// Explains a Chrome launch failure and how to point Goose at a browser.
     ///
-    /// Goose does not download Chrome. `headless_chrome` uses the `CHROME`
-    /// environment variable when it names an existing file, and otherwise
-    /// searches `PATH` and the standard install locations.
+    /// By the time Chrome is launched, `report::chrome` has found or downloaded
+    /// a binary, so a failure here means that binary could not run.
     fn chrome_launch_detail(inner_error: &str) -> String {
-        const HOW_TO: &str = "PDF generation requires Chrome or Chromium to be installed. Install one, or set the CHROME environment variable to the full path of an existing Chrome or Chromium binary.";
+        const HOW_TO: &str = "Goose found a Chrome binary but could not start it. Install Chrome or Chromium, or set the CHROME environment variable to the full path of a working Chrome or Chromium binary.";
         // `Command::spawn` reports ENOEXEC as "Exec format error (os error 8)"
         // when the binary was found but was built for another architecture.
         if inner_error.contains("Exec format error") {
-            format!("The Chrome binary was found but could not run: it does not match this machine's architecture ({}). {HOW_TO}", std::env::consts::ARCH)
+            format!(
+                "The Chrome binary does not match this machine's architecture ({}). {HOW_TO}",
+                std::env::consts::ARCH
+            )
         } else {
             HOW_TO.to_string()
         }
@@ -230,6 +232,7 @@ pub(crate) fn generate_pdf_from_html(
     scale: f64,
     verbose: bool,
     timeout_seconds: u64,
+    chrome: PathBuf,
 ) -> Result<(), GooseError> {
     // Get appropriate Chrome arguments based on verbosity
     let chrome_args = get_chrome_launch_args(verbose);
@@ -244,6 +247,7 @@ pub(crate) fn generate_pdf_from_html(
 
     // Launch Chrome with appropriate arguments and resource tracking
     let launch_options = LaunchOptions::default_builder()
+        .path(Some(chrome))
         .headless(true)
         .args(chrome_args)
         .build()
@@ -367,7 +371,7 @@ mod tests {
     }
 
     #[test]
-    fn launch_error_names_chrome_variable_and_promises_no_download() {
+    fn launch_error_names_chrome_variable() {
         let detail = detail("Could not auto detect a chrome executable");
         assert!(detail.contains("CHROME"), "{}", detail);
         assert!(!detail.to_lowercase().contains("download"), "{}", detail);

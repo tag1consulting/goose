@@ -4519,6 +4519,7 @@ impl GooseAttack {
         path: &str,
         baseline: Option<&ReportData<'static>>,
     ) -> Result<(), GooseError> {
+        use crate::report::chrome::find_or_download_chrome;
         use crate::report::pdf::generate_pdf_from_html;
         use crate::report::print::generate_print_optimized_html_content;
         use std::path::Path;
@@ -4547,6 +4548,9 @@ impl GooseAttack {
             );
         }
 
+        // Find an installed Chrome or Chromium, or download one
+        let chrome = find_or_download_chrome().await?;
+
         // Generate PDF from HTML using the configurable timeout and scale
         generate_pdf_from_html(
             &print_optimized_html,
@@ -4554,6 +4558,7 @@ impl GooseAttack {
             self.configuration.pdf_scale,
             self.configuration.verbose > 0,
             self.configuration.pdf_timeout,
+            chrome,
         )?;
 
         info!("pdf report file written to: {path}");

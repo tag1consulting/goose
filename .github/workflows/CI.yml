@@ -185,8 +185,8 @@ jobs:
           exit 1
         fi
 
-  # PDF reports need an installed Chrome or Chromium; Goose does not download one.
-  # Google ships no arm64 Linux Chrome, so this job installs Chromium.
+  # PDF reports with an installed browser: Google ships no arm64 Linux Chrome,
+  # so this job installs Chromium and points CHROME at it.
   pdf-reports-arm64:
     name: PDF report tests (arm64 Linux)
     runs-on: ubuntu-24.04-arm
@@ -211,3 +211,52 @@ jobs:
 
     - name: 🔎 Test PDF reports
       run: cargo test --verbose --features pdf-reports --test pdf_reports
+
+  # PDF reports with no browser installed: Goose downloads Chrome for Testing.
+  pdf-reports-download:
+    name: PDF report tests (Chrome download)
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: ⚡ Cache
+      uses: Swatinem/rust-cache@v1.3.0
+
+    - name: Install Rust toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+
+    - name: Remove the installed browsers
+      run: |
+        # Every name headless_chrome looks for on PATH; the runner image ships Chrome and Edge.
+        names="google-chrome-stable google-chrome-beta google-chrome-dev google-chrome-unstable google-chrome
+          chromium chromium-browser microsoft-edge-stable microsoft-edge-beta microsoft-edge-dev
+          chrome chrome-browser msedge microsoft-edge"
+        for name in $names; do
+          for path in $(which -a "$name"); do
+            echo "removing $path"
+            sudo rm -f "$path"
+          done
+        done
+        hash -r
+        # Pass: none of the names resolve. Fail: a browser is still on PATH.
+        for name in $names; do
+          if command -v "$name"; then
+            echo "::error::$name is still on PATH"
+            exit 1
+          fi
+        done
+
+    - name: 🔎 Test PDF reports
+      run: cargo test --verbose --features pdf-reports --test pdf_reports
+
+    - name: 🔎 Chrome was downloaded
+      run: |
+        # Pass: a downloaded headless shell is in Goose's cache. Fail: the tests used some other browser.
+        if ! ls ~/.cache/goose/chrome/*-linux64/chrome-headless-shell-linux64/chrome-headless-shell; then
+          echo "::error::the PDF tests passed without downloading Chrome for Testing"
+          exit 1
+        fi
