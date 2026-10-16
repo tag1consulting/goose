@@ -4644,8 +4644,20 @@ impl GooseAttack {
             );
         }
 
-        // The Chrome found at startup, by create_reports
-        let chrome = self.pdf_chrome().await?;
+        // The Chrome found at startup, by create_reports, unless it was a
+        // download that another Goose run's refresh has since removed.
+        let startup = self.pdf_chrome().await?;
+        let found_again;
+        let chrome = if startup.needs_new_lookup() {
+            info!(
+                "the downloaded Chrome at {} was removed, most likely by another Goose run's refresh; looking for Chrome again",
+                startup.path.display()
+            );
+            found_again = report::chrome::resolve_chrome().await?;
+            &found_again
+        } else {
+            startup
+        };
 
         // Generate PDF from HTML using the configurable timeout and scale
         generate_pdf_from_html(

@@ -80,6 +80,17 @@ pub(crate) struct ResolvedChrome {
     pub(crate) version: Option<String>,
 }
 
+impl ResolvedChrome {
+    /// True when this is a Chrome for Testing download that is no longer
+    /// there, most likely removed by another Goose run's weekly refresh, so
+    /// Chrome should be looked for again. A `CHROME` or installed browser
+    /// that disappeared is the user's change, and is never looked for again.
+    pub(crate) fn needs_new_lookup(&self) -> bool {
+        matches!(self.source, ChromeSource::Cached | ChromeSource::Downloaded)
+            && !self.path.is_file()
+    }
+}
+
 /// The `CHROME` environment variable, when it is set and not empty.
 pub(crate) fn chrome_env() -> Option<PathBuf> {
     std::env::var_os("CHROME")
@@ -628,6 +639,27 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn only_a_missing_download_is_looked_for_again() {
+        let dir = temp_dir("chrome-lookup");
+        let present = dir.join("chrome-headless-shell");
+        std::fs::write(&present, b"").unwrap();
+        let missing = dir.join("removed");
+        let chrome = |path: &Path, source| ResolvedChrome {
+            path: path.to_path_buf(),
+            source,
+            version: None,
+        };
+
+        assert!(chrome(&missing, ChromeSource::Cached).needs_new_lookup());
+        assert!(chrome(&missing, ChromeSource::Downloaded).needs_new_lookup());
+        assert!(!chrome(&present, ChromeSource::Cached).needs_new_lookup());
+        assert!(!chrome(&present, ChromeSource::Downloaded).needs_new_lookup());
+        assert!(!chrome(&missing, ChromeSource::Env).needs_new_lookup());
+        assert!(!chrome(&missing, ChromeSource::Installed).needs_new_lookup());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
