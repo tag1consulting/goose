@@ -63,6 +63,11 @@ pub(crate) struct DashboardSnapshot {
     pub flags: SnapshotFlags,
     /// Whether runs are saved, and the last run Goose saved or tried to save.
     pub save: SnapshotSave,
+    /// Time the metrics processor spent draining metrics and building this
+    /// snapshot, reported as `last_build_ms` on `/api/v1/health`. Zero when
+    /// not built by the processor. Not part of the JSON.
+    #[serde(skip)]
+    pub build_time: std::time::Duration,
 }
 
 /// Saving runs, as the dashboard shows it. Also the data of the SSE `closed`
@@ -457,6 +462,7 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
                 percentiles_over_time: false,
             },
             save: input.save,
+            build_time: std::time::Duration::ZERO,
         };
     }
 
@@ -620,6 +626,7 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
             percentiles_over_time: input.percentiles_over_time,
         },
         save: input.save,
+        build_time: std::time::Duration::ZERO,
     }
 }
 
@@ -1454,9 +1461,15 @@ mod tests {
         // from the fields as declared. ts-rs does not model attributes such as
         // `serialize_with`, and cannot see a hand-written `impl Serialize`, so
         // either could change the JSON without changing the declarations.
-        // `serde(` also catches one inside `cfg_attr`.
+        // `serde(` also catches one inside `cfg_attr`. `serde(skip)` is the one
+        // exception: ts-rs drops a skipped field too, which
+        // `dashboard_types_match_rust` checks.
         let source = include_str!("dashboard_snapshot.rs");
-        let structs = source.split("\nmod tests {").next().expect("source");
+        let structs = source
+            .split("\nmod tests {")
+            .next()
+            .expect("source")
+            .replace("#[serde(skip)]", "");
         for pattern in ["serde(", "impl Serialize", "impl serde::Serialize"] {
             assert!(
                 !structs.contains(pattern),
