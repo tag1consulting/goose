@@ -459,7 +459,7 @@ Goose looks for a browser in this order:
 1. The `CHROME` environment variable. When it is set, Goose uses that binary and never downloads one. It must name an executable file: a directory is an error, and for a macOS app bundle such as `/Applications/Google Chrome.app` the error gives the binary inside it, `Contents/MacOS/Google Chrome`.
 2. An installed Chrome, Chromium or Edge on `PATH`, or in the standard locations under `/Applications` on macOS.
 3. A Chrome for Testing headless shell that Goose downloaded earlier.
-4. A new download of the current stable Chrome for Testing headless shell. The archive is 102 to 125MB and unpacks to 211 to 291MB; Goose unpacks it with the system `unzip` (`tar` on Windows), and checks that it runs before downloading.
+4. A new download of the current stable Chrome for Testing headless shell. The archive is over 100MB and unpacks to more than twice that; Goose unpacks it with the system `unzip` (`tar` on Windows), and checks that it runs before downloading.
 
 Goose does all of this before the load test starts. When any `--report-file` ends in `.pdf`, Goose finds Chrome, downloads it if needed, and renders a small test page to PDF with it, within `--pdf-timeout`. If that fails, the load test does not start, so a Chrome problem never costs you a finished run. The log names the Chrome it will use:
 
@@ -467,7 +467,7 @@ Goose does all of this before the load test starts. When any `--report-file` end
 PDF reports will use Chrome 156.0.8078.35 at /Applications/Google Chrome.app/Contents/MacOS/Google Chrome (installed); checked in 2.6s
 ```
 
-Downloads are kept in `goose/chrome` under the user cache directory: `~/.cache` (or `$XDG_CACHE_HOME`) on Linux, `~/Library/Caches` on macOS, and `%LOCALAPPDATA%` on Windows. Once a week Goose checks for a newer stable Chrome for Testing; when there is one, it downloads it and removes the older ones. If the check or the download fails, Goose logs a warning and uses the Chrome it has. Partial downloads left by a killed run are removed after an hour. Installed browsers and `CHROME` are never checked or changed.
+Downloads are kept in `goose/chrome` under the user cache directory: `~/.cache` (or `$XDG_CACHE_HOME`) on Linux, `~/Library/Caches` on macOS, and `%LOCALAPPDATA%` on Windows. Once a week Goose checks for a newer stable Chrome for Testing; when there is one, it downloads it and removes the older ones. If the check or the download fails, Goose logs a warning and uses the Chrome it has. Partial downloads left by a killed run are removed after an hour. Goose never updates or removes an installed browser or the binary `CHROME` names.
 
 Goose built for musl, such as on Alpine, never downloads Chrome, because Chrome for Testing builds need glibc. Install Chromium (`apk add chromium`) or set `CHROME`.
 
