@@ -211,52 +211,6 @@ test("repeated stream errors that end in a failing poll say the loss once", asyn
   assert.equal(announce.textContent, "Connection lost.");
 });
 
-test("a slow poll failing after a later one answered does not say the connection was lost", async () => {
-  const page = await livePage({ snapshot: snapshotWith() });
-  await send(page, snapshotWith());
-  const { window } = page;
-  // Each snapshot poll waits until the test settles it; the 2s timer's tick
-  // is kept to run by hand.
-  const polls = [];
-  const realFetch = window.fetch;
-  window.fetch = (url, init) => {
-    if (!String(url).includes("/api/v1/snapshot")) return realFetch(url, init);
-    return new Promise((resolve, reject) => polls.push({ resolve, reject }));
-  };
-  let tick = null;
-  const realSetInterval = window.setInterval;
-  window.setInterval = (fn, ms) => {
-    if (ms === 2000) {
-      tick = fn;
-      return 0;
-    }
-    return realSetInterval(fn, ms);
-  };
-  const said = [];
-  const announce = el(page, "announce");
-  new window.MutationObserver(() => said.push(announce.textContent))
-    .observe(announce, { childList: true, characterData: true, subtree: true });
-
-  page.events.source.readyState = 2;
-  page.events.source.onerror();
-  await settle(window);
-  assert.ok(tick, "polling started");
-  tick();
-  assert.equal(polls.length, 2, "the first poll is still out when the second goes");
-  polls[1].resolve({ status: 200, ok: true, json: () => Promise.resolve(snapshotWith()) });
-  await settle(window);
-  polls[0].reject(new TypeError("network error"));
-  await settle(window);
-  assert.deepEqual(said, [], "nothing to say: the connection never dropped");
-  assert.equal(el(page, "connection-label").textContent, "poll");
-
-  // A failure newer than every answer is a real loss.
-  tick();
-  polls[2].reject(new TypeError("network error"));
-  await settle(window);
-  assert.deepEqual(said, ["Connection lost."]);
-});
-
 test("the pill says poll as soon as the stream closes, before a poll answers", async () => {
   const page = await livePage({ snapshotStatus: "pending" });
   await send(page, snapshotWith());
@@ -271,6 +225,281 @@ test("the pill says poll as soon as the stream closes, before a poll answers", a
   assert.equal(label.textContent, "poll", "not SSE while the first poll is out");
   assert.ok(el(page, "connection").classList.contains("poll"));
   assert.ok(!el(page, "connection").classList.contains("live"));
+});
+
+// --- Polling and the way back to the stream (#707) ---------------------------
+
+const POLL_TIMER = -707;
+
+/**
+ * Keeps the 2s poll timer's tick and each 8s poll timeout to run by hand;
+ * every other timer runs as usual.
+ */
+function driveTimers(window) {
+  const timers = { tick: null, cleared: false, timeouts: new Map(), next: 1e6 };
+  const realSetInterval = window.setInterval;
+  const realClearInterval = window.clearInterval;
+  const realSetTimeout = window.setTimeout;
+  const realClearTimeout = window.clearTimeout;
+  window.setInterval = (fn, ms) => {
+    if (ms !== 2000) return realSetInterval(fn, ms);
+    timers.tick = fn;
+    timers.cleared = false;
+    return POLL_TIMER;
+  };
+  window.clearInterval = (id) => {
+    if (id === POLL_TIMER) timers.cleared = true;
+    else realClearInterval(id);
+  };
+  window.setTimeout = (fn, ms, ...args) => {
+    if (ms !== 8000) return realSetTimeout(fn, ms, ...args);
+    const id = timers.next++;
+    timers.timeouts.set(id, fn);
+    return id;
+  };
+  window.clearTimeout = (id) => {
+    if (!timers.timeouts.delete(id)) realClearTimeout(id);
+  };
+  // Runs every pending poll timeout, as if 8s passed; says how many.
+  timers.expire = () => {
+    const due = [...timers.timeouts.values()];
+    timers.timeouts.clear();
+    for (const fn of due) fn();
+    return due.length;
+  };
+  return timers;
+}
+
+/** Holds each snapshot poll until the test answers it. */
+function holdPolls(window) {
+  const polls = [];
+  const realFetch = window.fetch;
+  window.fetch = (url, init) => {
+    if (!String(url).includes("/api/v1/snapshot")) return realFetch(url, init);
+    return new Promise((resolve, reject) => polls.push({ resolve, reject, settled: false }));
+  };
+  return polls;
+}
+
+const answered = (snap) => ({ status: 200, ok: true, json: () => Promise.resolve(snap) });
+
+function snapshotRequests(page) {
+  return page.requests.filter((r) => r.path === "/api/v1/snapshot").length;
+}
+
+function watchAnnounce(page) {
+  const announce = el(page, "announce");
+  const said = [];
+  new page.window.MutationObserver(() => said.push(announce.textContent))
+    .observe(announce, { childList: true, characterData: true, subtree: true });
+  return said;
+}
+
+/** A live page whose stream closes for good, so it polls. */
+async function pollingPage(options = {}, hold = false) {
+  const page = await livePage({ snapshot: snapshotWith(), ...options });
+  await send(page, snapshotWith());
+  const timers = driveTimers(page.window);
+  const polls = hold ? holdPolls(page.window) : null;
+  page.events.source.readyState = 2;
+  page.events.source.onerror();
+  await settle(page.window);
+  assert.ok(timers.tick, "polling started");
+  return { page, timers, polls };
+}
+
+/** Answers every poll still out. */
+async function answerPolls(p) {
+  for (const poll of p.polls) {
+    if (poll.settled) continue;
+    poll.settled = true;
+    poll.resolve(answered(snapshotWith()));
+  }
+  await settle(p.page.window);
+}
+
+/**
+ * Ticks the poll timer until the page opens a retry of the stream, at most
+ * five times, and returns the retry. `hold` pages have each poll answered
+ * before the next tick; the poll sent with the retry stays out.
+ */
+async function tickUntilRetry(p) {
+  const { sources } = p.page.events;
+  for (let i = 0; i < 5 && sources.length === 1; i++) {
+    if (p.polls) await answerPolls(p);
+    p.timers.tick();
+    await settle(p.page.window);
+  }
+  assert.equal(sources.length, 2, "the polling page opened a retry of the stream");
+  return p.page.events.source;
+}
+
+test("a polling page whose retry hears closed shows the end and sends nothing more", async () => {
+  const p = await pollingPage();
+  await tickUntilRetry(p);
+  p.page.events.emit("closed", "");
+  await settle(p.page.window);
+  assert.equal(el(p.page, "connection-label").textContent, "finished");
+  assert.equal(el(p.page, "banner").textContent, "Goose has exited.");
+  assert.ok(p.timers.cleared, "the poll timer is stopped");
+  assert.equal(p.page.events.source.readyState, 2, "the retry is closed, so it does not reconnect");
+  const sent = snapshotRequests(p.page);
+  for (let i = 0; i < 12; i++) {
+    p.timers.tick();
+    await settle(p.page.window);
+  }
+  assert.equal(snapshotRequests(p.page), sent, "no snapshot request after the end");
+  assert.equal(p.page.events.sources.length, 2, "no further retry after the end");
+  assert.equal(el(p.page, "connection-label").textContent, "finished");
+});
+
+for (const outcome of ["resolve", "reject"]) {
+  test(`a polling page whose retry gets a snapshot is live again and a late poll that ${outcome}s leaves it so`, async () => {
+    const p = await pollingPage({}, true);
+    await tickUntilRetry(p);
+    const said = watchAnnounce(p.page);
+    const late = p.polls[p.polls.length - 1];
+    assert.equal(late.settled, false, "a poll is out when the stream comes back");
+    await send(p.page, snapshotWith());
+    assert.equal(el(p.page, "connection-label").textContent, "SSE");
+    assert.ok(p.timers.cleared, "polling stopped");
+    late.settled = true;
+    if (outcome === "resolve") late.resolve(answered(snapshotWith()));
+    else late.reject(new TypeError("network error"));
+    await settle(p.page.window);
+    assert.equal(el(p.page, "connection-label").textContent, "SSE", "the late poll is dropped");
+    assert.deepEqual(said, [], "nothing to say: the connection never dropped");
+    // The retry is now the live stream: its loss falls back to polling.
+    p.page.events.source.readyState = 2;
+    p.page.events.source.onerror();
+    await settle(p.page.window);
+    assert.equal(el(p.page, "connection-label").textContent, "poll");
+  });
+}
+
+test("a poll that never answers times out and later polls still go", async () => {
+  const p = await pollingPage({ snapshotStatus: "pending" });
+  const sent = snapshotRequests(p.page);
+  assert.equal(p.timers.expire(), 1, "the poll out has a timeout");
+  await settle(p.page.window);
+  assert.equal(el(p.page, "announce").textContent, "Connection lost.", "a timed out poll failed");
+  assert.equal(p.page.events.sources.length, 1, "only a 503 retries the stream at once");
+  p.timers.tick();
+  await settle(p.page.window);
+  assert.equal(snapshotRequests(p.page), sent + 1, "the next tick polls again");
+});
+
+// Was "a slow poll failing after a later one answered does not say the
+// connection was lost", which sent two polls at once; polls no longer
+// overlap (#707), so a failure is always the newest word.
+test("a slow poll holds back the next tick instead of overlapping it", async () => {
+  const p = await pollingPage({}, true);
+  const said = watchAnnounce(p.page);
+  assert.equal(p.polls.length, 1);
+  p.timers.tick();
+  p.timers.tick();
+  await settle(p.page.window);
+  assert.equal(p.polls.length, 1, "no second poll while the first is out");
+  await answerPolls(p);
+  p.timers.tick();
+  await settle(p.page.window);
+  assert.equal(p.polls.length, 2, "the next tick polls once the first answered");
+  assert.deepEqual(said, []);
+  p.polls[1].settled = true;
+  p.polls[1].reject(new TypeError("network error"));
+  await settle(p.page.window);
+  assert.deepEqual(said, ["Connection lost."]);
+});
+
+test("a retry of the stream that fails says nothing and polling goes on", async () => {
+  const p = await pollingPage();
+  const said = watchAnnounce(p.page);
+  const banner = el(p.page, "banner");
+  const bannerBefore = [banner.textContent, banner.className];
+  const retry = await tickUntilRetry(p);
+  const sent = snapshotRequests(p.page);
+  retry.onerror();
+  await settle(p.page.window);
+  assert.equal(retry.readyState, 2, "closed, so the browser does not reconnect it");
+  assert.deepEqual(said, []);
+  assert.deepEqual([banner.textContent, banner.className], bannerBefore);
+  assert.equal(el(p.page, "connection-label").textContent, "poll");
+  p.timers.tick();
+  await settle(p.page.window);
+  assert.equal(snapshotRequests(p.page), sent + 1, "polling goes on");
+  for (let i = 0; i < 3; i++) {
+    p.timers.tick();
+    await settle(p.page.window);
+  }
+  assert.equal(p.page.events.sources.length, 2, "no retry before the fifth tick");
+  p.timers.tick();
+  await settle(p.page.window);
+  assert.equal(p.page.events.sources.length, 3, "the fifth tick retries again");
+});
+
+test("a poll answering 503 opens a retry of the stream at once", async () => {
+  const p = await pollingPage({ snapshotStatus: 503 });
+  assert.equal(p.page.events.sources.length, 2, "a retry opened without waiting");
+  const open = () => p.page.events.sources.filter((s) => s.readyState === 1).length;
+  // The 503 came on the first tick; ticks two to four answer 503 again.
+  for (let i = 0; i < 3; i++) {
+    p.timers.tick();
+    await settle(p.page.window);
+  }
+  assert.equal(p.page.events.sources.length, 2, "one retry at a time");
+  assert.equal(open(), 1, "one retry at a time");
+  // The fifth tick swaps the silent retry for a fresh one, still one open.
+  p.timers.tick();
+  await settle(p.page.window);
+  assert.equal(p.page.events.sources.length, 3, "the fifth tick replaced the retry");
+  assert.equal(open(), 1, "one retry at a time");
+});
+
+test("a poll still out does not hold back the fifth tick's retry", async () => {
+  const p = await pollingPage({ snapshotStatus: "pending" });
+  const sent = snapshotRequests(p.page);
+  for (let i = 0; i < 4; i++) {
+    p.timers.tick();
+    await settle(p.page.window);
+  }
+  assert.equal(snapshotRequests(p.page), sent, "the first poll is still out");
+  assert.equal(p.page.events.sources.length, 2, "the fifth tick retried anyway");
+  assert.equal(el(p.page, "connection-label").textContent, "poll", "a retry leaves the pill alone");
+});
+
+test("polling again after a retry came back counts five ticks afresh", async () => {
+  const p = await pollingPage({}, true);
+  p.polls[0].settled = true;
+  p.polls[0].resolve({ status: 503, ok: false, json: () => Promise.resolve(null) });
+  await settle(p.page.window);
+  assert.equal(p.page.events.sources.length, 2, "the 503 retried at once");
+  await send(p.page, snapshotWith());
+  assert.equal(el(p.page, "connection-label").textContent, "SSE");
+  p.page.events.source.readyState = 2;
+  p.page.events.source.onerror();
+  await settle(p.page.window);
+  let ticks = 0;
+  while (p.page.events.sources.length === 2 && ticks < 6) {
+    await answerPolls(p);
+    p.timers.tick();
+    ticks += 1;
+    await settle(p.page.window);
+  }
+  assert.equal(ticks, 4, "the retry waits for the fifth tick of the new polling");
+});
+
+test("a poll failing after closed leaves the page finished", async () => {
+  const p = await pollingPage({}, true);
+  await tickUntilRetry(p);
+  const late = p.polls[p.polls.length - 1];
+  p.page.events.emit("closed", "");
+  await settle(p.page.window);
+  late.settled = true;
+  late.reject(new TypeError("network error"));
+  await settle(p.page.window);
+  assert.equal(el(p.page, "connection-label").textContent, "finished");
+  assert.notEqual(el(p.page, "announce").textContent, "Connection lost.");
+  assert.equal(el(p.page, "banner").textContent, "Goose has exited.");
 });
 
 // --- 2. Tables update in place ----------------------------------------------
