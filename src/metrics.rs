@@ -4064,9 +4064,42 @@ impl GooseAttack {
     /// If `write` is true, then also write the data. Otherwise just create the files to ensure
     /// we have access. `html` caches the HTML report so it is generated once
     /// however many sets name an HTML file.
+    ///
+    /// Creating stops at the first error. Writing tries every report, logs
+    /// each error, and returns the first.
     pub(crate) async fn process_reports(
         &self,
         reports: &[String],
+        set: ReportSet,
+        write: bool,
+        baseline: Option<&ReportData<'static>>,
+        html: &mut Option<String>,
+    ) -> Result<(), GooseError> {
+        let mut first_error = None;
+        for report in reports {
+            if let Err(e) = self
+                .process_report(report, set, write, baseline, html)
+                .await
+            {
+                if !write {
+                    return Err(e);
+                }
+                match &e {
+                    GooseError::InvalidOption { value, detail, .. } => {
+                        error!("couldn't write the report {report}: {value}. {detail}")
+                    }
+                    other => error!("couldn't write the report {report}: {other:?}"),
+                }
+                first_error.get_or_insert(e);
+            }
+        }
+        first_error.map_or(Ok(()), Err)
+    }
+
+    /// Create one report file, and if `write` is true, write it.
+    async fn process_report(
+        &self,
+        report: &str,
         set: ReportSet,
         write: bool,
         baseline: Option<&ReportData<'static>>,
@@ -4078,62 +4111,63 @@ impl GooseAttack {
                 .map_err(|err| set.io_error(&path.to_string_lossy(), err))
         };
 
-        for report in reports {
-            let path = PathBuf::from(report);
-            match path.extension().map(OsStr::to_string_lossy).as_deref() {
-                Some("html" | "htm") => {
-                    let file = create(path).await?;
-                    if write {
-                        let content = match html {
-                            Some(content) => content,
-                            None => html.insert(self.generate_html_report_content(baseline)?),
-                        };
-                        self.write_html_report(file, report, set, content).await?;
+        let path = PathBuf::from(report);
+        match path.extension().map(OsStr::to_string_lossy).as_deref() {
+            Some("html" | "htm") => {
+                let file = create(path).await?;
+                if write {
+                    let content = match html {
+                        Some(content) => content,
+                        None => html.insert(self.generate_html_report_content(baseline)?),
+                    };
+                    self.write_html_report(file, report, set, content).await?;
+                }
+            }
+            Some("json") => {
+                let file = create(path).await?;
+                if write {
+                    self.write_json_report(file, report, set, baseline).await?;
+                }
+            }
+            Some("md") => {
+                let file = create(path).await?;
+                if write {
+                    self.write_markdown_report(file, report, set, baseline)
+                        .await?;
+                }
+            }
+            #[cfg(feature = "pdf-reports")]
+            Some("pdf") => {
+                let file = create(path.clone()).await?;
+                if write {
+                    if let Err(e) = self.write_pdf_report(file, report, baseline).await {
+                        remove_if_empty(&path).await;
+                        return Err(e);
                     }
                 }
-                Some("json") => {
-                    let file = create(path).await?;
-                    if write {
-                        self.write_json_report(file, report, set, baseline).await?;
-                    }
-                }
-                Some("md") => {
-                    let file = create(path).await?;
-                    if write {
-                        self.write_markdown_report(file, report, set, baseline)
-                            .await?;
-                    }
-                }
-                #[cfg(feature = "pdf-reports")]
-                Some("pdf") => {
-                    let file = create(path).await?;
-                    if write {
-                        self.write_pdf_report(file, report, baseline).await?;
-                    }
-                }
-                #[cfg(not(feature = "pdf-reports"))]
-                Some("pdf") => {
-                    return Err(GooseError::InvalidOption {
-                        option: "--report-file".to_string(),
-                        value: report.clone(),
-                        detail: "PDF reports require compiling with the 'pdf-reports' feature flag"
-                            .to_string(),
-                    })
-                }
-                None => {
-                    return Err(GooseError::InvalidOption {
-                        option: "--report-file".to_string(),
-                        value: report.clone(),
-                        detail: "Missing file extension for report".to_string(),
-                    })
-                }
-                Some(ext) => {
-                    return Err(GooseError::InvalidOption {
-                        option: "--report-file".to_string(),
-                        value: report.clone(),
-                        detail: format!("Unknown report file type: {ext}"),
-                    })
-                }
+            }
+            #[cfg(not(feature = "pdf-reports"))]
+            Some("pdf") => {
+                return Err(GooseError::InvalidOption {
+                    option: "--report-file".to_string(),
+                    value: report.to_string(),
+                    detail: "PDF reports require compiling with the 'pdf-reports' feature flag"
+                        .to_string(),
+                })
+            }
+            None => {
+                return Err(GooseError::InvalidOption {
+                    option: "--report-file".to_string(),
+                    value: report.to_string(),
+                    detail: "Missing file extension for report".to_string(),
+                })
+            }
+            Some(ext) => {
+                return Err(GooseError::InvalidOption {
+                    option: "--report-file".to_string(),
+                    value: report.to_string(),
+                    detail: format!("Unknown report file type: {ext}"),
+                })
             }
         }
 

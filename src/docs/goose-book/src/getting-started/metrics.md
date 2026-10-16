@@ -514,6 +514,7 @@ If you encounter issues generating PDF reports:
 - On Linux the downloaded headless shell needs the shared libraries Chrome uses, such as `libnss3`; installing Chromium from your distribution brings them in
 - An "Exec format error" means the binary was built for another architecture; install one that matches this machine
 - Without `unzip`, install it (`apt install unzip`, `dnf install unzip`, `apk add unzip` or `brew install unzip`) or set `CHROME`
+- If a PDF report fails at the end of a run, the other reports are still written, and the empty PDF file is removed
 - Try verbose logging: `cargo run --features pdf-reports -- --report-file report.pdf -v`
 
 **PDF generation failures:**

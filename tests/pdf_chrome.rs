@@ -1,4 +1,5 @@
-//! Chrome problems stop a run with a PDF report before any user starts.
+//! Chrome problems stop a run with a PDF report before any user starts, and a
+//! PDF that fails at the end of a run costs no other report.
 //!
 //! These tests set `CHROME`, so they live in their own test binary, where the
 //! variable can't leak into other tests.
@@ -95,5 +96,53 @@ async fn chrome_that_does_not_exist_fails_before_the_test() {
 async fn chrome_that_is_a_directory_fails_before_the_test() {
     let dir = temp_dir("pdf-chrome-directory");
     assert_fails_before_start(&dir, "pdf-chrome-directory-run").await;
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Writes an executable shell script.
+#[cfg(unix)]
+fn script(path: &Path, body: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::write(path, format!("#!/bin/sh\n{body}\n")).unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// A PDF report that fails at the end of the run leaves the JSON report
+/// complete and no empty PDF behind.
+///
+/// `CHROME` points at a script that runs the installed browser for the check
+/// at startup and deletes itself, so the launch at the end of the run fails.
+#[cfg(unix)]
+#[tokio::test]
+#[serial]
+async fn failed_pdf_keeps_other_reports() {
+    let Ok(real_chrome) = headless_chrome::browser::default_executable() else {
+        eprintln!("skipped: no installed Chrome or Chromium to wrap");
+        return;
+    };
+    let dir = temp_dir("pdf-chrome-fails-late");
+    let wrapper = dir.join("chrome");
+    script(
+        &wrapper,
+        &format!("rm -f \"$0\"\nexec '{}' \"$@\"", real_chrome.display()),
+    );
+
+    let pdf = dir.join("report.pdf");
+    let json = dir.join("report.json");
+    let server = MockServer::start();
+    let index = index_mock(&server);
+
+    std::env::set_var("CHROME", &wrapper);
+    let result = run(&server, &[&pdf, &json], &[]).await;
+    std::env::remove_var("CHROME");
+
+    assert!(!wrapper.exists(), "Chrome was not checked at startup");
+    assert!(index.calls() > 0, "the load test did not run");
+    let error = format!("{:?}", result.expect_err("the PDF report should fail"));
+    assert!(error.contains("Chrome launch failed"), "{}", error);
+    let report: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&json).unwrap()).unwrap();
+    assert!(report.get("raw_metrics").is_some(), "{}", report);
+    assert!(!pdf.exists(), "the empty PDF report was left behind");
     std::fs::remove_dir_all(&dir).unwrap();
 }
