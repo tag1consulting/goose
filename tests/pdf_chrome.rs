@@ -150,10 +150,10 @@ async fn chrome_that_exits_at_launch_fails_before_the_test() {
 #[cfg(unix)]
 #[tokio::test]
 #[serial]
+#[ignore = "needs an installed Chrome or Chromium; CI runs it with --include-ignored"]
 async fn failed_pdf_keeps_other_reports() {
     let Ok(real_chrome) = headless_chrome::browser::default_executable() else {
-        eprintln!("skipped: no installed Chrome or Chromium to wrap");
-        return;
+        panic!("this test needs an installed Chrome or Chromium to wrap, and found none");
     };
     let dir = temp_dir("pdf-chrome-fails-late");
     let wrapper = dir.join("chrome");

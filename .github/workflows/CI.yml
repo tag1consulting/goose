@@ -99,14 +99,16 @@ jobs:
       with:
         toolchain: stable
     
-    # zip yanked every release but 9.0.3 on 2026-10-16; headless_chrome's fetch feature pulled it in.
+    # headless_chrome's fetch feature pulled in zip 8.x. On 2026-10-16 every zip release but 9.0.3
+    # was yanked, so no Goose build resolved (#753). If a new dependency needs zip, confirm it
+    # resolves to an unyanked release, then remove or narrow this step.
     - name: 🔎 No zip in the dependency graph
       if: ${{ matrix.features == 'all-features' }}
       run: |
         # Pass: cargo tree finds no zip package. Fail: zip is in the graph, or cargo tree fails for another reason.
         if out=$(cargo tree --all-features -i zip 2>&1); then
           echo "$out"
-          echo "::error::zip is in the dependency graph again; see the cargo tree output above"
+          echo "::error::zip is in the dependency graph again (see the cargo tree output above). headless_chrome's fetch feature pulled in zip 8.x, and on 2026-10-16 every zip release but 9.0.3 was yanked, so no Goose build resolved (#753). If a new dependency needs zip, confirm it resolves to an unyanked release, then remove or narrow this step."
           exit 1
         fi
         if ! echo "$out" | grep -q "did not match any packages"; then
@@ -167,6 +169,11 @@ jobs:
         command: test 
         args: --verbose --all-features
     
+    # The ubuntu-latest image ships Google Chrome, which these ignored tests need.
+    - name: 🔎 Test PDF reports with an installed Chrome
+      if: ${{ matrix.features == 'all-features' }}
+      run: cargo test --verbose --all-features --test pdf_chrome -- --include-ignored
+
     - name: 🔎 timezone-sensitive tests in non UTC (GMT-5)
       if: ${{ matrix.features == 'all-features' }}
       uses: actions-rs/cargo@v1
@@ -212,6 +219,10 @@ jobs:
 
     - name: 🔎 Test PDF reports
       run: cargo test --verbose --features pdf-reports --test pdf_reports
+
+    # These tests set CHROME, so they download nothing.
+    - name: 🔎 Test Chrome failures with the installed Chromium
+      run: cargo test --verbose --features pdf-reports --test pdf_chrome -- --include-ignored
 
     - name: 🔎 Installed Chromium was used
       run: |
