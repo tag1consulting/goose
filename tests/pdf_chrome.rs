@@ -61,15 +61,17 @@ async fn run(
         .await
 }
 
-/// Asserts a run with `CHROME` set to `chrome` fails before sending a request.
+/// Asserts a run with `CHROME` set to `chrome` fails before sending a request,
+/// and leaves none of its report files behind.
 async fn assert_fails_before_start(chrome: &Path, name: &str) {
     let dir = temp_dir(name);
     let pdf = dir.join("report.pdf");
+    let json = dir.join("report.json");
     let server = MockServer::start();
     let index = index_mock(&server);
 
     std::env::set_var("CHROME", chrome);
-    let result = run(&server, &[&pdf], &[]).await;
+    let result = run(&server, &[&pdf, &json], &[]).await;
     std::env::remove_var("CHROME");
 
     let error = result.expect_err("the run should fail when CHROME can't run");
@@ -80,6 +82,7 @@ async fn assert_fails_before_start(chrome: &Path, name: &str) {
         "users started although CHROME is unusable"
     );
     assert!(!pdf.exists(), "an empty PDF report was left behind");
+    assert!(!json.exists(), "an empty JSON report was left behind");
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -121,12 +124,13 @@ async fn chrome_that_exits_at_launch_fails_before_the_test() {
         "echo 'chrome: error while loading shared libraries: libnss3.so' >&2\nexit 127",
     );
     let pdf = dir.join("report.pdf");
+    let json = dir.join("report.json");
     let server = MockServer::start();
     let index = index_mock(&server);
 
     let started = std::time::Instant::now();
     std::env::set_var("CHROME", &chrome);
-    let result = run(&server, &[&pdf], &["--pdf-timeout", "10"]).await;
+    let result = run(&server, &[&pdf, &json], &["--pdf-timeout", "10"]).await;
     std::env::remove_var("CHROME");
 
     let error = format!("{:?}", result.expect_err("the run should fail"));
@@ -139,6 +143,7 @@ async fn chrome_that_exits_at_launch_fails_before_the_test() {
     );
     assert_eq!(index.calls(), 0, "users started although Chrome can't run");
     assert!(!pdf.exists(), "an empty PDF report was left behind");
+    assert!(!json.exists(), "an empty JSON report was left behind");
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

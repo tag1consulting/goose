@@ -6,9 +6,9 @@
     o **behavior change**: a `CHROME` that names a path that does not exist is an error; `headless_chrome` ignored it
     o downloading needs `unzip` on `PATH` (`tar` on Windows), and no longer needs the `zip` crate
     o a failed Chrome launch says to install Chrome or set `CHROME`, and an `Exec format error` says the binary does not match this machine's architecture
-    o **behavior change**: with a `.pdf` `--report-file`, Goose finds Chrome, downloads it if needed, and renders a test page to PDF before any user starts, and a run whose Chrome can't render fails then instead of after the load test; Chrome was first looked for, downloaded and launched only when the report was written
+    o **behavior change**: with a `.pdf` `--report-file`, Goose finds Chrome, downloads it if needed, and renders a test page to PDF before any user starts, and a run whose Chrome can't render fails then, before any report file is created, instead of after the load test; Chrome was first looked for, downloaded and launched only when the report was written
     o **behavior change**: a `CHROME` that names a directory or a file that is not executable is an error when the configuration is checked, and a macOS app bundle gets the path of the binary inside it
-    o a report that fails at the end of a run no longer stops the other `--report-file` reports from being written, and a PDF report that fails leaves no empty file behind; the first error is still returned
+    o a report that fails at the end of a run no longer stops the other `--report-file` reports or `--pdf-print-html` from being written, and a PDF report that fails leaves no empty file behind; the first error is still returned
     o a failed Chrome launch names the binary and how Goose found it, and on Linux reports a missing ELF interpreter (a glibc binary on musl) and the shared libraries `ldd` can't find; otherwise it shows what `--version` printed
     o a Chrome launch is bounded by `--pdf-timeout`; a Chrome that exited at once, such as one missing a shared library, took `headless_chrome` about five and a half minutes to report, retrying a 30 second wait eleven times
     o Goose checks `unzip` runs before it downloads, and a musl build never downloads, since Chrome for Testing needs glibc

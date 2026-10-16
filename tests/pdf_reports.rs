@@ -327,3 +327,63 @@ async fn test_pdf_without_feature_fails() {
 
     common::cleanup_files(vec![pdf_file]);
 }
+
+/// The directory holding the JSON report that `remove_report_dir` removes.
+static REPORT_DIR: std::sync::Mutex<Option<std::path::PathBuf>> = std::sync::Mutex::new(None);
+
+/// Requests the index, then removes [`REPORT_DIR`], so a report created there
+/// at startup can't be written at the end of the run.
+pub async fn remove_report_dir(user: &mut GooseUser) -> TransactionResult {
+    let _goose = user.get(INDEX_PATH).await?;
+    if let Some(dir) = REPORT_DIR.lock().unwrap().as_ref() {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+    Ok(())
+}
+
+/// `--pdf-print-html` is written even when a `--report-file` report fails at
+/// the end of the run, and the run returns the report's error.
+#[tokio::test]
+#[serial]
+async fn test_pdf_print_html_written_when_a_report_fails() {
+    let dir = std::env::temp_dir().join(format!("goose-print-html-{}", std::process::id()));
+    let reports = dir.join("reports");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&reports).unwrap();
+    let json = reports.join("report.json");
+    let html = dir.join("print.html");
+    *REPORT_DIR.lock().unwrap() = Some(reports.clone());
+
+    let server = MockServer::start();
+    let mock_endpoints = setup_mock_server_endpoints(&server);
+    let json_flag = json.to_string_lossy().into_owned();
+    let html_flag = html.to_string_lossy().into_owned();
+    let configuration = common::build_configuration(
+        &server,
+        vec![
+            "--users",
+            "1",
+            "--increase-rate",
+            "1",
+            "--run-time",
+            "1",
+            "--report-file",
+            &json_flag,
+            "--pdf-print-html",
+            &html_flag,
+        ],
+    );
+    let scenario = scenario!("LoadTest").register_transaction(transaction!(remove_report_dir));
+    let result = common::build_load_test(configuration, vec![scenario], None, None)
+        .execute()
+        .await;
+    *REPORT_DIR.lock().unwrap() = None;
+
+    assert!(mock_endpoints[0].calls() > 0, "the load test did not run");
+    assert!(!reports.exists(), "the report directory was not removed");
+    let error = format!("{:?}", result.expect_err("the JSON report should fail"));
+    assert!(error.contains("report.json"), "{}", error);
+    let content = std::fs::read_to_string(&html).expect("--pdf-print-html was not written");
+    assert!(content.contains("@page"), "{}", content);
+    std::fs::remove_dir_all(&dir).unwrap();
+}

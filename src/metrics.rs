@@ -4066,7 +4066,8 @@ impl GooseAttack {
     /// however many sets name an HTML file.
     ///
     /// Creating stops at the first error. Writing tries every report, logs
-    /// each error, and returns the first.
+    /// each failure (an error for `--report-file`, a warning for a saved
+    /// run), and returns the first.
     pub(crate) async fn process_reports(
         &self,
         reports: &[String],
@@ -4084,11 +4085,15 @@ impl GooseAttack {
                 if !write {
                     return Err(e);
                 }
-                match &e {
+                let message = match &e {
                     GooseError::InvalidOption { value, detail, .. } => {
-                        error!("couldn't write the report {report}: {value}. {detail}")
+                        format!("couldn't write the report {report}: {value}. {detail}")
                     }
-                    other => error!("couldn't write the report {report}: {other:?}"),
+                    other => format!("couldn't write the report {report}: {other:?}"),
+                };
+                match set {
+                    ReportSet::ReportFiles => error!("{message}"),
+                    ReportSet::SavedRun => warn!("{message}"),
                 }
                 first_error.get_or_insert(e);
             }
@@ -4177,7 +4182,18 @@ impl GooseAttack {
     /// Create all requested reports, to ensure we have access. When any is a
     /// PDF, also find Chrome and confirm it renders one, so a Chrome problem
     /// stops the run before any user starts.
+    ///
+    /// The Chrome check runs first, so a run it stops leaves no report file behind.
     pub(crate) async fn create_reports(&self) -> Result<(), GooseError> {
+        #[cfg(feature = "pdf-reports")]
+        if self.configuration.report_file.iter().any(|report| {
+            std::path::Path::new(report)
+                .extension()
+                .is_some_and(|ext| ext == "pdf")
+        }) {
+            self.preflight_pdf().await?;
+        }
+
         self.process_reports(
             &self.configuration.report_file,
             ReportSet::ReportFiles,
@@ -4185,28 +4201,7 @@ impl GooseAttack {
             None,
             &mut None,
         )
-        .await?;
-
-        #[cfg(feature = "pdf-reports")]
-        {
-            let pdfs: Vec<PathBuf> = self
-                .configuration
-                .report_file
-                .iter()
-                .map(PathBuf::from)
-                .filter(|path| path.extension().is_some_and(|ext| ext == "pdf"))
-                .collect();
-            if !pdfs.is_empty() {
-                if let Err(e) = self.preflight_pdf().await {
-                    for path in &pdfs {
-                        remove_if_empty(path).await;
-                    }
-                    return Err(e);
-                }
-            }
-        }
-
-        Ok(())
+        .await
     }
 
     /// The Chrome binary PDF reports run, found (and if need be downloaded)
@@ -4231,11 +4226,7 @@ impl GooseAttack {
             report::pdf::preflight_pdf(scale, verbose, timeout, &launched)
         })
         .await
-        .map_err(|e| GooseError::InvalidOption {
-            option: "--report-file".to_string(),
-            value: format!("Chrome check failed: {e}"),
-            detail: "The check that Chrome can render a PDF did not finish.".to_string(),
-        })??;
+        .map_err(|e| chrome_task_error("the check that Chrome can render a PDF", e))??;
         info!(
             "PDF reports will use Chrome {} at {} ({}); checked in {:.1}s",
             version
@@ -4249,25 +4240,27 @@ impl GooseAttack {
         Ok(())
     }
 
-    /// Write all `--report-file` reports, and `--pdf-print-html` if set.
+    /// Write all `--report-file` reports, and `--pdf-print-html` if set,
+    /// even when a report failed. Returns the first error.
     pub(crate) async fn write_report_files(
         &self,
         baseline: Option<&ReportData<'static>>,
         html: &mut Option<String>,
     ) -> Result<(), GooseError> {
-        self.process_reports(
-            &self.configuration.report_file,
-            ReportSet::ReportFiles,
-            true,
-            baseline,
-            html,
-        )
-        .await?;
+        let reports = self
+            .process_reports(
+                &self.configuration.report_file,
+                ReportSet::ReportFiles,
+                true,
+                baseline,
+                html,
+            )
+            .await;
 
         // Write PDF-optimized HTML if configured (always available)
-        self.write_print_html_if_configured(baseline).await?;
+        let print_html = self.write_print_html_if_configured(baseline).await;
 
-        Ok(())
+        first_error(reports, print_html)
     }
 
     /// Write PDF-optimized HTML if the --pdf-print-html option is configured.
@@ -4618,7 +4611,6 @@ impl GooseAttack {
     ) -> Result<(), GooseError> {
         use crate::report::pdf::generate_pdf_from_html;
         use crate::report::print::generate_print_optimized_html_content;
-        use std::path::Path;
         use tokio::fs as async_fs;
 
         // Generate HTML report content using the shared function
@@ -4659,15 +4651,25 @@ impl GooseAttack {
             startup
         };
 
-        // Generate PDF from HTML using the configurable timeout and scale
-        generate_pdf_from_html(
-            &print_optimized_html,
-            Path::new(path),
-            self.configuration.pdf_scale,
-            self.configuration.verbose > 0,
-            self.configuration.pdf_timeout,
-            chrome,
-        )?;
+        // Generate PDF from HTML using the configurable timeout and scale.
+        // Launching Chrome and rendering block, so they run off the runtime.
+        let output = PathBuf::from(path);
+        let scale = self.configuration.pdf_scale;
+        let verbose = self.configuration.verbose > 0;
+        let timeout = self.configuration.pdf_timeout;
+        let chrome = chrome.clone();
+        tokio::task::spawn_blocking(move || {
+            generate_pdf_from_html(
+                &print_optimized_html,
+                &output,
+                scale,
+                verbose,
+                timeout,
+                &chrome,
+            )
+        })
+        .await
+        .map_err(|e| chrome_task_error("writing the PDF report", e))??;
 
         info!("pdf report file written to: {path}");
 
@@ -4693,6 +4695,32 @@ impl GooseAttack {
     }
 }
 
+/// The error for a blocking Chrome task, such as `task`, that panicked or was
+/// cancelled.
+#[cfg(feature = "pdf-reports")]
+fn chrome_task_error(task: &str, e: tokio::task::JoinError) -> GooseError {
+    GooseError::InvalidOption {
+        option: "--report-file".to_string(),
+        value: format!("{task} did not finish: {e}"),
+        detail: "The thread running Chrome panicked or was cancelled.".to_string(),
+    }
+}
+
+/// Combines the results of writers that all ran, returning the first error
+/// and logging any later one, which would otherwise be lost.
+fn first_error(
+    first: Result<(), GooseError>,
+    second: Result<(), GooseError>,
+) -> Result<(), GooseError> {
+    match (first, second) {
+        (Err(first), Err(second)) => {
+            error!("a later report also failed: {second:?}");
+            Err(first)
+        }
+        (first, second) => first.and(second),
+    }
+}
+
 /// Removes a report file that is still empty, the state `create_reports`
 /// leaves it in, after the report could not be written.
 #[cfg(feature = "pdf-reports")]
@@ -4709,8 +4737,9 @@ async fn remove_if_empty(path: &std::path::Path) {
 pub(crate) enum ReportSet {
     /// The `--report-file` reports: a failure is an invalid option.
     ReportFiles,
-    /// A saved run's reports: a failure is the I/O error alone, reported as
-    /// a warning by the caller.
+    /// A saved run's reports: a failure is the I/O error alone. Each failed
+    /// file is logged as a warning, and the first error is returned to the
+    /// caller.
     SavedRun,
 }
 
