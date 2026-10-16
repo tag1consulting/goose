@@ -107,6 +107,41 @@ fn script(path: &Path, body: &str) {
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
 }
 
+/// A Chrome that exits as soon as it starts, as one missing a shared library
+/// does, fails the check at startup within `--pdf-timeout`, and the error
+/// shows what it printed.
+#[cfg(unix)]
+#[tokio::test]
+#[serial]
+async fn chrome_that_exits_at_launch_fails_before_the_test() {
+    let dir = temp_dir("pdf-chrome-exits");
+    let chrome = dir.join("chrome");
+    script(
+        &chrome,
+        "echo 'chrome: error while loading shared libraries: libnss3.so' >&2\nexit 127",
+    );
+    let pdf = dir.join("report.pdf");
+    let server = MockServer::start();
+    let index = index_mock(&server);
+
+    let started = std::time::Instant::now();
+    std::env::set_var("CHROME", &chrome);
+    let result = run(&server, &[&pdf], &["--pdf-timeout", "10"]).await;
+    std::env::remove_var("CHROME");
+
+    let error = format!("{:?}", result.expect_err("the run should fail"));
+    assert!(error.contains("libnss3.so"), "{}", error);
+    assert!(error.contains(&*chrome.to_string_lossy()), "{}", error);
+    assert!(
+        started.elapsed().as_secs() < 30,
+        "took {:?}",
+        started.elapsed()
+    );
+    assert_eq!(index.calls(), 0, "users started although Chrome can't run");
+    assert!(!pdf.exists(), "an empty PDF report was left behind");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// A PDF report that fails at the end of the run leaves the JSON report
 /// complete and no empty PDF behind.
 ///
@@ -139,7 +174,7 @@ async fn failed_pdf_keeps_other_reports() {
     assert!(!wrapper.exists(), "Chrome was not checked at startup");
     assert!(index.calls() > 0, "the load test did not run");
     let error = format!("{:?}", result.expect_err("the PDF report should fail"));
-    assert!(error.contains("Chrome launch failed"), "{}", error);
+    assert!(error.contains("does not exist"), "{}", error);
     let report: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&json).unwrap()).unwrap();
     assert!(report.get("raw_metrics").is_some(), "{}", report);

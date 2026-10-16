@@ -513,6 +513,7 @@ If you encounter issues generating PDF reports:
 - With no browser installed, Goose needs network access to download Chrome for Testing and `unzip` on `PATH`; corporate firewalls may block the download, so install Chrome or Chromium or set `CHROME` instead
 - On Linux the downloaded headless shell needs the shared libraries Chrome uses, such as `libnss3`; installing Chromium from your distribution brings them in
 - An "Exec format error" means the binary was built for another architecture; install one that matches this machine
+- When Chrome won't start, the error names the binary and how Goose found it. On Linux it also says when the binary's ELF interpreter is missing (usually a glibc binary on a musl system) and lists the shared libraries `ldd` can't find; otherwise it shows what the binary printed when run with `--version`
 - Without `unzip`, install it (`apt install unzip`, `dnf install unzip`, `apk add unzip` or `brew install unzip`) or set `CHROME`
 - If a PDF report fails at the end of a run, the other reports are still written, and the empty PDF file is removed
 - Try verbose logging: `cargo run --features pdf-reports -- --report-file report.pdf -v`

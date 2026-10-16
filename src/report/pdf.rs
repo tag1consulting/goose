@@ -29,26 +29,7 @@ mod pdf_errors {
         GooseError::InvalidOption {
             option: "--pdf".to_string(),
             value: format!("Chrome launch failed: {inner_error}"),
-            detail: chrome_launch_detail(&inner_error, chrome),
-        }
-    }
-
-    /// Explains a Chrome launch failure and how to point Goose at a browser.
-    pub(super) fn chrome_launch_detail(inner_error: &str, chrome: &ResolvedChrome) -> String {
-        let how_to = format!(
-            "Goose found a Chrome binary, {} ({}), but could not start it. Install Chrome or Chromium, or set the CHROME environment variable to the full path of a working Chrome or Chromium binary.",
-            chrome.path.display(),
-            chrome.source.describe()
-        );
-        // `Command::spawn` reports ENOEXEC as "Exec format error (os error 8)"
-        // when the binary was found but was built for another architecture.
-        if inner_error.contains("Exec format error") {
-            format!(
-                "The Chrome binary does not match this machine's architecture ({}). {how_to}",
-                std::env::consts::ARCH
-            )
-        } else {
-            how_to
+            detail: super::launch_diagnosis::diagnose(&inner_error, chrome),
         }
     }
 
@@ -449,23 +430,233 @@ fn render_pdf(
     })
 }
 
+/// Explains why Chrome did not start. Each step that can't run is skipped,
+/// and no step can hang: every command it runs has a short timeout.
+mod launch_diagnosis {
+    use crate::report::chrome::ResolvedChrome;
+    use std::io::Read;
+    use std::path::Path;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    const HOW_TO: &str = "Install Chrome or Chromium, or set the CHROME environment variable to the full path of a working Chrome or Chromium binary.";
+
+    /// How the launch failed, from the error text.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub(super) enum Failure {
+        /// The binary is for another architecture (ENOEXEC).
+        ExecFormat,
+        /// ENOENT: the binary, or on Linux its ELF interpreter, is missing.
+        NotFound,
+        /// EACCES: the binary is not executable.
+        PermissionDenied,
+        Other,
+    }
+
+    pub(super) fn classify(error: &str) -> Failure {
+        // `Command::spawn` errors end with the OS error number.
+        if error.contains("Exec format error") || error.contains("os error 8)") {
+            Failure::ExecFormat
+        } else if error.contains("No such file or directory") || error.contains("os error 2)") {
+            Failure::NotFound
+        } else if error.contains("Permission denied") || error.contains("os error 13)") {
+            Failure::PermissionDenied
+        } else {
+            Failure::Other
+        }
+    }
+
+    /// The libraries `ldd` reports missing. glibc's `ldd` prints
+    /// `libnss3.so => not found`; musl's prints
+    /// `Error loading shared library libnss3.so: No such file or directory`.
+    pub(super) fn missing_libraries(ldd_output: &str) -> Vec<String> {
+        let mut missing: Vec<String> = Vec::new();
+        for line in ldd_output.lines().map(str::trim) {
+            let library = if let Some((library, rest)) = line.split_once("=>") {
+                (rest.trim() == "not found").then(|| library.trim())
+            } else if let Some(rest) = line.strip_prefix("Error loading shared library ") {
+                rest.split(':').next().map(str::trim)
+            } else {
+                None
+            };
+            if let Some(library) = library.filter(|library| !library.is_empty()) {
+                if !missing.iter().any(|seen| seen == library) {
+                    missing.push(library.to_string());
+                }
+            }
+        }
+        missing
+    }
+
+    /// What Goose learned about the failed launch.
+    pub(super) struct Findings<'a> {
+        pub(super) failure: Failure,
+        pub(super) exists: bool,
+        pub(super) linux: bool,
+        pub(super) missing: &'a [String],
+        pub(super) version_stderr: Option<&'a str>,
+    }
+
+    /// Writes the explanation from what was learned.
+    pub(super) fn explain(path: &Path, source: &str, findings: &Findings) -> String {
+        let mut text = format!(
+            "Goose could not start the Chrome binary {} ({source}).",
+            path.display()
+        );
+        match findings.failure {
+            Failure::ExecFormat => text.push_str(&format!(
+                " It does not match this machine's architecture ({}).",
+                std::env::consts::ARCH
+            )),
+            Failure::NotFound if !findings.exists => text.push_str(" The file does not exist."),
+            Failure::NotFound if findings.linux => text.push_str(
+                " The file exists, so the ELF interpreter it was linked against is missing: usually a glibc binary on a musl system such as Alpine, or the reverse.",
+            ),
+            Failure::PermissionDenied => {
+                text.push_str(" The file is not executable by this user.")
+            }
+            _ => {}
+        }
+        if !findings.missing.is_empty() {
+            text.push_str(&format!(
+                " It needs shared libraries that are not installed: {}. Installing your distribution's Chromium package pulls them in.",
+                findings.missing.join(", ")
+            ));
+        }
+        if let Some(stderr) = findings.version_stderr.filter(|s| !s.trim().is_empty()) {
+            text.push_str(&format!(
+                " Running it with --version printed: {}",
+                stderr.trim()
+            ));
+        }
+        text.push(' ');
+        text.push_str(HOW_TO);
+        text
+    }
+
+    /// Diagnoses a failed launch of `chrome`.
+    pub(super) fn diagnose(error: &str, chrome: &ResolvedChrome) -> String {
+        let failure = classify(error);
+        let exists = chrome.path.is_file();
+        let linux = cfg!(target_os = "linux");
+        // Nothing more to learn from a binary that is missing or for another architecture.
+        let probe = exists && failure != Failure::ExecFormat;
+
+        let mut missing = Vec::new();
+        if probe && linux {
+            if let Some((stdout, stderr)) = run(
+                Command::new("ldd").arg(&chrome.path),
+                Duration::from_secs(5),
+            ) {
+                missing = missing_libraries(&format!("{stdout}\n{stderr}"));
+            }
+        }
+        let interpreter_missing = linux && exists && failure == Failure::NotFound;
+        let version_stderr = if probe && missing.is_empty() && !interpreter_missing {
+            run(
+                Command::new(&chrome.path).arg("--version"),
+                Duration::from_secs(5),
+            )
+            .map(|(_, stderr)| stderr.lines().take(5).collect::<Vec<_>>().join(" / "))
+        } else {
+            None
+        };
+
+        explain(
+            &chrome.path,
+            chrome.source.describe(),
+            &Findings {
+                failure,
+                exists,
+                linux,
+                missing: &missing,
+                version_stderr: version_stderr.as_deref(),
+            },
+        )
+    }
+
+    /// Runs a command and returns its output, or `None` if it can't start or
+    /// doesn't finish within `timeout`.
+    fn run(command: &mut Command, timeout: Duration) -> Option<(String, String)> {
+        let mut child = command
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .ok()?;
+        let started = Instant::now();
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => break,
+                Ok(None) if started.elapsed() < timeout => {
+                    std::thread::sleep(Duration::from_millis(20))
+                }
+                _ => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+            }
+        }
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        if let Some(mut out) = child.stdout.take() {
+            let _ = out.read_to_string(&mut stdout);
+        }
+        if let Some(mut err) = child.stderr.take() {
+            let _ = err.read_to_string(&mut stderr);
+        }
+        Some((stdout, stderr))
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::pdf_errors::chrome_launch_detail;
-    use crate::report::chrome::{ChromeSource, ResolvedChrome};
+    use super::launch_diagnosis::{classify, explain, missing_libraries, Failure, Findings};
+    use std::path::Path;
 
-    fn detail(inner_error: &str) -> String {
-        let chrome = ResolvedChrome {
-            path: "/usr/bin/chromium".into(),
-            source: ChromeSource::Installed,
-            version: None,
-        };
-        chrome_launch_detail(inner_error, &chrome)
+    fn findings(failure: Failure) -> Findings<'static> {
+        Findings {
+            failure,
+            exists: true,
+            linux: false,
+            missing: &[],
+            version_stderr: None,
+        }
     }
 
     #[test]
-    fn launch_error_names_chrome_variable() {
-        let detail = detail("Could not auto detect a chrome executable");
+    fn classifies_launch_errors() {
+        assert_eq!(
+            classify("Exec format error (os error 8)"),
+            Failure::ExecFormat
+        );
+        assert_eq!(
+            classify("No such file or directory (os error 2)"),
+            Failure::NotFound
+        );
+        assert_eq!(
+            classify("Permission denied (os error 13)"),
+            Failure::PermissionDenied
+        );
+        assert_eq!(
+            classify("Could not auto detect a chrome executable"),
+            Failure::Other
+        );
+        // os error 28 is not os error 2.
+        assert_eq!(
+            classify("No space left on device (os error 28)"),
+            Failure::Other
+        );
+    }
+
+    #[test]
+    fn launch_error_names_chrome_variable_and_binary() {
+        let detail = explain(
+            Path::new("/usr/bin/chromium"),
+            "installed",
+            &findings(Failure::Other),
+        );
         assert!(detail.contains("CHROME"), "{}", detail);
         assert!(
             detail.contains("/usr/bin/chromium (installed)"),
@@ -478,10 +669,89 @@ mod tests {
 
     #[test]
     fn launch_error_reports_architecture_mismatch() {
-        let detail = detail("Exec format error (os error 8)");
+        let detail = explain(
+            Path::new("/usr/bin/chromium"),
+            "installed",
+            &findings(Failure::ExecFormat),
+        );
         assert!(detail.contains("architecture"), "{}", detail);
         assert!(detail.contains(std::env::consts::ARCH), "{}", detail);
         assert!(detail.contains("CHROME"), "{}", detail);
         assert!(!detail.to_lowercase().contains("download"), "{}", detail);
+    }
+
+    #[test]
+    fn launch_error_reports_missing_interpreter_on_linux() {
+        let mut found = findings(Failure::NotFound);
+        found.linux = true;
+        let detail = explain(Path::new("/opt/chrome"), "set by CHROME", &found);
+        assert!(detail.contains("ELF interpreter"), "{}", detail);
+        assert!(detail.contains("musl"), "{}", detail);
+
+        // A missing file is just missing.
+        found.exists = false;
+        let detail = explain(Path::new("/opt/chrome"), "set by CHROME", &found);
+        assert!(detail.contains("does not exist"), "{}", detail);
+        assert!(!detail.contains("ELF"), "{}", detail);
+
+        // Off Linux there is no ELF interpreter to blame.
+        found.exists = true;
+        found.linux = false;
+        let detail = explain(Path::new("/opt/chrome"), "set by CHROME", &found);
+        assert!(!detail.contains("ELF"), "{}", detail);
+    }
+
+    #[test]
+    fn launch_error_lists_missing_libraries_and_stderr() {
+        let missing = vec!["libnss3.so".to_string(), "libatk-1.0.so.0".to_string()];
+        let mut found = findings(Failure::Other);
+        found.linux = true;
+        found.missing = &missing;
+        let detail = explain(Path::new("/opt/chrome"), "installed", &found);
+        assert!(detail.contains("libnss3.so, libatk-1.0.so.0"), "{}", detail);
+        assert!(detail.contains("Chromium package"), "{}", detail);
+
+        let mut found = findings(Failure::Other);
+        found.version_stderr = Some("  cannot open display  ");
+        let detail = explain(Path::new("/opt/chrome"), "installed", &found);
+        assert!(
+            detail.contains("--version printed: cannot open display"),
+            "{}",
+            detail
+        );
+
+        // Empty stderr adds nothing.
+        found.version_stderr = Some("  ");
+        let detail = explain(Path::new("/opt/chrome"), "installed", &found);
+        assert!(!detail.contains("--version"), "{}", detail);
+    }
+
+    #[test]
+    fn parses_missing_libraries_from_ldd() {
+        let glibc = "\
+\tlinux-vdso.so.1 (0x0000ffff9a5e0000)
+\tlibdl.so.2 => /lib/aarch64-linux-gnu/libdl.so.2 (0x0000ffff9a590000)
+\tlibnss3.so => not found
+\tlibnssutil3.so => not found
+\tlibnss3.so => not found
+\tlibc.so.6 => /lib/aarch64-linux-gnu/libc.so.6 (0x0000ffff9a3e0000)
+";
+        assert_eq!(
+            missing_libraries(glibc),
+            vec!["libnss3.so", "libnssutil3.so"]
+        );
+
+        let musl = "\
+\t/lib/ld-musl-x86_64.so.1 (0x7f0e1c4a6000)
+Error loading shared library libglib-2.0.so.0: No such file or directory (needed by /opt/chrome)
+Error loading shared library libnss3.so: No such file or directory (needed by /opt/chrome)
+";
+        assert_eq!(
+            missing_libraries(musl),
+            vec!["libglib-2.0.so.0", "libnss3.so"]
+        );
+
+        assert!(missing_libraries("\tnot a dynamic executable\n").is_empty());
+        assert!(missing_libraries("").is_empty());
     }
 }
