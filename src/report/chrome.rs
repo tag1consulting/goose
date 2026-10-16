@@ -7,7 +7,9 @@
 //!    file is an error.
 //! 2. An installed browser, found by `headless_chrome` on `PATH` and in the
 //!    standard install locations.
-//! 3. A Chrome for Testing headless shell that Goose downloaded earlier.
+//! 3. A Chrome for Testing headless shell that Goose downloaded earlier. Once a
+//!    week Goose checks for a newer stable build, downloads it, and removes the
+//!    older ones.
 //! 4. A new download of the current stable Chrome for Testing headless shell,
 //!    unpacked with the system `unzip` (`tar` on Windows). Goose never
 //!    downloads when built for musl, because Chrome for Testing needs glibc.
@@ -19,9 +21,9 @@
 //! **Note**: This module is only available when compiled with the `pdf-reports` feature flag.
 
 use crate::GooseError;
-use log::info;
+use log::{debug, info, warn};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use tokio::io::AsyncWriteExt;
 
 /// Lists the Chrome for Testing downloads of each release channel.
@@ -30,6 +32,16 @@ const CHROME_FOR_TESTING_JSON: &str = "https://googlechromelabs.github.io/chrome
 /// The Chrome for Testing build Goose downloads: the headless shell, which is
 /// smaller than full Chrome and all that PDF generation needs.
 const DOWNLOAD_NAME: &str = "chrome-headless-shell";
+
+/// How often Goose checks for a newer Chrome for Testing than the one it downloaded.
+const REFRESH_INTERVAL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+
+/// A partial download older than this was abandoned, and is removed.
+const PARTIAL_MAX_AGE: Duration = Duration::from_secs(60 * 60);
+
+/// The file in the cache whose modification time records the last check for a
+/// newer Chrome for Testing.
+const LAST_CHECK: &str = "last-check";
 
 const INSTALL_OR_SET_CHROME: &str =
     "Install Chrome or Chromium, or set CHROME to the full path of its binary.";
@@ -126,7 +138,7 @@ fn app_bundle_binary(bundle: &Path) -> Option<PathBuf> {
 }
 
 /// Finds the Chrome or Chromium binary to run, downloading one when none is
-/// installed.
+/// installed, and refreshing a downloaded one once a week.
 pub(crate) async fn resolve_chrome() -> Result<ResolvedChrome, GooseError> {
     if let Some(chrome) = chrome_env() {
         check_chrome_env(&chrome).map_err(chrome_env_error)?;
@@ -169,12 +181,10 @@ pub(crate) async fn resolve_chrome() -> Result<ResolvedChrome, GooseError> {
         )
     })?;
 
+    remove_stale(&cache, platform, None);
+
     if let Some((version, binary)) = cached_chrome(&cache, platform) {
-        return Ok(ResolvedChrome {
-            path: binary,
-            source: ChromeSource::Cached,
-            version: Some(version),
-        });
+        return Ok(refresh(&cache, platform, version, binary).await);
     }
 
     unpack_tool_available().map_err(|value| {
@@ -252,6 +262,14 @@ fn version_key(version: &str) -> Option<Vec<u32>> {
     version.split('.').map(|part| part.parse().ok()).collect()
 }
 
+/// Whether `candidate` is a newer Chrome version than `current`.
+fn is_newer(candidate: &str, current: &str) -> bool {
+    match (version_key(candidate), version_key(current)) {
+        (Some(candidate), Some(current)) => candidate > current,
+        _ => false,
+    }
+}
+
 /// The version and binary of the newest complete download in the cache for
 /// this platform, if any.
 ///
@@ -270,6 +288,130 @@ fn cached_chrome(cache: &Path, platform: &str) -> Option<(String, PathBuf)> {
         })
         .max_by(|a, b| a.0.cmp(&b.0))
         .map(|(_, version, binary)| (version, binary))
+}
+
+/// Whether a check for a newer Chrome for Testing is due, given when the last
+/// one succeeded. A last check in the future (the clock moved back) is due.
+fn check_due(last_check: Option<SystemTime>, now: SystemTime) -> bool {
+    match last_check {
+        Some(last_check) => now
+            .duration_since(last_check)
+            .map_or(true, |age| age >= REFRESH_INTERVAL),
+        None => true,
+    }
+}
+
+fn last_check(cache: &Path) -> Option<SystemTime> {
+    std::fs::metadata(cache.join(LAST_CHECK))
+        .and_then(|metadata| metadata.modified())
+        .ok()
+}
+
+/// Records a successful check for a newer Chrome for Testing.
+fn record_check(cache: &Path) {
+    if let Err(e) = std::fs::write(cache.join(LAST_CHECK), b"") {
+        debug!(
+            "couldn't record the Chrome for Testing check in {}: {e}",
+            cache.display()
+        );
+    }
+}
+
+/// Uses a cached download, first replacing it with a newer stable build when
+/// the weekly check is due. A failed check or download is a warning, and the
+/// cached build is used.
+async fn refresh(cache: &Path, platform: &str, version: String, binary: PathBuf) -> ResolvedChrome {
+    let cached = ResolvedChrome {
+        path: binary,
+        source: ChromeSource::Cached,
+        version: Some(version.clone()),
+    };
+    if !check_due(last_check(cache), SystemTime::now()) {
+        return cached;
+    }
+    debug!("checking for a newer Chrome for Testing than {version}");
+    let newer = async {
+        let client = http_client(Duration::from_secs(10))?;
+        let (stable, url) = stable_download(&client, platform).await?;
+        if !is_newer(&stable, &version) {
+            return Ok(None);
+        }
+        unpack_tool_available()?;
+        install(&client, cache, platform, &stable, &url)
+            .await
+            .map(|binary| Some((stable, binary)))
+    };
+    match newer.await {
+        Ok(None) => {
+            record_check(cache);
+            cached
+        }
+        Ok(Some((stable, binary))) => {
+            record_check(cache);
+            remove_stale(cache, platform, Some(&stable));
+            ResolvedChrome {
+                path: binary,
+                source: ChromeSource::Downloaded,
+                version: Some(stable),
+            }
+        }
+        Err(e) => {
+            warn!("couldn't update the downloaded Chrome for Testing, using {version}: {e}");
+            cached
+        }
+    }
+}
+
+/// The cache entries to delete: partial downloads (names starting with `.`)
+/// older than [`PARTIAL_MAX_AGE`], and, when `current` is given, downloads
+/// for `platform` older than `current`. Each entry is a directory name and
+/// its age, when known.
+fn stale_entries<'a>(
+    entries: &'a [(String, Option<Duration>)],
+    platform: &str,
+    current: Option<&str>,
+) -> Vec<&'a str> {
+    let suffix = format!("-{platform}");
+    entries
+        .iter()
+        .filter(|(name, age)| {
+            if name.starts_with('.') {
+                return age.is_some_and(|age| age > PARTIAL_MAX_AGE);
+            }
+            match (current, name.strip_suffix(&suffix)) {
+                (Some(current), Some(version)) => is_newer(current, version),
+                _ => false,
+            }
+        })
+        .map(|(name, _)| name.as_str())
+        .collect()
+}
+
+/// Deletes the directories [`stale_entries`] picks. Errors are ignored: on
+/// Windows a binary in use can't be deleted.
+fn remove_stale(cache: &Path, platform: &str, current: Option<&str>) {
+    let Ok(read_dir) = std::fs::read_dir(cache) else {
+        return;
+    };
+    let now = SystemTime::now();
+    let entries: Vec<(String, Option<Duration>)> = read_dir
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let metadata = entry.metadata().ok()?;
+            if !metadata.is_dir() {
+                return None;
+            }
+            let age = metadata
+                .modified()
+                .ok()
+                .and_then(|modified| now.duration_since(modified).ok());
+            Some((entry.file_name().into_string().ok()?, age))
+        })
+        .collect();
+    for name in stale_entries(&entries, platform, current) {
+        debug!("removing {}", cache.join(name).display());
+        let _ = std::fs::remove_dir_all(cache.join(name));
+    }
 }
 
 fn http_client(connect_timeout: Duration) -> Result<reqwest::Client, String> {
@@ -321,6 +463,7 @@ async fn download_chrome(cache: &Path, platform: &str) -> Result<(String, PathBu
     let client = http_client(Duration::from_secs(30))?;
     let (version, url) = stable_download(&client, platform).await?;
     let binary = install(&client, cache, platform, &version, &url).await?;
+    record_check(cache);
     Ok((version, binary))
 }
 
@@ -549,6 +692,84 @@ mod tests {
     }
 
     #[test]
+    fn versions_compare_numerically() {
+        assert!(is_newer("10.0.0.1", "9.9.9.9"));
+        assert!(is_newer("155.0.8059.84", "155.0.8059.9"));
+        assert!(!is_newer("155.0.8059.84", "155.0.8059.84"));
+        assert!(!is_newer("9.0.0.0", "10.0.0.0"));
+        assert!(!is_newer("not-a-version", "1.0"));
+        assert!(!is_newer("2.0", "not-a-version"));
+    }
+
+    #[test]
+    fn check_is_due_weekly() {
+        let now = SystemTime::now();
+        let day = Duration::from_secs(24 * 60 * 60);
+        assert!(check_due(None, now));
+        assert!(!check_due(Some(now), now));
+        assert!(!check_due(Some(now - 6 * day), now));
+        assert!(check_due(Some(now - 7 * day), now));
+        assert!(check_due(Some(now - 30 * day), now));
+        // The clock moved back past the last check.
+        assert!(check_due(Some(now + day), now));
+    }
+
+    #[test]
+    fn stale_entries_are_old_versions_and_abandoned_partials() {
+        let hour = Duration::from_secs(60 * 60);
+        let entries: Vec<(String, Option<Duration>)> = [
+            ("9.0.0.1-linux64", Some(hour)),
+            ("10.0.0.2-linux64", None),
+            ("11.0.0.3-linux64", None),
+            ("12.0.0.4-linux64", None),
+            ("9.0.0.1-linux-arm64", None),
+            (".11.0.0.3-linux64.42", Some(2 * hour)),
+            (".12.0.0.4-linux64.43", Some(Duration::from_secs(60))),
+            (".10.0.0.2-mac-arm64.44", Some(3 * hour)),
+            (".unknown-age", None),
+            ("not-a-version-linux64", None),
+        ]
+        .iter()
+        .map(|(name, age)| (name.to_string(), *age))
+        .collect();
+
+        assert_eq!(
+            stale_entries(&entries, "linux64", Some("11.0.0.3")),
+            vec![
+                "9.0.0.1-linux64",
+                "10.0.0.2-linux64",
+                ".11.0.0.3-linux64.42",
+                ".10.0.0.2-mac-arm64.44",
+            ]
+        );
+        // With no current version, only abandoned partials go.
+        assert_eq!(
+            stale_entries(&entries, "linux64", None),
+            vec![".11.0.0.3-linux64.42", ".10.0.0.2-mac-arm64.44"]
+        );
+    }
+
+    #[test]
+    fn remove_stale_keeps_the_current_download() {
+        let cache = temp_dir("chrome-stale");
+        for name in ["9.0.0.1-linux64", "10.0.0.2-linux64", "9.0.0.1-mac-arm64"] {
+            std::fs::create_dir_all(cache.join(name)).unwrap();
+        }
+        std::fs::write(cache.join(LAST_CHECK), b"").unwrap();
+        remove_stale(&cache, "linux64", Some("10.0.0.2"));
+        let mut left: Vec<String> = std::fs::read_dir(&cache)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        left.sort();
+        assert_eq!(
+            left,
+            vec!["10.0.0.2-linux64", "9.0.0.1-mac-arm64", LAST_CHECK]
+        );
+        std::fs::remove_dir_all(&cache).unwrap();
+    }
+
+    #[test]
     fn app_bundles_name_their_binary() {
         assert_eq!(
             app_bundle_binary(Path::new("/Applications/Google Chrome.app")),
@@ -609,6 +830,8 @@ mod tests {
         let (version, binary) = download_chrome(&cache, platform).await.unwrap();
         assert!(binary.is_file());
         assert_eq!(cached_chrome(&cache, platform), Some((version, binary)));
+        // The download counts as a check, so no refresh is due.
+        assert!(!check_due(last_check(&cache), SystemTime::now()));
         std::fs::remove_dir_all(&cache).unwrap();
     }
 }
