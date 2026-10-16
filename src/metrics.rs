@@ -6083,6 +6083,11 @@ mod test {
             request.response_time = 5;
             processor.process_request_metric(&request);
         }
+        let shutdown = processor.handle_command(MetricsCommand::RecordUsers {
+            active_users: 1,
+            elapsed_secs: far_second,
+        });
+        assert!(!shutdown);
 
         // Full history retained for HTML report graphs.
         assert!(
