@@ -214,8 +214,15 @@ jobs:
 
   # PDF reports with no browser installed: Goose downloads Chrome for Testing.
   pdf-reports-download:
-    name: PDF report tests (Chrome download)
-    runs-on: ubuntu-latest
+    name: PDF report tests (Chrome download, ${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: linux64
+          - runner: ubuntu-24.04-arm
+            platform: linux-arm64
 
     steps:
     - name: Checkout code
@@ -256,7 +263,7 @@ jobs:
     - name: 🔎 Chrome was downloaded
       run: |
         # Pass: a downloaded headless shell is in Goose's cache. Fail: the tests used some other browser.
-        if ! ls ~/.cache/goose/chrome/*-linux64/chrome-headless-shell-linux64/chrome-headless-shell; then
+        if ! ls ~/.cache/goose/chrome/*-${{ matrix.platform }}/chrome-headless-shell-${{ matrix.platform }}/chrome-headless-shell; then
           echo "::error::the PDF tests passed without downloading Chrome for Testing"
           exit 1
         fi
