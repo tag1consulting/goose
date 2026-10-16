@@ -32,10 +32,13 @@ const TOKEN_STORAGE_KEY = "goose-dashboard-token";
 let token = "";
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
-// Each poll's number, and the highest whose snapshot arrived.
-let pollSeq = 0;
-let pollAnswered = 0;
+// The poll in flight, aborted when polling stops or it times out.
+let pollAbort: AbortController | null = null;
+let pollTicks = 0;
 let eventSource: EventSource | null = null;
+// A stream opened while polling, until its first snapshot makes it the
+// live stream.
+let retrySource: EventSource | null = null;
 let usingPoll = false;
 let authRequired = false;
 let authBlocked = false;
@@ -149,11 +152,38 @@ function render(snap: DashboardSnapshot, modeLabel: string): void {
   if (onSnapshot) onSnapshot(snap, modeLabel);
 }
 
+// Longer than the server's own 5s wait for a snapshot.
+const POLL_TIMEOUT_MS = 8000;
+// A retry of the stream every fifth tick, 10s apart.
+const RETRY_EVERY_TICKS = 5;
+
+class HttpError extends Error {
+  constructor(readonly status: number) {
+    super("HTTP " + status);
+  }
+}
+
 function stopPoll(): void {
   if (pollTimer != null) {
     clearInterval(pollTimer);
     pollTimer = null;
   }
+  if (pollAbort) {
+    pollAbort.abort();
+    pollAbort = null;
+  }
+}
+
+function closeStreams(): void {
+  for (const source of [eventSource, retrySource]) {
+    try {
+      if (source) source.close();
+    } catch {
+      /* ignore */
+    }
+  }
+  eventSource = null;
+  retrySource = null;
 }
 
 function showAuthMissing(): void {
@@ -162,14 +192,7 @@ function showAuthMissing(): void {
   authBlocked = true;
   stopPoll();
   usingPoll = false;
-  if (eventSource) {
-    try {
-      eventSource.close();
-    } catch {
-      /* ignore */
-    }
-    eventSource = null;
-  }
+  closeStreams();
   setConnection("disconnected");
   setBanner(
     "Open this dashboard as http://host:port/?token=… (token required for metrics).",
@@ -252,22 +275,25 @@ function checkSnapshot(data: unknown): DashboardSnapshot | null {
   return data as DashboardSnapshot;
 }
 
+// Renders nothing once Goose has exited, or once `signal` aborted.
 function fetchSnapshotOnce(
-  modeLabel?: string
+  modeLabel?: string,
+  signal?: AbortSignal
 ): Promise<DashboardSnapshot | null> {
   if (authBlocked) return Promise.resolve(null);
-  return fetch(snapshotUrl())
+  return fetch(snapshotUrl(), { signal })
     .then((res): Promise<unknown> | null => {
       if (res.status === 401) {
         showAuthMissing();
         return null;
       }
       if (!res.ok) {
-        throw new Error("HTTP " + res.status);
+        throw new HttpError(res.status);
       }
       return res.json();
     })
     .then((data) => {
+      if (finished || (signal && signal.aborted)) return null;
       const snap = data == null ? null : checkSnapshot(data);
       if (snap) {
         render(snap, modeLabel || "poll");
@@ -276,41 +302,59 @@ function fetchSnapshotOnce(
     });
 }
 
+/**
+ * Opens a retry of the stream while polling. With `replace` a retry still
+ * open, which has had no snapshot, is closed for a fresh one: it may hear
+ * only keep alive pings, or hang half open and never error. Without it, a
+ * retry already open stays and nothing new opens.
+ */
+function retrySse(replace = false): void {
+  if (finished || authBlocked) return;
+  if (retrySource) {
+    if (!replace) return;
+    // eventSource is null while polling, so this closes only the retry.
+    closeStreams();
+  }
+  openStream(true);
+}
+
 function startPollFallback(): void {
   if (finished || authBlocked) return;
   if (usingPoll && pollTimer != null) return;
   usingPoll = true;
-  if (eventSource) {
-    try {
-      eventSource.close();
-    } catch {
-      /* ignore */
-    }
-    eventSource = null;
-  }
+  pollTicks = 0;
+  closeStreams();
   // The pill alone: setConnection("poll") before the first poll answers
   // would announce a recovery a failing poll then takes back.
   showPolling();
   function tick(): void {
-    if (authBlocked) {
+    if (authBlocked || finished || !usingPoll) {
       stopPoll();
       return;
     }
-    // A poll can take longer than the 2s between them; one that fails after a
-    // later one answered is old news and must not announce a loss.
-    const seq = ++pollSeq;
-    fetchSnapshotOnce("poll").then(
-      () => {
-        if (seq > pollAnswered) pollAnswered = seq;
-      },
-      () => {
-        if (authBlocked || seq < pollAnswered) return;
-        setConnection("disconnected");
-      }
-    );
+    pollTicks += 1;
+    if (pollTicks % RETRY_EVERY_TICKS === 0) retrySse(true);
+    // One poll at a time: a slow one holds back the next tick.
+    if (pollAbort) return;
+    const abort = new AbortController();
+    pollAbort = abort;
+    const timeout = setTimeout(() => abort.abort(), POLL_TIMEOUT_MS);
+    // False once polling stopped: what this poll says is then old news.
+    const done = (): boolean => {
+      clearTimeout(timeout);
+      const current = pollAbort === abort;
+      if (current) pollAbort = null;
+      return current;
+    };
+    fetchSnapshotOnce("poll", abort.signal).then(done, (err: unknown) => {
+      if (!done()) return;
+      setConnection("disconnected");
+      // The hub may have closed: the stream then says so at once.
+      if (err instanceof HttpError && err.status === 503) retrySse();
+    });
   }
-  tick();
   stopPoll();
+  tick();
   if (!authBlocked) {
     pollTimer = setInterval(tick, 2000);
   }
@@ -323,18 +367,27 @@ function startPollFallback(): void {
 export function startSse(handler: SnapshotHandler, closed?: ClosedHandler): void {
   onSnapshot = handler;
   onClosed = closed || null;
-  if (typeof EventSource === "undefined") {
-    startPollFallback();
-    return;
-  }
+  openStream(false);
+}
 
-  setConnection("connecting");
+/**
+ * Opens the stream, or with `retry` a retry of it while polling: a retry's
+ * first snapshot makes it the live stream and ends polling, its `closed`
+ * ends the run, and an error before its first snapshot closes it quietly.
+ */
+function openStream(retry: boolean): void {
+  let source: EventSource;
   try {
-    eventSource = new EventSource(eventsUrl());
+    if (typeof EventSource === "undefined") throw new Error("no EventSource");
+    if (!retry) setConnection("connecting");
+    source = new EventSource(eventsUrl());
   } catch {
-    startPollFallback();
+    if (!retry) startPollFallback();
     return;
   }
+  if (retry) retrySource = source;
+  else eventSource = source;
+  const current = (): boolean => source === eventSource || source === retrySource;
 
   let sawSnapshot = false;
   // After the first snapshot, EventSource auto-reconnects; if errors keep
@@ -342,10 +395,15 @@ export function startSse(handler: SnapshotHandler, closed?: ClosedHandler): void
   let sseErrorStreak = 0;
   const SSE_ERROR_FALLBACK_THRESHOLD = 3;
 
-  eventSource.addEventListener("snapshot", (ev: MessageEvent) => {
+  source.addEventListener("snapshot", (ev: MessageEvent) => {
+    if (!current()) return;
     try {
       const snap = checkSnapshot(JSON.parse(ev.data));
       if (!snap) return;
+      if (source === retrySource) {
+        retrySource = null;
+        eventSource = source;
+      }
       sawSnapshot = true;
       sseErrorStreak = 0;
       usingPoll = false;
@@ -356,15 +414,10 @@ export function startSse(handler: SnapshotHandler, closed?: ClosedHandler): void
     }
   });
 
-  eventSource.addEventListener("closed", (ev: MessageEvent) => {
-    if (finished) return;
+  source.addEventListener("closed", (ev: MessageEvent) => {
+    if (finished || !current()) return;
     finished = true;
-    try {
-      if (eventSource) eventSource.close();
-    } catch {
-      /* ignore */
-    }
-    eventSource = null;
+    closeStreams();
     stopPoll();
     setConnection("closed");
     if (onClosed) {
@@ -374,8 +427,14 @@ export function startSse(handler: SnapshotHandler, closed?: ClosedHandler): void
     }
   });
 
-  eventSource.onerror = () => {
-    if (finished) {
+  source.onerror = () => {
+    if (finished || !current()) {
+      return;
+    }
+    if (source === retrySource) {
+      // Still polling: close it, or the browser reconnects it by itself.
+      // eventSource is null while polling, so this closes only the retry.
+      closeStreams();
       return;
     }
     // EventSource reconnects automatically on transient errors; fall back to
