@@ -146,6 +146,7 @@
     o **behavior change**: `GooseRawRequest.headers` (for example `goose.request.raw.headers`, or the `raw_request` in `TransactionError::RequestFailed`) is now empty unless one of these logs is enabled; log output is unchanged
  - [#731](https://github.com/tag1consulting/goose/pull/731) stop reparsing the request URL on every request; `request()` serialized the already parsed URL, parsed it again and allocated its path only for three log lines, and the `debug!` one is filtered out in normal runs
     o the path is now derived only when one of those lines is emitted; log output is unchanged and there is no behavior change
+ - [#754](https://github.com/tag1consulting/goose/pull/754) give each request a reference to its transaction's name instead of copying it when the name is inherited, and share one empty transaction name instead of allocating one per request; on ks3 under load, instructions per request fell 0.68% where requests inherit their transaction's name and 0.28% otherwise, with output unchanged
  - [#468](https://github.com/tag1consulting/goose/issues/468) replace `--hatch-rate` and `--startup-time` with `--increase-rate`, `--increase-time`, `--decrease-rate`, and `--decrease-time`
     o **breaking**: `--hatch-rate` / `-r` is now `--increase-rate` / `-r` (sets per-second rate users are added)
     o **breaking**: `--startup-time` / `-s` is now `--increase-time` / `-s` (sets total time to launch all users)
