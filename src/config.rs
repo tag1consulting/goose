@@ -2896,6 +2896,16 @@ impl GooseConfiguration {
             });
         }
 
+        // A CHROME that can't run fails here, before anything is downloaded
+        // or any user starts.
+        #[cfg(feature = "pdf-reports")]
+        if has_pdf_reports {
+            if let Some(chrome) = crate::report::chrome::chrome_env() {
+                crate::report::chrome::check_chrome_env(&chrome)
+                    .map_err(crate::report::chrome::chrome_env_error)?;
+            }
+        }
+
         Ok(())
     }
 

@@ -4140,7 +4140,9 @@ impl GooseAttack {
         Ok(())
     }
 
-    /// Create all requested reports, to ensure we have access.
+    /// Create all requested reports, to ensure we have access. When any is a
+    /// PDF, also find Chrome and confirm it renders one, so a Chrome problem
+    /// stops the run before any user starts.
     pub(crate) async fn create_reports(&self) -> Result<(), GooseError> {
         self.process_reports(
             &self.configuration.report_file,
@@ -4149,7 +4151,68 @@ impl GooseAttack {
             None,
             &mut None,
         )
+        .await?;
+
+        #[cfg(feature = "pdf-reports")]
+        {
+            let pdfs: Vec<PathBuf> = self
+                .configuration
+                .report_file
+                .iter()
+                .map(PathBuf::from)
+                .filter(|path| path.extension().is_some_and(|ext| ext == "pdf"))
+                .collect();
+            if !pdfs.is_empty() {
+                if let Err(e) = self.preflight_pdf().await {
+                    for path in &pdfs {
+                        remove_if_empty(path).await;
+                    }
+                    return Err(e);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// The Chrome binary PDF reports run, found (and if need be downloaded)
+    /// the first time it is asked for.
+    #[cfg(feature = "pdf-reports")]
+    async fn pdf_chrome(&self) -> Result<&report::chrome::ResolvedChrome, GooseError> {
+        self.chrome
+            .get_or_try_init(report::chrome::resolve_chrome)
+            .await
+    }
+
+    /// Finds Chrome and prints a small page to PDF with it.
+    #[cfg(feature = "pdf-reports")]
+    async fn preflight_pdf(&self) -> Result<(), GooseError> {
+        let started = std::time::Instant::now();
+        let chrome = self.pdf_chrome().await?.clone();
+        let scale = self.configuration.pdf_scale;
+        let verbose = self.configuration.verbose > 0;
+        let timeout = self.configuration.pdf_timeout;
+        let launched = chrome.clone();
+        let version = tokio::task::spawn_blocking(move || {
+            report::pdf::preflight_pdf(scale, verbose, timeout, &launched)
+        })
         .await
+        .map_err(|e| GooseError::InvalidOption {
+            option: "--pdf".to_string(),
+            value: format!("Chrome check failed: {e}"),
+            detail: "The check that Chrome can render a PDF did not finish.".to_string(),
+        })??;
+        info!(
+            "PDF reports will use Chrome {} at {} ({}); checked in {:.1}s",
+            version
+                .or(chrome.version)
+                .as_deref()
+                .unwrap_or("(version unknown)"),
+            chrome.path.display(),
+            chrome.source.describe(),
+            started.elapsed().as_secs_f64()
+        );
+        Ok(())
     }
 
     /// Write all `--report-file` reports, and `--pdf-print-html` if set.
@@ -4519,7 +4582,6 @@ impl GooseAttack {
         path: &str,
         baseline: Option<&ReportData<'static>>,
     ) -> Result<(), GooseError> {
-        use crate::report::chrome::find_or_download_chrome;
         use crate::report::pdf::generate_pdf_from_html;
         use crate::report::print::generate_print_optimized_html_content;
         use std::path::Path;
@@ -4548,8 +4610,8 @@ impl GooseAttack {
             );
         }
 
-        // Find an installed Chrome or Chromium, or download one
-        let chrome = find_or_download_chrome().await?;
+        // The Chrome found at startup, by create_reports
+        let chrome = self.pdf_chrome().await?;
 
         // Generate PDF from HTML using the configurable timeout and scale
         generate_pdf_from_html(
@@ -4582,6 +4644,17 @@ impl GooseAttack {
             value: path.to_string(),
             detail: "PDF reports require compiling with the 'pdf-reports' feature flag".to_string(),
         })
+    }
+}
+
+/// Removes a report file that is still empty, the state `create_reports`
+/// leaves it in, after the report could not be written.
+#[cfg(feature = "pdf-reports")]
+async fn remove_if_empty(path: &std::path::Path) {
+    if let Ok(metadata) = tokio::fs::metadata(path).await {
+        if metadata.is_file() && metadata.len() == 0 {
+            let _ = tokio::fs::remove_file(path).await;
+        }
     }
 }
 

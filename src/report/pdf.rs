@@ -7,45 +7,48 @@
 //! **Note**: This entire module is only available when compiled with the `pdf-reports` feature flag.
 
 use crate::logger::ScopedLogLevel;
+use crate::report::chrome::ResolvedChrome;
 use crate::GooseError;
 use headless_chrome::{Browser, LaunchOptions};
 use log::{debug, LevelFilter};
 use std::{
     ffi::OsStr,
     fs,
-    path::{Path, PathBuf},
+    path::Path,
     time::{Duration, Instant},
 };
 
 /// Centralized error message module for consistent PDF error handling
 mod pdf_errors {
+    use crate::report::chrome::ResolvedChrome;
     use crate::GooseError;
     use std::time::Duration;
 
     /// Creates a consistent error for Chrome launch failures
-    pub fn chrome_launch_error(inner_error: String) -> GooseError {
+    pub fn chrome_launch_error(inner_error: String, chrome: &ResolvedChrome) -> GooseError {
         GooseError::InvalidOption {
             option: "--pdf".to_string(),
             value: format!("Chrome launch failed: {inner_error}"),
-            detail: chrome_launch_detail(&inner_error),
+            detail: chrome_launch_detail(&inner_error, chrome),
         }
     }
 
     /// Explains a Chrome launch failure and how to point Goose at a browser.
-    ///
-    /// By the time Chrome is launched, `report::chrome` has found or downloaded
-    /// a binary, so a failure here means that binary could not run.
-    fn chrome_launch_detail(inner_error: &str) -> String {
-        const HOW_TO: &str = "Goose found a Chrome binary but could not start it. Install Chrome or Chromium, or set the CHROME environment variable to the full path of a working Chrome or Chromium binary.";
+    pub(super) fn chrome_launch_detail(inner_error: &str, chrome: &ResolvedChrome) -> String {
+        let how_to = format!(
+            "Goose found a Chrome binary, {} ({}), but could not start it. Install Chrome or Chromium, or set the CHROME environment variable to the full path of a working Chrome or Chromium binary.",
+            chrome.path.display(),
+            chrome.source.describe()
+        );
         // `Command::spawn` reports ENOEXEC as "Exec format error (os error 8)"
         // when the binary was found but was built for another architecture.
         if inner_error.contains("Exec format error") {
             format!(
-                "The Chrome binary does not match this machine's architecture ({}). {HOW_TO}",
+                "The Chrome binary does not match this machine's architecture ({}). {how_to}",
                 std::env::consts::ARCH
             )
         } else {
-            HOW_TO.to_string()
+            how_to
         }
     }
 
@@ -122,17 +125,58 @@ struct ChromeSession {
 impl ChromeSession {
     /// Creates a new Chrome session with proper resource tracking.
     ///
-    /// # Arguments
-    /// * `launch_options` - Chrome launch configuration
+    /// The launch is bounded by `timeout`. `headless_chrome` waits 30 seconds
+    /// for Chrome to report its DevTools address, and on a port it picked
+    /// itself retries ten more times, so a Chrome that exits at once (a
+    /// missing shared library) would otherwise take five minutes to fail.
+    /// Goose picks the port, so a failure is not retried, except when the
+    /// port turned out to be taken.
     ///
     /// # Returns
     /// * `Result<ChromeSession, GooseError>` - The Chrome session or an error
-    fn new(launch_options: LaunchOptions) -> Result<Self, GooseError> {
+    fn new(
+        chrome: &ResolvedChrome,
+        args: Vec<&'static OsStr>,
+        timeout: Duration,
+    ) -> Result<Self, GooseError> {
         let start_time = Instant::now();
 
-        debug!("Launching Chrome browser for PDF generation");
-        let browser = Browser::new(launch_options)
-            .map_err(|e| pdf_errors::chrome_launch_error(e.to_string()))?;
+        debug!(
+            "Launching {} ({}) for PDF generation",
+            chrome.path.display(),
+            chrome.source.describe()
+        );
+        let mut attempts = 0;
+        let browser = loop {
+            attempts += 1;
+            let launch_options = LaunchOptions::default_builder()
+                .path(Some(chrome.path.clone()))
+                .headless(true)
+                .args(args.clone())
+                .port(free_port())
+                .build()
+                .map_err(|e| pdf_errors::chrome_config_error(e.to_string()))?;
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = tx.send(Browser::new(launch_options));
+            });
+            let remaining = timeout.saturating_sub(start_time.elapsed());
+            match rx.recv_timeout(remaining) {
+                Ok(Ok(browser)) => break browser,
+                Ok(Err(e)) if attempts < 3 && e.to_string().contains("already in use") => continue,
+                Ok(Err(e)) => return Err(pdf_errors::chrome_launch_error(e.to_string(), chrome)),
+                // The launch thread ends on its own, and kills Chrome if it started.
+                Err(_) => {
+                    return Err(pdf_errors::chrome_launch_error(
+                        format!(
+                            "Chrome did not report its DevTools address within {} seconds",
+                            timeout.as_secs()
+                        ),
+                        chrome,
+                    ))
+                }
+            }
+        };
 
         // Attempt to get the process ID for tracking
         let process_id = browser.get_process_id();
@@ -177,6 +221,15 @@ impl Drop for ChromeSession {
         // The Browser's Drop trait handles the actual process termination
         // when self.browser is dropped
     }
+}
+
+/// A free local port for Chrome's DevTools, or `None` to let
+/// `headless_chrome` pick one.
+fn free_port() -> Option<u16> {
+    std::net::TcpListener::bind(("127.0.0.1", 0))
+        .and_then(|listener| listener.local_addr())
+        .map(|address| address.port())
+        .ok()
 }
 
 /// Get Chrome launch arguments based on verbosity level
@@ -232,8 +285,46 @@ pub(crate) fn generate_pdf_from_html(
     scale: f64,
     verbose: bool,
     timeout_seconds: u64,
-    chrome: PathBuf,
+    chrome: &ResolvedChrome,
 ) -> Result<(), GooseError> {
+    let rendered = render_pdf(html_content, scale, verbose, timeout_seconds, chrome)?;
+    fs::write(output_path, rendered.pdf)
+        .map_err(|e| pdf_errors::file_write_error(e.to_string(), output_path))
+}
+
+/// Confirms `chrome` can render a PDF, the way [`generate_pdf_from_html`]
+/// does, and returns Chrome's version when it reports one.
+pub(crate) fn preflight_pdf(
+    scale: f64,
+    verbose: bool,
+    timeout_seconds: u64,
+    chrome: &ResolvedChrome,
+) -> Result<Option<String>, GooseError> {
+    render_pdf(
+        "<!DOCTYPE html><html><body><p>Goose PDF report check</p></body></html>",
+        scale,
+        verbose,
+        timeout_seconds,
+        chrome,
+    )
+    .map(|rendered| rendered.version)
+}
+
+/// A PDF rendered in memory.
+struct Rendered {
+    pdf: Vec<u8>,
+    /// Chrome's version, such as `141.0.7390.122`.
+    version: Option<String>,
+}
+
+/// Launches Chrome and prints `html_content` to a PDF in memory.
+fn render_pdf(
+    html_content: &str,
+    scale: f64,
+    verbose: bool,
+    timeout_seconds: u64,
+    chrome: &ResolvedChrome,
+) -> Result<Rendered, GooseError> {
     // Get appropriate Chrome arguments based on verbosity
     let chrome_args = get_chrome_launch_args(verbose);
 
@@ -245,19 +336,19 @@ pub(crate) fn generate_pdf_from_html(
         None
     };
 
-    // Launch Chrome with appropriate arguments and resource tracking
-    let launch_options = LaunchOptions::default_builder()
-        .path(Some(chrome))
-        .headless(true)
-        .args(chrome_args)
-        .build()
-        .map_err(|e| pdf_errors::chrome_config_error(e.to_string()))?;
-
-    // Create Chrome session with automatic resource management
-    let chrome_session = ChromeSession::new(launch_options)?;
-
     // Set timeout for Chrome operations (configurable)
     let timeout = Duration::from_secs(timeout_seconds);
+
+    // Launch Chrome with appropriate arguments and automatic resource management
+    let chrome_session = ChromeSession::new(chrome, chrome_args, timeout)?;
+
+    // The product is reported as `HeadlessChrome/141.0.7390.122`.
+    let version = chrome_session.browser().get_version().ok().map(|version| {
+        match version.product.split_once('/') {
+            Some((_, number)) => number.to_string(),
+            None => version.product,
+        }
+    });
 
     // Create a new tab
     chrome_session.check_timeout(timeout)?;
@@ -346,34 +437,41 @@ pub(crate) fn generate_pdf_from_html(
             pdf_errors::pdf_generation_error(e.to_string(), scale, adjusted_width, adjusted_height)
         })?;
 
-    // Write PDF to file
     chrome_session.check_timeout(timeout)?;
-    fs::write(output_path, pdf_data)
-        .map_err(|e| pdf_errors::file_write_error(e.to_string(), output_path))?;
 
     // The ScopedLogLevel guard (_log_guard) automatically restores the original
     // log level when it goes out of scope here, ensuring no permanent global state changes.
     // Thread safety is guaranteed by the mutex synchronization in ScopedLogLevel.
     // The ChromeSession automatically cleans up Chrome processes via Drop trait.
-    Ok(())
+    Ok(Rendered {
+        pdf: pdf_data,
+        version,
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::pdf_errors::chrome_launch_error;
-    use crate::GooseError;
+    use super::pdf_errors::chrome_launch_detail;
+    use crate::report::chrome::{ChromeSource, ResolvedChrome};
 
     fn detail(inner_error: &str) -> String {
-        match chrome_launch_error(inner_error.to_string()) {
-            GooseError::InvalidOption { detail, .. } => detail,
-            other => panic!("unexpected error: {:?}", other),
-        }
+        let chrome = ResolvedChrome {
+            path: "/usr/bin/chromium".into(),
+            source: ChromeSource::Installed,
+            version: None,
+        };
+        chrome_launch_detail(inner_error, &chrome)
     }
 
     #[test]
     fn launch_error_names_chrome_variable() {
         let detail = detail("Could not auto detect a chrome executable");
         assert!(detail.contains("CHROME"), "{}", detail);
+        assert!(
+            detail.contains("/usr/bin/chromium (installed)"),
+            "{}",
+            detail
+        );
         assert!(!detail.to_lowercase().contains("download"), "{}", detail);
         assert!(!detail.contains("architecture"), "{}", detail);
     }

@@ -456,12 +456,20 @@ PDF generation uses headless Chrome to convert HTML reports to PDF format. The s
 
 Goose looks for a browser in this order:
 
-1. The `CHROME` environment variable. When it is set, Goose uses that binary and never downloads one.
+1. The `CHROME` environment variable. When it is set, Goose uses that binary and never downloads one. It must name an executable file: a directory is an error, and for a macOS app bundle such as `/Applications/Google Chrome.app` the error gives the binary inside it, `Contents/MacOS/Google Chrome`.
 2. An installed Chrome, Chromium or Edge on `PATH`, or in the standard locations under `/Applications` on macOS.
 3. A Chrome for Testing headless shell that Goose downloaded earlier.
-4. A new download of the current stable Chrome for Testing headless shell. The archive is 102 to 125MB and unpacks to 211 to 291MB; Goose unpacks it with the system `unzip` (`tar` on Windows).
+4. A new download of the current stable Chrome for Testing headless shell. The archive is 102 to 125MB and unpacks to 211 to 291MB; Goose unpacks it with the system `unzip` (`tar` on Windows), and checks that it runs before downloading.
+
+Goose does all of this before the load test starts. When any `--report-file` ends in `.pdf`, Goose finds Chrome, downloads it if needed, and renders a small test page to PDF with it, within `--pdf-timeout`. If that fails, the load test does not start, so a Chrome problem never costs you a finished run. The log names the Chrome it will use:
+
+```
+PDF reports will use Chrome 156.0.8078.35 at /Applications/Google Chrome.app/Contents/MacOS/Google Chrome (installed); checked in 2.6s
+```
 
 Downloads are kept in `goose/chrome` under the user cache directory: `~/.cache` (or `$XDG_CACHE_HOME`) on Linux, `~/Library/Caches` on macOS, and `%LOCALAPPDATA%` on Windows. Delete that directory to download a newer Chrome on the next PDF report.
+
+Goose built for musl, such as on Alpine, never downloads Chrome, because Chrome for Testing builds need glibc. Install Chromium (`apk add chromium`) or set `CHROME`.
 
 To use a particular browser, or to stop Goose from downloading one, set `CHROME`:
 
@@ -505,6 +513,7 @@ If you encounter issues generating PDF reports:
 - With no browser installed, Goose needs network access to download Chrome for Testing and `unzip` on `PATH`; corporate firewalls may block the download, so install Chrome or Chromium or set `CHROME` instead
 - On Linux the downloaded headless shell needs the shared libraries Chrome uses, such as `libnss3`; installing Chromium from your distribution brings them in
 - An "Exec format error" means the binary was built for another architecture; install one that matches this machine
+- Without `unzip`, install it (`apt install unzip`, `dnf install unzip`, `apk add unzip` or `brew install unzip`) or set `CHROME`
 - Try verbose logging: `cargo run --features pdf-reports -- --report-file report.pdf -v`
 
 **PDF generation failures:**

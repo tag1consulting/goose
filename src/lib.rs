@@ -549,6 +549,9 @@ pub struct GooseAttack {
     ended_by: Option<(runs::EndedBy, Option<String>)>,
     /// Saving runs to the runs directory.
     saving: runs::Saving,
+    /// The Chrome binary PDF reports run, found once at startup.
+    #[cfg(feature = "pdf-reports")]
+    chrome: tokio::sync::OnceCell<report::chrome::ResolvedChrome>,
 }
 
 /// Match a pattern containing `*` wildcards against text.
@@ -616,6 +619,8 @@ impl GooseAttack {
             run_in_progress: false,
             ended_by: None,
             saving: runs::Saving::default(),
+            #[cfg(feature = "pdf-reports")]
+            chrome: tokio::sync::OnceCell::new(),
         })
     }
 
@@ -656,6 +661,8 @@ impl GooseAttack {
             run_in_progress: false,
             ended_by: None,
             saving: runs::Saving::default(),
+            #[cfg(feature = "pdf-reports")]
+            chrome: tokio::sync::OnceCell::new(),
         })
     }
 
