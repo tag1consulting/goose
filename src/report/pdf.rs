@@ -27,7 +27,7 @@ mod pdf_errors {
     /// Creates a consistent error for Chrome launch failures
     pub fn chrome_launch_error(inner_error: String, chrome: &ResolvedChrome) -> GooseError {
         GooseError::InvalidOption {
-            option: "--pdf".to_string(),
+            option: "--report-file".to_string(),
             value: format!("Chrome launch failed: {inner_error}"),
             detail: super::launch_diagnosis::diagnose(&inner_error, chrome),
         }
@@ -36,16 +36,16 @@ mod pdf_errors {
     /// Creates a consistent error for Chrome configuration failures
     pub fn chrome_config_error(inner_error: String) -> GooseError {
         GooseError::InvalidOption {
-            option: "--pdf".to_string(),
+            option: "--report-file".to_string(),
             value: format!("Chrome configuration failed: {inner_error}"),
-            detail: "PDF generation requires Chrome/Chromium. Try installing Chrome or running with --pdf-scale to adjust memory usage.".to_string(),
+            detail: "Goose could not build the options to launch Chrome with. This is a bug in Goose; please report it at https://github.com/tag1consulting/goose/issues with this error.".to_string(),
         }
     }
 
     /// Creates a consistent error for Chrome operation failures
     pub fn chrome_operation_error(operation: &str, inner_error: String) -> GooseError {
         GooseError::InvalidOption {
-            option: "--pdf".to_string(),
+            option: "--report-file".to_string(),
             value: format!("{operation} failed: {inner_error}"),
             detail: format!("Chrome {operation} operation failed. This may indicate Chrome instability or insufficient system resources."),
         }
@@ -54,7 +54,7 @@ mod pdf_errors {
     /// Creates a consistent error for timeout scenarios
     pub fn timeout_error(duration: Duration) -> GooseError {
         GooseError::InvalidOption {
-            option: "--pdf".to_string(),
+            option: "--pdf-timeout".to_string(),
             value: "timeout".to_string(),
             detail: format!("Chrome operation timed out after {duration:?}. This may indicate Chrome is unresponsive or the system is under heavy load."),
         }
@@ -63,7 +63,7 @@ mod pdf_errors {
     /// Creates a consistent error for file write failures
     pub fn file_write_error(inner_error: String, output_path: &std::path::Path) -> GooseError {
         GooseError::InvalidOption {
-            option: "--pdf".to_string(),
+            option: "--report-file".to_string(),
             value: format!("Failed to write PDF file: {inner_error}"),
             detail: format!("Unable to write PDF to {}", output_path.display()),
         }
@@ -72,7 +72,7 @@ mod pdf_errors {
     /// Creates a consistent error for content measurement failures
     pub fn content_measurement_error(inner_error: String) -> GooseError {
         GooseError::InvalidOption {
-            option: "--pdf".to_string(),
+            option: "--report-file".to_string(),
             value: format!("Failed to measure content height: {inner_error}"),
             detail: "Unable to calculate content dimensions for PDF".to_string(),
         }
@@ -86,7 +86,7 @@ mod pdf_errors {
         height: f64,
     ) -> GooseError {
         GooseError::InvalidOption {
-            option: "--pdf".to_string(),
+            option: "--report-file".to_string(),
             value: format!("PDF generation failed: {inner_error}"),
             detail: format!("Chrome's print-to-PDF operation failed. Scale: {scale}, Paper size: {width:.1}\" x {height:.1}\". Try adjusting --pdf-scale or reducing report complexity."),
         }

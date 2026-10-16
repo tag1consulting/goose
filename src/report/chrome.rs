@@ -137,6 +137,7 @@ pub(crate) fn check_chrome_env(chrome: &Path) -> Result<(), String> {
 /// The error for a `CHROME` that [`check_chrome_env`] rejected.
 pub(crate) fn chrome_env_error(value: String) -> GooseError {
     chrome_error(
+        "CHROME",
         value,
         "Set CHROME to the full path of an existing Chrome or Chromium binary, or unset it so Goose finds or downloads one.",
     )
@@ -177,6 +178,7 @@ pub(crate) async fn resolve_chrome() -> Result<ResolvedChrome, GooseError> {
 
     if cfg!(target_env = "musl") {
         return Err(chrome_error(
+            "--report-file",
             "Goose found no installed Chrome or Chromium, and does not download one on musl".to_string(),
             "Chrome for Testing builds need glibc, so they can't run on a musl system such as Alpine. Install Chromium (apk add chromium), or set CHROME to the full path of a Chrome or Chromium binary.",
         ));
@@ -184,6 +186,7 @@ pub(crate) async fn resolve_chrome() -> Result<ResolvedChrome, GooseError> {
 
     let platform = platform().ok_or_else(|| {
         chrome_error(
+            "--report-file",
             format!(
                 "no Chrome for Testing build exists for {} {}",
                 std::env::consts::OS,
@@ -194,6 +197,7 @@ pub(crate) async fn resolve_chrome() -> Result<ResolvedChrome, GooseError> {
     })?;
     let cache = cache_dir().ok_or_else(|| {
         chrome_error(
+            "--report-file",
             "no user cache directory to download Chrome into".to_string(),
             INSTALL_OR_SET_CHROME,
         )
@@ -207,12 +211,14 @@ pub(crate) async fn resolve_chrome() -> Result<ResolvedChrome, GooseError> {
 
     unpack_tool_available().map_err(|value| {
         chrome_error(
+            "--report-file",
             value,
             "Install unzip (apt install unzip, dnf install unzip, apk add unzip or brew install unzip), or set CHROME to the full path of a Chrome or Chromium binary.",
         )
     })?;
     let (version, binary) = download_chrome(&cache, platform).await.map_err(|e| {
         chrome_error(
+            "--report-file",
             format!("Goose found no installed Chrome or Chromium, and downloading one failed: {e}"),
             INSTALL_OR_SET_CHROME,
         )
@@ -224,9 +230,11 @@ pub(crate) async fn resolve_chrome() -> Result<ResolvedChrome, GooseError> {
     })
 }
 
-fn chrome_error(value: String, detail: &str) -> GooseError {
+/// An error finding Chrome. `option` is what the user can change: `CHROME`, or
+/// `--report-file` for the PDF report that needed Chrome.
+fn chrome_error(option: &str, value: String, detail: &str) -> GooseError {
     GooseError::InvalidOption {
-        option: "--pdf".to_string(),
+        option: option.to_string(),
         value,
         detail: detail.to_string(),
     }

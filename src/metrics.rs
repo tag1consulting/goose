@@ -4232,7 +4232,7 @@ impl GooseAttack {
         })
         .await
         .map_err(|e| GooseError::InvalidOption {
-            option: "--pdf".to_string(),
+            option: "--report-file".to_string(),
             value: format!("Chrome check failed: {e}"),
             detail: "The check that Chrome can render a PDF did not finish.".to_string(),
         })??;
