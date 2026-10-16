@@ -185,8 +185,8 @@ jobs:
           exit 1
         fi
 
-  # PDF reports with an installed browser: Google ships no arm64 Linux Chrome,
-  # so this job installs Chromium and points CHROME at it.
+  # PDF reports with an installed browser and CHROME unset, the setup in #753:
+  # Google ships no arm64 Linux Chrome, so this job installs Chromium.
   pdf-reports-arm64:
     name: PDF report tests (arm64 Linux)
     runs-on: ubuntu-24.04-arm
@@ -206,11 +206,21 @@ jobs:
     - name: Install Chromium
       run: |
         sudo snap install chromium
-        echo "CHROME=/snap/bin/chromium" >> "$GITHUB_ENV"
-        /snap/bin/chromium --version
+        # Pass: Goose can find chromium on PATH. Fail: it is not there.
+        command -v chromium
+        chromium --version
 
     - name: 🔎 Test PDF reports
       run: cargo test --verbose --features pdf-reports --test pdf_reports
+
+    - name: 🔎 Installed Chromium was used
+      run: |
+        # Pass: nothing was downloaded. Fail: Goose missed the installed browser.
+        if [ -e ~/.cache/goose/chrome ]; then
+          ls -R ~/.cache/goose/chrome | head -20
+          echo "::error::Goose downloaded Chrome although Chromium is installed"
+          exit 1
+        fi
 
   # PDF reports with no browser installed: Goose downloads Chrome for Testing.
   pdf-reports-download:
