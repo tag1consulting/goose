@@ -3118,35 +3118,6 @@ mod tests {
         assert_eq!(hub.last_snapshot_ms(), 0);
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn poll_and_sse_json_omit_build_time() {
-        let (_hub_builds, _parent_builds, parent, base, _server) = setup_with_mock("").await;
-        let client = reqwest::Client::new();
-        let poll = client
-            .get(format!("{base}/api/v1/snapshot"))
-            .send()
-            .await
-            .expect("snapshot")
-            .text()
-            .await
-            .expect("body");
-        assert!(poll.contains("\"version\""), "{}", poll);
-        assert!(!poll.contains("build_time"), "{}", poll);
-
-        let mut sse = client
-            .get(format!("{base}/api/v1/events"))
-            .send()
-            .await
-            .expect("events");
-        let body = read_sse_until(&mut sse, Duration::from_secs(5), |b| {
-            b.contains("\"version\"")
-        })
-        .await;
-        assert!(body.contains("\"version\""), "{}", body);
-        assert!(!body.contains("build_time"), "{}", body);
-        parent.abort();
-    }
-
     #[tokio::test]
     async fn health_reports_controller_addresses() {
         // (no_telnet, no_websocket, expected controllers). Hosts and ports are

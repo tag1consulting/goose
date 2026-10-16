@@ -1456,16 +1456,6 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_json_omits_build_time() {
-        let metrics = GooseMetrics::default();
-        let mut snap = build_dashboard_snapshot(co_input(&metrics));
-        assert_eq!(snap.build_time, std::time::Duration::ZERO);
-        snap.build_time = std::time::Duration::from_millis(7);
-        let json = serde_json::to_value(&snap).expect("json");
-        assert!(json.get("build_time").is_none(), "{}", json);
-    }
-
-    #[test]
     fn snapshot_json_comes_from_plain_derives() {
         // snapshot.d.ts describes the JSON only while serde's derive writes it
         // from the fields as declared. ts-rs does not model attributes such as

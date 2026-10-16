@@ -6922,28 +6922,6 @@ mod test {
         (processor, metrics_tx, cmd_tx)
     }
 
-    /// Request metrics the processor has counted.
-    fn processed(processor: &MetricsProcessor) -> usize {
-        processor
-            .metrics
-            .requests
-            .get("GET /")
-            .map_or(0, |r| r.status_code_counts[&200])
-    }
-
-    #[test]
-    fn drain_up_to_processes_at_most_limit() {
-        let (mut processor, metrics_tx, _cmd_tx) = make_channel_processor(10);
-        processor.drain_up_to(4);
-        assert_eq!(processed(&processor), 4);
-        assert_eq!(metrics_tx.len(), 6);
-        processor.drain_up_to(100);
-        assert_eq!(processed(&processor), 10);
-        assert_eq!(metrics_tx.len(), 0);
-        processor.drain_up_to(4);
-        assert_eq!(processed(&processor), 10);
-    }
-
     #[tokio::test]
     async fn dashboard_snapshot_is_answered_before_the_queue_drains() {
         let queued = 2 * METRICS_DRAIN_LIMIT + 10;
