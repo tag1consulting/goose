@@ -99,6 +99,23 @@ jobs:
       with:
         toolchain: stable
     
+    # zip yanked every release but 9.0.3 on 2026-10-16; headless_chrome's fetch feature pulled it in.
+    - name: 🔎 No zip in the dependency graph
+      if: ${{ matrix.features == 'all-features' }}
+      run: |
+        # Pass: cargo tree finds no zip package. Fail: zip is in the graph, or cargo tree fails for another reason.
+        if out=$(cargo tree --all-features -i zip 2>&1); then
+          echo "$out"
+          echo "::error::zip is in the dependency graph again; see the cargo tree output above"
+          exit 1
+        fi
+        if ! echo "$out" | grep -q "did not match any packages"; then
+          echo "$out"
+          echo "::error::cargo tree failed for a reason other than zip being absent"
+          exit 1
+        fi
+        echo "zip is not in the dependency graph"
+
     - name: 🔨 Build (no default features)
       if: ${{ matrix.features == '' }}
       uses: actions-rs/cargo@v1
@@ -167,3 +184,30 @@ jobs:
           find goose-runs | head -50
           exit 1
         fi
+
+  # PDF reports need an installed Chrome or Chromium; Goose does not download one.
+  # Google ships no arm64 Linux Chrome, so this job installs Chromium.
+  pdf-reports-arm64:
+    name: PDF report tests (arm64 Linux)
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: ⚡ Cache
+      uses: Swatinem/rust-cache@v1.3.0
+
+    - name: Install Rust toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+
+    - name: Install Chromium
+      run: |
+        sudo snap install chromium
+        echo "CHROME=/snap/bin/chromium" >> "$GITHUB_ENV"
+        /snap/bin/chromium --version
+
+    - name: 🔎 Test PDF reports
+      run: cargo test --verbose --features pdf-reports --test pdf_reports

@@ -451,12 +451,22 @@ cargo build --features pdf-reports
 
 PDF generation uses headless Chrome to convert HTML reports to PDF format. The system requirements are:
 
-- Chrome or Chromium browser (automatically downloaded if not available)
-- Sufficient disk space for Chrome download (~120MB on first use)
-- Network connectivity for initial Chrome download
+- An installed Chrome or Chromium browser built for this machine's architecture
 - Write permissions for the output directory
 
-The first time you generate a PDF report, the system will automatically download and configure Chrome if it's not already available. This download may take a few minutes but only needs to happen once.
+Goose does not download Chrome. It looks for the binary in this order:
+
+1. The `CHROME` environment variable, if it names a file that exists
+2. `PATH`, under names that include `google-chrome-stable`, `chromium` and `chromium-browser`
+3. On macOS, the standard locations under `/Applications`
+
+If Chrome is installed somewhere else, point Goose at it:
+
+```bash
+CHROME=/opt/chromium/chrome cargo run --features pdf-reports --example simple -- --report-file report.pdf
+```
+
+Google does not publish Chrome for arm64 Linux, so on those hosts install Chromium from your distribution.
 
 #### Generating PDF Reports
 
@@ -491,9 +501,8 @@ PDF reports include several enhancements for better print output:
 If you encounter issues generating PDF reports:
 
 **Chrome-related problems:**
-- Ensure stable internet connection for Chrome download
-- Verify sufficient disk space (~120MB required)
-- Check network permissions (corporate firewalls may block downloads)
+- Install Chrome or Chromium, or set `CHROME` to the full path of the binary
+- An "Exec format error" means the binary was built for another architecture; install one that matches this machine
 - Try verbose logging: `cargo run --features pdf-reports -- --report-file report.pdf -v`
 
 **PDF generation failures:**

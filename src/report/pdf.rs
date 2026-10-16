@@ -27,7 +27,23 @@ mod pdf_errors {
         GooseError::InvalidOption {
             option: "--pdf".to_string(),
             value: format!("Chrome launch failed: {inner_error}"),
-            detail: "PDF generation requires Chrome/Chromium to be installed and accessible. The headless_chrome crate will attempt to download Chrome automatically on first use.".to_string(),
+            detail: chrome_launch_detail(&inner_error),
+        }
+    }
+
+    /// Explains a Chrome launch failure and how to point Goose at a browser.
+    ///
+    /// Goose does not download Chrome. `headless_chrome` uses the `CHROME`
+    /// environment variable when it names an existing file, and otherwise
+    /// searches `PATH` and the standard install locations.
+    fn chrome_launch_detail(inner_error: &str) -> String {
+        const HOW_TO: &str = "PDF generation requires Chrome or Chromium to be installed. Install one, or set the CHROME environment variable to the full path of an existing Chrome or Chromium binary.";
+        // `Command::spawn` reports ENOEXEC as "Exec format error (os error 8)"
+        // when the binary was found but was built for another architecture.
+        if inner_error.contains("Exec format error") {
+            format!("The Chrome binary was found but could not run: it does not match this machine's architecture ({}). {HOW_TO}", std::env::consts::ARCH)
+        } else {
+            HOW_TO.to_string()
         }
     }
 
@@ -336,4 +352,34 @@ pub(crate) fn generate_pdf_from_html(
     // Thread safety is guaranteed by the mutex synchronization in ScopedLogLevel.
     // The ChromeSession automatically cleans up Chrome processes via Drop trait.
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pdf_errors::chrome_launch_error;
+    use crate::GooseError;
+
+    fn detail(inner_error: &str) -> String {
+        match chrome_launch_error(inner_error.to_string()) {
+            GooseError::InvalidOption { detail, .. } => detail,
+            other => panic!("unexpected error: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn launch_error_names_chrome_variable_and_promises_no_download() {
+        let detail = detail("Could not auto detect a chrome executable");
+        assert!(detail.contains("CHROME"), "{}", detail);
+        assert!(!detail.to_lowercase().contains("download"), "{}", detail);
+        assert!(!detail.contains("architecture"), "{}", detail);
+    }
+
+    #[test]
+    fn launch_error_reports_architecture_mismatch() {
+        let detail = detail("Exec format error (os error 8)");
+        assert!(detail.contains("architecture"), "{}", detail);
+        assert!(detail.contains(std::env::consts::ARCH), "{}", detail);
+        assert!(detail.contains("CHROME"), "{}", detail);
+        assert!(!detail.to_lowercase().contains("download"), "{}", detail);
+    }
 }
