@@ -12,7 +12,6 @@ keywords = ["loadtesting", "performance", "web", "framework", "tool"]
 license = "Apache-2.0"
 
 [dependencies]
-async-trait = "0.1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 ctrlc = "3"
 downcast-rs = "2.0"
@@ -37,8 +36,6 @@ serde = { version = "1.0", features = [
 ] }
 serde_json = "1.0"
 simplelog = "0.12"
-strum = "0.27"
-strum_macros = "0.27"
 tokio = { version = "1", features = [
     "fs",
     "io-util",

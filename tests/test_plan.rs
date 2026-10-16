@@ -57,17 +57,15 @@ fn test_test_plan_whitespace_handling() {
 // Test zero values
 #[test]
 fn test_test_plan_zero_values() {
-    // Zero users
-    let plan = TestPlan::from_str("0,30s").unwrap();
-    assert_eq!(plan.steps, vec![(0, 30_000)]);
+    // Zero users: a plan that starts no users is refused.
+    assert!(TestPlan::from_str("0,30s").is_err());
 
     // Zero time
     let plan = TestPlan::from_str("10,0").unwrap();
     assert_eq!(plan.steps, vec![(10, 0)]);
 
     // Both zero
-    let plan = TestPlan::from_str("0,0").unwrap();
-    assert_eq!(plan.steps, vec![(0, 0)]);
+    assert!(TestPlan::from_str("0,0").is_err());
 }
 
 // Test large numbers

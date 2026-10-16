@@ -4,13 +4,14 @@
 
 use chrono::prelude::*;
 use gumdrop::Options;
+use lazy_static::lazy_static;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::str::FromStr;
 use std::time;
 
-use crate::config::GooseConfiguration;
+use crate::config::{timespan, GooseConfiguration};
 use crate::util;
 use crate::{AttackPhase, GooseAttack, GooseAttackRunState, GooseError};
 
@@ -29,6 +30,13 @@ impl Default for TestPlan {
     }
 }
 
+lazy_static! {
+    // Each step of a test plan is "{users},{timespan}"; white space is ignored.
+    static ref STEP: Regex =
+        Regex::new(r"^\s*([0-9]+)\s*,\s*([0-9]+|(([0-9]+?)h)?(([0-9]+?)m)?(([0-9]+?)s)?)\s*$")
+            .unwrap();
+}
+
 /// Automatically represent all load tests internally as a test plan.
 ///
 /// Load tests launched using `--users`, `--increase-time`, `--increase-rate`, and/or `--run-time` are
@@ -43,10 +51,13 @@ impl TestPlan {
     }
 
     /// Build a test plan from current configuration.
-    pub(crate) fn build(configuration: &GooseConfiguration) -> TestPlan {
+    ///
+    /// Fails when a configured time span is too long for a `usize` in
+    /// milliseconds.
+    pub(crate) fn build(configuration: &GooseConfiguration) -> Result<TestPlan, GooseError> {
         if let Some(test_plan) = configuration.test_plan.as_ref() {
             // Test plan was manually defined, clone and return as is.
-            test_plan.clone()
+            Ok(test_plan.clone())
         } else {
             let mut steps: Vec<(usize, usize)> = Vec::new();
 
@@ -56,7 +67,7 @@ impl TestPlan {
                     // Load test is configured with --increase-time.
                     steps.push((
                         users,
-                        util::parse_timespan(&configuration.increase_time) * 1_000,
+                        timespan("increase_time", &configuration.increase_time)? * 1_000,
                     ));
                 } else {
                     // Load test is configured with --increase-rate.
@@ -75,7 +86,10 @@ impl TestPlan {
 
                 // If a run-time is set, maintain users for the configured duration.
                 if configuration.run_time != "0" {
-                    steps.push((users, util::parse_timespan(&configuration.run_time) * 1_000));
+                    steps.push((
+                        users,
+                        timespan("run_time", &configuration.run_time)? * 1_000,
+                    ));
                 }
 
                 // Ramp down using --decrease-time or --decrease-rate if configured.
@@ -85,7 +99,7 @@ impl TestPlan {
                     // Decrease users over the configured decrease-time.
                     steps.push((
                         0,
-                        util::parse_timespan(&configuration.decrease_time) * 1_000,
+                        timespan("decrease_time", &configuration.decrease_time)? * 1_000,
                     ));
                 } else if let Some(decrease_rate) = configuration.decrease_rate.as_ref() {
                     // Calculate decrease time from rate.
@@ -101,22 +115,64 @@ impl TestPlan {
             }
 
             // Define test plan from options.
-            TestPlan { steps, current: 0 }
+            Ok(TestPlan { steps, current: 0 })
         }
     }
 
     // Determine the total number of users required by the test plan.
     pub fn total_users(&self) -> usize {
-        let mut total_users: usize = 0;
+        self.checked_total_users().unwrap_or(usize::MAX)
+    }
+
+    /// The total number of users the test plan starts, `None` if it does not
+    /// fit in a `usize`.
+    fn checked_total_users(&self) -> Option<usize> {
         let mut previous: usize = 0;
-        for step in &self.steps {
-            // Add to total_users every time there is an increase.
-            if step.0 > previous {
-                total_users += step.0 - previous;
+        self.steps
+            .iter()
+            .try_fold(0usize, |total_users, &(users, _)| {
+                // Add to total_users every time there is an increase.
+                let increase = users.saturating_sub(previous);
+                previous = users;
+                total_users.checked_add(increase)
+            })
+    }
+
+    /// Parse a test plan as [`FromStr`] does, without printing anything: the
+    /// Controllers parse client text with this.
+    pub(crate) fn parse(s: &str) -> Result<TestPlan, GooseError> {
+        // Convert string into a TestPlan.
+        let mut steps: Vec<(usize, usize)> = Vec::new();
+        // A test plan can have multiple lines split by the semicolon ";".
+        for line in s.split(';') {
+            // Users and milliseconds, unless either is too large for a usize.
+            let step = STEP.captures(line).and_then(|cap| {
+                Some((
+                    cap[1].parse::<usize>().ok()?,
+                    util::parse_timespan(&cap[2])? * 1_000,
+                ))
+            });
+            match step {
+                Some(step) => steps.push(step),
+                None => {
+                    return Err(GooseError::InvalidOption {
+                        option: "`configuration.test_plan".to_string(),
+                        value: line.to_string(),
+                        detail: INVALID_STEP.to_string(),
+                    })
+                }
             }
-            previous = step.0
         }
-        total_users
+        let test_plan = TestPlan { steps, current: 0 };
+        // A plan with no users never starts: weighting zero users never ends.
+        match test_plan.checked_total_users() {
+            Some(total) if total > 0 => Ok(test_plan),
+            _ => Err(GooseError::InvalidOption {
+                option: "`configuration.test_plan".to_string(),
+                value: s.to_string(),
+                detail: "`configuration.test_plan` must start at least one user, and no more than fit in a usize.".to_string(),
+            }),
+        }
     }
 }
 
@@ -132,36 +188,30 @@ impl FromStr for TestPlan {
     type Err = GooseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        // Convert string into a TestPlan.
-        let mut steps: Vec<(usize, usize)> = Vec::new();
-        // Each line of the test plan must be in the format "{users},{timespan}", white space is ignored
-        let re = Regex::new(r"^\s*(\d+)\s*,\s*(\d+|((\d+?)h)?((\d+?)m)?((\d+?)s)?)\s*$").unwrap();
-        // A test plan can have multiple lines split by the semicolon ";".
-        let lines = s.split(';');
-        for line in lines {
-            if let Some(cap) = re.captures(line) {
-                let left = cap[1]
-                    .parse::<usize>()
-                    .expect("failed to convert \\d to usize");
-                let right = util::parse_timespan(&cap[2]) * 1_000;
-                steps.push((left, right));
-            } else {
-                // Logger isn't initialized yet, provide helpful debug output.
-                eprintln!("ERROR: invalid `configuration.test_plan` value: '{line}'");
-                eprintln!("  Expected format: --test-plan \"{{users}},{{timespan}};{{users}},{{timespan}}\"");
-                eprintln!("    {{users}} must be an integer, ie \"100\"");
-                eprintln!("    {{timespan}} can be integer seconds or \"30s\", \"20m\", \"3h\", \"1h30m\", etc");
-                return Err(GooseError::InvalidOption {
-                    option: "`configuration.test_plan".to_string(),
-                    value: line.to_string(),
-                    detail: "invalid `configuration.test_plan` value.".to_string(),
-                });
-            }
-        }
-        // The steps are only valid if the logic gets this far.
-        Ok(TestPlan { steps, current: 0 })
+        // Logger isn't initialized yet, print why the plan is refused.
+        TestPlan::parse(s).inspect_err(|e| eprint!("{}", refusal(e)))
     }
 }
+
+/// What the command line prints for a refused test plan: the format for a
+/// step that does not parse, otherwise the reason it was refused.
+fn refusal(e: &GooseError) -> String {
+    match e {
+        GooseError::InvalidOption { value, detail, .. } if detail == INVALID_STEP => format!(
+            "ERROR: invalid `configuration.test_plan` value: '{value}'\n  \
+             Expected format: --test-plan \"{{users}},{{timespan}};{{users}},{{timespan}}\"\n    \
+             {{users}} must be an integer, ie \"100\"\n    \
+             {{timespan}} can be integer seconds or \"30s\", \"20m\", \"3h\", \"1h30m\", etc\n"
+        ),
+        GooseError::InvalidOption { value, detail, .. } => {
+            format!("ERROR: invalid `configuration.test_plan` value: '{value}': {detail}\n")
+        }
+        e => format!("ERROR: {e}\n"),
+    }
+}
+
+/// The detail of a test plan step that does not parse.
+const INVALID_STEP: &str = "invalid `configuration.test_plan` value.";
 
 /// A test plan is a series of steps performing one of the following actions.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -248,5 +298,30 @@ impl GooseAttack {
 
         // Always advance the TestPlan step
         self.test_plan.current += 1;
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    /// The command line says why it refuses a plan, not only that it did.
+    #[test]
+    fn refusal_names_reason() {
+        let reason = |plan: &str| refusal(&TestPlan::parse(plan).unwrap_err());
+        let no_users = "`configuration.test_plan` must start at least one user, and no more than fit in a usize.";
+        assert_eq!(
+            reason("0,1s"),
+            format!("ERROR: invalid `configuration.test_plan` value: '0,1s': {no_users}\n")
+        );
+        let overflow = "18446744073709551615,1s;0,1s;1,1s";
+        assert_eq!(
+            reason(overflow),
+            format!("ERROR: invalid `configuration.test_plan` value: '{overflow}': {no_users}\n")
+        );
+        // A step that does not parse still prints the format.
+        assert!(reason("10,1s;x").starts_with(
+            "ERROR: invalid `configuration.test_plan` value: 'x'\n  Expected format: --test-plan \"{users},{timespan};{users},{timespan}\"\n"
+        ));
     }
 }

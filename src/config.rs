@@ -696,9 +696,7 @@ impl GooseDefaultType<&str> for GooseAttack {
                 self.defaults.scenarios = Some(value.parse::<Scenarios>().unwrap())
             }
             GooseDefault::TelnetHost => self.defaults.telnet_host = Some(value.to_string()),
-            GooseDefault::TestPlan => {
-                self.defaults.test_plan = Some(value.parse::<TestPlan>().unwrap())
-            }
+            GooseDefault::TestPlan => self.defaults.test_plan = Some(value.parse::<TestPlan>()?),
             GooseDefault::Timeout => self.defaults.timeout = Some(value.to_string()),
             GooseDefault::TransactionLog => self.defaults.transaction_log = Some(value.to_string()),
             GooseDefault::WebSocketHost => self.defaults.websocket_host = Some(value.to_string()),
@@ -1528,9 +1526,27 @@ impl GooseConfigure<Scenarios> for GooseConfiguration {
     }
 }
 
+/// The seconds in time span option `option`, refused when the span is too long
+/// for a `usize` in milliseconds or has a digit of another script before a
+/// unit, naming which.
+pub(crate) fn timespan(option: &str, value: &str) -> Result<usize, GooseError> {
+    util::timespan_seconds(value).map_err(|e| GooseError::InvalidOption {
+        option: format!("`configuration.{option}`"),
+        value: value.to_string(),
+        detail: match e {
+            util::SpanError::TooLong => format!("`configuration.{option}` is too long."),
+            util::SpanError::ForeignDigit => {
+                format!("`configuration.{option}` must use the ASCII digits 0 to 9.")
+            }
+        },
+    })
+}
+
 impl GooseConfiguration {
     /// Implement precedence rules for all [`GooseConfiguration`] values.
-    pub(crate) fn configure(&mut self, defaults: &GooseDefaults) {
+    ///
+    /// Fails when a time span is too long.
+    pub(crate) fn configure(&mut self, defaults: &GooseDefaults) -> Result<(), GooseError> {
         // Configure `quiet`.
         self.quiet = self
             .get_value(vec![
@@ -1658,12 +1674,13 @@ impl GooseConfiguration {
         ]);
 
         // Configure `increase_time`.
+        let increase_time = timespan("increase_time", &self.increase_time)?;
         self.increase_time = self
             .get_value(vec![
                 // Use --increase-time if set.
                 GooseValue {
-                    value: Some(util::parse_timespan(&self.increase_time)),
-                    filter: util::parse_timespan(&self.increase_time) == 0,
+                    value: Some(increase_time),
+                    filter: increase_time == 0,
                     message: "increase_time",
                 },
                 // Otherwise use GooseDefault if set and not on Worker.
@@ -1676,12 +1693,13 @@ impl GooseConfiguration {
             .map_or_else(|| "0".to_string(), |v| v.to_string());
 
         // Configure `decrease_time`.
+        let decrease_time = timespan("decrease_time", &self.decrease_time)?;
         self.decrease_time = self
             .get_value(vec![
                 // Use --decrease-time if set.
                 GooseValue {
-                    value: Some(util::parse_timespan(&self.decrease_time)),
-                    filter: util::parse_timespan(&self.decrease_time) == 0,
+                    value: Some(decrease_time),
+                    filter: decrease_time == 0,
                     message: "decrease_time",
                 },
                 // Otherwise use GooseDefault if set and not on Worker.
@@ -1694,12 +1712,13 @@ impl GooseConfiguration {
             .map_or_else(|| "0".to_string(), |v| v.to_string());
 
         // Configure `run_time`.
+        let run_time = timespan("run_time", &self.run_time)?;
         self.run_time = self
             .get_value(vec![
                 // Use --run-time if set.
                 GooseValue {
-                    value: Some(util::parse_timespan(&self.run_time)),
-                    filter: util::parse_timespan(&self.run_time) == 0,
+                    value: Some(run_time),
+                    filter: run_time == 0,
                     message: "run_time",
                 },
                 // Otherwise use GooseDefault if set and not on Worker.
@@ -2354,6 +2373,8 @@ impl GooseConfiguration {
                 ])
                 .unwrap_or(60);
         }
+
+        Ok(())
     }
 
     /// Validate configured [`GooseConfiguration`] values.
@@ -2411,7 +2432,7 @@ impl GooseConfiguration {
             });
         }
 
-        // If set, increase rate must be non-zero.
+        // If set, increase rate must be non-zero, and at least one user a day.
         if let Some(increase_rate) = self.increase_rate.as_ref() {
             if increase_rate == "0" {
                 return Err(GooseError::InvalidOption {
@@ -2420,15 +2441,35 @@ impl GooseConfiguration {
                     detail: "`configuration.increase_rate` must be non-zero.".to_string(),
                 });
             }
+            if increase_rate
+                .parse::<f32>()
+                .is_ok_and(util::below_one_user_a_day)
+            {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.increase_rate`".to_string(),
+                    value: increase_rate.to_string(),
+                    detail: "`configuration.increase_rate` must be a number of at least 0.0000116 (one user a day).".to_string(),
+                });
+            }
         }
 
-        // If set, decrease rate must be non-zero.
+        // If set, decrease rate must be non-zero, and at least one user a day.
         if let Some(decrease_rate) = self.decrease_rate.as_ref() {
             if decrease_rate == "0" {
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.decrease_rate`".to_string(),
                     value: decrease_rate.to_string(),
                     detail: "`configuration.decrease_rate` must be non-zero.".to_string(),
+                });
+            }
+            if decrease_rate
+                .parse::<f32>()
+                .is_ok_and(util::below_one_user_a_day)
+            {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.decrease_rate`".to_string(),
+                    value: decrease_rate.to_string(),
+                    detail: "`configuration.decrease_rate` must be a number of at least 0.0000116 (one user a day).".to_string(),
                 });
             }
         }
@@ -3182,7 +3223,7 @@ mod test {
             dashboard: true,
             ..Default::default()
         };
-        config.configure(&GooseDefaults::default());
+        config.configure(&GooseDefaults::default()).unwrap();
         assert!(config.dashboard);
         assert!(!config.dashboard_control);
         assert_eq!(config.dashboard_host, "127.0.0.1");
@@ -3193,7 +3234,7 @@ mod test {
 
         // Dashboard disabled → host stays empty, port stays 0, max clients stays 0.
         let mut config = GooseConfiguration::default();
-        config.configure(&GooseDefaults::default());
+        config.configure(&GooseDefaults::default()).unwrap();
         assert!(!config.dashboard);
         assert!(!config.dashboard_control);
         assert!(config.dashboard_host.is_empty());
@@ -3217,7 +3258,7 @@ mod test {
             dashboard_max_clients: Some(64),
             ..GooseDefaults::default()
         };
-        config.configure(&defaults);
+        config.configure(&defaults).unwrap();
         assert_eq!(config.dashboard_host, "192.168.1.10");
         assert_eq!(config.dashboard_port, 9999);
         assert_eq!(config.dashboard_auth_token, "cli-token");
@@ -3232,7 +3273,7 @@ mod test {
             dashboard_port: Some(6000),
             ..GooseDefaults::default()
         };
-        config.configure(&defaults);
+        config.configure(&defaults).unwrap();
         assert!(config.dashboard);
         assert_eq!(config.dashboard_host, "0.0.0.0");
         assert_eq!(config.dashboard_port, 6000);
@@ -3251,7 +3292,7 @@ mod test {
             dashboard_max_clients: Some(16),
             ..GooseDefaults::default()
         };
-        config.configure(&defaults);
+        config.configure(&defaults).unwrap();
         assert_eq!(config.dashboard_auth_token, "from-default");
         assert_eq!(config.dashboard_max_clients, 16);
         assert!(config.validate_dashboard_config().is_ok());
@@ -3266,7 +3307,7 @@ mod test {
             dashboard_control: Some(true),
             ..GooseDefaults::default()
         };
-        config.configure(&defaults);
+        config.configure(&defaults).unwrap();
         assert!(config.dashboard_control);
         assert!(config.validate_dashboard_config().is_ok());
 
@@ -3281,7 +3322,7 @@ mod test {
             dashboard_control: Some(false),
             ..GooseDefaults::default()
         };
-        config.configure(&defaults);
+        config.configure(&defaults).unwrap();
         assert!(config.dashboard_control);
         assert!(config.validate_dashboard_config().is_ok());
     }
@@ -3429,18 +3470,206 @@ mod test {
             dashboard: true,
             ..Default::default()
         };
-        config.configure(&goose_attack.defaults);
+        config.configure(&goose_attack.defaults).unwrap();
         assert!(config.no_percentiles_over_time);
 
         // Without the dashboard the default is ignored, while the flag on
         // the command line is still refused.
         let mut config = GooseConfiguration::default();
-        config.configure(&goose_attack.defaults);
+        config.configure(&goose_attack.defaults).unwrap();
         assert!(!config.no_percentiles_over_time);
         assert!(config.validate().is_ok());
         let mut config =
             GooseConfiguration::parse_args_default(&["--no-percentiles-over-time"]).unwrap();
-        config.configure(&goose_attack.defaults);
+        config.configure(&goose_attack.defaults).unwrap();
         assert!(config.validate().is_err());
+    }
+
+    /// A test plan that overflows, or that has no users, is an error on the
+    /// command line instead of a panic or a load test that never starts.
+    #[test]
+    fn test_plan_overflow_and_no_users_refused() {
+        for plan in [
+            "99999999999999999999,1s",
+            "10,99999999999999999999h",
+            "10,9999999999999999h",
+            "10,18446744073709552",
+            "18446744073709551615,1s;0,1s;1,1s",
+            "0,1s",
+            "١,1s",
+            "10,١s",
+            "0,1s;0,1h",
+        ] {
+            assert!(
+                GooseConfiguration::parse_args_default(&["--test-plan", plan]).is_err(),
+                "{}",
+                plan
+            );
+        }
+        // What was accepted is still accepted.
+        for plan in ["10,1s;0,1s", "1,0", "100001,1h", "10, 1h2m3s ;0,30s"] {
+            assert!(
+                GooseConfiguration::parse_args_default(&["--test-plan", plan]).is_ok(),
+                "{}",
+                plan
+            );
+        }
+    }
+
+    /// `set_default(GooseDefault::TestPlan, ..)` returns an error for a plan
+    /// it can't use instead of panicking.
+    #[test]
+    fn set_default_test_plan_refused() {
+        for plan in ["foo", "99999999999999999999,1s", "0,1s"] {
+            let result = GooseAttack::initialize_with_config(GooseConfiguration::default())
+                .unwrap()
+                .set_default(GooseDefault::TestPlan, plan);
+            assert!(result.is_err(), "{}", plan);
+        }
+    }
+
+    /// A time span too large on the command line, or as a default, stops the
+    /// load test with an error before it starts instead of panicking.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn time_span_overflow_refused() {
+        use crate::goose::{Scenario, Transaction};
+
+        async fn noop(_user: &mut crate::goose::GooseUser) -> crate::goose::TransactionResult {
+            // Yield, so a load test that wrongly starts leaves the timer running.
+            tokio::task::yield_now().await;
+            Ok(())
+        }
+        // Two users, so the rule that increase and decrease times need at least
+        // two users can not refuse a row in place of the overflow check.
+        let base = [
+            "--users",
+            "2",
+            "--no-telnet",
+            "--no-websocket",
+            "--no-save",
+            "--quiet",
+            "--host",
+            "http://127.0.0.1",
+        ];
+        let scenario =
+            || crate::scenario!("Overflow").register_transaction(crate::transaction!(noop));
+        // Every row must be refused as too long, not by another rule. A value that
+        // wraps instead of failing starts a load test that never ends, so each
+        // row runs under a timeout and fails instead of hanging. Failures are
+        // collected so the report names every failing row.
+        let mut failures = Vec::new();
+        let mut check = |row: String, option: &str, result| match result {
+            Ok(Err(GooseError::InvalidOption { detail, .. }))
+                if detail == format!("`configuration.{}` is too long.", option) => {}
+            Ok(other) => failures.push(format!("{}: {:?}", row, other.map(|_| ()))),
+            Err(_) => failures.push(format!("{}: started a load test", row)),
+        };
+        let timeout = std::time::Duration::from_secs(10);
+        for (flag, option) in [
+            ("--run-time", "run_time"),
+            ("--increase-time", "increase_time"),
+            ("--decrease-time", "decrease_time"),
+        ] {
+            for value in [
+                "99999999999999999999h",
+                "9999999999999999h",
+                "18446744073709552",
+                "5124095576030431h100s",
+            ] {
+                let mut args = base.to_vec();
+                args.extend([flag, value]);
+                let configuration = GooseConfiguration::parse_args_default(&args).unwrap();
+                let attack = GooseAttack::initialize_with_config(configuration)
+                    .unwrap()
+                    .register_scenario(scenario());
+                let result = tokio::time::timeout(timeout, attack.execute()).await;
+                check(format!("{} {}", flag, value), option, result);
+            }
+        }
+        for (option, key) in [
+            ("run_time", GooseDefault::RunTime),
+            ("increase_time", GooseDefault::IncreaseTime),
+            ("decrease_time", GooseDefault::DecreaseTime),
+        ] {
+            let configuration = GooseConfiguration::parse_args_default(&base).unwrap();
+            let attack = GooseAttack::initialize_with_config(configuration)
+                .unwrap()
+                .register_scenario(scenario())
+                .set_default(key, usize::MAX)
+                .unwrap();
+            let result = tokio::time::timeout(timeout, attack.execute()).await;
+            check(format!("default {}", option), option, result);
+        }
+        assert!(failures.is_empty(), "{:#?}", failures);
+    }
+
+    /// A command line rate slower than one user a day is refused, and one
+    /// user a day is accepted.
+    #[test]
+    fn rate_below_one_user_a_day_refused() {
+        for (flag, option) in [
+            ("--increase-rate", "increase_rate"),
+            ("--decrease-rate", "decrease_rate"),
+        ] {
+            // Not below one user a day, so accepted as on main.
+            for (value, refused) in [
+                ("0.0000001", true),
+                ("0.00001157", true),
+                ("0.0000116", false),
+                ("inf", false),
+                ("NaN", false),
+            ] {
+                let mut config =
+                    GooseConfiguration::parse_args_default(&["--users", "2", flag, value]).unwrap();
+                config.configure(&GooseDefaults::default()).unwrap();
+                match config.validate() {
+                    Err(GooseError::InvalidOption { detail, .. }) if refused => assert_eq!(
+                        detail,
+                        format!(
+                            "`configuration.{option}` must be a number of at least 0.0000116 (one user a day)."
+                        )
+                    ),
+                    Ok(()) if !refused => {}
+                    other => panic!("{} {}: {:?}", flag, value, other),
+                }
+            }
+            // Zero keeps its own refusal.
+            let mut config =
+                GooseConfiguration::parse_args_default(&["--users", "2", flag, "0"]).unwrap();
+            config.configure(&GooseDefaults::default()).unwrap();
+            match config.validate() {
+                Err(GooseError::InvalidOption { detail, .. }) => assert_eq!(
+                    detail,
+                    format!("`configuration.{}` must be non-zero.", option)
+                ),
+                other => panic!("{} 0: {:?}", flag, other),
+            }
+        }
+    }
+
+    /// A command line time span names why it is refused: a digit of another
+    /// script before a unit, or a span too long.
+    #[test]
+    fn time_span_error_names_cause() {
+        for (value, detail) in [
+            (
+                "\u{661}h",
+                "`configuration.run_time` must use the ASCII digits 0 to 9.",
+            ),
+            (
+                "99999999999999999999h",
+                "`configuration.run_time` is too long.",
+            ),
+        ] {
+            let mut config =
+                GooseConfiguration::parse_args_default(&["--run-time", value]).unwrap();
+            match config.configure(&GooseDefaults::default()) {
+                Err(GooseError::InvalidOption { detail: got, .. }) => {
+                    assert_eq!(got, detail, "{value}")
+                }
+                other => panic!("{}: {:?}", value, other),
+            }
+        }
     }
 }

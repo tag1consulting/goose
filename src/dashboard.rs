@@ -7,8 +7,9 @@
 //! endpoints and saved run deletion.
 //!
 //! The parent GooseAttack main loop answers [`DashboardRequest`]s via oneshot
-//! channels using [`MetricsCommand::GetDashboardSnapshot`] for snapshots and
-//! staged control helpers for mutation.
+//! channels using [`MetricsCommand::GetDashboardSnapshot`] for snapshots.
+//! Control endpoints send [`ControllerCommand`]s on the channel the telnet and
+//! WebSocket Controllers share, and the main loop answers them the same way.
 //!
 //! # Snapshot freshness
 //!
@@ -18,12 +19,15 @@
 //! request is dequeued. Tests assert multi-client coalescing, not sub-100 ms
 //! latency.
 
+use crate::controller::{
+    send_command, ControlReply, ControlRequest, ControllerCommand, SendError, CONTROL_TIMEOUT,
+};
 use crate::metrics::dashboard_snapshot::{
     Heatmap, HeatmapColumn, HeatmapCursor, RequestSeries, SnapshotSave,
 };
 use crate::metrics::DashboardSnapshot;
 use crate::runs;
-use crate::{ControlOutcome, GooseConfiguration, GooseError, INVALID_USERS_MSG, MAX_CONTROL_USERS};
+use crate::{ControlOutcome, GooseConfiguration, GooseError};
 
 use axum::body::{Body, Bytes};
 use axum::extract::{Query, State};
@@ -70,18 +74,6 @@ const RECENT_POLL_WINDOW: Duration = Duration::from_secs(2);
 
 /// SSE comment heartbeat interval (`: ping`).
 const SSE_HEARTBEAT: Duration = Duration::from_secs(15);
-
-/// Oneshot wait for control POSTs (Start replies before `reset_run_state`).
-///
-/// If this fires the HTTP client receives 503 with `error=timeout`. The main
-/// loop **skips** applying the command when the oneshot is already closed
-/// (still queued). If the main loop had already started applying (e.g. large
-/// `SetUsers` allocation), a residual race can still mutate after this 503 —
-/// clients must re-check phase/users before retrying (do not blind-retry).
-///
-/// 15s allows non-trivial `weight_scenario_users` work; Start still replies
-/// before `control_start_finish` so HTTP usually completes much sooner.
-const CONTROL_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Hub wait for a single parent/metrics snapshot reply before treating the build
 /// as transient (poll clients already use a 5s outer timeout).
@@ -165,23 +157,6 @@ pub(crate) enum DashboardRequest {
         heatmap_since: Option<HeatmapCursor>,
         respond: tokio::sync::oneshot::Sender<DashboardSnapshot>,
     },
-    /// Start an idle load test (reply before `reset_run_state`).
-    Start {
-        respond: tokio::sync::oneshot::Sender<ControlResult>,
-    },
-    /// Begin cancel ramp (Increase/Maintain → Decrease).
-    Stop {
-        respond: tokio::sync::oneshot::Sender<ControlResult>,
-    },
-    /// Shut Goose down from Idle.
-    Quit {
-        respond: tokio::sync::oneshot::Sender<ControlResult>,
-    },
-    /// Set absolute target user count.
-    SetUsers {
-        users: usize,
-        respond: tokio::sync::oneshot::Sender<ControlResult>,
-    },
     /// One request's heatmap (`GET /api/v1/series`), with the columns
     /// changed since `since` (every column when `None`); `None` when the
     /// request has no histograms of its own.
@@ -195,21 +170,21 @@ pub(crate) enum DashboardRequest {
 
 /// JSON body returned by control endpoints after the main loop answers.
 #[derive(Debug, Clone, Serialize)]
-pub(crate) struct ControlResult {
-    pub ok: bool,
-    pub command: String,
+struct ControlResult {
+    ok: bool,
+    command: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-    pub message: String,
-    pub phase: String,
-    pub active_users: u64,
+    error: Option<String>,
+    message: String,
+    phase: String,
+    active_users: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub target_users: Option<u64>,
+    target_users: Option<u64>,
 }
 
 impl ControlResult {
-    /// Map a soft [`ControlOutcome`] from the shared control helpers.
-    pub(crate) fn from_outcome(command: &str, outcome: ControlOutcome) -> Self {
+    /// The body for the main loop's outcome of the `command` endpoint.
+    fn from_outcome(command: &str, outcome: ControlOutcome) -> Self {
         Self {
             ok: outcome.ok,
             command: command.to_string(),
@@ -218,19 +193,6 @@ impl ControlResult {
             phase: outcome.phase,
             active_users: outcome.active_users as u64,
             target_users: outcome.target_users.map(|u| u as u64),
-        }
-    }
-
-    /// Unexpected hard error mapped into the oneshot before re-raise.
-    pub(crate) fn internal(command: &str, phase: &str, active_users: usize) -> Self {
-        Self {
-            ok: false,
-            command: command.to_string(),
-            error: Some("internal".to_string()),
-            message: "internal control error".to_string(),
-            phase: phase.to_string(),
-            active_users: active_users as u64,
-            target_users: None,
         }
     }
 }
@@ -869,12 +831,15 @@ async fn build_once(inner: &Arc<HubInner>) -> BuildOutcome {
 struct DashboardState {
     /// Coalescing snapshot hub (owns a clone of the parent request channel sender).
     hub: SnapshotHub,
-    /// Clone of the flume sender for control handlers (same channel as the hub).
+    /// Clone of the flume sender for series requests (same channel as the hub).
     request_tx: flume::Sender<DashboardRequest>,
+    /// The channel control commands go to the main loop on, apart from the
+    /// telnet and WebSocket Controllers' so the main loop answers it first:
+    /// `Some` only with dashboard control, when the control routes are
+    /// registered and require a non-empty token.
+    control_tx: Option<flume::Sender<ControlRequest>>,
     /// Auth token; empty means observe auth is disabled (loopback-only runs).
     auth_token: String,
-    /// When true, control routes are registered and require a non-empty token.
-    control_enabled: bool,
     /// Concurrent control POSTs currently waiting on the main loop.
     control_in_flight: Arc<AtomicUsize>,
     /// Concurrent `GET /api/v1/series` requests waiting on the main loop.
@@ -980,11 +945,13 @@ fn format_bind_address(host: &str, port: u16) -> String {
 ///
 /// When `--dashboard` is set, bind failure is a hard error (opt-in server must
 /// not silently disappear). When the dashboard is disabled, returns `Ok(None)`.
+/// `control_tx`, given only with dashboard control, registers the control routes.
 ///
 /// When/if multi-mode (Gaggle) returns, the dashboard should only run on the
 /// standalone/manager process — currently AttackMode is StandAlone only.
 pub(crate) async fn setup_dashboard(
     configuration: &GooseConfiguration,
+    control_tx: Option<flume::Sender<ControlRequest>>,
 ) -> Result<Option<DashboardSetup>, GooseError> {
     if !configuration.dashboard {
         return Ok(None);
@@ -1033,7 +1000,7 @@ pub(crate) async fn setup_dashboard(
     } else {
         configuration.dashboard_max_clients as usize
     };
-    // Clone sender for hub + control handlers (same channel).
+    // Clone sender for the hub and the series handler (same channel).
     let hub = SnapshotHub::new(
         request_tx.clone(),
         Arc::clone(&build_count),
@@ -1042,12 +1009,12 @@ pub(crate) async fn setup_dashboard(
         Arc::clone(&active_sse),
         closed_data.clone(),
     );
-    let control_enabled = configuration.dashboard_control;
+    let control_enabled = control_tx.is_some();
     let state = DashboardState {
         hub,
         request_tx,
+        control_tx,
         auth_token: configuration.dashboard_auth_token.clone(),
-        control_enabled,
         control_in_flight: Arc::new(AtomicUsize::new(0)),
         series_in_flight: Arc::new(AtomicUsize::new(0)),
         series_cache: Arc::new(Mutex::new(HashMap::new())),
@@ -1254,12 +1221,12 @@ fn is_connection_error(e: &std::io::Error) -> bool {
 
 /// Build the axum router with public shell/static/health and auth-gated metrics.
 ///
-/// Control routes are registered only when `state.control_enabled` is true
+/// Control routes are registered only when `state.control_tx` is set
 /// (otherwise POST /api/v1/control/* and DELETE /api/v1/runs/{id} → 404). On a loopback bind every request
 /// must carry a loopback `Host`, so a page that rebinds its own domain to
 /// 127.0.0.1 cannot read the API.
 fn build_router(state: DashboardState, loopback_bind: bool) -> Router {
-    let control_enabled = state.control_enabled;
+    let control_enabled = state.control_tx.is_some();
     let mut router = Router::new()
         .route("/", get(index_handler))
         .route("/static/app.js", get(app_js_handler))
@@ -1370,7 +1337,7 @@ async fn health_handler(State(state): State<Arc<DashboardState>>) -> impl IntoRe
         last_build_ms: state.hub.last_build_ms(),
         build_count: state.hub.build_count(),
         active_sse_clients: state.hub.active_sse_clients(),
-        control_enabled: state.control_enabled,
+        control_enabled: state.control_tx.is_some(),
         controllers: state.controllers.clone(),
     })
 }
@@ -1999,42 +1966,26 @@ fn parse_empty_control_body(body: &[u8]) -> Result<(), (&'static str, &'static s
     }
 }
 
-/// Parse `{"users": N}` with integer N in 1..=[`MAX_CONTROL_USERS`], the shared
-/// bound, refused here as a 400.
-fn parse_users_body(body: &[u8]) -> Result<usize, (&'static str, &'static str)> {
+/// Parse `{"users": N}` into the `users` command, through the same bound as
+/// the Controllers' `users`, refused here as a 400.
+fn parse_users_body(body: &[u8]) -> Result<ControllerCommand, (&'static str, &'static str)> {
     let trimmed = trim_ascii_whitespace(body);
     if trimmed.is_empty() {
         return Err(("bad_request", "request body required"));
     }
-    let value: serde_json::Value = match serde_json::from_slice(trimmed) {
-        Ok(v) => v,
-        Err(_) => return Err(("bad_request", "malformed JSON body")),
-    };
-    let obj = match value.as_object() {
-        Some(o) => o,
-        None => return Err(("bad_request", "request body must be a JSON object")),
-    };
-    let users_val = match obj.get("users") {
-        Some(v) => v,
-        None => return Err(("invalid_users", INVALID_USERS_MSG)),
-    };
-    // Reject floats/strings: only JSON integers (i64/u64), not f64.
-    let n = match users_val.as_u64() {
-        Some(n) => n,
-        None => {
-            // Negative integers arrive as i64; treat as invalid_users.
-            if users_val.as_i64().is_some() || users_val.is_number() || users_val.is_string() {
-                return Err(("invalid_users", INVALID_USERS_MSG));
-            }
-            return Err(("invalid_users", INVALID_USERS_MSG));
-        }
-    };
-    if !(1..=MAX_CONTROL_USERS as u64).contains(&n) {
-        return Err(("invalid_users", INVALID_USERS_MSG));
-    }
-    // Reject unknown extra fields? Design only requires deny_unknown on start/stop.
-    // Users: only `users` is required; extra fields are tolerated for forward compat.
-    Ok(n as usize)
+    let value: serde_json::Value =
+        serde_json::from_slice(trimmed).map_err(|_| ("bad_request", "malformed JSON body"))?;
+    let obj = value
+        .as_object()
+        .ok_or(("bad_request", "request body must be a JSON object"))?;
+    // Anything but a non negative JSON integer (a missing count, a float, a
+    // string, a negative number) becomes 0, which the bound refuses. Extra
+    // fields are tolerated for forward compat.
+    let users = obj
+        .get("users")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    ControllerCommand::users(users).map_err(|message| ("invalid_users", message))
 }
 
 fn trim_ascii_whitespace(bytes: &[u8]) -> &[u8] {
@@ -2087,71 +2038,85 @@ fn try_acquire_control_slot(state: &DashboardState) -> Option<ControlInFlightGua
     })
 }
 
-/// Send a control request to the main loop and wait up to [`CONTROL_TIMEOUT`].
+/// Send a control command to the main loop and wait up to [`CONTROL_TIMEOUT`].
+///
+/// On a timeout the main loop skips the command if it is still queued; if it
+/// had already started applying it, it can still apply after the 503.
 async fn dispatch_control(
     state: &DashboardState,
-    request: DashboardRequest,
-    respond_rx: oneshot::Receiver<ControlResult>,
-    command: &str,
+    command: ControllerCommand,
+    name: &str,
 ) -> Response<Body> {
     let Some(_slot) = try_acquire_control_slot(state) else {
-        warn!("[dashboard]: control admission full ({command})");
+        warn!("[dashboard]: control admission full ({name})");
         return control_http_error(
             StatusCode::SERVICE_UNAVAILABLE,
-            command,
+            name,
             "busy",
             "too many control requests in flight — wait and retry",
         );
     };
-
-    if state.request_tx.send(request).is_err() {
-        warn!("[dashboard]: control channel disconnected ({command})");
-        return control_http_error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            command,
-            "unavailable",
-            "control unavailable",
-        );
-    }
-
-    match tokio::time::timeout(CONTROL_TIMEOUT, respond_rx).await {
-        Ok(Ok(result)) => {
+    // Control routes are registered only with a channel.
+    let reply = match state.control_tx.as_ref() {
+        Some(control_tx) => send_command(control_tx, command, CONTROL_TIMEOUT).await,
+        None => Err(SendError::Unavailable),
+    };
+    match reply {
+        Ok(ControlReply::Outcome(outcome)) => {
+            let result = ControlResult::from_outcome(name, outcome);
             if result.ok {
                 info!(
-                    "[dashboard]: control {command} ok phase={} target={:?}",
+                    "[dashboard]: control {name} ok phase={} target={:?}",
                     result.phase, result.target_users
                 );
             } else {
                 info!(
-                    "[dashboard]: control {command} rejected error={:?} phase={}",
+                    "[dashboard]: control {name} rejected error={:?} phase={}",
                     result.error, result.phase
                 );
             }
             (StatusCode::OK, Json(result)).into_response()
         }
-        Ok(Err(_)) => {
-            warn!("[dashboard]: control oneshot dropped ({command})");
+        Err(SendError::Timeout) => {
+            warn!("[dashboard]: control timed out ({name}); skipped if still queued");
             control_http_error(
                 StatusCode::SERVICE_UNAVAILABLE,
-                command,
-                "unavailable",
-                "control unavailable",
-            )
-        }
-        Err(_) => {
-            // Dropping respond_rx closes the oneshot. The main loop skips
-            // mutation when `respond.is_closed()` *before* handling — the common
-            // case (still queued). If the main loop had already started applying
-            // the command, a residual race can still mutate state after this 503.
-            warn!("[dashboard]: control oneshot timed out ({command}); skipped if still queued");
-            control_http_error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                command,
+                name,
                 "timeout",
                 "control timed out — action may still be applying; check phase/users before retrying",
             )
         }
+        // The main loop has gone or dropped the request; or it sent a Config
+        // or Metrics reply, which only Controllers ask for.
+        _ => {
+            warn!("[dashboard]: control unavailable ({name})");
+            control_http_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                name,
+                "unavailable",
+                "control unavailable",
+            )
+        }
     }
+}
+
+/// Start, Stop and Quit: authorized, with an empty body.
+async fn control_without_body(
+    state: &DashboardState,
+    headers: &HeaderMap,
+    query: TokenQuery,
+    body: &[u8],
+    command: ControllerCommand,
+    name: &str,
+) -> Response<Body> {
+    if !authorize_control(&state.auth_token, headers, query.token.as_deref()) {
+        warn!("[dashboard]: control {name} auth failure");
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    if let Err((code, msg)) = parse_empty_control_body(body) {
+        return control_http_error(StatusCode::BAD_REQUEST, name, code, msg);
+    }
+    dispatch_control(state, command, name).await
 }
 
 async fn control_start_handler(
@@ -2160,20 +2125,12 @@ async fn control_start_handler(
     Query(query): Query<TokenQuery>,
     body: Bytes,
 ) -> Response<Body> {
-    if !authorize_control(&state.auth_token, &headers, query.token.as_deref()) {
-        warn!("[dashboard]: control start auth failure");
-        return StatusCode::UNAUTHORIZED.into_response();
-    }
-    if let Err((code, msg)) = parse_empty_control_body(&body) {
-        return control_http_error(StatusCode::BAD_REQUEST, "start", code, msg);
-    }
-    let (respond_tx, respond_rx) = oneshot::channel();
-    dispatch_control(
+    control_without_body(
         &state,
-        DashboardRequest::Start {
-            respond: respond_tx,
-        },
-        respond_rx,
+        &headers,
+        query,
+        &body,
+        ControllerCommand::Start,
         "start",
     )
     .await
@@ -2185,20 +2142,12 @@ async fn control_stop_handler(
     Query(query): Query<TokenQuery>,
     body: Bytes,
 ) -> Response<Body> {
-    if !authorize_control(&state.auth_token, &headers, query.token.as_deref()) {
-        warn!("[dashboard]: control stop auth failure");
-        return StatusCode::UNAUTHORIZED.into_response();
-    }
-    if let Err((code, msg)) = parse_empty_control_body(&body) {
-        return control_http_error(StatusCode::BAD_REQUEST, "stop", code, msg);
-    }
-    let (respond_tx, respond_rx) = oneshot::channel();
-    dispatch_control(
+    control_without_body(
         &state,
-        DashboardRequest::Stop {
-            respond: respond_tx,
-        },
-        respond_rx,
+        &headers,
+        query,
+        &body,
+        ControllerCommand::Stop,
         "stop",
     )
     .await
@@ -2210,20 +2159,12 @@ async fn control_quit_handler(
     Query(query): Query<TokenQuery>,
     body: Bytes,
 ) -> Response<Body> {
-    if !authorize_control(&state.auth_token, &headers, query.token.as_deref()) {
-        warn!("[dashboard]: control quit auth failure");
-        return StatusCode::UNAUTHORIZED.into_response();
-    }
-    if let Err((code, msg)) = parse_empty_control_body(&body) {
-        return control_http_error(StatusCode::BAD_REQUEST, "quit", code, msg);
-    }
-    let (respond_tx, respond_rx) = oneshot::channel();
-    dispatch_control(
+    control_without_body(
         &state,
-        DashboardRequest::Quit {
-            respond: respond_tx,
-        },
-        respond_rx,
+        &headers,
+        query,
+        &body,
+        ControllerCommand::Quit,
         "quit",
     )
     .await
@@ -2285,23 +2226,10 @@ async fn control_users_handler(
         warn!("[dashboard]: control users auth failure");
         return StatusCode::UNAUTHORIZED.into_response();
     }
-    let users = match parse_users_body(&body) {
-        Ok(n) => n,
-        Err((code, msg)) => {
-            return control_http_error(StatusCode::BAD_REQUEST, "users", code, msg);
-        }
-    };
-    let (respond_tx, respond_rx) = oneshot::channel();
-    dispatch_control(
-        &state,
-        DashboardRequest::SetUsers {
-            users,
-            respond: respond_tx,
-        },
-        respond_rx,
-        "users",
-    )
-    .await
+    match parse_users_body(&body) {
+        Ok(command) => dispatch_control(&state, command, "users").await,
+        Err((code, msg)) => control_http_error(StatusCode::BAD_REQUEST, "users", code, msg),
+    }
 }
 
 #[cfg(test)]
@@ -2363,7 +2291,6 @@ mod tests {
     }
 
     /// Answer `GetSnapshot` requests with incrementing dummy payloads.
-    /// Control requests get a soft success so tests do not hang on oneshot waits.
     fn spawn_mock_parent(
         request_rx: flume::Receiver<DashboardRequest>,
         parent_builds: Arc<AtomicU64>,
@@ -2375,50 +2302,6 @@ mod tests {
                         let n = parent_builds.fetch_add(1, Ordering::SeqCst);
                         let _ = respond.send(dummy_snapshot(n));
                     }
-                    DashboardRequest::Start { respond } => {
-                        let _ = respond.send(ControlResult {
-                            ok: true,
-                            command: "start".into(),
-                            error: None,
-                            message: "load test started".into(),
-                            phase: "increase".into(),
-                            active_users: 0,
-                            target_users: Some(1),
-                        });
-                    }
-                    DashboardRequest::Stop { respond } => {
-                        let _ = respond.send(ControlResult {
-                            ok: true,
-                            command: "stop".into(),
-                            error: None,
-                            message: "load test stopped".into(),
-                            phase: "decrease".into(),
-                            active_users: 1,
-                            target_users: Some(0),
-                        });
-                    }
-                    DashboardRequest::Quit { respond } => {
-                        let _ = respond.send(ControlResult {
-                            ok: true,
-                            command: "quit".into(),
-                            error: None,
-                            message: "goose is shutting down".into(),
-                            phase: "decrease".into(),
-                            active_users: 0,
-                            target_users: None,
-                        });
-                    }
-                    DashboardRequest::SetUsers { users, respond } => {
-                        let _ = respond.send(ControlResult {
-                            ok: true,
-                            command: "users".into(),
-                            error: None,
-                            message: "users configured".into(),
-                            phase: "idle".into(),
-                            active_users: 0,
-                            target_users: Some(users as u64),
-                        });
-                    }
                     DashboardRequest::GetRequestSeries { respond, .. } => {
                         let _ = respond.send(None);
                     }
@@ -2427,8 +2310,61 @@ mod tests {
         })
     }
 
-    /// Parent that drops a window of oneshots (simulates metrics processor recycle)
-    /// then resumes answering.
+    /// Answer each control command with `answer`'s reply, or drop its
+    /// oneshot unanswered when `answer` gives none.
+    fn spawn_control_parent(
+        control_rx: flume::Receiver<ControlRequest>,
+        answer: fn(ControllerCommand) -> Option<ControlReply>,
+    ) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            while let Ok((command, respond)) = control_rx.recv_async().await {
+                if let Some(reply) = answer(command) {
+                    let _ = respond.send(reply);
+                }
+            }
+        })
+    }
+
+    fn outcome(
+        ok: bool,
+        error: Option<&'static str>,
+        message: &str,
+        phase: &str,
+        active_users: usize,
+        target_users: Option<usize>,
+    ) -> Option<ControlReply> {
+        Some(ControlReply::Outcome(ControlOutcome {
+            ok,
+            error,
+            message: message.to_string(),
+            phase: phase.to_string(),
+            active_users,
+            target_users,
+        }))
+    }
+
+    /// A soft success for every control command.
+    fn answer_ok(command: ControllerCommand) -> Option<ControlReply> {
+        match command {
+            ControllerCommand::Start => {
+                outcome(true, None, "load test started", "increase", 0, Some(1))
+            }
+            ControllerCommand::Stop => {
+                outcome(true, None, "load test stopped", "decrease", 1, Some(0))
+            }
+            ControllerCommand::Quit => {
+                outcome(true, None, "goose is shutting down", "decrease", 0, None)
+            }
+            ControllerCommand::Users(users) => {
+                outcome(true, None, "users configured", "idle", 0, Some(users))
+            }
+            // The dashboard sends only the four commands above.
+            other => panic!("unexpected dashboard command {:?}", other),
+        }
+    }
+
+    /// Parent that drops snapshot oneshots in a window (simulates metrics
+    /// processor recycle) then resumes answering.
     fn spawn_blip_parent(
         request_rx: flume::Receiver<DashboardRequest>,
         parent_builds: Arc<AtomicU64>,
@@ -2446,13 +2382,6 @@ mod tests {
                             let _ = respond.send(dummy_snapshot(n));
                         }
                     }
-                    // Control not exercised by blip tests.
-                    DashboardRequest::Start { respond }
-                    | DashboardRequest::Stop { respond }
-                    | DashboardRequest::Quit { respond }
-                    | DashboardRequest::SetUsers { respond, .. } => {
-                        let _ = respond.send(ControlResult::internal("unused", "idle", 0));
-                    }
                     DashboardRequest::GetRequestSeries { respond, .. } => {
                         let _ = respond.send(None);
                     }
@@ -2462,24 +2391,24 @@ mod tests {
     }
 
     async fn bind_dashboard(token: &str) -> (DashboardSetup, String) {
-        bind_dashboard_with(token, 0, false).await
+        bind_dashboard_with(token, 0, None).await
     }
 
     async fn bind_dashboard_with(
         token: &str,
         max_clients: u32,
-        control: bool,
+        control: Option<flume::Sender<ControlRequest>>,
     ) -> (DashboardSetup, String) {
         let config = GooseConfiguration {
             dashboard: true,
-            dashboard_control: control,
+            dashboard_control: control.is_some(),
             dashboard_host: "127.0.0.1".to_string(),
             dashboard_port: 0,
             dashboard_auth_token: token.to_string(),
             dashboard_max_clients: max_clients,
             ..Default::default()
         };
-        let setup = setup_dashboard(&config)
+        let setup = setup_dashboard(&config, control)
             .await
             .expect("bind")
             .expect("enabled");
@@ -2521,7 +2450,7 @@ mod tests {
         String,
         DashboardServer,
     ) {
-        let (setup, base) = bind_dashboard_with(token, max_clients, false).await;
+        let (setup, base) = bind_dashboard_with(token, max_clients, None).await;
         let hub_builds = Arc::clone(&setup.build_count);
         let parent_builds = Arc::new(AtomicU64::new(0));
         let parent = spawn_mock_parent(setup.request_rx, Arc::clone(&parent_builds));
@@ -2669,9 +2598,18 @@ mod tests {
 
     #[test]
     fn parse_users_body_rules() {
-        assert_eq!(parse_users_body(b"{\"users\":50}").unwrap(), 50);
-        assert_eq!(parse_users_body(b"{\"users\":1}").unwrap(), 1);
-        assert_eq!(parse_users_body(b"{\"users\":100000}").unwrap(), 100_000);
+        assert!(matches!(
+            parse_users_body(b"{\"users\":50}"),
+            Ok(ControllerCommand::Users(50))
+        ));
+        assert!(matches!(
+            parse_users_body(b"{\"users\":1}"),
+            Ok(ControllerCommand::Users(1))
+        ));
+        assert!(matches!(
+            parse_users_body(b"{\"users\":100000}"),
+            Ok(ControllerCommand::Users(100000))
+        ));
 
         let err = parse_users_body(b"").unwrap_err();
         assert_eq!(err.0, "bad_request");
@@ -2702,6 +2640,17 @@ mod tests {
 
         let err = parse_users_body(b"{\"users\":\"10\"}").unwrap_err();
         assert_eq!(err.0, "invalid_users");
+
+        // An integer too large for a u64 is read as an f64 (no
+        // arbitrary_precision), so it is refused by the bound up to f64::MAX;
+        // above that serde_json refuses the body as "number out of range".
+        let users = |digits: usize| format!("{{\"users\":{}}}", "9".repeat(digits));
+        let err = parse_users_body(users(76).as_bytes()).unwrap_err();
+        assert_eq!(err.0, "invalid_users");
+        let err = parse_users_body(users(308).as_bytes()).unwrap_err();
+        assert_eq!(err.0, "invalid_users");
+        let err = parse_users_body(users(309).as_bytes()).unwrap_err();
+        assert_eq!(err, ("bad_request", "malformed JSON body"));
     }
 
     #[test]
@@ -2723,7 +2672,7 @@ mod tests {
             dashboard_auth_token: String::new(),
             ..Default::default()
         };
-        let setup = setup_dashboard(&config)
+        let setup = setup_dashboard(&config, None)
             .await
             .expect("localhost bind should succeed")
             .expect("dashboard enabled");
@@ -2741,7 +2690,7 @@ mod tests {
         };
         // ::1 may be unavailable in some CI network namespaces; treat bind errors
         // as soft-skip only when the OS reports address-family issues.
-        match setup_dashboard(&config).await {
+        match setup_dashboard(&config, None).await {
             Ok(Some(setup)) => {
                 assert!(setup.bound_port > 0);
             }
@@ -2769,7 +2718,7 @@ mod tests {
             dashboard_auth_token: String::new(),
             ..Default::default()
         };
-        let err = setup_dashboard(&config)
+        let err = setup_dashboard(&config, None)
             .await
             .expect_err("second bind on same port must fail hard");
         match err {
@@ -3052,7 +3001,7 @@ mod tests {
                 websocket_port: 6117,
                 ..Default::default()
             };
-            let setup = setup_dashboard(&config)
+            let setup = setup_dashboard(&config, None)
                 .await
                 .expect("bind")
                 .expect("enabled");
@@ -3147,26 +3096,8 @@ mod tests {
                         };
                         let _ = respond.send(snap);
                     }
-                    other => {
-                        // Control arms unused in this test.
-                        match other {
-                            DashboardRequest::Start { respond } => {
-                                let _ = respond.send(ControlResult::internal("start", "idle", 0));
-                            }
-                            DashboardRequest::Stop { respond } => {
-                                let _ = respond.send(ControlResult::internal("stop", "idle", 0));
-                            }
-                            DashboardRequest::Quit { respond } => {
-                                let _ = respond.send(ControlResult::internal("quit", "idle", 0));
-                            }
-                            DashboardRequest::SetUsers { respond, .. } => {
-                                let _ = respond.send(ControlResult::internal("users", "idle", 0));
-                            }
-                            DashboardRequest::GetRequestSeries { respond, .. } => {
-                                let _ = respond.send(None);
-                            }
-                            DashboardRequest::GetSnapshot { .. } => unreachable!(),
-                        }
+                    DashboardRequest::GetRequestSeries { respond, .. } => {
+                        let _ = respond.send(None);
                     }
                 }
             }
@@ -3415,7 +3346,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn control_disabled_returns_404_and_health_false() {
-        let (setup, base) = bind_dashboard_with("s3cret", 0, false).await;
+        let (setup, base) = bind_dashboard_with("s3cret", 0, None).await;
         drop(setup.close_tx);
         drop(setup.request_rx);
         let client = reqwest::Client::new();
@@ -3454,8 +3385,10 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn control_requires_auth_and_validates_body() {
-        let (setup, base) = bind_dashboard_with("s3cret", 0, true).await;
+        let (control_tx, control_rx) = flume::unbounded();
+        let (setup, base) = bind_dashboard_with("s3cret", 0, Some(control_tx)).await;
         let parent = spawn_mock_parent(setup.request_rx, Arc::new(AtomicU64::new(0)));
+        let control = spawn_control_parent(control_rx, answer_ok);
         drop(setup.close_tx);
         let client = reqwest::Client::new();
 
@@ -3578,6 +3511,7 @@ mod tests {
         assert_eq!(resp.status(), 200);
 
         parent.abort();
+        control.abort();
     }
 
     /// A heatmap export with these columns (second, measured count in bucket 3).
@@ -3667,7 +3601,8 @@ mod tests {
     /// answers gets 503 `busy`, and control requests are still admitted.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn series_admission_caps_in_flight() {
-        let (setup, base) = bind_dashboard_with("s3cret", 0, true).await;
+        let (control_tx, control_rx) = flume::unbounded();
+        let (setup, base) = bind_dashboard_with("s3cret", 0, Some(control_tx)).await;
         // Nobody drains the request channel: admitted requests wait in it.
         let request_rx = setup.request_rx;
         let client = reqwest::Client::new();
@@ -3717,98 +3652,14 @@ mod tests {
                 .send()
                 .await
         }));
-        assert_eq!(
-            wait_for_queue(MAX_SERIES_IN_FLIGHT + 1).await,
-            MAX_SERIES_IN_FLIGHT + 1
-        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while control_rx.is_empty() && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(control_rx.len(), 1);
         for task in waiting {
             task.abort();
         }
-    }
-
-    /// Parent that drops control oneshots (simulates main-loop disconnect mid-command).
-    fn spawn_control_drop_parent(
-        request_rx: flume::Receiver<DashboardRequest>,
-    ) -> tokio::task::JoinHandle<()> {
-        tokio::spawn(async move {
-            while let Ok(msg) = request_rx.recv_async().await {
-                match msg {
-                    DashboardRequest::GetSnapshot { respond, .. } => {
-                        let _ = respond.send(dummy_snapshot(0));
-                    }
-                    DashboardRequest::Start { respond }
-                    | DashboardRequest::Stop { respond }
-                    | DashboardRequest::Quit { respond }
-                    | DashboardRequest::SetUsers { respond, .. } => {
-                        drop(respond);
-                    }
-                    DashboardRequest::GetRequestSeries { respond, .. } => {
-                        drop(respond);
-                    }
-                }
-            }
-        })
-    }
-
-    /// Parent that answers control with `error: "internal"` (hard-error mapping).
-    fn spawn_control_internal_parent(
-        request_rx: flume::Receiver<DashboardRequest>,
-    ) -> tokio::task::JoinHandle<()> {
-        tokio::spawn(async move {
-            while let Ok(msg) = request_rx.recv_async().await {
-                match msg {
-                    DashboardRequest::GetSnapshot { respond, .. } => {
-                        let _ = respond.send(dummy_snapshot(0));
-                    }
-                    DashboardRequest::Start { respond } => {
-                        let _ = respond.send(ControlResult::internal("start", "idle", 0));
-                    }
-                    DashboardRequest::Stop { respond } => {
-                        let _ = respond.send(ControlResult::internal("stop", "maintain", 1));
-                    }
-                    DashboardRequest::Quit { respond } => {
-                        let _ = respond.send(ControlResult::internal("quit", "maintain", 1));
-                    }
-                    DashboardRequest::SetUsers { respond, .. } => {
-                        let _ = respond.send(ControlResult::internal("users", "maintain", 1));
-                    }
-                    DashboardRequest::GetRequestSeries { respond, .. } => {
-                        let _ = respond.send(None);
-                    }
-                }
-            }
-        })
-    }
-
-    /// Parent that never completes control oneshots (exercises CONTROL_TIMEOUT → 503).
-    fn spawn_control_silent_parent(
-        request_rx: flume::Receiver<DashboardRequest>,
-    ) -> tokio::task::JoinHandle<()> {
-        tokio::spawn(async move {
-            while let Ok(msg) = request_rx.recv_async().await {
-                match msg {
-                    DashboardRequest::GetSnapshot { respond, .. } => {
-                        let _ = respond.send(dummy_snapshot(0));
-                    }
-                    // Hold oneshots until task abort / channel drop — do not reply.
-                    DashboardRequest::Start { respond }
-                    | DashboardRequest::Stop { respond }
-                    | DashboardRequest::Quit { respond }
-                    | DashboardRequest::SetUsers { respond, .. } => {
-                        // Keep the oneshot Sender alive so the client hits CONTROL_TIMEOUT
-                        // rather than an immediate oneshot-drop 503.
-                        let _hold = respond;
-                        futures::future::pending::<()>().await;
-                        drop(_hold);
-                    }
-                    DashboardRequest::GetRequestSeries { respond, .. } => {
-                        let _hold = respond;
-                        futures::future::pending::<()>().await;
-                        drop(_hold);
-                    }
-                }
-            }
-        })
     }
 
     /// Case 10: channel disconnect / oneshot drop → 503 `unavailable`;
@@ -3817,11 +3668,12 @@ mod tests {
     async fn control_oneshot_error_paths() {
         let client = reqwest::Client::new();
 
-        // --- disconnect: no parent consuming request_rx ---
+        // --- disconnect: no parent consuming the control channel ---
         {
-            let (setup, base) = bind_dashboard_with("s3cret", 0, true).await;
+            let (control_tx, control_rx) = flume::unbounded();
+            let (setup, base) = bind_dashboard_with("s3cret", 0, Some(control_tx)).await;
             drop(setup.close_tx);
-            drop(setup.request_rx);
+            drop(control_rx);
             let resp = client
                 .post(format!("{base}/api/v1/control/start"))
                 .header(header::AUTHORIZATION, "Bearer s3cret")
@@ -3839,8 +3691,9 @@ mod tests {
 
         // --- oneshot drop: parent receives then drops respond ---
         {
-            let (setup, base) = bind_dashboard_with("s3cret", 0, true).await;
-            let parent = spawn_control_drop_parent(setup.request_rx);
+            let (control_tx, control_rx) = flume::unbounded();
+            let (setup, base) = bind_dashboard_with("s3cret", 0, Some(control_tx)).await;
+            let parent = spawn_control_parent(control_rx, |_| None);
             drop(setup.close_tx);
             let resp = client
                 .post(format!("{base}/api/v1/control/stop"))
@@ -3860,8 +3713,18 @@ mod tests {
 
         // --- internal soft mapping: 200 + error=internal ---
         {
-            let (setup, base) = bind_dashboard_with("s3cret", 0, true).await;
-            let parent = spawn_control_internal_parent(setup.request_rx);
+            let (control_tx, control_rx) = flume::unbounded();
+            let (setup, base) = bind_dashboard_with("s3cret", 0, Some(control_tx)).await;
+            let parent = spawn_control_parent(control_rx, |_| {
+                outcome(
+                    false,
+                    Some("internal"),
+                    "internal control error",
+                    "maintain",
+                    1,
+                    None,
+                )
+            });
             drop(setup.close_tx);
             let resp = client
                 .post(format!("{base}/api/v1/control/users"))
@@ -3882,8 +3745,16 @@ mod tests {
 
         // --- oneshot timeout: parent never replies → 503 after CONTROL_TIMEOUT ---
         {
-            let (setup, base) = bind_dashboard_with("s3cret", 0, true).await;
-            let parent = spawn_control_silent_parent(setup.request_rx);
+            let (control_tx, control_rx) = flume::unbounded();
+            let (setup, base) = bind_dashboard_with("s3cret", 0, Some(control_tx)).await;
+            // Hold every oneshot so the client hits CONTROL_TIMEOUT rather
+            // than an immediate oneshot-drop 503.
+            let parent = tokio::spawn(async move {
+                let mut held = Vec::new();
+                while let Ok(request) = control_rx.recv_async().await {
+                    held.push(request);
+                }
+            });
             drop(setup.close_tx);
             let started = Instant::now();
             let resp = client
@@ -4023,7 +3894,8 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn shutdown_drain_is_bounded() {
         use tokio::io::AsyncWriteExt;
-        let (setup, _base) = bind_dashboard_with("s3cret", 0, true).await;
+        let (control_tx, control_rx) = flume::unbounded();
+        let (setup, _base) = bind_dashboard_with("s3cret", 0, Some(control_tx)).await;
         let port = setup.bound_port;
         let mut stalled = tokio::net::TcpStream::connect(("127.0.0.1", port))
             .await
@@ -4038,11 +3910,10 @@ mod tests {
             .expect("write control request");
         // Hold the request unanswered: its handler waits on the reply, so the
         // connection is busy (not idle) when shutdown starts.
-        let _in_flight =
-            tokio::time::timeout(Duration::from_secs(5), setup.request_rx.recv_async())
-                .await
-                .expect("control request reaches the parent")
-                .expect("request channel open");
+        let _in_flight = tokio::time::timeout(Duration::from_secs(5), control_rx.recv_async())
+            .await
+            .expect("control request reaches the parent")
+            .expect("request channel open");
 
         let started = Instant::now();
         let shutdown = tokio::spawn(setup.server.shutdown());
@@ -4221,7 +4092,7 @@ mod tests {
                 dashboard_auth_token: "secret".to_string(),
                 ..Default::default()
             };
-            let setup = setup_dashboard(&config)
+            let setup = setup_dashboard(&config, None)
                 .await
                 .expect("bind")
                 .expect("enabled");
@@ -4490,7 +4361,7 @@ mod tests {
         let cap = 2u32;
         // Nothing reads `request_rx`, like a main loop busy in a long
         // `test_start`, so no snapshot is ever published.
-        let (_setup, base) = bind_dashboard_with("", cap, false).await;
+        let (_setup, base) = bind_dashboard_with("", cap, None).await;
         let client = reqwest::Client::new();
 
         let mut held = Vec::new();

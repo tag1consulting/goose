@@ -6,63 +6,96 @@
 use crate::config::GooseConfiguration;
 use crate::metrics::{GooseMetrics, MetricsCommand};
 use crate::test_plan::TestPlan;
-use crate::util;
-use crate::{AttackPhase, ControlStartBegin, GooseAttack, GooseAttackRunState, GooseError};
+use crate::GooseError;
+use crate::{AttackPhase, ControlOutcome, ControlStartBegin, GooseAttack, GooseAttackRunState};
 
-use async_trait::async_trait;
 use futures::{SinkExt, StreamExt};
-use regex::{Regex, RegexSet};
+use lazy_static::lazy_static;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::io::{self, Write};
+use std::io;
 use std::str::{self, FromStr};
+use std::sync::Arc;
 use std::time::Duration;
-use strum::IntoEnumIterator;
-use strum_macros::EnumIter;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
-use tokio_tungstenite::tungstenite::Message;
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::oneshot;
+use tokio_tungstenite::tungstenite::protocol::{
+    frame::coding::CloseCode, CloseFrame, WebSocketConfig,
+};
+use tokio_tungstenite::tungstenite::{Error as WebSocketError, Message};
+use tokio_tungstenite::WebSocketStream;
 
-/// All commands recognized by the Goose Controllers.
+/// Most users any front end can set: `users`, a test plan's total, and the
+/// dashboard's users control. One command allocates the added users on the
+/// main loop, so a larger value can exhaust memory or overflow the user
+/// arithmetic.
+pub(crate) const MAX_CONTROL_USERS: usize = 100_000;
+
+/// Refusal for a user count outside 1 to [`MAX_CONTROL_USERS`].
+pub(crate) const INVALID_USERS_MSG: &str = "users must be an integer between 1 and 100000";
+
+/// How long a client waits for the parent to answer a command.
 ///
-/// Commands are not case sensitive. When sending commands to the WebSocket Controller,
-/// they must be formatted as json as defined by
+/// On a timeout the client is told so, and the parent skips the command if
+/// it is still queued. If the parent had already started applying it (a
+/// large users change), it can still apply after the timeout, so clients
+/// must check the phase and users before retrying.
+///
+/// 15s allows non-trivial `weight_scenario_users` work; Start still replies
+/// before `control_start_finish`, so a client usually hears much sooner.
+pub(crate) const CONTROL_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Reply to a line that is not a command.
+const UNRECOGNIZED: &str = "unrecognized command";
+
+/// The help a telnet or WebSocket client gets for `help` or `?`.
+const HELP: &str = concat!(
+    env!("CARGO_PKG_NAME"),
+    " ",
+    env!("CARGO_PKG_VERSION"),
+    " controller commands:\n",
+    "help               this help\n",
+    "exit               exit controller\n\n",
+    "start              start an idle load test\n",
+    "stop               stop a running load test and return to idle state\n",
+    "shutdown           shutdown load test and exit controller\n\n",
+    "host HOST          set host to load test, (ie https://web.site/)\n",
+    "increaserate FLOAT set per-second rate users increase\n",
+    "increase-time TIME set total time to take increasing users\n",
+    "decreaserate FLOAT set per-second rate users decrease\n",
+    "decrease-time TIME set total time to take decreasing users\n",
+    "users INT          set number of simulated users (1 to 100000)\n",
+    "runtime TIME       set how long to run test, (ie 1h30m5s)\n",
+    "test-plan PLAN     define or replace test-plan, (ie 10,5m;10,1h;0,30s)\n\n",
+    "config             display load test configuration\n",
+    "config-json        display load test configuration in json format\n",
+    "metrics            display metrics for current load test\n",
+    "metrics-json       display metrics for current load test in json format",
+);
+
+/// All commands Goose can be controlled with, each carrying its parsed and
+/// bounded value.
+///
+/// Telnet and WebSocket clients send a command as text, which
+/// [`FromStr`](#impl-FromStr-for-ControllerCommand) parses; commands and
+/// their aliases are not case sensitive. When sending commands to the
+/// WebSocket Controller, they must be formatted as json as defined by
 /// [ControllerWebSocketRequest](./struct.ControllerWebSocketRequest.html).
+/// The dashboard builds the same commands from its control requests. `help`
+/// and `exit` are answered by the Controller itself, so are not commands.
 ///
 /// GOOSE DEVELOPER NOTE: The following steps are required to add a new command:
-///  1. Define the new command here in the ControllerCommand enum.
-///      - Commands will be displayed in the help screen in the order defined here, so
-///        they should be logically grouped.
-///  2. Add the new command to `ControllerCommand::details` and populate all
-///     `ControllerCommandDetails`, using other commands as an implementation reference.
-///       - The `regex` is used to identify the command, and optionally to extract a
-///         value (for example see `IncreaseRate` and `Users`)
-///       - If additional validation is required beyond the regular expression, add
-///         the necessary logic to `ControllerCommand::validate_value`.
-///  3. Add any necessary parent process logic for the command to
-///     `GooseAttack::handle_controller_requests` (also in this file).
-///  4. Add a test for the new command in tests/controller.rs.
-#[derive(Clone, Debug, EnumIter, PartialEq, Eq)]
+///  1. Define the new command here, carrying its value already parsed and
+///     bounded.
+///  2. Parse it in `ControllerCommand::from_str`, with a value parser that
+///     returns the error a client is sent, and add a line to `HELP`.
+///  3. Apply it in `GooseAttack::control` (also in this file), which answers
+///     with a `ControlOutcome` whose message every front end shows.
+///  4. Add it to the parse table test in this file, and a test for the new
+///     command in tests/controller.rs.
+#[derive(Clone, Debug)]
 pub enum ControllerCommand {
-    /// Displays a list of all commands supported by the Controller.
-    ///
-    /// # Example
-    /// Returns the a list of all supported Controller commands.
-    /// ```notest
-    /// help
-    /// ```
-    ///
-    /// This command can be run at any time.
-    Help,
-    /// Disconnect from the Controller.
-    ///
-    /// # Example
-    /// Disconnects from the Controller.
-    /// ```notest
-    /// exit
-    /// ```
-    ///
-    /// This command can be run at any time.
-    Exit,
     /// Start an idle test.
     ///
     /// # Example
@@ -76,7 +109,7 @@ pub enum ControllerCommand {
     /// Stop a running test, putting it into an idle state.
     ///
     /// # Example
-    /// Stops a running (or stating) load test.
+    /// Stops a running (or starting) load test.
     /// ```notest
     /// stop
     /// ```
@@ -93,7 +126,12 @@ pub enum ControllerCommand {
     ///
     /// Goose can process this command at any time.
     Shutdown,
-    /// Configure the host to load test.
+    /// Shut Goose down from Idle: the dashboard's Quit. Controllers have no
+    /// text for it, as `quit` disconnects a Controller client.
+    ///
+    /// Goose must be idle to process this command.
+    Quit,
+    /// Configure the host to load test, a valid http or https url.
     ///
     /// # Example
     /// Tells Goose to generate load against <http://example.com/>.
@@ -102,8 +140,10 @@ pub enum ControllerCommand {
     /// ```
     ///
     /// Goose must be idle to process this command.
-    Host,
-    /// Configure how quickly new [`GooseUser`](../goose/struct.GooseUser.html)s are launched.
+    Host(String),
+    /// Configure how quickly new [`GooseUser`](../goose/struct.GooseUser.html)s
+    /// are launched, per second: a finite number of at least 0.0000116, one
+    /// user a day.
     ///
     /// # Example
     /// Tells Goose to launch a new user every 1.25 seconds.
@@ -112,8 +152,9 @@ pub enum ControllerCommand {
     /// ```
     ///
     /// Goose can be idle or running when processing this command.
-    IncreaseRate,
-    /// Configure how long to take to launch all [`GooseUser`](../goose/struct.GooseUser.html)s.
+    IncreaseRate(f32),
+    /// Configure how long to take to launch all
+    /// [`GooseUser`](../goose/struct.GooseUser.html)s, in seconds.
     ///
     /// # Example
     /// Tells Goose to increase users over 30 seconds.
@@ -122,8 +163,10 @@ pub enum ControllerCommand {
     /// ```
     ///
     /// Goose must be idle to process this command.
-    IncreaseTime,
-    /// Configure how quickly [`GooseUser`](../goose/struct.GooseUser.html)s are stopped.
+    IncreaseTime(usize),
+    /// Configure how quickly [`GooseUser`](../goose/struct.GooseUser.html)s are
+    /// stopped, per second: a finite number of at least 0.0000116, one user a
+    /// day.
     ///
     /// # Example
     /// Tells Goose to stop one user every 2 seconds.
@@ -132,8 +175,9 @@ pub enum ControllerCommand {
     /// ```
     ///
     /// Goose can be idle or running when processing this command.
-    DecreaseRate,
-    /// Configure how long to take to stop all [`GooseUser`](../goose/struct.GooseUser.html)s.
+    DecreaseRate(f32),
+    /// Configure how long to take to stop all
+    /// [`GooseUser`](../goose/struct.GooseUser.html)s, in seconds.
     ///
     /// # Example
     /// Tells Goose to decrease users over 30 seconds.
@@ -142,8 +186,9 @@ pub enum ControllerCommand {
     /// ```
     ///
     /// Goose must be idle to process this command.
-    DecreaseTime,
-    /// Configure how many [`GooseUser`](../goose/struct.GooseUser.html)s to launch.
+    DecreaseTime(usize),
+    /// Configure how many [`GooseUser`](../goose/struct.GooseUser.html)s to
+    /// launch, 1 to 100000.
     ///
     /// # Example
     /// Tells Goose to simulate 100 concurrent users.
@@ -152,8 +197,9 @@ pub enum ControllerCommand {
     /// ```
     ///
     /// Can be configured on an idle or running load test.
-    Users,
-    /// Configure how long the load test should run before stopping and returning to an idle state.
+    Users(usize),
+    /// Configure how long the load test should run before stopping and
+    /// returning to an idle state, in seconds.
     ///
     /// # Example
     /// Tells Goose to run the load test for 1 minute, before automatically stopping.
@@ -161,19 +207,21 @@ pub enum ControllerCommand {
     /// runtime 60
     /// ```
     ///
-    /// This can be configured when Goose is idle as well as when a Goose load test is running.
-    RunTime,
-    /// Define a load test plan. This will replace the previously configured test plan, if any.
+    /// Goose must be idle to process this command: the run time is read when
+    /// the load test starts.
+    RunTime(usize),
+    /// Define a load test plan, starting 1 to 100000 users in total. This will
+    /// replace the previously configured test plan, if any.
     ///
     /// # Example
     /// Tells Goose to launch 10 users in 5 seconds, maintain them for 30 seconds, and then spend 5 seconds
     /// stopping them.
     /// ```notest
-    /// testplan "10,5s;10,30s;0,5s"
+    /// testplan 10,5s;10,30s;0,5s
     /// ```
     ///
     /// Can be configured on an idle or running load test.
-    TestPlan,
+    TestPlan(TestPlan),
     /// Display the current [`GooseConfiguration`](../struct.GooseConfiguration.html)s.
     ///
     /// # Example
@@ -214,769 +262,440 @@ pub enum ControllerCommand {
     MetricsJson,
 }
 
-/// Defines details around identifying and processing ControllerCommands.
-///
-/// As order doesn't matter here, it's preferred to define commands in alphabetical order.
 impl ControllerCommand {
-    /// Each ControllerCommand must define complete ControllerCommentDetails.
-    ///  - `help` returns a ControllerHelp struct that is used to provide inline help.
-    ///  - `regex` returns an &str defining the regular expression used to match the command
-    ///    (and optionally to grab a value being set).
-    ///  - `process_response` contains a boxed closure that receives the parent process
-    ///    response to the command and responds to the controller appropriately.
-    fn details(&self) -> ControllerCommandDetails<'_> {
-        match self {
-            ControllerCommand::Config => ControllerCommandDetails {
-                help: ControllerHelp {
-                    name: "config",
-                    description: "display load test configuration\n",
-                },
-                regex: r"(?i)^config$",
-                process_response: Box::new(|response| {
-                    if let ControllerResponseMessage::Config(config) = response {
-                        Ok(format!("{config:#?}"))
-                    } else {
-                        Err("error loading configuration".to_string())
-                    }
-                }),
-            },
-            ControllerCommand::ConfigJson => ControllerCommandDetails {
-                help: ControllerHelp {
-                    name: "config-json",
-                    description: "display load test configuration in json format\n",
-                },
-                regex: r"(?i)^(configjson|config-json)$",
-                process_response: Box::new(|response| {
-                    if let ControllerResponseMessage::Config(config) = response {
-                        Ok(serde_json::to_string(&config).expect("unexpected serde failure"))
-                    } else {
-                        Err("error loading configuration".to_string())
-                    }
-                }),
-            },
-            ControllerCommand::Exit => ControllerCommandDetails {
-                help: ControllerHelp {
-                    name: "exit",
-                    description: "exit controller\n\n",
-                },
-                regex: r"(?i)^(exit|quit|q)$",
-                process_response: Box::new(|_| {
-                    let e = "received an impossible EXIT command";
-                    error!("{e}");
-                    Err(e.to_string())
-                }),
-            },
-            ControllerCommand::IncreaseRate => ControllerCommandDetails {
-                help: ControllerHelp {
-                    name: "increaserate FLOAT",
-                    description: "set per-second rate users increase\n",
-                },
-                regex: r"(?i)^(increaserate|increase_rate|increase-rate) ([0-9]*(\.[0-9]*)?){1}$",
-                process_response: Box::new(|response| {
-                    if let ControllerResponseMessage::Bool(true) = response {
-                        Ok("increase_rate configured".to_string())
-                    } else {
-                        Err("failed to configure increase_rate".to_string())
-                    }
-                }),
-            },
-            ControllerCommand::Help => ControllerCommandDetails {
-                help: ControllerHelp {
-                    name: "help",
-                    description: "this help\n",
-                },
-                regex: r"(?i)^(help|\?)$",
-                process_response: Box::new(|_| {
-                    let e = "received an impossible HELP command";
-                    error!("{e}");
-                    Err(e.to_string())
-                }),
-            },
-            ControllerCommand::Host => ControllerCommandDetails {
-                help: ControllerHelp {
-                    name: "host HOST",
-                    description: "set host to load test, (ie https://web.site/)\n",
-                },
-                regex: r"(?i)^(host|hostname|host_name|host-name) ((https?)://.+)$",
-                process_response: Box::new(|response| {
-                    if let ControllerResponseMessage::Bool(true) = response {
-                        Ok("host configured".to_string())
-                    } else {
-                        Err("failed to reconfigure host, be sure host is valid and load test is idle".to_string())
-                    }
-                }),
-            },
-            ControllerCommand::Metrics => ControllerCommandDetails {
-                help: ControllerHelp {
-                    name: "metrics",
-                    description: "display metrics for current load test\n",
-                },
-                regex: r"(?i)^(metrics|stats)$",
-                process_response: Box::new(|response| {
-                    if let ControllerResponseMessage::Metrics(metrics) = response {
-                        Ok(metrics.to_string())
-                    } else {
-                        Err("error loading metrics".to_string())
-                    }
-                }),
-            },
-            ControllerCommand::MetricsJson => {
-                ControllerCommandDetails {
-                    help: ControllerHelp {
-                        name: "metrics-json",
-                        // No new-line as this is the last line of the help screen.
-                        description: "display metrics for current load test in json format",
-                    },
-                    regex: r"(?i)^(metricsjson|metrics-json|statsjson|stats-json)$",
-                    process_response: Box::new(|response| {
-                        if let ControllerResponseMessage::Metrics(metrics) = response {
-                            Ok(serde_json::to_string(&metrics).expect("unexpected serde failure"))
-                        } else {
-                            Err("error loading metrics".to_string())
-                        }
-                    }),
-                }
-            }
-            ControllerCommand::RunTime => ControllerCommandDetails {
-                help: ControllerHelp {
-                    name: "runtime TIME",
-                    description: "set how long to run test, (ie 1h30m5s)\n",
-                },
-                regex: r"(?i)^(run|runtime|run_time|run-time|) (\d+|((\d+?)h)?((\d+?)m)?((\d+?)s)?)$",
-                process_response: Box::new(|response| {
-                    if let ControllerResponseMessage::Bool(true) = response {
-                        Ok("run_time configured".to_string())
-                    } else {
-                        Err("failed to configure run_time".to_string())
-                    }
-                }),
-            },
-            ControllerCommand::Shutdown => ControllerCommandDetails {
-                help: ControllerHelp {
-                    name: "shutdown",
-                    description: "shutdown load test and exit controller\n\n",
-                },
-                regex: r"(?i)^shutdown$",
-                process_response: Box::new(|response| {
-                    if let ControllerResponseMessage::Bool(true) = response {
-                        Ok("load test shut down".to_string())
-                    } else {
-                        Err("failed to shut down load test".to_string())
-                    }
-                }),
-            },
-            ControllerCommand::Start => {
-                ControllerCommandDetails {
-                    help: ControllerHelp {
-                        name: "start",
-                        description: "start an idle load test\n",
-                    },
-                    regex: r"(?i)^start$",
-                    process_response: Box::new(|response| {
-                        if let ControllerResponseMessage::Bool(true) = response {
-                            Ok("load test started".to_string())
-                        } else {
-                            Err("unable to start load test, be sure it is idle and host is configured".to_string())
-                        }
-                    }),
-                }
-            }
-            ControllerCommand::IncreaseTime => ControllerCommandDetails {
-                help: ControllerHelp {
-                    name: "increase-time TIME",
-                    description: "set total time to take increasing users\n",
-                },
-                regex: r"(?i)^(increasetime|increase_time|increase-time) (\d+|((\d+?)h)?((\d+?)m)?((\d+?)s)?)$",
-                process_response: Box::new(|response| {
-                    if let ControllerResponseMessage::Bool(true) = response {
-                        Ok("increase_time configured".to_string())
-                    } else {
-                        Err(
-                            "failed to configure increase_time, be sure load test is idle"
-                                .to_string(),
-                        )
-                    }
-                }),
-            },
-            ControllerCommand::DecreaseRate => ControllerCommandDetails {
-                help: ControllerHelp {
-                    name: "decreaserate FLOAT",
-                    description: "set per-second rate users decrease\n",
-                },
-                regex: r"(?i)^(decreaserate|decrease_rate|decrease-rate) ([0-9]*(\.[0-9]*)?){1}$",
-                process_response: Box::new(|response| {
-                    if let ControllerResponseMessage::Bool(true) = response {
-                        Ok("decrease_rate configured".to_string())
-                    } else {
-                        Err("failed to configure decrease_rate".to_string())
-                    }
-                }),
-            },
-            ControllerCommand::DecreaseTime => ControllerCommandDetails {
-                help: ControllerHelp {
-                    name: "decrease-time TIME",
-                    description: "set total time to take decreasing users\n",
-                },
-                regex: r"(?i)^(decreasetime|decrease_time|decrease-time) (\d+|((\d+?)h)?((\d+?)m)?((\d+?)s)?)$",
-                process_response: Box::new(|response| {
-                    if let ControllerResponseMessage::Bool(true) = response {
-                        Ok("decrease_time configured".to_string())
-                    } else {
-                        Err(
-                            "failed to configure decrease_time, be sure load test is idle"
-                                .to_string(),
-                        )
-                    }
-                }),
-            },
-            ControllerCommand::Stop => ControllerCommandDetails {
-                help: ControllerHelp {
-                    name: "stop",
-                    description: "stop a running load test and return to idle state\n",
-                },
-                regex: r"(?i)^stop$",
-                process_response: Box::new(|response| {
-                    if let ControllerResponseMessage::Bool(true) = response {
-                        Ok("load test stopped".to_string())
-                    } else {
-                        Err("load test not running, failed to stop".to_string())
-                    }
-                }),
-            },
-            ControllerCommand::TestPlan => ControllerCommandDetails {
-                help: ControllerHelp {
-                    name: "test-plan PLAN",
-                    description: "define or replace test-plan, (ie 10,5m;10,1h;0,30s)\n\n",
-                },
-                regex: r"(?i)^(testplan|test_plan|test-plan|plan) (((\d+)\s*,\s*(\d+|((\d+?)h)?((\d+?)m)?((\d+?)s)?)*;*)+)$",
-                process_response: Box::new(|response| {
-                    if let ControllerResponseMessage::Bool(true) = response {
-                        Ok("test-plan configured".to_string())
-                    } else {
-                        Err("failed to configure test-plan, be sure test-plan is valid".to_string())
-                    }
-                }),
-            },
-            ControllerCommand::Users => ControllerCommandDetails {
-                help: ControllerHelp {
-                    name: "users INT",
-                    description: "set number of simulated users (1 to 100000)\n",
-                },
-                regex: r"(?i)^(users?) (\d+)$",
-                process_response: Box::new(|response| {
-                    if let ControllerResponseMessage::Bool(true) = response {
-                        Ok("users configured".to_string())
-                    } else {
-                        Err("failed to reconfigure users, be sure users is valid and load test is not stopping".to_string())
-                    }
-                }),
-            },
-        }
-    }
-
-    // Optionally perform validation beyond what is possible with a regular expression.
-    //
-    // Return Some(value) if the value is valid, otherwise return None.
-    fn validate_value(&self, value: &str) -> Option<String> {
-        // The Regex that captures the host only validates that the host starts with
-        // http:// or https://. Now use a library to properly validate that this is
-        // a valid host before sending to the parent process.
-        if self == &ControllerCommand::Host {
-            if util::is_valid_host(value).is_ok() {
-                Some(value.to_string())
-            } else {
-                None
-            }
-        } else if value.is_empty() {
-            None
+    /// `users`, refused unless 1 to [`MAX_CONTROL_USERS`].
+    pub(crate) fn users(users: u64) -> Result<Self, &'static str> {
+        if (1..=MAX_CONTROL_USERS as u64).contains(&users) {
+            Ok(Self::Users(users as usize))
         } else {
-            Some(value.to_string())
+            Err(INVALID_USERS_MSG)
         }
-    }
-
-    // If the regular expression that matches this command also matches a value, get and validate
-    // the value.
-    //
-    // Returns Some(value) if the value is valid, otherwise returns None.
-    fn get_value(&self, command_string: &str) -> Option<String> {
-        let regex = Regex::new(self.details().regex)
-            .expect("ControllerCommand::details().regex returned invalid regex [2]");
-        let caps = regex.captures(command_string).unwrap();
-        let value = caps.get(2).map_or("", |m| m.as_str());
-        self.validate_value(value)
-    }
-
-    // Builds a help screen displayed when a controller receives the `help` command.
-    fn display_help() -> String {
-        let mut help_text = Vec::new();
-        writeln!(
-            &mut help_text,
-            "{} {} controller commands:",
-            env!("CARGO_PKG_NAME"),
-            env!("CARGO_PKG_VERSION")
-        )
-        .expect("failed to write to buffer");
-        // Builds help screen in the order commands are defined in the ControllerCommand enum.
-        for command in ControllerCommand::iter() {
-            write!(
-                &mut help_text,
-                "{:<18} {}",
-                command.details().help.name,
-                command.details().help.description
-            )
-            .expect("failed to write to buffer");
-        }
-        String::from_utf8(help_text).expect("invalid utf-8 in help text")
     }
 }
 
+lazy_static! {
+    // The values the Controller regexes on main accepted, in ASCII digits
+    // only: a value outside them is refused before it is parsed, so no other
+    // text reaches a parser.
+    static ref USERS: Regex = Regex::new(r"^[0-9]+$").unwrap();
+    static ref RATE: Regex = Regex::new(r"^[0-9]*(\.[0-9]*)?$").unwrap();
+    static ref TIME: Regex = Regex::new(r"(?i-u)^([0-9]+|([0-9]+h)?([0-9]+m)?([0-9]+s)?)$").unwrap();
+    static ref PLAN: Regex = Regex::new(
+        r"(?-u)^(([0-9]+)\s*,\s*([0-9]+|([0-9]+h)?([0-9]+m)?([0-9]+s)?)*;*)+$"
+    )
+    .unwrap();
+    static ref HOST: Regex = Regex::new(r"(?i)^https?://.+$").unwrap();
+}
+
+/// `value` when `regex` accepts it, otherwise `error`.
+fn grammar<'a>(
+    regex: &Regex,
+    value: &'a str,
+    error: &'static str,
+) -> Result<&'a str, &'static str> {
+    regex.is_match(value).then_some(value).ok_or(error)
+}
+
+/// A rate: a finite number of users per second, at least one user a day.
+fn rate(value: &str, error: &'static str) -> Result<f32, &'static str> {
+    match grammar(&RATE, value, error)?.parse::<f32>() {
+        Ok(rate) if rate.is_finite() && !crate::util::below_one_user_a_day(rate) => Ok(rate),
+        _ => Err(error),
+    }
+}
+
+/// A time span in seconds: whole seconds, or hours, minutes and seconds in
+/// that order, short enough for a `usize` in milliseconds.
+fn time(value: &str, error: &'static str) -> Result<usize, &'static str> {
+    if value.is_empty() {
+        return Err(error);
+    }
+    let value = grammar(&TIME, value, error)?.to_ascii_lowercase();
+    crate::util::parse_timespan(&value).ok_or(error)
+}
+
+/// Parse a line from a telnet or WebSocket client into a command, or the
+/// error the client is sent back.
+impl FromStr for ControllerCommand {
+    type Err = &'static str;
+
+    fn from_str(line: &str) -> Result<Self, Self::Err> {
+        // A verb, then one space and its value if it takes one.
+        let line = line.trim();
+        let (verb, value) = line.split_once(' ').unwrap_or((line, ""));
+        // A command that takes no value.
+        let alone = |command| match value {
+            "" => Ok(command),
+            _ => Err(UNRECOGNIZED),
+        };
+        match verb.to_ascii_lowercase().as_str() {
+            "start" => alone(Self::Start),
+            "stop" => alone(Self::Stop),
+            "shutdown" => alone(Self::Shutdown),
+            "config" => alone(Self::Config),
+            "configjson" | "config-json" => alone(Self::ConfigJson),
+            "metrics" | "stats" => alone(Self::Metrics),
+            "metricsjson" | "metrics-json" | "statsjson" | "stats-json" => alone(Self::MetricsJson),
+            "host" | "hostname" | "host_name" | "host-name" => {
+                let error = "host must be a valid url starting with http:// or https://";
+                let host = grammar(&HOST, value, error)?;
+                url::Url::parse(host).map_err(|_| error)?;
+                Ok(Self::Host(host.to_string()))
+            }
+            "users" | "user" => grammar(&USERS, value, INVALID_USERS_MSG)?
+                .parse()
+                .map_err(|_| INVALID_USERS_MSG)
+                .and_then(Self::users),
+            "increaserate" | "increase_rate" | "increase-rate" => rate(
+                value,
+                "increase_rate must be a number of at least 0.0000116 (one user a day)",
+            )
+            .map(Self::IncreaseRate),
+            "decreaserate" | "decrease_rate" | "decrease-rate" => rate(
+                value,
+                "decrease_rate must be a number of at least 0.0000116 (one user a day)",
+            )
+            .map(Self::DecreaseRate),
+            "increasetime" | "increase_time" | "increase-time" => {
+                time(value, "increase_time must be a time span such as 1h30m5s")
+                    .map(Self::IncreaseTime)
+            }
+            "decreasetime" | "decrease_time" | "decrease-time" => {
+                time(value, "decrease_time must be a time span such as 1h30m5s")
+                    .map(Self::DecreaseTime)
+            }
+            "run" | "runtime" | "run_time" | "run-time" => {
+                time(value, "run_time must be a time span such as 1h30m5s").map(Self::RunTime)
+            }
+            "testplan" | "test_plan" | "test-plan" | "plan" => {
+                let error = "test-plan must be users,time steps such as 10,5m;10,1h;0,30s, with 1 to 100000 users in total";
+                // The quiet parse: the command line's prints the line it refuses.
+                match TestPlan::parse(grammar(&PLAN, value, error)?) {
+                    Ok(plan) if plan.total_users() <= MAX_CONTROL_USERS => Ok(Self::TestPlan(plan)),
+                    _ => Err(error),
+                }
+            }
+            _ => Err(UNRECOGNIZED),
+        }
+    }
+}
+
+/// The parent's answer to a [`ControllerCommand`].
+pub(crate) enum ControlReply {
+    /// Whether the command was applied, and the message every front end shows.
+    Outcome(ControlOutcome),
+    /// The load test configuration, for `config` and `config-json`.
+    Config(Box<GooseConfiguration>),
+    /// Current load test metrics, for `metrics` and `metrics-json`, shared
+    /// by every client that asked in the same tick.
+    Metrics(Arc<GooseMetrics>),
+}
+
+/// A command and where to send the parent's reply, on the one channel that
+/// telnet, WebSocket and the dashboard share.
+pub(crate) type ControlRequest = (ControllerCommand, oneshot::Sender<ControlReply>);
+
+/// Why [`send_command`] has no reply.
+pub(crate) enum SendError {
+    /// The parent has gone or dropped the request.
+    Unavailable,
+    /// The parent did not answer within [`CONTROL_TIMEOUT`].
+    Timeout,
+}
+
+/// Send `command` to the parent and wait up to `timeout`, [`CONTROL_TIMEOUT`]
+/// outside tests, for its reply.
+pub(crate) async fn send_command(
+    channel_tx: &flume::Sender<ControlRequest>,
+    command: ControllerCommand,
+    timeout: Duration,
+) -> Result<ControlReply, SendError> {
+    let (respond, reply) = oneshot::channel();
+    channel_tx
+        .send((command, respond))
+        .map_err(|_| SendError::Unavailable)?;
+    match tokio::time::timeout(timeout, reply).await {
+        Ok(Ok(reply)) => Ok(reply),
+        Ok(Err(_)) => Err(SendError::Unavailable),
+        Err(_) => Err(SendError::Timeout),
+    }
+}
+
+/// Most requests the parent answers in one turn, so a flood cannot hold the
+/// main loop: a tick has two control turns, the dashboard's and then the
+/// Controllers', and one turn on the dashboard's snapshot channel.
+pub(crate) const MAX_DRAIN: usize = 16;
+
 /// The parent process side of the Controller functionality.
 impl GooseAttack {
-    /// Handle Controller requests.
-    pub(crate) async fn handle_controller_requests(
+    /// Answer up to [`MAX_DRAIN`] queued dashboard commands, then up to
+    /// [`MAX_DRAIN`] more, telnet and WebSocket commands among them: the
+    /// dashboard first, and again before each Controller command, as the
+    /// Controllers take no authentication. A request whose client has gone
+    /// (timed out or disconnected) is skipped, so it is not applied after the
+    /// client was told it failed, and does not count toward [`MAX_DRAIN`]; no
+    /// more of them are skipped in a turn than were queued when it began.
+    ///
+    /// Every `metrics` and `metrics-json` in the tick is answered from one
+    /// metrics processor request, made after the tick's commands, so it shows
+    /// the metrics as they stand at the end of the tick.
+    pub(crate) async fn handle_control_requests(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> Result<(), GooseError> {
-        // If the controller is enabled, check if we've received any
-        // messages.
-        if let Some(c) = goose_attack_run_state.controller_channel_rx.as_ref() {
-            match c.try_recv() {
-                Ok(message) => {
-                    info!(
-                        "request from controller client {}: {:?}",
-                        message.client_id, message.request
-                    );
-                    // As order is not important here, commands should be defined in alphabetical order.
-                    match &message.request.command {
-                        // Send back a copy of the running configuration.
-                        ControllerCommand::Config | ControllerCommand::ConfigJson => {
-                            self.reply_to_controller(
-                                message,
-                                ControllerResponseMessage::Config(Box::new(
-                                    self.configuration.clone(),
-                                )),
-                            );
-                        }
-                        // Send back a copy of the running metrics from the
-                        // dedicated processor task.
-                        ControllerCommand::Metrics | ControllerCommand::MetricsJson => {
-                            self.update_duration();
-                            let (respond_tx, respond_rx) = tokio::sync::oneshot::channel();
-                            let sent = goose_attack_run_state.metrics_cmd_tx.send(
-                                MetricsCommand::GetMetrics {
-                                    duration: self.metrics.duration,
-                                    total_users: self.metrics.total_users,
-                                    maximum_users: self.metrics.maximum_users,
-                                    history: self.metrics.history.clone(),
-                                    respond: respond_tx,
-                                },
-                            );
-                            let snapshot = if sent.is_ok() {
-                                respond_rx.await.ok()
-                            } else {
-                                None
-                            };
-                            let metrics = snapshot.unwrap_or_else(|| {
-                                warn!("metrics processor unavailable, returning stale metrics to controller");
-                                self.metrics.clone()
-                            });
-                            self.reply_to_controller(
-                                message,
-                                ControllerResponseMessage::Metrics(Box::new(metrics)),
-                            );
-                        }
-                        // Start the load test, and acknowledge command.
-                        // Reply BEFORE control_start_finish so clients are not blocked
-                        // on reset_run_state / test_start.
-                        ControllerCommand::Start => {
-                            match self.control_start_begin(goose_attack_run_state)? {
-                                ControlStartBegin::Rejected(_outcome) => {
-                                    self.reply_to_controller(
-                                        message,
-                                        ControllerResponseMessage::Bool(false),
-                                    );
-                                }
-                                ControlStartBegin::Accepted(_outcome) => {
-                                    self.reply_to_controller(
-                                        message,
-                                        ControllerResponseMessage::Bool(true),
-                                    );
-                                    self.control_start_finish(goose_attack_run_state).await?;
-                                }
-                            }
-                        }
-                        // Stop the load test, and acknowledge command.
-                        ControllerCommand::Stop => {
-                            let outcome = self.control_stop(goose_attack_run_state).await?;
-                            self.reply_to_controller(
-                                message,
-                                ControllerResponseMessage::Bool(outcome.ok),
-                            );
-                        }
-                        // Stop the load test, and acknowledge request.
-                        ControllerCommand::Shutdown => {
-                            // If load test is Idle, there are no metrics to display.
-                            if self.attack_phase == AttackPhase::Idle {
-                                self.metrics.display_metrics = false;
-                                // Nothing to cancel, but the run is stopping all
-                                // the same: refuse Users until it shuts down.
-                                goose_attack_run_state.stopping = true;
-                                self.set_attack_phase(
-                                    goose_attack_run_state,
-                                    AttackPhase::Decrease,
-                                );
-                            } else {
-                                self.set_ended_by(crate::runs::EndedBy::Stopped, None);
-                                self.cancel_attack(goose_attack_run_state).await?;
-                            }
-
-                            // Shutdown after stopping.
-                            goose_attack_run_state.shutdown_after_stop = true;
-                            // Confirm shut down to Controller.
-                            self.reply_to_controller(
-                                message,
-                                ControllerResponseMessage::Bool(true),
-                            );
-
-                            // Give the controller thread time to send the response.
-                            tokio::time::sleep(Duration::from_millis(250)).await;
-                        }
-                        ControllerCommand::Host => {
-                            if self.attack_phase == AttackPhase::Idle {
-                                // The controller uses a regular expression to validate that
-                                // this is a valid hostname, so simply use it with further
-                                // validation.
-                                if let Some(host) = &message.request.value {
-                                    info!(
-                                        "changing host from {:?} to {}",
-                                        self.configuration.host, host
-                                    );
-                                    self.configuration.host = host.to_string();
-                                    self.reply_to_controller(
-                                        message,
-                                        ControllerResponseMessage::Bool(true),
-                                    );
-                                } else {
-                                    debug!(
-                                        "controller didn't provide host: {:#?}",
-                                        message.request
-                                    );
-                                    self.reply_to_controller(
-                                        message,
-                                        ControllerResponseMessage::Bool(false),
-                                    );
-                                }
-                            } else {
-                                self.reply_to_controller(
-                                    message,
-                                    ControllerResponseMessage::Bool(false),
-                                );
-                            }
-                        }
-                        ControllerCommand::Users => {
-                            // The controller's regular expression only guarantees digits,
-                            // which may not fit in a usize.
-                            if let Some(new_users) = message
-                                .request
-                                .value
-                                .as_deref()
-                                .and_then(|users| usize::from_str(users).ok())
-                            {
-                                let outcome =
-                                    self.control_set_users(goose_attack_run_state, new_users)?;
-                                self.reply_to_controller(
-                                    message,
-                                    ControllerResponseMessage::Bool(outcome.ok),
-                                );
-                            } else {
-                                warn!(
-                                    "[controller]: didn't provide valid users: {:#?}",
-                                    message.request
-                                );
-                                self.reply_to_controller(
-                                    message,
-                                    ControllerResponseMessage::Bool(false),
-                                );
-                            }
-                        }
-                        ControllerCommand::IncreaseRate => {
-                            // The controller uses a regular expression to validate that
-                            // this is a valid float, so simply use it with further
-                            // validation.
-                            if let Some(increase_rate) = &message.request.value {
-                                // If increase_time was already set, unset it first.
-                                if self.configuration.increase_time != "0" {
-                                    info!(
-                                        "resetting increase_time from {} to 0",
-                                        self.configuration.increase_time
-                                    );
-                                    self.configuration.increase_time = "0".to_string();
-                                }
-                                info!(
-                                    "changing increase_rate from {:?} to {}",
-                                    self.configuration.increase_rate, increase_rate
-                                );
-                                self.configuration.increase_rate = Some(increase_rate.clone());
-                                // If setting increase_rate, any existing configuration for a test plan isn't valid.
-                                self.configuration.test_plan = None;
-                                self.reply_to_controller(
-                                    message,
-                                    ControllerResponseMessage::Bool(true),
-                                );
-                            } else {
-                                warn!(
-                                    "Controller didn't provide increase_rate: {:#?}",
-                                    message.request
-                                );
-                                self.reply_to_controller(
-                                    message,
-                                    ControllerResponseMessage::Bool(false),
-                                );
-                            }
-                        }
-                        ControllerCommand::IncreaseTime => {
-                            if self.attack_phase == AttackPhase::Idle {
-                                // The controller uses a regular expression to validate that
-                                // this is a valid time, so simply use it with further
-                                // validation.
-                                if let Some(increase_time) = &message.request.value {
-                                    // If increase_rate was already set, unset it first.
-                                    if let Some(increase_rate) = &self.configuration.increase_rate {
-                                        info!(
-                                            "resetting increase_rate from {increase_rate} to None"
-                                        );
-                                        self.configuration.increase_rate = None;
-                                    }
-                                    info!(
-                                        "changing increase_time from {} to {}",
-                                        self.configuration.increase_time, increase_time
-                                    );
-                                    self.configuration.increase_time.clone_from(increase_time);
-                                    // If setting increase_time, any existing configuration for a test plan isn't valid.
-                                    self.configuration.test_plan = None;
-                                    self.reply_to_controller(
-                                        message,
-                                        ControllerResponseMessage::Bool(true),
-                                    );
-                                } else {
-                                    warn!(
-                                        "Controller didn't provide increase_time: {:#?}",
-                                        message.request
-                                    );
-                                    self.reply_to_controller(
-                                        message,
-                                        ControllerResponseMessage::Bool(false),
-                                    );
-                                }
-                            } else {
-                                self.reply_to_controller(
-                                    message,
-                                    ControllerResponseMessage::Bool(false),
-                                );
-                            }
-                        }
-                        ControllerCommand::DecreaseRate => {
-                            // The controller uses a regular expression to validate that
-                            // this is a valid float, so simply use it with further
-                            // validation.
-                            if let Some(decrease_rate) = &message.request.value {
-                                // If decrease_time was already set, unset it first.
-                                if self.configuration.decrease_time != "0" {
-                                    info!(
-                                        "resetting decrease_time from {} to 0",
-                                        self.configuration.decrease_time
-                                    );
-                                    self.configuration.decrease_time = "0".to_string();
-                                }
-                                info!(
-                                    "changing decrease_rate from {:?} to {}",
-                                    self.configuration.decrease_rate, decrease_rate
-                                );
-                                self.configuration.decrease_rate = Some(decrease_rate.clone());
-                                // If setting decrease_rate, any existing configuration for a test plan isn't valid.
-                                self.configuration.test_plan = None;
-                                self.reply_to_controller(
-                                    message,
-                                    ControllerResponseMessage::Bool(true),
-                                );
-                            } else {
-                                warn!(
-                                    "Controller didn't provide decrease_rate: {:#?}",
-                                    message.request
-                                );
-                                self.reply_to_controller(
-                                    message,
-                                    ControllerResponseMessage::Bool(false),
-                                );
-                            }
-                        }
-                        ControllerCommand::DecreaseTime => {
-                            if self.attack_phase == AttackPhase::Idle {
-                                // The controller uses a regular expression to validate that
-                                // this is a valid time, so simply use it with further
-                                // validation.
-                                if let Some(decrease_time) = &message.request.value {
-                                    // If decrease_rate was already set, unset it first.
-                                    if let Some(decrease_rate) = &self.configuration.decrease_rate {
-                                        info!(
-                                            "resetting decrease_rate from {decrease_rate} to None"
-                                        );
-                                        self.configuration.decrease_rate = None;
-                                    }
-                                    info!(
-                                        "changing decrease_time from {} to {}",
-                                        self.configuration.decrease_time, decrease_time
-                                    );
-                                    self.configuration.decrease_time.clone_from(decrease_time);
-                                    // If setting decrease_time, any existing configuration for a test plan isn't valid.
-                                    self.configuration.test_plan = None;
-                                    self.reply_to_controller(
-                                        message,
-                                        ControllerResponseMessage::Bool(true),
-                                    );
-                                } else {
-                                    warn!(
-                                        "Controller didn't provide decrease_time: {:#?}",
-                                        message.request
-                                    );
-                                    self.reply_to_controller(
-                                        message,
-                                        ControllerResponseMessage::Bool(false),
-                                    );
-                                }
-                            } else {
-                                self.reply_to_controller(
-                                    message,
-                                    ControllerResponseMessage::Bool(false),
-                                );
-                            }
-                        }
-                        ControllerCommand::RunTime => {
-                            // The controller uses a regular expression to validate that
-                            // this is a valid run time, so simply use it with further
-                            // validation.
-                            if let Some(run_time) = &message.request.value {
-                                info!(
-                                    "changing run_time from {:?} to {}",
-                                    self.configuration.run_time, run_time
-                                );
-                                self.configuration.run_time.clone_from(run_time);
-                                // If setting run_time, any existing configuration for a test plan isn't valid.
-                                self.configuration.test_plan = None;
-                                self.reply_to_controller(
-                                    message,
-                                    ControllerResponseMessage::Bool(true),
-                                );
-                            } else {
-                                warn!("Controller didn't provide run_time: {:#?}", message.request);
-                            }
-                        }
-                        ControllerCommand::TestPlan => {
-                            if let Some(value) = &message.request.value {
-                                match value.parse::<TestPlan>() {
-                                    Ok(t) => {
-                                        // Switch the configuration to use the test plan.
-                                        self.configuration.test_plan = Some(t.clone());
-                                        self.configuration.users = None;
-                                        self.configuration.increase_rate = None;
-                                        self.configuration.increase_time = "0".to_string();
-                                        self.configuration.decrease_rate = None;
-                                        self.configuration.decrease_time = "0".to_string();
-                                        self.configuration.run_time = "0".to_string();
-                                        match self.attack_phase {
-                                            // If the load test is idle, just update the configuration.
-                                            AttackPhase::Idle => {
-                                                self.reply_to_controller(
-                                                    message,
-                                                    ControllerResponseMessage::Bool(true),
-                                                );
-                                            }
-                                            // If the load test is running, rebuild the active test plan.
-                                            AttackPhase::Increase
-                                            | AttackPhase::Decrease
-                                            | AttackPhase::Maintain => {
-                                                // Rebuild the active test plan.
-                                                self.test_plan = t;
-
-                                                // Reallocate users.
-                                                self.weighted_users = self.weight_scenario_users(
-                                                    self.test_plan.total_users(),
-                                                )?;
-
-                                                // Determine how long the current step has been running.
-                                                let elapsed = self.step_elapsed() as usize;
-
-                                                // Insert the current state of the test plan before the new test plan.
-                                                self.test_plan.steps.insert(
-                                                    0,
-                                                    (goose_attack_run_state.active_users, elapsed),
-                                                );
-
-                                                // Finally, advance to the next step to adjust user count.
-                                                self.advance_test_plan(goose_attack_run_state);
-
-                                                // The load test is successfully reconfigured.
-                                                self.reply_to_controller(
-                                                    message,
-                                                    ControllerResponseMessage::Bool(true),
-                                                );
-                                            }
-                                            _ => {
-                                                unreachable!("Controller used in impossible phase.")
-                                            }
-                                        }
-                                    }
-                                    Err(e) => {
-                                        warn!("Controller provided invalid test_plan: {e}");
-                                        self.reply_to_controller(
-                                            message,
-                                            ControllerResponseMessage::Bool(false),
-                                        );
-                                    }
-                                }
-                            } else {
-                                warn!(
-                                    "Controller didn't provide test_plan: {:#?}",
-                                    message.request
-                                );
-                                self.reply_to_controller(
-                                    message,
-                                    ControllerResponseMessage::Bool(false),
-                                );
-                            }
-                        }
-                        // These messages shouldn't be received here.
-                        ControllerCommand::Help | ControllerCommand::Exit => {
-                            warn!("Unexpected command: {:?}", message.request);
-                        }
-                    }
-                }
-                Err(e) => {
-                    // Errors can be ignored, they happen any time there are no messages.
-                    debug!("error receiving message: {e}");
-                }
-            }
+        let mut metrics_waiters = Vec::new();
+        let mut result = Ok(());
+        let pending = |rx: &Option<flume::Receiver<ControlRequest>>| rx.as_ref()?.try_recv().ok();
+        let queued = |rx: &Option<flume::Receiver<ControlRequest>>| {
+            rx.as_ref().map_or(0, flume::Receiver::len)
         };
-        Ok(())
-    }
-
-    /// Use the provided oneshot channel to reply to a controller client request.
-    pub(crate) fn reply_to_controller(
-        &mut self,
-        request: ControllerRequest,
-        response: ControllerResponseMessage,
-    ) {
-        if let Some(oneshot_tx) = request.response_channel {
-            if oneshot_tx
-                .send(ControllerResponse {
-                    _client_id: request.client_id,
-                    response,
-                })
-                .is_err()
-            {
-                warn!("failed to send response to controller via one-shot channel")
+        'drain: for dashboard in [true, false] {
+            // A skipped request is not counted, so requests whose clients
+            // have gone leave the queue at once, but no more of them than
+            // were queued when the turn began, so the turn ends however fast
+            // more arrive.
+            let mut skips = queued(&goose_attack_run_state.dashboard_control_rx)
+                + if dashboard {
+                    0
+                } else {
+                    queued(&goose_attack_run_state.controller_channel_rx)
+                };
+            let mut answered = 0;
+            while answered < MAX_DRAIN {
+                // The dashboard's next request, else in the Controllers' turn
+                // theirs, so no queued Controller command runs ahead of a
+                // dashboard command.
+                let state = &*goose_attack_run_state;
+                let next = match pending(&state.dashboard_control_rx) {
+                    None if !dashboard => pending(&state.controller_channel_rx),
+                    next => next,
+                };
+                let Some((command, respond)) = next else {
+                    break;
+                };
+                if respond.is_closed() {
+                    debug!("[control]: {command:?} skipped, its client has gone");
+                    if skips == 0 {
+                        break;
+                    }
+                    skips -= 1;
+                    continue;
+                }
+                answered += 1;
+                info!("[control]: {command:?}");
+                result = self
+                    .control(
+                        goose_attack_run_state,
+                        command,
+                        respond,
+                        &mut metrics_waiters,
+                    )
+                    .await;
+                if result.is_err() {
+                    break 'drain;
+                }
             }
         }
+        // Answered even after a hard error, so no client waits for nothing.
+        if !metrics_waiters.is_empty() {
+            let metrics = Arc::new(self.metrics_for_controller(goose_attack_run_state).await);
+            for respond in metrics_waiters {
+                let _ = respond.send(ControlReply::Metrics(Arc::clone(&metrics)));
+            }
+        }
+        result
+    }
+
+    /// Apply one command and reply to it. A hard error is answered as an
+    /// `internal` outcome, then returned. `metrics` and `metrics-json` are
+    /// added to `metrics_waiters`, all answered at the end of the tick.
+    async fn control(
+        &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+        command: ControllerCommand,
+        respond: oneshot::Sender<ControlReply>,
+        metrics_waiters: &mut Vec<oneshot::Sender<ControlReply>>,
+    ) -> Result<(), GooseError> {
+        let idle = self.attack_phase == AttackPhase::Idle;
+        let refused = |goose: &Self, run_state: &GooseAttackRunState, message| {
+            Ok(goose.control_outcome(run_state, false, Some("invalid_phase"), message, None))
+        };
+        let configured = |goose: &Self, run_state: &GooseAttackRunState, message| {
+            Ok(goose.control_outcome(run_state, true, None, message, None))
+        };
+        // An accepted Start is answered first and then finished, so the
+        // client is not blocked on reset_run_state and test_start.
+        let mut start = false;
+        let outcome = match command {
+            ControllerCommand::Config | ControllerCommand::ConfigJson => {
+                let config = Box::new(self.configuration.clone());
+                let _ = respond.send(ControlReply::Config(config));
+                return Ok(());
+            }
+            ControllerCommand::Metrics | ControllerCommand::MetricsJson => {
+                metrics_waiters.push(respond);
+                return Ok(());
+            }
+            ControllerCommand::Start => match self.control_start_begin(goose_attack_run_state) {
+                Ok(ControlStartBegin::Accepted(outcome)) => {
+                    start = true;
+                    Ok(outcome)
+                }
+                Ok(ControlStartBegin::Rejected(outcome)) => Ok(outcome),
+                Err(e) => Err(e),
+            },
+            ControllerCommand::Stop => self.control_stop(goose_attack_run_state).await,
+            ControllerCommand::Quit => Ok(self.control_quit(goose_attack_run_state)),
+            ControllerCommand::Shutdown => self.control_shutdown(goose_attack_run_state).await,
+            ControllerCommand::Users(users) => {
+                self.control_set_users(goose_attack_run_state, users)
+            }
+            ControllerCommand::TestPlan(plan) => {
+                self.control_set_plan(goose_attack_run_state, plan)
+            }
+            ControllerCommand::IncreaseRate(rate) => {
+                self.configuration.increase_time = "0".to_string();
+                self.configuration.increase_rate = Some(rate.to_string());
+                let message = match self.configuration.test_plan.take() {
+                    Some(_) => "increase_rate configured, test plan cleared",
+                    None => "increase_rate configured",
+                };
+                configured(self, goose_attack_run_state, message)
+            }
+            ControllerCommand::DecreaseRate(rate) => {
+                self.configuration.decrease_time = "0".to_string();
+                self.configuration.decrease_rate = Some(rate.to_string());
+                let message = match self.configuration.test_plan.take() {
+                    Some(_) => "decrease_rate configured, test plan cleared",
+                    None => "decrease_rate configured",
+                };
+                configured(self, goose_attack_run_state, message)
+            }
+            ControllerCommand::Host(_) if !idle => refused(
+                self,
+                goose_attack_run_state,
+                "failed to reconfigure host, load test is not idle",
+            ),
+            ControllerCommand::IncreaseTime(_) if !idle => refused(
+                self,
+                goose_attack_run_state,
+                "failed to configure increase_time, be sure load test is idle",
+            ),
+            ControllerCommand::DecreaseTime(_) if !idle => refused(
+                self,
+                goose_attack_run_state,
+                "failed to configure decrease_time, be sure load test is idle",
+            ),
+            ControllerCommand::RunTime(_) if !idle => refused(
+                self,
+                goose_attack_run_state,
+                "failed to configure run_time, be sure load test is idle",
+            ),
+            ControllerCommand::Host(host) => {
+                self.configuration.host = host;
+                configured(self, goose_attack_run_state, "host configured")
+            }
+            ControllerCommand::IncreaseTime(seconds) => {
+                self.configuration.increase_rate = None;
+                self.configuration.increase_time = seconds.to_string();
+                self.configuration.test_plan = None;
+                configured(self, goose_attack_run_state, "increase_time configured")
+            }
+            ControllerCommand::DecreaseTime(seconds) => {
+                self.configuration.decrease_rate = None;
+                self.configuration.decrease_time = seconds.to_string();
+                self.configuration.test_plan = None;
+                configured(self, goose_attack_run_state, "decrease_time configured")
+            }
+            ControllerCommand::RunTime(seconds) => {
+                self.configuration.run_time = seconds.to_string();
+                self.configuration.test_plan = None;
+                configured(self, goose_attack_run_state, "run_time configured")
+            }
+        };
+        match outcome {
+            Ok(outcome) => {
+                debug!(
+                    "[control]: ok={} error={:?} phase={} active_users={} target_users={:?}: {}",
+                    outcome.ok,
+                    outcome.error,
+                    outcome.phase,
+                    outcome.active_users,
+                    outcome.target_users,
+                    outcome.message
+                );
+                let _ = respond.send(ControlReply::Outcome(outcome));
+                if !start {
+                    return Ok(());
+                }
+                self.control_start_finish(goose_attack_run_state)
+                    .await
+                    .inspect_err(|e| warn!("[control]: start failed after it was accepted: {e}"))
+            }
+            Err(e) => {
+                let internal = self.control_outcome(
+                    goose_attack_run_state,
+                    false,
+                    Some("internal"),
+                    "internal control error",
+                    None,
+                );
+                let _ = respond.send(ControlReply::Outcome(internal));
+                Err(e)
+            }
+        }
+    }
+
+    /// Current metrics from the dedicated metrics processor, or the main
+    /// loop's copy when the processor is not running.
+    async fn metrics_for_controller(
+        &mut self,
+        goose_attack_run_state: &GooseAttackRunState,
+    ) -> GooseMetrics {
+        self.update_duration();
+        let (respond_tx, respond_rx) = oneshot::channel();
+        let sent = goose_attack_run_state
+            .metrics_cmd_tx
+            .send(MetricsCommand::GetMetrics {
+                duration: self.metrics.duration,
+                total_users: self.metrics.total_users,
+                maximum_users: self.metrics.maximum_users,
+                history: self.metrics.history.clone(),
+                respond: respond_tx,
+            });
+        let snapshot = if sent.is_ok() {
+            respond_rx.await.ok()
+        } else {
+            None
+        };
+        snapshot.unwrap_or_else(|| {
+            warn!("metrics processor unavailable, returning stale metrics to controller");
+            self.metrics.clone()
+        })
+    }
+
+    /// Shut the load test down: from Idle at once, as Ctrl-C does there,
+    /// otherwise by canceling the run. Nothing to do once shutting down.
+    async fn control_shutdown(
+        &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+    ) -> Result<ControlOutcome, GooseError> {
+        match self.attack_phase {
+            AttackPhase::Idle => self.shutdown_from_idle(goose_attack_run_state),
+            AttackPhase::Shutdown => {}
+            _ => {
+                self.set_ended_by(crate::runs::EndedBy::Stopped, None);
+                goose_attack_run_state.shutdown_after_stop = true;
+                self.cancel_attack(goose_attack_run_state).await?;
+            }
+        }
+        Ok(self.control_outcome(
+            goose_attack_run_state,
+            true,
+            None,
+            "load test shut down",
+            None,
+        ))
     }
 }
 
@@ -990,7 +709,7 @@ pub(crate) async fn controller_main(
     // Expose load test configuration to controller thread.
     configuration: GooseConfiguration,
     // For sending requests to the parent process.
-    channel_tx: flume::Sender<ControllerRequest>,
+    channel_tx: flume::Sender<ControlRequest>,
     // Which type of controller to launch.
     protocol: ControllerProtocol,
 ) -> io::Result<()> {
@@ -1012,89 +731,36 @@ pub(crate) async fn controller_main(
     info!("[controller]: {protocol:?} listening on: {address}");
 
     // Counter increments each time a controller client connects with this protocol.
-    let mut thread_id: u32 = 0;
+    let mut client_id: u32 = 0;
 
     // Wait for a connection.
     while let Ok((stream, _)) = listener.accept().await {
-        thread_id += 1;
+        client_id += 1;
 
         // Identify the client ip and port, used primarily for debug logging.
         let peer_address = stream
             .peer_addr()
             .map_or("UNKNOWN ADDRESS".to_string(), |p| p.to_string());
-
-        // Create a per-client Controller state.
-        let controller_state = ControllerState {
-            thread_id,
-            peer_address,
-            channel_tx: channel_tx.clone(),
-            protocol: protocol.clone(),
-        };
+        let client = format!("{protocol:?} client [{client_id}] from {peer_address}");
 
         // Spawn a new thread to communicate with a client. The returned JoinHandle is
         // ignored as the thread simply runs until the client exits or Goose shuts down.
         // Don't .await the tokio::spawn or Goose can't handle multiple simultaneous
         // connections.
-        let _ignored_joinhandle = tokio::spawn(controller_state.accept_connections(stream));
+        let _ignored_joinhandle = tokio::spawn(serve_client(
+            stream,
+            protocol,
+            channel_tx.clone(),
+            client,
+            CONTROL_TIMEOUT,
+        ));
     }
 
     Ok(())
 }
 
-/// Implement [`FromStr`] to convert controller commands and optional values to the proper enum
-/// representation.
-impl FromStr for ControllerCommand {
-    type Err = GooseError;
-
-    // Use regular expressions to convert controller input to ControllerCommands.
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        // Load all ControllerCommand regex into a set.
-        let mut regex_set: Vec<String> = Vec::new();
-        let mut keys = Vec::new();
-        for t in ControllerCommand::iter() {
-            keys.push(t.clone());
-            regex_set.push(t.details().regex.to_string());
-        }
-        let commands = RegexSet::new(regex_set)
-            .expect("ControllerCommand::details().regex returned invalid regex");
-        let matches: Vec<_> = commands.matches(s).into_iter().collect();
-        // This happens any time the controller receives an invalid command.
-        if matches.is_empty() {
-            Err(GooseError::InvalidControllerCommand {
-                detail: format!("unrecognized controller command: '{s}'."),
-            })
-        // This shouldn't ever happen, but if it does report all available information.
-        } else if matches.len() > 1 {
-            let mut matched_commands = Vec::new();
-            for index in matches {
-                matched_commands.push(keys[index].clone())
-            }
-            Err(GooseError::InvalidControllerCommand {
-                detail: format!(
-                    "matched multiple controller commands: '{s}' ({matched_commands:?})."
-                ),
-            })
-        // Only one command matched.
-        } else {
-            Ok(keys[*matches.first().unwrap()].clone())
-        }
-    }
-}
-
-/// Send a message to the client TcpStream, no prompt or line feed.
-async fn write_to_socket_raw(socket: &mut tokio::net::TcpStream, message: &str) {
-    if socket
-        // Add a linefeed to the end of the message.
-        .write_all(message.as_bytes())
-        .await
-        .is_err()
-    {
-        warn!("failed to write data to socket");
-    }
-}
-
 /// Goose supports two different Controller protocols: telnet and WebSocket.
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) enum ControllerProtocol {
     /// Allows control of Goose via telnet.
     Telnet,
@@ -1102,67 +768,225 @@ pub(crate) enum ControllerProtocol {
     WebSocket,
 }
 
-/// All commands define their own ControllerHelp to create a help screen.
-#[derive(Clone, Debug)]
-pub(crate) struct ControllerHelp<'a> {
-    // The name of the controller command.
-    name: &'a str,
-    // A description of the contorller command.
-    description: &'a str,
+/// A connected Controller client: what differs between telnet and
+/// WebSocket is how a line arrives and how a reply is written.
+enum Transport {
+    Telnet(TcpStream),
+    WebSocket(Box<WebSocketStream<TcpStream>>),
 }
 
-/// Defines the regular expression used to identify a command and optionall the associated
-/// value, as well as the logic for letting the controller know whether or not the
-/// recognized command worked correctly.
-pub(crate) struct ControllerCommandDetails<'a> {
-    // The name and description of the controller command.
-    help: ControllerHelp<'a>,
-    // A [regular expression](https://docs.rs/regex/1.5.5/regex/struct.Regex.html) for
-    // matching the command and option value.
-    regex: &'a str,
-    // The response sent by the controller after handling the incoming controller
-    // request.
-    process_response: Box<dyn Fn(ControllerResponseMessage) -> Result<String, String>>,
+/// Longest WebSocket message a Controller reads, in bytes. It matches Linux's
+/// limit on one command line argument (`MAX_ARG_STRLEN`, 128 KiB with 4 KiB
+/// pages), so a test plan the command line takes there fits, less the few
+/// bytes of the JSON request around it. A longer
+/// message gets a 1009 close. A connection accepts messages and frames of up
+/// to twice this, so it reads into about 1 MiB at most: a message being
+/// assembled, its next frame, and one read ahead.
+pub(crate) const MAX_CONTROLLER_MESSAGE: usize = 128 * 1024;
+
+/// Reason in the close a WebSocket message over [`MAX_CONTROLLER_MESSAGE`]
+/// gets.
+const MESSAGE_TOO_BIG: &str = "message too big, at most 131072 bytes";
+// The reason names the limit, so the two change together.
+const _: () = assert!(MAX_CONTROLLER_MESSAGE == 131_072);
+
+/// Reply to a WebSocket message that is not a json request.
+const INVALID_JSON: &str =
+    "invalid json, see Goose book https://book.goose.rs/controller/websocket.html";
+
+/// Reply to a WebSocket request that is not a command.
+const WS_UNRECOGNIZED: &str =
+    "unrecognized command, see Goose book https://book.goose.rs/controller/websocket.html";
+
+impl Transport {
+    /// The next line the client sent; `None` once the client has gone,
+    /// `Some(Err(reply))` for a message that holds no line.
+    async fn read(&mut self) -> Option<Result<String, &'static str>> {
+        match self {
+            Transport::Telnet(socket) => {
+                let mut buf = [0; 1024];
+                let n = socket.read(&mut buf).await.ok().filter(|n| *n > 0)?;
+                // Invalid utf-8 is a corrupted request: disconnect.
+                let text = str::from_utf8(&buf[..n])
+                    .inspect_err(|e| info!("ignoring unexpected input from telnet controller: {e}"))
+                    .ok()?;
+                Some(Ok(text.lines().next().unwrap_or_default().to_string()))
+            }
+            Transport::WebSocket(stream) => {
+                let message = match stream.next().await? {
+                    Ok(message) if message.len() <= MAX_CONTROLLER_MESSAGE => message,
+                    // Too big: refused unread, or over the hard bound and
+                    // never buffered; a close can usually still be written.
+                    Ok(_) | Err(WebSocketError::Capacity(_)) => {
+                        info!("WebSocket Controller message over {MAX_CONTROLLER_MESSAGE} bytes, closing");
+                        self.close(CloseCode::Size, MESSAGE_TOO_BIG).await;
+                        return None;
+                    }
+                    Err(_) => return None,
+                };
+                let request = match message {
+                    Message::Text(text) => {
+                        serde_json::from_str::<ControllerWebSocketRequest>(&text).ok()
+                    }
+                    // The client is closing: there is nothing to answer.
+                    Message::Close(_) => return None,
+                    _ => None,
+                };
+                Some(request.map(|r| r.request).ok_or(INVALID_JSON))
+            }
+        }
+    }
+
+    /// Send a reply: telnet as text followed by a prompt, WebSocket as a
+    /// [`ControllerWebSocketResponse`].
+    async fn write(&mut self, success: bool, response: &str) {
+        let written = match self {
+            Transport::Telnet(socket) => socket
+                .write_all(format!("{response}\ngoose> ").as_bytes())
+                .await
+                .map_err(|e| e.to_string()),
+            Transport::WebSocket(stream) => {
+                let response = ControllerWebSocketResponse {
+                    response: response.to_string(),
+                    success,
+                };
+                let json = serde_json::to_string(&response).unwrap_or_default();
+                stream
+                    .send(Message::Text(json.into()))
+                    .await
+                    .map_err(|e| e.to_string())
+            }
+        };
+        if let Err(e) = written {
+            info!("failed to write to controller client: {e}");
+        }
+    }
+
+    /// Tell a WebSocket client the connection is closing, and why.
+    async fn close(&mut self, code: CloseCode, reason: &'static str) {
+        if let Transport::WebSocket(stream) = self {
+            let frame = CloseFrame {
+                code,
+                reason: reason.into(),
+            };
+            if stream.send(Message::Close(Some(frame))).await.is_err() {
+                warn!("failed to write data to stream");
+            }
+        }
+    }
 }
 
-/// This structure is used to send commands and values to the parent process.
-#[derive(Debug)]
-pub(crate) struct ControllerRequestMessage {
-    /// The command that is being sent to the parent.
-    pub command: ControllerCommand,
-    /// An optional value that is being sent to the parent.
-    pub value: Option<String>,
+/// Talk to one Controller client until it exits, shuts Goose down, or goes,
+/// waiting up to `timeout` for the parent to answer each command.
+async fn serve_client(
+    socket: TcpStream,
+    protocol: ControllerProtocol,
+    channel_tx: flume::Sender<ControlRequest>,
+    client: String,
+    timeout: Duration,
+) {
+    info!("{client} connected");
+    let mut transport = match protocol {
+        ControllerProtocol::Telnet => Transport::Telnet(socket),
+        ControllerProtocol::WebSocket => match tokio_tungstenite::accept_async_with_config(
+            socket,
+            Some(
+                WebSocketConfig::default()
+                    .max_message_size(Some(2 * MAX_CONTROLLER_MESSAGE))
+                    .max_frame_size(Some(2 * MAX_CONTROLLER_MESSAGE)),
+            ),
+        )
+        .await
+        {
+            Ok(stream) => Transport::WebSocket(Box::new(stream)),
+            Err(e) => {
+                info!("invalid WebSocket handshake: {e}");
+                return;
+            }
+        },
+    };
+    let websocket = matches!(transport, Transport::WebSocket(_));
+    // Display initial goose> prompt.
+    if let Transport::Telnet(socket) = &mut transport {
+        let _ = socket.write_all(b"goose> ").await;
+    }
+
+    while let Some(line) = transport.read().await {
+        let line = match line {
+            Ok(line) => line,
+            Err(reply) => {
+                transport.write(false, reply).await;
+                continue;
+            }
+        };
+        if let Some((reply, exit)) = local_reply(&line) {
+            transport.write(true, reply).await;
+            if exit {
+                transport.close(CloseCode::Normal, "exit").await;
+                break;
+            }
+            continue;
+        }
+        let command = match line.parse::<ControllerCommand>() {
+            Ok(command) => command,
+            Err(reply) => {
+                let book = websocket && reply == UNRECOGNIZED;
+                transport
+                    .write(false, if book { WS_UNRECOGNIZED } else { reply })
+                    .await;
+                continue;
+            }
+        };
+        let shutdown = matches!(command, ControllerCommand::Shutdown);
+        // The WebSocket Controller always returns json.
+        let json = websocket
+            || matches!(
+                command,
+                ControllerCommand::ConfigJson | ControllerCommand::MetricsJson
+            );
+        let (success, response) = match send_command(&channel_tx, command, timeout).await {
+            Ok(ControlReply::Outcome(outcome)) => (outcome.ok, outcome.message),
+            Ok(ControlReply::Config(config)) if json => (true, to_json(&config)),
+            Ok(ControlReply::Config(config)) => (true, format!("{config:#?}")),
+            Ok(ControlReply::Metrics(metrics)) if json => (true, to_json(metrics.as_ref())),
+            Ok(ControlReply::Metrics(metrics)) => (true, metrics.to_string()),
+            Err(SendError::Timeout) => (
+                false,
+                "control timed out, it may still apply: check before retrying".to_string(),
+            ),
+            // The parent has gone: disconnect.
+            Err(SendError::Unavailable) => {
+                transport
+                    .write(false, "parent process has closed the controller channel")
+                    .await;
+                break;
+            }
+        };
+        transport.write(success, &response).await;
+        if shutdown {
+            transport.close(CloseCode::Normal, "shutdown").await;
+            break;
+        }
+    }
+    info!("{client} disconnected");
 }
 
-/// An enumeration of all messages the parent can reply back to the controller thread.
-#[derive(Debug)]
-pub(crate) enum ControllerResponseMessage {
-    /// A response containing a boolean value.
-    Bool(bool),
-    /// A response containing the load test configuration.
-    Config(Box<GooseConfiguration>),
-    /// A response containing current load test metrics.
-    Metrics(Box<GooseMetrics>),
+/// A reply the Controller gives itself, and whether the client then exits:
+/// `help` and `exit` never reach the parent.
+fn local_reply(line: &str) -> Option<(&'static str, bool)> {
+    let is = |words: &[&str]| words.iter().any(|w| line.trim().eq_ignore_ascii_case(w));
+    if is(&["help", "?"]) {
+        Some((HELP, false))
+    } else if is(&["exit", "quit", "q"]) {
+        Some(("goodbye!", true))
+    } else {
+        None
+    }
 }
 
-/// The request that's passed from the controller to the parent thread.
-#[derive(Debug)]
-pub(crate) struct ControllerRequest {
-    /// Optional one-shot channel if a reply is required.
-    pub response_channel: Option<tokio::sync::oneshot::Sender<ControllerResponse>>,
-    /// An integer identifying which controller client is making the request.
-    pub client_id: u32,
-    /// The actual request message.
-    pub request: ControllerRequestMessage,
-}
-
-/// The response that's passed from the parent to the controller.
-#[derive(Debug)]
-pub(crate) struct ControllerResponse {
-    /// An integer identifying which controller the parent is responding to.
-    pub _client_id: u32,
-    /// The actual response message.
-    pub response: ControllerResponseMessage,
+/// Configuration and metrics as json for a Controller client.
+fn to_json<T: Serialize>(value: &T) -> String {
+    serde_json::to_string(value).unwrap_or_else(|e| e.to_string())
 }
 
 /// This structure defines the required json format of any request sent to the WebSocket
@@ -1226,463 +1050,1312 @@ pub struct ControllerWebSocketResponse {
     pub success: bool,
 }
 
-/// Return type to indicate whether or not to exit the Controller thread.
-type ControllerExit = bool;
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    use crate::goose::{GooseUser, Scenario, Transaction};
+    use crate::runs;
+    use crate::test_plan::TestPlanStepAction;
+    use crate::{scenario, transaction};
+    use gumdrop::Options;
 
-/// The telnet Controller message buffer.
-type ControllerTelnetMessage = [u8; 1024];
+    /// A telnet client that goes ends the task serving it.
+    #[tokio::test]
+    async fn telnet_client_gone_ends_serve_client() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (socket, _) = listener.accept().await.unwrap();
+        let (channel_tx, _channel_rx) = flume::unbounded();
+        let served = tokio::spawn(serve_client(
+            socket,
+            ControllerProtocol::Telnet,
+            channel_tx,
+            "telnet client".to_string(),
+            CONTROL_TIMEOUT,
+        ));
+        let mut prompt = [0; 7];
+        client.read_exact(&mut prompt).await.unwrap();
+        assert_eq!(&prompt, b"goose> ");
+        // End of file, with the client still reading, so only the read ends it.
+        client.shutdown().await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), served)
+            .await
+            .expect("serve_client must end once its client has gone")
+            .unwrap();
+    }
 
-/// The WebSocket Controller message buffer.
-type ControllerWebSocketMessage = std::result::Result<
-    tokio_tungstenite::tungstenite::Message,
-    tokio_tungstenite::tungstenite::Error,
->;
+    /// What a client line becomes: the typed command written out, or the
+    /// error the client is sent back.
+    fn parse(line: &str) -> Result<String, String> {
+        if let Some((_, exit)) = local_reply(line) {
+            return Ok(if exit { "Exit" } else { "Help" }.to_string());
+        }
+        line.parse::<ControllerCommand>()
+            .map(|command| format!("{command:?}"))
+            .map_err(str::to_string)
+    }
 
-/// Simplify the ControllerExecuteCommand trait definition for WebSockets.
-type ControllerWebSocketSender = futures::stream::SplitSink<
-    tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
-    tokio_tungstenite::tungstenite::Message,
->;
+    /// Every command and alias parses to its typed value, and every bad
+    /// input to the error its client is sent.
+    #[test]
+    fn parse_table() {
+        const UNRECOGNIZED: &str = "unrecognized command";
+        const USERS: &str = "users must be an integer between 1 and 100000";
+        const HOST: &str = "host must be a valid url starting with http:// or https://";
+        const INCREASE_RATE: &str =
+            "increase_rate must be a number of at least 0.0000116 (one user a day)";
+        const DECREASE_RATE: &str =
+            "decrease_rate must be a number of at least 0.0000116 (one user a day)";
+        const INCREASE_TIME: &str = "increase_time must be a time span such as 1h30m5s";
+        const DECREASE_TIME: &str = "decrease_time must be a time span such as 1h30m5s";
+        const RUN_TIME: &str = "run_time must be a time span such as 1h30m5s";
+        const FORTY_DIGITS: &str = "increaserate 1000000000000000000000000000000000000000";
+        const TEST_PLAN: &str =
+            "test-plan must be users,time steps such as 10,5m;10,1h;0,30s, with 1 to 100000 users in total";
 
-/// This state object is created in the main Controller thread and then passed to the specific
-/// per-client thread.
-pub(crate) struct ControllerState {
-    /// Track which controller-thread this is.
-    thread_id: u32,
-    /// Track the ip and port of the connected TCP client.
-    peer_address: String,
-    /// A shared channel for communicating with the parent process.
-    channel_tx: flume::Sender<ControllerRequest>,
-    /// Which protocol this Controller understands.
-    protocol: ControllerProtocol,
-}
-// Defines functions shared by all Controllers.
-impl ControllerState {
-    async fn accept_connections(self, mut socket: tokio::net::TcpStream) {
-        info!(
-            "{:?} client [{}] connected from {}",
-            self.protocol, self.thread_id, self.peer_address
+        let ok: &[(&str, &str)] = &[
+            ("help", "Help"),
+            ("?", "Help"),
+            ("HELP", "Help"),
+            ("exit", "Exit"),
+            ("quit", "Exit"),
+            ("q", "Exit"),
+            ("Exit", "Exit"),
+            ("start", "Start"),
+            ("START", "Start"),
+            ("stop", "Stop"),
+            ("shutdown", "Shutdown"),
+            ("config", "Config"),
+            ("configjson", "ConfigJson"),
+            ("config-json", "ConfigJson"),
+            ("metrics", "Metrics"),
+            ("stats", "Metrics"),
+            ("metricsjson", "MetricsJson"),
+            ("metrics-json", "MetricsJson"),
+            ("statsjson", "MetricsJson"),
+            ("stats-json", "MetricsJson"),
+            ("host http://example.com/", "Host(\"http://example.com/\")"),
+            ("hostname https://example.com", "Host(\"https://example.com\")"),
+            ("host_name http://127.0.0.1:8080/", "Host(\"http://127.0.0.1:8080/\")"),
+            ("host-name http://example.com/", "Host(\"http://example.com/\")"),
+            ("HOST HTTP://EXAMPLE.COM/", "Host(\"HTTP://EXAMPLE.COM/\")"),
+            ("users 5", "Users(5)"),
+            ("user 1", "Users(1)"),
+            ("users 100000", "Users(100000)"),
+            ("increaserate 1.25", "IncreaseRate(1.25)"),
+            ("increase_rate .1", "IncreaseRate(0.1)"),
+            ("increase-rate 25", "IncreaseRate(25.0)"),
+            ("decreaserate 0.5", "DecreaseRate(0.5)"),
+            ("decrease_rate 2", "DecreaseRate(2.0)"),
+            ("decrease-rate 0.90", "DecreaseRate(0.9)"),
+            // One user a day is the slowest rate.
+            ("increaserate 0.0000116", "IncreaseRate(1.16e-5)"),
+            ("decreaserate 0.0000116", "DecreaseRate(1.16e-5)"),
+            ("increasetime 30s", "IncreaseTime(30)"),
+            ("increase_time 1h2m3s", "IncreaseTime(3723)"),
+            ("increase-time 10", "IncreaseTime(10)"),
+            ("decreasetime 5m", "DecreaseTime(300)"),
+            ("decrease_time 1h", "DecreaseTime(3600)"),
+            ("decrease-time 30", "DecreaseTime(30)"),
+            ("runtime 60", "RunTime(60)"),
+            ("run 1h", "RunTime(3600)"),
+            ("run_time 1h2s", "RunTime(3602)"),
+            ("run-time 10s", "RunTime(10)"),
+            ("runtime 1H2M3S", "RunTime(3723)"),
+            (
+                "testplan 10,5s;10,30s;0,5s",
+                "TestPlan(TestPlan { steps: [(10, 5000), (10, 30000), (0, 5000)], current: 0 })",
+            ),
+            (
+                "test_plan 10,2s;10,30m5s;0,1h2s",
+                "TestPlan(TestPlan { steps: [(10, 2000), (10, 1805000), (0, 3602000)], current: 0 })",
+            ),
+            (
+                "test-plan 100000,1s",
+                "TestPlan(TestPlan { steps: [(100000, 1000)], current: 0 })",
+            ),
+            (
+                "plan 50000,1s;100000,1s",
+                "TestPlan(TestPlan { steps: [(50000, 1000), (100000, 1000)], current: 0 })",
+            ),
+            // Main's grammar allows ASCII white space around the comma.
+            (
+                "testplan 10 , 5s;0,\t1s",
+                "TestPlan(TestPlan { steps: [(10, 5000), (0, 1000)], current: 0 })",
+            ),
+        ];
+        let refused: &[(&str, &str)] = &[
+            ("", UNRECOGNIZED),
+            ("foo", UNRECOGNIZED),
+            ("start now", UNRECOGNIZED),
+            ("users", USERS),
+            ("users 0", USERS),
+            ("users 100001", USERS),
+            ("users 1.1", USERS),
+            ("users -1", USERS),
+            ("users 99999999999999999999", USERS),
+            ("host foobar", HOST),
+            ("host http://$[foo", HOST),
+            ("host ftp://example.com/", HOST),
+            ("increaserate 0", INCREASE_RATE),
+            ("increaserate 0.0", INCREASE_RATE),
+            ("increaserate .", INCREASE_RATE),
+            ("increaserate 1.2.3", INCREASE_RATE),
+            ("increaserate -1", INCREASE_RATE),
+            ("decreaserate 0", DECREASE_RATE),
+            ("decreaserate .", DECREASE_RATE),
+            // Above 0, but slower than one user a day: a ramp of months.
+            ("increaserate 0.0000001", INCREASE_RATE),
+            ("increaserate 0.00001157", INCREASE_RATE),
+            ("decreaserate 0.0000001", DECREASE_RATE),
+            ("decreaserate 0.00001157", DECREASE_RATE),
+            ("increasetime .1", INCREASE_TIME),
+            ("increasetime 10d", INCREASE_TIME),
+            ("increase-time 2m1h", INCREASE_TIME),
+            ("increasetime 99999999999999999999h", INCREASE_TIME),
+            ("decreasetime 9999999999999999h", DECREASE_TIME),
+            ("runtime 10d", RUN_TIME),
+            ("runtime", RUN_TIME),
+            ("increasetime", INCREASE_TIME),
+            ("decreasetime", DECREASE_TIME),
+            ("runtime 99999999999999999999h", RUN_TIME),
+            ("runtime 18446744073709552", RUN_TIME),
+            ("testplan 10", TEST_PLAN),
+            ("testplan 0,1s", TEST_PLAN),
+            ("testplan 0,1s;0,1h", TEST_PLAN),
+            ("testplan 99999999999999999999,1s", TEST_PLAN),
+            ("testplan 10,99999999999999999999h", TEST_PLAN),
+            ("testplan 10,18446744073709552", TEST_PLAN),
+            ("testplan 100001,1s", TEST_PLAN),
+            ("testplan 60000,1s;0,1s;60000,1s", TEST_PLAN),
+            // Only ASCII digits: a regex `\d` also matches other scripts' digits.
+            ("testplan ١,1s", TEST_PLAN),
+            ("testplan 10,١s", TEST_PLAN),
+            ("users ١", USERS),
+            ("increaserate ١", INCREASE_RATE),
+            ("runtime ١h", RUN_TIME),
+            // ASCII case and spaces only: Unicode `(?i)` folds `ſ` to `s`, and
+            // Unicode `\s` matches a no break space.
+            ("runtime 1\u{17f}", RUN_TIME),
+            ("testplan 10,\u{a0}1s", TEST_PLAN),
+            ("users 9999999999999999999999999999", USERS),
+            ("testplan 9999999999999999999999999999,1s", TEST_PLAN),
+            // Only what the Controller regexes on main accepted: a sign, a second
+            // space, an exponent, a word for a number, or a host without `//`.
+            ("users +5", USERS),
+            ("users  5", USERS),
+            ("increaserate 1e3", INCREASE_RATE),
+            ("increaserate inf", INCREASE_RATE),
+            ("increaserate NaN", INCREASE_RATE),
+            ("host http:foo", HOST),
+            ("testplan 10,1s\u{1b}[2J", TEST_PLAN),
+            ("testplan  10,1s", TEST_PLAN),
+            ("testplan 10,1s ;5,1s", TEST_PLAN),
+            // In the grammar, but infinite as an f32: the finite check refuses it.
+            (FORTY_DIGITS, INCREASE_RATE),
+        ];
+
+        // Collect every mismatch, so one run shows the whole table.
+        let mut mismatches = Vec::new();
+        let rows = ok
+            .iter()
+            .map(|(line, typed)| (*line, Ok(typed.to_string())))
+            .chain(
+                refused
+                    .iter()
+                    .map(|(line, error)| (*line, Err(error.to_string()))),
+            );
+        for (line, expected) in rows {
+            let got = std::panic::catch_unwind(|| parse(line))
+                .unwrap_or_else(|_| Err("panicked".to_string()));
+            if got != expected {
+                mismatches.push(format!("{line:?}: expected {expected:?}, got {got:?}"));
+            }
+        }
+        // The grammar, not a parser, refuses the escape sequence, so it never
+        // reaches a parser that could print it; and the forty digit rate is
+        // in the grammar, so the finite check is what refuses it.
+        assert!(!PLAN.is_match("10,1s\u{1b}[2J"));
+        assert!(RATE.is_match(&FORTY_DIGITS[13..]));
+
+        // A long line is refused like a short one.
+        let long = format!("users {}", "1".repeat(10_000));
+        if parse(&long) != Err(USERS.to_string()) {
+            mismatches.push(format!("10 KB users line: got {:?}", parse(&long)));
+        }
+        assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+    }
+
+    /// Users outside 1 to MAX_CONTROL_USERS is refused while idle and while
+    /// running, and leaves the configuration and test plan as they were. The
+    /// bound is in the one constructor every front end builds `users` with.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_set_users_out_of_bounds_refused() {
+        use crate::controller::{ControllerCommand, INVALID_USERS_MSG, MAX_CONTROL_USERS};
+
+        let configuration = GooseConfiguration::parse_args_default(&[
+            "--no-save",
+            "--no-telnet",
+            "--no-websocket",
+            "--test-plan",
+            "10,1s",
+        ])
+        .unwrap();
+        let mut goose_attack = GooseAttack::initialize_with_config(configuration).unwrap();
+        let mut run_state = goose_attack.initialize_attack().await.unwrap();
+        assert_eq!(
+            INVALID_USERS_MSG,
+            format!("users must be an integer between 1 and {MAX_CONTROL_USERS}")
         );
-        match self.protocol {
-            ControllerProtocol::Telnet => {
-                let mut buf: ControllerTelnetMessage = [0; 1024];
+        let steps = goose_attack.test_plan.steps.clone();
 
-                // Display initial goose> prompt.
-                write_to_socket_raw(&mut socket, "goose> ").await;
+        for phase in [AttackPhase::Idle, AttackPhase::Maintain] {
+            goose_attack.set_attack_phase(&mut run_state, phase);
+            for users in [0, MAX_CONTROL_USERS as u64 + 1, u64::MAX] {
+                let line = format!("users {users}");
+                let refused = !control(&mut goose_attack, &mut run_state, &line).await;
+                assert!(refused, "{:?} must refuse {} users", phase, users);
+                assert!(
+                    matches!(ControllerCommand::users(users), Err(INVALID_USERS_MSG)),
+                    "{} users",
+                    users
+                );
+                assert_eq!(goose_attack.configuration.users, None);
+                // Accepting users clears the configured test plan.
+                assert!(goose_attack.configuration.test_plan.is_some());
+                assert_eq!(goose_attack.test_plan.steps, steps);
+            }
+        }
 
-                loop {
-                    // Process data received from the client in a loop.
-                    let n = match socket.read(&mut buf).await {
-                        Ok(data) => data,
-                        Err(_) => {
-                            info!(
-                                "Telnet client [{}] disconnected from {}",
-                                self.thread_id, self.peer_address
-                            );
-                            break;
-                        }
-                    };
+        // The bounds themselves are accepted.
+        goose_attack.set_attack_phase(&mut run_state, AttackPhase::Idle);
+        for users in [1, MAX_CONTROL_USERS] {
+            let line = format!("users {users}");
+            let accepted = control(&mut goose_attack, &mut run_state, &line).await;
+            assert!(accepted, "idle must accept {} users", users);
+            assert_eq!(goose_attack.configuration.users, Some(users));
+        }
+    }
 
-                    // Invalid request, exit.
-                    if n == 0 {
-                        info!(
-                            "Telnet client [{}] disconnected from {}",
-                            self.thread_id, self.peer_address
-                        );
-                        break;
-                    }
+    /// A controller `shutdown` while idle cancels nothing, but the run is
+    /// stopping all the same: Users is refused until it shuts down.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_shutdown_while_idle_sets_stopping() {
+        async fn noop(_user: &mut GooseUser) -> crate::goose::TransactionResult {
+            Ok(())
+        }
 
-                    // Extract the command string in a protocol-specific way.
-                    if let Ok(command_string) = self.get_command_string(buf).await {
-                        // Extract the command and value in a generic way.
-                        if let Ok(request_message) = self.get_match(command_string.trim()).await {
-                            // Act on the commmand received.
-                            if self.execute_command(&mut socket, request_message).await {
-                                // If execute_command returns true, it's time to exit.
-                                info!(
-                                    "Telnet client [{}] disconnected from {}",
-                                    self.thread_id, self.peer_address
-                                );
-                                break;
-                            }
-                        } else {
-                            self.write_to_socket(
-                                &mut socket,
-                                Err("unrecognized command".to_string()),
-                            )
-                            .await;
-                        }
-                    } else {
-                        // Corrupted request from telnet client, exit.
-                        info!(
-                            "Telnet client [{}] disconnected from {}",
-                            self.thread_id, self.peer_address
-                        );
-                        break;
-                    }
+        // A scenario and host let a Users that wrongly gets through launch
+        // users and fail the assertion, rather than loop with nothing to weight.
+        let configuration = GooseConfiguration::parse_args_default(&[
+            "--no-save",
+            "--no-telnet",
+            "--no-websocket",
+            "--host",
+            "http://127.0.0.1",
+        ])
+        .unwrap();
+        let mut goose_attack = GooseAttack::initialize_with_config(configuration)
+            .unwrap()
+            .register_scenario(scenario!("Idle").register_transaction(transaction!(noop)));
+        let mut run_state = goose_attack.initialize_attack().await.unwrap();
+        assert_eq!(
+            reply(&mut goose_attack, &mut run_state, "shutdown").await,
+            (true, "load test shut down".to_string())
+        );
+        assert_eq!(goose_attack.attack_phase, AttackPhase::Decrease);
+        assert!(run_state.stopping);
+        let outcome = goose_attack.control_set_users(&mut run_state, 5).unwrap();
+        assert!(!outcome.ok, "shutdown must refuse users: {:?}", outcome);
+        assert_eq!(outcome.error, Some("invalid_phase"));
+    }
+
+    /// A controller `users` value too large for a `usize` is refused with an
+    /// error reply instead of panicking the main loop.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_controller_users_overflow_refused() {
+        let configuration =
+            GooseConfiguration::parse_args_default(&["--no-telnet", "--no-websocket", "--no-save"])
+                .unwrap();
+        let mut goose_attack = GooseAttack::initialize_with_config(configuration).unwrap();
+        let mut run_state = goose_attack.initialize_attack().await.unwrap();
+        let accepted = control(
+            &mut goose_attack,
+            &mut run_state,
+            "users 99999999999999999999",
+        )
+        .await;
+        assert!(!accepted, "users overflow must be refused");
+        assert_eq!(goose_attack.configuration.users, None);
+    }
+
+    /// Run `test` on a thread and runtime of its own and fail if it does not
+    /// finish within 20 seconds, so a dispatcher that never returns fails the
+    /// test instead of hanging the suite. A hung test leaves its thread
+    /// spinning until the test binary exits, which is why the tests that use
+    /// this register no scenario: weighting users then allocates nothing.
+    fn finishes<F, Fut>(test: F)
+    where
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = ()>,
+    {
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(test());
+            let _ = done_tx.send(());
+        });
+        match done_rx.recv_timeout(Duration::from_secs(20)) {
+            Ok(()) => handle.join().unwrap(),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                if let Err(panic) = handle.join() {
+                    std::panic::resume_unwind(panic);
                 }
             }
-            ControllerProtocol::WebSocket => {
-                let stream = match tokio_tungstenite::accept_async(socket).await {
-                    Ok(s) => s,
-                    Err(e) => {
-                        info!("invalid WebSocket handshake: {e}");
-                        return;
-                    }
-                };
-                let (mut ws_sender, mut ws_receiver) = stream.split();
-
-                loop {
-                    // Wait until the client sends a command.
-                    let data = match ws_receiver.next().await {
-                        Some(d) => d,
-                        None => {
-                            // Returning with no data means the client disconnected.
-                            info!(
-                                "WebSocket client [{}] disconnected from {}",
-                                self.thread_id, self.peer_address
-                            );
-                            break;
-                        }
-                    };
-
-                    // Extract the command string in a protocol-specific way.
-                    if let Ok(command_string) = self.get_command_string(data).await {
-                        // Extract the command and value in a generic way.
-                        if let Ok(request_message) = self.get_match(command_string.trim()).await {
-                            if self.execute_command(&mut ws_sender, request_message).await {
-                                // If execute_command() returns true, it's time to exit.
-                                info!(
-                                    "WebSocket client [{}] disconnected from {}",
-                                    self.thread_id, self.peer_address
-                                );
-                                break;
-                            }
-                        } else {
-                            self.write_to_socket(
-                                &mut ws_sender,
-                                Err(
-                                    "unrecognized command, see Goose book https://book.goose.rs/controller/websocket.html"
-                                        .to_string(),
-                                ),
-                            )
-                            .await;
-                        }
-                    } else {
-                        self.write_to_socket(
-                            &mut ws_sender,
-                            Err(
-                                "invalid json, see Goose book https://book.goose.rs/controller/websocket.html"
-                                    .to_string(),
-                            ),
-                        )
-                        .await;
-                    }
-                }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                panic!("the control dispatcher did not return within 20 seconds")
             }
         }
     }
 
-    // Both Controllers use a common function to identify commands.
-    async fn get_match(
-        &self,
-        command_string: &str,
-    ) -> Result<ControllerRequestMessage, GooseError> {
-        // Use FromStr to convert &str to ControllerCommand.
-        let command: ControllerCommand = ControllerCommand::from_str(command_string)?;
-        // Extract value if there is one, otherwise will be None.
-        let value: Option<String> = command.get_value(command_string);
-
-        Ok(ControllerRequestMessage { command, value })
+    /// An idle load test with no scenario, built from `args`.
+    async fn idle_attack(args: &[&str]) -> (GooseAttack, GooseAttackRunState) {
+        let mut all = vec!["--no-telnet", "--no-websocket", "--no-save", "--quiet"];
+        all.extend_from_slice(args);
+        let configuration = GooseConfiguration::parse_args_default(&all).unwrap();
+        let mut goose_attack = GooseAttack::initialize_with_config(configuration).unwrap();
+        let run_state = goose_attack.initialize_attack().await.unwrap();
+        (goose_attack, run_state)
     }
 
-    /// Process a request entirely within the Controller thread, without sending a message
-    /// to the parent thread.
-    fn process_local_command(&self, request_message: &ControllerRequestMessage) -> Option<String> {
-        match request_message.command {
-            ControllerCommand::Help => Some(ControllerCommand::display_help()),
-            ControllerCommand::Exit => Some("goodbye!".to_string()),
-            // All other commands require sending the request to the parent thread.
-            _ => None,
-        }
+    /// Send `line` to the parent as a telnet or WebSocket client does, and
+    /// return whether it was accepted. A line the client refuses never
+    /// reaches the parent and counts as refused.
+    pub(crate) async fn control(
+        goose_attack: &mut GooseAttack,
+        run_state: &mut GooseAttackRunState,
+        line: &str,
+    ) -> bool {
+        reply(goose_attack, run_state, line).await.0
     }
 
-    /// Send a message to parent thread, with or without an optional value, and wait for
-    /// a reply.
-    async fn process_command(
-        &self,
-        request: ControllerRequestMessage,
-    ) -> Result<ControllerResponseMessage, String> {
-        // Create a one-shot channel to allow the parent to reply to our request. As flume
-        // doesn't implement a one-shot channel, we use tokio for this temporary channel.
-        let (response_tx, response_rx): (
-            tokio::sync::oneshot::Sender<ControllerResponse>,
-            tokio::sync::oneshot::Receiver<ControllerResponse>,
-        ) = tokio::sync::oneshot::channel();
+    /// As [`control`], with the message the client is sent: the outcome's,
+    /// the client's own refusal, or empty for configuration and metrics.
+    async fn reply(
+        goose_attack: &mut GooseAttack,
+        run_state: &mut GooseAttackRunState,
+        line: &str,
+    ) -> (bool, String) {
+        use crate::controller::{ControlReply, ControllerCommand};
 
-        if self
-            .channel_tx
-            .try_send(ControllerRequest {
-                response_channel: Some(response_tx),
-                client_id: self.thread_id,
-                request,
-            })
-            .is_err()
-        {
-            return Err("parent process has closed the controller channel".to_string());
-        }
-
-        // Await response from parent.
-        match response_rx.await {
-            Ok(value) => Ok(value.response),
-            Err(e) => Err(format!("one-shot channel dropped without reply: {e}")),
-        }
-    }
-}
-
-/// Controller-protocol-specific functions, necessary to manage the different way each
-/// Controller protocol communicates with a client.
-#[async_trait]
-trait Controller<T> {
-    // Extract the command string from a Controller client request.
-    async fn get_command_string(&self, raw_value: T) -> Result<String, String>;
-}
-#[async_trait]
-impl Controller<ControllerTelnetMessage> for ControllerState {
-    // Extract the command string from a telnet Controller client request.
-    async fn get_command_string(
-        &self,
-        raw_value: ControllerTelnetMessage,
-    ) -> Result<String, String> {
-        let command_string = match str::from_utf8(&raw_value) {
-            Ok(m) => m.lines().next().unwrap_or_default(),
-            Err(e) => {
-                let error = format!("ignoring unexpected input from telnet controller: {e}");
-                info!("{error}");
-                return Err(error);
-            }
+        let command = match line.parse::<ControllerCommand>() {
+            Ok(command) => command,
+            Err(refusal) => return (false, refusal.to_string()),
         };
-
-        Ok(command_string.to_string())
-    }
-}
-#[async_trait]
-impl Controller<ControllerWebSocketMessage> for ControllerState {
-    // Extract the command string from a WebSocket Controller client request.
-    async fn get_command_string(
-        &self,
-        raw_value: ControllerWebSocketMessage,
-    ) -> Result<String, String> {
-        if let Ok(request) = raw_value {
-            if request.is_text() {
-                if let Ok(request) = request.into_text() {
-                    debug!("websocket request: {:?}", request.trim());
-                    let command_string: ControllerWebSocketRequest =
-                        match serde_json::from_str(&request) {
-                            Ok(c) => c,
-                            Err(_) => {
-                                return Err("invalid json, see Goose book https://book.goose.rs/controller/websocket.html"
-                                    .to_string())
-                            }
-                        };
-                    return Ok(command_string.request);
-                } else {
-                    // Failed to consume the WebSocket message and convert it to a String.
-                    return Err("unsupported string format".to_string());
-                }
-            } else {
-                // Received a non-text WebSocket message.
-                return Err("unsupported format, requests must be sent as text".to_string());
-            }
-        }
-        // Improper WebSocket handshake.
-        Err("WebSocket handshake error".to_string())
-    }
-}
-#[async_trait]
-trait ControllerExecuteCommand<T> {
-    // Run the command received from a Controller request. Returns a boolean, if true exit.
-    async fn execute_command(
-        &self,
-        socket: &mut T,
-        request_message: ControllerRequestMessage,
-    ) -> ControllerExit;
-
-    // Send response to Controller client. The response is wrapped in a Result to indicate
-    // if the request was successful or not.
-    async fn write_to_socket(&self, socket: &mut T, response_message: Result<String, String>);
-}
-
-#[async_trait]
-impl ControllerExecuteCommand<tokio::net::TcpStream> for ControllerState {
-    // Run the command received from a telnet Controller request.
-    async fn execute_command(
-        &self,
-        socket: &mut tokio::net::TcpStream,
-        request_message: ControllerRequestMessage,
-    ) -> ControllerExit {
-        // First handle commands that don't require interaction with the parent process.
-        if let Some(message) = self.process_local_command(&request_message) {
-            self.write_to_socket(socket, Ok(message)).await;
-            // If Exit was received return true to exit, otherwise return false.
-            return request_message.command == ControllerCommand::Exit;
-        }
-
-        // Retain a copy of the command used when processing the parent response.
-        let command = request_message.command.clone();
-
-        // Now handle commands that require interaction with the parent process.
-        let response = match self.process_command(request_message).await {
-            Ok(r) => r,
-            Err(e) => {
-                // Receiving an error here means the parent closed the communication
-                // channel. Write the error to the Controller client and then return
-                // true to exit.
-                self.write_to_socket(socket, Err(e)).await;
-                return true;
-            }
-        };
-
-        // If Shutdown command was received return true to exit, otherwise return false.
-        let exit_controller = command == ControllerCommand::Shutdown;
-
-        // Write the response to the Controller client socket.
-        let processed_response = (command.details().process_response)(response);
-        self.write_to_socket(socket, processed_response).await;
-
-        // Return true if it's time to exit the Controller.
-        exit_controller
-    }
-
-    // Send response to telnet Controller client.
-    async fn write_to_socket(
-        &self,
-        socket: &mut tokio::net::TcpStream,
-        message: Result<String, String>,
-    ) {
-        // Send result to telnet Controller client, whether Ok() or Err().
-        let response_message = match message {
-            Ok(m) => m,
-            Err(e) => e,
-        };
-        if socket
-            // Add a linefeed to the end of the message, followed by a prompt.
-            .write_all([&response_message, "\ngoose> "].concat().as_bytes())
+        let (controller_tx, controller_rx) = flume::unbounded();
+        run_state.controller_channel_rx = Some(controller_rx);
+        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+        controller_tx.send((command, response_tx)).unwrap();
+        goose_attack
+            .handle_control_requests(run_state)
             .await
-            .is_err()
-        {
-            warn!("failed to write data to socker");
-        };
-    }
-}
-
-#[async_trait]
-impl ControllerExecuteCommand<ControllerWebSocketSender> for ControllerState {
-    // Run the command received from a WebSocket Controller request.
-    async fn execute_command(
-        &self,
-        socket: &mut ControllerWebSocketSender,
-        request_message: ControllerRequestMessage,
-    ) -> ControllerExit {
-        // First handle commands that don't require interaction with the parent process.
-        if let Some(message) = self.process_local_command(&request_message) {
-            self.write_to_socket(socket, Ok(message)).await;
-
-            // If Exit was received return true to exit, otherwise return false.
-            let exit_controller = request_message.command == ControllerCommand::Exit;
-            // If exiting, notify the WebSocket client that this connection is closing.
-            if exit_controller
-                && socket
-                    .send(Message::Close(Some(tokio_tungstenite::tungstenite::protocol::CloseFrame {
-                        code: tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::Normal,
-                        reason: "exit".into(),
-                    })))
-                    .await
-                    .is_err()
-            {
-                warn!("failed to write data to stream");
-            }
-
-            return exit_controller;
+            .unwrap();
+        match response_rx.await.expect("the parent must reply") {
+            ControlReply::Outcome(outcome) => (outcome.ok, outcome.message),
+            _ => (true, String::new()),
         }
+    }
 
-        // WebSocket Controller always returns JSON, convert command where necessary.
-        let command = match request_message.command {
-            ControllerCommand::Config => ControllerCommand::ConfigJson,
-            ControllerCommand::Metrics => ControllerCommand::MetricsJson,
-            _ => request_message.command.clone(),
-        };
-
-        // Now handle commands that require interaction with the parent process.
-        let response = match self.process_command(request_message).await {
-            Ok(r) => r,
-            Err(e) => {
-                // Receiving an error here means the parent closed the communication
-                // channel. Write the error to the Controller client and then return
-                // true to exit.
-                self.write_to_socket(socket, Err(e)).await;
-                return true;
+    /// Gap 1: a test plan with no users is refused, idle or running, as
+    /// weighting zero users never ends.
+    #[test]
+    #[serial_test::serial]
+    fn test_control_test_plan_without_users_refused() {
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) = idle_attack(&[]).await;
+            for line in ["testplan 0,1s", "test-plan 0,1s;0,1h"] {
+                assert!(
+                    !control(&mut goose_attack, &mut run_state, line).await,
+                    "{}",
+                    line
+                );
+                assert!(goose_attack.configuration.test_plan.is_none(), "{}", line);
             }
-        };
+            goose_attack.set_attack_phase(&mut run_state, AttackPhase::Maintain);
+            assert!(!control(&mut goose_attack, &mut run_state, "testplan 0,1s").await);
+            assert!(goose_attack.test_plan.steps.is_empty());
+        });
+    }
 
-        // If Shutdown command was received return true to exit, otherwise return false.
-        let exit_controller = command == ControllerCommand::Shutdown;
+    /// Gaps 2 and 3: users or time spans too large for a `usize`, or a step
+    /// too long in milliseconds, are refused instead of panicking the parent.
+    #[test]
+    #[serial_test::serial]
+    fn test_control_overflow_refused() {
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) = idle_attack(&[]).await;
+            let configuration = format!("{:?}", goose_attack.configuration);
+            for line in [
+                "testplan 99999999999999999999,1s",
+                "testplan 10,99999999999999999999h",
+                "testplan 10,9999999999999999h",
+                "testplan 10,18446744073709552",
+                "testplan 18446744073709551615,1s;0,1s;1,1s",
+                "increasetime 99999999999999999999h",
+                "increasetime 18446744073709552",
+                "decreasetime 9999999999999999h",
+                // Digits of other scripts, and a users count no integer holds.
+                "testplan ١,1s",
+                "users ١",
+                "runtime ١h",
+                "users 9999999999999999999999999999",
+                "testplan 9999999999999999999999999999,1s",
+            ] {
+                assert!(
+                    !control(&mut goose_attack, &mut run_state, line).await,
+                    "{}",
+                    line
+                );
+                assert_eq!(
+                    format!("{:?}", goose_attack.configuration),
+                    configuration,
+                    "{}",
+                    line
+                );
+            }
+        });
+    }
 
-        // Write the response to the Controller client socket.
-        let processed_response = (command.details().process_response)(response);
-        self.write_to_socket(socket, processed_response).await;
+    /// Gap 4: a run time too large is refused when it is set, instead of
+    /// panicking the next Start.
+    #[test]
+    #[serial_test::serial]
+    fn test_control_run_time_overflow_refused() {
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) = idle_attack(&[]).await;
+            let run_time = goose_attack.configuration.run_time.clone();
+            for line in ["runtime 99999999999999999999h", "run 18446744073709552"] {
+                assert!(
+                    !control(&mut goose_attack, &mut run_state, line).await,
+                    "{}",
+                    line
+                );
+                assert_eq!(goose_attack.configuration.run_time, run_time, "{}", line);
+            }
+        });
+    }
 
-        // If exiting, notify the WebSocket client that this connection is closing.
-        if exit_controller
-            && socket
-                .send(Message::Close(Some(tokio_tungstenite::tungstenite::protocol::CloseFrame {
-                    code: tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::Normal,
-                    reason: "shutdown".into(),
-                })))
+    /// Gap 5: a rate must be at least one user a day, as on the command line.
+    #[test]
+    #[serial_test::serial]
+    fn test_control_rate_zero_refused() {
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) = idle_attack(&[]).await;
+            for line in [
+                "increaserate 0",
+                "increaserate 0.0",
+                "increaserate 00",
+                "increaserate .",
+                "decreaserate 0",
+                "decreaserate .",
+            ] {
+                assert!(
+                    !control(&mut goose_attack, &mut run_state, line).await,
+                    "{}",
+                    line
+                );
+                assert_eq!(goose_attack.configuration.increase_rate, None, "{}", line);
+                assert_eq!(goose_attack.configuration.decrease_rate, None, "{}", line);
+            }
+            assert!(control(&mut goose_attack, &mut run_state, "increaserate .5").await);
+        });
+    }
+
+    /// Gap 6: a test plan goes through the users bound and the stopping
+    /// check that `users` does, and is refused in Shutdown.
+    #[test]
+    #[serial_test::serial]
+    fn test_control_test_plan_users_bound_and_stopping() {
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) = idle_attack(&[]).await;
+            // More than 100000 users in total, in one step or over several.
+            for line in ["testplan 100001,1s", "testplan 60000,1s;0,1s;60000,1s"] {
+                assert!(
+                    !control(&mut goose_attack, &mut run_state, line).await,
+                    "{}",
+                    line
+                );
+                assert!(goose_attack.configuration.test_plan.is_none(), "{}", line);
+            }
+            assert!(
+                control(
+                    &mut goose_attack,
+                    &mut run_state,
+                    "testplan 50000,1s;100000,1s"
+                )
                 .await
-                .is_err()
-        {
-            warn!("failed to write data to stream");
-        }
+            );
 
-        // Return true if it's time to exit the Controller.
-        exit_controller
+            // Shutdown refuses instead of reaching `unreachable!`.
+            goose_attack.set_attack_phase(&mut run_state, AttackPhase::Shutdown);
+            assert!(!control(&mut goose_attack, &mut run_state, "testplan 10,1s").await);
+
+            // A cancel keeps its ramp to zero.
+            goose_attack.set_attack_phase(&mut run_state, AttackPhase::Idle);
+            goose_attack.test_plan = TestPlan {
+                steps: vec![(10, 0), (0, 10_000)],
+                current: 0,
+            };
+            run_state.active_users = 10;
+            goose_attack.advance_test_plan(&mut run_state);
+            goose_attack.cancel_attack(&mut run_state).await.unwrap();
+            assert!(run_state.stopping);
+            assert!(!control(&mut goose_attack, &mut run_state, "testplan 10,1s").await);
+            assert_eq!(goose_attack.test_plan.steps.last(), Some(&(0, 0)));
+        });
     }
 
-    // Send a json-formatted response to the WebSocket.
-    async fn write_to_socket(
-        &self,
-        socket: &mut ControllerWebSocketSender,
-        response_result: Result<String, String>,
-    ) {
-        let success;
-        let response = match response_result {
-            Ok(m) => {
-                success = true;
-                m
+    /// Gap 7: run time is only read at Start, so it is refused unless idle,
+    /// as increase and decrease time and host are.
+    #[test]
+    #[serial_test::serial]
+    fn test_control_run_time_refused_unless_idle() {
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) = idle_attack(&[]).await;
+            let configuration = format!("{:?}", goose_attack.configuration);
+            for phase in [
+                AttackPhase::Increase,
+                AttackPhase::Maintain,
+                AttackPhase::Decrease,
+            ] {
+                goose_attack.set_attack_phase(&mut run_state, phase);
+                for (line, refusal) in [
+                    (
+                        "runtime 10",
+                        "failed to configure run_time, be sure load test is idle",
+                    ),
+                    (
+                        "increasetime 10",
+                        "failed to configure increase_time, be sure load test is idle",
+                    ),
+                    (
+                        "decreasetime 10",
+                        "failed to configure decrease_time, be sure load test is idle",
+                    ),
+                    (
+                        "host http://127.0.0.1/",
+                        "failed to reconfigure host, load test is not idle",
+                    ),
+                ] {
+                    assert_eq!(
+                        reply(&mut goose_attack, &mut run_state, line).await,
+                        (false, refusal.to_string()),
+                        "{} in {:?}",
+                        line,
+                        phase
+                    );
+                    assert_eq!(
+                        format!("{:?}", goose_attack.configuration),
+                        configuration,
+                        "{} in {:?}",
+                        line,
+                        phase
+                    );
+                }
             }
-            Err(e) => {
-                success = false;
-                e
+            goose_attack.set_attack_phase(&mut run_state, AttackPhase::Idle);
+            assert!(control(&mut goose_attack, &mut run_state, "runtime 10").await);
+            assert_eq!(goose_attack.configuration.run_time, "10");
+        });
+    }
+
+    /// A Controller time of 0 written with units is stored as "0", which
+    /// means unset, as the command line already normalised it; on main the
+    /// raw "0s" was stored and read as a real span.
+    #[test]
+    #[serial_test::serial]
+    fn test_control_zero_time_is_unset() {
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) = idle_attack(&[]).await;
+            for line in ["runtime 0s", "increasetime 0m", "decreasetime 00"] {
+                assert!(
+                    control(&mut goose_attack, &mut run_state, line).await,
+                    "{}",
+                    line
+                );
             }
-        };
-        if let Err(e) = socket
-            .send(Message::Text(
-                match serde_json::to_string(&ControllerWebSocketResponse {
-                    response,
-                    // Success is true if there is no error, false if there is an error.
-                    success,
-                }) {
-                    Ok(json) => json.into(),
-                    Err(e) => {
-                        warn!("failed to json encode response: {e}");
-                        return;
+            assert_eq!(goose_attack.configuration.run_time, "0");
+            assert_eq!(goose_attack.configuration.increase_time, "0");
+            assert_eq!(goose_attack.configuration.decrease_time, "0");
+        });
+    }
+
+    /// Gap 8: a controller `shutdown` from Idle shuts down as Ctrl-C and
+    /// dashboard Quit do there, with a plan that has nothing left to run, and
+    /// does not hold the main loop.
+    #[test]
+    #[serial_test::serial]
+    fn test_control_shutdown_from_idle() {
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) =
+                idle_attack(&["--no-autostart", "--test-plan", "10,1s"]).await;
+            goose_attack.test_plan = TestPlan::build(&goose_attack.configuration).unwrap();
+            let started = std::time::Instant::now();
+            assert!(control(&mut goose_attack, &mut run_state, "shutdown").await);
+            assert!(
+                started.elapsed() < Duration::from_millis(250),
+                "shutdown held the main loop for {:?}",
+                started.elapsed()
+            );
+            assert_eq!(goose_attack.attack_phase, AttackPhase::Decrease);
+            assert!(run_state.stopping);
+            assert!(run_state.shutdown_after_stop);
+            assert_eq!(goose_attack.test_plan.steps, vec![(0, 0)]);
+            assert_eq!(goose_attack.test_plan.current, 0);
+        });
+    }
+
+    /// A `shutdown` once Goose is shutting down is answered and changes
+    /// nothing.
+    #[test]
+    #[serial_test::serial]
+    fn test_control_shutdown_in_shutdown_phase() {
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) = idle_attack(&["--no-autostart"]).await;
+            goose_attack.set_attack_phase(&mut run_state, AttackPhase::Shutdown);
+            let steps = goose_attack.test_plan.steps.clone();
+            assert_eq!(
+                reply(&mut goose_attack, &mut run_state, "shutdown").await,
+                (true, "load test shut down".to_string())
+            );
+            assert_eq!(goose_attack.attack_phase, AttackPhase::Shutdown);
+            assert!(!run_state.stopping);
+            assert!(!run_state.shutdown_after_stop);
+            assert_eq!(goose_attack.test_plan.steps, steps);
+        });
+    }
+
+    /// A cancel with no user running, as a second `shutdown` from Idle or a
+    /// `stop` in the tick of its `start` sends, ends the load test instead
+    /// of maintaining zero users with no end.
+    #[test]
+    #[serial_test::serial]
+    fn test_control_cancel_without_users_ends() {
+        // Run the main loop's phase work until the cancel ends in `until`,
+        // as a plan maintaining zero users never does.
+        async fn ends_in(
+            goose_attack: &mut GooseAttack,
+            run_state: &mut GooseAttackRunState,
+            until: AttackPhase,
+        ) {
+            for _ in 0..4 {
+                match goose_attack.attack_phase {
+                    AttackPhase::Maintain => goose_attack.maintain_attack(run_state).await,
+                    AttackPhase::Decrease => goose_attack.decrease_attack(run_state).await,
+                    _ => break,
+                }
+                .unwrap();
+            }
+            assert_eq!(goose_attack.attack_phase, until);
+        }
+
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) = idle_attack(&["--no-autostart"]).await;
+            assert!(control(&mut goose_attack, &mut run_state, "shutdown").await);
+            assert!(control(&mut goose_attack, &mut run_state, "shutdown").await);
+            assert_eq!(goose_attack.attack_phase, AttackPhase::Decrease);
+            assert_eq!(goose_attack.test_plan.steps, vec![(0, 0)]);
+            ends_in(&mut goose_attack, &mut run_state, AttackPhase::Shutdown).await;
+
+            let (mut goose_attack, mut run_state) = idle_attack(&["--no-autostart"]).await;
+            // As `start` leaves it before its first user launches.
+            goose_attack.set_attack_phase(&mut run_state, AttackPhase::Increase);
+            goose_attack.run_in_progress = true;
+            run_state.active_users = 0;
+            assert!(control(&mut goose_attack, &mut run_state, "stop").await);
+            assert_eq!(goose_attack.attack_phase, AttackPhase::Decrease);
+            assert_eq!(goose_attack.test_plan.steps, vec![(0, 0)]);
+            assert!(run_state.stopping);
+            assert!(!run_state.shutdown_after_stop);
+            assert!(matches!(
+                goose_attack.ended_by,
+                Some((runs::EndedBy::Stopped, _))
+            ));
+            ends_in(&mut goose_attack, &mut run_state, AttackPhase::Idle).await;
+            // The run ended through report writing, recorded as canceled.
+            assert!(!goose_attack.run_in_progress);
+            assert!(!run_state.stopping);
+            let actions: Vec<_> = goose_attack
+                .metrics
+                .history
+                .iter()
+                .map(|step| &step.action)
+                .collect();
+            assert!(
+                matches!(
+                    actions[..],
+                    [TestPlanStepAction::Canceling, TestPlanStepAction::Finished]
+                ),
+                "{:?}",
+                actions
+            );
+
+            // A stop while maintaining no users, as a plan step to 0 users
+            // leaves the run, ends it too.
+            let (mut goose_attack, mut run_state) = idle_attack(&["--no-autostart"]).await;
+            goose_attack.set_attack_phase(&mut run_state, AttackPhase::Maintain);
+            goose_attack.run_in_progress = true;
+            run_state.active_users = 0;
+            assert!(control(&mut goose_attack, &mut run_state, "stop").await);
+            assert_eq!(goose_attack.attack_phase, AttackPhase::Decrease);
+            assert_eq!(goose_attack.test_plan.steps, vec![(0, 0)]);
+            ends_in(&mut goose_attack, &mut run_state, AttackPhase::Idle).await;
+            assert!(!run_state.stopping);
+        });
+    }
+
+    /// Gap 10: on a `--test-plan` launch, a run time or rate clears the test
+    /// plan and leaves no users, and Start then answers instead of weighting
+    /// zero users forever.
+    #[test]
+    #[serial_test::serial]
+    fn test_control_start_after_test_plan_cleared_answers() {
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) =
+                idle_attack(&["--no-autostart", "--test-plan", "2,1s"]).await;
+            for line in ["runtime 10", "increaserate 2"] {
+                assert!(
+                    control(&mut goose_attack, &mut run_state, line).await,
+                    "{}",
+                    line
+                );
+                assert!(
+                    !control(&mut goose_attack, &mut run_state, "start").await,
+                    "{}",
+                    line
+                );
+                assert_eq!(goose_attack.attack_phase, AttackPhase::Idle, "{}", line);
+            }
+        });
+    }
+
+    /// The parent answers every queued controller request in one tick, up
+    /// to a batch, and skips a request whose client has gone.
+    #[test]
+    #[serial_test::serial]
+    fn test_control_drains_batch_and_skips_gone_clients() {
+        use crate::controller::{ControlReply, ControllerCommand};
+
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) = idle_attack(&[]).await;
+            let (controller_tx, controller_rx) = flume::unbounded();
+            run_state.controller_channel_rx = Some(controller_rx);
+            let mut replies = Vec::new();
+            for (users, gone) in [(6, false), (7, false), (5, true)] {
+                let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+                controller_tx
+                    .send((ControllerCommand::Users(users), response_tx))
+                    .unwrap();
+                if !gone {
+                    replies.push(response_rx);
+                }
+            }
+            goose_attack
+                .handle_control_requests(&mut run_state)
+                .await
+                .unwrap();
+            for mut reply in replies {
+                assert!(matches!(
+                    reply.try_recv(),
+                    Ok(ControlReply::Outcome(ControlOutcome { ok: true, .. }))
+                ));
+            }
+            assert_eq!(goose_attack.configuration.users, Some(7));
+        });
+    }
+
+    /// The parent answers at most 16 commands a tick, so a flood cannot
+    /// hold the main loop; the rest wait for the next tick.
+    #[test]
+    #[serial_test::serial]
+    fn test_control_drain_cap() {
+        use crate::controller::{ControlReply, ControllerCommand};
+        use tokio::sync::oneshot::error::TryRecvError;
+
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) = idle_attack(&[]).await;
+            let (controller_tx, controller_rx) = flume::unbounded();
+            run_state.controller_channel_rx = Some(controller_rx);
+            let mut replies = Vec::new();
+            for users in 1..=17 {
+                let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+                controller_tx
+                    .send((ControllerCommand::Users(users), response_tx))
+                    .unwrap();
+                replies.push(response_rx);
+            }
+            goose_attack
+                .handle_control_requests(&mut run_state)
+                .await
+                .unwrap();
+            let mut last = replies.pop().unwrap();
+            for mut reply in replies {
+                assert!(matches!(
+                    reply.try_recv(),
+                    Ok(ControlReply::Outcome(ControlOutcome { ok: true, .. }))
+                ));
+            }
+            assert!(matches!(last.try_recv(), Err(TryRecvError::Empty)));
+            assert_eq!(goose_attack.configuration.users, Some(16));
+
+            goose_attack
+                .handle_control_requests(&mut run_state)
+                .await
+                .unwrap();
+            assert!(matches!(
+                last.try_recv(),
+                Ok(ControlReply::Outcome(ControlOutcome { ok: true, .. }))
+            ));
+            assert_eq!(goose_attack.configuration.users, Some(17));
+        });
+    }
+
+    /// Dashboard control is answered before queued Controller commands, so
+    /// Controller clients, which take no authentication, can not delay it.
+    #[test]
+    #[serial_test::serial]
+    fn test_control_dashboard_drained_first() {
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) = idle_attack(&[]).await;
+            let (controller_tx, controller_rx) = flume::unbounded();
+            run_state.controller_channel_rx = Some(controller_rx);
+            let (dashboard_tx, dashboard_rx) = flume::unbounded();
+            run_state.dashboard_control_rx = Some(dashboard_rx);
+            let mut queued = Vec::new();
+            for users in 1..=MAX_DRAIN + 1 {
+                let (respond, reply) = oneshot::channel();
+                controller_tx
+                    .send((ControllerCommand::Users(users), respond))
+                    .unwrap();
+                queued.push(reply);
+            }
+            let (respond, mut reply) = oneshot::channel();
+            dashboard_tx
+                .send((ControllerCommand::Users(42), respond))
+                .unwrap();
+            goose_attack
+                .handle_control_requests(&mut run_state)
+                .await
+                .unwrap();
+            assert!(matches!(
+                reply.try_recv(),
+                Ok(ControlReply::Outcome(ControlOutcome { ok: true, .. }))
+            ));
+            // The dashboard's command ran first, so the last Controller
+            // command answered in the tick stands.
+            assert_eq!(goose_attack.configuration.users, Some(MAX_DRAIN));
+        });
+    }
+
+    /// A dashboard command beyond a full dashboard turn is still answered in
+    /// the tick, ahead of the Controllers': the dashboard is checked before
+    /// each Controller command, not only in its own turn.
+    #[test]
+    #[serial_test::serial]
+    fn test_control_dashboard_checked_before_each_controller_command() {
+        use tokio::sync::oneshot::error::TryRecvError;
+
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) = idle_attack(&[]).await;
+            let (controller_tx, controller_rx) = flume::unbounded();
+            run_state.controller_channel_rx = Some(controller_rx);
+            let (dashboard_tx, dashboard_rx) = flume::unbounded();
+            run_state.dashboard_control_rx = Some(dashboard_rx);
+            let mut controller = Vec::new();
+            for users in 1..=MAX_DRAIN {
+                let (respond, reply) = oneshot::channel();
+                controller_tx
+                    .send((ControllerCommand::Users(users), respond))
+                    .unwrap();
+                controller.push(reply);
+            }
+            let mut dashboard = Vec::new();
+            for users in 100..=100 + MAX_DRAIN {
+                let (respond, reply) = oneshot::channel();
+                dashboard_tx
+                    .send((ControllerCommand::Users(users), respond))
+                    .unwrap();
+                dashboard.push(reply);
+            }
+            goose_attack
+                .handle_control_requests(&mut run_state)
+                .await
+                .unwrap();
+            for mut reply in dashboard {
+                assert!(matches!(
+                    reply.try_recv(),
+                    Ok(ControlReply::Outcome(ControlOutcome { ok: true, .. }))
+                ));
+            }
+            // The 17th dashboard command took a Controller slot.
+            let mut last = controller.pop().unwrap();
+            assert!(matches!(last.try_recv(), Err(TryRecvError::Empty)));
+            assert_eq!(goose_attack.configuration.users, Some(MAX_DRAIN - 1));
+        });
+    }
+
+    /// Requests whose clients have gone do not use up a tick: a live request
+    /// behind more than [`MAX_DRAIN`] of them is answered in the same tick.
+    #[test]
+    #[serial_test::serial]
+    fn test_control_gone_clients_do_not_count() {
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) = idle_attack(&[]).await;
+            let (controller_tx, controller_rx) = flume::unbounded();
+            run_state.controller_channel_rx = Some(controller_rx);
+            for users in 1..=MAX_DRAIN + 1 {
+                // The reply's receiver is dropped: the client has gone.
+                let (respond, _) = oneshot::channel();
+                controller_tx
+                    .send((ControllerCommand::Users(users), respond))
+                    .unwrap();
+            }
+            let (respond, mut reply) = oneshot::channel();
+            controller_tx
+                .send((ControllerCommand::Users(42), respond))
+                .unwrap();
+            goose_attack
+                .handle_control_requests(&mut run_state)
+                .await
+                .unwrap();
+            assert!(matches!(
+                reply.try_recv(),
+                Ok(ControlReply::Outcome(ControlOutcome { ok: true, .. }))
+            ));
+            assert_eq!(goose_attack.configuration.users, Some(42));
+        });
+    }
+
+    /// Every `metrics` and `metrics-json` queued in one tick is answered from
+    /// one metrics processor request.
+    #[test]
+    #[serial_test::serial]
+    fn test_control_metrics_fetched_once_per_tick() {
+        use crate::metrics::MetricsCommand;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) = idle_attack(&[]).await;
+            let (controller_tx, controller_rx) = flume::unbounded();
+            run_state.controller_channel_rx = Some(controller_rx);
+            let (metrics_cmd_tx, metrics_cmd_rx) = flume::unbounded();
+            run_state.metrics_cmd_tx = metrics_cmd_tx;
+            let requests = Arc::new(AtomicUsize::new(0));
+            let counted = Arc::clone(&requests);
+            tokio::spawn(async move {
+                while let Ok(command) = metrics_cmd_rx.recv_async().await {
+                    if let MetricsCommand::GetMetrics { respond, .. } = command {
+                        counted.fetch_add(1, Ordering::SeqCst);
+                        let _ = respond.send(GooseMetrics::default());
                     }
-                },
-            ))
+                }
+            });
+            let mut replies = Vec::new();
+            for command in [
+                ControllerCommand::Metrics,
+                ControllerCommand::MetricsJson,
+                ControllerCommand::Metrics,
+                ControllerCommand::MetricsJson,
+                ControllerCommand::Metrics,
+            ] {
+                let (respond, reply) = oneshot::channel();
+                controller_tx.send((command, respond)).unwrap();
+                replies.push(reply);
+            }
+            goose_attack
+                .handle_control_requests(&mut run_state)
+                .await
+                .unwrap();
+            assert_eq!(requests.load(Ordering::SeqCst), 1);
+            for mut reply in replies {
+                assert!(matches!(reply.try_recv(), Ok(ControlReply::Metrics(_))));
+            }
+        });
+    }
+
+    /// A rate that clears a configured test plan says so; with no plan the
+    /// reply is as before.
+    #[test]
+    #[serial_test::serial]
+    fn test_control_rate_reply_names_cleared_plan() {
+        finishes(|| async {
+            for (line, name) in [
+                ("increaserate 2", "increase_rate"),
+                ("decreaserate 2", "decrease_rate"),
+            ] {
+                let (mut goose_attack, mut run_state) =
+                    idle_attack(&["--no-autostart", "--test-plan", "2,1s"]).await;
+                assert_eq!(
+                    reply(&mut goose_attack, &mut run_state, line).await,
+                    (true, format!("{name} configured, test plan cleared"))
+                );
+                assert!(goose_attack.configuration.test_plan.is_none());
+                // The plan is gone, so a second rate clears nothing.
+                assert_eq!(
+                    reply(&mut goose_attack, &mut run_state, line).await,
+                    (true, format!("{name} configured"))
+                );
+            }
+        });
+    }
+
+    /// A rate set on a running load test is used by the next `users` change.
+    /// Users go down, as weighting added users with no scenario never ends;
+    /// with no decrease rate set, the increase rate paces it.
+    #[test]
+    #[serial_test::serial]
+    fn test_control_rate_then_users_on_running_test() {
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) = idle_attack(&[]).await;
+            goose_attack.set_attack_phase(&mut run_state, AttackPhase::Maintain);
+            run_state.active_users = 6;
+            assert_eq!(
+                reply(&mut goose_attack, &mut run_state, "increaserate 2").await,
+                (true, "increase_rate configured".to_string())
+            );
+            assert!(control(&mut goose_attack, &mut run_state, "users 2").await);
+            // Four fewer users at 2 a second take 2 seconds.
+            assert_eq!(goose_attack.test_plan.steps[1], (2, 2_000));
+        });
+    }
+
+    /// Read from a telnet Controller until its prompt.
+    async fn telnet_reply(client: &mut TcpStream) -> String {
+        let mut text = Vec::new();
+        let mut buf = [0; 1024];
+        while !text.ends_with(b"goose> ") {
+            let n = tokio::time::timeout(Duration::from_secs(10), client.read(&mut buf))
+                .await
+                .expect("the telnet Controller must answer")
+                .unwrap();
+            assert!(n > 0, "telnet Controller closed: {:?}", text);
+            text.extend_from_slice(&buf[..n]);
+        }
+        String::from_utf8(text).unwrap()
+    }
+
+    /// A telnet command sent with no line ending runs.
+    #[tokio::test]
+    async fn telnet_command_without_line_ending_runs() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap())
             .await
-        {
-            info!("failed to write data to websocket: {e}");
+            .unwrap();
+        let (socket, _) = listener.accept().await.unwrap();
+        let (channel_tx, channel_rx) = flume::unbounded::<ControlRequest>();
+        tokio::spawn(serve_client(
+            socket,
+            ControllerProtocol::Telnet,
+            channel_tx,
+            "telnet client".to_string(),
+            CONTROL_TIMEOUT,
+        ));
+        assert_eq!(telnet_reply(&mut client).await, "goose> ");
+        client.write_all(b"users 5").await.unwrap();
+        let (command, respond) =
+            tokio::time::timeout(Duration::from_secs(10), channel_rx.recv_async())
+                .await
+                .expect("the command must reach the parent")
+                .unwrap();
+        assert!(matches!(command, ControllerCommand::Users(5)));
+        let _ = respond.send(ControlReply::Outcome(ControlOutcome {
+            ok: true,
+            error: None,
+            message: "users configured".to_string(),
+            phase: "idle".to_string(),
+            active_users: 0,
+            target_users: Some(5),
+        }));
+        assert_eq!(telnet_reply(&mut client).await, "users configured\ngoose> ");
+    }
+
+    /// A Controller client whose command the parent never answers is told
+    /// so once the timeout passes.
+    #[tokio::test]
+    async fn telnet_command_unanswered_times_out() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (socket, _) = listener.accept().await.unwrap();
+        // Held and never read, so the command is never answered.
+        let (channel_tx, _channel_rx) = flume::unbounded::<ControlRequest>();
+        tokio::spawn(serve_client(
+            socket,
+            ControllerProtocol::Telnet,
+            channel_tx,
+            "telnet client".to_string(),
+            Duration::from_millis(100),
+        ));
+        assert_eq!(telnet_reply(&mut client).await, "goose> ");
+        client.write_all(b"users 5\n").await.unwrap();
+        assert_eq!(
+            telnet_reply(&mut client).await,
+            "control timed out, it may still apply: check before retrying\ngoose> "
+        );
+    }
+
+    /// A WebSocket Controller client served by [`serve_client`], and the
+    /// channel its commands arrive on.
+    async fn websocket_client() -> (WebSocketStream<TcpStream>, flume::Receiver<ControlRequest>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (channel_tx, channel_rx) = flume::unbounded();
+        tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            serve_client(
+                socket,
+                ControllerProtocol::WebSocket,
+                channel_tx,
+                "WebSocket client".to_string(),
+                CONTROL_TIMEOUT,
+            )
+            .await;
+        });
+        let stream = TcpStream::connect(address).await.unwrap();
+        let (client, _) = tokio_tungstenite::client_async(format!("ws://{address}/"), stream)
+            .await
+            .unwrap();
+        (client, channel_rx)
+    }
+
+    /// The next frame a WebSocket client gets, `None` once the connection
+    /// has ended.
+    async fn next_frame(client: &mut WebSocketStream<TcpStream>) -> Option<Message> {
+        tokio::time::timeout(Duration::from_secs(10), client.next())
+            .await
+            .expect("the WebSocket Controller must answer or end the connection")
+            .and_then(Result::ok)
+    }
+
+    /// A WebSocket text or binary message longer than [`MAX_CONTROLLER_MESSAGE`]
+    /// is answered with a 1009 close naming the limit, and the connection ends.
+    #[tokio::test]
+    async fn websocket_message_too_big_closed() {
+        for message in [
+            Message::Text("x".repeat(131_073).into()),
+            Message::Binary(vec![b'x'; 131_073].into()),
+        ] {
+            let (mut client, _channel_rx) = websocket_client().await;
+            client.send(message).await.unwrap();
+            match next_frame(&mut client).await {
+                Some(Message::Close(Some(frame))) => {
+                    assert_eq!(frame.code, CloseCode::Size);
+                    assert_eq!(frame.reason, "message too big, at most 131072 bytes");
+                }
+                other => panic!("expected a 1009 close, got {:?}", other),
+            }
+            assert!(next_frame(&mut client).await.is_none());
+        }
+    }
+
+    /// A WebSocket frame announcing more than twice the limit ends the
+    /// connection from its header, before any of it is buffered: with the
+    /// same 1009 close if one can still be written.
+    #[tokio::test]
+    async fn websocket_message_over_hard_bound_ends_connection() {
+        let (mut client, _channel_rx) = websocket_client().await;
+        // A masked text frame header announcing 300 KiB, and no payload: only
+        // a limit read from the header answers it; a buffering server waits
+        // for the payload and the test times out.
+        let mut header = vec![0x81, 0xFF];
+        header.extend_from_slice(&(300u64 * 1024).to_be_bytes());
+        header.extend_from_slice(&[1, 2, 3, 4]);
+        client.get_mut().write_all(&header).await.unwrap();
+        match next_frame(&mut client).await {
+            None => {}
+            Some(Message::Close(frame)) => {
+                if let Some(frame) = frame {
+                    assert_eq!(frame.code, CloseCode::Size);
+                    assert_eq!(frame.reason, "message too big, at most 131072 bytes");
+                }
+                assert!(next_frame(&mut client).await.is_none());
+            }
+            Some(other) => panic!("expected the connection to end, got {:?}", other),
+        }
+    }
+
+    /// A test plan in a WebSocket message of exactly [`MAX_CONTROLLER_MESSAGE`]
+    /// bytes is parsed and applied.
+    #[test]
+    #[serial_test::serial]
+    fn websocket_test_plan_at_limit_applied() {
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) = idle_attack(&[]).await;
+            let (mut client, channel_rx) = websocket_client().await;
+            run_state.controller_channel_rx = Some(channel_rx);
+            // One user up and down per two steps, so 13,000 users in total.
+            let mut plan = "1,1s;0,1s;".repeat(13_000);
+            plan.push_str("0,");
+            let wrapper = r#"{"request":"testplan "}"#.len();
+            let padding = 131_072 - wrapper - plan.len() - 2;
+            plan.push_str(&"0".repeat(padding));
+            plan.push_str("1s");
+            let request = format!(r#"{{"request":"testplan {}"}}"#, plan);
+            assert_eq!(request.len(), 131_072);
+            client.send(Message::Text(request.into())).await.unwrap();
+            // Answer commands as the main loop does until the plan arrives.
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+            while goose_attack.configuration.test_plan.is_none() {
+                assert!(
+                    tokio::time::Instant::now() < deadline,
+                    "no test plan arrived"
+                );
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                goose_attack
+                    .handle_control_requests(&mut run_state)
+                    .await
+                    .unwrap();
+            }
+            let applied = goose_attack.configuration.test_plan.as_ref().unwrap();
+            assert_eq!(applied.steps.len(), 26_001);
+            assert_eq!(applied.total_users(), 13_000);
+            match next_frame(&mut client).await {
+                Some(Message::Text(text)) => assert_eq!(
+                    serde_json::from_str::<ControllerWebSocketResponse>(&text)
+                        .unwrap()
+                        .response,
+                    "test-plan configured"
+                ),
+                other => panic!("expected a reply, got {:?}", other),
+            }
+        });
+    }
+
+    /// A binary WebSocket message is answered as main answered it.
+    #[tokio::test]
+    async fn websocket_binary_message_refused() {
+        let (mut client, _channel_rx) = websocket_client().await;
+        client
+            .send(Message::Binary(b"{\"request\":\"config\"}".to_vec().into()))
+            .await
+            .unwrap();
+        match next_frame(&mut client).await {
+            Some(Message::Text(text)) => {
+                let response: ControllerWebSocketResponse = serde_json::from_str(&text).unwrap();
+                assert!(!response.success);
+                assert_eq!(response.response, INVALID_JSON);
+            }
+            other => panic!("expected a reply, got {:?}", other),
         }
     }
 }
