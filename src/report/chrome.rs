@@ -39,6 +39,13 @@ const REFRESH_INTERVAL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 /// A partial download older than this was abandoned, and is removed.
 const PARTIAL_MAX_AGE: Duration = Duration::from_secs(60 * 60);
 
+/// The largest Chrome for Testing download Goose accepts. The real archive is
+/// about a quarter of this.
+const MAX_DOWNLOAD_BYTES: u64 = 400_000_000;
+
+/// The only host Goose downloads Chrome for Testing from.
+const DOWNLOAD_HOST: &str = "storage.googleapis.com";
+
 /// The file in the cache whose modification time records the last check for a
 /// newer Chrome for Testing.
 const LAST_CHECK: &str = "last-check";
@@ -463,9 +470,47 @@ async fn stable_download(
         .json()
         .await
         .map_err(|e| format!("reading {CHROME_FOR_TESTING_JSON}: {e}"))?;
-    parse_stable_download(&json, platform).ok_or_else(|| {
+    let (version, url) = parse_stable_download(&json, platform).ok_or_else(|| {
         format!("{CHROME_FOR_TESTING_JSON} lists no stable {DOWNLOAD_NAME} for {platform}")
-    })
+    })?;
+    validate_download(&version, &url)?;
+    Ok((version, url))
+}
+
+/// Confirms the version and URL read from the Chrome for Testing JSON are safe
+/// to use. The version becomes a directory name in the cache, so it must be
+/// numbers and dots only, and the archive must come over HTTPS from
+/// [`DOWNLOAD_HOST`].
+fn validate_download(version: &str, url: &str) -> Result<(), String> {
+    if version.is_empty() || version_key(version).is_none() {
+        return Err(format!(
+            "the Chrome for Testing JSON gave the version {version:?}, which is not a Chrome version"
+        ));
+    }
+    let parsed = url::Url::parse(url).map_err(|e| {
+        format!(
+            "the Chrome for Testing JSON gave the download URL {url:?}, which is not a URL: {e}"
+        )
+    })?;
+    if parsed.scheme() != "https" || parsed.host_str() != Some(DOWNLOAD_HOST) {
+        return Err(format!(
+            "the Chrome for Testing JSON gave the download URL {url:?}, which is not an https URL on {DOWNLOAD_HOST}"
+        ));
+    }
+    Ok(())
+}
+
+/// Fails when `bytes`, the announced length of the download or what has
+/// arrived so far, exceeds [`MAX_DOWNLOAD_BYTES`].
+fn check_download_size(bytes: u64, url: &str) -> Result<(), String> {
+    if bytes > MAX_DOWNLOAD_BYTES {
+        Err(format!(
+            "downloading {url}: the download is larger than {} MB, the most Goose accepts",
+            MAX_DOWNLOAD_BYTES / 1_000_000
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 /// Downloads and unpacks the stable Chrome for Testing headless shell into the
@@ -527,6 +572,9 @@ async fn download_and_unpack(
         .await
         .and_then(|response| response.error_for_status())
         .map_err(|e| format!("downloading {url}: {e}"))?;
+    if let Some(length) = response.content_length() {
+        check_download_size(length, url)?;
+    }
     let size = response
         .content_length()
         .map(|bytes| format!(" ({} MB)", bytes.div_ceil(1_000_000)))
@@ -538,11 +586,14 @@ async fn download_and_unpack(
     let mut file = tokio::fs::File::create(&archive)
         .await
         .map_err(|e| format!("creating {}: {e}", archive.display()))?;
+    let mut received: u64 = 0;
     while let Some(chunk) = response
         .chunk()
         .await
         .map_err(|e| format!("downloading {url}: {e}"))?
     {
+        received += chunk.len() as u64;
+        check_download_size(received, url)?;
         file.write_all(&chunk)
             .await
             .map_err(|e| format!("writing {}: {e}", archive.display()))?;
@@ -694,6 +745,32 @@ mod tests {
             ))
         );
         assert_eq!(parse_stable_download(&json, "win64"), None);
+    }
+
+    #[test]
+    fn downloads_are_checked_before_use() {
+        let url = "https://storage.googleapis.com/chrome-for-testing-public/155.0.8059.84/linux64/chrome-headless-shell-linux64.zip";
+        assert_eq!(validate_download("155.0.8059.84", url), Ok(()));
+        for version in ["../../x", "155.0/../1", "", "155.0.x"] {
+            let error = validate_download(version, url).unwrap_err();
+            assert!(error.contains("Chrome for Testing JSON"), "{}", error);
+        }
+        for url in [
+            "http://storage.googleapis.com/chrome-for-testing-public/shell.zip",
+            "https://example.com/chrome-for-testing-public/shell.zip",
+            "https://storage.googleapis.com.evil.example/chrome-for-testing-public/shell.zip",
+            "not a url",
+        ] {
+            let error = validate_download("155.0.8059.84", url).unwrap_err();
+            assert!(error.contains(url), "{}", error);
+        }
+    }
+
+    #[test]
+    fn downloads_are_capped() {
+        assert_eq!(check_download_size(0, "url"), Ok(()));
+        assert_eq!(check_download_size(MAX_DOWNLOAD_BYTES, "url"), Ok(()));
+        assert!(check_download_size(MAX_DOWNLOAD_BYTES + 1, "url").is_err());
     }
 
     #[test]
