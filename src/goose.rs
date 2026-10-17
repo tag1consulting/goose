@@ -317,9 +317,6 @@ use crate::{GooseConfiguration, GooseError, WeightedTransactions};
 /// By default Goose sets the following User-Agent header when making requests.
 static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 
-/// By default Goose times out requests after 60,000 milliseconds.
-static GOOSE_REQUEST_TIMEOUT: u64 = 60_000;
-
 /// Atomically decrement `counter` by one, saturating at zero.
 ///
 /// An explicit `compare_exchange_weak` loop with `Relaxed` ordering, equivalent to
@@ -3353,19 +3350,9 @@ impl GooseUser {
 pub(crate) fn create_reqwest_client(
     configuration: &GooseConfiguration,
 ) -> Result<Client, reqwest::Error> {
-    // Either use manually configured timeout, or default.
-    let timeout = if configuration.timeout.is_some() {
-        match crate::util::get_float_from_string(configuration.timeout.clone()) {
-            Some(f) => f as u64 * 1_000,
-            None => GOOSE_REQUEST_TIMEOUT,
-        }
-    } else {
-        GOOSE_REQUEST_TIMEOUT
-    };
-
     let client_builder = Client::builder()
         .user_agent(APP_USER_AGENT)
-        .timeout(Duration::from_millis(timeout))
+        .timeout(configuration.request_timeout())
         // Enable gzip unless `--no-gzip` flag is enabled.
         .gzip(!configuration.no_gzip)
         // Validate https certificates unless `--accept-invalid-certs` is enabled.

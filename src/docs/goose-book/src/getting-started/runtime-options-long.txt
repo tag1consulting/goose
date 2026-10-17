@@ -550,8 +550,8 @@ HTTP client:
       --timeout <SECS>
           Request timeout in seconds [default: 60]
 
-          How long each request may take before it fails. Greater than 0, in
-          whole seconds; a fraction is dropped.
+          How long each request may take before it fails. A decimal is allowed:
+          0.5 is half a second. At least 0.001, one millisecond.
 
           Example: --timeout 15. Set in code with GooseDefault::Timeout.
 

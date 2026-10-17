@@ -172,18 +172,8 @@ impl Default for GooseClientConfig {
 
 impl From<&GooseConfiguration> for GooseClientConfig {
     fn from(config: &GooseConfiguration) -> Self {
-        // Either use manually configured timeout, or default.
-        let timeout = if config.timeout.is_some() {
-            match crate::util::get_float_from_string(config.timeout.clone()) {
-                Some(f) => Some(Duration::from_millis(f as u64 * 1_000)),
-                None => Some(Duration::from_millis(60_000)),
-            }
-        } else {
-            Some(Duration::from_millis(60_000))
-        };
-
         Self {
-            timeout,
+            timeout: Some(config.request_timeout()),
             user_agent: concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION")).to_string(),
             gzip: !config.no_gzip,
             accept_invalid_certs: config.accept_invalid_certs,

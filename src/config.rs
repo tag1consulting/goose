@@ -21,6 +21,10 @@ use crate::test_plan::TestPlan;
 use crate::util;
 use crate::{GooseAttack, GooseError};
 
+/// The request timeout, in milliseconds, when neither `--timeout` nor
+/// [`GooseDefault::Timeout`] sets one.
+const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 60_000;
+
 /// The PDF scale factor when neither `--pdf-scale` nor [`GooseDefault::PdfScale`] sets one.
 #[cfg(feature = "pdf-reports")]
 const DEFAULT_PDF_SCALE: f64 = 0.8;
@@ -711,8 +715,8 @@ pub struct GooseConfiguration {
 
     /// Request timeout in seconds [default: 60]
     ///
-    /// How long each request may take before it fails. Greater than 0, in whole seconds;
-    /// a fraction is dropped.
+    /// How long each request may take before it fails. A decimal is allowed: 0.5 is half
+    /// a second. At least 0.001, one millisecond.
     ///
     /// Example: --timeout 15. Set in code with GooseDefault::Timeout.
     #[arg(help_heading = "HTTP client", long, value_name = "SECS")]
@@ -2462,6 +2466,28 @@ pub(crate) fn timespan(option: &str, value: &str) -> Result<usize, GooseError> {
     })
 }
 
+/// A `--timeout` of `seconds` in whole milliseconds, rounded to the nearest, or `None`
+/// when it is not a number or is below zero.
+fn timeout_millis(seconds: f32) -> Option<u64> {
+    let millis = (f64::from(seconds) * 1_000.0).round();
+    // `as` saturates, so an infinite timeout is the longest there is.
+    (millis >= 0.0).then_some(millis as u64)
+}
+
+/// The number in option `option`, refused when `value` is not a number.
+fn number(option: &str, value: &str) -> Result<f32, GooseError> {
+    value.parse::<f32>().map_err(|_| GooseError::InvalidOption {
+        option: format!("`configuration.{option}`"),
+        value: value.to_string(),
+        detail: format!("`configuration.{option}` must be a number."),
+    })
+}
+
+/// The number in optional option `option`, as [`number`].
+fn optional_number(option: &str, value: Option<&str>) -> Result<Option<f32>, GooseError> {
+    value.map(|value| number(option, value)).transpose()
+}
+
 impl GooseConfiguration {
     /// Implement precedence rules for all [`GooseConfiguration`] values.
     ///
@@ -2651,54 +2677,62 @@ impl GooseConfiguration {
             .map_or_else(|| "0".to_string(), |v| v.to_string());
 
         // Configure `increase_rate`.
+        let increase_rate = optional_number("increase_rate", self.increase_rate.as_deref())?;
+        let default_increase_rate =
+            optional_number("increase_rate", defaults.increase_rate.as_deref())?;
         self.increase_rate = self
             .get_value(vec![
                 // Use --increase-rate if set.
                 GooseValue {
-                    value: Some(util::parse_rate(self.increase_rate.clone())),
-                    filter: self.increase_rate.is_none(),
+                    value: increase_rate,
+                    filter: increase_rate.is_none(),
                     message: "increase_rate",
                 },
                 // Otherwise use GooseDefault if set and not on Worker.
                 GooseValue {
-                    value: Some(util::parse_rate(defaults.increase_rate.clone())),
-                    filter: defaults.increase_rate.is_none(),
+                    value: default_increase_rate,
+                    filter: default_increase_rate.is_none(),
                     message: "increase_rate",
                 },
             ])
             .map(|v| v.to_string());
 
         // Configure `decrease_rate`.
+        let decrease_rate = optional_number("decrease_rate", self.decrease_rate.as_deref())?;
+        let default_decrease_rate =
+            optional_number("decrease_rate", defaults.decrease_rate.as_deref())?;
         self.decrease_rate = self
             .get_value(vec![
                 // Use --decrease-rate if set.
                 GooseValue {
-                    value: Some(util::parse_rate(self.decrease_rate.clone())),
-                    filter: self.decrease_rate.is_none(),
+                    value: decrease_rate,
+                    filter: decrease_rate.is_none(),
                     message: "decrease_rate",
                 },
                 // Otherwise use GooseDefault if set and not on Worker.
                 GooseValue {
-                    value: Some(util::parse_rate(defaults.decrease_rate.clone())),
-                    filter: defaults.decrease_rate.is_none(),
+                    value: default_decrease_rate,
+                    filter: default_decrease_rate.is_none(),
                     message: "decrease_rate",
                 },
             ])
             .map(|v| v.to_string());
 
         // Configure `timeout`.
+        let timeout = optional_number("timeout", self.timeout.as_deref())?;
+        let default_timeout = optional_number("timeout", defaults.timeout.as_deref())?;
         self.timeout = self
             .get_value(vec![
                 // Use --timeout if set.
                 GooseValue {
-                    value: util::get_float_from_string(self.timeout.clone()),
-                    filter: self.timeout.is_none(),
+                    value: timeout,
+                    filter: timeout.is_none(),
                     message: "timeout",
                 },
                 // Otherwise use GooseDefault if set and not on Worker.
                 GooseValue {
-                    value: util::get_float_from_string(defaults.timeout.clone()),
-                    filter: defaults.timeout.is_none(),
+                    value: default_timeout,
+                    filter: default_timeout.is_none(),
                     message: "timeout",
                 },
             ])
@@ -3328,6 +3362,17 @@ impl GooseConfiguration {
         !self.no_save && !self.no_metrics
     }
 
+    /// How long a request may take: `--timeout`, or 60 seconds when it is not set.
+    pub(crate) fn request_timeout(&self) -> std::time::Duration {
+        std::time::Duration::from_millis(
+            self.timeout
+                .as_deref()
+                .and_then(|timeout| timeout.parse().ok())
+                .and_then(timeout_millis)
+                .unwrap_or(DEFAULT_REQUEST_TIMEOUT_MS),
+        )
+    }
+
     /// The PDF scale factor, or the built in default before [`Self::configure`] runs.
     #[cfg(feature = "pdf-reports")]
     pub(crate) fn pdf_scale_or_default(&self) -> f64 {
@@ -3431,16 +3476,14 @@ impl GooseConfiguration {
             }
         }
 
-        // If set, timeout must be greater than zero.
+        // If set, timeout must be a number of at least one millisecond.
         if let Some(timeout) = self.timeout.as_ref() {
-            if crate::util::get_float_from_string(self.timeout.clone())
-                .expect("failed to re-convert string to float")
-                <= 0.0
-            {
+            if !timeout_millis(number("timeout", timeout)?).is_some_and(|ms| ms >= 1) {
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.timeout`".to_string(),
                     value: timeout.to_string(),
-                    detail: "`configuration.timeout` must be greater than 0.".to_string(),
+                    detail: "`configuration.timeout` must be at least 0.001 (one millisecond)."
+                        .to_string(),
                 });
             }
         }
@@ -3933,6 +3976,7 @@ impl GooseConfiguration {
 #[cfg(test)]
 mod test {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn set_defaults() {
@@ -5279,5 +5323,89 @@ mod test {
         let mut config = GooseConfiguration::parse_args_default(&["--no-granular-report"]).unwrap();
         config.configure(&goose_attack.defaults).unwrap();
         assert!(config.no_granular_report);
+    }
+
+    /// The request timeout `--timeout` gives the HTTP client, once configured.
+    fn configured_timeout(timeout: &str) -> std::time::Duration {
+        let mut config = GooseConfiguration::parse_args_default(&["--timeout", timeout]).unwrap();
+        config.configure(&GooseDefaults::default()).unwrap();
+        config.validate().unwrap();
+        config.request_timeout()
+    }
+
+    /// A fractional `--timeout` is kept to the millisecond, not truncated to whole
+    /// seconds.
+    #[test]
+    fn fractional_timeout_is_kept() {
+        assert_eq!(configured_timeout("0.5"), Duration::from_millis(500));
+        assert_eq!(configured_timeout("1.5"), Duration::from_millis(1_500));
+        assert_eq!(configured_timeout("15"), Duration::from_secs(15));
+        assert_eq!(
+            GooseConfiguration::default().request_timeout(),
+            Duration::from_secs(60)
+        );
+    }
+
+    /// An option that takes a number and is given something else is an error that
+    /// names it, not a warning and a default, on the command line and in code.
+    #[test]
+    fn option_that_is_not_a_number_is_refused() {
+        for (flag, option) in [
+            ("--timeout", "timeout"),
+            ("--increase-rate", "increase_rate"),
+            ("--decrease-rate", "decrease_rate"),
+        ] {
+            let mut config =
+                GooseConfiguration::parse_args_default(&["--users", "2", flag, "abc"]).unwrap();
+            match config.configure(&GooseDefaults::default()) {
+                Err(GooseError::InvalidOption {
+                    option: got,
+                    value,
+                    detail,
+                }) => {
+                    assert_eq!(got, format!("`configuration.{option}`"));
+                    assert_eq!(value, "abc");
+                    assert_eq!(
+                        detail,
+                        format!("`configuration.{option}` must be a number.")
+                    );
+                }
+                other => panic!("{} abc: {:?}", flag, other),
+            }
+        }
+        for key in [
+            GooseDefault::Timeout,
+            GooseDefault::IncreaseRate,
+            GooseDefault::DecreaseRate,
+        ] {
+            let goose_attack = GooseAttack::initialize_with_config(GooseConfiguration::default())
+                .unwrap()
+                .set_default(key, "abc")
+                .unwrap();
+            let mut config = GooseConfiguration::default();
+            assert!(config.configure(&goose_attack.defaults).is_err());
+        }
+    }
+
+    /// A timeout that rounds to less than one millisecond would fail every request,
+    /// so it is refused.
+    #[test]
+    fn timeout_below_one_millisecond_refused() {
+        for timeout in ["0.0001", "0.00049", "NaN", "0", "-1"] {
+            let mut config =
+                GooseConfiguration::parse_args_default(&["--timeout", timeout]).unwrap();
+            config.configure(&GooseDefaults::default()).unwrap();
+            match config.validate() {
+                Err(GooseError::InvalidOption { option, detail, .. }) => {
+                    assert_eq!(option, "`configuration.timeout`");
+                    assert_eq!(
+                        detail,
+                        "`configuration.timeout` must be at least 0.001 (one millisecond)."
+                    );
+                }
+                other => panic!("{}: {:?}", timeout, other),
+            }
+        }
+        assert_eq!(configured_timeout("0.001"), Duration::from_millis(1));
     }
 }
