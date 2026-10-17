@@ -18,6 +18,15 @@ use crate::test_plan::TestPlan;
 use crate::util;
 use crate::{GooseAttack, GooseError};
 
+/// The PDF scale factor when neither `--pdf-scale` nor [`GooseDefault::PdfScale`] sets one.
+#[cfg(feature = "pdf-reports")]
+const DEFAULT_PDF_SCALE: f64 = 0.8;
+
+/// The PDF generation timeout, in seconds, when neither `--pdf-timeout` nor
+/// [`GooseDefault::PdfTimeout`] sets one.
+#[cfg(feature = "pdf-reports")]
+const DEFAULT_PDF_TIMEOUT: u64 = 60;
+
 /// Runtime options available when launching a Goose load test.
 ///
 /// Custom defaults can be programmatically set for most of these options using the
@@ -144,22 +153,12 @@ pub struct GooseConfiguration {
     pub pdf_print_html: String,
     /// Sets PDF scale factor (0.1-2.0)
     #[cfg(feature = "pdf-reports")]
-    #[arg(
-        help_heading = "Metrics",
-        long,
-        value_name = "SCALE",
-        default_value_t = 0.8
-    )]
-    pub pdf_scale: f64,
+    #[arg(help_heading = "Metrics", long, value_name = "SCALE")]
+    pub pdf_scale: Option<f64>,
     /// PDF generation timeout (10-600s)
     #[cfg(feature = "pdf-reports")]
-    #[arg(
-        help_heading = "Metrics",
-        long,
-        value_name = "SECONDS",
-        default_value_t = 60
-    )]
-    pub pdf_timeout: u64,
+    #[arg(help_heading = "Metrics", long, value_name = "SECONDS")]
+    pub pdf_timeout: Option<u64>,
     /// Sets request log file name
     #[arg(
         help_heading = "Metrics",
@@ -551,6 +550,9 @@ pub(crate) struct GooseDefaults {
     pub no_percentiles_over_time: Option<bool>,
     /// An optional default for not validating https certificates.
     pub accept_invalid_certs: Option<bool>,
+    /// An optional default for the PDF scale factor.
+    #[cfg(feature = "pdf-reports")]
+    pub pdf_scale: Option<f64>,
     /// An optional default for PDF generation timeout (seconds).
     #[cfg(feature = "pdf-reports")]
     pub pdf_timeout: Option<u64>,
@@ -680,6 +682,9 @@ pub enum GooseDefault {
     NoPercentilesOverTime,
     /// An optional default for not validating https certificates.
     AcceptInvalidCerts,
+    /// An optional default for the PDF scale factor.
+    #[cfg(feature = "pdf-reports")]
+    PdfScale,
     /// An optional default for PDF generation timeout (seconds).
     #[cfg(feature = "pdf-reports")]
     PdfTimeout,
@@ -751,6 +756,11 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::WebSocketPort`]
 ///  - [`GooseDefault::DashboardPort`]
 ///  - [`GooseDefault::DashboardMaxClients`]
+///  - [`GooseDefault::PdfTimeout`] (with the `pdf-reports` feature)
+///
+/// The following run-time options can be configured with a custom default using a
+/// [`f64`] float:
+///  - [`GooseDefault::PdfScale`] (with the `pdf-reports` feature)
 ///
 /// The following run-time flags can be configured with a custom default using a
 /// [`bool`] (and otherwise default to [`false`]).
@@ -773,6 +783,7 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::Dashboard`]
 ///  - [`GooseDefault::DashboardControl`]
 ///  - [`GooseDefault::NoPercentilesOverTime`]
+///  - [`GooseDefault::AcceptInvalidCerts`]
 ///
 /// The following run-time flags can be configured with a custom default using a
 /// [`GooseLogFormat`].
@@ -925,6 +936,16 @@ impl GooseDefaultType<&str> for GooseAttack {
                     ),
                 });
             }
+            #[cfg(feature = "pdf-reports")]
+            GooseDefault::PdfScale => {
+                return Err(GooseError::InvalidOption {
+                    option: format!("GooseDefault::{key:?}"),
+                    value: value.to_string(),
+                    detail: format!(
+                        "set_default(GooseDefault::{key:?}, {value}) expected f64 value, received &str"
+                    ),
+                });
+            }
         }
         Ok(Box::new(self))
     }
@@ -1029,6 +1050,16 @@ impl GooseDefaultType<usize> for GooseAttack {
                     value: format!("{value:?}"),
                     detail: format!(
                         "set_default(GooseDefault::{key:?}, {value:?}) expected GooseCoordinatedOmissionMitigation value, received usize"
+                    ),
+                })
+            }
+            #[cfg(feature = "pdf-reports")]
+            GooseDefault::PdfScale => {
+                return Err(GooseError::InvalidOption {
+                    option: format!("GooseDefault::{key:?}"),
+                    value: value.to_string(),
+                    detail: format!(
+                        "set_default(GooseDefault::{key:?}, {value}) expected f64 value, received usize"
                     ),
                 })
             }
@@ -1144,6 +1175,16 @@ impl GooseDefaultType<bool> for GooseAttack {
                     value: value.to_string(),
                     detail: format!(
                         "set_default(GooseDefault::{key:?}, {value}) expected usize value, received bool"
+                    ),
+                });
+            }
+            #[cfg(feature = "pdf-reports")]
+            GooseDefault::PdfScale => {
+                return Err(GooseError::InvalidOption {
+                    option: format!("GooseDefault::{key:?}"),
+                    value: value.to_string(),
+                    detail: format!(
+                        "set_default(GooseDefault::{key:?}, {value}) expected f64 value, received bool"
                     ),
                 });
             }
@@ -1264,6 +1305,16 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
                     ),
                 });
             }
+            #[cfg(feature = "pdf-reports")]
+            GooseDefault::PdfScale => {
+                return Err(GooseError::InvalidOption {
+                    option: format!("GooseDefault::{key:?}"),
+                    value: format!("{value:?}"),
+                    detail: format!(
+                        "set_default(GooseDefault::{key:?}, {value:?}) expected f64 value, received GooseCoordinatedOmissionMitigation"
+                    ),
+                });
+            }
         }
         Ok(Box::new(self))
     }
@@ -1378,6 +1429,127 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
                     value: format!("{value:?}"),
                     detail: format!(
                         "set_default(GooseDefault::{key:?}, {value:?}) expected usize value, received GooseLogFormat"
+                    ),
+                });
+            }
+            #[cfg(feature = "pdf-reports")]
+            GooseDefault::PdfScale => {
+                return Err(GooseError::InvalidOption {
+                    option: format!("GooseDefault::{key:?}"),
+                    value: format!("{value:?}"),
+                    detail: format!(
+                        "set_default(GooseDefault::{key:?}, {value:?}) expected f64 value, received GooseLogFormat"
+                    ),
+                });
+            }
+        }
+        Ok(Box::new(self))
+    }
+}
+#[cfg(feature = "pdf-reports")]
+impl GooseDefaultType<f64> for GooseAttack {
+    /// Sets [`GooseDefault`] to a [`f64`] value.
+    fn set_default(mut self, key: GooseDefault, value: f64) -> Result<Box<Self>, GooseError> {
+        match key {
+            GooseDefault::PdfScale => self.defaults.pdf_scale = Some(value),
+            // Otherwise display a helpful and explicit error.
+            GooseDefault::DebugLog
+            | GooseDefault::ErrorLog
+            | GooseDefault::GooseLog
+            | GooseDefault::IncreaseRate
+            | GooseDefault::DecreaseRate
+            | GooseDefault::Host
+            | GooseDefault::ReportFile
+            | GooseDefault::RunsDir
+            | GooseDefault::BaselineFile
+            | GooseDefault::RequestLog
+            | GooseDefault::ScenarioLog
+            | GooseDefault::Scenarios
+            | GooseDefault::TelnetHost
+            | GooseDefault::TestPlan
+            | GooseDefault::Timeout
+            | GooseDefault::TransactionLog
+            | GooseDefault::WebSocketHost
+            | GooseDefault::DashboardHost
+            | GooseDefault::DashboardAuthToken => {
+                return Err(GooseError::InvalidOption {
+                    option: format!("GooseDefault::{key:?}"),
+                    value: value.to_string(),
+                    detail: format!(
+                        "set_default(GooseDefault::{key:?}, {value}) expected &str value, received f64"
+                    ),
+                });
+            }
+            GooseDefault::Users
+            | GooseDefault::IncreaseTime
+            | GooseDefault::DecreaseTime
+            | GooseDefault::RunTime
+            | GooseDefault::Iterations
+            | GooseDefault::RunningMetrics
+            | GooseDefault::LogLevel
+            | GooseDefault::Quiet
+            | GooseDefault::Verbose
+            | GooseDefault::ThrottleRequests
+            | GooseDefault::TelnetPort
+            | GooseDefault::WebSocketPort
+            | GooseDefault::DashboardPort
+            | GooseDefault::DashboardMaxClients
+            | GooseDefault::PdfTimeout => {
+                return Err(GooseError::InvalidOption {
+                    option: format!("GooseDefault::{key:?}"),
+                    value: value.to_string(),
+                    detail: format!(
+                        "set_default(GooseDefault::{key:?}, {value}) expected usize value, received f64"
+                    ),
+                });
+            }
+            GooseDefault::NoResetMetrics
+            | GooseDefault::NoMetrics
+            | GooseDefault::NoTransactionMetrics
+            | GooseDefault::NoScenarioMetrics
+            | GooseDefault::RequestBody
+            | GooseDefault::NoPrintMetrics
+            | GooseDefault::NoErrorSummary
+            | GooseDefault::NoDebugBody
+            | GooseDefault::NoTelnet
+            | GooseDefault::NoWebSocket
+            | GooseDefault::NoAutoStart
+            | GooseDefault::NoGzip
+            | GooseDefault::NoStatusCodes
+            | GooseDefault::StickyFollow
+            | GooseDefault::NoGranularData
+            | GooseDefault::NoSave
+            | GooseDefault::Dashboard
+            | GooseDefault::DashboardControl
+            | GooseDefault::NoPercentilesOverTime
+            | GooseDefault::AcceptInvalidCerts => {
+                return Err(GooseError::InvalidOption {
+                    option: format!("GooseDefault::{key:?}"),
+                    value: value.to_string(),
+                    detail: format!(
+                        "set_default(GooseDefault::{key:?}, {value}) expected bool value, received f64"
+                    ),
+                });
+            }
+            GooseDefault::RequestFormat
+            | GooseDefault::DebugFormat
+            | GooseDefault::ErrorFormat
+            | GooseDefault::ScenarioFormat
+            | GooseDefault::TransactionFormat => {
+                return Err(GooseError::InvalidOption {
+                    option: format!("GooseDefault::{key:?}"),
+                    value: value.to_string(),
+                    detail: format!(
+                        "set_default(GooseDefault::{key:?}, {value}) expected GooseLogFormat value, received f64"
+                    ),
+                });
+            }
+            GooseDefault::CoordinatedOmissionMitigation => {
+                return Err(GooseError::InvalidOption {
+                    option: format!("GooseDefault::{key:?}"),
+                    value: value.to_string(),
+                    detail: format!(
+                        "set_default(GooseDefault::{key:?}, {value}) expected GooseCoordinatedOmissionMitigation value, received f64"
                     ),
                 });
             }
@@ -1519,6 +1691,24 @@ impl GooseConfigure<u8> for GooseConfiguration {
 impl GooseConfigure<f32> for GooseConfiguration {
     /// Use [`GooseValue`] to set a [`f32`] value.
     fn get_value(&self, values: Vec<GooseValue<f32>>) -> Option<f32> {
+        for value in values {
+            if let Some(v) = value.value {
+                if value.filter {
+                    continue;
+                } else {
+                    if !value.message.is_empty() {
+                        info!("{} = {}", value.message, v)
+                    }
+                    return Some(v);
+                }
+            }
+        }
+        None
+    }
+}
+impl GooseConfigure<f64> for GooseConfiguration {
+    /// Use [`GooseValue`] to set a [`f64`] value.
+    fn get_value(&self, values: Vec<GooseValue<f64>>) -> Option<f64> {
         for value in values {
             if let Some(v) = value.value {
                 if value.filter {
@@ -2491,25 +2681,49 @@ impl GooseConfiguration {
             ])
             .unwrap_or(false);
 
-        // Configure `pdf_timeout` when PDF reports feature is enabled.
+        // Configure `pdf_scale` and `pdf_timeout` when PDF reports feature is enabled.
         #[cfg(feature = "pdf-reports")]
         {
-            self.pdf_timeout = self
-                .get_value(vec![
-                    // Use --pdf-timeout if set.
-                    GooseValue {
-                        value: Some(self.pdf_timeout),
-                        filter: self.pdf_timeout == 60, // 60 is the default value of --pdf-timeout
-                        message: "pdf_timeout",
-                    },
-                    // Otherwise use GooseDefault if set.
-                    GooseValue {
-                        value: defaults.pdf_timeout,
-                        filter: defaults.pdf_timeout.is_none(),
-                        message: "pdf_timeout",
-                    },
-                ])
-                .unwrap_or(60);
+            self.pdf_scale = self.get_value(vec![
+                // Use --pdf-scale if set.
+                GooseValue {
+                    value: self.pdf_scale,
+                    filter: self.pdf_scale.is_none(),
+                    message: "pdf_scale",
+                },
+                // Otherwise use GooseDefault if set.
+                GooseValue {
+                    value: defaults.pdf_scale,
+                    filter: defaults.pdf_scale.is_none(),
+                    message: "pdf_scale",
+                },
+                // Otherwise use the built in default.
+                GooseValue {
+                    value: Some(DEFAULT_PDF_SCALE),
+                    filter: false,
+                    message: "",
+                },
+            ]);
+            self.pdf_timeout = self.get_value(vec![
+                // Use --pdf-timeout if set.
+                GooseValue {
+                    value: self.pdf_timeout,
+                    filter: self.pdf_timeout.is_none(),
+                    message: "pdf_timeout",
+                },
+                // Otherwise use GooseDefault if set.
+                GooseValue {
+                    value: defaults.pdf_timeout,
+                    filter: defaults.pdf_timeout.is_none(),
+                    message: "pdf_timeout",
+                },
+                // Otherwise use the built in default.
+                GooseValue {
+                    value: Some(DEFAULT_PDF_TIMEOUT),
+                    filter: false,
+                    message: "",
+                },
+            ]);
         }
 
         Ok(())
@@ -2520,6 +2734,19 @@ impl GooseConfiguration {
     /// or `--no-metrics` is set.
     pub(crate) fn saves_runs(&self) -> bool {
         !self.no_save && !self.no_metrics
+    }
+
+    /// The PDF scale factor, or the built in default before [`Self::configure`] runs.
+    #[cfg(feature = "pdf-reports")]
+    pub(crate) fn pdf_scale_or_default(&self) -> f64 {
+        self.pdf_scale.unwrap_or(DEFAULT_PDF_SCALE)
+    }
+
+    /// The PDF generation timeout in seconds, or the built in default before
+    /// [`Self::configure`] runs.
+    #[cfg(feature = "pdf-reports")]
+    pub(crate) fn pdf_timeout_or_default(&self) -> u64 {
+        self.pdf_timeout.unwrap_or(DEFAULT_PDF_TIMEOUT)
     }
 
     /// The runs directory as given, or the default `goose-runs`.
@@ -3013,25 +3240,31 @@ impl GooseConfiguration {
 
         // Scale validation when feature is available
         #[cfg(feature = "pdf-reports")]
-        if has_pdf_reports && (self.pdf_scale < 0.1 || self.pdf_scale > 2.0) {
-            return Err(GooseError::InvalidOption {
-                option: "`configuration.pdf_scale`".to_string(),
-                value: self.pdf_scale.to_string(),
-                detail: "`configuration.pdf_scale` must be between 0.1 and 2.0 (inclusive)."
-                    .to_string(),
-            });
+        if has_pdf_reports {
+            let pdf_scale = self.pdf_scale_or_default();
+            if !(0.1..=2.0).contains(&pdf_scale) {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.pdf_scale`".to_string(),
+                    value: pdf_scale.to_string(),
+                    detail: "`configuration.pdf_scale` must be between 0.1 and 2.0 (inclusive)."
+                        .to_string(),
+                });
+            }
         }
 
         // PDF generation timeout validation when feature is available
         #[cfg(feature = "pdf-reports")]
-        if has_pdf_reports && (self.pdf_timeout < 10 || self.pdf_timeout > 600) {
-            return Err(GooseError::InvalidOption {
-                option: "`configuration.pdf_timeout`".to_string(),
-                value: self.pdf_timeout.to_string(),
-                detail:
-                    "`configuration.pdf_timeout` must be between 10 and 600 seconds (inclusive)."
-                        .to_string(),
-            });
+        if has_pdf_reports {
+            let pdf_timeout = self.pdf_timeout_or_default();
+            if !(10..=600).contains(&pdf_timeout) {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.pdf_timeout`".to_string(),
+                    value: pdf_timeout.to_string(),
+                    detail:
+                        "`configuration.pdf_timeout` must be between 10 and 600 seconds (inclusive)."
+                            .to_string(),
+                });
+            }
         }
 
         // A CHROME that can't run fails here, before anything is downloaded
@@ -3971,8 +4204,8 @@ mod test {
         assert_eq!(c.pdf_print_html, "print.html");
         #[cfg(feature = "pdf-reports")]
         {
-            assert_eq!(c.pdf_scale, 1.5);
-            assert_eq!(c.pdf_timeout, 120);
+            assert_eq!(c.pdf_scale, Some(1.5));
+            assert_eq!(c.pdf_timeout, Some(120));
         }
         assert_eq!(c.request_log, "request.log");
         assert_eq!(c.request_format, Some(GooseLogFormat::Json));
@@ -4019,19 +4252,11 @@ mod test {
         assert!(c.accept_invalid_certs);
     }
 
-    /// An option left off the command line keeps its `Default` value, apart from
-    /// the PDF options, which have their own defaults.
+    /// An option left off the command line keeps its `Default` value.
     #[test]
     fn absent_options_take_their_defaults() {
         let c = GooseConfiguration::parse_args_default::<&str>(&[]).unwrap();
-        let expected = GooseConfiguration {
-            #[cfg(feature = "pdf-reports")]
-            pdf_scale: 0.8,
-            #[cfg(feature = "pdf-reports")]
-            pdf_timeout: 60,
-            ..GooseConfiguration::default()
-        };
-        assert_eq!(as_json(&c), as_json(&expected));
+        assert_eq!(as_json(&c), as_json(&GooseConfiguration::default()));
         assert!(c.scenarios.active.is_empty());
     }
 
@@ -4166,5 +4391,78 @@ mod test {
                 other => panic!("{:?}: {:?}", args, other),
             }
         }
+    }
+
+    /// A configuration built with `GooseConfiguration::default()`, as
+    /// `GooseAttack::initialize_with_config` takes, gets the built in PDF scale
+    /// and timeout, so a PDF report passes validation.
+    #[cfg(feature = "pdf-reports")]
+    #[test]
+    fn default_configuration_gets_pdf_defaults() {
+        let mut config = GooseConfiguration {
+            report_file: vec!["report.pdf".to_string()],
+            ..Default::default()
+        };
+        config.configure(&GooseDefaults::default()).unwrap();
+        assert_eq!(as_json(&config)["pdf_scale"], 0.8);
+        assert_eq!(as_json(&config)["pdf_timeout"], 60);
+        if let Err(GooseError::InvalidOption { option, .. }) = config.validate_pdf_configuration() {
+            assert!(!option.contains("pdf_scale"), "{}", option);
+            assert!(!option.contains("pdf_timeout"), "{}", option);
+        }
+    }
+
+    /// `--pdf-timeout 60` on the command line beats `GooseDefault::PdfTimeout`,
+    /// although 60 is also the built in default.
+    #[cfg(feature = "pdf-reports")]
+    #[test]
+    fn explicit_pdf_timeout_beats_goose_default() {
+        let goose_attack = GooseAttack::initialize_with_config(GooseConfiguration::default())
+            .unwrap()
+            .set_default(GooseDefault::PdfTimeout, 120)
+            .unwrap();
+        let mut config = GooseConfiguration::parse_args_default(&["--pdf-timeout", "60"]).unwrap();
+        config.configure(&goose_attack.defaults).unwrap();
+        assert_eq!(as_json(&config)["pdf_timeout"], 60);
+
+        // Without it on the command line, the GooseDefault wins.
+        let mut config = GooseConfiguration::parse_args_default::<&str>(&[]).unwrap();
+        config.configure(&goose_attack.defaults).unwrap();
+        assert_eq!(as_json(&config)["pdf_timeout"], 120);
+    }
+
+    /// `--pdf-scale` beats `GooseDefault::PdfScale`, which beats the built in
+    /// default, and `PdfScale` takes an `f64`.
+    #[cfg(feature = "pdf-reports")]
+    #[test]
+    fn pdf_scale_precedence() {
+        let goose_attack = GooseAttack::initialize_with_config(GooseConfiguration::default())
+            .unwrap()
+            .set_default(GooseDefault::PdfScale, 1.25)
+            .unwrap();
+        let mut config = GooseConfiguration::parse_args_default(&["--pdf-scale", "0.8"]).unwrap();
+        config.configure(&goose_attack.defaults).unwrap();
+        assert_eq!(config.pdf_scale, Some(0.8));
+
+        let mut config = GooseConfiguration::default();
+        config.configure(&goose_attack.defaults).unwrap();
+        assert_eq!(config.pdf_scale, Some(1.25));
+
+        let mut config = GooseConfiguration::default();
+        config.configure(&GooseDefaults::default()).unwrap();
+        assert_eq!(config.pdf_scale, Some(0.8));
+
+        assert!(
+            GooseAttack::initialize_with_config(GooseConfiguration::default())
+                .unwrap()
+                .set_default(GooseDefault::PdfScale, 1)
+                .is_err()
+        );
+        assert!(
+            GooseAttack::initialize_with_config(GooseConfiguration::default())
+                .unwrap()
+                .set_default(GooseDefault::PdfTimeout, 1.5)
+                .is_err()
+        );
     }
 }

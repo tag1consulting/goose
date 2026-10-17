@@ -4253,9 +4253,9 @@ impl GooseAttack {
     async fn preflight_pdf(&self) -> Result<(), GooseError> {
         let started = std::time::Instant::now();
         let chrome = self.pdf_chrome().await?.clone();
-        let scale = self.configuration.pdf_scale;
+        let scale = self.configuration.pdf_scale_or_default();
         let verbose = self.configuration.verbose > 0;
-        let timeout = self.configuration.pdf_timeout;
+        let timeout = self.configuration.pdf_timeout_or_default();
         let launched = chrome.clone();
         let version = tokio::task::spawn_blocking(move || {
             report::pdf::preflight_pdf(scale, verbose, timeout, &launched)
@@ -4689,9 +4689,9 @@ impl GooseAttack {
         // Generate PDF from HTML using the configurable timeout and scale.
         // Launching Chrome and rendering block, so they run off the runtime.
         let output = PathBuf::from(path);
-        let scale = self.configuration.pdf_scale;
+        let scale = self.configuration.pdf_scale_or_default();
         let verbose = self.configuration.verbose > 0;
-        let timeout = self.configuration.pdf_timeout;
+        let timeout = self.configuration.pdf_timeout_or_default();
         let chrome = chrome.clone();
         tokio::task::spawn_blocking(move || {
             generate_pdf_from_html(
