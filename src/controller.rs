@@ -2324,6 +2324,7 @@ pub(crate) mod tests {
             phase: "idle".to_string(),
             active_users: 0,
             target_users: Some(5),
+            field: None,
         }));
         assert_eq!(telnet_reply(&mut client).await, "users configured\ngoose> ");
     }

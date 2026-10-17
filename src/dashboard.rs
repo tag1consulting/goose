@@ -180,6 +180,9 @@ struct ControlResult {
     active_users: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     target_users: Option<u64>,
+    /// The setting at fault in a refusal, when one is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    field: Option<String>,
 }
 
 impl ControlResult {
@@ -193,6 +196,7 @@ impl ControlResult {
             phase: outcome.phase,
             active_users: outcome.active_users as u64,
             target_users: outcome.target_users.map(|u| u as u64),
+            field: outcome.field.map(str::to_string),
         }
     }
 }
@@ -207,6 +211,8 @@ struct ControlHttpErrorBody {
     phase: Option<String>,
     active_users: Option<u64>,
     target_users: Option<u64>,
+    /// The setting at fault, `null` when no one setting is.
+    field: Option<String>,
 }
 
 impl ControlHttpErrorBody {
@@ -219,6 +225,7 @@ impl ControlHttpErrorBody {
             phase: None,
             active_users: None,
             target_users: None,
+            field: None,
         }
     }
 }
@@ -2388,6 +2395,7 @@ mod tests {
             phase: phase.to_string(),
             active_users,
             target_users,
+            field: None,
         }))
     }
 

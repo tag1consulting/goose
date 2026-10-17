@@ -363,6 +363,18 @@ pub(crate) struct ControlOutcome {
     pub active_users: usize,
     /// Command-specific target user count when applicable.
     pub target_users: Option<usize>,
+    /// The setting at fault in a refusal, when one is: `host`, `users`,
+    /// `increase_rate`, `increase_time`, `decrease_rate`, `decrease_time`,
+    /// `run_time` or `test_plan`.
+    pub field: Option<&'static str>,
+}
+
+impl ControlOutcome {
+    /// This outcome, naming `field` as the setting at fault.
+    pub(crate) fn with_field(mut self, field: &'static str) -> Self {
+        self.field = Some(field);
+        self
+    }
 }
 
 /// Result of the pre-reply portion of Start (Controller reply point).
@@ -1293,7 +1305,28 @@ impl GooseAttack {
     }
 
     // Returns OK(()) if there's a valid host, GooseError with details if not.
+    // Every Start checks it before it replies: a scenario, and a test_start
+    // or test_stop transaction, which run with no scenario host, each need
+    // one.
     fn validate_host(&mut self) -> Result<(), GooseError> {
+        if self.configuration.host().is_none() && self.defaults.host.is_none() {
+            let transaction = if self.test_start_transaction.is_some() {
+                Some("test_start")
+            } else if self.test_stop_transaction.is_some() {
+                Some("test_stop")
+            } else {
+                None
+            };
+            if let Some(transaction) = transaction {
+                return Err(GooseError::InvalidOption {
+                    option: NO_HOST_OPTION.to_string(),
+                    value: "".to_string(),
+                    detail: format!(
+                        "A host must be defined via the --host option or the GooseAttack.set_default() function (no host defined for the {transaction} transaction)."
+                    ),
+                });
+            }
+        }
         if self.configuration.host().is_none() {
             for scenario in &self.scenarios {
                 match &scenario.host {
@@ -2416,6 +2449,7 @@ impl GooseAttack {
             phase: attack_phase_str(self.attack_phase).to_string(),
             active_users: goose_attack_run_state.active_users,
             target_users,
+            field: None,
         }
     }
 
@@ -2447,23 +2481,27 @@ impl GooseAttack {
             // Soft: do not move to Increase if unable to prepare load test. Name
             // the cause: prepare_load_test refuses no host and no users itself,
             // with the options these constants name.
-            let reason = match e {
+            let (reason, field) = match e {
                 GooseError::InvalidOption { option, .. } if option == NO_HOST_OPTION => {
-                    "no host is configured".to_string()
+                    ("no host is configured".to_string(), Some("host"))
                 }
                 GooseError::InvalidOption { option, .. } if option == NO_USERS_OPTION => {
-                    "there are no users to start".to_string()
+                    ("there are no users to start".to_string(), None)
                 }
-                GooseError::InvalidOption { detail, .. } => detail,
-                e => e.to_string(),
+                GooseError::InvalidOption { detail, .. } => (detail, None),
+                e => (e.to_string(), None),
             };
-            return Ok(ControlStartBegin::Rejected(self.control_outcome(
+            let outcome = self.control_outcome(
                 goose_attack_run_state,
                 false,
                 Some("prepare_failed"),
                 format!("unable to start load test, {reason}"),
                 None,
-            )));
+            );
+            return Ok(ControlStartBegin::Rejected(match field {
+                Some(field) => outcome.with_field(field),
+                None => outcome,
+            }));
         }
 
         self.set_attack_phase(goose_attack_run_state, AttackPhase::Increase);
@@ -2790,7 +2828,7 @@ impl GooseAttack {
         reset_killswitch();
 
         // Run any configured test_start() functions.
-        self.run_test_start().await.unwrap();
+        self.run_test_start().await?;
 
         // Prepare to collect metrics, if enabled.
         self.metrics = GooseMetrics::default();
@@ -3444,6 +3482,94 @@ mod tests {
                 "unable to start load test, it is not idle".to_string()
             )
         );
+    }
+
+    /// A Start with scenario hosts only, no default host and a `test_start`
+    /// or `test_stop` transaction is refused before it replies, naming the
+    /// host; it used to panic after replying ok. An autostarted run fails
+    /// at launch instead.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_start_refused_without_host_for_test_start() {
+        async fn noop(_user: &mut GooseUser) -> crate::goose::TransactionResult {
+            Ok(())
+        }
+        for test_stop in [false, true] {
+            let configuration = GooseConfiguration::parse_args_default(&[
+                "--no-telnet",
+                "--no-websocket",
+                "--no-save",
+                "--users",
+                "1",
+            ])
+            .unwrap();
+            let goose_attack = GooseAttack::initialize_with_config(configuration)
+                .unwrap()
+                .register_scenario(
+                    scenario!("Hosted")
+                        .set_host("http://127.0.0.1")
+                        .register_transaction(transaction!(noop)),
+                );
+            let mut goose_attack = if test_stop {
+                goose_attack.test_stop(transaction!(noop))
+            } else {
+                goose_attack.test_start(transaction!(noop))
+            };
+            let mut run_state = goose_attack.initialize_attack().await.unwrap();
+            match goose_attack.control_start_begin(&mut run_state).unwrap() {
+                ControlStartBegin::Rejected(outcome) => {
+                    assert_eq!(outcome.error, Some("prepare_failed"));
+                    assert_eq!(outcome.field, Some("host"));
+                    assert_eq!(
+                        outcome.message,
+                        "unable to start load test, no host is configured"
+                    );
+                }
+                ControlStartBegin::Accepted(outcome) => panic!("accepted: {:?}", outcome),
+            }
+            assert_eq!(goose_attack.attack_phase, AttackPhase::Idle);
+
+            // A default host is enough for the transaction.
+            goose_attack.defaults.host = Some("http://127.0.0.1".to_string());
+            assert!(matches!(
+                goose_attack.control_start_begin(&mut run_state).unwrap(),
+                ControlStartBegin::Accepted(_)
+            ));
+        }
+
+        // Autostarted, the same configuration is a startup error.
+        let configuration = GooseConfiguration::parse_args_default(&[
+            "--no-telnet",
+            "--no-websocket",
+            "--no-save",
+            "--users",
+            "1",
+            "--quiet",
+        ])
+        .unwrap();
+        let error = GooseAttack::initialize_with_config(configuration)
+            .unwrap()
+            .register_scenario(
+                scenario!("Hosted")
+                    .set_host("http://127.0.0.1")
+                    .register_transaction(transaction!(noop)),
+            )
+            .test_start(transaction!(noop))
+            .execute()
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&error, GooseError::InvalidOption { option, .. } if option == NO_HOST_OPTION),
+            "{}",
+            error
+        );
+    }
+
+    /// Resolving a base url with no host from any source is an error, not a
+    /// panic.
+    #[test]
+    fn get_base_url_without_host_is_an_error() {
+        assert!(goose::get_base_url(None, None, None).is_err());
     }
 
     /// Users is refused while a cancel ramps the run down, accepted during a
