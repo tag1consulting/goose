@@ -3816,6 +3816,104 @@ mod tests {
         }
     }
 
+    /// A control request beyond the four waiting on a main loop that never
+    /// answers gets 503 `busy` and never reaches the main loop.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn control_admission_caps_in_flight() {
+        let (control_tx, control_rx) = flume::unbounded();
+        let (_setup, base) = bind_dashboard_with("s3cret", 0, Some(control_tx)).await;
+        let client = reqwest::Client::new();
+        let start = |client: reqwest::Client, url: String| async move {
+            client
+                .post(url)
+                .header(header::AUTHORIZATION, "Bearer s3cret")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body("{}")
+                .send()
+                .await
+        };
+        let url = format!("{base}/api/v1/control/start");
+        let fill = || -> Vec<_> {
+            (0..MAX_CONTROL_IN_FLIGHT)
+                .map(|_| tokio::spawn(start(client.clone(), url.clone())))
+                .collect()
+        };
+        let wait_for_queue = || async {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while control_rx.len() < MAX_CONTROL_IN_FLIGHT && Instant::now() < deadline {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            control_rx.len()
+        };
+        // Nobody receives from control_rx: admitted requests wait in it.
+        let waiting = fill();
+        assert_eq!(wait_for_queue().await, MAX_CONTROL_IN_FLIGHT);
+
+        let resp = start(client.clone(), url.clone())
+            .await
+            .expect("fifth start POST");
+        assert_eq!(resp.status(), 503);
+        let body: serde_json::Value = resp.json().await.expect("json");
+        assert_eq!(body["ok"], false);
+        assert_eq!(body["command"], "start");
+        assert_eq!(body["error"], "busy");
+        assert_eq!(control_rx.len(), MAX_CONTROL_IN_FLIGHT);
+
+        // Dropping the queued commands answers the waiting requests 503
+        // `unavailable`, which must free their slots for a new set.
+        drop(control_rx.drain().collect::<Vec<_>>());
+        for task in waiting {
+            let resp = task.await.expect("join").expect("waiting start POST");
+            assert_eq!(resp.status(), 503);
+        }
+        let again = fill();
+        assert_eq!(
+            wait_for_queue().await,
+            MAX_CONTROL_IN_FLIGHT,
+            "slots must be released"
+        );
+        for task in again {
+            task.abort();
+        }
+    }
+
+    /// A control body over [`CONTROL_BODY_LIMIT`] gets 413; one of exactly
+    /// the limit passes the size gate and reaches body validation.
+    #[tokio::test]
+    async fn control_body_limit_is_exact() {
+        let (control_tx, _control_rx) = flume::unbounded();
+        let (_setup, base) = bind_dashboard_with("s3cret", 0, Some(control_tx)).await;
+        let client = reqwest::Client::new();
+        let post = |path: &'static str, len: usize| {
+            client
+                .post(format!("{base}{path}"))
+                .header(header::AUTHORIZATION, "Bearer s3cret")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(vec![b'x'; len])
+                .send()
+        };
+
+        for path in [
+            "/api/v1/control/start",
+            "/api/v1/control/stop",
+            "/api/v1/control/quit",
+            "/api/v1/control/users",
+        ] {
+            let resp = post(path, CONTROL_BODY_LIMIT + 1)
+                .await
+                .expect("oversized POST");
+            assert_eq!(resp.status(), 413, "{path}");
+        }
+
+        let resp = post("/api/v1/control/start", CONTROL_BODY_LIMIT)
+            .await
+            .expect("limit sized POST");
+        assert_eq!(resp.status(), 400);
+        let body: serde_json::Value = resp.json().await.expect("json");
+        assert_eq!(body["command"], "start");
+        assert_eq!(body["error"], "bad_request");
+    }
+
     /// Case 10: channel disconnect / oneshot drop → 503 `unavailable`;
     /// parent `internal` → 200 `error=internal`; oneshot timeout → 503.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

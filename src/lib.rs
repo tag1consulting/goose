@@ -3543,6 +3543,49 @@ mod tests {
         assert!(outcome.ok, "idle must accept users: {:?}", outcome);
     }
 
+    /// A Stop moves a running load test to Decrease, and a second Stop while
+    /// it ramps down is refused as `invalid_phase` without touching the cancel.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_second_stop_refused_while_decreasing() {
+        let configuration =
+            GooseConfiguration::parse_args_default(&["--no-telnet", "--no-websocket", "--no-save"])
+                .unwrap();
+        let mut goose_attack = GooseAttack::initialize_with_config(configuration).unwrap();
+        let mut run_state = goose_attack.initialize_attack().await.unwrap();
+
+        // A test plan maintaining 10 users.
+        goose_attack.test_plan = TestPlan {
+            steps: vec![(10, 0), (10, 10_000)],
+            current: 0,
+        };
+        run_state.active_users = 10;
+        goose_attack.advance_test_plan(&mut run_state);
+        assert_eq!(goose_attack.attack_phase, AttackPhase::Maintain);
+
+        let first = goose_attack.control_stop(&mut run_state).await.unwrap();
+        assert!(first.ok, "maintain must accept stop: {:?}", first);
+        assert_eq!(first.phase, "decrease");
+        assert_eq!(goose_attack.attack_phase, AttackPhase::Decrease);
+        assert!(run_state.stopping);
+        let steps = goose_attack.test_plan.steps.clone();
+        let current = goose_attack.test_plan.current;
+        let history_len = goose_attack.metrics.history.len();
+
+        let second = goose_attack.control_stop(&mut run_state).await.unwrap();
+        assert!(!second.ok, "decrease must refuse stop: {:?}", second);
+        assert_eq!(second.error, Some("invalid_phase"));
+        assert_eq!(second.phase, "decrease");
+        // The first Stop's ramp to zero is left in place.
+        assert_eq!(goose_attack.test_plan.steps, steps);
+        assert_eq!(goose_attack.test_plan.current, current);
+        assert_eq!(goose_attack.metrics.history.len(), history_len);
+        assert_eq!(goose_attack.attack_phase, AttackPhase::Decrease);
+        assert!(run_state.stopping);
+        assert!(goose_attack.configuration.no_autostart);
+        assert!(!run_state.shutdown_after_stop);
+    }
+
     /// Every snapshot the main loop serves carries the stopping flag: the one
     /// forwarded to the metrics processor, the local fallback when the
     /// processor is gone, and the one served in the tick of a command, which
