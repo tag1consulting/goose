@@ -1171,7 +1171,7 @@ async fn test_control_users_validation() {
 /// Case 7: a second stop right behind a stop → ok:false invalid_phase.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial]
-async  {
+async fn test_control_second_stop_refused() {
     let server = MockServer::start();
     let _mocks = setup_mock_endpoints(&server);
     let port = reserve_port();
