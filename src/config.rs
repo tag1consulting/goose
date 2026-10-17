@@ -319,6 +319,8 @@ pub struct GooseConfiguration {
     /// Report graphs show a line for the total and, by default, one more for each request,
     /// transaction or scenario. This leaves out the extra lines. Needs --report-file or a
     /// saved run.
+    ///
+    /// Set in code with GooseDefault::NoGranularData.
     #[arg(help_heading = "Reports", long)]
     pub no_granular_report: bool,
     /// Write print-ready HTML for PDF
@@ -2898,8 +2900,8 @@ impl GooseConfiguration {
             },
         ]);
 
-        // Configure `no_debug_body` (set by --no-granular-report).
-        self.no_debug_body = self
+        // Configure `no_granular_report`.
+        self.no_granular_report = self
             .get_value(vec![
                 // Use --no-granular-report if set.
                 GooseValue {
@@ -2909,8 +2911,8 @@ impl GooseConfiguration {
                 },
                 // Otherwise use GooseDefault if set.
                 GooseValue {
-                    value: defaults.no_debug_body,
-                    filter: defaults.no_debug_body.is_none(),
+                    value: defaults.no_granular_report,
+                    filter: defaults.no_granular_report.is_none(),
                     message: "no_granular_report",
                 },
             ])
@@ -5236,5 +5238,46 @@ mod test {
                 .set_default(GooseDefault::PdfTimeout, 1.5)
                 .is_err()
         );
+    }
+
+    /// `--no-debug-body` on its own leaves response bodies out of the debug log.
+    #[test]
+    fn no_debug_body_alone_is_kept() {
+        let mut config = GooseConfiguration::parse_args_default(&["--no-debug-body"]).unwrap();
+        config.configure(&GooseDefaults::default()).unwrap();
+        assert!(config.no_debug_body);
+    }
+
+    /// `--no-granular-report` changes report graphs only, not the debug log.
+    #[test]
+    fn no_granular_report_keeps_debug_bodies() {
+        let mut config = GooseConfiguration::parse_args_default(&["--no-granular-report"]).unwrap();
+        config.configure(&GooseDefaults::default()).unwrap();
+        assert!(config.no_granular_report);
+        assert!(!config.no_debug_body);
+    }
+
+    /// `GooseDefault::NoGranularData` sets `no_granular_report`, and the command
+    /// line still wins over it.
+    #[test]
+    fn no_granular_data_default_is_applied() {
+        let goose_attack = GooseAttack::initialize_with_config(GooseConfiguration::default())
+            .unwrap()
+            .set_default(GooseDefault::NoGranularData, true)
+            .unwrap();
+        let mut config = GooseConfiguration::default();
+        config.configure(&goose_attack.defaults).unwrap();
+        assert!(config.no_granular_report);
+        assert!(!config.no_debug_body);
+
+        // The command line can only turn the flag on, so a default of false
+        // shows the command line winning.
+        let goose_attack = GooseAttack::initialize_with_config(GooseConfiguration::default())
+            .unwrap()
+            .set_default(GooseDefault::NoGranularData, false)
+            .unwrap();
+        let mut config = GooseConfiguration::parse_args_default(&["--no-granular-report"]).unwrap();
+        config.configure(&goose_attack.defaults).unwrap();
+        assert!(config.no_granular_report);
     }
 }

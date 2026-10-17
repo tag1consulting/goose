@@ -249,6 +249,8 @@ Reports:
           each request, transaction or scenario. This leaves out the extra
           lines. Needs --report-file or a saved run.
 
+          Set in code with GooseDefault::NoGranularData.
+
       --pdf-print-html <FILE>
           Write print-ready HTML for PDF
 
