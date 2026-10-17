@@ -60,14 +60,21 @@ impl TestPlan {
         } else {
             let mut steps: Vec<(usize, usize)> = Vec::new();
 
+            // The seconds in each time span, 0 when it is not set.
+            let span = |option, value: &Option<String>| {
+                value
+                    .as_deref()
+                    .map_or(Ok(0), |value| timespan(option, value))
+            };
+            let increase_time = span("increase_time", &configuration.increase_time)?;
+            let run_time = span("run_time", &configuration.run_time)?;
+            let decrease_time = span("decrease_time", &configuration.decrease_time)?;
+
             // Build a simple test plan from configured options if possible.
             if let Some(users) = configuration.users {
-                if configuration.increase_time != "0" {
+                if increase_time > 0 {
                     // Load test is configured with --increase-time.
-                    steps.push((
-                        users,
-                        timespan("increase_time", &configuration.increase_time)? * 1_000,
-                    ));
+                    steps.push((users, increase_time * 1_000));
                 } else {
                     // Load test is configured with --increase-rate.
                     let increase_rate =
@@ -84,29 +91,23 @@ impl TestPlan {
                 }
 
                 // If a run-time is set, maintain users for the configured duration.
-                if configuration.run_time != "0" {
-                    steps.push((
-                        users,
-                        timespan("run_time", &configuration.run_time)? * 1_000,
-                    ));
+                if run_time > 0 {
+                    steps.push((users, run_time * 1_000));
                 }
 
                 // Ramp down using --decrease-time or --decrease-rate if configured.
                 // This applies whether or not --run-time is set (e.g. ramp up then
                 // immediately ramp down).
-                if configuration.decrease_time != "0" {
+                if decrease_time > 0 {
                     // Decrease users over the configured decrease-time.
-                    steps.push((
-                        0,
-                        timespan("decrease_time", &configuration.decrease_time)? * 1_000,
-                    ));
+                    steps.push((0, decrease_time * 1_000));
                 } else if let Some(decrease_rate) = configuration.decrease_rate.as_ref() {
                     // Calculate decrease time from rate.
                     let rate = util::parse_rate(Some(decrease_rate.to_string()));
                     let ms_decrease_rate = 1.0 / rate * 1_000.0;
                     let total_time = ms_decrease_rate * users as f32;
                     steps.push((0, total_time as usize));
-                } else if configuration.run_time != "0" {
+                } else if run_time > 0 {
                     // No decrease option set but run-time is configured: shut down
                     // as quickly as possible once run-time elapses.
                     steps.push((0, 0));

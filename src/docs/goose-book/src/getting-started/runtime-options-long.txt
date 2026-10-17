@@ -448,7 +448,8 @@ Dashboard:
       --dashboard-port <PORT>
           Bind port [default: 5118]
 
-          The TCP port the dashboard listens on, with --dashboard.
+          The TCP port the dashboard listens on, with --dashboard. 0 picks a
+          free port, which the log shows.
 
           Example: --dashboard-port 8088. Set in code with
           GooseDefault::DashboardPort.

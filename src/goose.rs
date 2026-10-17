@@ -1864,9 +1864,9 @@ impl GooseUser {
         // Grab a copy of any headers set by this request, included in the request log,
         // the debug log and the error log. Skip the formatting when none of those logs
         // is enabled, as nothing else reads them.
-        let headers: Vec<String> = if !self.config.request_log.is_empty()
-            || !self.config.debug_log.is_empty()
-            || !self.config.error_log.is_empty()
+        let headers: Vec<String> = if self.config.request_log().is_some()
+            || self.config.debug_log().is_some()
+            || self.config.error_log().is_some()
         {
             let mut headers = Vec::with_capacity(built_request.headers().len());
             for header in built_request.headers() {
@@ -2227,7 +2227,7 @@ impl GooseUser {
         request_metric: GooseRequestMetric,
     ) -> TransactionResult {
         // If requests-file is enabled, send a copy of the raw request to the logger thread.
-        if !self.config.request_log.is_empty() {
+        if self.config.request_log().is_some() {
             if let Some(logger) = self.logger.as_ref() {
                 if let Err(e) = logger.send(Some(GooseLog::Request(request_metric.clone()))) {
                     return Err(Box::new(e.into()));
@@ -3075,7 +3075,7 @@ impl GooseUser {
         headers: Option<&header::HeaderMap>,
         body: Option<&str>,
     ) -> TransactionResult {
-        if !self.config.debug_log.is_empty() {
+        if self.config.debug_log().is_some() {
             // Logger is not defined when running
             // [`test_start`](../struct.GooseAttack.html#method.test_start),
             // [`test_stop`](../struct.GooseAttack.html#method.test_stop), and during testing.

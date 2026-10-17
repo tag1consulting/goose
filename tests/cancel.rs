@@ -119,11 +119,11 @@ fn common_build_configuration(server: &MockServer, test_type: &TestType) -> Goos
     match test_type {
         TestType::Iterations | TestType::NoRunTime => {
             // Do not set --run-time with --iterations or when testing not setting run time.
-            configuration.run_time = "".to_string();
+            configuration.run_time = None;
         }
         TestType::TestPlanIncrease | TestType::TestPlanDecrease | TestType::TestPlanMaintain => {
             // Do not set --run-time with --test-plan.
-            configuration.run_time = "".to_string();
+            configuration.run_time = None;
             // Do not set --increase-rate with --test-plan.
             configuration.increase_rate = None;
             // Do not set --users with --test-plan.

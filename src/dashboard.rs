@@ -1006,12 +1006,9 @@ pub(crate) async fn setup_dashboard(
         return Ok(None);
     }
 
-    let host = if configuration.dashboard_host.is_empty() {
-        "127.0.0.1"
-    } else {
-        configuration.dashboard_host.as_str()
-    };
-    let port = configuration.dashboard_port;
+    let host = configuration.dashboard_host();
+    // 0 picks a free port; the log and the footer name the port bound.
+    let port = configuration.dashboard_port();
     // Use a host:port string so `ToSocketAddrs` resolves `localhost` and IPv6
     // (same approach as Controllers). Do not parse as SocketAddr first — that
     // rejects hostnames and unbracketed `::1`.
@@ -1043,12 +1040,7 @@ pub(crate) async fn setup_dashboard(
         dir: configuration.runs_dir_or_default().to_string(),
         last_run: None,
     });
-    // 0 means unset (direct setup without configure); fall back to default cap.
-    let max_sse_clients = if configuration.dashboard_max_clients == 0 {
-        MAX_SSE_CLIENTS
-    } else {
-        configuration.dashboard_max_clients as usize
-    };
+    let max_sse_clients = configuration.dashboard_max_clients();
     // Clone sender for the hub and the series handler (same channel).
     let hub = SnapshotHub::new(
         request_tx.clone(),
@@ -1063,19 +1055,23 @@ pub(crate) async fn setup_dashboard(
         hub,
         request_tx,
         control_tx,
-        auth_token: configuration.dashboard_auth_token.clone(),
+        auth_token: configuration
+            .dashboard_auth_token()
+            .unwrap_or_default()
+            .to_string(),
         control_in_flight: Arc::new(AtomicUsize::new(0)),
         series_in_flight: Arc::new(AtomicUsize::new(0)),
         series_cache: Arc::new(Mutex::new(HashMap::new())),
         runs_dir: configuration.runs_dir_or_default().to_string(),
-        // setup_controllers has already resolved an empty host or a 0 port
-        // to its default.
         controllers: HealthControllers {
             telnet: (!configuration.no_telnet).then(|| {
-                format_bind_address(&configuration.telnet_host, configuration.telnet_port)
+                format_bind_address(configuration.telnet_host(), configuration.telnet_port())
             }),
             websocket: (!configuration.no_websocket).then(|| {
-                format_bind_address(&configuration.websocket_host, configuration.websocket_port)
+                format_bind_address(
+                    configuration.websocket_host(),
+                    configuration.websocket_port(),
+                )
             }),
         },
     };
@@ -2454,10 +2450,11 @@ mod tests {
         let config = GooseConfiguration {
             dashboard: true,
             dashboard_control: control.is_some(),
-            dashboard_host: "127.0.0.1".to_string(),
-            dashboard_port: 0,
-            dashboard_auth_token: token.to_string(),
-            dashboard_max_clients: max_clients,
+            dashboard_host: Some("127.0.0.1".to_string()),
+            dashboard_port: Some(0),
+            dashboard_auth_token: Some(token.to_string()),
+            // 0 leaves the cap at its default.
+            dashboard_max_clients: (max_clients > 0).then_some(max_clients),
             ..Default::default()
         };
         let setup = setup_dashboard(&config, control)
@@ -2719,9 +2716,9 @@ mod tests {
         // localhost (hostname — rejected by SocketAddr::parse, must use ToSocketAddrs).
         let config = GooseConfiguration {
             dashboard: true,
-            dashboard_host: "localhost".to_string(),
-            dashboard_port: 0,
-            dashboard_auth_token: String::new(),
+            dashboard_host: Some("localhost".to_string()),
+            dashboard_port: Some(0),
+            dashboard_auth_token: None,
             ..Default::default()
         };
         let setup = setup_dashboard(&config, None)
@@ -2735,9 +2732,9 @@ mod tests {
         // ::1 (bare IPv6 literal needs brackets in the bind string).
         let config = GooseConfiguration {
             dashboard: true,
-            dashboard_host: "::1".to_string(),
-            dashboard_port: 0,
-            dashboard_auth_token: String::new(),
+            dashboard_host: Some("::1".to_string()),
+            dashboard_port: Some(0),
+            dashboard_auth_token: None,
             ..Default::default()
         };
         // ::1 may be unavailable in some CI network namespaces; treat bind errors
@@ -2765,9 +2762,9 @@ mod tests {
 
         let config = GooseConfiguration {
             dashboard: true,
-            dashboard_host: "127.0.0.1".to_string(),
-            dashboard_port: port,
-            dashboard_auth_token: String::new(),
+            dashboard_host: Some("127.0.0.1".to_string()),
+            dashboard_port: Some(port),
+            dashboard_auth_token: None,
             ..Default::default()
         };
         let err = setup_dashboard(&config, None)
@@ -3143,14 +3140,14 @@ mod tests {
         for (no_telnet, no_websocket, expected) in cases {
             let config = GooseConfiguration {
                 dashboard: true,
-                dashboard_host: "127.0.0.1".to_string(),
-                dashboard_port: 0,
+                dashboard_host: Some("127.0.0.1".to_string()),
+                dashboard_port: Some(0),
                 no_telnet,
-                telnet_host: "0.0.0.0".to_string(),
-                telnet_port: 5116,
+                telnet_host: Some("0.0.0.0".to_string()),
+                telnet_port: Some(5116),
                 no_websocket,
-                websocket_host: "::1".to_string(),
-                websocket_port: 6117,
+                websocket_host: Some("::1".to_string()),
+                websocket_port: Some(6117),
                 ..Default::default()
             };
             let setup = setup_dashboard(&config, None)
@@ -4339,9 +4336,9 @@ mod tests {
         for bind_host in ["0.0.0.0", "127.1"] {
             let config = GooseConfiguration {
                 dashboard: true,
-                dashboard_host: bind_host.to_string(),
-                dashboard_port: 0,
-                dashboard_auth_token: "secret".to_string(),
+                dashboard_host: Some(bind_host.to_string()),
+                dashboard_port: Some(0),
+                dashboard_auth_token: Some("secret".to_string()),
                 ..Default::default()
             };
             let setup = setup_dashboard(&config, None)

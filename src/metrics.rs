@@ -1715,11 +1715,7 @@ impl GooseMetrics {
                 self.hosts.insert(
                     get_base_url(
                         // Determine if --host was configured.
-                        if !config.host.is_empty() {
-                            Some(config.host.to_string())
-                        } else {
-                            None
-                        },
+                        config.host().map(str::to_string),
                         // Determine if the scenario defines a host.
                         scenario.host.clone(),
                         // Determine if there is a default host.
@@ -3694,7 +3690,7 @@ impl MetricsProcessor {
 
     /// Update error metrics and optionally send to the error logger.
     fn record_error(&mut self, raw_request: &GooseRequestMetric) {
-        if !self.configuration.error_log.is_empty() {
+        if self.configuration.error_log().is_some() {
             if let Some(logger) = self.logger_tx.as_ref() {
                 if let Err(e) = logger.send(Some(GooseLog::Error(GooseErrorMetric {
                     elapsed: raw_request.elapsed,
@@ -4028,7 +4024,7 @@ impl GooseAttack {
         if !goose_attack_run_state.all_users_spawned {
             goose_attack_run_state.all_users_spawned = true;
             // Only reset metrics on startup if not using `--test-plan` or `--iterations`.
-            if self.configuration.test_plan.is_none() && self.configuration.iterations == 0 {
+            if self.configuration.test_plan.is_none() && self.configuration.iterations() == 0 {
                 let users = self.configuration.users.unwrap();
                 if !self.configuration.no_reset_metrics {
                     self.update_duration();
@@ -4304,7 +4300,7 @@ impl GooseAttack {
         &self,
         baseline: Option<&ReportData<'static>>,
     ) -> Result<(), GooseError> {
-        if !self.configuration.pdf_print_html.is_empty() {
+        if let Some(pdf_print_html) = self.configuration.pdf_print_html() {
             use crate::report::print::generate_print_optimized_html_content;
             use tokio::fs as async_fs;
 
@@ -4315,20 +4311,15 @@ impl GooseAttack {
             let print_optimized_html = generate_print_optimized_html_content(&html_report);
 
             // Write the PDF-optimized HTML to file
-            if let Err(e) =
-                async_fs::write(&self.configuration.pdf_print_html, &print_optimized_html).await
-            {
+            if let Err(e) = async_fs::write(pdf_print_html, &print_optimized_html).await {
                 return Err(GooseError::InvalidOption {
                     option: "--pdf-print-html".to_string(),
-                    value: self.configuration.pdf_print_html.clone(),
+                    value: pdf_print_html.to_string(),
                     detail: format!("Failed to write PDF-optimized HTML: {e}"),
                 });
             }
 
-            info!(
-                "PDF-optimized HTML saved to: {}",
-                self.configuration.pdf_print_html
-            );
+            info!("PDF-optimized HTML saved to: {pdf_print_html}");
         }
 
         Ok(())
@@ -4655,20 +4646,15 @@ impl GooseAttack {
         let print_optimized_html = generate_print_optimized_html_content(&html_report);
 
         // If pdf_print_html is configured, save the PDF-optimized HTML for debugging
-        if !self.configuration.pdf_print_html.is_empty() {
-            if let Err(e) =
-                async_fs::write(&self.configuration.pdf_print_html, &print_optimized_html).await
-            {
+        if let Some(pdf_print_html) = self.configuration.pdf_print_html() {
+            if let Err(e) = async_fs::write(pdf_print_html, &print_optimized_html).await {
                 return Err(GooseError::InvalidOption {
                     option: "--pdf-print-html".to_string(),
-                    value: self.configuration.pdf_print_html.clone(),
+                    value: pdf_print_html.to_string(),
                     detail: format!("Failed to write PDF-optimized HTML: {e}"),
                 });
             }
-            info!(
-                "PDF-optimized HTML saved to: {}",
-                self.configuration.pdf_print_html
-            );
+            info!("PDF-optimized HTML saved to: {pdf_print_html}");
         }
 
         // The Chrome found at startup, by create_reports, unless it was a

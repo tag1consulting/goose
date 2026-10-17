@@ -166,7 +166,7 @@ fn validate_one_scenario(
     assert!(goose_metrics.total_users == MAX_USERS);
 
     // Host was not configured at start time.
-    assert!(configuration.host.is_empty());
+    assert!(configuration.host.is_none());
 
     // The load test was manually shut down instead of running to completion.
     assert!(goose_metrics.duration < RUN_TIME);

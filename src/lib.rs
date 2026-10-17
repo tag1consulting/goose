@@ -74,12 +74,6 @@ use crate::metrics::{
 };
 use crate::test_plan::{TestPlan, TestPlanHistory, TestPlanStepAction};
 
-/// Constant defining Goose's default telnet Controller port.
-const DEFAULT_TELNET_PORT: &str = "5116";
-
-/// Constant defining Goose's default WebSocket Controller port.
-const DEFAULT_WEBSOCKET_PORT: &str = "5117";
-
 lazy_static! {
     // WORKER_ID is used to identify different works when running a gaggle.
     static ref WORKER_ID: AtomicUsize = AtomicUsize::new(0);
@@ -910,10 +904,11 @@ impl GooseAttack {
 
     /// Internal helper to determine if the scenario is currently active.
     fn scenario_is_active(&self, scenario: &Scenario) -> bool {
-        if self.configuration.scenarios.active.is_empty() {
+        let patterns = self.configuration.scenarios();
+        if patterns.is_empty() {
             return true;
         }
-        self.configuration.scenarios.active.iter().any(|pattern| {
+        patterns.iter().any(|pattern| {
             if pattern.contains('*') {
                 wildcard_match(pattern, &scenario.machine_name)
             } else {
@@ -1265,14 +1260,14 @@ impl GooseAttack {
         if self.configuration.no_autostart {
             if self.validate_host().is_err() {
                 info!("host must be configured via Controller before starting load test");
-            } else if !self.configuration.host.is_empty() {
-                info!("global host configured: {}", self.configuration.host);
+            } else if let Some(host) = self.configuration.host() {
+                info!("global host configured: {host}");
             }
         } else {
             // If configuration.host is empty, then it will fall back to per-scenario
             // defaults if set.
-            if !self.configuration.host.is_empty() {
-                info!("global host configured: {}", self.configuration.host);
+            if let Some(host) = self.configuration.host() {
+                info!("global host configured: {host}");
             }
             self.prepare_load_test()?;
         }
@@ -1299,7 +1294,7 @@ impl GooseAttack {
 
     // Returns OK(()) if there's a valid host, GooseError with details if not.
     fn validate_host(&mut self) -> Result<(), GooseError> {
-        if self.configuration.host.is_empty() {
+        if self.configuration.host().is_none() {
             for scenario in &self.scenarios {
                 match &scenario.host {
                     Some(h) => {
@@ -1377,11 +1372,7 @@ impl GooseAttack {
 
     /// Helper to wrap configured host in `Option<>` if set.
     fn get_configuration_host(&self) -> Option<String> {
-        if self.configuration.host.is_empty() {
-            None
-        } else {
-            Some(self.configuration.host.to_string())
-        }
+        self.configuration.host().map(str::to_string)
     }
 
     // Helper to spawn a throttle thread if configured. The throttle thread opens
@@ -1396,7 +1387,8 @@ impl GooseAttack {
         Option<flume::Sender<bool>>,
     ) {
         // If the throttle isn't enabled, return immediately.
-        if self.configuration.throttle_requests == 0 {
+        let throttle_requests = self.configuration.throttle_requests();
+        if throttle_requests == 0 {
             return (None, None);
         }
 
@@ -1405,7 +1397,7 @@ impl GooseAttack {
         let (all_threads_throttle, throttle_receiver): (
             flume::Sender<bool>,
             flume::Receiver<bool>,
-        ) = flume::bounded(self.configuration.throttle_requests);
+        ) = flume::bounded(throttle_requests);
 
         // Create a channel allowing the parent to inform the throttle thread when the
         // load test is finished. Even though we only send one message, we can't use a
@@ -1414,7 +1406,7 @@ impl GooseAttack {
 
         // Launch a new thread for throttling, no need to rejoin it.
         let _ = Some(tokio::spawn(throttle::throttle_main(
-            self.configuration.throttle_requests,
+            throttle_requests,
             throttle_receiver,
             throttle_rx,
         )));
@@ -1426,7 +1418,7 @@ impl GooseAttack {
         // add a token to the bucket before making a request, and are blocked until this
         // throttle thread "leaks out" a token thereby creating space. More information
         // can be found at: https://en.wikipedia.org/wiki/Leaky_bucket
-        for _ in 1..self.configuration.throttle_requests {
+        for _ in 1..throttle_requests {
             let _ = sender.send_async(true).await;
         }
 
@@ -1436,28 +1428,9 @@ impl GooseAttack {
     // Helper to optionally spawn a telnet and/or WebSocket Controller thread. The Controller
     // threads send commands to the parent process on `control_tx`, each with a one-shot
     // channel for the reply.
-    async fn setup_controllers(&mut self, control_tx: &flume::Sender<ControlRequest>) {
+    async fn setup_controllers(&self, control_tx: &flume::Sender<ControlRequest>) {
         // Configured telnet Controller if not disabled.
         if !self.configuration.no_telnet {
-            // Configure telnet_host, using default if run-time option is not set.
-            if self.configuration.telnet_host.is_empty() {
-                self.configuration.telnet_host =
-                    if let Some(host) = self.defaults.telnet_host.clone() {
-                        host
-                    } else {
-                        "0.0.0.0".to_string()
-                    }
-            }
-
-            // Then configure telnet_port, using default if run-time option is not set.
-            if self.configuration.telnet_port == 0 {
-                self.configuration.telnet_port = if let Some(port) = self.defaults.telnet_port {
-                    port
-                } else {
-                    DEFAULT_TELNET_PORT.to_string().parse().unwrap()
-                };
-            }
-
             // Spawn the initial controller thread to allow real-time control of the load test.
             // There is no need to rejoin this thread when the load test ends.
             let _ = Some(tokio::spawn(controller::controller_main(
@@ -1469,26 +1442,6 @@ impl GooseAttack {
 
         // Configured WebSocket Controller if not disabled.
         if !self.configuration.no_websocket {
-            // Configure websocket_host, using default if run-time option is not set.
-            if self.configuration.websocket_host.is_empty() {
-                self.configuration.websocket_host =
-                    if let Some(host) = self.defaults.websocket_host.clone() {
-                        host
-                    } else {
-                        "0.0.0.0".to_string()
-                    }
-            }
-
-            // Then configure websocket_port, using default if run-time option is not set.
-            if self.configuration.websocket_port == 0 {
-                self.configuration.websocket_port = if let Some(port) = self.defaults.websocket_port
-                {
-                    port
-                } else {
-                    DEFAULT_WEBSOCKET_PORT.to_string().parse().unwrap()
-                };
-            }
-
             // Spawn the initial controller thread to allow real-time control of the load test.
             // There is no need to rejoin this thread when the load test ends.
             let _ = Some(tokio::spawn(controller::controller_main(
@@ -2089,7 +2042,7 @@ impl GooseAttack {
                     .clone_from(&goose_attack_run_state.all_threads_logger_tx);
 
                 // Copy the GooseUser-throttle receiver channel, used by all threads.
-                thread_user.throttle = if self.configuration.throttle_requests > 0 {
+                thread_user.throttle = if self.configuration.throttle_requests() > 0 {
                     Some(goose_attack_run_state.throttle_threads_tx.clone().unwrap())
                 } else {
                     None
@@ -2742,10 +2695,10 @@ impl GooseAttack {
         self.configuration.test_plan = Some(test_plan.clone());
         self.configuration.users = None;
         self.configuration.increase_rate = None;
-        self.configuration.increase_time = "0".to_string();
+        self.configuration.increase_time = None;
         self.configuration.decrease_rate = None;
-        self.configuration.decrease_time = "0".to_string();
-        self.configuration.run_time = "0".to_string();
+        self.configuration.decrease_time = None;
+        self.configuration.run_time = None;
         // If the load test is running, rebuild the active test plan.
         if self.attack_phase != AttackPhase::Idle {
             self.test_plan = test_plan;
@@ -3469,7 +3422,7 @@ mod tests {
             )
         );
 
-        goose_attack.configuration.host = "http://127.0.0.1".to_string();
+        goose_attack.configuration.host = Some("http://127.0.0.1".to_string());
         goose_attack.configuration.users = None;
         goose_attack.configuration.test_plan = None;
         // With no scenario, a Start that got past the users check would fail
