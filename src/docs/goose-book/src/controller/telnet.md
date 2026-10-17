@@ -20,12 +20,12 @@ stop               stop a running load test and return to idle state
 shutdown           shutdown load test and exit controller
 
 host HOST          set host to load test, (ie https://web.site/)
-increaserate FLOAT set per-second rate users increase
-increase-time TIME set total time to take increasing users
-decreaserate FLOAT set per-second rate users decrease
-decrease-time TIME set total time to take decreasing users
+increaserate FLOAT set per-second rate users increase (0.01 to 100000)
+increase-time TIME set total time to take increasing users (0 clears)
+decreaserate FLOAT set per-second rate users decrease (0.01 to 100000)
+decrease-time TIME set total time to take decreasing users (0 clears)
 users INT          set number of simulated users (1 to 100000)
-runtime TIME       set how long to run test, (ie 1h30m5s)
+runtime TIME       set how long to hold users after the ramp up, (ie 1h30m5s, 0 clears)
 test-plan PLAN     define or replace test-plan, (ie 10,5m;10,1h;0,30s)
 
 config             display load test configuration
@@ -42,12 +42,26 @@ A command whose value can't be used is refused with what the value must be, and 
 goose> users 0
 users must be an integer between 1 and 100000
 goose> increaserate 0
-increase_rate must be a number of at least 0.0000116 (one user a day)
-goose> runtime 10d
-run_time must be a time span such as 1h30m5s
+increase_rate must be a number from 0.01 to 100000
+goose> runtime 31d
+run_time must be a time span such as 1h30m5s, from 1 second to 30 days, or 0 to clear
 ```
 
-`host`, `runtime`, `increase-time` and `decrease-time` are accepted only while the load test is idle, as they are read when it starts. `users` and `test-plan` also change a running load test. The rates are accepted at any time and stored: the next `users` change or Start uses them, so on a running load test set a rate, then `users`. A rate of at least one user a day (0.0000116 a second) is accepted. Setting a rate clears a configured test plan, and the reply then says so: `increase_rate configured, test plan cleared`. A test plan must start 1 to 100000 users in total, and `users` and `test-plan` are refused while a `stop`, `shutdown` or Ctrl-C is ramping the load test down. A command that gets no answer within 15 seconds is reported as timed out, and may still apply.
+Telnet, WebSocket and the dashboard share these bounds:
+
+| Setting | Accepted |
+|---------|----------|
+| `host` | An `http://` or `https://` url with no user name or password, which would show to observers and in reports |
+| `users` | 1 to 100000 |
+| `increaserate`, `decreaserate` | 0.01 to 100000 users per second |
+| `increase-time`, `decrease-time`, `runtime` | 1 second to 30 days; `0` clears the setting, so Goose's default applies |
+| `test-plan` | At most 100 steps of 0 seconds to 30 days each, in at most 4096 bytes, starting 1 to 100000 users in total |
+
+`host`, `runtime`, `increase-time` and `decrease-time` are accepted only while the load test is idle, as they are read when it starts. `users` and `test-plan` also change a running load test. A `users` change on a running users ramp keeps its run time and ramp down: it ramps to the new count, then holds until the hold's end and ramps down for the new count, and during the ramp down it abandons the ramp down and holds the new count until stopped. `users` is refused while a test plan runs, as the plan sets users. See [Users on a running test](dashboard.md#users-on-a-running-test).
+
+The rates are accepted in Idle and on a running users ramp, and are refused during its ramp down, while stopping and while a test plan runs. On a running test, a rate is refused while its own time is set, since a time changes only in Idle; in Idle a rate clears its own time and a time clears its own rate. A decrease rate on a running users ramp regenerates the ramp down still ahead, or adds one where all users would stop at once when the hold ends; an increase rate is for the next `users` increase.
+
+A test plan sets users, so while one is configured a rate or a time is refused with `set users first to switch to a users ramp`: `users` switches to a users ramp and clears the plan, and `test-plan` switches back and clears users, the rates and the times. The command line's rules also apply: `runtime` and `test-plan` are refused under `--iterations`, `test-plan` under `--no-reset-metrics`, and in Idle `increase-time` or `decrease-time` with fewer than 2 users, or `users 1` while either is set. `users` and `test-plan` are refused while a `stop`, `shutdown` or Ctrl-C is ramping the load test down. A command that gets no answer within 15 seconds is reported as timed out, and may still apply.
 
 ## Example
 
