@@ -76,7 +76,6 @@ async fn test_default_behavior_unchanged() {
 #[test]
 fn test_client_config_from_goose_configuration() {
     use goose::config::GooseConfiguration;
-    use gumdrop::Options;
 
     let args: Vec<&str> = vec!["--no-save"];
     let goose_config =

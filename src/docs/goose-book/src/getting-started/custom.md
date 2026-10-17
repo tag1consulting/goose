@@ -1,6 +1,6 @@
 # Custom Run Time Options
 
-It can sometimes be necessary to add custom run-time options to your load test. As Goose "owns" the command line, adding another option with [gumdrop](https://docs.rs/gumdrop) (used by Goose) or another command line parser can be tricky, as Goose will throw an error if it receives an unexpected command line option. There are two alternatives here.
+It can sometimes be necessary to add custom run-time options to your load test. As Goose "owns" the command line, adding another option with [clap](https://docs.rs/clap) (used by Goose) or another command line parser can be tricky, as Goose will throw an error if it receives an unexpected command line option. There are two alternatives here.
 
 ## Environment Variables
 
@@ -77,7 +77,7 @@ Error: InvalidOption { option: "--host", value: "", detail: "A host must be defi
 
 ## Command Line Arguments
 
-If you really need to have custom command line arguments, there is a way to make Goose not throw an error due to unexpected arguments. You can do that by, instead of calling `GooseAttack::initialize()`, using `GooseAttack::initialize_with_config`. This method differs from the first one in that it does not parse arguments from the command line, but instead takes a `GooseConfiguration` value as parameter. Since this type has quite a lot of configuration options, with some private fields, currently the only way you can obtain an instance of it is via the `Default` trait: `GooseConfiguration::default()`.
+If you really need to have custom command line arguments, there is a way to make Goose not throw an error due to unexpected arguments. You can do that by, instead of calling `GooseAttack::initialize()`, using `GooseAttack::initialize_with_config`. This method differs from the first one in that it does not parse arguments from the command line, but instead takes a `GooseConfiguration` value as parameter. Since this type has quite a lot of configuration options, with some private fields, you obtain an instance of it either via the `Default` trait, `GooseConfiguration::default()`, or by parsing a list of Goose options with `GooseConfiguration::parse_args_default(&["--host", "https://localhost:8080"])`, which returns a `Result` and leaves every option you do not pass at its default.
 
 Note that by initializing the `GooseAttack` in this way you are preventing Goose from reading command line arguments, so if you want to have the ability of passing the arguments that Goose allows, you will need to parse them and set them in the `GooseConfiguration` instance. In particular, the `--host` parameter is mandatory, so don't forget to set it in the configuration somehow.
 

@@ -3,7 +3,6 @@
 //! Internally, Goose represents all load tests as a series of Test Plan steps.
 
 use chrono::prelude::*;
-use gumdrop::Options;
 use lazy_static::lazy_static;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -16,7 +15,7 @@ use crate::util;
 use crate::{AttackPhase, GooseAttack, GooseAttackRunState, GooseError};
 
 /// Internal data structure representing a test plan.
-#[derive(Options, Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TestPlan {
     // A test plan is a vector of tuples each indicating a # of users and milliseconds.
     pub steps: Vec<(usize, usize)>,

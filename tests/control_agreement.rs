@@ -5,7 +5,6 @@
 #![cfg(feature = "dashboard")]
 
 use futures::{SinkExt, StreamExt};
-use gumdrop::Options;
 use httpmock::{Method::GET, MockServer};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

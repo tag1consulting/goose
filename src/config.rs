@@ -5,9 +5,10 @@
 //!
 //! Goose can be configured programmatically with [`GooseDefaultType::set_default`].
 
-use gumdrop::Options;
+use clap::{CommandFactory, FromArgMatches, Parser};
 use serde::{Deserialize, Serialize};
 use simplelog::*;
+use std::ffi::OsString;
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -25,234 +26,371 @@ use crate::{GooseAttack, GooseError};
 /// [Help is generated for all of these options](https://book.goose.rs/getting-started/runtime-options.html)
 /// by passing a `-h` flag to an application built with the Goose Library.
 ///
-/// Goose leverages [`gumdrop`](https://docs.rs/gumdrop/) to derive the above help from
-/// the the below structure.
-#[derive(Options, Debug, Clone, Default, Serialize, Deserialize)]
-#[options(
-    help = r#"Goose is a modern, high-performance, distributed HTTP(S) load testing tool,
+/// Goose leverages [`clap`](https://docs.rs/clap/) to derive the above help from
+/// the the below structure. Build a configuration with
+/// [`GooseConfiguration::parse_args_default_or_exit`] or
+/// [`GooseConfiguration::parse_args_default`]: an option that is not on the command
+/// line takes its [`Default`] value, which Goose then resolves against any
+/// [`GooseDefault`] before falling back to its built in default.
+///
+/// Options that take a value and have no `Option` or `Vec` type are marked
+/// `required = false` so that clap leaves them at their [`Default`] value when absent.
+/// `-h` and `-V` are ordinary flags here rather than clap's built in ones, so that
+/// [`GooseConfiguration::parse_args_default`] returns a configuration with `help` or
+/// `version` set, which Goose acts on.
+#[derive(Parser, Debug, Clone, Default, Serialize, Deserialize)]
+#[command(
+    about = r#"Goose is a modern, high-performance, distributed HTTP(S) load testing tool,
 written in Rust. Visit https://book.goose.rs/ for more information.
 
-The following runtime options are available when launching a Goose load test:"#
+The following runtime options are available when launching a Goose load test:"#,
+    long_about = None,
+    disable_help_flag = true,
+    disable_version_flag = true,
+    // A repeated option keeps its last value, as it always has.
+    args_override_self = true,
+    // An option's value may begin with a hyphen, as it always could.
+    allow_hyphen_values = true
 )]
 pub struct GooseConfiguration {
     /// Displays this help
-    #[options(short = "h")]
+    #[arg(short = 'h', long)]
     pub help: bool,
     /// Prints version information
-    #[options(short = "V")]
+    #[arg(short = 'V', long)]
     pub version: bool,
     /// Lists all transactions and exits
-    // Add a blank line after this option
-    #[options(short = "l", help = "Lists all transactions and exits\n")]
+    #[arg(short = 'l', long)]
     pub list: bool,
 
     /// Defines host to load test (ie http://10.21.32.33)
-    #[options(short = "H")]
+    #[arg(short = 'H', long, required = false)]
     pub host: String,
     /// Sets concurrent users (default: number of CPUs)
-    #[options(short = "u")]
+    #[arg(short = 'u', long)]
     pub users: Option<usize>,
     /// Sets per-second user increase rate (default: 1)
-    #[options(short = "r", meta = "RATE")]
+    #[arg(short = 'r', long, value_name = "RATE")]
     pub increase_rate: Option<String>,
     /// Increases users for up to (30s, 20m, 3h, 1h30m, etc)
-    #[options(short = "s", meta = "TIME")]
+    #[arg(short = 's', long, value_name = "TIME", required = false)]
     pub increase_time: String,
     /// Sets per-second user decrease rate
-    #[options(no_short, meta = "RATE")]
+    #[arg(long, value_name = "RATE")]
     pub decrease_rate: Option<String>,
     /// Decreases users for up to (30s, 20m, 3h, 1h30m, etc)
-    #[options(no_short, meta = "TIME")]
+    #[arg(long, value_name = "TIME", required = false)]
     pub decrease_time: String,
     /// Stops load test after (30s, 20m, 3h, 1h30m, etc)
-    #[options(short = "t", meta = "TIME")]
+    #[arg(short = 't', long, value_name = "TIME", required = false)]
     pub run_time: String,
     /// Enables Goose log file and sets name
-    #[options(short = "G", meta = "NAME")]
+    #[arg(short = 'G', long, value_name = "NAME", required = false)]
     pub goose_log: String,
     /// Increases Goose log level (-g, -gg, etc)
-    #[options(short = "g", count)]
+    #[arg(short = 'g', long, action = clap::ArgAction::Count)]
     pub log_level: u8,
     /// Decreases Goose verbosity (-q, -qq, etc)
-    #[options(count, short = "q", help = "Decreases Goose verbosity (-q, -qq, etc)")]
+    #[arg(short = 'q', long, action = clap::ArgAction::Count)]
     pub quiet: u8,
     /// Increases Goose verbosity (-v, -vv, etc)
-    #[options(
-        count,
-        short = "v",
-        // Add a blank line and then a 'Metrics:' header after this option
-        help = "Increases Goose verbosity (-v, -vv, etc)\n\nMetrics:"
-    )]
+    #[arg(short = 'v', long, action = clap::ArgAction::Count)]
     pub verbose: u8,
 
     /// How often to optionally print running metrics
-    #[options(no_short, meta = "TIME")]
+    #[arg(help_heading = "Metrics", long, value_name = "TIME")]
     pub running_metrics: Option<usize>,
     /// Doesn't reset metrics after all users have started
-    #[options(no_short)]
+    #[arg(help_heading = "Metrics", long)]
     pub no_reset_metrics: bool,
     /// Doesn't track metrics
-    #[options(no_short)]
+    #[arg(help_heading = "Metrics", long)]
     pub no_metrics: bool,
     /// Doesn't track transaction metrics
-    #[options(no_short)]
+    #[arg(help_heading = "Metrics", long)]
     pub no_transaction_metrics: bool,
     /// Doesn't track scenario metrics
-    #[options(no_short)]
+    #[arg(help_heading = "Metrics", long)]
     pub no_scenario_metrics: bool,
     /// Doesn't display metrics at end of load test
-    #[options(no_short)]
+    #[arg(help_heading = "Metrics", long)]
     pub no_print_metrics: bool,
     /// Doesn't display an error summary
-    #[options(no_short)]
+    #[arg(help_heading = "Metrics", long)]
     pub no_error_summary: bool,
     /// Create reports, can be used multiple times (supports .html, .htm, .md, .json, .pdf)
-    #[options(no_short, meta = "NAME")]
+    #[arg(help_heading = "Metrics", long, value_name = "NAME")]
     pub report_file: Vec<String>,
     /// Doesn't save this run to the runs directory (--report-file still works)
-    #[options(no_short)]
+    #[arg(help_heading = "Metrics", long)]
     pub no_save: bool,
     /// Sets the runs directory (default: goose-runs)
-    #[options(no_short, meta = "DIR")]
+    #[arg(help_heading = "Metrics", long, value_name = "DIR", required = false)]
     pub runs_dir: String,
     /// Compare against a previous JSON report or saved run directory, showing deltas in all reports
-    #[options(no_short, meta = "FILE")]
+    #[arg(help_heading = "Metrics", long, value_name = "FILE")]
     pub baseline_file: Option<String>,
     /// Disable granular graphs in report file
-    #[options(no_short)]
+    #[arg(help_heading = "Metrics", long)]
     pub no_granular_report: bool,
     /// Generate printer-friendly HTML optimized for PDF conversion
-    #[options(
-        no_short,
-        meta = "PATH",
+    #[arg(
+        help_heading = "Metrics",
+        long,
+        value_name = "PATH",
+        required = false,
         help = "Generate printer-friendly HTML for PDF conversion"
     )]
     pub pdf_print_html: String,
     /// Sets PDF scale factor (0.1-2.0)
     #[cfg(feature = "pdf-reports")]
-    #[options(no_short, meta = "SCALE", default = "0.8")]
+    #[arg(
+        help_heading = "Metrics",
+        long,
+        value_name = "SCALE",
+        default_value_t = 0.8
+    )]
     pub pdf_scale: f64,
-    /// PDF generation timeout (10-600s)  
+    /// PDF generation timeout (10-600s)
     #[cfg(feature = "pdf-reports")]
-    #[options(no_short, meta = "SECONDS", default = "60")]
+    #[arg(
+        help_heading = "Metrics",
+        long,
+        value_name = "SECONDS",
+        default_value_t = 60
+    )]
     pub pdf_timeout: u64,
     /// Sets request log file name
-    #[options(short = "R", meta = "NAME")]
+    #[arg(
+        help_heading = "Metrics",
+        short = 'R',
+        long,
+        value_name = "NAME",
+        required = false
+    )]
     pub request_log: String,
     /// Sets request log format (csv, json, raw, pretty)
-    #[options(no_short, meta = "FORMAT")]
+    #[arg(help_heading = "Metrics", long, value_name = "FORMAT")]
     pub request_format: Option<GooseLogFormat>,
     /// Include the request body in the request log
-    #[options(no_short)]
+    #[arg(help_heading = "Metrics", long)]
     pub request_body: bool,
     /// Sets transaction log file name
-    #[options(short = "T", meta = "NAME")]
+    #[arg(
+        help_heading = "Metrics",
+        short = 'T',
+        long,
+        value_name = "NAME",
+        required = false
+    )]
     pub transaction_log: String,
     /// Sets log format (csv, json, raw, pretty)
-    #[options(no_short, meta = "FORMAT")]
+    #[arg(help_heading = "Metrics", long, value_name = "FORMAT")]
     pub transaction_format: Option<GooseLogFormat>,
     /// Sets scenario log file name
-    #[options(short = "S", meta = "NAME")]
+    #[arg(
+        help_heading = "Metrics",
+        short = 'S',
+        long,
+        value_name = "NAME",
+        required = false
+    )]
     pub scenario_log: String,
     /// Sets log format (csv, json, raw, pretty)
-    #[options(no_short, meta = "FORMAT")]
+    #[arg(help_heading = "Metrics", long, value_name = "FORMAT")]
     pub scenario_format: Option<GooseLogFormat>,
     /// Sets error log file name
-    #[options(short = "E", meta = "NAME")]
+    #[arg(
+        help_heading = "Metrics",
+        short = 'E',
+        long,
+        value_name = "NAME",
+        required = false
+    )]
     pub error_log: String,
     /// Sets error log format (csv, json, raw, pretty)
-    #[options(no_short, meta = "FORMAT")]
+    #[arg(help_heading = "Metrics", long, value_name = "FORMAT")]
     pub error_format: Option<GooseLogFormat>,
     /// Sets debug log file name
-    #[options(short = "D", meta = "NAME")]
+    #[arg(
+        help_heading = "Metrics",
+        short = 'D',
+        long,
+        value_name = "NAME",
+        required = false
+    )]
     pub debug_log: String,
     /// Sets debug log format (csv, json, raw, pretty)
-    #[options(no_short, meta = "FORMAT")]
+    #[arg(help_heading = "Metrics", long, value_name = "FORMAT")]
     pub debug_format: Option<GooseLogFormat>,
     /// Do not include the response body in the debug log
-    #[options(no_short)]
+    #[arg(help_heading = "Metrics", long)]
     pub no_debug_body: bool,
     /// Do not track status code metrics
-    // Add a blank line and then an Advanced: header after this option
-    #[options(no_short, help = "Do not track status code metrics\n\nAdvanced:")]
+    #[arg(help_heading = "Metrics", long)]
     pub no_status_codes: bool,
 
     /// Defines a more complex test plan ("10,60s;0,30s")
-    #[options(no_short, meta = "\"TESTPLAN\"")]
+    #[arg(help_heading = "Advanced", long, value_name = "\"TESTPLAN\"")]
     pub(crate) test_plan: Option<TestPlan>,
     /// Sets how many times to run scenarios then exit
-    #[options(no_short)]
+    #[arg(help_heading = "Advanced", long, required = false)]
     pub iterations: usize,
     /// Limits load test to only specified scenarios
-    #[options(no_short, meta = "\"SCENARIO\"")]
+    #[arg(
+        help_heading = "Advanced",
+        long,
+        value_name = "\"SCENARIO\"",
+        required = false
+    )]
     pub scenarios: Scenarios,
     /// Lists all scenarios and exits
-    #[options(no_short)]
+    #[arg(help_heading = "Advanced", long)]
     pub scenarios_list: bool,
     /// Doesn't enable telnet Controller
-    #[options(no_short)]
+    #[arg(help_heading = "Advanced", long)]
     pub no_telnet: bool,
     /// Sets telnet Controller host (default: 0.0.0.0)
-    #[options(no_short, meta = "HOST")]
+    #[arg(help_heading = "Advanced", long, value_name = "HOST", required = false)]
     pub telnet_host: String,
     /// Sets telnet Controller TCP port (default: 5116)
-    #[options(no_short, meta = "PORT")]
+    #[arg(help_heading = "Advanced", long, value_name = "PORT", required = false)]
     pub telnet_port: u16,
     /// Doesn't enable WebSocket Controller
-    #[options(no_short)]
+    #[arg(help_heading = "Advanced", long)]
     pub no_websocket: bool,
     /// Sets WebSocket Controller host (default: 0.0.0.0)
-    #[options(no_short, meta = "HOST")]
+    #[arg(help_heading = "Advanced", long, value_name = "HOST", required = false)]
     pub websocket_host: String,
     /// Sets WebSocket Controller TCP port (default: 5117)
-    #[options(no_short, meta = "PORT")]
+    #[arg(help_heading = "Advanced", long, value_name = "PORT", required = false)]
     pub websocket_port: u16,
     /// Enables the live web dashboard
-    #[options(no_short)]
+    #[arg(help_heading = "Advanced", long)]
     pub dashboard: bool,
     /// Enable dashboard control endpoints (requires --dashboard and --dashboard-auth-token).
-    #[options(no_short)]
+    // Verbatim, so clap keeps the closing period.
+    #[arg(help_heading = "Advanced", long, verbatim_doc_comment)]
     pub dashboard_control: bool,
     /// Sets dashboard bind host (default: 127.0.0.1)
-    #[options(no_short, meta = "HOST")]
+    #[arg(help_heading = "Advanced", long, value_name = "HOST", required = false)]
     pub dashboard_host: String,
     /// Sets dashboard bind port (default: 5118)
-    #[options(no_short, meta = "PORT")]
+    #[arg(help_heading = "Advanced", long, value_name = "PORT", required = false)]
     pub dashboard_port: u16,
     /// Sets dashboard auth token (required for non-loopback binds, and always required with --dashboard-control)
-    #[options(no_short, meta = "TOKEN")]
+    #[arg(
+        help_heading = "Advanced",
+        long,
+        value_name = "TOKEN",
+        required = false
+    )]
     pub dashboard_auth_token: String,
     /// Sets max concurrent dashboard SSE clients (default: 32)
-    #[options(no_short, meta = "COUNT")]
+    #[arg(
+        help_heading = "Advanced",
+        long,
+        value_name = "COUNT",
+        required = false
+    )]
     pub dashboard_max_clients: u32,
     /// Doesn't track response times by second (requires --dashboard)
-    #[options(no_short)]
+    #[arg(help_heading = "Advanced", long)]
     pub no_percentiles_over_time: bool,
     /// Doesn't automatically start load test
-    #[options(no_short)]
+    #[arg(help_heading = "Advanced", long)]
     pub no_autostart: bool,
     /// Doesn't set the gzip Accept-Encoding header
-    #[options(no_short)]
+    #[arg(help_heading = "Advanced", long)]
     pub no_gzip: bool,
     /// Sets per-request timeout, in seconds (default: 60)
-    #[options(no_short, meta = "VALUE")]
+    #[arg(help_heading = "Advanced", long, value_name = "VALUE")]
     pub timeout: Option<String>,
     /// Sets coordinated omission mitigation strategy
-    #[options(no_short, meta = "STRATEGY")]
+    #[arg(help_heading = "Advanced", long, value_name = "STRATEGY")]
     pub co_mitigation: Option<GooseCoordinatedOmissionMitigation>,
     /// Sets maximum requests per second
-    #[options(no_short, meta = "VALUE")]
+    #[arg(
+        help_heading = "Advanced",
+        long,
+        value_name = "VALUE",
+        required = false
+    )]
     pub throttle_requests: usize,
     /// Follows base_url redirect with subsequent requests
-    #[options(no_short)]
+    #[arg(help_heading = "Advanced", long)]
     pub sticky_follow: bool,
     /// Disables validation of https certificates
-    #[options(no_short)]
+    #[arg(help_heading = "Advanced", long)]
     pub accept_invalid_certs: bool,
 }
 
+impl GooseConfiguration {
+    /// Parses the command line of the running program into a configuration.
+    ///
+    /// Prints help and exits with status 0 when `-h` or `--help` is passed. Prints an
+    /// error and exits with status 2 when the command line is invalid.
+    ///
+    /// # Example
+    /// ```rust,no_run
+    /// use goose::config::GooseConfiguration;
+    ///
+    /// let configuration = GooseConfiguration::parse_args_default_or_exit();
+    /// ```
+    pub fn parse_args_default_or_exit() -> Self {
+        let mut command = Self::command();
+        let configuration =
+            Self::parse_with(&mut command, std::env::args_os()).unwrap_or_else(|e| e.exit());
+        if configuration.help {
+            eprintln!("{}", command.render_help());
+            std::process::exit(0);
+        }
+        configuration
+    }
+
+    /// Parses `args` into a configuration. The program name is omitted from `args`.
+    ///
+    /// # Example
+    /// ```rust
+    /// use goose::config::GooseConfiguration;
+    ///
+    /// let configuration =
+    ///     GooseConfiguration::parse_args_default(&["--users", "4", "-t", "30s"]).unwrap();
+    /// assert_eq!(configuration.users, Some(4));
+    /// assert_eq!(configuration.run_time, "30s");
+    /// ```
+    pub fn parse_args_default<S: AsRef<str>>(args: &[S]) -> Result<Self, GooseError> {
+        let args: Vec<&str> = args.iter().map(AsRef::as_ref).collect();
+        let program = env!("CARGO_PKG_NAME");
+        Self::parse_with(
+            &mut Self::command(),
+            std::iter::once(program).chain(args.iter().copied()),
+        )
+        .map_err(|e| GooseError::InvalidOption {
+            option: "command line".to_string(),
+            value: args.join(" "),
+            detail: e.to_string(),
+        })
+    }
+
+    /// Parses `args`, the program name first, leaving every option that is not on
+    /// the command line at its [`Default`] value.
+    fn parse_with<I, T>(command: &mut clap::Command, args: I) -> Result<Self, clap::Error>
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<OsString> + Clone,
+    {
+        let mut matches = command.try_get_matches_from_mut(args)?;
+        let mut configuration = Self::default();
+        configuration
+            .update_from_arg_matches_mut(&mut matches)
+            .map_err(|e| e.format(command))?;
+        Ok(configuration)
+    }
+}
+
 /// Optionally defines a subset of active Scenarios to run during a load test.
-#[derive(Options, Default, Debug, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct Scenarios {
     pub active: Vec<String>,
 }
@@ -2361,7 +2499,7 @@ impl GooseConfiguration {
                     // Use --pdf-timeout if set.
                     GooseValue {
                         value: Some(self.pdf_timeout),
-                        filter: self.pdf_timeout == 60, // 60 is the default value from gumdrop
+                        filter: self.pdf_timeout == 60, // 60 is the default value of --pdf-timeout
                         message: "pdf_timeout",
                     },
                     // Otherwise use GooseDefault if set.
@@ -3679,6 +3817,353 @@ mod test {
                     assert_eq!(got, detail, "{value}")
                 }
                 other => panic!("{}: {:?}", value, other),
+            }
+        }
+    }
+
+    /// Serializes a configuration so two can be compared field by field.
+    fn as_json(configuration: &GooseConfiguration) -> serde_json::Value {
+        serde_json::to_value(configuration).unwrap()
+    }
+
+    /// A command line that uses every option at least once sets every field.
+    #[test]
+    fn command_line_sets_every_option() {
+        let mut args = vec![
+            "--help",
+            "--version",
+            "--list",
+            "--host",
+            "http://example.com/",
+            "--users",
+            "3",
+            "--increase-rate",
+            "2",
+            "--increase-time",
+            "5s",
+            "--decrease-rate",
+            "4",
+            "--decrease-time",
+            "6s",
+            "--run-time",
+            "7s",
+            "--goose-log",
+            "goose.log",
+            "--log-level",
+            "--log-level",
+            "--quiet",
+            "--verbose",
+            "--verbose",
+            "--verbose",
+            "--running-metrics",
+            "15",
+            "--no-reset-metrics",
+            "--no-metrics",
+            "--no-transaction-metrics",
+            "--no-scenario-metrics",
+            "--no-print-metrics",
+            "--no-error-summary",
+            "--report-file",
+            "a.html",
+            "--report-file",
+            "b.json",
+            "--no-save",
+            "--runs-dir",
+            "runs",
+            "--baseline-file",
+            "baseline.json",
+            "--no-granular-report",
+            "--pdf-print-html",
+            "print.html",
+            "--request-log",
+            "request.log",
+            "--request-format",
+            "json",
+            "--request-body",
+            "--transaction-log",
+            "transaction.log",
+            "--transaction-format",
+            "csv",
+            "--scenario-log",
+            "scenario.log",
+            "--scenario-format",
+            "raw",
+            "--error-log",
+            "error.log",
+            "--error-format",
+            "pretty",
+            "--debug-log",
+            "debug.log",
+            "--debug-format",
+            "json",
+            "--no-debug-body",
+            "--no-status-codes",
+            "--test-plan",
+            "10,60s;0,30s",
+            "--iterations",
+            "8",
+            "--scenarios",
+            "one,two*",
+            "--scenarios-list",
+            "--no-telnet",
+            "--telnet-host",
+            "127.0.0.2",
+            "--telnet-port",
+            "6000",
+            "--no-websocket",
+            "--websocket-host",
+            "127.0.0.3",
+            "--websocket-port",
+            "6001",
+            "--dashboard",
+            "--dashboard-control",
+            "--dashboard-host",
+            "127.0.0.4",
+            "--dashboard-port",
+            "6002",
+            "--dashboard-auth-token",
+            "token",
+            "--dashboard-max-clients",
+            "9",
+            "--no-percentiles-over-time",
+            "--no-autostart",
+            "--no-gzip",
+            "--timeout",
+            "30",
+            "--co-mitigation",
+            "average",
+            "--throttle-requests",
+            "11",
+            "--sticky-follow",
+            "--accept-invalid-certs",
+        ];
+        if cfg!(feature = "pdf-reports") {
+            args.extend(["--pdf-scale", "1.5", "--pdf-timeout", "120"]);
+        }
+
+        let c = GooseConfiguration::parse_args_default(&args).unwrap();
+        assert!(c.help);
+        assert!(c.version);
+        assert!(c.list);
+        assert_eq!(c.host, "http://example.com/");
+        assert_eq!(c.users, Some(3));
+        assert_eq!(c.increase_rate.as_deref(), Some("2"));
+        assert_eq!(c.increase_time, "5s");
+        assert_eq!(c.decrease_rate.as_deref(), Some("4"));
+        assert_eq!(c.decrease_time, "6s");
+        assert_eq!(c.run_time, "7s");
+        assert_eq!(c.goose_log, "goose.log");
+        assert_eq!(c.log_level, 2);
+        assert_eq!(c.quiet, 1);
+        assert_eq!(c.verbose, 3);
+        assert_eq!(c.running_metrics, Some(15));
+        assert!(c.no_reset_metrics);
+        assert!(c.no_metrics);
+        assert!(c.no_transaction_metrics);
+        assert!(c.no_scenario_metrics);
+        assert!(c.no_print_metrics);
+        assert!(c.no_error_summary);
+        assert_eq!(c.report_file, vec!["a.html", "b.json"]);
+        assert!(c.no_save);
+        assert_eq!(c.runs_dir, "runs");
+        assert_eq!(c.baseline_file.as_deref(), Some("baseline.json"));
+        assert!(c.no_granular_report);
+        assert_eq!(c.pdf_print_html, "print.html");
+        #[cfg(feature = "pdf-reports")]
+        {
+            assert_eq!(c.pdf_scale, 1.5);
+            assert_eq!(c.pdf_timeout, 120);
+        }
+        assert_eq!(c.request_log, "request.log");
+        assert_eq!(c.request_format, Some(GooseLogFormat::Json));
+        assert!(c.request_body);
+        assert_eq!(c.transaction_log, "transaction.log");
+        assert_eq!(c.transaction_format, Some(GooseLogFormat::Csv));
+        assert_eq!(c.scenario_log, "scenario.log");
+        assert_eq!(c.scenario_format, Some(GooseLogFormat::Raw));
+        assert_eq!(c.error_log, "error.log");
+        assert_eq!(c.error_format, Some(GooseLogFormat::Pretty));
+        assert_eq!(c.debug_log, "debug.log");
+        assert_eq!(c.debug_format, Some(GooseLogFormat::Json));
+        assert!(c.no_debug_body);
+        assert!(c.no_status_codes);
+        assert_eq!(
+            c.test_plan.unwrap().steps,
+            TestPlan::from_str("10,60s;0,30s").unwrap().steps
+        );
+        assert_eq!(c.iterations, 8);
+        assert_eq!(c.scenarios.active, vec!["one", "two*"]);
+        assert!(c.scenarios_list);
+        assert!(c.no_telnet);
+        assert_eq!(c.telnet_host, "127.0.0.2");
+        assert_eq!(c.telnet_port, 6000);
+        assert!(c.no_websocket);
+        assert_eq!(c.websocket_host, "127.0.0.3");
+        assert_eq!(c.websocket_port, 6001);
+        assert!(c.dashboard);
+        assert!(c.dashboard_control);
+        assert_eq!(c.dashboard_host, "127.0.0.4");
+        assert_eq!(c.dashboard_port, 6002);
+        assert_eq!(c.dashboard_auth_token, "token");
+        assert_eq!(c.dashboard_max_clients, 9);
+        assert!(c.no_percentiles_over_time);
+        assert!(c.no_autostart);
+        assert!(c.no_gzip);
+        assert_eq!(c.timeout.as_deref(), Some("30"));
+        assert_eq!(
+            c.co_mitigation,
+            Some(GooseCoordinatedOmissionMitigation::Average)
+        );
+        assert_eq!(c.throttle_requests, 11);
+        assert!(c.sticky_follow);
+        assert!(c.accept_invalid_certs);
+    }
+
+    /// An option left off the command line keeps its `Default` value, apart from
+    /// the PDF options, which have their own defaults.
+    #[test]
+    fn absent_options_take_their_defaults() {
+        let c = GooseConfiguration::parse_args_default::<&str>(&[]).unwrap();
+        let expected = GooseConfiguration {
+            #[cfg(feature = "pdf-reports")]
+            pdf_scale: 0.8,
+            #[cfg(feature = "pdf-reports")]
+            pdf_timeout: 60,
+            ..GooseConfiguration::default()
+        };
+        assert_eq!(as_json(&c), as_json(&expected));
+        assert!(c.scenarios.active.is_empty());
+    }
+
+    /// Generates a test that a short option sets the same field as its long name,
+    /// and that the field differs from its default.
+    macro_rules! short_option_test {
+        ($name:ident, $short:expr, $long:expr) => {
+            #[test]
+            fn $name() {
+                let short = GooseConfiguration::parse_args_default(&$short).unwrap();
+                let long = GooseConfiguration::parse_args_default(&$long).unwrap();
+                let none = GooseConfiguration::parse_args_default::<&str>(&[]).unwrap();
+                assert_eq!(as_json(&short), as_json(&long));
+                assert_ne!(as_json(&short), as_json(&none));
+            }
+        };
+    }
+
+    short_option_test!(short_option_h, ["-h"], ["--help"]);
+    short_option_test!(short_option_upper_v, ["-V"], ["--version"]);
+    short_option_test!(short_option_l, ["-l"], ["--list"]);
+    short_option_test!(
+        short_option_upper_h,
+        ["-H", "http://example.com/"],
+        ["--host", "http://example.com/"]
+    );
+    short_option_test!(short_option_u, ["-u", "5"], ["--users", "5"]);
+    short_option_test!(short_option_r, ["-r", "3"], ["--increase-rate", "3"]);
+    short_option_test!(short_option_s, ["-s", "10s"], ["--increase-time", "10s"]);
+    short_option_test!(short_option_t, ["-t", "1m"], ["--run-time", "1m"]);
+    short_option_test!(
+        short_option_upper_g,
+        ["-G", "g.log"],
+        ["--goose-log", "g.log"]
+    );
+    short_option_test!(short_option_g, ["-gg"], ["--log-level", "--log-level"]);
+    short_option_test!(short_option_q, ["-qq"], ["--quiet", "--quiet"]);
+    short_option_test!(short_option_v, ["-vvv"], ["-v", "--verbose", "-v"]);
+    short_option_test!(
+        short_option_upper_r,
+        ["-R", "r.log"],
+        ["--request-log", "r.log"]
+    );
+    short_option_test!(
+        short_option_upper_t,
+        ["-T", "t.log"],
+        ["--transaction-log", "t.log"]
+    );
+    short_option_test!(
+        short_option_upper_s,
+        ["-S", "s.log"],
+        ["--scenario-log", "s.log"]
+    );
+    short_option_test!(
+        short_option_upper_e,
+        ["-E", "e.log"],
+        ["--error-log", "e.log"]
+    );
+    short_option_test!(
+        short_option_upper_d,
+        ["-D", "d.log"],
+        ["--debug-log", "d.log"]
+    );
+
+    /// Short options combine, and take a value attached or after `=` on a long name.
+    #[test]
+    fn option_spellings() {
+        let a =
+            GooseConfiguration::parse_args_default(&["-lu7", "--host=http://h/", "-gv"]).unwrap();
+        assert!(a.list);
+        assert_eq!(a.users, Some(7));
+        assert_eq!(a.host, "http://h/");
+        assert_eq!(a.log_level, 1);
+        assert_eq!(a.verbose, 1);
+    }
+
+    /// A repeated option keeps its last value, a repeated flag stays set, and
+    /// `--report-file` collects every value.
+    #[test]
+    fn repeated_options() {
+        let c = GooseConfiguration::parse_args_default(&[
+            "--users",
+            "1",
+            "-u",
+            "2",
+            "--host",
+            "http://a/",
+            "--host",
+            "http://b/",
+            "--no-save",
+            "--no-save",
+            "--report-file",
+            "a.html",
+            "--report-file",
+            "a.html",
+        ])
+        .unwrap();
+        assert_eq!(c.users, Some(2));
+        assert_eq!(c.host, "http://b/");
+        assert!(c.no_save);
+        assert_eq!(c.report_file, vec!["a.html", "a.html"]);
+    }
+
+    /// An option's value may begin with a hyphen.
+    #[test]
+    fn option_value_may_begin_with_hyphen() {
+        let c = GooseConfiguration::parse_args_default(&["--goose-log", "-g", "-H", "--users"])
+            .unwrap();
+        assert_eq!(c.goose_log, "-g");
+        assert_eq!(c.host, "--users");
+        assert_eq!(c.log_level, 0);
+        assert_eq!(c.users, None);
+    }
+
+    /// Unknown options, free arguments, missing values and bad values are errors.
+    #[test]
+    fn invalid_command_lines_are_errors() {
+        for args in [
+            &["--bogus"][..],
+            &["extra"],
+            &["--users"],
+            &["--users", "many"],
+            &["--no-save=true"],
+            &["--request-format", "xml"],
+            &["--telnet-port", "70000"],
+        ] {
+            match GooseConfiguration::parse_args_default(args) {
+                Err(GooseError::InvalidOption { option, value, .. }) => {
+                    assert_eq!(option, "command line");
+                    assert_eq!(value, args.join(" "));
+                }
+                other => panic!("{:?}: {:?}", args, other),
             }
         }
     }

@@ -1,6 +1,11 @@
 # Changelog
 
 ## 0.19.0-dev
+ - [#PR](https://github.com/tag1consulting/goose/pull/PR) parse the command line with `clap` instead of the unmaintained `gumdrop`; every command line is unchanged
+    o **API change**: `GooseConfiguration::parse_args_default` and `GooseConfiguration::parse_args_default_or_exit` are now inherent methods, so remove `use gumdrop::Options;` from load tests that imported it
+    o `parse_args_default` returns a `GooseError::InvalidOption` instead of a `gumdrop::Error`
+    o `Scenarios` and `TestPlan` no longer implement `gumdrop::Options`
+    o help output is laid out differently
  - [#755](https://github.com/tag1consulting/goose/pull/755) replace `headless_chrome`'s `fetch` feature with Goose's own browser lookup and download, so `pdf-reports` builds again and uses an installed Chrome or Chromium first; on 2026-10-16 every `zip` release but 9.0.3 was yanked, and `fetch` needed `zip` 8.6, so every build failed to resolve, since Cargo resolves optional dependencies whatever features are enabled; on arm64 Linux `fetch` downloaded an x86_64 Chromium that could not run, even with Chromium installed (#753)
     o **behavior change**: PDF reports use `CHROME` when it is set, then an installed Chrome, Chromium or Edge, then a Chrome for Testing headless shell that Goose downloads once into the user cache directory (`goose/chrome`); `fetch` always downloaded its own Chromium snapshot and ignored both `CHROME` and the installed browser
     o **behavior change**: a `CHROME` that names a path that does not exist is an error; `headless_chrome` ignored it

@@ -4162,7 +4162,6 @@ impl Hash for Transaction {
 mod tests {
     use super::*;
 
-    use gumdrop::Options;
     use httpmock::{
         Method::{GET, POST},
         MockServer,

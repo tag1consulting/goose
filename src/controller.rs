@@ -1057,7 +1057,6 @@ pub(crate) mod tests {
     use crate::runs;
     use crate::test_plan::TestPlanStepAction;
     use crate::{scenario, transaction};
-    use gumdrop::Options;
 
     /// A telnet client that goes ends the task serving it.
     #[tokio::test]

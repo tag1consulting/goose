@@ -9,7 +9,6 @@
 
 mod common;
 
-use gumdrop::Options;
 use httpmock::{Method::GET, MockServer};
 use serial_test::serial;
 

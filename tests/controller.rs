@@ -1,6 +1,5 @@
 use futures::stream::{SplitSink, SplitStream};
 use futures::{SinkExt, StreamExt};
-use gumdrop::Options;
 use httpmock::{Method::GET, Mock, MockServer};
 use std::{str, time};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

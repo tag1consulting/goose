@@ -8,7 +8,7 @@
 - **Reqwest**: HTTP client library for making requests
 - **Serde**: Serialization/deserialization framework
 - **Flume**: Channel implementation for internal communication
-- **Gumdrop**: Command-line argument parsing
+- **Clap**: Command-line argument parsing
 
 ### Supporting Libraries
 - **Chrono**: Date and time functionality

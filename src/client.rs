@@ -370,7 +370,6 @@ mod tests {
     #[test]
     fn test_configuration_from_goose_config() {
         use crate::config::GooseConfiguration;
-        use gumdrop::Options;
 
         let args: Vec<&str> = vec![];
         let config = GooseConfiguration::parse_args_default(&args).unwrap();

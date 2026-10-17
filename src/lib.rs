@@ -56,7 +56,6 @@ mod throttle;
 mod user;
 pub mod util;
 
-use gumdrop::Options;
 use lazy_static::lazy_static;
 use rand::prelude::*;
 use std::collections::{hash_map::DefaultHasher, BTreeMap, HashMap, HashSet};
@@ -633,7 +632,6 @@ impl GooseAttack {
     /// ```rust
     /// use goose::GooseAttack;
     /// use goose::config::GooseConfiguration;
-    /// use gumdrop::Options;
     ///
     /// let configuration = GooseConfiguration::parse_args_default_or_exit();
     /// let mut goose_attack = GooseAttack::initialize_with_config(configuration);

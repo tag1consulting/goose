@@ -7,7 +7,6 @@
 
 #![cfg(unix)]
 
-use gumdrop::Options;
 use httpmock::{Method::GET, MockServer};
 use std::os::unix::fs::PermissionsExt;
 

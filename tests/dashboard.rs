@@ -10,7 +10,6 @@
 
 #![cfg(feature = "dashboard")]
 
-use gumdrop::Options;
 use httpmock::{Method::GET, Mock, MockServer};
 use serial_test::serial;
 use std::time::{Duration, Instant};

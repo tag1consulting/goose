@@ -3,7 +3,6 @@
 
 use goose::config::GooseConfiguration;
 use goose::prelude::*;
-use gumdrop::Options;
 
 #[derive(Debug, Clone)]
 struct Session {
