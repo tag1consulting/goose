@@ -262,9 +262,12 @@ test("the pill says poll as soon as the stream closes, before a poll answers", a
   await send(page, snapshotWith());
   const label = el(page, "connection-label");
   assert.equal(label.textContent, "SSE");
+  const polls = () => page.requests.filter((r) => r.path === "/api/v1/snapshot").length;
+  const before = polls();
   page.events.source.readyState = 2;
   page.events.source.onerror();
   await settle(page.window);
+  assert.equal(polls(), before + 1, "one closed error polls at once, without the error streak");
   assert.equal(label.textContent, "poll", "not SSE while the first poll is out");
   assert.ok(el(page, "connection").classList.contains("poll"));
   assert.ok(!el(page, "connection").classList.contains("live"));

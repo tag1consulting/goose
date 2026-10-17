@@ -182,3 +182,21 @@ test("Stop keeps focus and ignores a second press while its request is in flight
   await answered(page);
   assert.deepEqual(posts(page), ["/api/v1/control/stop"]);
 });
+
+test("the Target field falls back from target to maximum to active users", async () => {
+  const page = await openPage("/?token=" + TOKEN, FRESH, TOKEN, {
+    controlEnabled: true,
+    eventStream: true,
+  });
+  const target = el(page, "ctrl-target");
+  const show = async (users) => {
+    page.events.emit("snapshot", JSON.stringify({ ...IDLE_SNAPSHOT, ...users }));
+    await settle(page.window);
+    return target.value;
+  };
+  // First, while the field is still empty: no target leaves the field as it was.
+  assert.equal(await show({ target_users: 0, maximum_users: 0, active_users: 0 }), "", "never 0");
+  assert.equal(await show({ target_users: 20, maximum_users: 50, active_users: 0 }), "20");
+  assert.equal(await show({ target_users: 0, maximum_users: 50, active_users: 7 }), "50");
+  assert.equal(await show({ target_users: 0, maximum_users: 0, active_users: 7 }), "7");
+});
