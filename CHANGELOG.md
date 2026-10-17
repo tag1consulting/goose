@@ -1,11 +1,14 @@
 # Changelog
 
 ## 0.19.0-dev
- - [#760](https://github.com/tag1consulting/goose/pull/760) parse the command line with `clap` instead of the unmaintained `gumdrop`; every command line is unchanged
-    o **API change**: `GooseConfiguration::parse_args_default` and `GooseConfiguration::parse_args_default_or_exit` are now inherent methods, so remove `use gumdrop::Options;` from load tests that imported it
-    o `parse_args_default` returns a `GooseError::InvalidOption` instead of a `gumdrop::Error`
-    o `Scenarios` and `TestPlan` no longer implement `gumdrop::Options`
-    o help output is laid out differently
+ - [#760](https://github.com/tag1consulting/goose/pull/760) parse the command line with `clap` instead of the unmaintained `gumdrop`; every command line parses as it did
+    o **API change**: `GooseConfiguration::parse_args_default` and `GooseConfiguration::parse_args_default_or_exit` are now inherent methods, so remove `use gumdrop::Options;` from load tests that imported it; `GooseConfiguration` does not implement `clap::Parser`, so `parse()` and `try_parse_from()` do not exist
+    o **API change**: the `help` field is gone, and `parse_args_default` returns a `GooseError::InvalidOption` for `-h` and `--help`; its errors name the option and value clap refused, and give clap's reason without its usage line
+    o **API change**: `GooseConfiguration::pdf_scale` and `pdf_timeout` are `Option<f64>` and `Option<u64>`; `GooseDefault::PdfScale` sets the scale in code, as `GooseDefault::PdfTimeout` sets the timeout
+    o **behavior change**: help is split into a short `-h`, one line for each option, and a long `--help`, which explains each option's default, values, interactions and `GooseDefault`; both are regrouped under task headings with new wording, printed to stdout, and wrapped to the terminal (80 columns when none is detected, at most 120)
+    o **bug fix**: an explicit `--pdf-timeout 60` now beats `GooseDefault::PdfTimeout`, and `GooseConfiguration::default()` gets a PDF scale of 0.8 and a timeout of 60, where it had 0.0 and 0 and a PDF report was refused
+    o a bad `--co-mitigation` or log format value now names the valid ones
+    o the book's runtime options page is generated from the help, and a test checks it matches
  - [#755](https://github.com/tag1consulting/goose/pull/755) replace `headless_chrome`'s `fetch` feature with Goose's own browser lookup and download, so `pdf-reports` builds again and uses an installed Chrome or Chromium first; on 2026-10-16 every `zip` release but 9.0.3 was yanked, and `fetch` needed `zip` 8.6, so every build failed to resolve, since Cargo resolves optional dependencies whatever features are enabled; on arm64 Linux `fetch` downloaded an x86_64 Chromium that could not run, even with Chromium installed (#753)
     o **behavior change**: PDF reports use `CHROME` when it is set, then an installed Chrome, Chromium or Edge, then a Chrome for Testing headless shell that Goose downloads once into the user cache directory (`goose/chrome`); `fetch` always downloaded its own Chromium snapshot and ignored both `CHROME` and the installed browser
     o **behavior change**: a `CHROME` that names a path that does not exist is an error; `headless_chrome` ignored it
