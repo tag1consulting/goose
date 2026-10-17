@@ -554,7 +554,7 @@ impl GooseAttack {
                 self.control_set_plan(goose_attack_run_state, plan)
             }
             ControllerCommand::IncreaseRate(rate) => {
-                self.configuration.increase_time = "0".to_string();
+                self.configuration.increase_time = None;
                 self.configuration.increase_rate = Some(rate.to_string());
                 let message = match self.configuration.test_plan.take() {
                     Some(_) => "increase_rate configured, test plan cleared",
@@ -563,7 +563,7 @@ impl GooseAttack {
                 configured(self, goose_attack_run_state, message)
             }
             ControllerCommand::DecreaseRate(rate) => {
-                self.configuration.decrease_time = "0".to_string();
+                self.configuration.decrease_time = None;
                 self.configuration.decrease_rate = Some(rate.to_string());
                 let message = match self.configuration.test_plan.take() {
                     Some(_) => "decrease_rate configured, test plan cleared",
@@ -592,23 +592,23 @@ impl GooseAttack {
                 "failed to configure run_time, be sure load test is idle",
             ),
             ControllerCommand::Host(host) => {
-                self.configuration.host = host;
+                self.configuration.host = Some(host);
                 configured(self, goose_attack_run_state, "host configured")
             }
             ControllerCommand::IncreaseTime(seconds) => {
                 self.configuration.increase_rate = None;
-                self.configuration.increase_time = seconds.to_string();
+                self.configuration.increase_time = Some(seconds.to_string());
                 self.configuration.test_plan = None;
                 configured(self, goose_attack_run_state, "increase_time configured")
             }
             ControllerCommand::DecreaseTime(seconds) => {
                 self.configuration.decrease_rate = None;
-                self.configuration.decrease_time = seconds.to_string();
+                self.configuration.decrease_time = Some(seconds.to_string());
                 self.configuration.test_plan = None;
                 configured(self, goose_attack_run_state, "decrease_time configured")
             }
             ControllerCommand::RunTime(seconds) => {
-                self.configuration.run_time = seconds.to_string();
+                self.configuration.run_time = Some(seconds.to_string());
                 self.configuration.test_plan = None;
                 configured(self, goose_attack_run_state, "run_time configured")
             }
@@ -717,11 +717,13 @@ pub(crate) async fn controller_main(
     let address = match &protocol {
         ControllerProtocol::Telnet => format!(
             "{}:{}",
-            configuration.telnet_host, configuration.telnet_port
+            configuration.telnet_host(),
+            configuration.telnet_port()
         ),
         ControllerProtocol::WebSocket => format!(
             "{}:{}",
-            configuration.websocket_host, configuration.websocket_port
+            configuration.websocket_host(),
+            configuration.websocket_port()
         ),
     };
 
@@ -1057,7 +1059,6 @@ pub(crate) mod tests {
     use crate::runs;
     use crate::test_plan::TestPlanStepAction;
     use crate::{scenario, transaction};
-    use gumdrop::Options;
 
     /// A telnet client that goes ends the task serving it.
     #[tokio::test]
@@ -1673,7 +1674,7 @@ pub(crate) mod tests {
             }
             goose_attack.set_attack_phase(&mut run_state, AttackPhase::Idle);
             assert!(control(&mut goose_attack, &mut run_state, "runtime 10").await);
-            assert_eq!(goose_attack.configuration.run_time, "10");
+            assert_eq!(goose_attack.configuration.run_time.as_deref(), Some("10"));
         });
     }
 
@@ -1692,9 +1693,15 @@ pub(crate) mod tests {
                     line
                 );
             }
-            assert_eq!(goose_attack.configuration.run_time, "0");
-            assert_eq!(goose_attack.configuration.increase_time, "0");
-            assert_eq!(goose_attack.configuration.decrease_time, "0");
+            assert_eq!(goose_attack.configuration.run_time.as_deref(), Some("0"));
+            assert_eq!(
+                goose_attack.configuration.increase_time.as_deref(),
+                Some("0")
+            );
+            assert_eq!(
+                goose_attack.configuration.decrease_time.as_deref(),
+                Some("0")
+            );
         });
     }
 

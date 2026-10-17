@@ -317,9 +317,6 @@ use crate::{GooseConfiguration, GooseError, WeightedTransactions};
 /// By default Goose sets the following User-Agent header when making requests.
 static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 
-/// By default Goose times out requests after 60,000 milliseconds.
-static GOOSE_REQUEST_TIMEOUT: u64 = 60_000;
-
 /// Atomically decrement `counter` by one, saturating at zero.
 ///
 /// An explicit `compare_exchange_weak` loop with `Relaxed` ordering, equivalent to
@@ -1867,9 +1864,9 @@ impl GooseUser {
         // Grab a copy of any headers set by this request, included in the request log,
         // the debug log and the error log. Skip the formatting when none of those logs
         // is enabled, as nothing else reads them.
-        let headers: Vec<String> = if !self.config.request_log.is_empty()
-            || !self.config.debug_log.is_empty()
-            || !self.config.error_log.is_empty()
+        let headers: Vec<String> = if self.config.request_log().is_some()
+            || self.config.debug_log().is_some()
+            || self.config.error_log().is_some()
         {
             let mut headers = Vec::with_capacity(built_request.headers().len());
             for header in built_request.headers() {
@@ -2230,7 +2227,7 @@ impl GooseUser {
         request_metric: GooseRequestMetric,
     ) -> TransactionResult {
         // If requests-file is enabled, send a copy of the raw request to the logger thread.
-        if !self.config.request_log.is_empty() {
+        if self.config.request_log().is_some() {
             if let Some(logger) = self.logger.as_ref() {
                 if let Err(e) = logger.send(Some(GooseLog::Request(request_metric.clone()))) {
                     return Err(Box::new(e.into()));
@@ -3078,7 +3075,7 @@ impl GooseUser {
         headers: Option<&header::HeaderMap>,
         body: Option<&str>,
     ) -> TransactionResult {
-        if !self.config.debug_log.is_empty() {
+        if self.config.debug_log().is_some() {
             // Logger is not defined when running
             // [`test_start`](../struct.GooseAttack.html#method.test_start),
             // [`test_stop`](../struct.GooseAttack.html#method.test_stop), and during testing.
@@ -3353,19 +3350,9 @@ impl GooseUser {
 pub(crate) fn create_reqwest_client(
     configuration: &GooseConfiguration,
 ) -> Result<Client, reqwest::Error> {
-    // Either use manually configured timeout, or default.
-    let timeout = if configuration.timeout.is_some() {
-        match crate::util::get_float_from_string(configuration.timeout.clone()) {
-            Some(f) => f as u64 * 1_000,
-            None => GOOSE_REQUEST_TIMEOUT,
-        }
-    } else {
-        GOOSE_REQUEST_TIMEOUT
-    };
-
     let client_builder = Client::builder()
         .user_agent(APP_USER_AGENT)
-        .timeout(Duration::from_millis(timeout))
+        .timeout(configuration.request_timeout())
         // Enable gzip unless `--no-gzip` flag is enabled.
         .gzip(!configuration.no_gzip)
         // Validate https certificates unless `--accept-invalid-certs` is enabled.
@@ -4162,7 +4149,6 @@ impl Hash for Transaction {
 mod tests {
     use super::*;
 
-    use gumdrop::Options;
     use httpmock::{
         Method::{GET, POST},
         MockServer,

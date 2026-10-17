@@ -1,5 +1,4 @@
 use futures::future::join_all;
-use gumdrop::Options;
 use httpmock::MockServer;
 use std::io::{self, BufRead};
 

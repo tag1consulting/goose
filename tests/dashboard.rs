@@ -10,7 +10,6 @@
 
 #![cfg(feature = "dashboard")]
 
-use gumdrop::Options;
 use httpmock::{Method::GET, Mock, MockServer};
 use serial_test::serial;
 use std::time::{Duration, Instant};
@@ -365,7 +364,7 @@ async fn test_dashboard_loopback_no_token() {
 
     let configuration = build_dashboard_config(&server, "127.0.0.1", port, None);
     assert!(configuration.dashboard);
-    assert!(configuration.dashboard_auth_token.is_empty());
+    assert!(configuration.dashboard_auth_token.is_none());
     assert!(configuration.report_file.is_empty());
 
     let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
@@ -481,7 +480,10 @@ async fn test_dashboard_token_auth() {
     let base_v4 = format!("http://127.0.0.1:{port}");
 
     let configuration = build_dashboard_config(&server, "127.0.0.1", port, Some(AUTH_TOKEN));
-    assert_eq!(configuration.dashboard_auth_token, AUTH_TOKEN);
+    assert_eq!(
+        configuration.dashboard_auth_token.as_deref(),
+        Some(AUTH_TOKEN)
+    );
 
     let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
 
@@ -612,7 +614,7 @@ async fn test_dashboard_binds_localhost() {
     let base_v6 = format!("http://[::1]:{port}");
 
     let configuration = build_dashboard_config(&server, "localhost", port, None);
-    assert_eq!(configuration.dashboard_host, "localhost");
+    assert_eq!(configuration.dashboard_host.as_deref(), Some("localhost"));
 
     let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
 
@@ -661,7 +663,7 @@ async fn test_dashboard_refuses_rebound_host() {
     let base_v4 = format!("http://127.0.0.1:{port}");
 
     let configuration = build_dashboard_config(&server, "127.0.0.1", port, None);
-    assert!(configuration.dashboard_auth_token.is_empty());
+    assert!(configuration.dashboard_auth_token.is_none());
     let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
     let load_handle = tokio::spawn(async move { goose_attack.execute().await });
     wait_for_health(&[&base_v4], 80).await;
@@ -1495,7 +1497,7 @@ async fn test_dashboard_series_without_report_file() {
     let base_v4 = format!("http://127.0.0.1:{port}");
 
     let mut configuration = build_dashboard_config(&server, "127.0.0.1", port, None);
-    configuration.run_time = "5".to_string();
+    configuration.run_time = Some("5".to_string());
     assert!(configuration.report_file.is_empty());
 
     let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
@@ -1602,7 +1604,7 @@ async fn test_dashboard_latency_by_second() {
     let base_v4 = format!("http://127.0.0.1:{port}");
 
     let mut configuration = build_dashboard_config(&server, "127.0.0.1", port, None);
-    configuration.run_time = "7".to_string();
+    configuration.run_time = Some("7".to_string());
 
     let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
     let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
@@ -1771,7 +1773,7 @@ async fn test_dashboard_scenario_and_transaction_metrics_disabled() {
     let base_v4 = format!("http://127.0.0.1:{port}");
 
     let mut configuration = build_dashboard_config(&server, "127.0.0.1", port, None);
-    configuration.run_time = "5".to_string();
+    configuration.run_time = Some("5".to_string());
     configuration.no_transaction_metrics = true;
     configuration.no_scenario_metrics = true;
 
@@ -1887,7 +1889,7 @@ async fn wait_for_test_ready(_user: &mut GooseUser) -> TransactionResult {
 /// dashboard while it runs, and return that connection after `execute()`.
 async fn attack_with_keep_alive(server: &MockServer, port: u16) -> tokio::net::TcpStream {
     let mut configuration = build_dashboard_config(server, "127.0.0.1", port, None);
-    configuration.run_time = "1".to_string();
+    configuration.run_time = Some("1".to_string());
     let ready = arm_test_ready();
     let start = transaction!(wait_for_test_ready);
     let goose_attack =
@@ -2175,7 +2177,7 @@ async fn test_saved_runs_routes() {
     let base_v4 = format!("http://127.0.0.1:{port}");
     let mut configuration =
         build_control_config(&server, "127.0.0.1", port, ControlTestOpts::default());
-    configuration.runs_dir = runs.to_string_lossy().into_owned();
+    configuration.runs_dir = Some(runs.to_string_lossy().into_owned());
     let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
     let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
     let (base, _) = wait_for_health(&[&base_v4], 80).await;
@@ -2357,8 +2359,8 @@ async fn closed_event_carries_saved_run(server: &MockServer) {
     let base_v4 = format!("http://127.0.0.1:{port}");
     let mut configuration = build_dashboard_config(server, "127.0.0.1", port, Some(AUTH_TOKEN));
     configuration.no_save = false;
-    configuration.runs_dir = runs.to_string_lossy().into_owned();
-    configuration.run_time = "2".to_string();
+    configuration.runs_dir = Some(runs.to_string_lossy().into_owned());
+    configuration.run_time = Some("2".to_string());
     let ready = arm_test_ready();
     let start = transaction!(wait_for_test_ready);
     let goose_attack =
@@ -2446,8 +2448,8 @@ async fn start_saved_dashboard_run(
     let mut configuration = build_dashboard_config(server, "127.0.0.1", port, Some(AUTH_TOKEN));
     configuration.dashboard_control = control;
     configuration.no_save = false;
-    configuration.runs_dir = runs.to_string_lossy().into_owned();
-    configuration.run_time = "2".to_string();
+    configuration.runs_dir = Some(runs.to_string_lossy().into_owned());
+    configuration.run_time = Some("2".to_string());
     let ready = arm_test_ready();
     let start = transaction!(wait_for_test_ready);
     let goose_attack =
@@ -2629,7 +2631,7 @@ async fn test_delete_saved_run() {
     let mut configuration =
         build_control_config(&server, "127.0.0.1", port, ControlTestOpts::default());
     configuration.no_save = false;
-    configuration.runs_dir = runs.to_string_lossy().into_owned();
+    configuration.runs_dir = Some(runs.to_string_lossy().into_owned());
     let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
     let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
     let (base, _) = wait_for_health(&[&base_v4], 80).await;

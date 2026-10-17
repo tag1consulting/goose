@@ -205,7 +205,7 @@ use std::sync::Mutex;
 use tokio::fs::File;
 use tokio::io::{AsyncWriteExt, BufWriter};
 
-use crate::config::{GooseConfigure, GooseValue};
+use crate::config::GooseValue;
 use crate::goose::GooseDebug;
 use crate::metrics::{GooseErrorMetric, GooseRequestMetric, ScenarioMetric, TransactionMetric};
 use crate::{GooseConfiguration, GooseDefaults, GooseError};
@@ -582,22 +582,20 @@ impl GooseConfiguration {
     /// if not configured through a run time option).
     pub(crate) fn configure_loggers(&mut self, defaults: &GooseDefaults) {
         // Configure debug_log path if enabled.
-        self.debug_log = self
-            .get_value(vec![
-                // Use --debug-log if set.
-                GooseValue {
-                    value: Some(self.debug_log.to_string()),
-                    filter: self.debug_log.is_empty(),
-                    message: "",
-                },
-                // Otherwise use GooseDefault if set.
-                GooseValue {
-                    value: defaults.debug_log.clone(),
-                    filter: defaults.debug_log.is_none(),
-                    message: "",
-                },
-            ])
-            .unwrap_or_default();
+        self.debug_log = self.get_value(vec![
+            // Use --debug-log if set.
+            GooseValue {
+                value: self.debug_log.clone(),
+                filter: self.debug_log.is_none(),
+                message: "",
+            },
+            // Otherwise use GooseDefault if set.
+            GooseValue {
+                value: defaults.debug_log.clone(),
+                filter: defaults.debug_log.is_none(),
+                message: "",
+            },
+        ]);
 
         // Set `debug_format`.
         self.debug_format = self.get_value(vec![
@@ -622,22 +620,20 @@ impl GooseConfiguration {
         ]);
 
         // Configure error_log path if enabled.
-        self.error_log = self
-            .get_value(vec![
-                // Use --error-log if set.
-                GooseValue {
-                    value: Some(self.error_log.to_string()),
-                    filter: self.error_log.is_empty(),
-                    message: "",
-                },
-                // Otherwise use GooseDefault if set.
-                GooseValue {
-                    value: defaults.error_log.clone(),
-                    filter: defaults.error_log.is_none(),
-                    message: "",
-                },
-            ])
-            .unwrap_or_default();
+        self.error_log = self.get_value(vec![
+            // Use --error-log if set.
+            GooseValue {
+                value: self.error_log.clone(),
+                filter: self.error_log.is_none(),
+                message: "",
+            },
+            // Otherwise use GooseDefault if set.
+            GooseValue {
+                value: defaults.error_log.clone(),
+                filter: defaults.error_log.is_none(),
+                message: "",
+            },
+        ]);
 
         // Set `error_format`.
         self.error_format = self.get_value(vec![
@@ -662,22 +658,20 @@ impl GooseConfiguration {
         ]);
 
         // Configure request_log path if enabled.
-        self.request_log = self
-            .get_value(vec![
-                // Use --request-log if set.
-                GooseValue {
-                    value: Some(self.request_log.to_string()),
-                    filter: self.request_log.is_empty(),
-                    message: "",
-                },
-                // Otherwise use GooseDefault if set.
-                GooseValue {
-                    value: defaults.request_log.clone(),
-                    filter: defaults.request_log.is_none(),
-                    message: "",
-                },
-            ])
-            .unwrap_or_default();
+        self.request_log = self.get_value(vec![
+            // Use --request-log if set.
+            GooseValue {
+                value: self.request_log.clone(),
+                filter: self.request_log.is_none(),
+                message: "",
+            },
+            // Otherwise use GooseDefault if set.
+            GooseValue {
+                value: defaults.request_log.clone(),
+                filter: defaults.request_log.is_none(),
+                message: "",
+            },
+        ]);
 
         // Set `request_format`.
         self.request_format = self.get_value(vec![
@@ -720,22 +714,20 @@ impl GooseConfiguration {
             .unwrap_or(false);
 
         // Configure transaction_log path if enabled.
-        self.transaction_log = self
-            .get_value(vec![
-                // Use --transaction-log if set.
-                GooseValue {
-                    value: Some(self.transaction_log.to_string()),
-                    filter: self.transaction_log.is_empty(),
-                    message: "",
-                },
-                // Otherwise use GooseDefault if set.
-                GooseValue {
-                    value: defaults.transaction_log.clone(),
-                    filter: defaults.transaction_log.is_none(),
-                    message: "",
-                },
-            ])
-            .unwrap_or_default();
+        self.transaction_log = self.get_value(vec![
+            // Use --transaction-log if set.
+            GooseValue {
+                value: self.transaction_log.clone(),
+                filter: self.transaction_log.is_none(),
+                message: "",
+            },
+            // Otherwise use GooseDefault if set.
+            GooseValue {
+                value: defaults.transaction_log.clone(),
+                filter: defaults.transaction_log.is_none(),
+                message: "",
+            },
+        ]);
 
         // Set `transaction_format`.
         self.transaction_format = self.get_value(vec![
@@ -760,22 +752,20 @@ impl GooseConfiguration {
         ]);
 
         // Configure scenario_log path if enabled.
-        self.scenario_log = self
-            .get_value(vec![
-                // Use --scenario-log if set.
-                GooseValue {
-                    value: Some(self.scenario_log.to_string()),
-                    filter: self.scenario_log.is_empty(),
-                    message: "",
-                },
-                // Otherwise use GooseDefault if set.
-                GooseValue {
-                    value: defaults.scenario_log.clone(),
-                    filter: defaults.scenario_log.is_none(),
-                    message: "",
-                },
-            ])
-            .unwrap_or_default();
+        self.scenario_log = self.get_value(vec![
+            // Use --scenario-log if set.
+            GooseValue {
+                value: self.scenario_log.clone(),
+                filter: self.scenario_log.is_none(),
+                message: "",
+            },
+            // Otherwise use GooseDefault if set.
+            GooseValue {
+                value: defaults.scenario_log.clone(),
+                filter: defaults.scenario_log.is_none(),
+                message: "",
+            },
+        ]);
 
         // Set `scenario_format`.
         self.scenario_format = self.get_value(vec![
@@ -809,11 +799,11 @@ impl GooseConfiguration {
         self.configure_loggers(defaults);
 
         // If no logger is enabled, return immediately without launching logger thread.
-        if self.debug_log.is_empty()
-            && self.request_log.is_empty()
-            && self.transaction_log.is_empty()
-            && self.scenario_log.is_empty()
-            && self.error_log.is_empty()
+        if self.debug_log().is_none()
+            && self.request_log().is_none()
+            && self.transaction_log().is_none()
+            && self.scenario_log().is_none()
+            && self.error_log().is_none()
         {
             return Ok((None, None));
         }
@@ -832,22 +822,19 @@ impl GooseConfiguration {
     /// A helper used to open any/all log files, deleting any file that already exists.
     async fn open_log_file(
         &self,
-        log_file_path: &str,
+        log_file_path: Option<&str>,
         log_file_type: &str,
         buffer_capacity: usize,
     ) -> std::option::Option<tokio::io::BufWriter<tokio::fs::File>> {
-        if log_file_path.is_empty() {
-            None
-        } else {
-            match File::create(log_file_path).await {
-                Ok(f) => {
-                    info!("[logger]: writing {log_file_type} to: {log_file_path}");
-                    Some(BufWriter::with_capacity(buffer_capacity, f))
-                }
-                Err(e) => {
-                    error!("[logger]: failed to create {log_file_type} ({log_file_path}): {e}");
-                    None
-                }
+        let log_file_path = log_file_path?;
+        match File::create(log_file_path).await {
+            Ok(f) => {
+                info!("[logger]: writing {log_file_type} to: {log_file_path}");
+                Some(BufWriter::with_capacity(buffer_capacity, f))
+            }
+            Err(e) => {
+                error!("[logger]: failed to create {log_file_type} ({log_file_path}): {e}");
+                None
             }
         }
     }
@@ -864,7 +851,10 @@ impl GooseConfiguration {
         {
             Ok(_) => (),
             Err(e) => {
-                warn!("failed to write to {}: {e}", self.debug_log);
+                warn!(
+                    "failed to write to {}: {e}",
+                    self.debug_log().unwrap_or_default()
+                );
             }
         }
     }
@@ -878,7 +868,7 @@ impl GooseConfiguration {
         // If the debug_log is enabled, allocate a buffer and open the file.
         let mut debug_log = self
             .open_log_file(
-                &self.debug_log,
+                self.debug_log(),
                 "debug file",
                 if self.no_debug_body {
                     // Allocate a smaller 64K buffer if not logging response body.
@@ -899,7 +889,7 @@ impl GooseConfiguration {
 
         // If the error_log is enabled, allocate a buffer and open the file.
         let mut error_log = self
-            .open_log_file(&self.error_log, "error log", 64 * 1024)
+            .open_log_file(self.error_log(), "error log", 64 * 1024)
             .await;
         // If the request_log is a CSV, write the header.
         if self.error_format == Some(GooseLogFormat::Csv) {
@@ -912,7 +902,7 @@ impl GooseConfiguration {
         // If the request_log is enabled, allocate a buffer and open the file.
         let mut request_log = self
             .open_log_file(
-                &self.request_log,
+                self.request_log(),
                 "request log",
                 if self.request_body {
                     // Allocate a larger 8M buffer if logging request body.
@@ -934,7 +924,7 @@ impl GooseConfiguration {
 
         // If the transaction_log is enabled, allocate a buffer and open the file.
         let mut transaction_log = self
-            .open_log_file(&self.transaction_log, "transaction log", 64 * 1024)
+            .open_log_file(self.transaction_log(), "transaction log", 64 * 1024)
             .await;
         // If the transaction_log is a CSV, write the header.
         if self.transaction_format == Some(GooseLogFormat::Csv) {
@@ -947,7 +937,7 @@ impl GooseConfiguration {
 
         // If the scenario_log is enabled, allocate a buffer and open the file.
         let mut scenario_log = self
-            .open_log_file(&self.scenario_log, "scenario log", 64 * 1024)
+            .open_log_file(self.scenario_log(), "scenario log", 64 * 1024)
             .await;
         // If the scenario_log is a CSV, write the header.
         if self.scenario_format == Some(GooseLogFormat::Csv) {
@@ -995,13 +985,19 @@ impl GooseConfiguration {
 
         // Flush debug logs to disk if enabled.
         if let Some(debug_log_file) = debug_log.as_mut() {
-            info!("[logger]: flushing debug_log: {}", self.debug_log);
+            info!(
+                "[logger]: flushing debug_log: {}",
+                self.debug_log().unwrap_or_default()
+            );
             let _ = debug_log_file.flush().await;
         };
 
         // Flush requests log to disk if enabled.
         if let Some(requests_log_file) = request_log.as_mut() {
-            info!("[logger]: flushing request_log: {}", self.request_log);
+            info!(
+                "[logger]: flushing request_log: {}",
+                self.request_log().unwrap_or_default()
+            );
             let _ = requests_log_file.flush().await;
         }
 
@@ -1009,20 +1005,26 @@ impl GooseConfiguration {
         if let Some(transactions_log_file) = transaction_log.as_mut() {
             info!(
                 "[logger]: flushing transaction_log: {}",
-                self.transaction_log
+                self.transaction_log().unwrap_or_default()
             );
             let _ = transactions_log_file.flush().await;
         }
 
         // Flush scenario log to disk if enabled.
         if let Some(scenarios_log_file) = scenario_log.as_mut() {
-            info!("[logger]: flushing scenario: {}", self.scenario_log);
+            info!(
+                "[logger]: flushing scenario: {}",
+                self.scenario_log().unwrap_or_default()
+            );
             let _ = scenarios_log_file.flush().await;
         }
 
         // Flush error logs to disk if enabled.
         if let Some(error_log_file) = error_log.as_mut() {
-            info!("[logger]: flushing error_log: {}", self.error_log);
+            info!(
+                "[logger]: flushing error_log: {}",
+                self.error_log().unwrap_or_default()
+            );
             let _ = error_log_file.flush().await;
         };
 

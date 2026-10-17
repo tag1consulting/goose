@@ -250,8 +250,9 @@ async fn test_throttle_gaggle() {
     let mut request_logs = Vec::new();
     for i in 0..EXPECT_WORKERS {
         let mut worker_configuration = configuration.clone();
-        worker_configuration.request_log = request_log.clone() + &i.to_string();
-        request_logs.push(worker_configuration.request_log.clone());
+        let worker_request_log = request_log.clone() + &i.to_string();
+        worker_configuration.request_log = Some(worker_request_log.clone());
+        request_logs.push(worker_request_log);
         let worker_goose_attack = common::build_load_test(
             worker_configuration.clone(),
             vec![get_transactions()],
@@ -310,8 +311,9 @@ async fn test_throttle_gaggle() {
     let mut request_logs = Vec::new();
     for i in 0..EXPECT_WORKERS {
         let mut worker_configuration = configuration.clone();
-        worker_configuration.request_log = request_log.clone() + &i.to_string();
-        request_logs.push(worker_configuration.request_log.clone());
+        let worker_request_log = request_log.clone() + &i.to_string();
+        worker_configuration.request_log = Some(worker_request_log.clone());
+        request_logs.push(worker_request_log);
         let worker_goose_attack = common::build_load_test(
             worker_configuration.clone(),
             vec![get_transactions()],

@@ -363,20 +363,20 @@ impl GooseAttack {
     /// explicitly given runs directory, failing before any load if it can't
     /// be created.
     pub(crate) fn check_runs_dir(&mut self) -> Result<(), GooseError> {
-        if self.configuration.no_save && !self.configuration.runs_dir.is_empty() {
-            println!(
-                "Not saving this run: --no-save is set, so --runs-dir {} is ignored.",
-                self.configuration.runs_dir
-            );
+        if let Some(runs_dir) = self
+            .configuration
+            .runs_dir()
+            .filter(|_| self.configuration.no_save)
+        {
+            println!("Not saving this run: --no-save is set, so --runs-dir {runs_dir} is ignored.");
         }
         if !self.configuration.saves_runs() {
             self.saving.state = SaveState::Off;
             return Ok(());
         }
         self.saving.state = SaveState::On;
-        if !self.configuration.runs_dir.is_empty() {
-            let dir = self.configuration.runs_dir.clone();
-            ensure_runs_dir(Path::new(&dir)).map_err(|e| runs_dir_error(&dir, &dir, e))?;
+        if let Some(dir) = self.configuration.runs_dir() {
+            ensure_runs_dir(Path::new(dir)).map_err(|e| runs_dir_error(dir, dir, e))?;
         }
         Ok(())
     }
@@ -392,7 +392,7 @@ impl GooseAttack {
             return Ok(());
         }
         let dir = self.configuration.runs_dir_or_default().to_string();
-        let explicit = !self.configuration.runs_dir.is_empty();
+        let explicit = self.configuration.runs_dir().is_some();
         let started = Utc::now();
         let base = run_id_base(started.with_timezone(&Local));
         let created = ensure_runs_dir(Path::new(&dir))

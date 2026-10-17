@@ -127,8 +127,8 @@ pub(crate) async fn user_main(
 
             // Check if configured to exit after a certain number of iterations, and exit if
             // that number of iterations have run.
-            if thread_user.config.iterations > 0
-                && thread_user.iterations >= thread_user.config.iterations
+            if thread_user.config.iterations() > 0
+                && thread_user.iterations >= thread_user.config.iterations()
             {
                 // Pluralize the word "iteration" if more than one iteration completed.
                 let pluralize = if thread_user.iterations == 0 {
@@ -253,7 +253,7 @@ async fn record_scenario(
             }
         }
         // If scenario-log is enabled, send a copy of the raw scenario metric to the logger thread.
-        if !thread_user.config.scenario_log.is_empty() {
+        if thread_user.config.scenario_log().is_some() {
             if let Some(logger) = thread_user.logger.as_ref() {
                 logger.send(Some(GooseLog::Scenario(raw_scenario)))?;
             }
@@ -303,7 +303,7 @@ async fn invoke_transaction_function(
     }
 
     // If transaction-log is enabled, send a copy of the raw transaction metric to the logger thread.
-    if !thread_user.config.transaction_log.is_empty() {
+    if thread_user.config.transaction_log().is_some() {
         if let Some(logger) = thread_user.logger.as_ref() {
             logger.send(Some(GooseLog::Transaction(raw_transaction.clone())))?;
         }

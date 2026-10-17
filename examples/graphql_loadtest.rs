@@ -15,7 +15,7 @@
 //! ## Configuration Options
 //!
 //! - `--host`: Target host to load test
-//! - `--users`: Number of concurrent users (default: 1)
+//! - `--users`: Number of concurrent users (default: one per CPU)
 //! - `--run-time`: Duration to run the test (e.g., "30s", "5m")
 //!
 //! ## GraphQL Helper Methods

@@ -196,9 +196,9 @@ async fn test_defaults() {
 
     // Unset options set in common.rs so set_default() is instead used.
     config.users = None;
-    config.run_time = "".to_string();
+    config.run_time = None;
     config.increase_rate = None;
-    let host = std::mem::take(&mut config.host);
+    let host = config.host.take().unwrap_or_default();
 
     let goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .unwrap()
@@ -263,7 +263,7 @@ async fn test_no_percentiles_over_time_default_without_dashboard() {
     let mock_endpoints = setup_mock_server_endpoints(&server);
     let mut config = common::build_configuration(&server, vec![]);
     config.users = Some(1);
-    config.run_time = "1".to_string();
+    config.run_time = Some("1".to_string());
     assert!(!config.dashboard);
 
     let goose_metrics = crate::GooseAttack::initialize_with_config(config)
@@ -305,10 +305,10 @@ async fn test_defaults_gaggle() {
 
     // Unset options set in common.rs so set_default() is instead used.
     configuration.users = None;
-    configuration.run_time = "".to_string();
+    configuration.run_time = None;
     configuration.increase_rate = None;
     configuration.co_mitigation = None;
-    let host = std::mem::take(&mut configuration.host);
+    let host = configuration.host.take().unwrap_or_default();
 
     // Launch workers in their own threads, storing the thread handle.
     let mut worker_handles = Vec::new();
@@ -591,9 +591,9 @@ async fn test_plan_defaults() {
 
     // Unset options set in common.rs so set_default() is instead used.
     config.users = None;
-    config.run_time = "".to_string();
+    config.run_time = None;
     config.increase_rate = None;
-    let host = std::mem::take(&mut config.host);
+    let host = config.host.take().unwrap_or_default();
 
     let goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .unwrap()
@@ -672,7 +672,7 @@ async fn test_plan_no_defaults() {
 
     config.users = None;
     config.increase_rate = None;
-    config.run_time = "".to_string();
+    config.run_time = None;
 
     let goose_metrics = crate::GooseAttack::initialize_with_config(config)
         .unwrap()
@@ -703,7 +703,7 @@ async fn test_defaults_no_metrics() {
 
     // Unset options set in common.rs so set_default() is instead used.
     config.users = None;
-    config.run_time = "".to_string();
+    config.run_time = None;
     config.increase_rate = None;
 
     let goose_metrics = crate::GooseAttack::initialize_with_config(config)

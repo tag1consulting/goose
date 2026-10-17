@@ -13,11 +13,18 @@ license = "Apache-2.0"
 
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+clap = { version = "4.5", default-features = false, features = [
+    "derive",
+    "error-context",
+    "help",
+    "std",
+    "usage",
+    "wrap_help",
+] }
 ctrlc = "3"
 downcast-rs = "2.0"
 flume = "0.12"
 futures = "0.3"
-gumdrop = "0.8"
 http = "1.1"
 itertools = "0.14"
 lazy_static = "1.4"
@@ -36,6 +43,8 @@ serde = { version = "1.0", features = [
 ] }
 serde_json = "1.0"
 simplelog = "0.12"
+# The version clap resolves for `wrap_help`, to find the width of stdout.
+terminal_size = "0.4"
 tokio = { version = "1", features = [
     "fs",
     "io-util",

@@ -100,7 +100,7 @@ When implementing new features:
 
 ### GooseConfiguration Pattern
 **CLI and configuration file support**:
-- Use `gumdrop` for CLI parsing
+- Use `clap` for CLI parsing
 - Support both command-line and file-based configuration
 - Validate options early with clear error messages
 - Document all configuration options
