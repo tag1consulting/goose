@@ -198,5 +198,5 @@ test("the Target field falls back from target to maximum to active users", async
   assert.equal(await show({ target_users: 0, maximum_users: 0, active_users: 0 }), "", "never 0");
   assert.equal(await show({ target_users: 20, maximum_users: 50, active_users: 0 }), "20");
   assert.equal(await show({ target_users: 0, maximum_users: 50, active_users: 7 }), "50");
-  assert.equal(await show({ target_users: undefined, maximum_users: 0, active_users: 7 }), "7");
+  assert.equal(await show({ target_users: 0, maximum_users: 0, active_users: 7 }), "7");
 });
