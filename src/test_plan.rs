@@ -193,6 +193,21 @@ impl FromStr for TestPlan {
     }
 }
 
+/// Write a test plan as `--test-plan` takes it, each step's duration in whole
+/// seconds: the canonical form, so `10,1h30m` is written `10,5400`. It parses
+/// back to the same steps with [`FromStr`]. `current` is not written.
+impl std::fmt::Display for TestPlan {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (index, (users, ms)) in self.steps.iter().enumerate() {
+            if index > 0 {
+                f.write_str(";")?;
+            }
+            write!(f, "{},{}", users, ms / 1_000)?;
+        }
+        Ok(())
+    }
+}
+
 /// What the command line prints for a refused test plan: the format for a
 /// step that does not parse, otherwise the reason it was refused.
 fn refusal(e: &GooseError) -> String {
@@ -304,6 +319,25 @@ impl GooseAttack {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    /// A test plan is written in canonical form, and parses back to the
+    /// same steps.
+    #[test]
+    fn display_round_trips() {
+        for (plan, written) in [
+            ("10,5s;10,30s;0,5s", "10,5;10,30;0,5"),
+            ("10,1h30m;0,0", "10,5400;0,0"),
+            ("100000,1s", "100000,1"),
+            (" 3 , 2m10s ;0,1h2m3s", "3,130;0,3723"),
+            ("1,720h", "1,2592000"),
+        ] {
+            let parsed = TestPlan::parse(plan).unwrap();
+            assert_eq!(parsed.to_string(), written, "{}", plan);
+            let again = TestPlan::parse(&parsed.to_string()).unwrap();
+            assert_eq!(again.steps, parsed.steps, "{}", plan);
+            assert_eq!(again.to_string(), written, "{}", plan);
+        }
+    }
 
     /// The command line says why it refuses a plan, not only that it did.
     #[test]
