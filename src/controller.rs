@@ -61,12 +61,12 @@ const HELP: &str = concat!(
     "stop               stop a running load test and return to idle state\n",
     "shutdown           shutdown load test and exit controller\n\n",
     "host HOST          set host to load test, (ie https://web.site/)\n",
-    "increaserate FLOAT set per-second rate users increase\n",
-    "increase-time TIME set total time to take increasing users\n",
-    "decreaserate FLOAT set per-second rate users decrease\n",
-    "decrease-time TIME set total time to take decreasing users\n",
+    "increaserate FLOAT set per-second rate users increase (0.01 to 100000)\n",
+    "increase-time TIME set total time to take increasing users (0 clears)\n",
+    "decreaserate FLOAT set per-second rate users decrease (0.01 to 100000)\n",
+    "decrease-time TIME set total time to take decreasing users (0 clears)\n",
     "users INT          set number of simulated users (1 to 100000)\n",
-    "runtime TIME       set how long to run test, (ie 1h30m5s)\n",
+    "runtime TIME       set how long to hold users after the ramp up, (ie 1h30m5s, 0 clears)\n",
     "test-plan PLAN     define or replace test-plan, (ie 10,5m;10,1h;0,30s)\n\n",
     "config             display load test configuration\n",
     "config-json        display load test configuration in json format\n",
@@ -142,8 +142,7 @@ pub enum ControllerCommand {
     /// Goose must be idle to process this command.
     Host(String),
     /// Configure how quickly new [`GooseUser`](../goose/struct.GooseUser.html)s
-    /// are launched, per second: a finite number of at least 0.0000116, one
-    /// user a day.
+    /// are launched, per second: from 0.01 to 100000.
     ///
     /// # Example
     /// Tells Goose to launch a new user every 1.25 seconds.
@@ -154,7 +153,8 @@ pub enum ControllerCommand {
     /// Goose can be idle or running when processing this command.
     IncreaseRate(f32),
     /// Configure how long to take to launch all
-    /// [`GooseUser`](../goose/struct.GooseUser.html)s, in seconds.
+    /// [`GooseUser`](../goose/struct.GooseUser.html)s, in seconds: from 1
+    /// second to 30 days, or 0 to clear it.
     ///
     /// # Example
     /// Tells Goose to increase users over 30 seconds.
@@ -165,8 +165,7 @@ pub enum ControllerCommand {
     /// Goose must be idle to process this command.
     IncreaseTime(usize),
     /// Configure how quickly [`GooseUser`](../goose/struct.GooseUser.html)s are
-    /// stopped, per second: a finite number of at least 0.0000116, one user a
-    /// day.
+    /// stopped, per second: from 0.01 to 100000.
     ///
     /// # Example
     /// Tells Goose to stop one user every 2 seconds.
@@ -177,7 +176,8 @@ pub enum ControllerCommand {
     /// Goose can be idle or running when processing this command.
     DecreaseRate(f32),
     /// Configure how long to take to stop all
-    /// [`GooseUser`](../goose/struct.GooseUser.html)s, in seconds.
+    /// [`GooseUser`](../goose/struct.GooseUser.html)s, in seconds: from 1
+    /// second to 30 days, or 0 to clear it.
     ///
     /// # Example
     /// Tells Goose to decrease users over 30 seconds.
@@ -198,11 +198,11 @@ pub enum ControllerCommand {
     ///
     /// Can be configured on an idle or running load test.
     Users(usize),
-    /// Configure how long the load test should run before stopping and
-    /// returning to an idle state, in seconds.
+    /// Configure how long to hold all users after the ramp up, before the
+    /// ramp down, in seconds: from 1 second to 30 days, or 0 to clear it.
     ///
     /// # Example
-    /// Tells Goose to run the load test for 1 minute, before automatically stopping.
+    /// Tells Goose to hold all users for 1 minute, then ramp down.
     /// ```notest
     /// runtime 60
     /// ```
@@ -210,7 +210,8 @@ pub enum ControllerCommand {
     /// Goose must be idle to process this command: the run time is read when
     /// the load test starts.
     RunTime(usize),
-    /// Define a load test plan, starting 1 to 100000 users in total. This will
+    /// Define a load test plan: at most 100 steps of up to 30 days each, in
+    /// at most 4096 bytes, starting 1 to 100000 users in total. This will
     /// replace the previously configured test plan, if any.
     ///
     /// # Example
@@ -287,6 +288,30 @@ lazy_static! {
     static ref HOST: Regex = Regex::new(r"(?i)^https?://.+$").unwrap();
 }
 
+/// Slowest rate any front end can set, in users per second.
+pub(crate) const MIN_CONTROL_RATE: f32 = 0.01;
+
+/// Fastest rate any front end can set, in users per second.
+pub(crate) const MAX_CONTROL_RATE: f32 = 100_000.0;
+
+/// Longest increase time, decrease time, run time or test plan step any
+/// front end can set: 30 days, in seconds.
+pub(crate) const MAX_CONTROL_SECS: usize = 30 * 24 * 60 * 60;
+
+/// Most steps in a test plan any front end can set.
+pub(crate) const MAX_CONTROL_PLAN_STEPS: usize = 100;
+
+/// Longest test plan text any front end can set, in bytes.
+pub(crate) const MAX_CONTROL_PLAN_BYTES: usize = 4 * 1024;
+
+/// Refusal for a host that is not an http or https url, or that carries a
+/// user name or password.
+pub(crate) const INVALID_HOST_MSG: &str =
+    "host must be a valid url starting with http:// or https://, without a user name or password";
+
+/// Refusal for a test plan outside the bounds.
+pub(crate) const INVALID_PLAN_MSG: &str = "test-plan must be users,time steps such as 10,5m;10,1h;0,30s: at most 100 steps of up to 30 days each, 4096 bytes, and 1 to 100000 users in total";
+
 /// `value` when `regex` accepts it, otherwise `error`.
 fn grammar<'a>(
     regex: &Regex,
@@ -296,23 +321,86 @@ fn grammar<'a>(
     regex.is_match(value).then_some(value).ok_or(error)
 }
 
-/// A rate: a finite number of users per second, at least one user a day.
-fn rate(value: &str, error: &'static str) -> Result<f32, &'static str> {
-    match grammar(&RATE, value, error)?.parse::<f32>() {
-        Ok(rate) if rate.is_finite() && !crate::util::below_one_user_a_day(rate) => Ok(rate),
-        _ => Err(error),
+/// A host to load test: an http or https url with no user name or password,
+/// which would show to observers and in reports.
+pub(crate) fn host(value: &str) -> Result<String, &'static str> {
+    let host = grammar(&HOST, value, INVALID_HOST_MSG)?;
+    match url::Url::parse(host) {
+        Ok(url) if url.username().is_empty() && url.password().is_none() => Ok(host.to_string()),
+        _ => Err(INVALID_HOST_MSG),
+    }
+}
+
+/// A rate in users per second, from [`MIN_CONTROL_RATE`] to
+/// [`MAX_CONTROL_RATE`] once read as the `f32` Goose ramps with.
+pub(crate) fn rate(value: &str, error: &'static str) -> Result<f32, &'static str> {
+    let rate = grammar(&RATE, value, error)?
+        .parse::<f32>()
+        .map_err(|_| error)?;
+    bounded_rate(rate, error)
+}
+
+/// `rate` when it is from [`MIN_CONTROL_RATE`] to [`MAX_CONTROL_RATE`];
+/// `NaN` and infinity are not.
+pub(crate) fn bounded_rate(rate: f32, error: &'static str) -> Result<f32, &'static str> {
+    if (MIN_CONTROL_RATE..=MAX_CONTROL_RATE).contains(&rate) {
+        Ok(rate)
+    } else {
+        Err(error)
     }
 }
 
 /// A time span in seconds: whole seconds, or hours, minutes and seconds in
-/// that order, short enough for a `usize` in milliseconds.
-fn time(value: &str, error: &'static str) -> Result<usize, &'static str> {
+/// that order, up to [`MAX_CONTROL_SECS`]. 0 is accepted, and means unset.
+pub(crate) fn time(value: &str, error: &'static str) -> Result<usize, &'static str> {
     if value.is_empty() {
         return Err(error);
     }
     let value = grammar(&TIME, value, error)?.to_ascii_lowercase();
-    crate::util::parse_timespan(&value).ok_or(error)
+    match crate::util::parse_timespan(&value) {
+        Some(seconds) if seconds <= MAX_CONTROL_SECS => Ok(seconds),
+        _ => Err(error),
+    }
 }
+
+/// A test plan: at most [`MAX_CONTROL_PLAN_STEPS`] steps of up to
+/// [`MAX_CONTROL_SECS`] each, [`MAX_CONTROL_PLAN_BYTES`] of text, and 1 to
+/// [`MAX_CONTROL_USERS`] users in total.
+pub(crate) fn test_plan(value: &str) -> Result<TestPlan, &'static str> {
+    if value.len() > MAX_CONTROL_PLAN_BYTES {
+        return Err(INVALID_PLAN_MSG);
+    }
+    // The quiet parse: the command line's prints the line it refuses.
+    let plan =
+        TestPlan::parse(grammar(&PLAN, value, INVALID_PLAN_MSG)?).map_err(|_| INVALID_PLAN_MSG)?;
+    let bounded = plan.steps.len() <= MAX_CONTROL_PLAN_STEPS
+        && plan
+            .steps
+            .iter()
+            .all(|&(_, ms)| ms <= MAX_CONTROL_SECS * 1_000)
+        && plan.total_users() <= MAX_CONTROL_USERS;
+    if bounded {
+        Ok(plan)
+    } else {
+        Err(INVALID_PLAN_MSG)
+    }
+}
+
+/// Refusal for an increase rate outside the bounds.
+pub(crate) const INVALID_INCREASE_RATE_MSG: &str =
+    "increase_rate must be a number from 0.01 to 100000";
+/// Refusal for a decrease rate outside the bounds.
+pub(crate) const INVALID_DECREASE_RATE_MSG: &str =
+    "decrease_rate must be a number from 0.01 to 100000";
+/// Refusal for an increase time outside the bounds.
+pub(crate) const INVALID_INCREASE_TIME_MSG: &str =
+    "increase_time must be a time span such as 1h30m5s, from 1 second to 30 days, or 0 to clear";
+/// Refusal for a decrease time outside the bounds.
+pub(crate) const INVALID_DECREASE_TIME_MSG: &str =
+    "decrease_time must be a time span such as 1h30m5s, from 1 second to 30 days, or 0 to clear";
+/// Refusal for a run time outside the bounds.
+pub(crate) const INVALID_RUN_TIME_MSG: &str =
+    "run_time must be a time span such as 1h30m5s, from 1 second to 30 days, or 0 to clear";
 
 /// Parse a line from a telnet or WebSocket client into a command, or the
 /// error the client is sent back.
@@ -336,45 +424,27 @@ impl FromStr for ControllerCommand {
             "configjson" | "config-json" => alone(Self::ConfigJson),
             "metrics" | "stats" => alone(Self::Metrics),
             "metricsjson" | "metrics-json" | "statsjson" | "stats-json" => alone(Self::MetricsJson),
-            "host" | "hostname" | "host_name" | "host-name" => {
-                let error = "host must be a valid url starting with http:// or https://";
-                let host = grammar(&HOST, value, error)?;
-                url::Url::parse(host).map_err(|_| error)?;
-                Ok(Self::Host(host.to_string()))
-            }
+            "host" | "hostname" | "host_name" | "host-name" => host(value).map(Self::Host),
             "users" | "user" => grammar(&USERS, value, INVALID_USERS_MSG)?
                 .parse()
                 .map_err(|_| INVALID_USERS_MSG)
                 .and_then(Self::users),
-            "increaserate" | "increase_rate" | "increase-rate" => rate(
-                value,
-                "increase_rate must be a number of at least 0.0000116 (one user a day)",
-            )
-            .map(Self::IncreaseRate),
-            "decreaserate" | "decrease_rate" | "decrease-rate" => rate(
-                value,
-                "decrease_rate must be a number of at least 0.0000116 (one user a day)",
-            )
-            .map(Self::DecreaseRate),
+            "increaserate" | "increase_rate" | "increase-rate" => {
+                rate(value, INVALID_INCREASE_RATE_MSG).map(Self::IncreaseRate)
+            }
+            "decreaserate" | "decrease_rate" | "decrease-rate" => {
+                rate(value, INVALID_DECREASE_RATE_MSG).map(Self::DecreaseRate)
+            }
             "increasetime" | "increase_time" | "increase-time" => {
-                time(value, "increase_time must be a time span such as 1h30m5s")
-                    .map(Self::IncreaseTime)
+                time(value, INVALID_INCREASE_TIME_MSG).map(Self::IncreaseTime)
             }
             "decreasetime" | "decrease_time" | "decrease-time" => {
-                time(value, "decrease_time must be a time span such as 1h30m5s")
-                    .map(Self::DecreaseTime)
+                time(value, INVALID_DECREASE_TIME_MSG).map(Self::DecreaseTime)
             }
             "run" | "runtime" | "run_time" | "run-time" => {
-                time(value, "run_time must be a time span such as 1h30m5s").map(Self::RunTime)
+                time(value, INVALID_RUN_TIME_MSG).map(Self::RunTime)
             }
-            "testplan" | "test_plan" | "test-plan" | "plan" => {
-                let error = "test-plan must be users,time steps such as 10,5m;10,1h;0,30s, with 1 to 100000 users in total";
-                // The quiet parse: the command line's prints the line it refuses.
-                match TestPlan::parse(grammar(&PLAN, value, error)?) {
-                    Ok(plan) if plan.total_users() <= MAX_CONTROL_USERS => Ok(Self::TestPlan(plan)),
-                    _ => Err(error),
-                }
-            }
+            "testplan" | "test_plan" | "test-plan" | "plan" => test_plan(value).map(Self::TestPlan),
             _ => Err(UNRECOGNIZED),
         }
     }
@@ -594,6 +664,20 @@ impl GooseAttack {
             ControllerCommand::Host(host) => {
                 self.configuration.host = Some(host);
                 configured(self, goose_attack_run_state, "host configured")
+            }
+            // 0 clears a time, as `null` does on the dashboard: back to
+            // Goose's default, leaving the rate and any test plan alone.
+            ControllerCommand::IncreaseTime(0) => {
+                self.configuration.increase_time = None;
+                configured(self, goose_attack_run_state, "increase_time cleared")
+            }
+            ControllerCommand::DecreaseTime(0) => {
+                self.configuration.decrease_time = None;
+                configured(self, goose_attack_run_state, "decrease_time cleared")
+            }
+            ControllerCommand::RunTime(0) => {
+                self.configuration.run_time = None;
+                configured(self, goose_attack_run_state, "run_time cleared")
             }
             ControllerCommand::IncreaseTime(seconds) => {
                 self.configuration.increase_rate = None;
@@ -1104,17 +1188,20 @@ pub(crate) mod tests {
     fn parse_table() {
         const UNRECOGNIZED: &str = "unrecognized command";
         const USERS: &str = "users must be an integer between 1 and 100000";
-        const HOST: &str = "host must be a valid url starting with http:// or https://";
-        const INCREASE_RATE: &str =
-            "increase_rate must be a number of at least 0.0000116 (one user a day)";
-        const DECREASE_RATE: &str =
-            "decrease_rate must be a number of at least 0.0000116 (one user a day)";
-        const INCREASE_TIME: &str = "increase_time must be a time span such as 1h30m5s";
-        const DECREASE_TIME: &str = "decrease_time must be a time span such as 1h30m5s";
-        const RUN_TIME: &str = "run_time must be a time span such as 1h30m5s";
+        const HOST: &str = "host must be a valid url starting with http:// or https://, without a user name or password";
+        const INCREASE_RATE: &str = "increase_rate must be a number from 0.01 to 100000";
+        const DECREASE_RATE: &str = "decrease_rate must be a number from 0.01 to 100000";
+        const INCREASE_TIME: &str = "increase_time must be a time span such as 1h30m5s, from 1 second to 30 days, or 0 to clear";
+        const DECREASE_TIME: &str = "decrease_time must be a time span such as 1h30m5s, from 1 second to 30 days, or 0 to clear";
+        const RUN_TIME: &str =
+            "run_time must be a time span such as 1h30m5s, from 1 second to 30 days, or 0 to clear";
         const FORTY_DIGITS: &str = "increaserate 1000000000000000000000000000000000000000";
-        const TEST_PLAN: &str =
-            "test-plan must be users,time steps such as 10,5m;10,1h;0,30s, with 1 to 100000 users in total";
+        const TEST_PLAN: &str = "test-plan must be users,time steps such as 10,5m;10,1h;0,30s: at most 100 steps of up to 30 days each, 4096 bytes, and 1 to 100000 users in total";
+        // 100 steps of 1,1s are accepted and 101 refused; so is a plan of
+        // more than 4096 bytes.
+        let steps_100 = format!("testplan {}", vec!["1,1s"; 100].join(";"));
+        let steps_101 = format!("testplan {}", vec!["1,1s"; 101].join(";"));
+        let bytes_4097 = format!("testplan 1,{}1s", "0".repeat(4093));
 
         let ok: &[(&str, &str)] = &[
             ("help", "Help"),
@@ -1151,9 +1238,22 @@ pub(crate) mod tests {
             ("decreaserate 0.5", "DecreaseRate(0.5)"),
             ("decrease_rate 2", "DecreaseRate(2.0)"),
             ("decrease-rate 0.90", "DecreaseRate(0.9)"),
-            // One user a day is the slowest rate.
-            ("increaserate 0.0000116", "IncreaseRate(1.16e-5)"),
-            ("decreaserate 0.0000116", "DecreaseRate(1.16e-5)"),
+            // The slowest and fastest rates.
+            ("increaserate 0.01", "IncreaseRate(0.01)"),
+            ("decreaserate .01", "DecreaseRate(0.01)"),
+            ("increaserate 100000", "IncreaseRate(100000.0)"),
+            ("decreaserate 100000.0", "DecreaseRate(100000.0)"),
+            // 30 days is the longest time, and 0 clears a time.
+            ("runtime 720h", "RunTime(2592000)"),
+            ("increasetime 2592000", "IncreaseTime(2592000)"),
+            ("decreasetime 43200m", "DecreaseTime(2592000)"),
+            ("runtime 0", "RunTime(0)"),
+            ("increasetime 0s", "IncreaseTime(0)"),
+            (
+                "testplan 10,720h;0,0",
+                "TestPlan(TestPlan { steps: [(10, 2592000000), (0, 0)], current: 0 })",
+            ),
+            ("host https://example.com:8443/path", "Host(\"https://example.com:8443/path\")"),
             ("increasetime 30s", "IncreaseTime(30)"),
             ("increase_time 1h2m3s", "IncreaseTime(3723)"),
             ("increase-time 10", "IncreaseTime(10)"),
@@ -1200,6 +1300,10 @@ pub(crate) mod tests {
             ("host foobar", HOST),
             ("host http://$[foo", HOST),
             ("host ftp://example.com/", HOST),
+            // A user name or password would show to observers and in reports.
+            ("host http://user:secret@example.com/", HOST),
+            ("host https://user@example.com/", HOST),
+            ("host https://:secret@example.com/", HOST),
             ("increaserate 0", INCREASE_RATE),
             ("increaserate 0.0", INCREASE_RATE),
             ("increaserate .", INCREASE_RATE),
@@ -1207,11 +1311,19 @@ pub(crate) mod tests {
             ("increaserate -1", INCREASE_RATE),
             ("decreaserate 0", DECREASE_RATE),
             ("decreaserate .", DECREASE_RATE),
-            // Above 0, but slower than one user a day: a ramp of months.
+            // Above 0, but slower than 0.01 or faster than 100000.
             ("increaserate 0.0000001", INCREASE_RATE),
-            ("increaserate 0.00001157", INCREASE_RATE),
-            ("decreaserate 0.0000001", DECREASE_RATE),
-            ("decreaserate 0.00001157", DECREASE_RATE),
+            ("increaserate 0.009", INCREASE_RATE),
+            ("decreaserate 0.0000116", DECREASE_RATE),
+            ("decreaserate 0.0099", DECREASE_RATE),
+            ("increaserate 100000.01", INCREASE_RATE),
+            ("decreaserate 100001", DECREASE_RATE),
+            // Longer than 30 days.
+            ("runtime 720h1s", RUN_TIME),
+            ("increasetime 2592001", INCREASE_TIME),
+            ("decreasetime 43201m", DECREASE_TIME),
+            ("testplan 10,720h1s", TEST_PLAN),
+            ("testplan 10,1s;0,2592001", TEST_PLAN),
             ("increasetime .1", INCREASE_TIME),
             ("increasetime 10d", INCREASE_TIME),
             ("increase-time 2m1h", INCREASE_TIME),
@@ -1260,6 +1372,23 @@ pub(crate) mod tests {
 
         // Collect every mismatch, so one run shows the whole table.
         let mut mismatches = Vec::new();
+        for (line, expected) in [
+            (steps_100.as_str(), Ok(())),
+            (steps_101.as_str(), Err(TEST_PLAN.to_string())),
+            (bytes_4097.as_str(), Err(TEST_PLAN.to_string())),
+        ] {
+            let got = parse(line).map(|_| ());
+            if got != expected {
+                mismatches.push(format!(
+                    "{}...: expected {expected:?}, got {got:?}",
+                    &line[..20]
+                ));
+            }
+        }
+        // 4096 bytes of plan are accepted.
+        let bytes_4096 = format!("testplan 1,{}1s", "0".repeat(4092));
+        assert_eq!(bytes_4096.len() - "testplan ".len(), 4096);
+        assert!(parse(&bytes_4096).is_ok());
         let rows = ok
             .iter()
             .map(|(line, typed)| (*line, Ok(typed.to_string())))
@@ -1678,29 +1807,33 @@ pub(crate) mod tests {
         });
     }
 
-    /// A Controller time of 0 written with units is stored as "0", which
-    /// means unset, as the command line already normalised it; on main the
-    /// raw "0s" was stored and read as a real span.
+    /// A Controller time of 0, with or without units, clears the time as
+    /// `null` does on the dashboard, and leaves the rate alone.
     #[test]
     #[serial_test::serial]
     fn test_control_zero_time_is_unset() {
         finishes(|| async {
-            let (mut goose_attack, mut run_state) = idle_attack(&[]).await;
-            for line in ["runtime 0s", "increasetime 0m", "decreasetime 00"] {
-                assert!(
-                    control(&mut goose_attack, &mut run_state, line).await,
+            let (mut goose_attack, mut run_state) =
+                idle_attack(&["--users", "4", "--run-time", "10", "--decrease-time", "5"]).await;
+            goose_attack.configuration.increase_rate = Some("2".to_string());
+            for (line, reply_text) in [
+                ("runtime 0s", "run_time cleared"),
+                ("increasetime 0m", "increase_time cleared"),
+                ("decreasetime 00", "decrease_time cleared"),
+            ] {
+                assert_eq!(
+                    reply(&mut goose_attack, &mut run_state, line).await,
+                    (true, reply_text.to_string()),
                     "{}",
                     line
                 );
             }
-            assert_eq!(goose_attack.configuration.run_time.as_deref(), Some("0"));
+            assert_eq!(goose_attack.configuration.run_time, None);
+            assert_eq!(goose_attack.configuration.increase_time, None);
+            assert_eq!(goose_attack.configuration.decrease_time, None);
             assert_eq!(
-                goose_attack.configuration.increase_time.as_deref(),
-                Some("0")
-            );
-            assert_eq!(
-                goose_attack.configuration.decrease_time.as_deref(),
-                Some("0")
+                goose_attack.configuration.increase_rate.as_deref(),
+                Some("2")
             );
         });
     }
@@ -2301,8 +2434,8 @@ pub(crate) mod tests {
         }
     }
 
-    /// A test plan in a WebSocket message of exactly [`MAX_CONTROLLER_MESSAGE`]
-    /// bytes is parsed and applied.
+    /// A test plan of exactly [`MAX_CONTROL_PLAN_BYTES`] in a WebSocket
+    /// message is parsed and applied, and one byte more is refused.
     #[test]
     #[serial_test::serial]
     fn websocket_test_plan_at_limit_applied() {
@@ -2310,41 +2443,47 @@ pub(crate) mod tests {
             let (mut goose_attack, mut run_state) = idle_attack(&[]).await;
             let (mut client, channel_rx) = websocket_client().await;
             run_state.controller_channel_rx = Some(channel_rx);
-            // One user up and down per two steps, so 13,000 users in total.
-            let mut plan = "1,1s;0,1s;".repeat(13_000);
-            plan.push_str("0,");
-            let wrapper = r#"{"request":"testplan "}"#.len();
-            let padding = 131_072 - wrapper - plan.len() - 2;
+            // 100 steps, the most a plan has, padded to 4096 bytes.
+            let mut plan = "1,1s;0,1s;".repeat(49);
+            plan.push_str("1,1s;0,");
+            let padding = MAX_CONTROL_PLAN_BYTES - plan.len() - 2;
             plan.push_str(&"0".repeat(padding));
             plan.push_str("1s");
-            let request = format!(r#"{{"request":"testplan {}"}}"#, plan);
-            assert_eq!(request.len(), 131_072);
-            client.send(Message::Text(request.into())).await.unwrap();
-            // Answer commands as the main loop does until the plan arrives.
-            let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-            while goose_attack.configuration.test_plan.is_none() {
-                assert!(
-                    tokio::time::Instant::now() < deadline,
-                    "no test plan arrived"
-                );
-                tokio::time::sleep(Duration::from_millis(10)).await;
-                goose_attack
-                    .handle_control_requests(&mut run_state)
-                    .await
-                    .unwrap();
+            assert_eq!(plan.len(), MAX_CONTROL_PLAN_BYTES);
+            for (plan, reply) in [
+                (format!("{plan}0"), INVALID_PLAN_MSG),
+                (plan.clone(), "test-plan configured"),
+            ] {
+                let request = format!(r#"{{"request":"testplan {}"}}"#, plan);
+                client.send(Message::Text(request.into())).await.unwrap();
+                // Answer commands as the main loop does until the reply arrives.
+                let answered = async {
+                    loop {
+                        goose_attack
+                            .handle_control_requests(&mut run_state)
+                            .await
+                            .unwrap();
+                        if let Ok(frame) =
+                            tokio::time::timeout(Duration::from_millis(10), next_frame(&mut client))
+                                .await
+                        {
+                            return frame;
+                        }
+                    }
+                };
+                match tokio::time::timeout(Duration::from_secs(10), answered).await {
+                    Ok(Some(Message::Text(text))) => assert_eq!(
+                        serde_json::from_str::<ControllerWebSocketResponse>(&text)
+                            .unwrap()
+                            .response,
+                        reply
+                    ),
+                    other => panic!("expected a reply, got {:?}", other),
+                }
             }
             let applied = goose_attack.configuration.test_plan.as_ref().unwrap();
-            assert_eq!(applied.steps.len(), 26_001);
-            assert_eq!(applied.total_users(), 13_000);
-            match next_frame(&mut client).await {
-                Some(Message::Text(text)) => assert_eq!(
-                    serde_json::from_str::<ControllerWebSocketResponse>(&text)
-                        .unwrap()
-                        .response,
-                    "test-plan configured"
-                ),
-                other => panic!("expected a reply, got {:?}", other),
-            }
+            assert_eq!(applied.steps.len(), MAX_CONTROL_PLAN_STEPS);
+            assert_eq!(applied.total_users(), 50);
         });
     }
 
