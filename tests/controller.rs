@@ -643,8 +643,7 @@ async fn run_standalone_test(test_type: TestType) {
                             assert!(success.unwrap_or(true), "config must succeed");
                             // Confirm the configuration is returned in jsonformat.
                             if test_state.websocket_controller {
-                                assert!(response
-                                    .starts_with(r#"{"help":false,"version":false,"list":false,"#));
+                                assert!(response.starts_with(r#"{"host":"#));
                             // Confirm the configuration object is returned.
                             } else {
                                 assert!(response.starts_with(r"GooseConfiguration "));
@@ -663,8 +662,7 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                         // Confirm the configuration is returned in jsonformat.
                         _ => {
-                            assert!(response
-                                .starts_with(r#"{"help":false,"version":false,"list":false,"#));
+                            assert!(response.starts_with(r#"{"host":"#));
 
                             // Move onto the next command.
                             test_state = update_state(Some(test_state), &test_type).await;

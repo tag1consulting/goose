@@ -1,0 +1,96 @@
+Goose: a distributed HTTP(S) load testing tool written in Rust
+
+Usage: loadtest [OPTIONS]
+
+Use -h for a summary of each option, --help for details, defaults and examples.
+
+Load test:
+  -H, --host <URL>             Target host, such as http://10.21.32.33
+  -u, --users <N>              Concurrent users [default: one per CPU]
+  -r, --increase-rate <RATE>   Users started per second [default: 1]
+  -s, --increase-time <TIME>   Time to start all users, such as 30s
+  -t, --run-time <TIME>        Run this long after all users start
+      --decrease-rate <RATE>   Users stopped per second
+      --decrease-time <TIME>   Time to stop all users, such as 30s
+      --iterations <N>         Each user runs its scenario N times
+      --test-plan <PLAN>       Load shape, such as "10,60s;0,30s"
+      --scenarios <LIST>       Only run the named scenarios
+      --throttle-requests <N>  Cap total requests per second
+
+Information:
+  -h, --help            Print help (--help for more)
+  -V, --version         Print the Goose library version
+  -l, --list            List scenarios and their transactions
+      --scenarios-list  List scenario names, then exit
+
+Console and Goose log:
+  -v, --verbose...           More console output (-v, -vv)
+  -q, --quiet...             Less console output, warnings only
+  -G, --goose-log <FILE>     Write the Goose log to FILE
+  -g, --log-level...         More Goose log detail (-g, -gg)
+      --running-metrics <N>  Print running metrics every N seconds
+      --no-print-metrics     Don't print metrics at the end
+      --no-error-summary     Don't collect the error summary
+
+Reports:
+      --report-file <FILE>     Write a report; repeatable
+      --no-save                Don't save this run to the runs folder
+      --runs-dir <DIR>         Runs folder [default: goose-runs]
+      --baseline-file <PATH>   Compare against an earlier run
+      --no-granular-report     Graph only totals in reports
+      --pdf-print-html <FILE>  Write print-ready HTML for PDF
+      --pdf-scale <SCALE>      PDF scale, 0.1 to 2.0 [default: 0.8]
+      --pdf-timeout <SECS>     PDF timeout, 10 to 600 s [default: 60]
+
+Metrics:
+      --no-reset-metrics        Keep metrics from the ramp up
+      --no-metrics              Don't collect any metrics
+      --no-transaction-metrics  Don't collect transaction metrics
+      --no-scenario-metrics     Don't collect scenario metrics
+      --no-status-codes         Don't collect status code metrics
+      --co-mitigation <MODE>    Coordinated omission mitigation
+
+Logs:
+  -R, --request-log <FILE>        Log every request to FILE
+      --request-format <FMT>      Request log format
+      --request-body              Add request bodies to the request log
+  -T, --transaction-log <FILE>    Log every transaction to FILE
+      --transaction-format <FMT>  Transaction log format
+  -S, --scenario-log <FILE>       Log every scenario to FILE
+      --scenario-format <FMT>     Scenario log format
+  -E, --error-log <FILE>          Log every error to FILE
+      --error-format <FMT>        Error log format
+  -D, --debug-log <FILE>          Write the debug log to FILE
+      --debug-format <FMT>        Debug log format
+      --no-debug-body             Leave response bodies out of debug log
+
+Dashboard:
+      --dashboard                     Serve the live web dashboard
+      --dashboard-host <HOST>         Bind host [default: 127.0.0.1]
+      --dashboard-port <PORT>         Bind port [default: 5118]
+      --dashboard-auth-token <TOKEN>  Auth token
+      --dashboard-control             Allow control from the dashboard
+      --dashboard-max-clients <N>     Max live clients [default: 32]
+      --no-percentiles-over-time      Don't track per-second response times
+
+Controllers:
+      --no-autostart           Wait for a Controller to start the test
+      --no-telnet              Disable the telnet Controller
+      --telnet-host <HOST>     Telnet host [default: 0.0.0.0]
+      --telnet-port <PORT>     Telnet port [default: 5116]
+      --no-websocket           Disable the WebSocket Controller
+      --websocket-host <HOST>  WebSocket host [default: 0.0.0.0]
+      --websocket-port <PORT>  WebSocket port [default: 5117]
+
+HTTP client:
+      --timeout <SECS>        Request timeout in seconds [default: 60]
+      --no-gzip               Don't send Accept-Encoding: gzip
+      --sticky-follow         Keep following the host's redirect
+      --accept-invalid-certs  Accept invalid TLS certificates
+
+Examples:
+  loadtest -H http://localhost:8080 -u 10 -r 2 -t 5m
+  loadtest -H http://localhost:8080 -u 10 -r 2 -t 5m --report-file report.html
+
+Run with --help for details, defaults and examples.
+https://book.goose.rs/getting-started/runtime-options.html

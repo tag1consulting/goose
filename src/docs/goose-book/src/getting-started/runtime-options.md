@@ -1,89 +1,21 @@
 # Run-Time Options
 
-The `-h` flag will show all run-time configuration options available to Goose load tests. For example, you can pass the `-h` flag to our example loadtest as follows, `cargo run --release -- -h`:
+Every Goose load test takes the same run-time options. `-h` prints a summary of each one, and `--help` prints the full reference: what each option does, its default, the values it takes, the options it works with or excludes, an example, and the `GooseDefault` that sets it in code. For example, to see the summary for our example load test, run `cargo run --release -- -h`:
 
-```ignore
-Usage: target/release/loadtest [OPTIONS]
+```text
+{{#include runtime-options-short.txt}}
+```
 
-Goose is a modern, high-performance, distributed HTTP(S) load testing tool,
-written in Rust. Visit https://book.goose.rs/ for more information.
+`--pdf-scale` and `--pdf-timeout` exist only when Goose is built with the `pdf-reports` feature.
 
-The following runtime options are available when launching a Goose load test:
+Help wraps to the width of the terminal, or to `COLUMNS` when it is set, up to 120 columns, and to 80 columns when neither is available. Both outputs on this page are generated from the help at 80 columns, and Goose's tests check that they still match.
 
-Optional arguments:
-  -h, --help                  Displays this help
-  -V, --version               Prints version information
-  -l, --list                  Lists all transactions and exits
+## Full reference
 
-  -H, --host HOST             Defines host to load test (ie http://10.21.32.33)
-  -u, --users USERS           Sets concurrent users (default: number of CPUs)
-  -r, --increase-rate RATE    Sets per-second user increase rate (default: 1)
-  -s, --increase-time TIME    Increases users for up to (30s, 20m, 3h, 1h30m, etc)
-  --decrease-rate RATE        Sets per-second user decrease rate
-  --decrease-time TIME        Decreases users for up to (30s, 20m, 3h, 1h30m, etc)
-  -t, --run-time TIME         Stops load test after (30s, 20m, 3h, 1h30m, etc)
-  -G, --goose-log NAME        Enables Goose log file and sets name
-  -g, --log-level             Increases Goose log level (-g, -gg, etc)
-  -q, --quiet                 Decreases Goose verbosity (-q, -qq, etc)
-  -v, --verbose               Increases Goose verbosity (-v, -vv, etc)
+`cargo run --release -- --help` prints:
 
-Metrics:
-  --running-metrics TIME      How often to optionally print running metrics
-  --no-reset-metrics          Doesn't reset metrics after all users have started
-  --no-metrics                Doesn't track metrics
-  --no-transaction-metrics    Doesn't track transaction metrics
-  --no-scenario-metrics       Doesn't track scenario metrics
-  --no-print-metrics          Doesn't display metrics at end of load test
-  --no-error-summary          Doesn't display an error summary
-  --report-file NAME          Create reports, can be used multiple times (supports .html, .htm, .md, .json, .pdf)
-  --no-save                   Doesn't save this run to the runs directory (--report-file still works)
-  --runs-dir DIR              Sets the runs directory (default: goose-runs)
-  --baseline-file FILE        Compare against a previous JSON report or saved run directory, showing deltas in all reports
-  --no-granular-report        Disable granular graphs in report file
-  --pdf-print-html PATH       Generate printer-friendly HTML for PDF conversion
-  --pdf-scale SCALE           Sets PDF scale factor (0.1-2.0) (default: 0.8)
-  --pdf-timeout SECONDS       PDF generation timeout (10-600s)   (default: 60)
-  -R, --request-log NAME      Sets request log file name
-  --request-format FORMAT     Sets request log format (csv, json, raw, pretty)
-  --request-body              Include the request body in the request log
-  -T, --transaction-log NAME  Sets transaction log file name
-  --transaction-format FORMAT Sets log format (csv, json, raw, pretty)
-  -S, --scenario-log NAME     Sets scenario log file name
-  --scenario-format FORMAT    Sets log format (csv, json, raw, pretty)
-  -E, --error-log NAME        Sets error log file name
-  --error-format FORMAT       Sets error log format (csv, json, raw, pretty)
-  -D, --debug-log NAME        Sets debug log file name
-  --debug-format FORMAT       Sets debug log format (csv, json, raw, pretty)
-  --no-debug-body             Do not include the response body in the debug log
-  --no-status-codes           Do not track status code metrics
-
-Advanced:
-  --test-plan "TESTPLAN"      Defines a more complex test plan ("10,60s;0,30s")
-  --iterations ITERATIONS     Sets how many times to run scenarios then exit
-  --scenarios "SCENARIO"      Limits load test to only specified scenarios
-  --scenarios-list            Lists all scenarios and exits
-  --no-telnet                 Doesn't enable telnet Controller
-  --telnet-host HOST          Sets telnet Controller host (default: 0.0.0.0)
-  --telnet-port PORT          Sets telnet Controller TCP port (default: 5116)
-  --no-websocket              Doesn't enable WebSocket Controller
-  --websocket-host HOST       Sets WebSocket Controller host (default: 0.0.0.0)
-  --websocket-port PORT       Sets WebSocket Controller TCP port (default: 5117)
-  --dashboard                 Enables the live web dashboard
-  --dashboard-control         Enable dashboard control endpoints (requires --dashboard and --dashboard-auth-token).
-  --dashboard-host HOST       Sets dashboard bind host (default: 127.0.0.1)
-  --dashboard-port PORT       Sets dashboard bind port (default: 5118)
-  --dashboard-auth-token TOKEN
-                              Sets dashboard auth token (required for non-loopback binds, and always required with --dashboard-control)
-  --dashboard-max-clients COUNT
-                              Sets max concurrent dashboard SSE clients (default: 32)
-  --no-percentiles-over-time  Doesn't track response times by second (requires --dashboard)
-  --no-autostart              Doesn't automatically start load test
-  --no-gzip                   Doesn't set the gzip Accept-Encoding header
-  --timeout VALUE             Sets per-request timeout, in seconds (default: 60)
-  --co-mitigation STRATEGY    Sets coordinated omission mitigation strategy
-  --throttle-requests VALUE   Sets maximum requests per second
-  --sticky-follow             Follows base_url redirect with subsequent requests
-  --accept-invalid-certs      Disables validation of https certificates
+```text
+{{#include runtime-options-long.txt}}
 ```
 
 All of the above configuration options are [defined in the developer documentation](https://docs.rs/goose/*/goose/config/struct.GooseConfiguration.html).
