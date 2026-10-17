@@ -1,9 +1,17 @@
 // The control panel: Start, Stop, Quit and the users target, sent as
-// authenticated POSTs, plus the phase badge whose phase gates them.
+// authenticated POSTs, plus the phase badge whose phase gates them and the
+// run settings summary.
 
 import { forgetStoredToken, getToken } from "./connection";
 import { optionalElement, requireElement } from "./dom";
+import {
+  addDescribedBy,
+  FollowedField,
+  removeDescribedBy,
+  setReadOnly,
+} from "./follow";
 import { formatInt } from "./format";
+import { settingsSummary } from "./run-settings";
 import { announce, setBanner } from "./status";
 
 type ControlStatusKind = "info" | "ok" | "error";
@@ -16,6 +24,8 @@ interface ControlResultBody {
   phase?: string;
   active_users?: number;
   target_users?: number | null;
+  /** The setting at fault in a refusal. */
+  field?: string | null;
 }
 
 /** Where each Controller listens, or null when it is off. */
@@ -43,16 +53,30 @@ const ctrlMinus = optionalElement("ctrl-minus", HTMLButtonElement);
 const ctrlPlus = optionalElement("ctrl-plus", HTMLButtonElement);
 const ctrlStep = optionalElement("ctrl-step", HTMLInputElement);
 const ctrlStatus = optionalElement("ctrl-status", HTMLElement);
+const ctrlSummary = optionalElement("ctrl-summary", HTMLElement);
+const ctrlTargetHelp = optionalElement("ctrl-target-help", HTMLElement);
+const ctrlTargetReason = optionalElement("ctrl-target-reason", HTMLElement);
 
-// Control panel state (normative lastTarget/dirty algorithm)
+/** Help under the Target row: which settings a mid run change uses. */
+const TARGET_HELP =
+  "Mid run changes ramp at the increase rate when adding users and the decrease rate (else the increase rate) when removing them, 1 per second when neither is set; increase and decrease times are not used.";
+/** Help under the Target row in Idle with a test plan configured. */
+const TARGET_HELP_PLAN = "Applying a user count replaces the test plan with a users ramp.";
+
+// Control panel state
 let controlEnabled = false;
-let lastTarget: number | null = null;
-let dirty = false;
+// The Target field: follows the server unless being edited.
+const targetField = ctrlTarget
+  ? new FollowedField(ctrlTarget, "Target", (text) => {
+      setControlStatus(text, "info");
+    })
+  : null;
 let step = 10;
 let inFlight = false;
 let lastSnap: DashboardSnapshot | null = null;
-let lastDisplayTarget: number | null = null;
 let currentPhase = "idle";
+// Where the run is, from the latest snapshot's settings.
+let currentStage = "idle";
 let seenPhase: string | null = null;
 // A cancel is in progress: the server refuses Users until idle.
 let stopping = false;
@@ -64,6 +88,11 @@ let controllers: HealthControllers | null = null;
 /** True while control is on and the page has no token. */
 export function isControlTokenMissing(): boolean {
   return controlTokenMissing;
+}
+
+/** True once health says control is on. */
+export function isControlEnabled(): boolean {
+  return controlEnabled;
 }
 
 /**
@@ -104,34 +133,56 @@ function setControlStatus(text: string, kind?: ControlStatusKind): void {
 
 // Mark the Target field invalid and described by the status line, or clear
 // both: the status line also carries other results, so it describes the field
-// only while the field is invalid.
+// only while the field is invalid. Its other descriptions stay.
 function setTargetInvalid(invalid: boolean): void {
   if (!ctrlTarget) return;
   if (invalid) {
     ctrlTarget.setAttribute("aria-invalid", "true");
-    ctrlTarget.setAttribute("aria-describedby", "ctrl-status");
+    addDescribedBy(ctrlTarget, "ctrl-status");
   } else {
     ctrlTarget.removeAttribute("aria-invalid");
-    ctrlTarget.removeAttribute("aria-describedby");
+    removeDescribedBy(ctrlTarget, "ctrl-status");
   }
 }
 
-function displayTargetFromSnap(snap: DashboardSnapshot | null): number | null {
-  if (lastTarget != null) return lastTarget;
-  if (!snap) return null;
-  // Prefer plan/control target over peak HWM (maximum_users) so the control
-  // field matches the KPI "active / target" second number. Ignore 0 (stop /
-  // cancel ramp) — control input and server only accept users >= 1.
-  if (snap.target_users >= 1) {
-    return snap.target_users;
+/**
+ * The server's value for the Target field, as text: in Idle the configured
+ * users the next Start runs (empty with a test plan); while running the
+ * count the current step ramps toward. A 0 target (a cancel's ramp to zero)
+ * falls back to the peak, then to the active users; `null` when there is
+ * nothing to show.
+ */
+function serverTarget(snap: DashboardSnapshot): string | null {
+  if (snap.phase === "idle") {
+    return snap.settings.users == null ? "" : String(snap.settings.users);
   }
-  if (snap.maximum_users >= 1) {
-    return snap.maximum_users;
-  }
-  if (snap.active_users >= 1) {
-    return snap.active_users;
+  for (const users of [snap.target_users, snap.maximum_users, snap.active_users]) {
+    if (users >= 1) return String(users);
   }
   return null;
+}
+
+/** Why the Target row cannot change users now, or "" when it can. */
+function targetReason(hasToken: boolean): string {
+  if (!hasToken) return "Enter the control token to change settings";
+  if (currentStage === "test_plan") {
+    return "The test plan sets users; edit the plan, or stop and switch mode";
+  }
+  if (currentStage === "stopping") return "Users change again once the run is idle";
+  return "";
+}
+
+/** Show `text` as the field's reason, or remove it. */
+function setReason(el: HTMLElement | null, input: HTMLInputElement | null, text: string): void {
+  if (!el) return;
+  el.textContent = text;
+  el.hidden = text === "";
+  if (!input) return;
+  if (text === "") {
+    removeDescribedBy(input, el.id);
+  } else {
+    addDescribedBy(input, el.id);
+  }
 }
 
 function readStep(): number {
@@ -158,8 +209,9 @@ function updateControlEnablement(): void {
   const canStart = hasToken && !inFlight && phase === "idle";
   const canStop =
     hasToken && !inFlight && (phase === "increase" || phase === "maintain");
+  const reason = targetReason(hasToken);
   const canUsers =
-    hasToken &&
+    reason === "" &&
     !inFlight &&
     !stopping &&
     (phase === "idle" ||
@@ -180,8 +232,10 @@ function updateControlEnablement(): void {
   setAvailable(ctrlApply, canUsers);
   setAvailable(ctrlMinus, canUsers);
   setAvailable(ctrlPlus, canUsers);
-  if (ctrlTarget) ctrlTarget.disabled = !hasToken || inFlight;
-  if (ctrlStep) ctrlStep.disabled = !hasToken || inFlight;
+  // Read only, never disabled, so focus stays and the reason is read.
+  if (ctrlTarget) setReadOnly(ctrlTarget, reason !== "" || inFlight);
+  if (ctrlStep) setReadOnly(ctrlStep, reason !== "" || inFlight);
+  setReason(ctrlTargetReason, ctrlTarget, reason);
 
   if (!hasToken) {
     controlPanel.classList.add("disabled");
@@ -190,22 +244,40 @@ function updateControlEnablement(): void {
   }
 }
 
+/** Notes for a stage the Target row cannot change users in. */
+function stageReason(stage: string): string {
+  if (stage === "test_plan") return "Test plan running";
+  if (stage === "stopping") return "Run stopping";
+  return "";
+}
+
 export function updateControlFromSnapshot(snap: DashboardSnapshot): void {
   if (!controlEnabled || !controlPanel) return;
   lastSnap = snap;
   stopping = snap.stopping === true;
+  const settings = snap.settings;
+  const before = currentStage;
+  currentStage = settings.stage;
 
   if (ctrlActive) {
     ctrlActive.textContent = formatInt(snap.active_users);
   }
+  if (ctrlSummary) {
+    ctrlSummary.textContent = settingsSummary(settings, true);
+  }
 
-  if (!dirty && ctrlTarget) {
-    const dt = displayTargetFromSnap(snap);
-    if (dt != null) {
-      ctrlTarget.value = String(dt);
-      lastDisplayTarget = dt;
-      setTargetInvalid(false);
+  if (targetField) {
+    // An edit the run can no longer take is discarded, said once.
+    const reason = stageReason(currentStage);
+    if (reason !== "" && reason !== stageReason(before)) {
+      targetField.discard(reason);
     }
+    targetField.fromServer(serverTarget(snap));
+    if (!targetField.pending()) setTargetInvalid(false);
+  }
+  if (ctrlTargetHelp) {
+    ctrlTargetHelp.textContent =
+      snap.phase === "idle" && settings.test_plan != null ? TARGET_HELP_PLAN : TARGET_HELP;
   }
 
   updateControlEnablement();
@@ -233,6 +305,22 @@ function handleControlResponse(
   res: Response,
   appliedUsers?: number
 ): Promise<ControlResultBody | null> {
+  // Whatever happens, a users value this tab sent is settled by the reply.
+  const settle = (data: ControlResultBody | null): void => {
+    if (!targetField || typeof appliedUsers !== "number") return;
+    if (data && data.ok) {
+      targetField.accepted(String(appliedUsers));
+    } else {
+      targetField.refused(String(appliedUsers));
+    }
+  };
+  return handleControlBody(res).then((data) => {
+    settle(data);
+    return data;
+  });
+}
+
+function handleControlBody(res: Response): Promise<ControlResultBody | null> {
   if (res.status === 401) {
     forgetStoredToken();
     setBanner(
@@ -290,33 +378,11 @@ function handleControlResponse(
         if (data.command === "stop") {
           stopping = true;
         }
-        if (
-          typeof appliedUsers === "number" &&
-          isFinite(appliedUsers) &&
-          appliedUsers >= 1
-        ) {
-          lastTarget = appliedUsers;
-          dirty = false;
-          if (ctrlTarget) {
-            ctrlTarget.value = String(appliedUsers);
-            lastDisplayTarget = appliedUsers;
-          }
-        } else if (
-          data.target_users != null &&
-          typeof data.target_users === "number" &&
-          data.target_users >= 1
-        ) {
-          lastTarget = data.target_users;
-          dirty = false;
-          if (ctrlTarget) {
-            ctrlTarget.value = String(data.target_users);
-            lastDisplayTarget = data.target_users;
-          }
-        }
         updateControlEnablement();
         return data;
       }
       setControlStatus(data.message || "Control rejected", "error");
+      if (data.field === "users") setTargetInvalid(true);
       if (data.phase) {
         setPhase(data.phase, false);
       }
@@ -367,37 +433,32 @@ function onQuitClick(): void {
   runControl("/api/v1/control/quit");
 }
 
+/** Send `users` to `/users`, the field showing it until the reply. */
+function sendUsers(users: number): void {
+  if (targetField) targetField.sending(String(users));
+  runControl("/api/v1/control/users", { users: users }, users);
+}
+
 function onApplyClick(): void {
   if (unavailable(ctrlApply)) return;
-  const n = parseInt(ctrlTarget && ctrlTarget.value ? ctrlTarget.value : "", 10);
+  const n = parseInt(targetField ? targetField.text() : "", 10);
   if (!isFinite(n) || n < 1) {
     setControlStatus("Target must be an integer ≥ 1", "error");
     setTargetInvalid(true);
     return;
   }
-  runControl("/api/v1/control/users", { users: n }, n);
+  sendUsers(n);
 }
 
 function onStepClick(delta: number): void {
   if (unavailable(delta < 0 ? ctrlMinus : ctrlPlus)) return;
   readStep();
-  let base: number;
-  if (dirty) {
-    base = parseInt(
-      ctrlTarget && ctrlTarget.value ? ctrlTarget.value : "",
-      10
-    );
-  } else {
-    const fromSnap = displayTargetFromSnap(lastSnap);
-    base = fromSnap == null ? NaN : fromSnap;
-  }
+  // From what the field shows: the server's value, or the user's edit.
+  let base = parseInt(targetField ? targetField.text() : "", 10);
   if (!isFinite(base)) {
     base = lastSnap ? lastSnap.active_users : 1;
   }
-  const next = Math.max(1, base + delta * step);
-  if (ctrlTarget) ctrlTarget.value = String(next);
-  dirty = true;
-  runControl("/api/v1/control/users", { users: next }, next);
+  sendUsers(Math.max(1, base + delta * step));
 }
 
 /**
@@ -491,23 +552,8 @@ export function initControlPanel(): Promise<boolean> {
     ctrlStep.addEventListener("input", readStep);
   }
   if (ctrlTarget) {
-    ctrlTarget.addEventListener("focus", () => {
-      dirty = true;
-    });
     ctrlTarget.addEventListener("input", () => {
-      dirty = true;
       setTargetInvalid(false);
-    });
-    ctrlTarget.addEventListener("blur", () => {
-      if (!dirty) return;
-      const n = parseInt(ctrlTarget.value, 10);
-      if (
-        lastDisplayTarget != null &&
-        isFinite(n) &&
-        n === lastDisplayTarget
-      ) {
-        dirty = false;
-      }
     });
   }
   return enabled;
