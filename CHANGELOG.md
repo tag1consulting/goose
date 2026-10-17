@@ -2,10 +2,22 @@
 
 ## 0.19.0-dev
  - [#760](https://github.com/tag1consulting/goose/pull/760) parse the command line with `clap` instead of the unmaintained `gumdrop`; every command line parses as it did
-    o **API change**: `GooseConfiguration::parse_args_default` and `GooseConfiguration::parse_args_default_or_exit` are now inherent methods, so remove `use gumdrop::Options;` from load tests that imported it; `GooseConfiguration` does not implement `clap::Parser`, so `parse()` and `try_parse_from()` do not exist
+    o **API change**: `GooseConfiguration::parse_args_default` and `GooseConfiguration::parse_args_default_or_exit` are now inherent methods, so remove `use gumdrop::Options;` from load tests that imported it; `GooseConfiguration` implements `clap::Parser`, so `parse()`, `try_parse()` and `try_parse_from()` parse the same command line, with the same help
+    o **API change**: `host`, `increase_time`, `run_time`, `decrease_time`, `goose_log`, `runs_dir`, `pdf_print_html`, `request_log`, `transaction_log`, `scenario_log`, `error_log`, `debug_log`, `dashboard_host`, `dashboard_auth_token`, `telnet_host`, `websocket_host`, `iterations`, `throttle_requests`, `scenarios`, `dashboard_port`, `telnet_port`, `websocket_port` and `dashboard_max_clients` in `GooseConfiguration` are now `Option`, `None` when the option is not given, so a value a user types, `0` or `""` among them, is never taken for one not given; code that set one directly wraps the value in `Some`, as in `configuration.run_time = Some("30s".to_string())`, and code that read one uses `as_deref()` or `unwrap_or`
     o **API change**: the `help` field is gone, and `parse_args_default` returns a `GooseError::InvalidOption` for `-h` and `--help`; its errors name the option and value clap refused, and give clap's reason without its usage line
     o **API change**: `GooseConfiguration::pdf_scale` and `pdf_timeout` are `Option<f64>` and `Option<u64>`; `GooseDefault::PdfScale` sets the scale in code, as `GooseDefault::PdfTimeout` sets the timeout
     o **behavior change**: help is split into a short `-h`, one line for each option, and a long `--help`, which explains each option's default, values, interactions and `GooseDefault`; both are regrouped under task headings with new wording, printed to stdout, and wrapped to the terminal (80 columns when none is detected, at most 120)
+    o **behavior change**: the Controller `config` command's JSON no longer has a `help` key, lists its keys in help order, and shows an option that is not set as `null`
+    o **behavior change**: `--dashboard-port 0` binds a free port, which the log and the end of run message show; it bound port 5118
+    o **bug fix**: `--no-debug-body` on its own leaves response bodies out of the debug log; it was reset to off unless `--no-granular-report` was also given
+    o **bug fix**: `GooseDefault::NoGranularData` is applied; it had no effect
+    o **bug fix**: `--no-granular-report` no longer leaves response bodies out of the debug log
+    o **bug fix**: a fractional `--timeout` is kept to the millisecond; `--timeout 0.5` gave a 0 ms timeout that failed every request, and `1.5` gave 1 second; a timeout under 1 ms is refused
+    o **bug fix**: a `--timeout`, `--increase-rate` or `--decrease-rate` that is not a number, or the same in `GooseDefault::Timeout`, `IncreaseRate` or `DecreaseRate`, is an error naming the option; it was a warning, and the load test ran with a 60 second timeout or one user a second
+    o **bug fix**: `GooseDefault::Iterations` is applied; the command line's `iterations` always won, even when `--iterations` was not given
+    o **bug fix**: `--run-time 0`, `--increase-time 0`, `--decrease-time 0` and `--throttle-requests 0` undo `GooseDefault::RunTime`, `IncreaseTime`, `DecreaseTime` and `ThrottleRequests`; they were read as not given, so the default stayed, and with `--iterations`, `--increase-rate` or `--decrease-rate` the load test was refused
+    o **bug fix**: an empty `--goose-log`, `--request-log`, `--transaction-log`, `--scenario-log`, `--error-log`, `--debug-log` or `--dashboard-auth-token` turns off the log or token its `GooseDefault` sets; it was read as not given, so the default stayed
+    o **bug fix**: `--telnet-port 0`, `--websocket-port 0` and `--dashboard-max-clients 0` are refused; they became 5116, 5117 and 32
     o **bug fix**: an explicit `--pdf-timeout 60` now beats `GooseDefault::PdfTimeout`, and `GooseConfiguration::default()` gets a PDF scale of 0.8 and a timeout of 60, where it had 0.0 and 0 and a PDF report was refused
     o a bad `--co-mitigation` or log format value now names the valid ones
     o the book's runtime options page is generated from the help, and a test checks it matches
