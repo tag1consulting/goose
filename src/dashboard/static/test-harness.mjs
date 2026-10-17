@@ -44,7 +44,8 @@ function fileResponse(status, body, filename) {
 // control 401 alone), and `controlStatus` / `snapshotStatus` to force an
 // authorized request to answer with that status instead of 200 (`snapshotStatus`
 // "reject" makes the snapshot fetch fail as on a network error, "pending"
-// leaves it unanswered), and
+// leaves it unanswered until its signal aborts, then fails with an AbortError
+// as a browser's fetch does), and
 // `snapshot` for the snapshot an authorized request gets (default
 // IDLE_SNAPSHOT), or a function of the request URL returning it.
 // `controlDelayMs` (default 0) holds each control answer that long, so a test
@@ -166,10 +167,16 @@ export function stubServer(token, options = {}) {
       return Promise.resolve(jsonResponse(200, body));
     }
     if (snapshotStatus === "pending") {
-      return new Promise(() => {});
+      const signal = init && init.signal;
+      return new Promise((resolve, reject) => {
+        if (signal) {
+          signal.addEventListener("abort", () =>
+            reject(new DOMException("aborted", "AbortError"))
+          );
+        }
+      });
     }
     if (snapshotStatus === "reject") {
-
       return Promise.reject(new TypeError("network error"));
     }
     if (snapshotStatus !== 200) {
@@ -233,12 +240,14 @@ export async function openPage(path, from, serverToken, options = {}) {
       },
     });
   }
-  // `eventStream`: an event stream the test drives, as `page.events.emit`.
+  // `eventStream`: an event stream the test drives, as `page.events.emit`;
+  // `source` is the last one the page opened, `sources` every one in order.
   const events = {
     emit(type, payload) {
       if (this.source) this.source.emit(type, payload);
     },
     source: null,
+    sources: [],
   };
   if (options.eventStream) {
     window.EventSource = class {
@@ -247,6 +256,7 @@ export async function openPage(path, from, serverToken, options = {}) {
         this.readyState = 1;
         this.listeners = {};
         events.source = this;
+        events.sources.push(this);
       }
       emit(type, payload) {
         for (const listener of this.listeners[type] || []) {

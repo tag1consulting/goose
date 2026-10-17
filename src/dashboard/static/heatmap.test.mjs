@@ -735,6 +735,75 @@ test("a delta that does not follow on asks for the columns the page lacks", asyn
   assert.equal(url.searchParams.get("heatmap_since"), "5");
 });
 
+test("a catch-up answering after Goose exited renders nothing", async () => {
+  const page = await openPage("/?token=" + TOKEN, FRESH, TOKEN, {
+    snapshot: snapshotWith([]),
+    eventStream: true,
+  });
+  page.events.emit(
+    "snapshot",
+    JSON.stringify(withHeatmap(snapshotWith([]), heatmap({ generation: 3, rev: 5, columns: [column(1, [MS_7, 2])] })))
+  );
+  await settle(page.window);
+  const held = [];
+  const realFetch = page.window.fetch;
+  page.window.fetch = (url, init) => {
+    if (!String(url).includes("/api/v1/snapshot")) return realFetch(url, init);
+    return new Promise((resolve) => held.push(resolve));
+  };
+  page.events.emit(
+    "snapshot",
+    JSON.stringify(withHeatmap(snapshotWith([]), heatmap({ generation: 3, rev: 8, since: 4 })))
+  );
+  await settle(page.window);
+  assert.equal(held.length, 1, "a catch-up is out");
+  page.events.emit("closed", "");
+  await settle(page.window);
+  assert.equal(el(page, "connection-label").textContent, "finished");
+  held[0]({ status: 200, ok: true, json: () => Promise.resolve(snapshotWith([])) });
+  await settle(page.window);
+  assert.equal(el(page, "connection-label").textContent, "finished", "the late catch-up is dropped");
+});
+
+test("a catch-up after a polling page's retry came back keeps the pill on SSE", async () => {
+  const page = await openPage("/?token=" + TOKEN, FRESH, TOKEN, {
+    snapshot: snapshotWith([]),
+    eventStream: true,
+  });
+  page.events.emit(
+    "snapshot",
+    JSON.stringify(withHeatmap(snapshotWith([]), heatmap({ generation: 3, rev: 5, columns: [column(1, [MS_7, 2])] })))
+  );
+  await settle(page.window);
+  // Every snapshot poll answers 503 until the retry is live again.
+  let pollStatus = 503;
+  const realFetch = page.window.fetch;
+  page.window.fetch = (url, init) => {
+    if (!String(url).includes("/api/v1/snapshot") || pollStatus === 200) return realFetch(url, init);
+    return Promise.resolve({ status: 503, ok: false, json: () => Promise.resolve(null) });
+  };
+  page.events.source.readyState = 2;
+  page.events.source.onerror();
+  await settle(page.window);
+  assert.equal(page.events.sources.length, 2, "the 503 poll opened a retry");
+  pollStatus = 200;
+  page.events.emit(
+    "snapshot",
+    JSON.stringify(withHeatmap(snapshotWith([]), heatmap({ generation: 3, rev: 5, columns: [column(1, [MS_7, 2])] })))
+  );
+  await settle(page.window);
+  assert.equal(el(page, "connection-label").textContent, "SSE");
+  const before = snapshotRequests(page).length;
+  // Follows on from rev 4, which this page never had: a catch-up goes.
+  page.events.emit(
+    "snapshot",
+    JSON.stringify(withHeatmap(snapshotWith([]), heatmap({ generation: 3, rev: 8, since: 4 })))
+  );
+  await settle(page.window);
+  assert.equal(snapshotRequests(page).length, before + 1, "a catch-up is out");
+  assert.equal(el(page, "connection-label").textContent, "SSE", "the catch-up is a live fetch, not a poll");
+});
+
 test("with percentiles off the card is the average latency chart, with no heatmap", async () => {
   const page = await openPage("/?token=" + TOKEN, FRESH, TOKEN, {
     snapshot: snapshotWith([requestRow("/a", true)], {}, { percentiles_over_time: false }),
