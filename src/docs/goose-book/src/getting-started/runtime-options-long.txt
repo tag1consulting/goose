@@ -584,5 +584,6 @@ Examples:
   loadtest -H http://localhost:8080 -u 10 -r 2 -t 5m
   loadtest -H http://localhost:8080 -u 10 -r 2 -t 5m --report-file report.html
 
-Most options can also be set in code with GooseDefault; the command line wins.
+Most options can also be set in code with GooseDefault; the command line wins. A
+value that begins with a hyphen goes after =, as in --goose-log=-run.log.
 https://book.goose.rs/getting-started/runtime-options.html

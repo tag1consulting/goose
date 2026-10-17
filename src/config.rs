@@ -171,7 +171,12 @@ pub struct GooseConfiguration {
     /// scenario runs.
     ///
     /// Example: --scenarios "checkout,browse*". Set in code with GooseDefault::Scenarios.
-    #[arg(help_heading = "Load test", long, value_name = "LIST")]
+    #[arg(
+        help_heading = "Load test",
+        long,
+        value_name = "LIST",
+        value_parser = scenarios_parser
+    )]
     pub scenarios: Option<Scenarios>,
     /// Cap total requests per second
     ///
@@ -742,7 +747,8 @@ fn command(name: &str, width: usize) -> clap::Command {
             .after_long_help(format!(
                 "{examples}\n\n\
                  Most options can also be set in code with GooseDefault; the command line \
-                 wins.\n\
+                 wins. A value that begins with a hyphen goes after =, as in \
+                 --goose-log=-run.log.\n\
                  {RUNTIME_OPTIONS_URL}"
             ))
             .help_template(
@@ -753,8 +759,9 @@ fn command(name: &str, width: usize) -> clap::Command {
             .disable_version_flag(true)
             // A repeated option keeps its last value.
             .args_override_self(true)
-            // An option's value may begin with a hyphen.
-            .allow_hyphen_values(true),
+            // A negative number is a value, which the option then refuses with its own
+            // reason; any other argument that begins with a hyphen is an option.
+            .allow_negative_numbers(true),
     );
     // Set after the derive, which would otherwise take the structure's documentation.
     let command = command
@@ -843,7 +850,19 @@ impl GooseConfiguration {
                 let _ = stdout.flush();
                 std::process::exit(0);
             }
-            e.exit()
+            let args: Vec<String> = std::env::args_os()
+                .skip(1)
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect();
+            let args: Vec<&str> = args.iter().map(String::as_str).collect();
+            match hyphen_value_tip(&args) {
+                Some(tip) => {
+                    let _ = e.print();
+                    eprintln!("\n{tip}");
+                    std::process::exit(e.exit_code())
+                }
+                None => e.exit(),
+            }
         })
     }
 
@@ -885,31 +904,76 @@ fn tidy_help(help: &str) -> String {
     tidy
 }
 
+/// A tip for a command line that gives an option a value beginning with a hyphen as
+/// its own argument, as `--goose-log -run.log`: clap reads that value as another
+/// option, so the option has no value, or the value is an unknown option. The tip
+/// names the option, never the value, which can be a `--dashboard-auth-token`.
+fn hyphen_value_tip(args: &[&str]) -> Option<String> {
+    let command = command("loadtest", DEFAULT_HELP_WIDTH);
+    args.windows(2).find_map(|pair| {
+        let (option, value) = (pair[0], pair[1]);
+        // A lone hyphen is a value, as clap reads it.
+        if !value.starts_with('-') || value == "-" {
+            return None;
+        }
+        let takes_value = command.get_arguments().any(|arg| {
+            let named = match option.strip_prefix("--") {
+                Some(long) => arg.get_long() == Some(long),
+                None => {
+                    let mut short = option.strip_prefix('-').unwrap_or_default().chars();
+                    short.next().is_some_and(|c| arg.get_short() == Some(c))
+                        && short.next().is_none()
+                }
+            };
+            named && arg.get_action().takes_values()
+        });
+        takes_value.then(|| {
+            format!("tip: a value that begins with a hyphen goes after =, as in {option}=<value>")
+        })
+    })
+}
+
 /// A clap error as a [`GooseError::InvalidOption`]: the option and value clap names,
-/// otherwise the arguments, and clap's message without its prefix, usage or tips.
+/// and clap's message without its prefix, usage or tips. The rest of the command line
+/// is never copied in: it can hold a `--dashboard-auth-token`, and load tests print
+/// this error.
 fn invalid_option(error: &clap::Error, args: &[&str]) -> GooseError {
     let context = |kind| match error.get(kind) {
         Some(ContextValue::String(value)) => Some(value.clone()),
         _ => None,
     };
-    let detail = match error.kind() {
-        ErrorKind::DisplayHelp => "help was requested".to_string(),
-        _ => {
-            let message = error.to_string();
-            let line = message.lines().next().unwrap_or_default();
-            let line = line.strip_prefix("error: ").unwrap_or(line);
-            // clap lists the valid values on a line of their own.
-            match error.get(ContextKind::ValidValue) {
-                Some(ContextValue::Strings(values)) if !values.is_empty() => {
-                    format!("{line}; possible values: {}", values.join(", "))
-                }
-                _ => line.to_string(),
-            }
+    if error.kind() == ErrorKind::DisplayHelp {
+        // clap names no argument for help; name the flag as it was given.
+        let flag = args
+            .iter()
+            .find(|arg| matches!(**arg, "-h" | "--help"))
+            .unwrap_or(&"--help");
+        return GooseError::InvalidOption {
+            option: flag.to_string(),
+            value: String::new(),
+            detail: "help was requested".to_string(),
+        };
+    }
+    let message = error.to_string();
+    let line = message.lines().next().unwrap_or_default();
+    let line = line.strip_prefix("error: ").unwrap_or(line);
+    // clap lists the valid values on a line of their own.
+    let detail = match error.get(ContextKind::ValidValue) {
+        Some(ContextValue::Strings(values)) if !values.is_empty() => {
+            format!("{line}; possible values: {}", values.join(", "))
         }
+        _ => line.to_string(),
     };
+    let detail = match hyphen_value_tip(args) {
+        Some(tip) => format!("{detail}; {tip}"),
+        None => detail,
+    };
+    // An unexpected argument is both the option and the value clap refused.
+    let option = context(ContextKind::InvalidArg).unwrap_or_default();
+    let value = context(ContextKind::InvalidValue).unwrap_or_else(|| option.clone());
     GooseError::InvalidOption {
-        option: context(ContextKind::InvalidArg).unwrap_or_else(|| args.join(" ")),
-        value: context(ContextKind::InvalidValue).unwrap_or_else(|| args.join(" ")),
+        option,
+        value,
         detail,
     }
 }
@@ -935,21 +999,31 @@ impl FromStr for Scenarios {
             if scenario.chars().all(|c| c.is_alphanumeric() || c == '*') {
                 active.push(scenario);
             } else {
-                // Logger isn't initialized yet, provide helpful debug output.
-                eprintln!("ERROR: invalid `configuration.scenarios` value: '{line}'");
-                eprintln!("  Expected format: --scenarios \"{{one}},{{two}},{{three}}\"");
-                eprintln!("    {{one}}, {{two}}, {{three}}, etc must be alphanumeric (use * for wildcard matching)");
-                eprintln!("    To view valid scenario names invoke `--scenarios-list`");
+                // The caller reports the error: clap for the command line, the
+                // caller of `set_default` in code.
                 return Err(GooseError::InvalidOption {
-                    option: "`configuration.scenarios".to_string(),
+                    option: "`configuration.scenarios`".to_string(),
                     value: line.to_string(),
-                    detail: "invalid `configuration.scenarios` value.".to_string(),
+                    detail: format!(
+                        "'{}' is not a scenario name: use letters and digits, with * as a \
+                         wildcard; --scenarios-list prints the names.",
+                        line.trim()
+                    ),
                 });
             }
         }
         // The listed scenarios are only valid if the logic gets this far.
         Ok(Scenarios { active })
     }
+}
+
+/// Parses `--scenarios` for clap, whose error message is the `Display` of the error:
+/// for a [`GooseError`] that is a generic sentence, so this returns the detail.
+fn scenarios_parser(value: &str) -> Result<Scenarios, String> {
+    value.parse().map_err(|e| match e {
+        GooseError::InvalidOption { detail, .. } => detail,
+        other => other.to_string(),
+    })
 }
 
 /// Optional default values for Goose run-time options.
@@ -1282,11 +1356,11 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::WebSocketPort`]
 ///  - [`GooseDefault::DashboardPort`]
 ///  - [`GooseDefault::DashboardMaxClients`]
-///  - [`GooseDefault::PdfTimeout`] (with the `pdf-reports` feature)
+///  - `GooseDefault::PdfTimeout` (with the `pdf-reports` feature)
 ///
 /// The following run-time options can be configured with a custom default using a
 /// [`f64`] float:
-///  - [`GooseDefault::PdfScale`] (with the `pdf-reports` feature)
+///  - `GooseDefault::PdfScale` (with the `pdf-reports` feature)
 ///
 /// The following run-time flags can be configured with a custom default using a
 /// [`bool`] (and otherwise default to [`false`]).
@@ -1367,9 +1441,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             GooseDefault::BaselineFile => self.defaults.baseline_file = Some(value.to_string()),
             GooseDefault::RequestLog => self.defaults.request_log = Some(value.to_string()),
             GooseDefault::ScenarioLog => self.defaults.scenario_log = Some(value.to_string()),
-            GooseDefault::Scenarios => {
-                self.defaults.scenarios = Some(value.parse::<Scenarios>().unwrap())
-            }
+            GooseDefault::Scenarios => self.defaults.scenarios = Some(value.parse::<Scenarios>()?),
             GooseDefault::TelnetHost => self.defaults.telnet_host = Some(value.to_string()),
             GooseDefault::TestPlan => self.defaults.test_plan = Some(value.parse::<TestPlan>()?),
             GooseDefault::Timeout => self.defaults.timeout = Some(value.to_string()),
@@ -2119,264 +2191,20 @@ pub(crate) struct GooseValue<'a, T> {
     pub(crate) message: &'a str,
 }
 
-pub(crate) trait GooseConfigure<T> {
-    /// Set [`GooseValue`] with supported type.
-    fn get_value(&self, values: Vec<GooseValue<T>>) -> Option<T>;
-}
-
-impl GooseConfigure<usize> for GooseConfiguration {
-    /// Use [`GooseValue`] to set a [`usize`] value.
-    fn get_value(&self, values: Vec<GooseValue<usize>>) -> Option<usize> {
-        for value in values {
-            if let Some(v) = value.value {
-                if value.filter {
-                    continue;
-                } else {
-                    if !value.message.is_empty() {
-                        info!("{} = {}", value.message, v)
-                    }
-                    return Some(v);
+impl GooseConfiguration {
+    /// The first value in `values` that is set and not filtered out, in order of
+    /// precedence, logging it at info level when it has a `message`.
+    pub(crate) fn get_value<T: std::fmt::Debug>(&self, values: Vec<GooseValue<T>>) -> Option<T> {
+        values
+            .into_iter()
+            .filter(|value| !value.filter)
+            .find_map(|value| {
+                let v = value.value?;
+                if !value.message.is_empty() {
+                    info!("{} = {:?}", value.message, v);
                 }
-            }
-        }
-        None
-    }
-}
-impl GooseConfigure<u64> for GooseConfiguration {
-    /// Use [`GooseValue`] to set a [`u64`] value.
-    fn get_value(&self, values: Vec<GooseValue<u64>>) -> Option<u64> {
-        for value in values {
-            if let Some(v) = value.value {
-                if value.filter {
-                    continue;
-                } else {
-                    if !value.message.is_empty() {
-                        info!("{} = {}", value.message, v)
-                    }
-                    return Some(v);
-                }
-            }
-        }
-        None
-    }
-}
-impl GooseConfigure<u16> for GooseConfiguration {
-    /// Use [`GooseValue`] to set a [`u16`] value.
-    fn get_value(&self, values: Vec<GooseValue<u16>>) -> Option<u16> {
-        for value in values {
-            if let Some(v) = value.value {
-                if value.filter {
-                    continue;
-                } else {
-                    if !value.message.is_empty() {
-                        info!("{} = {}", value.message, v)
-                    }
-                    return Some(v);
-                }
-            }
-        }
-        None
-    }
-}
-impl GooseConfigure<u32> for GooseConfiguration {
-    /// Use [`GooseValue`] to set a [`u32`] value.
-    fn get_value(&self, values: Vec<GooseValue<u32>>) -> Option<u32> {
-        for value in values {
-            if let Some(v) = value.value {
-                if value.filter {
-                    continue;
-                } else {
-                    if !value.message.is_empty() {
-                        info!("{} = {}", value.message, v)
-                    }
-                    return Some(v);
-                }
-            }
-        }
-        None
-    }
-}
-impl GooseConfigure<u8> for GooseConfiguration {
-    /// Use [`GooseValue`] to set a [`u8`] value.
-    fn get_value(&self, values: Vec<GooseValue<u8>>) -> Option<u8> {
-        for value in values {
-            if let Some(v) = value.value {
-                if value.filter {
-                    continue;
-                } else {
-                    if !value.message.is_empty() {
-                        info!("{} = {}", value.message, v)
-                    }
-                    return Some(v);
-                }
-            }
-        }
-        None
-    }
-}
-impl GooseConfigure<f32> for GooseConfiguration {
-    /// Use [`GooseValue`] to set a [`f32`] value.
-    fn get_value(&self, values: Vec<GooseValue<f32>>) -> Option<f32> {
-        for value in values {
-            if let Some(v) = value.value {
-                if value.filter {
-                    continue;
-                } else {
-                    if !value.message.is_empty() {
-                        info!("{} = {}", value.message, v)
-                    }
-                    return Some(v);
-                }
-            }
-        }
-        None
-    }
-}
-impl GooseConfigure<f64> for GooseConfiguration {
-    /// Use [`GooseValue`] to set a [`f64`] value.
-    fn get_value(&self, values: Vec<GooseValue<f64>>) -> Option<f64> {
-        for value in values {
-            if let Some(v) = value.value {
-                if value.filter {
-                    continue;
-                } else {
-                    if !value.message.is_empty() {
-                        info!("{} = {}", value.message, v)
-                    }
-                    return Some(v);
-                }
-            }
-        }
-        None
-    }
-}
-impl GooseConfigure<TestPlan> for GooseConfiguration {
-    /// Use [`GooseValue`] to set a vec<(usize, usize)> value.
-    fn get_value(&self, values: Vec<GooseValue<TestPlan>>) -> Option<TestPlan> {
-        for value in values {
-            if let Some(v) = value.value {
-                if value.filter {
-                    continue;
-                } else {
-                    if !value.message.is_empty() {
-                        info!("{} = {:?}", value.message, v)
-                    }
-                    return Some(v);
-                }
-            }
-        }
-        None
-    }
-}
-impl GooseConfigure<String> for GooseConfiguration {
-    /// Use [`GooseValue`] to set a [`String`] value.
-    fn get_value(&self, values: Vec<GooseValue<String>>) -> Option<String> {
-        for value in values {
-            if let Some(v) = value.value {
-                if value.filter {
-                    continue;
-                } else {
-                    if !value.message.is_empty() {
-                        info!("{} = {}", value.message, v)
-                    }
-                    return Some(v);
-                }
-            }
-        }
-        None
-    }
-}
-impl GooseConfigure<Vec<String>> for GooseConfiguration {
-    /// Use [`GooseValue`] to set a [`String`] value.
-    fn get_value(&self, values: Vec<GooseValue<Vec<String>>>) -> Option<Vec<String>> {
-        for value in values {
-            if let Some(v) = value.value {
-                if value.filter {
-                    continue;
-                } else {
-                    if !value.message.is_empty() {
-                        info!("{} = {:?}", value.message, v)
-                    }
-                    return Some(v);
-                }
-            }
-        }
-        None
-    }
-}
-impl GooseConfigure<bool> for GooseConfiguration {
-    /// Use [`GooseValue`] to set a [`bool`] value.
-    fn get_value(&self, values: Vec<GooseValue<bool>>) -> Option<bool> {
-        for value in values {
-            if let Some(v) = value.value {
-                if value.filter {
-                    continue;
-                } else {
-                    if !value.message.is_empty() {
-                        info!("{} = {}", value.message, v)
-                    }
-                    return Some(v);
-                }
-            }
-        }
-        None
-    }
-}
-impl GooseConfigure<GooseLogFormat> for GooseConfiguration {
-    /// Use [`GooseValue`] to set a [`GooseLogFormat`] value.
-    fn get_value(&self, values: Vec<GooseValue<GooseLogFormat>>) -> Option<GooseLogFormat> {
-        for value in values {
-            if let Some(v) = value.value {
-                if value.filter {
-                    continue;
-                } else {
-                    if !value.message.is_empty() {
-                        info!("{} = {:?}", value.message, v)
-                    }
-                    return Some(v);
-                }
-            }
-        }
-        None
-    }
-}
-impl GooseConfigure<GooseCoordinatedOmissionMitigation> for GooseConfiguration {
-    /// Use [`GooseValue`] to set a [`GooseCoordinatedOmissionMitigation`] value.
-    fn get_value(
-        &self,
-        values: Vec<GooseValue<GooseCoordinatedOmissionMitigation>>,
-    ) -> Option<GooseCoordinatedOmissionMitigation> {
-        for value in values {
-            if let Some(v) = value.value {
-                if value.filter {
-                    continue;
-                } else {
-                    if !value.message.is_empty() {
-                        info!("{} = {:?}", value.message, v)
-                    }
-                    return Some(v);
-                }
-            }
-        }
-        None
-    }
-}
-impl GooseConfigure<Scenarios> for GooseConfiguration {
-    /// Use [`GooseValue`] to set a [`Scenarios`] value.
-    fn get_value(&self, values: Vec<GooseValue<Scenarios>>) -> Option<Scenarios> {
-        for value in values {
-            if let Some(v) = value.value {
-                if value.filter {
-                    continue;
-                } else {
-                    if !value.message.is_empty() {
-                        info!("{} = {:?}", value.message, v)
-                    }
-                    return Some(v);
-                }
-            }
-        }
-        None
+                Some(v)
+            })
     }
 }
 
@@ -2397,10 +2225,12 @@ pub(crate) fn timespan(option: &str, value: &str) -> Result<usize, GooseError> {
 }
 
 /// A `--timeout` of `seconds` in whole milliseconds, rounded to the nearest, or `None`
-/// when it is not a number or is below zero.
-fn timeout_millis(seconds: f32) -> Option<u64> {
-    let millis = (f64::from(seconds) * 1_000.0).round();
-    // `as` saturates, so an infinite timeout is the longest there is.
+/// when it is below zero. `seconds` is an `f64`, which keeps the millisecond of any
+/// timeout up to about 285,000 years; an `f32` loses it above about 4.5 hours.
+fn timeout_millis(seconds: f64) -> Option<u64> {
+    let millis = (seconds * 1_000.0).round();
+    // `as` saturates, so a timeout too long for a `u64` of milliseconds is the
+    // longest there is.
     (millis >= 0.0).then_some(millis as u64)
 }
 
@@ -2418,17 +2248,23 @@ fn seconds(value: &Option<String>) -> usize {
         .unwrap_or_default()
 }
 
-/// The number in option `option`, refused when `value` is not a number.
-fn number(option: &str, value: &str) -> Result<f32, GooseError> {
-    value.parse::<f32>().map_err(|_| GooseError::InvalidOption {
-        option: format!("`configuration.{option}`"),
-        value: value.to_string(),
-        detail: format!("`configuration.{option}` must be a number."),
-    })
+/// The number in option `option`, refused when `value` is not a finite number:
+/// `NaN`, `inf` and `infinity` parse as floats, but are not numbers a rate or a
+/// timeout can use, and the Controllers refuse them too.
+fn number(option: &str, value: &str) -> Result<f64, GooseError> {
+    value
+        .parse::<f64>()
+        .ok()
+        .filter(|number| number.is_finite())
+        .ok_or_else(|| GooseError::InvalidOption {
+            option: format!("`configuration.{option}`"),
+            value: value.to_string(),
+            detail: format!("`configuration.{option}` must be a number."),
+        })
 }
 
 /// The number in optional option `option`, as [`number`].
-fn optional_number(option: &str, value: Option<&str>) -> Result<Option<f32>, GooseError> {
+fn optional_number(option: &str, value: Option<&str>) -> Result<Option<f64>, GooseError> {
     value.map(|value| number(option, value)).transpose()
 }
 
@@ -4793,13 +4629,12 @@ mod test {
             ("--increase-rate", "increase_rate"),
             ("--decrease-rate", "decrease_rate"),
         ] {
-            // Not below one user a day, so accepted as on main.
+            // NaN and inf are refused as not numbers, in
+            // option_that_is_not_a_number_is_refused.
             for (value, refused) in [
                 ("0.0000001", true),
                 ("0.00001157", true),
                 ("0.0000116", false),
-                ("inf", false),
-                ("NaN", false),
             ] {
                 let mut config =
                     GooseConfiguration::parse_args_default(&["--users", "2", flag, value]).unwrap();
@@ -5160,15 +4995,102 @@ mod test {
         assert_eq!(c.report_file, vec!["a.html", "a.html"]);
     }
 
-    /// An option's value may begin with a hyphen.
+    /// A value that begins with a hyphen goes after `=`. Given as its own argument it
+    /// is read as an option, so `--goose-log --no-save` is an error with a tip, never a
+    /// log file named `--no-save`.
     #[test]
-    fn option_value_may_begin_with_hyphen() {
-        let c = GooseConfiguration::parse_args_default(&["--goose-log", "-g", "-H", "--users"])
-            .unwrap();
+    fn option_value_beginning_with_hyphen() {
+        let c = GooseConfiguration::parse_args_default(&[
+            "--goose-log=-g",
+            "-H=--users",
+            "--report-file=-r.html",
+            "-R",
+            "-",
+        ])
+        .unwrap();
         assert_eq!(c.goose_log.as_deref(), Some("-g"));
         assert_eq!(c.host.as_deref(), Some("--users"));
+        assert_eq!(c.report_file, vec!["-r.html"]);
+        assert_eq!(c.request_log.as_deref(), Some("-"));
         assert_eq!(c.log_level, 0);
         assert_eq!(c.users, None);
+
+        for (args, tip_option) in [
+            (&["--goose-log", "--no-save"][..], "--goose-log"),
+            (&["-G", "-g"], "-G"),
+            (&["--report-file", "-r.html"], "--report-file"),
+            (
+                &["--dashboard-auth-token", "-s3cret"],
+                "--dashboard-auth-token",
+            ),
+        ] {
+            match GooseConfiguration::parse_args_default(args) {
+                Err(GooseError::InvalidOption {
+                    option,
+                    value,
+                    detail,
+                }) => {
+                    let tip = format!(
+                        "; tip: a value that begins with a hyphen goes after =, as in \
+                         {tip_option}=<value>"
+                    );
+                    assert!(detail.ends_with(&tip), "{:?}: {}", args, detail);
+                    // The value, which can be a token, is never echoed whole.
+                    for field in [&option, &value, &detail] {
+                        assert!(!field.contains("s3cret"), "{:?}: {}", args, field);
+                    }
+                }
+                other => panic!("{:?}: {:?}", args, other),
+            }
+        }
+        // A flag that takes no value gets no tip.
+        match GooseConfiguration::parse_args_default(&["--no-save", "-x"]) {
+            Err(GooseError::InvalidOption { detail, .. }) => {
+                assert!(!detail.contains("tip"), "{}", detail)
+            }
+            other => panic!("{:?}", other),
+        }
+    }
+
+    /// A parse error names only what clap refused, never the rest of the command
+    /// line, which can hold a `--dashboard-auth-token`.
+    #[test]
+    fn parse_error_never_copies_the_command_line() {
+        for args in [
+            &["--dashboard-auth-token", "s3cret", "-h"][..],
+            &["--dashboard-auth-token", "s3cret", "extra"],
+            &["--dashboard-auth-token", "s3cret", "--bogus"],
+            &["--dashboard-auth-token", "s3cret", "--users", "many"],
+        ] {
+            match GooseConfiguration::parse_args_default(args) {
+                Err(GooseError::InvalidOption {
+                    option,
+                    value,
+                    detail,
+                }) => {
+                    for field in [&option, &value, &detail] {
+                        assert!(!field.contains("s3cret"), "{:?}: {}", args, field);
+                    }
+                }
+                other => panic!("{:?}: {:?}", args, other),
+            }
+        }
+    }
+
+    /// An invalid `GooseDefault::Scenarios` is an error naming the scenario, not a
+    /// panic.
+    #[test]
+    fn set_default_invalid_scenarios_refused() {
+        let result = GooseAttack::initialize_with_config(GooseConfiguration::default())
+            .unwrap()
+            .set_default(GooseDefault::Scenarios, "ok,a-b");
+        match result {
+            Err(GooseError::InvalidOption { option, value, .. }) => {
+                assert_eq!(option, "`configuration.scenarios`");
+                assert_eq!(value, "a-b");
+            }
+            other => panic!("{:?}", other.map(|_| ())),
+        }
     }
 
     /// Unknown options, free arguments, missing values and bad values are errors
@@ -5185,7 +5107,7 @@ mod test {
             (
                 &["-u", "2", "extra"],
                 "extra",
-                "-u 2 extra",
+                "extra",
                 "unexpected argument 'extra' found",
             ),
             (
@@ -5224,8 +5146,14 @@ mod test {
                 "70000",
                 "invalid value '70000' for '--telnet-port <PORT>': 70000 is not in 0..=65535",
             ),
-            (&["-h"], "-h", "-h", "help was requested"),
-            (&["--help"], "--help", "--help", "help was requested"),
+            (
+                &["--scenarios", "a-b"],
+                "--scenarios <LIST>",
+                "a-b",
+                "invalid value 'a-b' for '--scenarios <LIST>': 'a-b' is not a scenario name: use letters and digits, with * as a wildcard; --scenarios-list prints the names.",
+            ),
+            (&["-h"], "-h", "", "help was requested"),
+            (&["--help"], "--help", "", "help was requested"),
         ] {
             match GooseConfiguration::parse_args_default(args) {
                 Err(GooseError::InvalidOption {
@@ -5506,6 +5434,11 @@ mod test {
         assert_eq!(configured_timeout("0.5"), Duration::from_millis(500));
         assert_eq!(configured_timeout("1.5"), Duration::from_millis(1_500));
         assert_eq!(configured_timeout("15"), Duration::from_secs(15));
+        // An f32 kept seven digits and gave 20000.002 seconds.
+        assert_eq!(
+            configured_timeout("20000.001"),
+            Duration::from_millis(20_000_001)
+        );
         assert_eq!(
             GooseConfiguration::default().request_timeout(),
             Duration::from_secs(60)
@@ -5521,22 +5454,26 @@ mod test {
             ("--increase-rate", "increase_rate"),
             ("--decrease-rate", "decrease_rate"),
         ] {
-            let mut config =
-                GooseConfiguration::parse_args_default(&["--users", "2", flag, "abc"]).unwrap();
-            match config.configure(&GooseDefaults::default()) {
-                Err(GooseError::InvalidOption {
-                    option: got,
-                    value,
-                    detail,
-                }) => {
-                    assert_eq!(got, format!("`configuration.{option}`"));
-                    assert_eq!(value, "abc");
-                    assert_eq!(
+            // NaN and infinity parse as floats, but are not numbers a rate or a
+            // timeout can use; the Controllers refuse them too.
+            for bad in ["abc", "NaN", "nan", "inf", "infinity"] {
+                let mut config =
+                    GooseConfiguration::parse_args_default(&["--users", "2", flag, bad]).unwrap();
+                match config.configure(&GooseDefaults::default()) {
+                    Err(GooseError::InvalidOption {
+                        option: got,
+                        value,
                         detail,
-                        format!("`configuration.{option}` must be a number.")
-                    );
+                    }) => {
+                        assert_eq!(got, format!("`configuration.{option}`"));
+                        assert_eq!(value, bad);
+                        assert_eq!(
+                            detail,
+                            format!("`configuration.{option}` must be a number.")
+                        );
+                    }
+                    other => panic!("{} {}: {:?}", flag, bad, other),
                 }
-                other => panic!("{} abc: {:?}", flag, other),
             }
         }
         for key in [
@@ -5546,7 +5483,7 @@ mod test {
         ] {
             let goose_attack = GooseAttack::initialize_with_config(GooseConfiguration::default())
                 .unwrap()
-                .set_default(key, "abc")
+                .set_default(key, "NaN")
                 .unwrap();
             let mut config = GooseConfiguration::default();
             assert!(config.configure(&goose_attack.defaults).is_err());
@@ -5557,7 +5494,7 @@ mod test {
     /// so it is refused.
     #[test]
     fn timeout_below_one_millisecond_refused() {
-        for timeout in ["0.0001", "0.00049", "NaN", "0", "-1"] {
+        for timeout in ["0.0001", "0.00049", "0", "-1"] {
             let mut config =
                 GooseConfiguration::parse_args_default(&["--timeout", timeout]).unwrap();
             config.configure(&GooseDefaults::default()).unwrap();

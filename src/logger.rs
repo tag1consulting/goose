@@ -205,7 +205,7 @@ use std::sync::Mutex;
 use tokio::fs::File;
 use tokio::io::{AsyncWriteExt, BufWriter};
 
-use crate::config::{GooseConfigure, GooseValue};
+use crate::config::GooseValue;
 use crate::goose::GooseDebug;
 use crate::metrics::{GooseErrorMetric, GooseRequestMetric, ScenarioMetric, TransactionMetric};
 use crate::{GooseConfiguration, GooseDefaults, GooseError};
