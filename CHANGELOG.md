@@ -1,7 +1,7 @@
 # Changelog
 
 ## 0.19.0-dev
- - [#PR](https://github.com/tag1consulting/goose/pull/PR) parse the command line with `clap` instead of the unmaintained `gumdrop`; every command line is unchanged
+ - [#760](https://github.com/tag1consulting/goose/pull/760) parse the command line with `clap` instead of the unmaintained `gumdrop`; every command line is unchanged
     o **API change**: `GooseConfiguration::parse_args_default` and `GooseConfiguration::parse_args_default_or_exit` are now inherent methods, so remove `use gumdrop::Options;` from load tests that imported it
     o `parse_args_default` returns a `GooseError::InvalidOption` instead of a `gumdrop::Error`
     o `Scenarios` and `TestPlan` no longer implement `gumdrop::Options`
