@@ -217,6 +217,15 @@ impl FrontEnds {
         );
         (dashboard.0.unwrap(), dashboard.1)
     }
+
+    /// As [`agree`], for a command only telnet and WebSocket take: the
+    /// dashboard sets these in Part 2 of the settings work.
+    async fn agree_controllers(&mut self, line: &str) -> (bool, String) {
+        let telnet = self.send(Via::Telnet, line, "", "").await;
+        let websocket = self.send(Via::WebSocket, line, "", "").await;
+        assert_eq!(telnet.1, websocket.1, "{line}: telnet and websocket differ");
+        (websocket.0.unwrap(), websocket.1)
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -291,6 +300,85 @@ async fn test_control_agreement() {
         (true, "users configured".to_string())
     );
 
+    // Every setting's bounds, the same from telnet and WebSocket.
+    for (line, message) in [
+        (
+            "host http://user:secret@example.com/",
+            "host must be a valid url starting with http:// or https://, without a user name or password",
+        ),
+        ("increaserate 0.009", "increase_rate must be a number from 0.01 to 100000"),
+        ("decreaserate 100001", "decrease_rate must be a number from 0.01 to 100000"),
+        (
+            "increasetime 720h1s",
+            "increase_time must be a time span such as 1h30m5s, from 1 second to 30 days, or 0 to clear",
+        ),
+        (
+            "decreasetime 2592001",
+            "decrease_time must be a time span such as 1h30m5s, from 1 second to 30 days, or 0 to clear",
+        ),
+        (
+            "runtime 43201m",
+            "run_time must be a time span such as 1h30m5s, from 1 second to 30 days, or 0 to clear",
+        ),
+        (
+            "testplan 1,720h1s",
+            "test-plan must be users,time steps such as 10,5m;10,1h;0,30s: at most 100 steps of up to 30 days each, 4096 bytes, and 1 to 100000 users in total",
+        ),
+    ] {
+        assert_eq!(
+            front.agree_controllers(line).await,
+            (false, message.to_string()),
+            "{}",
+            line
+        );
+    }
+
+    // A time needs 2 users in Idle: the same refusal from all three.
+    assert_eq!(
+        front.agree_controllers("increasetime 5").await,
+        (true, "increase_time configured".to_string())
+    );
+    assert_eq!(
+        front.agree("users 1", "users", r#"{"users":1}"#).await,
+        (
+            false,
+            "failed to configure users, increase_time needs at least 2 users".to_string()
+        )
+    );
+    assert_eq!(
+        front.agree_controllers("increasetime 0").await,
+        (true, "increase_time cleared".to_string())
+    );
+
+    // A test plan sets users: a ramp setting is refused until users
+    // switches back, which all three accept alike.
+    assert_eq!(
+        front.agree_controllers("testplan 3,1s").await,
+        (true, "test-plan configured".to_string())
+    );
+    for (line, field) in [
+        ("increaserate 2", "increase_rate"),
+        ("runtime 10", "run_time"),
+    ] {
+        assert_eq!(
+            front.agree_controllers(line).await,
+            (
+                false,
+                format!("failed to configure {field}, a test plan is configured: set users first to switch to a users ramp")
+            ),
+            "{}",
+            line
+        );
+    }
+    assert_eq!(
+        front.agree("users 3", "users", r#"{"users":3}"#).await,
+        (true, "users configured".to_string())
+    );
+    assert_eq!(
+        front.agree_controllers("increaserate 50").await,
+        (true, "increase_rate configured".to_string())
+    );
+
     // Stop while idle is refused by all three.
     assert_eq!(
         front.agree("stop", "stop", "{}").await,
@@ -325,6 +413,40 @@ async fn test_control_agreement() {
         .map(|(decision, message)| (decision, message.to_string()));
         assert_eq!(replies, &expected.to_vec(), "{:?}", via);
     }
+
+    // Users is refused by all three while a test plan runs.
+    assert_eq!(
+        front.agree_controllers("testplan 3,1s;3,1m;0,0").await,
+        (true, "test-plan configured".to_string())
+    );
+    assert_eq!(
+        front.send(Via::Dashboard, "start", "start", "{}").await,
+        (Some(true), "load test started".to_string())
+    );
+    wait_for_phase(&front.client, &["increase", "maintain"]).await;
+    assert_eq!(
+        front.agree("users 5", "users", r#"{"users":5}"#).await,
+        (
+            false,
+            "failed to reconfigure users, the test plan sets users: edit the plan, or stop and switch mode".to_string()
+        )
+    );
+    assert_eq!(
+        front.agree_controllers("decreaserate 2").await,
+        (
+            false,
+            "failed to configure decrease_rate, a test plan is running".to_string()
+        )
+    );
+    assert_eq!(
+        dashboard_post(&front.client, "stop", "{}").await,
+        (true, "load test stopped".to_string())
+    );
+    wait_for_phase(&front.client, &["idle"]).await;
+    assert_eq!(
+        front.agree("users 2", "users", r#"{"users":2}"#).await,
+        (true, "users configured".to_string())
+    );
 
     // Quit: `quit` disconnects a telnet or WebSocket client and leaves the
     // run alone; the dashboard Quit is refused while running and shuts Goose

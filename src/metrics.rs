@@ -387,6 +387,8 @@ pub(crate) enum MetricsCommand {
         series_window_secs: u32,
         /// Saving runs, which only the main loop knows.
         save: dashboard_snapshot::SnapshotSave,
+        /// The run settings, which only the main loop knows.
+        settings: Box<dashboard_snapshot::SnapshotSettings>,
         /// What the dashboard holds of the heatmap: only columns changed
         /// since are exported (every column when `None`).
         heatmap_since: Option<dashboard_snapshot::HeatmapCursor>,
@@ -3340,6 +3342,7 @@ impl MetricsProcessor {
                 stopping,
                 series_window_secs,
                 save,
+                settings,
                 heatmap_since,
                 respond,
             } => {
@@ -3379,6 +3382,7 @@ impl MetricsProcessor {
                         no_transaction_metrics: self.configuration.no_transaction_metrics,
                         no_scenario_metrics: self.configuration.no_scenario_metrics,
                         save,
+                        settings: *settings,
                         percentiles_over_time: self.configuration.records_latency_series(),
                         series_keys: self.graph_data.latency_series_keys(),
                     },
@@ -4023,9 +4027,21 @@ impl GooseAttack {
     ) -> Result<(), GooseError> {
         if !goose_attack_run_state.all_users_spawned {
             goose_attack_run_state.all_users_spawned = true;
-            // Only reset metrics on startup if not using `--test-plan` or `--iterations`.
-            if self.configuration.test_plan.is_none() && self.configuration.iterations() == 0 {
-                let users = self.configuration.users.unwrap();
+            // Only reset metrics on startup if not using `--test-plan` or
+            // `--iterations`. A users ramp always has users; with none, as
+            // when a ramp setting reached a running test plan before
+            // Controllers refused it, the run is treated as a test plan
+            // rather than panicking.
+            let users = match self.configuration.users {
+                Some(users)
+                    if self.configuration.test_plan.is_none()
+                        && self.configuration.iterations() == 0 =>
+                {
+                    Some(users)
+                }
+                _ => None,
+            };
+            if let Some(users) = users {
                 if !self.configuration.no_reset_metrics {
                     self.update_duration();
 
@@ -6152,6 +6168,7 @@ mod test {
             stopping: true,
             series_window_secs: dashboard_snapshot::SERIES_WINDOW_SECS,
             save: dashboard_snapshot::SnapshotSave::off("goose-runs"),
+            settings: Box::new(dashboard_snapshot::SnapshotSettings::idle()),
             heatmap_since: None,
             respond: respond_tx,
         });
@@ -6931,6 +6948,7 @@ mod test {
                 stopping: false,
                 series_window_secs: dashboard_snapshot::SERIES_WINDOW_SECS,
                 save: dashboard_snapshot::SnapshotSave::off("goose-runs"),
+                settings: Box::new(dashboard_snapshot::SnapshotSettings::idle()),
                 heatmap_since: None,
                 respond,
             })
@@ -7189,6 +7207,7 @@ mod test {
             stopping: false,
             series_window_secs: dashboard_snapshot::SERIES_WINDOW_SECS,
             save: dashboard_snapshot::SnapshotSave::off("goose-runs"),
+            settings: Box::new(dashboard_snapshot::SnapshotSettings::idle()),
             heatmap_since: None,
             respond,
         });
@@ -7235,6 +7254,7 @@ mod test {
             stopping: false,
             series_window_secs: dashboard_snapshot::SERIES_WINDOW_SECS,
             save: dashboard_snapshot::SnapshotSave::off("goose-runs"),
+            settings: Box::new(dashboard_snapshot::SnapshotSettings::idle()),
             heatmap_since: None,
             respond,
         });

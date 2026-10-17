@@ -46,7 +46,12 @@ transactions: Array<TransactionRow>, series: SeriesWindow, flags: SnapshotFlags,
 /**
  * Whether runs are saved, and the last run Goose saved or tried to save.
  */
-save: SnapshotSave, };
+save: SnapshotSave,
+/**
+ * The run settings: what the next Start runs, and where the running
+ * test is.
+ */
+settings: SnapshotSettings, };
 
 type ErrorRow = { method: string, name: string, error: string, occurrences: number, };
 
@@ -181,6 +186,46 @@ dir: string,
  * The id of the last run Goose saved or tried to save.
  */
 last_run: string | null, };
+
+type SnapshotSettings = {
+/**
+ * The `--host` override, or `null`.
+ */
+host: string | null,
+/**
+ * The hosts the next Start will load test, one per scenario from
+ * `--host`, else the scenario's host, else the default host, in the
+ * same form, sorted and deduplicated, as the top level `hosts` (which
+ * keeps meaning the current or last run's). A scenario with no host
+ * from any source adds nothing.
+ */
+hosts: Array<string>,
+/**
+ * The configured user count, `null` only with a test plan. Not
+ * `target_users`, the count the current step ramps toward.
+ */
+users: number | null, increase_rate: number | null, increase_time_secs: number | null, decrease_rate: number | null, decrease_time_secs: number | null,
+/**
+ * The hold at full users after the ramp up, not the total run time.
+ */
+run_time_secs: number | null,
+/**
+ * The test plan as `--test-plan` takes it, in canonical form: each
+ * step's duration in whole seconds.
+ */
+test_plan: string | null,
+/**
+ * Seconds until the hold ends once it has a fixed end, 0 while a ramp
+ * runs past it. `null` in Idle, during the first ramp up, once the
+ * ramp down starts, with no run time, and with a test plan.
+ */
+hold_ends_in_secs: number | null,
+/**
+ * Where the run is: `idle`, `ramp_up`, `hold`, `hold_until_stopped`,
+ * `ramping_down` or `stopping` for a users ramp; `idle`, `test_plan` or
+ * `stopping` for a test plan.
+ */
+stage: "idle" | "ramp_up" | "hold" | "hold_until_stopped" | "ramping_down" | "test_plan" | "stopping", };
 
 type TransactionRow = {
 /**

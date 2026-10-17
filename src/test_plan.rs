@@ -268,7 +268,8 @@ impl GooseAttack {
     // Advance the active [`GooseAttack`](./struct.GooseAttack.html) to the next TestPlan step.
     pub(crate) fn advance_test_plan(&mut self, goose_attack_run_state: &mut GooseAttackRunState) {
         // Record the instant this new step starts, for use with timers.
-        self.step_started = Some(time::Instant::now());
+        let now = time::Instant::now();
+        self.step_started = Some(now);
 
         let action = if self.test_plan.current == self.test_plan.steps.len() - 1 {
             // If this is the last TestPlan step and there are 0 users, shut down.
@@ -313,6 +314,11 @@ impl GooseAttack {
 
         // Always advance the TestPlan step
         self.test_plan.current += 1;
+
+        // A users ramp starts its hold, or its ramp down, as it enters it.
+        if let Some(shape) = self.run_shape.as_mut() {
+            shape.entered(self.test_plan.current, &mut self.test_plan.steps, now);
+        }
     }
 }
 

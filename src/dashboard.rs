@@ -2341,6 +2341,7 @@ mod tests {
                 percentiles_over_time: false,
             },
             save: SnapshotSave::off("goose-runs"),
+            settings: crate::metrics::dashboard_snapshot::SnapshotSettings::idle(),
             build_time: Duration::ZERO,
         }
     }

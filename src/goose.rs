@@ -6267,6 +6267,7 @@ mod tests {
                         dir: "goose-runs".to_string(),
                         last_run: None,
                     },
+                    settings: crate::metrics::dashboard_snapshot::SnapshotSettings::idle(),
                     percentiles_over_time: false,
                     series_keys: std::collections::HashSet::new(),
                 },
