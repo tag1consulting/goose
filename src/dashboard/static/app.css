@@ -94,6 +94,14 @@ body {
   white-space: nowrap;
 }
 
+/* The run settings summary in the header, with control off: it wraps, so a
+   long host is never cut short. */
+.meta-item.meta-wrap {
+  white-space: normal;
+  overflow: visible;
+  overflow-wrap: anywhere;
+}
+
 /* Phase badges */
 .phase-badge {
   display: inline-block;
@@ -321,6 +329,33 @@ body {
   min-width: 2.25rem;
   padding-left: 0.55rem;
   padding-right: 0.55rem;
+}
+
+/* The run settings summary: what the next Start runs, or where the run is.
+   It wraps, so a long host is never cut short. */
+.control-summary {
+  margin: 0 0 0.65rem;
+  font-size: 0.95rem;
+  overflow-wrap: anywhere;
+}
+
+/* Help and reason text under a control, in the muted colour, which meets
+   4.5:1 on the card and page backgrounds in both themes. */
+.control-help {
+  margin: 0.25rem 0 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+  max-width: 48rem;
+}
+
+.control-reason {
+  color: var(--text);
+}
+
+/* A read only input says so by its colour; it keeps its focus ring. */
+.control-label input[aria-disabled="true"] {
+  background: color-mix(in srgb, var(--bg) 45%, var(--card));
+  cursor: not-allowed;
 }
 
 .control-status {

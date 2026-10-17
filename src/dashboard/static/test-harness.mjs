@@ -81,7 +81,8 @@ export function stubServer(token, options = {}) {
     const headers = (init && init.headers) || {};
     const method = (init && init.method) || "GET";
     const bearer = headers["Authorization"] || "";
-    requests.push({ method, path: url.pathname, url: url.href, bearer });
+    const body = init && typeof init.body === "string" ? init.body : undefined;
+    requests.push({ method, path: url.pathname, url: url.href, bearer, body });
     if (url.pathname.startsWith("/api/v1/runs") && method === "DELETE") {
       // Deletes are control: a Bearer token and no `?token=`.
       const ok =

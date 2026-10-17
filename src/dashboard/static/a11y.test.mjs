@@ -251,19 +251,22 @@ function usersPosts(requests) {
   );
 }
 
+// Valid: no aria-invalid, and the status line no longer describes the
+// field, while its help still does.
 function assertValid(target) {
   assert.equal(target.hasAttribute("aria-invalid"), false, "aria-invalid cleared");
   assert.equal(
-    target.hasAttribute("aria-describedby"),
-    false,
-    "aria-describedby cleared"
+    target.getAttribute("aria-describedby"),
+    "ctrl-target-help",
+    "only the help describes the field"
   );
 }
 
 test("an invalid Target is marked invalid and described by its message", async () => {
   const { doc, target, requests } = await controlPage();
   assert.equal(target.getAttribute("aria-invalid"), "true");
-  assert.equal(target.getAttribute("aria-describedby"), "ctrl-status");
+  // Added to the field's other descriptions, not in place of them.
+  assert.equal(target.getAttribute("aria-describedby"), "ctrl-target-help ctrl-status");
   assert.equal(
     doc.getElementById("ctrl-status").textContent,
     "Target must be an integer ≥ 1"
@@ -343,13 +346,16 @@ async function invalidStreamPage() {
 
 test("a snapshot that rewrites the Target clears its invalid state", async () => {
   const { window, events, target } = await invalidStreamPage();
-  events.emit("snapshot", JSON.stringify({ ...IDLE_SNAPSHOT, target_users: 5 }));
+  events.emit(
+    "snapshot",
+    JSON.stringify({ ...IDLE_SNAPSHOT, settings: { ...IDLE_SNAPSHOT.settings, users: 5 } })
+  );
   await settle(window);
   assert.equal(target.value, "5", "the snapshot wrote the Target");
   assertValid(target);
 });
 
-test("a Start answer that rewrites the Target clears its invalid state", async () => {
+test("a Start clears the Target's invalid state, and leaves the field to snapshots", async () => {
   const { window, doc, target } = await invalidStreamPage();
   // The stub answers control without target_users; this Start answer has it.
   const fetch = window.fetch;
@@ -369,7 +375,9 @@ test("a Start answer that rewrites the Target clears its invalid state", async (
       : fetch(input, init);
   doc.getElementById("ctrl-start").click();
   await settle(window);
-  assert.equal(target.value, "7", "the Start answer wrote the Target");
+  // The field follows snapshots, which can trail the answer; the answer's
+  // target does not write it.
+  assert.equal(target.value, "", "the Start answer left the Target alone");
   assertValid(target);
 });
 

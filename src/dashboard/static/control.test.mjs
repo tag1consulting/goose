@@ -19,8 +19,18 @@ test.afterEach(() => {
   while (openPages.length) openPages.pop().window.close();
 });
 
-function snapshot(phase, target_users) {
-  return JSON.stringify({ ...IDLE_SNAPSHOT, phase, target_users });
+// A snapshot in `phase` whose target, and configured users, are `users`.
+function snapshot(phase, users, settings = {}) {
+  return JSON.stringify({
+    ...IDLE_SNAPSHOT,
+    phase,
+    target_users: users,
+    settings: { ...IDLE_SNAPSHOT.settings, users, stage: stageOf(phase), ...settings },
+  });
+}
+
+function stageOf(phase) {
+  return { increase: "ramp_up", maintain: "hold_until_stopped", decrease: "ramping_down" }[phase] || "idle";
 }
 
 async function controlPage(options = {}) {
@@ -183,14 +193,17 @@ test("Stop keeps focus and ignores a second press while its request is in flight
   assert.deepEqual(posts(page), ["/api/v1/control/stop"]);
 });
 
-test("the Target field falls back from target to maximum to active users", async () => {
+test("while running, the Target field falls back from target to maximum to active users", async () => {
   const page = await openPage("/?token=" + TOKEN, FRESH, TOKEN, {
     controlEnabled: true,
     eventStream: true,
   });
   const target = el(page, "ctrl-target");
   const show = async (users) => {
-    page.events.emit("snapshot", JSON.stringify({ ...IDLE_SNAPSHOT, ...users }));
+    page.events.emit(
+      "snapshot",
+      JSON.stringify({ ...IDLE_SNAPSHOT, phase: "maintain", ...users }),
+    );
     await settle(page.window);
     return target.value;
   };
@@ -199,4 +212,252 @@ test("the Target field falls back from target to maximum to active users", async
   assert.equal(await show({ target_users: 20, maximum_users: 50, active_users: 0 }), "20");
   assert.equal(await show({ target_users: 0, maximum_users: 50, active_users: 7 }), "50");
   assert.equal(await show({ target_users: 0, maximum_users: 0, active_users: 7 }), "7");
+});
+
+// Fields follow the server unless being edited (#706).
+
+/** The users each `/users` POST sent, in order. */
+function usersSent(page) {
+  return page.requests
+    .filter((r) => r.method === "POST" && r.path === "/api/v1/control/users")
+    .map((r) => JSON.parse(r.body).users);
+}
+
+async function emit(page, json) {
+  page.events.emit("snapshot", json);
+  await settle(page.window);
+}
+
+test("after an Apply, the Target follows a change from elsewhere, and plus steps from it", async () => {
+  const page = await controlPage();
+  const target = el(page, "ctrl-target");
+  await emit(page, snapshot("maintain", 20));
+  target.value = "50";
+  target.dispatchEvent(new page.window.Event("input"));
+  el(page, "ctrl-apply").click();
+  await settle(page.window);
+  await emit(page, snapshot("maintain", 50));
+  assert.equal(target.value, "50");
+  // telnet `users 200`.
+  await emit(page, snapshot("maintain", 200));
+  assert.equal(target.value, "200", "the field follows the server again");
+  el(page, "ctrl-plus").click();
+  await settle(page.window);
+  assert.deepEqual(usersSent(page), [50, 210]);
+});
+
+test("a snapshot from before an Apply does not put the old target back", async () => {
+  const page = await controlPage();
+  const target = el(page, "ctrl-target");
+  await emit(page, snapshot("maintain", 20));
+  target.value = "50";
+  target.dispatchEvent(new page.window.Event("input"));
+  el(page, "ctrl-apply").click();
+  await settle(page.window);
+  // The answer came first; this snapshot was taken before the change.
+  await emit(page, snapshot("maintain", 20));
+  assert.equal(target.value, "50", "a trailing snapshot is not a change");
+  assert.doesNotMatch(el(page, "ctrl-status").textContent, /elsewhere/);
+  await emit(page, snapshot("maintain", 50));
+  await emit(page, snapshot("maintain", 20));
+  assert.equal(target.value, "20", "once confirmed, the field follows again");
+});
+
+test("two quick plus clicks step from what was sent, and their own values are not changes", async () => {
+  const page = await controlPage();
+  const target = el(page, "ctrl-target");
+  await emit(page, snapshot("maintain", 20));
+  el(page, "ctrl-plus").click();
+  await settle(page.window);
+  el(page, "ctrl-plus").click();
+  await settle(page.window);
+  assert.deepEqual(usersSent(page), [30, 40]);
+  // Snapshots catch up one value at a time.
+  for (const users of [20, 30]) {
+    await emit(page, snapshot("maintain", users));
+    assert.equal(target.value, "40", "snapshot at " + users);
+  }
+  assert.doesNotMatch(el(page, "ctrl-status").textContent, /elsewhere/);
+  await emit(page, snapshot("maintain", 40));
+  assert.equal(target.value, "40");
+});
+
+test("an unapplied edit gives way to a change from elsewhere, saying so", async () => {
+  const page = await controlPage();
+  const target = el(page, "ctrl-target");
+  await emit(page, snapshot("maintain", 20));
+  target.value = "70";
+  target.dispatchEvent(new page.window.Event("input"));
+  await emit(page, snapshot("maintain", 20));
+  assert.equal(target.value, "70", "the edit holds while the server is unchanged");
+  await emit(page, snapshot("maintain", 200));
+  assert.equal(target.value, "200");
+  assert.equal(el(page, "ctrl-status").textContent, "Target changed elsewhere to 200");
+});
+
+test("a run that starts stopping discards an unapplied Target edit, once", async () => {
+  const page = await controlPage();
+  const target = el(page, "ctrl-target");
+  await emit(page, snapshot("maintain", 20));
+  target.value = "70";
+  target.dispatchEvent(new page.window.Event("input"));
+  const stopping = JSON.stringify({
+    ...JSON.parse(snapshot("decrease", 0, { stage: "stopping" })),
+    stopping: true,
+    maximum_users: 20,
+  });
+  await emit(page, stopping);
+  assert.equal(el(page, "ctrl-status").textContent, "Run stopping; unapplied Target edit discarded");
+  assert.equal(target.value, "20");
+  el(page, "ctrl-status").textContent = "";
+  await emit(page, stopping);
+  assert.equal(el(page, "ctrl-status").textContent, "", "said once");
+});
+
+test("while a test plan runs the Target row is read only, with the reason", async () => {
+  const page = await controlPage();
+  await emit(page, snapshot("maintain", 10, { users: null, test_plan: "10,60", stage: "test_plan" }));
+  const target = el(page, "ctrl-target");
+  for (const id of ["ctrl-target", "ctrl-step"]) {
+    assert.equal(el(page, id).disabled, false, id + " is never disabled");
+    assert.equal(el(page, id).readOnly, true, id);
+    assert.equal(el(page, id).getAttribute("aria-disabled"), "true", id);
+  }
+  for (const id of ["ctrl-apply", "ctrl-minus", "ctrl-plus"]) {
+    assert.equal(el(page, id).getAttribute("aria-disabled"), "true", id);
+  }
+  const reason = el(page, "ctrl-target-reason");
+  assert.equal(reason.hidden, false);
+  assert.equal(reason.textContent, "The test plan sets users; edit the plan, or stop and switch mode");
+  assert.equal(target.getAttribute("aria-describedby"), "ctrl-target-help ctrl-target-reason");
+  el(page, "ctrl-plus").click();
+  await settle(page.window);
+  assert.deepEqual(usersSent(page), []);
+
+  // A users ramp again: editable, the reason gone.
+  await emit(page, snapshot("maintain", 10));
+  assert.equal(target.readOnly, false);
+  assert.equal(target.hasAttribute("aria-disabled"), false);
+  assert.equal(reason.hidden, true);
+  assert.equal(target.getAttribute("aria-describedby"), "ctrl-target-help");
+});
+
+test("with no token the Target and step are read only, saying why", async () => {
+  const page = await openPage("/", FRESH, TOKEN, { controlEnabled: true, eventStream: true });
+  await emit(page, snapshot("idle", 20));
+  assert.equal(el(page, "ctrl-target").readOnly, true);
+  assert.equal(el(page, "ctrl-target").disabled, false);
+  assert.equal(el(page, "ctrl-target-reason").textContent, "Enter the control token to change settings");
+});
+
+test("in Idle with a test plan, the Target is empty and says what Apply does", async () => {
+  const page = await controlPage();
+  await emit(page, snapshot("idle", 0, { users: null, test_plan: "10,30;10,3600;0,30" }));
+  assert.equal(el(page, "ctrl-target").value, "");
+  assert.equal(el(page, "ctrl-target").readOnly, false);
+  assert.equal(
+    el(page, "ctrl-target-help").textContent,
+    "Applying a user count replaces the test plan with a users ramp.",
+  );
+});
+
+test("the summary line says what the next Start runs, and where the run is", async () => {
+  const page = await controlPage();
+  const summary = el(page, "ctrl-summary");
+  const show = async (phase, settings) => {
+    await emit(page, snapshot(phase, settings.users == null ? 0 : settings.users, settings));
+    return summary.textContent;
+  };
+  const ramp = {
+    hosts: ["https://example.com/"],
+    users: 100,
+    increase_rate: 10,
+    run_time_secs: 600,
+    decrease_rate: 10,
+  };
+  assert.equal(
+    await show("idle", ramp),
+    "https://example.com/ · 100 users at 10/s · hold 10 min · then 10/s down",
+  );
+  assert.equal(
+    await show("idle", { ...ramp, increase_rate: null, increase_time_secs: 300, decrease_rate: null }),
+    "https://example.com/ · 100 users over 5 min · hold 10 min · then all stop",
+  );
+  assert.equal(
+    await show("idle", { ...ramp, increase_rate: null, run_time_secs: null, decrease_rate: null, decrease_time_secs: 60 }),
+    "https://example.com/ · 100 users at 1/s (default) · then straight down over 1 min",
+  );
+  assert.equal(
+    await show("idle", { ...ramp, run_time_secs: null, decrease_rate: null }),
+    "https://example.com/ · 100 users at 10/s · until stopped",
+  );
+  assert.equal(
+    await show("increase", { ...ramp, stage: "ramp_up" }),
+    "https://example.com/ · ramping to 100 users at 10/s · hold 10 min · then 10/s down",
+  );
+  assert.equal(
+    await show("maintain", { ...ramp, stage: "hold", hold_ends_in_secs: 412 }),
+    "https://example.com/ · 100 users · ramp down in 6 min 52 s",
+  );
+  assert.equal(
+    await show("increase", { ...ramp, decrease_rate: null, stage: "hold", hold_ends_in_secs: 0 }),
+    "https://example.com/ · 100 users · all stop after this ramp",
+  );
+  assert.equal(
+    await show("maintain", { ...ramp, stage: "hold_until_stopped" }),
+    "https://example.com/ · 100 users · holding until stopped",
+  );
+  assert.equal(
+    await show("decrease", { ...ramp, stage: "ramping_down" }),
+    "https://example.com/ · ramping down at 10/s",
+  );
+  assert.equal(
+    await show("idle", { hosts: [], users: null, test_plan: "100,60;100,3600;0,0" }),
+    "no host set · test plan: 3 steps, peak 100 users, 1 h 1 min total",
+  );
+  assert.equal(
+    await show("idle", { host: "https://override.test", hosts: ["https://override.test/"], users: 2 }),
+    "https://override.test · 2 users at 1/s (default) · until stopped",
+  );
+  // Not a live region: the countdown is not announced.
+  assert.equal(summary.hasAttribute("role"), false);
+  assert.equal(summary.hasAttribute("aria-live"), false);
+});
+
+test("with control off, the header shows the run settings, and the last run's hosts say so", async () => {
+  const page = await openPage("/?token=" + TOKEN, FRESH, TOKEN, { eventStream: true });
+  const hosts = el(page, "hosts");
+  const runSettings = el(page, "run-settings");
+  const settings = { hosts: ["https://next.test/"], users: 5, run_time_secs: 60 };
+  // Idle, after a run against another host: both say which is which.
+  await emit(
+    page,
+    JSON.stringify({
+      ...JSON.parse(snapshot("idle", 5, settings)),
+      hosts: ["https://last.test/"],
+    }),
+  );
+  assert.equal(hosts.textContent, "Last run: https://last.test/");
+  assert.equal(runSettings.hidden, false);
+  assert.equal(
+    runSettings.textContent,
+    "https://next.test/ · 5 users at 1/s (default) · hold 1 min · then all stop",
+  );
+  // Running, the hosts are the run's own, and the line leaves them out.
+  await emit(
+    page,
+    JSON.stringify({
+      ...JSON.parse(snapshot("maintain", 5, { ...settings, stage: "hold", hold_ends_in_secs: 30 })),
+      hosts: ["https://next.test/"],
+    }),
+  );
+  assert.equal(hosts.textContent, "https://next.test/");
+  assert.equal(runSettings.textContent, "5 users · all stop in 30 s");
+});
+
+test("with control on, the header leaves the run settings to the control card", async () => {
+  const page = await controlPage();
+  await emit(page, snapshot("idle", 5, { hosts: ["https://next.test/"] }));
+  assert.equal(el(page, "run-settings").hidden, true);
+  assert.equal(el(page, "hosts").textContent, "—");
 });

@@ -18,6 +18,7 @@ import {
 } from "./connection";
 import {
   initControlPanel,
+  isControlEnabled,
   isControlTokenMissing,
   setPhase,
   updateControlFromSnapshot,
@@ -30,6 +31,7 @@ import {
   snapshotHeatmapCursor,
   updateHeatmapCard,
 } from "./heatmap-card";
+import { sameHosts, settingsSummary } from "./run-settings";
 import {
   closedBannerText,
   initRunsPanel,
@@ -40,6 +42,7 @@ import { setBanner, setConnection, type ConnectionMode } from "./status";
 import { initTables, setTableData } from "./tables";
 
 const hostsEl = requireElement("hosts", HTMLElement);
+const runSettingsEl = requireElement("run-settings", HTMLElement);
 const durationEl = requireElement("duration", HTMLElement);
 const summaryEl = requireElement("summary-body", HTMLElement);
 const aggregateEl = requireElement("aggregate-body", HTMLElement);
@@ -70,6 +73,26 @@ function setKpi(el: HTMLElement, text: string, title: string | null): void {
   }
 }
 
+/**
+ * The header's hosts: the current or last run's. In Idle, when the next
+ * Start would load test other hosts, they read "Last run: …", visibly, as a
+ * hover title alone would be hover only. With control off, the run settings
+ * summary follows in its own item, with the next Start's hosts only in Idle
+ * when they differ.
+ */
+function renderHosts(snap: DashboardSnapshot): void {
+  const idle = snap.phase === "idle";
+  const differ = !sameHosts(snap.hosts, snap.settings.hosts);
+  const hosts = snap.hosts.length ? snap.hosts.join(", ") : "—";
+  hostsEl.textContent = idle && differ && snap.hosts.length ? "Last run: " + hosts : hosts;
+  if (isControlEnabled()) {
+    runSettingsEl.hidden = true;
+    return;
+  }
+  runSettingsEl.hidden = false;
+  runSettingsEl.textContent = settingsSummary(snap.settings, idle && differ);
+}
+
 function renderSnapshot(
   snap: DashboardSnapshot,
   modeLabel?: ConnectionMode | string
@@ -83,7 +106,7 @@ function renderSnapshot(
     setConnection("poll");
   }
   setPhase(snap.phase);
-  hostsEl.textContent = snap.hosts.length ? snap.hosts.join(", ") : "—";
+  renderHosts(snap);
   durationEl.textContent = formatDuration(snap.duration_secs);
 
   // active / target (not peak maximum_users — that stays equal during ramp).

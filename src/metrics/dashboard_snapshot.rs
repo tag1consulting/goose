@@ -63,6 +63,9 @@ pub(crate) struct DashboardSnapshot {
     pub flags: SnapshotFlags,
     /// Whether runs are saved, and the last run Goose saved or tried to save.
     pub save: SnapshotSave,
+    /// The run settings: what the next Start runs, and where the running
+    /// test is.
+    pub settings: SnapshotSettings,
     /// Time the metrics processor spent draining metrics and building this
     /// snapshot, reported as `last_build_ms` on `/api/v1/health`. Zero when
     /// not built by the processor. Not part of the JSON.
@@ -96,6 +99,69 @@ impl SnapshotSave {
             reason: None,
             dir: dir.to_string(),
             last_run: None,
+        }
+    }
+}
+
+/// The run settings, as the dashboard shows them: what the next Start runs,
+/// plus where the running test is in its hold. Names are the command line's
+/// flags in snake case, durations whole seconds with a `_secs` suffix, and
+/// `null` means unset, so Goose's default applies.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub(crate) struct SnapshotSettings {
+    /// The `--host` override, or `null`.
+    pub host: Option<String>,
+    /// The hosts the next Start will load test, one per scenario from
+    /// `--host`, else the scenario's host, else the default host, in the
+    /// same form, sorted and deduplicated, as the top level `hosts` (which
+    /// keeps meaning the current or last run's). A scenario with no host
+    /// from any source adds nothing.
+    pub hosts: Vec<String>,
+    /// The configured user count, `null` only with a test plan. Not
+    /// `target_users`, the count the current step ramps toward.
+    pub users: Option<u64>,
+    pub increase_rate: Option<f64>,
+    pub increase_time_secs: Option<u64>,
+    pub decrease_rate: Option<f64>,
+    pub decrease_time_secs: Option<u64>,
+    /// The hold at full users after the ramp up, not the total run time.
+    pub run_time_secs: Option<u64>,
+    /// The test plan as `--test-plan` takes it, in canonical form: each
+    /// step's duration in whole seconds.
+    pub test_plan: Option<String>,
+    /// Seconds until the hold ends once it has a fixed end, 0 while a ramp
+    /// runs past it. `null` in Idle, during the first ramp up, once the
+    /// ramp down starts, with no run time, and with a test plan.
+    pub hold_ends_in_secs: Option<u64>,
+    /// Where the run is: `idle`, `ramp_up`, `hold`, `hold_until_stopped`,
+    /// `ramping_down` or `stopping` for a users ramp; `idle`, `test_plan` or
+    /// `stopping` for a test plan.
+    #[cfg_attr(
+        test,
+        ts(
+            type = "\"idle\" | \"ramp_up\" | \"hold\" | \"hold_until_stopped\" | \"ramping_down\" | \"test_plan\" | \"stopping\""
+        )
+    )]
+    pub stage: String,
+}
+
+impl SnapshotSettings {
+    /// No settings and an idle stage, for a snapshot built in a test.
+    #[cfg(test)]
+    pub(crate) fn idle() -> Self {
+        SnapshotSettings {
+            host: None,
+            hosts: Vec::new(),
+            users: None,
+            increase_rate: None,
+            increase_time_secs: None,
+            decrease_rate: None,
+            decrease_time_secs: None,
+            run_time_secs: None,
+            test_plan: None,
+            hold_ends_in_secs: None,
+            stage: "idle".to_string(),
         }
     }
 }
@@ -408,6 +474,8 @@ pub(crate) struct DashboardSnapshotInput<'a> {
     pub no_scenario_metrics: bool,
     /// See [`DashboardSnapshot::save`].
     pub save: SnapshotSave,
+    /// See [`DashboardSnapshot::settings`].
+    pub settings: SnapshotSettings,
     /// See [`SnapshotFlags::percentiles_over_time`].
     pub percentiles_over_time: bool,
     /// Keys (`"METHOD name"`) of the requests that have their own latency
@@ -462,6 +530,7 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
                 percentiles_over_time: false,
             },
             save: input.save,
+            settings: input.settings,
             build_time: std::time::Duration::ZERO,
         };
     }
@@ -626,6 +695,7 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
             percentiles_over_time: input.percentiles_over_time,
         },
         save: input.save,
+        settings: input.settings,
         build_time: std::time::Duration::ZERO,
     }
 }
@@ -803,6 +873,7 @@ mod tests {
             no_transaction_metrics: false,
             no_scenario_metrics: false,
             save: SnapshotSave::off("goose-runs"),
+            settings: SnapshotSettings::idle(),
             percentiles_over_time: false,
             series_keys: HashSet::new(),
         });
@@ -859,6 +930,7 @@ mod tests {
             no_transaction_metrics: false,
             no_scenario_metrics: false,
             save: SnapshotSave::off("goose-runs"),
+            settings: SnapshotSettings::idle(),
             percentiles_over_time: false,
             series_keys: HashSet::new(),
         });
@@ -899,6 +971,7 @@ mod tests {
             no_transaction_metrics: false,
             no_scenario_metrics: false,
             save: SnapshotSave::off("goose-runs"),
+            settings: SnapshotSettings::idle(),
             percentiles_over_time: false,
             series_keys: HashSet::new(),
         });
@@ -931,6 +1004,7 @@ mod tests {
             no_transaction_metrics: false,
             no_scenario_metrics: false,
             save: SnapshotSave::off("goose-runs"),
+            settings: SnapshotSettings::idle(),
             percentiles_over_time: false,
             series_keys: HashSet::new(),
         });
@@ -953,6 +1027,7 @@ mod tests {
             no_transaction_metrics: false,
             no_scenario_metrics: false,
             save: SnapshotSave::off("goose-runs"),
+            settings: SnapshotSettings::idle(),
             percentiles_over_time: false,
             series_keys: HashSet::new(),
         }
@@ -1074,6 +1149,7 @@ mod tests {
             no_transaction_metrics: false,
             no_scenario_metrics: false,
             save: SnapshotSave::off("goose-runs"),
+            settings: SnapshotSettings::idle(),
             percentiles_over_time: false,
             series_keys: HashSet::new(),
         });
@@ -1133,6 +1209,7 @@ mod tests {
             no_transaction_metrics: false,
             no_scenario_metrics: false,
             save: SnapshotSave::off("goose-runs"),
+            settings: SnapshotSettings::idle(),
             percentiles_over_time: false,
             series_keys: HashSet::new(),
         });
@@ -1234,6 +1311,7 @@ mod tests {
             no_transaction_metrics: false,
             no_scenario_metrics: false,
             save: SnapshotSave::off("goose-runs"),
+            settings: SnapshotSettings::idle(),
             percentiles_over_time: false,
             series_keys: HashSet::new(),
         }
