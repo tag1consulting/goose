@@ -5807,7 +5807,8 @@ mod tests {
             request.failed = false;
         }
         let mut processor = test_processor(&configuration);
-        *processor.graph_data_for_test() = crate::graph::GraphData::with_latency_budgets(4, 2);
+        *processor.graph_data_for_test() =
+            crate::graph::GraphData::with_latency_budgets(false, 4, 2);
         for batch in batch_through_users(&configuration, 8, &requests) {
             processor.process_batch_for_test(batch);
             let graph = processor.graph_data_for_test();
@@ -5861,7 +5862,8 @@ mod tests {
         assert_eq!(batches.len(), 1);
         assert_eq!(batch_seconds(&batches[0]), [(3, 1), (4, 1)]);
         let mut processor = test_processor(&configuration);
-        *processor.graph_data_for_test() = crate::graph::GraphData::with_latency_budgets(4, 4);
+        *processor.graph_data_for_test() =
+            crate::graph::GraphData::with_latency_budgets(false, 4, 4);
         for batch in batches {
             processor.process_batch_for_test(batch);
         }
@@ -5898,6 +5900,8 @@ mod tests {
                 "--no-save",
                 "--no-percentiles-over-time",
             ]),
+            // A saved run: the report's recorder and columns, no dashboard.
+            batched(&[]),
             batched(&["--no-save"]),
             {
                 let plain = GooseConfiguration::parse_args_default(&["--no-save"]).unwrap();

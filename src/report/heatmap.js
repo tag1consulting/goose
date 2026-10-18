@@ -102,10 +102,18 @@
         var low = Infinity;
         var high = 0;
         var end = first;
+        var previous = null;
         shown.columns.forEach(function (column) {
             var from = first + column[0] * widthMs;
             var to = from + widthMs;
             end = Math.max(end, to);
+            // A column with no requests breaks the lines.
+            if (previous !== null && column[0] > previous + 1) {
+                for (var gap = 0; gap < 3; gap++) {
+                    lines[gap].push([from - widthMs / 2, null, null]);
+                }
+            }
+            previous = column[0];
             for (var p = 0; p < 3; p++) {
                 // The value axis is logarithmic, so a percentile under a
                 // millisecond is drawn at 0.5 ms, as its bucket starts.
@@ -133,6 +141,7 @@
                 name: name,
                 type: 'line',
                 symbol: 'none',
+                connectNulls: false,
                 lineStyle: { color: color, width: 1.5 },
                 itemStyle: { color: color },
                 encode: { x: 0, y: 1 },

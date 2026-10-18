@@ -713,14 +713,19 @@ pub(crate) struct ColumnSink<'a> {
 }
 
 impl ColumnSink<'_> {
+    /// For a ring that feeds only its own columns, `width` seconds wide.
+    fn own(origin: usize, width: usize) -> Self {
+        ColumnSink {
+            origin,
+            width,
+            all: None,
+        }
+    }
+
     /// For a ring with no columns to feed (unit tests).
     #[cfg(test)]
     fn none() -> Self {
-        ColumnSink {
-            origin: 0,
-            width: 1,
-            all: None,
-        }
+        Self::own(0, 1)
     }
 
     /// Apply `add` to the column holding `second` in `own`, the ring's own
@@ -1258,25 +1263,21 @@ impl LatencyHistograms {
         self.rev = rev;
     }
 
-    /// Pack every ring's open seconds, folding them into the columns.
+    /// Pack every ring's open seconds, folding them into the columns, when
+    /// columns are kept.
     fn pack_open(&mut self) {
+        if self.all_columns.is_none() {
+            return;
+        }
         for index in (0..self.rings.len()).map(Some).chain([None]) {
             let (ring, mut sink) = self.ring(index);
             ring.pack_open(&mut sink);
         }
         let (origin, all_width, request_width) = (self.origin, self.all_width, self.request_width);
         if let Some((all, by_request)) = self.synthetic.as_mut() {
-            all.pack_open(&mut ColumnSink {
-                origin,
-                width: all_width,
-                all: None,
-            });
+            all.pack_open(&mut ColumnSink::own(origin, all_width));
             for ring in by_request.values_mut() {
-                ring.pack_open(&mut ColumnSink {
-                    origin,
-                    width: request_width,
-                    all: None,
-                });
+                ring.pack_open(&mut ColumnSink::own(origin, request_width));
             }
         }
     }
@@ -1312,20 +1313,12 @@ impl LatencyHistograms {
             second,
             time,
             rev,
-            &mut ColumnSink {
-                origin,
-                width: self.all_width,
-                all: None,
-            },
+            &mut ColumnSink::own(origin, self.all_width),
         );
         if !self.by_request.contains_key(key) {
             return;
         }
-        let mut sink = ColumnSink {
-            origin,
-            width: self.request_width,
-            all: None,
-        };
+        let mut sink = ColumnSink::own(origin, self.request_width);
         if let Some(ring) = by_request.get_mut(key) {
             ring.record_to(second, time, rev, &mut sink);
         } else {
@@ -1871,15 +1864,43 @@ impl GraphData {
         co_active: bool,
         started: DateTime<Utc>,
     ) -> String {
+        // A run with no requests since the start or the last reset has no
+        // heatmap to show.
         let Some(heatmap) = self
             .latency
             .as_ref()
             .and_then(|latency| latency.report_heatmap(co_active, started))
+            .filter(|heatmap| !heatmap.series[0].measured.columns.is_empty())
         else {
             return String::new();
         };
         format!(
             r#"<div class="graph heatmap">
+                <style>
+                    .heatmap-controls button {{
+                        border: 1px solid #2c664f;
+                        background: white;
+                        padding: 0.2em 0.8em;
+                    }}
+                    .heatmap-controls button.active {{
+                        background: #2c664f;
+                        color: white;
+                    }}
+                    .heatmap-legend {{
+                        display: flex;
+                        align-items: center;
+                        gap: 0.5em;
+                        width: 1000px;
+                        font-size: 0.9em;
+                    }}
+                    .heatmap-ramp {{
+                        display: inline-block;
+                        width: 200px;
+                        height: 0.8em;
+                        print-color-adjust: exact;
+                        -webkit-print-color-adjust: exact;
+                    }}
+                </style>
                 <h3>Response time heatmap</h3>
                 <div class="heatmap-controls">
                     <label>Series <select id="graph-latency-heatmap-series"></select></label>
@@ -1956,11 +1977,12 @@ impl GraphData {
     }
 
     /// GraphData keeping whole run columns with budgets of `all` columns for
-    /// all requests and `request` for each name (unit tests).
+    /// all requests and `request` for each name, and synthetic columns too
+    /// when `synthetic` (unit tests).
     #[cfg(test)]
-    pub(crate) fn with_latency_budgets(all: usize, request: usize) -> Self {
+    pub(crate) fn with_latency_budgets(synthetic: bool, all: usize, request: usize) -> Self {
         let mut graph = GraphData::new();
-        graph.latency = Some(LatencyHistograms::with_budgets(false, all, request));
+        graph.latency = Some(LatencyHistograms::with_budgets(synthetic, all, request));
         graph
     }
 
@@ -5884,14 +5906,6 @@ mod test {
 
     // --- The report heatmap's whole run columns (#746) ---
 
-    /// GraphData keeping whole run columns with budgets of `all` columns for
-    /// all requests and `request` for each name.
-    fn column_graph(synthetic: bool, all: usize, request: usize) -> GraphData {
-        let mut graph = GraphData::new();
-        graph.latency = Some(LatencyHistograms::with_budgets(synthetic, all, request));
-        graph
-    }
-
     fn latency(graph: &GraphData) -> &LatencyHistograms {
         graph.latency.as_ref().expect("latency histograms")
     }
@@ -5934,7 +5948,7 @@ mod test {
     /// the raw times, after several merges of both budgets.
     #[test]
     fn merged_columns_match_columns_built_directly() {
-        let mut graph = column_graph(false, 4, 2);
+        let mut graph = GraphData::with_latency_budgets(false, 4, 2);
         let mut state = 746;
         let mut times = Vec::new();
         let mut by_name: HashMap<&str, Vec<(usize, u64)>> = HashMap::new();
@@ -5989,7 +6003,7 @@ mod test {
     /// lost or counted twice.
     #[test]
     fn late_writes_reach_the_columns_once() {
-        let mut graph = column_graph(false, 1_000, 1_000);
+        let mut graph = GraphData::with_latency_budgets(false, 1_000, 1_000);
         let one = |time: u64| {
             let mut data = GooseRequestMetricTimingData::new(None);
             data.record_time(time);
@@ -6044,7 +6058,7 @@ mod test {
     /// adds them to the measured columns.
     #[test]
     fn synthetic_times_land_in_their_columns() {
-        let mut graph = column_graph(true, 100, 50);
+        let mut graph = GraphData::with_latency_budgets(true, 100, 50);
         for second in 0..700 {
             graph.record_request_per_second_and_latency("GET /a", second, Some(10));
         }
@@ -6101,7 +6115,7 @@ mod test {
     /// an Adjusted view, even with mitigation events recorded before it.
     #[test]
     fn no_adjusted_view_without_synthetic_times() {
-        let mut graph = column_graph(true, 600, 120);
+        let mut graph = GraphData::with_latency_budgets(true, 600, 120);
         graph.record_request_per_second_and_latency("GET /a", 1, Some(10));
         graph.record_synthetic_latency("GET /a", 1, 900);
         graph.reset_rate_series(5);
@@ -6120,7 +6134,7 @@ mod test {
     /// budget, after any write.
     #[test]
     fn each_budget_widens_its_own_series() {
-        let mut graph = column_graph(true, 6, 2);
+        let mut graph = GraphData::with_latency_budgets(true, 6, 2);
         for second in 0..40 {
             graph.record_request_per_second_and_latency("GET /a", second, Some(10));
             graph.record_synthetic_latency("GET /a", second, 500);
@@ -6149,7 +6163,7 @@ mod test {
     /// the columns before it is written.
     #[test]
     fn a_synthetic_time_fits_its_second_in_the_columns() {
-        let mut graph = column_graph(true, 4, 2);
+        let mut graph = GraphData::with_latency_budgets(true, 4, 2);
         graph.record_request_per_second_and_latency("GET /a", 0, Some(10));
         graph.record_synthetic_latency("GET /a", 9, 500);
         let latency = latency(&graph);
@@ -6171,7 +6185,7 @@ mod test {
     /// none survive into the new run's Adjusted view.
     #[test]
     fn a_reset_clears_folded_synthetic_times() {
-        let mut graph = column_graph(true, 600, 120);
+        let mut graph = GraphData::with_latency_budgets(true, 600, 120);
         for second in 0..5 {
             graph.record_request_per_second_and_latency("GET /a", second, Some(10));
             graph.record_synthetic_latency("GET /a", second, 900);
@@ -6187,12 +6201,36 @@ mod test {
             .all(|series| series.adjusted.is_none()));
     }
 
+    /// A count's place on the colour scale is logarithmic, as the
+    /// dashboard's: 10 between 1 and 100 sits in the middle.
+    #[test]
+    fn report_heatmap_colours_on_a_log_scale() {
+        assert_eq!(ReportView::level(1, 1, 100), 0);
+        assert_eq!(ReportView::level(10, 1, 100), 500);
+        assert_eq!(ReportView::level(100, 1, 100), 1000);
+        // Every cell holding the same count is the highest.
+        assert_eq!(ReportView::level(7, 7, 7), 1000);
+    }
+
+    /// A run with no requests since the last reset shows no heatmap card.
+    #[test]
+    fn no_card_without_requests() {
+        let mut graph = GraphData::with_latency_budgets(false, 600, 120);
+        graph.finish_latency_columns();
+        assert_eq!(graph.get_latency_heatmap_markup(false, Utc::now()), "");
+        graph.record_request_per_second_and_latency("GET /a", 1, Some(10));
+        graph.finish_latency_columns();
+        assert!(graph
+            .get_latency_heatmap_markup(false, Utc::now())
+            .contains("Response time heatmap"));
+    }
+
     /// A name first seen after the per name columns widened gets columns of
     /// the same width, so its measured and synthetic columns line up with
     /// every other name's.
     #[test]
     fn a_late_name_gets_the_current_width() {
-        let mut graph = column_graph(true, 10, 5);
+        let mut graph = GraphData::with_latency_budgets(true, 10, 5);
         for second in 0..40 {
             graph.record_request_per_second_and_latency("GET /early", second, Some(10));
         }
@@ -6227,7 +6265,7 @@ mod test {
     /// the reset, goes to column 0, once.
     #[test]
     fn reset_clears_the_columns() {
-        let mut graph = column_graph(false, 4, 4);
+        let mut graph = GraphData::with_latency_budgets(false, 4, 4);
         for second in 0..20 {
             graph.record_request_per_second_and_latency("GET /a", second, Some(10));
         }
@@ -6266,7 +6304,7 @@ mod test {
     /// columns.
     #[test]
     fn only_the_first_names_get_columns() {
-        let mut graph = column_graph(false, 600, 120);
+        let mut graph = GraphData::with_latency_budgets(false, 600, 120);
         for name in 0..105 {
             graph.record_request_per_second_and_latency(&format!("GET /{name}"), 1, Some(10));
         }
@@ -6294,7 +6332,7 @@ mod test {
     /// seconds before the end, whose times waited in its pending counts.
     #[test]
     fn the_end_of_the_run_is_in_the_columns() {
-        let mut graph = column_graph(false, 600, 120);
+        let mut graph = GraphData::with_latency_budgets(false, 600, 120);
         let one = |time: u64| {
             let mut data = GooseRequestMetricTimingData::new(None);
             data.record_time(time);
@@ -6372,7 +6410,7 @@ mod test {
     /// 0 for the sparsest cell to 1000 for the busiest.
     #[test]
     fn report_heatmap_percentiles_come_from_the_columns() {
-        let mut graph = column_graph(true, 8, 4);
+        let mut graph = GraphData::with_latency_budgets(true, 8, 4);
         let mut state = 2026;
         let mut measured = Vec::new();
         let mut synthetic = Vec::new();
@@ -6440,7 +6478,7 @@ mod test {
     #[test]
     fn report_heatmap_escapes_request_names() {
         let name = "GET /</script><img src=x onerror=alert(1)>\"'&\u{2028}\u{2029}";
-        let mut graph = column_graph(false, 600, 120);
+        let mut graph = GraphData::with_latency_budgets(false, 600, 120);
         graph.record_request_per_second_and_latency(name, 1, Some(10));
         graph.finish_latency_columns();
         let markup = graph.get_latency_heatmap_markup(false, Utc::now());

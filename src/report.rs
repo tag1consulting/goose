@@ -737,31 +737,6 @@ pub(crate) fn build_report(
         .graph {{
             margin-bottom: 1em;
         }}
-
-        .heatmap-controls button {{
-            border: 1px solid #2c664f;
-            background: white;
-            padding: 0.2em 0.8em;
-        }}
-
-        .heatmap-controls button.active {{
-            background: #2c664f;
-            color: white;
-        }}
-
-        .heatmap-legend {{
-            display: flex;
-            align-items: center;
-            gap: 0.5em;
-            width: 1000px;
-            font-size: 0.9em;
-        }}
-
-        .heatmap-ramp {{
-            display: inline-block;
-            width: 200px;
-            height: 0.8em;
-        }}
     </style>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.2.2/dist/echarts.min.js"></script>
 </head>
