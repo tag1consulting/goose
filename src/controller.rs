@@ -2476,7 +2476,7 @@ pub(crate) mod tests {
         )
     }
 
-    /// Behaviours 1 and 7: Users before the hold ramps to the new count,
+    /// Users before the hold ramps to the new count,
     /// then holds for the full run time, then ramps down for the new count;
     /// the stage stays ramp_up, with no countdown, until the hold starts.
     #[test]
@@ -2521,8 +2521,9 @@ pub(crate) mod tests {
         });
     }
 
-    /// Behaviours 2 and 7: Users during the hold keeps the hold's end, and
-    /// a ramp that outlasts it goes straight on to the ramp down.
+    /// Users during the hold keeps the hold's end, and a ramp that
+    /// outlasts it goes straight on to the ramp down, with the stage and
+    /// countdown checked.
     #[test]
     #[serial_test::serial]
     fn test_shape_users_during_hold() {
@@ -2570,9 +2571,10 @@ pub(crate) mod tests {
         });
     }
 
-    /// Behaviours 3 and 7: Users during the ramp down abandons it and holds
-    /// at the new count until stopped; the run is running again, so rates
-    /// are accepted, and a second Users still holds until stopped.
+    /// Users during the ramp down abandons it and holds at the new count
+    /// until stopped; the run is running again, so rates are accepted, and a
+    /// second Users still holds until stopped, with the stage and countdown
+    /// checked.
     #[test]
     #[serial_test::serial]
     fn test_shape_users_during_ramp_down() {
@@ -2606,9 +2608,9 @@ pub(crate) mod tests {
         });
     }
 
-    /// Behaviours 4 and 7: a run with no run time and no ramp down ramps up,
-    /// then holds until stopped; Users ramps to the new count and keeps
-    /// holding.
+    /// A run with no run time and no ramp down ramps up, then holds until
+    /// stopped; Users ramps to the new count and keeps holding, with the
+    /// stage and countdown checked.
     #[test]
     #[serial_test::serial]
     fn test_shape_users_holding_until_stopped() {
@@ -2627,7 +2629,7 @@ pub(crate) mod tests {
         });
     }
 
-    /// Behaviour 5: a decrease rate while running regenerates the ramp down
+    /// A decrease rate while running regenerates the ramp down
     /// still ahead, adds one where all users would stop at once, and only
     /// sets the configuration on a run holding until stopped.
     #[test]
@@ -2683,7 +2685,7 @@ pub(crate) mod tests {
         });
     }
 
-    /// Behaviour 6: a rate alone clears its own time in Idle; while running,
+    /// A rate alone clears its own time in Idle; while running,
     /// a rate is refused while its own time is set, naming the rate.
     #[test]
     #[serial_test::serial]
@@ -2727,7 +2729,7 @@ pub(crate) mod tests {
         });
     }
 
-    /// Decision 5: Users is refused while a test plan runs, naming users;
+    /// Users is refused while a test plan runs, naming users;
     /// the rates are refused there too, and a test plan replaces it.
     #[test]
     #[serial_test::serial]

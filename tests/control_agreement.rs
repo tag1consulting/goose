@@ -219,7 +219,7 @@ impl FrontEnds {
     }
 
     /// As [`agree`], for a command only telnet and WebSocket take: the
-    /// dashboard sets these in Part 2 of the settings work.
+    /// dashboard does not set these yet.
     async fn agree_controllers(&mut self, line: &str) -> (bool, String) {
         let telnet = self.send(Via::Telnet, line, "", "").await;
         let websocket = self.send(Via::WebSocket, line, "", "").await;
