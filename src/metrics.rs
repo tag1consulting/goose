@@ -6238,8 +6238,10 @@ mod test {
             processor.process_request_metric(&make_request_metric("/", 10, 200, elapsed));
         }
         let (ack, _ack_rx) = tokio::sync::oneshot::channel();
+        // The run's duration rounds on another clock: the columns start from
+        // the series second, not from it.
         processor.handle_command(MetricsCommand::Reset {
-            duration: 10,
+            duration: 7,
             total_users: 1,
             maximum_users: 1,
             active_users: 1,

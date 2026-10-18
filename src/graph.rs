@@ -1598,11 +1598,12 @@ impl LatencyHistograms {
     fn report_heatmap(&self, co_active: bool, started: DateTime<Utc>) -> Option<ReportHeatmap<'_>> {
         let all = self.all_columns.as_ref()?;
         let synthetic = self.synthetic.as_ref().filter(|_| co_active);
-        // Columns with no synthetic time, as after a reset, offer no view.
-        let held = |columns: &&Columns| columns.columns.iter().any(|column| column.counter > 0);
+        // All requests' synthetic columns outlive a reset empty, and then
+        // offer no view; a name's synthetic ring exists only once it has a
+        // time.
         let synthetic_all = synthetic
             .and_then(|(all, _)| all.columns.as_ref())
-            .filter(held);
+            .filter(|columns| columns.columns.iter().any(|column| column.counter > 0));
         let mut series = vec![ReportSeries {
             name: "All requests",
             width: self.all_width,
@@ -1617,8 +1618,7 @@ impl LatencyHistograms {
             };
             let added = synthetic
                 .and_then(|(_, by_request)| by_request.get(name))
-                .and_then(|ring| ring.columns.as_ref())
-                .filter(held);
+                .and_then(|ring| ring.columns.as_ref());
             series.push(ReportSeries {
                 name,
                 width: self.request_width,
@@ -6113,6 +6113,36 @@ mod test {
             .series
             .iter()
             .all(|series| series.adjusted.is_none()));
+    }
+
+    /// With budgets that fill at different seconds, each series widens when
+    /// its own budget fills: no series ever holds more columns than its
+    /// budget, after any write.
+    #[test]
+    fn each_budget_widens_its_own_series() {
+        let mut graph = column_graph(true, 6, 2);
+        for second in 0..40 {
+            graph.record_request_per_second_and_latency("GET /a", second, Some(10));
+            graph.record_synthetic_latency("GET /a", second, 500);
+            let latency = latency(&graph);
+            let own = latency.rings[0].columns.as_ref().unwrap();
+            let synthetic = latency.synthetic.as_ref().unwrap();
+            let synthetic_own = synthetic.1["GET /a"].columns.as_ref().unwrap();
+            let synthetic_all = synthetic.0.columns.as_ref().unwrap();
+            assert!(
+                own.columns.len() <= 2 && synthetic_own.columns.len() <= 2,
+                "{}",
+                second
+            );
+            assert!(
+                latency.all_columns.as_ref().unwrap().columns.len() <= 6,
+                "{}",
+                second
+            );
+            assert!(synthetic_all.columns.len() <= 6, "{}", second);
+        }
+        let latency = latency(&graph);
+        assert_eq!((latency.all_width, latency.request_width), (8, 32));
     }
 
     /// A name first seen after the per name columns widened gets columns of
