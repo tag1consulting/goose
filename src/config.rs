@@ -590,7 +590,8 @@ pub struct GooseConfiguration {
     /// Don't track per-second response times
     ///
     /// Leaves out the response time percentiles for each second behind the dashboard's
-    /// response time heatmap, which saves memory. Needs --dashboard.
+    /// response time heatmap, which saves memory. Also turns off the report's response
+    /// time heatmap.
     ///
     /// Set in code with GooseDefault::NoPercentilesOverTime.
     #[arg(help_heading = "Dashboard", long)]
@@ -3061,11 +3062,11 @@ impl GooseConfiguration {
                     filter: !self.no_percentiles_over_time,
                     message: "no_percentiles_over_time",
                 },
-                // Otherwise use GooseDefault if set, only with the dashboard:
-                // a load test can set it once for runs with and without it.
+                // Otherwise use GooseDefault if set, with or without the
+                // dashboard: it turns off the report's heatmap too.
                 GooseValue {
                     value: defaults.no_percentiles_over_time,
-                    filter: defaults.no_percentiles_over_time.is_none() || !self.dashboard,
+                    filter: defaults.no_percentiles_over_time.is_none(),
                     message: "no_percentiles_over_time",
                 },
             ])
@@ -3399,9 +3400,18 @@ impl GooseConfiguration {
     }
 
     /// Whether response time histograms are kept for each second, for the
-    /// dashboard's response time heatmap. Implies [`Self::records_graph_data`].
+    /// dashboard's response time heatmap or the report's. Implies
+    /// [`Self::records_graph_data`].
     pub(crate) fn records_latency_series(&self) -> bool {
-        self.dashboard && !self.no_percentiles_over_time && !self.no_metrics
+        (self.dashboard || self.keeps_full_graph())
+            && !self.no_percentiles_over_time
+            && !self.no_metrics
+    }
+
+    /// Whether the per second histograms also fold into whole run columns,
+    /// for the report's response time heatmap.
+    pub(crate) fn records_latency_columns(&self) -> bool {
+        self.keeps_full_graph() && self.records_latency_series()
     }
 
     /// Whether the heatmap also keeps coordinated omission mitigation's
@@ -3701,16 +3711,6 @@ impl GooseConfiguration {
                 value: true.to_string(),
                 detail:
                     "`configuration.no_granular_report` can not be set without `configuration.report_file` when runs are not saved."
-                        .to_string(),
-            });
-        }
-
-        if !self.dashboard && self.no_percentiles_over_time {
-            return Err(GooseError::InvalidOption {
-                option: "`configuration.no_percentiles_over_time`".to_string(),
-                value: true.to_string(),
-                detail:
-                    "`configuration.no_percentiles_over_time` can not be set without `configuration.dashboard`."
                         .to_string(),
             });
         }
@@ -4459,24 +4459,6 @@ mod test {
     }
 
     #[test]
-    fn no_percentiles_over_time_requires_dashboard() {
-        let config = GooseConfiguration {
-            no_percentiles_over_time: true,
-            ..Default::default()
-        };
-        match config.validate() {
-            Err(GooseError::InvalidOption { option, detail, .. }) => {
-                assert_eq!(option, "`configuration.no_percentiles_over_time`");
-                assert_eq!(
-                    detail,
-                    "`configuration.no_percentiles_over_time` can not be set without `configuration.dashboard`."
-                );
-            }
-            other => panic!("expected InvalidOption, got {:?}", other),
-        }
-    }
-
-    #[test]
     fn no_percentiles_over_time_from_default() {
         let goose_attack = GooseAttack::initialize_with_config(GooseConfiguration::default())
             .unwrap()
@@ -4490,16 +4472,20 @@ mod test {
         config.configure(&goose_attack.defaults).unwrap();
         assert!(config.no_percentiles_over_time);
 
-        // Without the dashboard the default is ignored, while the flag on
-        // the command line is still refused.
+        // Without the dashboard the default applies too, as does the flag
+        // on the command line: both turn off the report's heatmap.
         let mut config = GooseConfiguration::default();
         config.configure(&goose_attack.defaults).unwrap();
-        assert!(!config.no_percentiles_over_time);
+        assert!(config.no_percentiles_over_time);
         assert!(config.validate().is_ok());
+        assert!(!config.records_latency_series());
+        assert!(!config.records_latency_columns());
         let mut config =
             GooseConfiguration::parse_args_default(&["--no-percentiles-over-time"]).unwrap();
-        config.configure(&goose_attack.defaults).unwrap();
-        assert!(config.validate().is_err());
+        config.configure(&GooseDefaults::default()).unwrap();
+        assert!(config.no_percentiles_over_time);
+        assert!(config.validate().is_ok());
+        assert!(!config.records_latency_series());
     }
 
     /// A test plan that overflows, or that has no users, is an error on the

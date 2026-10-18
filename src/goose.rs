@@ -4967,6 +4967,7 @@ mod tests {
             vec!["--dashboard"],
             vec!["--dashboard", "--no-percentiles-over-time"],
             vec!["--report-file", "report.html"],
+            vec!["--no-percentiles-over-time"],
         ] {
             let configuration = GooseConfiguration::parse_args_default(&args).unwrap();
             let mut user =
@@ -5045,6 +5046,7 @@ mod tests {
             crate::graph::GraphData::for_metrics_processor(
                 configuration.records_latency_series(),
                 configuration.records_synthetic_latency(),
+                configuration.records_latency_columns(),
             ),
             configuration.clone(),
             Vec::new(),
@@ -5275,6 +5277,7 @@ mod tests {
             crate::graph::GraphData::for_metrics_processor(
                 configuration.records_latency_series(),
                 configuration.records_synthetic_latency(),
+                configuration.records_latency_columns(),
             ),
             configuration.clone(),
             Vec::new(),
@@ -5529,12 +5532,15 @@ mod tests {
         assert_batches_follow_the_count_and_age_rule(&configuration);
     }
 
-    /// With default flags, where the run is saved and so per second graphs
-    /// are kept, and with the dashboard but no heatmap, batches are main's
-    /// too: the heatmap alone splits them by second (#713).
+    /// With a saved run, where per second graphs are kept, or the dashboard,
+    /// but no heatmap, batches are main's too: the heatmaps alone split
+    /// them by second (#713, #746).
     #[test]
     fn batches_follow_the_count_and_age_rule_without_the_heatmap() {
-        for args in [vec![], vec!["--dashboard", "--no-percentiles-over-time"]] {
+        for args in [
+            vec!["--no-percentiles-over-time"],
+            vec!["--dashboard", "--no-percentiles-over-time"],
+        ] {
             let configuration = GooseConfiguration::parse_args_default(&args).unwrap();
             assert!(configuration.records_graph_data());
             assert_batches_follow_the_count_and_age_rule(&configuration);
@@ -5557,15 +5563,24 @@ mod tests {
             .sum()
     }
 
-    /// With the heatmap on, a user's last request in a quiet second leaves
-    /// on the same flush main would use: after every request, the user has
-    /// sent as many requests as main's count and age rule sends, so it holds
-    /// none main would not (#713).
+    /// With either heatmap on, the dashboard's or, at default flags, the
+    /// report's, a user's last request in a quiet second leaves on the same
+    /// flush main would use: after every request, the user has sent as many
+    /// requests as main's count and age rule sends, so it holds none main
+    /// would not (#713, #746).
     #[test]
     fn last_request_in_a_quiet_second_leaves_with_mains_flush() {
-        let configuration = GooseConfiguration::parse_args_default(&["--dashboard"]).unwrap();
+        for args in [vec!["--dashboard"], vec![]] {
+            let configuration = GooseConfiguration::parse_args_default(&args).unwrap();
+            last_request_in_a_quiet_second_leaves_with_mains_flush_for(&configuration);
+        }
+    }
+
+    fn last_request_in_a_quiet_second_leaves_with_mains_flush_for(
+        configuration: &GooseConfiguration,
+    ) {
         assert!(configuration.records_latency_series());
-        let (mut users, rx) = batching_users(&configuration, 1);
+        let (mut users, rx) = batching_users(configuration, 1);
         let mut clock = BatchClock::default();
         let mut sent = 0;
         // Main's rule: the open batch goes when an added request makes it
@@ -5616,8 +5631,15 @@ mod tests {
     /// a slow request whose response came seconds after it started.
     #[test]
     fn no_batch_spans_more_than_two_seconds() {
-        let configuration = GooseConfiguration::parse_args_default(&["--dashboard"]).unwrap();
-        let (mut users, rx) = batching_users(&configuration, 1);
+        for args in [vec!["--dashboard"], vec![]] {
+            let configuration = GooseConfiguration::parse_args_default(&args).unwrap();
+            assert!(configuration.records_latency_series());
+            no_batch_spans_more_than_two_seconds_for(&configuration);
+        }
+    }
+
+    fn no_batch_spans_more_than_two_seconds_for(configuration: &GooseConfiguration) {
+        let (mut users, rx) = batching_users(configuration, 1);
         let user = &mut users[0];
         let mut clock = BatchClock::default();
         let mut send = |user: &mut GooseUser, elapsed: u64, response_time: u64| {
@@ -5697,7 +5719,7 @@ mod tests {
         // Seeded users: every batch holds at most two seconds, and every
         // request is in one.
         let requests = seeded_requests_with_boundaries(713, 8, 40);
-        let batches = batch_through_users(&configuration, 9, &requests);
+        let batches = batch_through_users(configuration, 9, &requests);
         let mut sent = 0;
         for batch in &batches {
             let seconds = batch_seconds(batch);
@@ -5714,13 +5736,26 @@ mod tests {
     /// the second it started, and the mean of their times.
     #[test]
     fn per_second_graphs_come_from_the_batch() {
-        let configuration =
-            GooseConfiguration::parse_args_default(&["--report-file", "audit.html", "--no-save"])
-                .unwrap();
+        // With the recorder on, and with it off.
+        for args in [
+            vec!["--report-file", "audit.html", "--no-save"],
+            vec![
+                "--report-file",
+                "audit.html",
+                "--no-save",
+                "--no-percentiles-over-time",
+            ],
+        ] {
+            let configuration = GooseConfiguration::parse_args_default(&args).unwrap();
+            per_second_graphs_come_from_the_batch_for(&configuration);
+        }
+    }
+
+    fn per_second_graphs_come_from_the_batch_for(configuration: &GooseConfiguration) {
         assert!(configuration.records_graph_data());
         let requests = seeded_requests(2027, 8, 30);
-        let mut processor = test_processor(&configuration);
-        for batch in batch_through_users(&configuration, 8, &requests) {
+        let mut processor = test_processor(configuration);
+        for batch in batch_through_users(configuration, 8, &requests) {
             processor.process_batch_for_test(batch);
         }
         let graph = processor.graph_data_for_test();
@@ -5777,7 +5812,12 @@ mod tests {
         let on = batched(&["--dashboard"]);
         let others = [
             batched(&["--dashboard", "--no-percentiles-over-time"]),
-            batched(&["--report-file", "audit.html", "--no-save"]),
+            batched(&[
+                "--report-file",
+                "audit.html",
+                "--no-save",
+                "--no-percentiles-over-time",
+            ]),
             batched(&["--no-save"]),
             {
                 let plain = GooseConfiguration::parse_args_default(&["--no-save"]).unwrap();
@@ -6069,6 +6109,7 @@ mod tests {
             crate::graph::GraphData::for_metrics_processor(
                 configuration.records_latency_series(),
                 configuration.records_synthetic_latency(),
+                configuration.records_latency_columns(),
             ),
             configuration.clone(),
             Vec::new(),

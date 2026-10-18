@@ -2018,6 +2018,7 @@ impl GooseAttack {
             GraphData::for_metrics_processor(
                 self.configuration.records_latency_series(),
                 self.configuration.records_synthetic_latency(),
+                self.configuration.records_latency_columns(),
             ),
             self.configuration.clone(),
             self.scenarios.clone(),
@@ -3068,6 +3069,7 @@ impl GooseAttack {
             GraphData::for_metrics_processor(
                 self.configuration.records_latency_series(),
                 self.configuration.records_synthetic_latency(),
+                self.configuration.records_latency_columns(),
             ),
             self.configuration.clone(),
             self.scenarios.clone(),

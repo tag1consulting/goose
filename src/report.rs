@@ -30,6 +30,7 @@ pub(crate) struct GooseReportTemplates<'a> {
     pub errors_template: &'a str,
     pub graph_rps_template: &'a str,
     pub graph_average_response_time_template: &'a str,
+    pub graph_latency_heatmap_template: &'a str,
     pub graph_users_per_second: &'a str,
     pub co_metrics_template: &'a str,
 }
@@ -736,6 +737,31 @@ pub(crate) fn build_report(
         .graph {{
             margin-bottom: 1em;
         }}
+
+        .heatmap-controls button {{
+            border: 1px solid #2c664f;
+            background: white;
+            padding: 0.2em 0.8em;
+        }}
+
+        .heatmap-controls button.active {{
+            background: #2c664f;
+            color: white;
+        }}
+
+        .heatmap-legend {{
+            display: flex;
+            align-items: center;
+            gap: 0.5em;
+            width: 1000px;
+            font-size: 0.9em;
+        }}
+
+        .heatmap-ramp {{
+            display: inline-block;
+            width: 200px;
+            height: 0.8em;
+        }}
     </style>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.2.2/dist/echarts.min.js"></script>
 </head>
@@ -796,6 +822,8 @@ pub(crate) fn build_report(
 
             {graph_average_response_time_template}
 
+            {graph_latency_heatmap_template}
+
             <table>
                 <thead>
                     <tr>
@@ -852,6 +880,7 @@ pub(crate) fn build_report(
         errors_template = templates.errors_template,
         graph_rps_template = templates.graph_rps_template,
         graph_average_response_time_template = templates.graph_average_response_time_template,
+        graph_latency_heatmap_template = templates.graph_latency_heatmap_template,
         graph_users_per_second = templates.graph_users_per_second,
         co_metrics_template = templates.co_metrics_template,
     )

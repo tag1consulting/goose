@@ -343,6 +343,9 @@ pub(crate) enum MetricsCommand {
         maximum_users: usize,
         /// Live user count at reset (for logging continuity; users series is kept).
         active_users: usize,
+        /// Seconds on the continuous series clock at the reset, where the
+        /// report heatmap's columns start again.
+        series_elapsed_secs: usize,
         ack: tokio::sync::oneshot::Sender<()>,
     },
     /// Return a snapshot of the current metrics for the controller.
@@ -3249,6 +3252,7 @@ impl MetricsProcessor {
                 total_users,
                 maximum_users,
                 active_users,
+                series_elapsed_secs,
                 ack,
             } => {
                 // Drain all pending metrics before reset.
@@ -3286,7 +3290,7 @@ impl MetricsProcessor {
                 // Clear rate series only. Active-users history (ramp + later
                 // changes) is kept on a continuous series clock so the dashboard
                 // still shows how load evolved over the full run.
-                self.graph_data.reset_rate_series();
+                self.graph_data.reset_rate_series(series_elapsed_secs);
                 // Ensure the users series reflects the live count at the last
                 // known second (or second 0 if empty) so the chart does not dip
                 // to zero when the next sample is slightly delayed.
@@ -3322,6 +3326,9 @@ impl MetricsProcessor {
             } => {
                 // Drain all remaining metrics from the channel.
                 self.drain_pending();
+                // Fold every response time still held into the report
+                // heatmap's columns.
+                self.graph_data.finish_latency_columns();
                 self.sync_atomic_counters();
                 self.metrics.duration = duration;
                 self.metrics.total_users = total_users;
@@ -3801,6 +3808,8 @@ impl MetricsProcessor {
             // started in the batch's second, and the batch's `next_second`
             // those that started in the second after.
             if let (true, Some(second)) = (latency_merged, batch.second) {
+                // The batch holds this second and the next.
+                self.graph_data.fit_latency_columns(second + 1);
                 // Each request's whole run timing data and its pending counts
                 // in one walk of the batch's buckets, with the rest of the
                 // request's whole run figures, so step 3 has nothing left
@@ -4055,6 +4064,7 @@ impl GooseAttack {
                             total_users: self.metrics.total_users,
                             maximum_users: self.metrics.maximum_users,
                             active_users: goose_attack_run_state.active_users,
+                            series_elapsed_secs: self.series_elapsed_secs(),
                             ack: ack_tx,
                         })
                         .expect("metrics processor channel closed unexpectedly");
@@ -4553,6 +4563,13 @@ impl GooseAttack {
                     .graph_data
                     .get_average_response_time_graph(!self.configuration.no_granular_report)
                     .get_markup(&self.metrics.history, test_start_time),
+                graph_latency_heatmap_template: &self.graph_data.get_latency_heatmap_markup(
+                    self.metrics
+                        .coordinated_omission_metrics
+                        .as_ref()
+                        .is_some_and(|metrics| metrics.has_events()),
+                    test_start_time,
+                ),
                 graph_users_per_second: &self
                     .graph_data
                     .get_active_users_graph(!self.configuration.no_granular_report)
@@ -6203,6 +6220,54 @@ mod test {
         assert_eq!(snapshot.hosts, vec!["http://localhost/".to_string()]);
     }
 
+    /// A metrics reset restarts the report heatmap's columns at the reset's
+    /// second on the series clock: what came before is gone, and a request
+    /// that started in the second before the reset and finished after it is
+    /// counted once, in column 0, as the report's totals count it (#746).
+    #[test]
+    fn reset_restarts_the_report_heatmap_columns() {
+        let configuration = GooseConfiguration::default();
+        assert!(configuration.records_latency_columns());
+        let mut processor = make_dashboard_test_processor(configuration.clone());
+        processor.graph_data = GraphData::for_metrics_processor(
+            configuration.records_latency_series(),
+            configuration.records_synthetic_latency(),
+            configuration.records_latency_columns(),
+        );
+        for elapsed in [1_200, 4_500, 8_000] {
+            processor.process_request_metric(&make_request_metric("/", 10, 200, elapsed));
+        }
+        let (ack, _ack_rx) = tokio::sync::oneshot::channel();
+        processor.handle_command(MetricsCommand::Reset {
+            duration: 10,
+            total_users: 1,
+            maximum_users: 1,
+            active_users: 1,
+            series_elapsed_secs: 10,
+            ack,
+        });
+        // In flight at the reset: started at 9.8 s, finished after it.
+        processor.process_request_metric(&make_request_metric("/", 400, 200, 9_800));
+        processor.process_request_metric(&make_request_metric("/", 10, 200, 12_100));
+        let (respond, mut respond_rx) = tokio::sync::oneshot::channel();
+        processor.handle_command(MetricsCommand::Shutdown {
+            duration: 13,
+            total_users: 1,
+            maximum_users: 1,
+            respond,
+        });
+        let (metrics, graph_data) = respond_rx.try_recv().unwrap();
+        assert_eq!(metrics.requests["GET /"].raw_data.counter, 2);
+        for key in [None, Some("GET /")] {
+            assert_eq!(
+                graph_data.latency_columns_for_test(key),
+                Some((1, vec![(0, 1), (2, 1)])),
+                "{:?}",
+                key
+            );
+        }
+    }
+
     #[test]
     fn reset_preserves_active_users_ramp_history() {
         // Regression: metrics reset used to wipe users and reseed second 0 with
@@ -6233,6 +6298,7 @@ mod test {
             total_users: 5,
             maximum_users: 5,
             active_users: 5,
+            series_elapsed_secs: 10,
             ack: ack_tx,
         });
         assert!(!shutdown);
@@ -7057,6 +7123,7 @@ mod test {
         processor.graph_data = GraphData::for_metrics_processor(
             configuration.records_latency_series(),
             configuration.records_synthetic_latency(),
+            configuration.records_latency_columns(),
         );
         if mitigation != GooseCoordinatedOmissionMitigation::Disabled {
             processor.metrics.coordinated_omission_metrics =
@@ -7240,6 +7307,7 @@ mod test {
         processor.graph_data = GraphData::for_metrics_processor(
             configuration.records_latency_series(),
             configuration.records_synthetic_latency(),
+            configuration.records_latency_columns(),
         );
         processor.process_request_metric(&make_request_metric("/", 10, 200, 1_000));
         let (respond, respond_rx) = tokio::sync::oneshot::channel();
@@ -7277,13 +7345,25 @@ mod test {
 
     #[test]
     fn latency_gate() {
-        let on = GooseConfiguration {
-            dashboard: true,
-            ..Default::default()
-        };
-        assert!(on.records_latency_series());
-        for off in [
+        for on in [
+            GooseConfiguration {
+                dashboard: true,
+                ..Default::default()
+            },
+            // A saved run, for the report's heatmap.
             GooseConfiguration::default(),
+        ] {
+            assert!(on.records_latency_series());
+        }
+        for off in [
+            GooseConfiguration {
+                no_save: true,
+                ..Default::default()
+            },
+            GooseConfiguration {
+                no_percentiles_over_time: true,
+                ..Default::default()
+            },
             GooseConfiguration {
                 dashboard: true,
                 no_percentiles_over_time: true,
