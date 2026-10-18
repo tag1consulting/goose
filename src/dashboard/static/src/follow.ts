@@ -10,7 +10,14 @@
 // Target field that kept the last value this tab applied and ignored every
 // change made from telnet, WebSocket or another tab.
 
-/** One input that follows a server value. Values are compared as text. */
+/** A text or number input, or a select: the fields that follow the server. */
+export type FollowedElement = HTMLInputElement | HTMLSelectElement;
+
+/**
+ * One input or select that follows a server value. Values are compared as
+ * text. A select has no read only state, so while it says it is unavailable
+ * (`aria-disabled`) a change puts back the value it showed.
+ */
 export class FollowedField {
   /** The server's value as of the last snapshot or accepted reply. */
   private server: string | null = null;
@@ -20,6 +27,8 @@ export class FollowedField {
   private edit: string | null = null;
   /** Values this tab sent that no snapshot has reported yet, oldest first. */
   private awaiting: string[] = [];
+  /** The value the field last showed, which a refused select change keeps. */
+  private shown = "";
 
   /**
    * @param input the field
@@ -27,11 +36,17 @@ export class FollowedField {
    * @param note says something once through the status line
    */
   constructor(
-    private readonly input: HTMLInputElement,
+    private readonly input: FollowedElement,
     private readonly label: string,
     private readonly note: (text: string) => void
   ) {
-    input.addEventListener("input", () => {
+    this.shown = input.value;
+    const select = input instanceof HTMLSelectElement;
+    input.addEventListener(select ? "change" : "input", () => {
+      if (select && input.getAttribute("aria-disabled") === "true") {
+        input.value = this.shown;
+        return;
+      }
       this.edited(input.value);
     });
     input.addEventListener("blur", () => {
@@ -58,7 +73,7 @@ export class FollowedField {
       this.baseline = this.server;
     }
     this.edit = text;
-    if (this.input.value !== text) this.input.value = text;
+    this.show(text);
   }
 
   /** `text` is being applied. */
@@ -68,13 +83,13 @@ export class FollowedField {
     }
     this.edit = text;
     this.awaiting.push(text);
-    if (this.input.value !== text) this.input.value = text;
+    this.show(text);
   }
 
   /** The server accepted `text`; a snapshot still has to report it. */
   accepted(text: string): void {
     if (this.edit === text) this.edit = null;
-    this.input.value = text;
+    this.show(text);
   }
 
   /** The server refused `text`, or never answered: the edit stays. */
@@ -85,11 +100,16 @@ export class FollowedField {
   /** Discard an unapplied edit, saying why once; the field follows again. */
   discard(reason: string): void {
     if (this.edit === null) return;
+    this.revert();
+    this.note(reason + "; unapplied " + this.label + " edit discarded");
+  }
+
+  /** Drop an unapplied edit without a word, as Discard edits does. */
+  revert(): void {
     this.edit = null;
     this.awaiting = [];
     this.baseline = this.server;
-    this.input.value = this.server === null ? "" : this.server;
-    this.note(reason + "; unapplied " + this.label + " edit discarded");
+    this.show(this.server === null ? "" : this.server);
   }
 
   /** A snapshot's value; `null` says nothing about this field. */
@@ -103,7 +123,7 @@ export class FollowedField {
         this.baseline = value;
         if (this.edit === null || this.edit === value) {
           this.edit = null;
-          this.input.value = value;
+          this.show(value);
         }
         return;
       }
@@ -119,20 +139,25 @@ export class FollowedField {
       if (value === this.edit) {
         this.edit = null;
         this.baseline = value;
-        this.input.value = value;
+        this.show(value);
         return;
       }
       if (value !== this.baseline) this.changedElsewhere(value);
       return;
     }
     this.baseline = value;
-    if (this.input.value !== value) this.input.value = value;
+    this.show(value);
+  }
+
+  private show(text: string): void {
+    this.shown = text;
+    if (this.input.value !== text) this.input.value = text;
   }
 
   private changedElsewhere(value: string): void {
     this.edit = null;
     this.baseline = value;
-    this.input.value = value;
+    this.show(value);
     this.note(this.label + " changed elsewhere to " + (value === "" ? "none" : value));
   }
 }
@@ -158,10 +183,11 @@ export function removeDescribedBy(el: HTMLElement, id: string): void {
 
 /**
  * Make a text or number input read only, or editable again. Read only, not
- * disabled: it keeps focus and stays readable, and says it is unavailable.
+ * disabled: it keeps focus and stays readable, and says it is unavailable. A
+ * select only says so; its FollowedField puts back any change.
  */
-export function setReadOnly(input: HTMLInputElement, readOnly: boolean): void {
-  input.readOnly = readOnly;
+export function setReadOnly(input: FollowedElement, readOnly: boolean): void {
+  if (input instanceof HTMLInputElement) input.readOnly = readOnly;
   if (readOnly) {
     input.setAttribute("aria-disabled", "true");
   } else {

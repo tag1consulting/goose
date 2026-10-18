@@ -1,6 +1,6 @@
-// The control panel: Start, Stop, Quit and the users target, sent as
-// authenticated POSTs, plus the phase badge whose phase gates them and the
-// run settings summary.
+// The control panel: Start, Stop, Quit, the users target and the run
+// settings form, sent as authenticated POSTs, plus the phase badge whose
+// phase gates them and the run settings summary.
 
 import { forgetStoredToken, getToken } from "./connection";
 import { optionalElement, requireElement } from "./dom";
@@ -12,6 +12,7 @@ import {
 } from "./follow";
 import { formatInt } from "./format";
 import { settingsSummary } from "./run-settings";
+import { SettingsBody, SettingsForm } from "./settings-form";
 import { announce, setBanner } from "./status";
 
 type ControlStatusKind = "info" | "ok" | "error";
@@ -26,6 +27,8 @@ interface ControlResultBody {
   target_users?: number | null;
   /** The setting at fault in a refusal. */
   field?: string | null;
+  /** The run settings after a settings request or a Start with settings. */
+  settings?: SnapshotSettings;
 }
 
 /** Where each Controller listens, or null when it is off. */
@@ -56,12 +59,24 @@ const ctrlStatus = optionalElement("ctrl-status", HTMLElement);
 const ctrlSummary = optionalElement("ctrl-summary", HTMLElement);
 const ctrlTargetHelp = optionalElement("ctrl-target-help", HTMLElement);
 const ctrlTargetReason = optionalElement("ctrl-target-reason", HTMLElement);
+const setApply = optionalElement("set-apply", HTMLButtonElement);
+const setDiscard = optionalElement("set-discard", HTMLButtonElement);
+const setReasonEl = optionalElement("set-reason", HTMLElement);
+const hostConfirm = optionalElement("set-host-confirm", HTMLElement);
+const hostConfirmText = optionalElement("set-host-confirm-text", HTMLElement);
+const hostConfirmOk = optionalElement("set-host-confirm-ok", HTMLButtonElement);
+const hostConfirmCancel = optionalElement("set-host-confirm-cancel", HTMLButtonElement);
 
 /** Help under the Target row: which settings a mid run change uses. */
 const TARGET_HELP =
   "Mid run changes ramp at the increase rate when adding users and the decrease rate (else the increase rate) when removing them, 1 per second when neither is set; increase and decrease times are not used.";
 /** Help under the Target row in Idle with a test plan configured. */
 const TARGET_HELP_PLAN = "Applying a user count replaces the test plan with a users ramp.";
+/** The Target row's reason in Idle while the form has other edits. */
+const TARGET_WITH_EDITS =
+  "Sent with your other edits: use Start with changes or Apply settings";
+/** The form's reason with no token. */
+const NO_TOKEN = "Enter the control token to change settings";
 
 // Control panel state
 let controlEnabled = false;
@@ -71,6 +86,20 @@ const targetField = ctrlTarget
       setControlStatus(text, "info");
     })
   : null;
+// The run settings form, when the page has one.
+const form = SettingsForm.find(
+  () => {
+    updateControlEnablement();
+  },
+  (text) => {
+    setControlStatus(text, "info");
+  }
+);
+// The host confirmation is asked once per page load.
+let hostConfirmed = false;
+// What the open host confirmation goes on to do, and the button it returns
+// focus to.
+let confirming: { trigger: HTMLButtonElement; then: () => void } | null = null;
 let step = 10;
 let inFlight = false;
 let lastSnap: DashboardSnapshot | null = null;
@@ -164,7 +193,7 @@ function serverTarget(snap: DashboardSnapshot): string | null {
 
 /** Why the Target row cannot change users now, or "" when it can. */
 function targetReason(hasToken: boolean): string {
-  if (!hasToken) return "Enter the control token to change settings";
+  if (!hasToken) return NO_TOKEN;
   if (currentStage === "test_plan") {
     return "The test plan sets users; edit the plan, or stop and switch mode";
   }
@@ -201,12 +230,32 @@ function unavailable(button: HTMLButtonElement | null): boolean {
   return !button || button.getAttribute("aria-disabled") === "true";
 }
 
+/** Whether the Target row's edit goes with the form's: in Idle only. */
+function targetPending(): boolean {
+  return currentStage === "idle" && !!targetField && targetField.pending();
+}
+
+/** Unapplied edits: the form's, and in Idle the Target row's. */
+function pendingCount(): number {
+  return (form ? form.pendingCount() : 0) + (targetPending() ? 1 : 0);
+}
+
 function updateControlEnablement(): void {
   if (!controlPanel || !controlEnabled) return;
 
   const hasToken = !!getToken();
   const phase = currentPhase || "idle";
   const canStart = hasToken && !inFlight && phase === "idle";
+  const pending = pendingCount();
+  const formPending = form ? form.pendingCount() : 0;
+  if (ctrlStart) {
+    ctrlStart.textContent = phase === "idle" && pending > 0 ? "Start with changes" : "Start";
+  }
+  if (form) form.update(hasToken && !inFlight);
+  setAvailable(setApply, hasToken && !inFlight && pending > 0 && currentStage !== "stopping");
+  setAvailable(setDiscard, hasToken && !inFlight && pending > 0);
+  setReason(setReasonEl, null, hasToken ? "" : NO_TOKEN);
+  if (form) form.setPendingLabel(pending);
   const canStop =
     hasToken && !inFlight && (phase === "increase" || phase === "maintain");
   const reason = targetReason(hasToken);
@@ -229,19 +278,23 @@ function updateControlEnablement(): void {
     setAvailable(ctrlQuit, hasToken && !inFlight);
     if (focused && ctrlQuit.hidden && ctrlStart) ctrlStart.focus();
   }
-  setAvailable(ctrlApply, canUsers);
+  // In Idle with other edits, the Target goes with them, so its own Apply
+  // waits and plus and minus only change the field.
+  const withEdits = currentStage === "idle" && formPending > 0;
+  setAvailable(ctrlApply, canUsers && !withEdits);
   setAvailable(ctrlMinus, canUsers);
   setAvailable(ctrlPlus, canUsers);
   // Read only, never disabled, so focus stays and the reason is read.
   if (ctrlTarget) setReadOnly(ctrlTarget, reason !== "" || inFlight);
   if (ctrlStep) setReadOnly(ctrlStep, reason !== "" || inFlight);
-  setReason(ctrlTargetReason, ctrlTarget, reason);
+  const shown = reason !== "" ? reason : withEdits ? TARGET_WITH_EDITS : "";
+  setReason(ctrlTargetReason, ctrlTarget, shown);
   // The help says how a change applies, so it goes while the reason says
   // none can; out of aria-describedby too, where hidden text is still read.
   if (ctrlTargetHelp) {
-    ctrlTargetHelp.hidden = reason !== "";
+    ctrlTargetHelp.hidden = shown !== "";
     if (ctrlTarget) {
-      if (reason === "") {
+      if (shown === "") {
         addDescribedBy(ctrlTarget, ctrlTargetHelp.id);
       } else {
         removeDescribedBy(ctrlTarget, ctrlTargetHelp.id);
@@ -278,6 +331,7 @@ export function updateControlFromSnapshot(snap: DashboardSnapshot): void {
     ctrlSummary.textContent = settingsSummary(settings, true);
   }
 
+  if (form) form.fromSnapshot(settings);
   if (targetField) {
     // An edit the run can no longer take is discarded, said once.
     const reason = stageReason(currentStage);
@@ -298,7 +352,7 @@ export function updateControlFromSnapshot(snap: DashboardSnapshot): void {
 // Control POSTs: Bearer only — never append ?token= (do not use withToken).
 function postControl(
   path: string,
-  body?: { users: number } | undefined
+  body?: { users: number } | SettingsBody | undefined
 ): Promise<Response> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -410,8 +464,9 @@ function handleControlBody(res: Response): Promise<ControlResultBody | null> {
 
 function runControl(
   path: string,
-  body?: { users: number },
-  appliedUsers?: number
+  body?: { users: number } | SettingsBody,
+  appliedUsers?: number,
+  settled?: (data: ControlResultBody | null) => void
 ): void {
   if (inFlight || !getToken()) return;
   inFlight = true;
@@ -423,16 +478,116 @@ function runControl(
     .then((res) => handleControlResponse(res, appliedUsers))
     .catch((err: unknown) => {
       setControlStatus("Request failed: " + String(err), "error");
+      return null;
     })
-    .then(() => {
+    .then((data) => {
       inFlight = false;
+      if (settled) settled(data);
       updateControlEnablement();
     });
 }
 
+/**
+ * Send the pending edits to `path`, Apply settings or a Start with changes,
+ * with the Target row's users in Idle. A refusal naming a setting opens the
+ * form, marks the field and moves focus to it.
+ */
+function sendSettings(path: string): void {
+  if (!form) return;
+  const body = form.body();
+  let users: number | undefined;
+  if (targetPending() && targetField) {
+    users = parseInt(targetField.text(), 10);
+    if (!isFinite(users) || users < 1) {
+      setControlStatus("Target must be an integer ≥ 1", "error");
+      setTargetInvalid(true);
+      if (ctrlTarget) ctrlTarget.focus();
+      return;
+    }
+    body.users = users;
+    targetField.sending(String(users));
+  }
+  form.sending();
+  runControl(path, body, users, (data) => {
+    const ok = !!(data && data.ok);
+    form.settled(ok, data && data.settings ? data.settings : null);
+    if (ok && data && data.settings && ctrlSummary) {
+      ctrlSummary.textContent = settingsSummary(data.settings, true);
+    }
+    if (!ok && data && data.field) {
+      if (data.field === "users" && ctrlTarget) {
+        setTargetInvalid(true);
+        ctrlTarget.focus();
+      } else {
+        form.focusField(data.field);
+      }
+    }
+  });
+}
+
+/**
+ * Ask once per page load before edits change the host: "Load will go to X"
+ * under Host, with Confirm and Cancel. Nothing is sent until Confirm.
+ */
+function confirmHost(trigger: HTMLButtonElement, then: () => void): void {
+  const change = form ? form.hostChange() : null;
+  if (hostConfirmed || change === null || !hostConfirm || !hostConfirmText || !hostConfirmOk) {
+    then();
+    return;
+  }
+  if (form) form.open();
+  hostConfirmText.textContent = "Load will go to " + change;
+  hostConfirm.hidden = false;
+  confirming = { trigger, then };
+  hostConfirmOk.focus();
+}
+
+function closeHostConfirm(): { trigger: HTMLButtonElement; then: () => void } | null {
+  const open = confirming;
+  confirming = null;
+  if (hostConfirm) hostConfirm.hidden = true;
+  return open;
+}
+
+function onHostConfirm(): void {
+  const open = closeHostConfirm();
+  if (!open) return;
+  hostConfirmed = true;
+  open.trigger.focus();
+  open.then();
+}
+
+function onHostCancel(): void {
+  const open = closeHostConfirm();
+  if (open) open.trigger.focus();
+}
+
 function onStartClick(): void {
   if (unavailable(ctrlStart)) return;
+  if (currentPhase === "idle" && pendingCount() > 0 && ctrlStart) {
+    confirmHost(ctrlStart, () => {
+      sendSettings("/api/v1/control/start");
+    });
+    return;
+  }
   runControl("/api/v1/control/start");
+}
+
+function onApplySettingsClick(): void {
+  if (unavailable(setApply) || !setApply) return;
+  confirmHost(setApply, () => {
+    sendSettings("/api/v1/control/settings");
+  });
+}
+
+function onDiscardClick(): void {
+  if (unavailable(setDiscard)) return;
+  closeHostConfirm();
+  if (form) form.discardAll();
+  if (targetPending() && targetField) targetField.revert();
+  setTargetInvalid(false);
+  setControlStatus("Unapplied edits discarded", "info");
+  updateControlEnablement();
 }
 
 function onStopClick(): void {
@@ -470,7 +625,14 @@ function onStepClick(delta: number): void {
   if (!isFinite(base)) {
     base = lastSnap ? lastSnap.active_users : 1;
   }
-  sendUsers(Math.max(1, base + delta * step));
+  const users = Math.max(1, base + delta * step);
+  // With other edits pending in Idle, the Target goes with them.
+  if (currentStage === "idle" && form && form.pendingCount() > 0 && targetField) {
+    targetField.edited(String(users));
+    updateControlEnablement();
+    return;
+  }
+  sendUsers(users);
 }
 
 /**
@@ -548,6 +710,10 @@ export function initControlPanel(): Promise<boolean> {
     });
 
   if (ctrlStart) ctrlStart.addEventListener("click", onStartClick);
+  if (setApply) setApply.addEventListener("click", onApplySettingsClick);
+  if (setDiscard) setDiscard.addEventListener("click", onDiscardClick);
+  if (hostConfirmOk) hostConfirmOk.addEventListener("click", onHostConfirm);
+  if (hostConfirmCancel) hostConfirmCancel.addEventListener("click", onHostCancel);
   if (ctrlStop) ctrlStop.addEventListener("click", onStopClick);
   if (ctrlQuit) ctrlQuit.addEventListener("click", onQuitClick);
   if (ctrlApply) ctrlApply.addEventListener("click", onApplyClick);
@@ -566,6 +732,7 @@ export function initControlPanel(): Promise<boolean> {
   if (ctrlTarget) {
     ctrlTarget.addEventListener("input", () => {
       setTargetInvalid(false);
+      updateControlEnablement();
     });
   }
   return enabled;

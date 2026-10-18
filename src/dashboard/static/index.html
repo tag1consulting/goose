@@ -35,6 +35,73 @@
   <section id="control-panel" class="card control-panel hidden" aria-label="Load test control">
     <h2>Control</h2>
     <p id="ctrl-summary" class="control-summary"></p>
+    <details id="ctrl-settings" class="control-settings">
+      <summary id="ctrl-settings-label">Edit settings</summary>
+      <div class="settings-form">
+        <div class="settings-row settings-host">
+          <label class="settings-label" for="set-host">Host</label>
+          <div class="settings-inputs">
+            <input id="set-host" type="url" autocomplete="off" spellcheck="false">
+          </div>
+          <p id="set-host-help" class="control-help" hidden></p>
+          <p id="set-host-reason" class="control-help control-reason" hidden></p>
+          <div id="set-host-confirm" class="settings-confirm" hidden>
+            <p id="set-host-confirm-text" class="control-reason"></p>
+            <button type="button" id="set-host-confirm-ok" class="ctrl-btn">Confirm</button>
+            <button type="button" id="set-host-confirm-cancel" class="ctrl-btn">Cancel</button>
+          </div>
+        </div>
+        <div class="settings-row">
+          <label class="settings-label" for="set-up">Ramp up</label>
+          <div class="settings-inputs">
+            <input id="set-up" type="number" min="0" step="any" inputmode="decimal" autocomplete="off">
+            <label class="visually-hidden" for="set-up-unit">Ramp up unit</label>
+            <select id="set-up-unit">
+              <option value="rate">users per second</option>
+              <option value="s">s total</option>
+              <option value="min">min total</option>
+              <option value="h">h total</option>
+            </select>
+          </div>
+          <p id="set-up-reason" class="control-help control-reason" hidden></p>
+        </div>
+        <div class="settings-row">
+          <label class="settings-label" for="set-down">Ramp down</label>
+          <div class="settings-inputs">
+            <input id="set-down" type="number" min="0" step="any" inputmode="decimal" autocomplete="off" aria-describedby="set-down-help">
+            <label class="visually-hidden" for="set-down-unit">Ramp down unit</label>
+            <select id="set-down-unit">
+              <option value="rate">users per second</option>
+              <option value="s">s total</option>
+              <option value="min">min total</option>
+              <option value="h">h total</option>
+            </select>
+          </div>
+          <p id="set-down-help" class="control-help">Empty: all users stop at once.</p>
+          <p id="set-down-reason" class="control-help control-reason" hidden></p>
+        </div>
+        <div class="settings-row">
+          <label class="settings-label" for="set-run">Run time</label>
+          <div class="settings-inputs">
+            <input id="set-run" type="number" min="1" step="any" inputmode="decimal" autocomplete="off">
+            <label class="visually-hidden" for="set-run-unit">Run time unit</label>
+            <select id="set-run-unit">
+              <option value="s">s</option>
+              <option value="min">min</option>
+              <option value="h">h</option>
+            </select>
+          </div>
+          <p id="set-run-help" class="control-help"></p>
+          <p id="set-run-held" class="control-help" hidden></p>
+          <p id="set-run-reason" class="control-help control-reason" hidden></p>
+        </div>
+        <div class="control-row settings-actions">
+          <button type="button" id="set-apply" class="ctrl-btn">Apply settings</button>
+          <button type="button" id="set-discard" class="ctrl-btn">Discard edits</button>
+        </div>
+        <p id="set-reason" class="control-help control-reason" hidden></p>
+      </div>
+    </details>
     <div class="control-row">
       <button type="button" id="ctrl-start" class="ctrl-btn ctrl-start">Start</button>
       <button type="button" id="ctrl-stop" class="ctrl-btn ctrl-stop">Stop</button>
