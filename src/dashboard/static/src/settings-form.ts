@@ -215,7 +215,7 @@ export class SettingsForm {
     this.run = new Pair(runEls, "Run time", note);
     for (const el of [hostInput, upEls.number, upEls.unit, downEls.number, downEls.unit, runEls.number, runEls.unit]) {
       el.addEventListener(el instanceof HTMLSelectElement ? "change" : "input", () => {
-        el.removeAttribute("aria-invalid");
+        markInvalid(el, false);
         this.refresh();
         onChange();
       });
@@ -318,8 +318,10 @@ export class SettingsForm {
     return this.settings.hosts.length ? "each scenario's own host" : "no host";
   }
 
-  /** The pending edits are being sent. */
+  /** The pending edits are being sent: a field marked by the last refusal
+   * is no longer known to be at fault. */
   sending(): void {
+    this.clearInvalid();
     this.sent = {};
     if (this.host.pending()) {
       this.sent.host = this.host.text();
@@ -365,6 +367,7 @@ export class SettingsForm {
 
   /** Drop every pending edit; the fields follow the server again. */
   discardAll(): void {
+    this.clearInvalid();
     this.host.revert();
     for (const pair of [this.up, this.down, this.run]) pair.revert();
     this.refresh();
@@ -388,9 +391,17 @@ export class SettingsForm {
     const input = document.getElementById(id);
     if (!input) return false;
     this.open();
-    input.setAttribute("aria-invalid", "true");
+    markInvalid(input, true);
     input.focus();
     return true;
+  }
+
+  /** Clear every field's invalid mark. */
+  private clearInvalid(): void {
+    for (const id of new Set(Object.values(FIELD_INPUTS))) {
+      const input = document.getElementById(id);
+      if (input) markInvalid(input, false);
+    }
   }
 
   /** A snapshot: follow its settings, and discard edits the stage can no
@@ -545,6 +556,18 @@ export class SettingsForm {
           ? "Ramp down started; ramp settings change again when idle"
           : "Run stopping; settings change again when idle";
     return { host: "Host changes only when idle", up: all, down: all, run: all };
+  }
+}
+
+/** Mark `input` invalid, described by the status line that says why, or
+ * clear both; its other descriptions stay. */
+function markInvalid(input: HTMLElement, invalid: boolean): void {
+  if (invalid) {
+    input.setAttribute("aria-invalid", "true");
+    addDescribedBy(input, "ctrl-status");
+  } else if (input.hasAttribute("aria-invalid")) {
+    input.removeAttribute("aria-invalid");
+    removeDescribedBy(input, "ctrl-status");
   }
 }
 

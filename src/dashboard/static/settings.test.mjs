@@ -313,8 +313,14 @@ test("a refused setting opens the closed form, marks the field and moves focus t
   assert.equal(el(page, "ctrl-settings").open, true);
   assert.equal(el(page, "set-run").getAttribute("aria-invalid"), "true");
   assert.equal(page.window.document.activeElement, el(page, "set-run"));
+  assert.match(el(page, "set-run").getAttribute("aria-describedby"), /ctrl-status/);
   type(page, "set-run", "1");
   assert.equal(el(page, "set-run").hasAttribute("aria-invalid"), false);
+  assert.doesNotMatch(el(page, "set-run").getAttribute("aria-describedby") || "", /ctrl-status/);
+  // Discard edits clears a mark left by an earlier refusal.
+  el(page, "set-discard").click();
+  await settle(page.window);
+  assert.equal(el(page, "set-up").hasAttribute("aria-invalid"), false);
 });
 
 test("an accepted reply's settings are followed before the next snapshot", async () => {
