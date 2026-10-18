@@ -740,3 +740,51 @@ test("unreadable text in a row the server has none for stays an edit through blu
   assert.deepEqual(controlPosts(page), []);
   assert.equal(el(page, "ctrl-status").textContent, "Ramp down must be a number");
 });
+
+test("Discard edits clears unreadable text from a row the server has none for", async () => {
+  const page = await acceptingPage("idle", { decrease_rate: null, decrease_time_secs: null });
+  const input = el(page, "set-down");
+  // A browser shows the text, reads it as "", and clears it only when written.
+  const writes = [];
+  Object.defineProperty(input, "validity", { value: { badInput: true, valid: false } });
+  Object.defineProperty(input, "value", { get: () => "", set: (v) => writes.push(v), configurable: true });
+  input.dispatchEvent(new page.window.Event("input"));
+  assert.equal(label(page), "Edit settings (1 unapplied)");
+  el(page, "set-discard").click();
+  await settle(page.window);
+  assert.equal(label(page), "Edit settings");
+  assert.deepEqual(writes, [""], "the field is written, clearing the text");
+});
+
+test("a Start with changes that timed out but landed is not reported as started elsewhere", async () => {
+  const page = await acceptingPage("idle", {}, { timeout: true });
+  type(page, "set-host", "http://new.test");
+  type(page, "set-up", "5");
+  choose(page, "set-up-unit", "min");
+  el(page, "ctrl-start").click();
+  await settle(page.window);
+  await confirmAsShown(page);
+  assert.equal(controlPosts(page).length, 1);
+  await emit(page, snapshot("increase", "ramp_up", page.server.settings));
+  assert.doesNotMatch(el(page, "ctrl-status").textContent, /elsewhere|discarded/);
+  assert.equal(label(page), "Edit settings");
+  assert.equal(el(page, "set-host").value, "http://new.test");
+  assert.equal(shown(page, "set-up"), "5 min");
+});
+
+test("unreadable text fixed after another client's change is said to be overtaken, never lost silently", async () => {
+  const page = await acceptingPage("idle", { increase_rate: 5 });
+  const input = el(page, "set-up");
+  const validity = { badInput: true, valid: false };
+  Object.defineProperty(input, "validity", { value: validity });
+  type(page, "set-up", "");
+  await emit(page, snapshot("idle", "idle", { increase_rate: 7 }));
+  validity.badInput = false;
+  validity.valid = true;
+  type(page, "set-up", "5");
+  input.dispatchEvent(new page.window.Event("blur"));
+  await emit(page, snapshot("idle", "idle", { increase_rate: 7 }));
+  // Overtaken while it could not be read: said so, never lost silently.
+  assert.equal(el(page, "set-up").value, "7");
+  assert.equal(el(page, "ctrl-status").textContent, "Ramp up changed elsewhere to 7 users per second");
+});

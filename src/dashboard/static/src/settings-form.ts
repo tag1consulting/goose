@@ -164,11 +164,20 @@ class Pair extends FollowedValue {
     return this.pending() && this.server !== null && pairParts(this.server)[1] !== this.unitText();
   }
 
-  /** The server's number and unit. Unreadable text reads as none, so while
-   * it is pending the row waits for it to be fixed or refused. */
-  fromServerParts(number: string, unit: Unit): void {
-    if (this.pending() && this.badNumber()) return;
-    this.fromServer(pairValue(number, unit));
+  /** Unreadable text reads as "", so it goes only when the field is written. */
+  revert(): void {
+    super.revert();
+    if (this.els.number.validity.badInput) this.els.number.value = pairParts(this.value())[0];
+  }
+
+  /** Unreadable text reads as none, so while it is pending the row keeps
+   * it, to be fixed or refused, and only notes the server's value. */
+  fromServer(value: string | null): void {
+    if (value !== null && this.pending() && this.badNumber()) {
+      this.server = value;
+      return;
+    }
+    super.fromServer(value);
   }
 
   protected show(text: string): void {
@@ -511,14 +520,18 @@ export class SettingsForm {
     }
     const now = editableIn(settings.stage, settings);
     if (stageBefore !== settings.stage) {
+      // An edit the server already has, as after a Start with changes that
+      // timed out but landed, is followed below, not discarded.
+      const values = this.serverValues(settings);
       const reason = stageChange(settings.stage);
-      if (before.host && !now.host) this.host.discard(reason);
-      const pairs: [Pair, boolean, boolean, boolean, boolean][] = [
-        [this.up, before.up, now.up, now.upUnit, this.up.unitEdited()],
-        [this.down, before.down, now.down, now.downUnit, this.down.unitEdited()],
-        [this.run, before.run, now.run, true, false],
+      if (before.host && !now.host && !this.host.editIs(values.host)) this.host.discard(reason);
+      const pairs: [Pair, string, boolean, boolean, boolean, boolean][] = [
+        [this.up, values.up, before.up, now.up, now.upUnit, this.up.unitEdited()],
+        [this.down, values.down, before.down, now.down, now.downUnit, this.down.unitEdited()],
+        [this.run, values.run, before.run, now.run, true, false],
       ];
-      for (const [pair, was, is, unit, unitEdit] of pairs) {
+      for (const [pair, value, was, is, unit, unitEdit] of pairs) {
+        if (pair.editIs(value)) continue;
         if ((was && !is) || (unitEdit && !unit)) pair.discard(reason);
       }
     }
@@ -530,14 +543,26 @@ export class SettingsForm {
    * but for the fields in `skip`. */
   private follow(settings: SnapshotSettings, skip: { host?: unknown; up?: unknown; down?: unknown; run?: unknown } = {}): void {
     this.settings = settings;
-    if (skip.host === undefined) this.host.fromServer(settings.host || "");
+    const values = this.serverValues(settings);
+    if (skip.host === undefined) this.host.fromServer(values.host);
+    if (skip.up === undefined) this.up.fromServer(values.up);
+    if (skip.down === undefined) this.down.fromServer(values.down);
+    if (skip.run === undefined) this.run.fromServer(values.run);
+  }
+
+  /** What each field shows for `settings`; a run time of none in the row's
+   * current unit. */
+  private serverValues(settings: SnapshotSettings): { host: string; up: string; down: string; run: string } {
     const [up, upUnit] = rampServer(settings.increase_rate, settings.increase_time_secs);
-    if (skip.up === undefined) this.up.fromServerParts(up, upUnit);
     const [down, downUnit] = rampServer(settings.decrease_rate, settings.decrease_time_secs);
-    if (skip.down === undefined) this.down.fromServerParts(down, downUnit);
     const [run, runUnit] =
       settings.run_time_secs == null ? ["", this.run.unitText() as Unit] : timeParts(settings.run_time_secs);
-    if (skip.run === undefined) this.run.fromServerParts(run, runUnit === "rate" ? "s" : runUnit);
+    return {
+      host: settings.host || "",
+      up: pairValue(up, upUnit),
+      down: pairValue(down, downUnit),
+      run: pairValue(run, runUnit === "rate" ? "s" : runUnit),
+    };
   }
 
   /** Read only states, reasons, help, placeholders and the disclosure's

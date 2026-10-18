@@ -68,6 +68,11 @@ export abstract class FollowedValue {
     return this.edit !== null;
   }
 
+  /** Whether the unapplied edit is `value`, as when the server has it. */
+  editIs(value: string): boolean {
+    return this.edit !== null && this.same(this.edit, value);
+  }
+
   /** The user (or a button acting for them) set the field to `text`. */
   edited(text: string): void {
     if (this.edit === null && this.awaiting.length === 0) {
