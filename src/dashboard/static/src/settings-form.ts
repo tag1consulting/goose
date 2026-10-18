@@ -164,8 +164,10 @@ class Pair extends FollowedValue {
     return this.pending() && this.server !== null && pairParts(this.server)[1] !== this.unitText();
   }
 
-  /** The server's number and unit. */
+  /** The server's number and unit. Unreadable text reads as none, so while
+   * it is pending the row waits for it to be fixed or refused. */
   fromServerParts(number: string, unit: Unit): void {
+    if (this.pending() && this.badNumber()) return;
     this.fromServer(pairValue(number, unit));
   }
 

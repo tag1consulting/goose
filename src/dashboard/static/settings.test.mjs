@@ -725,12 +725,15 @@ test("an invalid Target is refused before the host confirmation, which then stil
   assert.deepEqual(sent[0].body, { host: "http://other.test", users: 5 });
 });
 
-test("unreadable text in a row the server has none for stays an edit, refused on the page", async () => {
+test("unreadable text in a row the server has none for stays an edit through blur and snapshots, refused on the page", async () => {
   const page = await acceptingPage("idle", { decrease_rate: null, decrease_time_secs: null });
   const input = el(page, "set-down");
   Object.defineProperty(input, "validity", { value: { badInput: true, valid: false } });
   type(page, "set-down", "");
   input.dispatchEvent(new page.window.Event("blur"));
+  assert.equal(label(page), "Edit settings (1 unapplied)");
+  // Nor does a snapshot that has none take it as done.
+  await emit(page, snapshot("idle", "idle", page.server.settings));
   assert.equal(label(page), "Edit settings (1 unapplied)");
   el(page, "set-apply").click();
   await settle(page.window);
