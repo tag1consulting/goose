@@ -598,3 +598,55 @@ test("a host confirmation whose fallback the server already has closes, sending 
   );
   assert.notEqual(page.window.document.activeElement, confirm, "focus leaves the hidden Confirm");
 });
+
+test("on an empty ramp, a unit chosen before the number stays chosen and the number goes as a time", async () => {
+  const page = await acceptingPage("idle", { decrease_rate: null, decrease_time_secs: null });
+  assert.equal(shown(page, "set-down"), " rate");
+  choose(page, "set-down-unit", "min");
+  el(page, "set-down-unit").dispatchEvent(new page.window.Event("blur"));
+  await emit(page, snapshot("idle", "idle", page.server.settings));
+  assert.equal(shown(page, "set-down"), " min", "a snapshot does not put the unit back");
+  type(page, "set-down", "5");
+  await emit(page, snapshot("idle", "idle", page.server.settings));
+  assert.equal(label(page), "Edit settings (1 unapplied)");
+  el(page, "set-apply").click();
+  await settle(page.window);
+  assert.deepEqual(controlPosts(page).at(-1).body, { decrease_time_secs: 300, decrease_rate: null });
+  await emit(page, snapshot("idle", "idle", page.server.settings));
+  assert.equal(shown(page, "set-down"), "5 min");
+  assert.equal(label(page), "Edit settings");
+});
+
+test("a time cleared by emptying its number is acknowledged without a change from elsewhere", async () => {
+  const page = await acceptingPage("idle", { decrease_time_secs: 600 });
+  type(page, "set-down", "");
+  el(page, "set-apply").click();
+  await settle(page.window);
+  assert.deepEqual(controlPosts(page).at(-1).body, { decrease_rate: null, decrease_time_secs: null });
+  for (const settings of [{ decrease_time_secs: 600 }, page.server.settings, page.server.settings]) {
+    await emit(page, snapshot("idle", "idle", settings));
+    assert.equal(label(page), "Edit settings");
+    assert.doesNotMatch(el(page, "ctrl-status").textContent, /changed elsewhere/);
+  }
+  assert.equal(el(page, "set-down").value, "");
+});
+
+test("number text a browser can not read is refused on the page, never sent as a clear", async () => {
+  const page = await acceptingPage();
+  const input = el(page, "set-up");
+  // A browser reports bad number text as an empty value with badInput set.
+  Object.defineProperty(input, "validity", { value: { badInput: true, valid: false } });
+  type(page, "set-up", "");
+  assert.equal(label(page), "Edit settings (1 unapplied)");
+  el(page, "ctrl-settings").open = false;
+  el(page, "set-apply").click();
+  await settle(page.window);
+  assert.deepEqual(controlPosts(page), [], "nothing is sent");
+  assert.equal(el(page, "ctrl-status").textContent, "Ramp up must be a number");
+  assert.equal(el(page, "ctrl-settings").open, true);
+  assert.equal(input.getAttribute("aria-invalid"), "true");
+  assert.equal(page.window.document.activeElement, input);
+  el(page, "ctrl-start").click();
+  await settle(page.window);
+  assert.deepEqual(controlPosts(page), [], "nor with Start");
+});

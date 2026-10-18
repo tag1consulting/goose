@@ -38,7 +38,7 @@ export abstract class FollowedValue {
    * @param same whether two values are the same setting; equal text by default
    */
   constructor(
-    protected readonly label: string,
+    readonly label: string,
     private readonly note: (text: string) => void,
     private readonly same: Same = (a, b) => a === b
   ) {}

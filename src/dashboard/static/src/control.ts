@@ -601,9 +601,19 @@ function onHostCancel(): void {
   if (open) open.trigger.focus();
 }
 
+/** Refuse the form's edits on the page while a number in them can not be
+ * read: a browser reports it as empty, which would send a clear. */
+function badNumber(): boolean {
+  const bad = form ? form.refuseBadNumber() : null;
+  if (bad === null) return false;
+  setControlStatus(bad + " must be a number", "error");
+  return true;
+}
+
 function onStartClick(): void {
   if (unavailable(ctrlStart)) return;
   if (currentPhase === "idle" && pendingCount() > 0 && ctrlStart) {
+    if (badNumber()) return;
     confirmHost(ctrlStart, () => {
       sendSettings("/api/v1/control/start");
     });
@@ -614,6 +624,7 @@ function onStartClick(): void {
 
 function onApplySettingsClick(): void {
   if (unavailable(setApply) || !setApply) return;
+  if (badNumber()) return;
   confirmHost(setApply, () => {
     sendSettings("/api/v1/control/settings");
   });

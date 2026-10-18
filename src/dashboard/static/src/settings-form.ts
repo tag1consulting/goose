@@ -75,13 +75,13 @@ function pairParts(value: string): [string, string] {
 /**
  * The quantity a pair's value sets, so values the server writes another way
  * compare equal: a time in seconds, whatever its unit, and a rate as the
- * `f32` the server keeps; empty for none, whatever the unit, and the text
- * itself when it is not a number.
+ * `f32` the server keeps; none in its unit, which a unit chosen before the
+ * number keeps, and the text itself when it is not a number.
  */
 function quantity(value: string): string {
   const [number, unit] = pairParts(value);
   const n = numberOf(number);
-  if (n === null) return "";
+  if (n === null) return "none " + unit;
   if (isNaN(n)) return value;
   return unit === "rate" ? "rate " + Math.fround(n) : "s " + seconds(n, unit);
 }
@@ -96,10 +96,15 @@ class Pair extends FollowedValue {
   /** The unit the select last showed. */
   private shownUnit: string;
 
+  /**
+   * @param emptyUnit the unit the server shows a cleared setting in, or
+   *   null when it keeps the unit the row shows
+   */
   constructor(
     readonly els: RowElements,
     label: string,
-    note: (text: string) => void
+    note: (text: string) => void,
+    private readonly emptyUnit: Unit | null
   ) {
     super(label, note, (a, b) => quantity(a) === quantity(b));
     this.shownUnit = els.unit.value;
@@ -125,12 +130,26 @@ class Pair extends FollowedValue {
     return pairValue(this.els.number.value, this.els.unit.value);
   }
 
+  /** The value as sent: a clear in the unit the server will show it in. */
+  sendValue(): string {
+    if (numberOf(this.numberText()) !== null || this.emptyUnit === null) return this.value();
+    return pairValue("", this.emptyUnit);
+  }
+
+  /** The number the row shows, as typed. */
   numberText(): string {
     return this.els.number.value;
   }
 
+  /** The unit the row shows. */
   unitText(): string {
     return this.els.unit.value;
+  }
+
+  /** Whether the number is text a browser could not read as one. */
+  badNumber(): boolean {
+    const n = numberOf(this.numberText());
+    return (n !== null && isNaN(n)) || this.els.number.validity.badInput;
   }
 
   /** Whether an unapplied edit changes the unit from the server's. */
@@ -256,9 +275,9 @@ export class SettingsForm {
   ) {
     // The server keeps the host as sent, which is trimmed.
     this.host = new FollowedField(hostInput, "Host", note, (a, b) => a.trim() === b.trim());
-    this.up = new Pair(upEls, "Ramp up", note);
-    this.down = new Pair(downEls, "Ramp down", note);
-    this.run = new Pair(runEls, "Run time", note);
+    this.up = new Pair(upEls, "Ramp up", note, "rate");
+    this.down = new Pair(downEls, "Ramp down", note, "rate");
+    this.run = new Pair(runEls, "Run time", note, null);
     for (const el of [hostInput, upEls.number, upEls.unit, downEls.number, downEls.unit, runEls.number, runEls.unit]) {
       el.addEventListener(el instanceof HTMLSelectElement ? "change" : "input", () => {
         markInvalid(el, false);
@@ -380,7 +399,7 @@ export class SettingsForm {
     ];
     for (const [key, pair] of pairs) {
       if (!pair.pending()) continue;
-      const value = pair.value();
+      const value = pair.sendValue();
       this.sent[key] = value;
       pair.sending(value);
     }
@@ -430,6 +449,19 @@ export class SettingsForm {
   /** Open the form, so a field the server named can take focus. */
   open(): void {
     this.details.open = true;
+  }
+
+  /** The label of the first pending number a browser could not read,
+   * marked invalid and focused, or null when there is none. */
+  refuseBadNumber(): string | null {
+    for (const pair of [this.up, this.down, this.run]) {
+      if (!pair.pending() || !pair.badNumber()) continue;
+      this.open();
+      markInvalid(pair.els.number, true);
+      pair.els.number.focus();
+      return pair.label;
+    }
+    return null;
   }
 
   /** Mark the input showing `field` invalid and move focus to it; false when
