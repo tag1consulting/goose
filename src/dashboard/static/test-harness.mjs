@@ -48,6 +48,8 @@ function fileResponse(status, body, filename) {
 // as a browser's fetch does), and
 // `snapshot` for the snapshot an authorized request gets (default
 // IDLE_SNAPSHOT), or a function of the request URL returning it.
+// `controlBody` is the body a control answer other than 200 carries (default a
+// 503 style `busy`).
 // `controlDelayMs` (default 0) holds each control answer that long, so a test
 // can act while a request is in flight.
 //
@@ -66,6 +68,7 @@ export function stubServer(token, options = {}) {
     controllers,
     controlToken = token,
     controlStatus = 200,
+    controlBody = { error: "busy", message: "busy" },
     snapshotStatus = 200,
     snapshot = IDLE_SNAPSHOT,
     runs = { dir: "goose-runs", total_bytes: 0, runs: [] },
@@ -127,7 +130,7 @@ export function stubServer(token, options = {}) {
               command,
               phase: command === "quit" ? "decrease" : "increase",
             })
-          : jsonResponse(controlStatus, { error: "busy", message: "busy" });
+          : jsonResponse(controlStatus, controlBody);
       if (controlDelayMs > 0) {
         return new Promise((resolve) =>
           setTimeout(() => resolve(answer), controlDelayMs)

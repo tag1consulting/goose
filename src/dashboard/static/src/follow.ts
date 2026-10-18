@@ -114,6 +114,14 @@ export class FollowedField {
       return;
     }
     if (this.edit !== null) {
+      // The server has the user's own value, as when an apply timed out
+      // but landed: the edit is done, not changed elsewhere.
+      if (value === this.edit) {
+        this.edit = null;
+        this.baseline = value;
+        this.input.value = value;
+        return;
+      }
       if (value !== this.baseline) this.changedElsewhere(value);
       return;
     }

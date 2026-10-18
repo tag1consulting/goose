@@ -282,6 +282,52 @@ test("two quick plus clicks step from what was sent, and their own values are no
   assert.equal(target.value, "40");
 });
 
+test("an Apply that timed out but landed is not a change from elsewhere", async () => {
+  const page = await controlPage({
+    controlStatus: 503,
+    controlBody: { error: "timeout", message: "timed out" },
+  });
+  const target = el(page, "ctrl-target");
+  await emit(page, snapshot("maintain", 10));
+  target.value = "50";
+  target.dispatchEvent(new page.window.Event("input"));
+  el(page, "ctrl-apply").click();
+  await settle(page.window);
+  assert.deepEqual(usersSent(page), [50]);
+  await emit(page, snapshot("maintain", 10));
+  assert.equal(target.value, "50", "the edit holds while the server is unchanged");
+  await emit(page, snapshot("maintain", 50));
+  assert.equal(target.value, "50");
+  assert.doesNotMatch(el(page, "ctrl-status").textContent, /elsewhere/);
+  // Not pending: the field follows the server again.
+  await emit(page, snapshot("maintain", 30));
+  assert.equal(target.value, "30");
+  assert.doesNotMatch(el(page, "ctrl-status").textContent, /elsewhere/);
+});
+
+test("a refused Apply keeps the edit while the server is unchanged", async () => {
+  const page = await controlPage({
+    controlStatus: 409,
+    controlBody: { ok: false, error: "invalid_phase", message: "not now" },
+  });
+  const target = el(page, "ctrl-target");
+  await emit(page, snapshot("maintain", 10));
+  target.value = "50";
+  target.dispatchEvent(new page.window.Event("input"));
+  el(page, "ctrl-apply").click();
+  await settle(page.window);
+  assert.deepEqual(usersSent(page), [50]);
+  for (let i = 0; i < 2; i++) {
+    await emit(page, snapshot("maintain", 10));
+    assert.equal(target.value, "50", "the edit holds");
+  }
+  assert.equal(el(page, "ctrl-status").textContent, "not now");
+  // Still pending: a change from elsewhere replaces it, saying so.
+  await emit(page, snapshot("maintain", 200));
+  assert.equal(target.value, "200");
+  assert.equal(el(page, "ctrl-status").textContent, "Target changed elsewhere to 200");
+});
+
 test("an unapplied edit gives way to a change from elsewhere, saying so", async () => {
   const page = await controlPage();
   const target = el(page, "ctrl-target");
