@@ -159,6 +159,9 @@
             series: [
                 {
                     type: 'custom',
+                    // Drawn in one pass, not over several frames, so a
+                    // printed report has every cell.
+                    progressive: 0,
                     renderItem: function (params, api) {
                         var topLeft = api.coord([api.value(0), api.value(3)]);
                         var bottomRight = api.coord([api.value(1), api.value(2)]);
