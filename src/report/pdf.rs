@@ -9,7 +9,7 @@
 use crate::logger::ScopedLogLevel;
 use crate::report::chrome::ResolvedChrome;
 use crate::GooseError;
-use headless_chrome::{Browser, LaunchOptions};
+use headless_chrome::{protocol::cdp::Page, Browser, LaunchOptions};
 use log::{debug, LevelFilter};
 use std::{
     ffi::OsStr,
@@ -291,42 +291,6 @@ pub(crate) fn preflight_pdf(
     .map(|rendered| rendered.version)
 }
 
-/// The HTML Chrome prints, in a file only this user can read, removed when
-/// dropped.
-struct PageFile {
-    path: std::path::PathBuf,
-    url: url::Url,
-}
-
-impl PageFile {
-    fn write(html: &str) -> std::io::Result<Self> {
-        use std::io::Write;
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |since| since.as_nanos());
-        let path =
-            std::env::temp_dir().join(format!("goose-report-{}-{nanos}.html", std::process::id()));
-        let mut options = fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-        let url = url::Url::from_file_path(&path).map_err(|()| {
-            std::io::Error::other(format!("{} is not an absolute path", path.display()))
-        })?;
-        let mut file = options.open(&path)?;
-        // Created: from here on, dropping the page removes it.
-        let page = PageFile { path, url };
-        file.write_all(html.as_bytes())?;
-        Ok(page)
-    }
-}
-
-impl Drop for PageFile {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
-    }
-}
-
 /// A PDF rendered in memory.
 struct Rendered {
     pdf: Vec<u8>,
@@ -374,18 +338,32 @@ fn render_pdf(
         .new_tab()
         .map_err(|e| pdf_errors::chrome_operation_error("tab creation", e.to_string()))?;
 
-    // Load the HTML from a file: Chrome refuses a data URL of more than
-    // about 2 MB, which a report with many request names passes.
-    let page = PageFile::write(html_content)
-        .map_err(|e| pdf_errors::chrome_operation_error("HTML loading", e.to_string()))?;
+    // Give Chrome the HTML as a blank page's content. A data URL, which
+    // Chrome refuses past about 2 MB, would fail for a report with many
+    // request names, and a file would give the page access to local files.
     chrome_session.check_timeout(timeout)?;
-    tab.navigate_to(page.url.as_str())
+    tab.navigate_to("about:blank")
+        .and_then(|tab| tab.wait_until_navigated())
+        .and_then(|tab| tab.call_method(Page::GetFrameTree(None)))
+        .and_then(|tree| {
+            tab.call_method(Page::SetDocumentContent {
+                frame_id: tree.frame_tree.frame.id,
+                html: html_content.to_string(),
+            })
+        })
         .map_err(|e| pdf_errors::chrome_operation_error("HTML loading", e.to_string()))?;
 
-    // Wait for the page to load
-    chrome_session.check_timeout(timeout)?;
-    tab.wait_until_navigated()
-        .map_err(|e| pdf_errors::chrome_operation_error("page loading", e.to_string()))?;
+    // Wait for the page, and the chart library it loads, to finish loading.
+    loop {
+        chrome_session.check_timeout(timeout)?;
+        let state = tab
+            .evaluate("document.readyState", false)
+            .map_err(|e| pdf_errors::chrome_operation_error("page loading", e.to_string()))?;
+        if state.value.as_ref().and_then(|value| value.as_str()) == Some("complete") {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
 
     // Optimized content height calculation using document.documentElement.scrollHeight
     // This is significantly more performant than iterating through all DOM elements

@@ -6167,6 +6167,26 @@ mod test {
         );
     }
 
+    /// A reset also empties the columns synthetic times were folded into:
+    /// none survive into the new run's Adjusted view.
+    #[test]
+    fn a_reset_clears_folded_synthetic_times() {
+        let mut graph = column_graph(true, 600, 120);
+        for second in 0..5 {
+            graph.record_request_per_second_and_latency("GET /a", second, Some(10));
+            graph.record_synthetic_latency("GET /a", second, 900);
+        }
+        graph.finish_latency_columns();
+        graph.reset_rate_series(10);
+        graph.record_request_per_second_and_latency("GET /a", 11, Some(10));
+        graph.finish_latency_columns();
+        let heatmap = latency(&graph).report_heatmap(true, Utc::now()).unwrap();
+        assert!(heatmap
+            .series
+            .iter()
+            .all(|series| series.adjusted.is_none()));
+    }
+
     /// A name first seen after the per name columns widened gets columns of
     /// the same width, so its measured and synthetic columns line up with
     /// every other name's.
