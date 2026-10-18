@@ -131,19 +131,6 @@ pub enum ControllerCommand {
     ///
     /// Goose must be idle to process this command.
     Quit,
-    /// Apply several run settings together, all or none: the dashboard's
-    /// Apply settings. Controllers have no text for it; they set one
-    /// setting per command.
-    ///
-    /// Each setting is checked against the phase as its own command is.
-    Settings(Box<RunSettings>),
-    /// Apply several run settings and start an idle test in one step, so no
-    /// other client can change a setting in between: the dashboard's Start
-    /// with changes. A refused setting or Start leaves every setting as it
-    /// was. Controllers have no text for it.
-    ///
-    /// Goose must be idle to process this command.
-    StartWith(Box<RunSettings>),
     /// Configure the host to load test, a valid http or https url.
     ///
     /// # Example
@@ -287,13 +274,12 @@ impl ControllerCommand {
     }
 }
 
-/// Run settings applied together by
-/// [`ControllerCommand::Settings`] and [`ControllerCommand::StartWith`],
-/// each already parsed and bounded: a field that is `None` is left alone,
+/// Run settings applied together by [`ControlCommand::Settings`], each
+/// already parsed and bounded: a field that is `None` is left alone,
 /// `Some(None)` clears it back to Goose's default, and `Some(Some(value))`
 /// sets it. Built by the dashboard from its control requests.
 #[derive(Clone, Debug, Default)]
-pub struct RunSettings {
+pub(crate) struct RunSettings {
     pub(crate) host: Option<Option<String>>,
     /// Users can not be cleared, only switched to.
     pub(crate) users: Option<usize>,
@@ -624,9 +610,46 @@ pub(crate) enum ControlReply {
     Metrics(Arc<GooseMetrics>),
 }
 
+/// What a front end asks the parent to do: a [`ControllerCommand`], or the
+/// dashboard's run settings, which Controllers have no text for.
+pub(crate) enum ControlCommand {
+    Command(ControllerCommand),
+    /// Several run settings applied together, all or none: the dashboard's
+    /// Apply settings, each setting checked against the phase as its own
+    /// command is. With `start`, its Start with changes: the settings and a
+    /// Start of an idle test in one step, so no other client can change a
+    /// setting in between, and a refused setting or Start leaves every
+    /// setting as it was.
+    #[cfg(feature = "dashboard")]
+    Settings {
+        settings: Box<RunSettings>,
+        start: bool,
+    },
+}
+
+impl From<ControllerCommand> for ControlCommand {
+    fn from(command: ControllerCommand) -> Self {
+        Self::Command(command)
+    }
+}
+
+/// Logged as the command it carries, as before the dashboard's settings.
+impl std::fmt::Debug for ControlCommand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Command(command) => command.fmt(f),
+            #[cfg(feature = "dashboard")]
+            Self::Settings { settings, start } => f
+                .debug_tuple(if *start { "StartWith" } else { "Settings" })
+                .field(settings)
+                .finish(),
+        }
+    }
+}
+
 /// A command and where to send the parent's reply, on the one channel that
 /// telnet, WebSocket and the dashboard share.
-pub(crate) type ControlRequest = (ControllerCommand, oneshot::Sender<ControlReply>);
+pub(crate) type ControlRequest = (ControlCommand, oneshot::Sender<ControlReply>);
 
 /// Why [`send_command`] has no reply.
 pub(crate) enum SendError {
@@ -640,12 +663,12 @@ pub(crate) enum SendError {
 /// outside tests, for its reply.
 pub(crate) async fn send_command(
     channel_tx: &flume::Sender<ControlRequest>,
-    command: ControllerCommand,
+    command: impl Into<ControlCommand>,
     timeout: Duration,
 ) -> Result<ControlReply, SendError> {
     let (respond, reply) = oneshot::channel();
     channel_tx
-        .send((command, respond))
+        .send((command.into(), respond))
         .map_err(|_| SendError::Unavailable)?;
     match tokio::time::timeout(timeout, reply).await {
         Ok(Ok(reply)) => Ok(reply),
@@ -745,7 +768,7 @@ impl GooseAttack {
     async fn control(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
-        command: ControllerCommand,
+        command: ControlCommand,
         respond: oneshot::Sender<ControlReply>,
         metrics_waiters: &mut Vec<oneshot::Sender<ControlReply>>,
     ) -> Result<(), GooseError> {
@@ -758,57 +781,57 @@ impl GooseAttack {
         // An accepted Start is answered first and then finished, so the
         // client is not blocked on reset_run_state and test_start.
         let mut start = false;
+        let started = |begun| match begun {
+            ControlStartBegin::Accepted(outcome) => {
+                start = true;
+                outcome
+            }
+            ControlStartBegin::Rejected(outcome) => outcome,
+        };
         // The dashboard's settings commands answer with the settings.
         #[cfg(feature = "dashboard")]
-        let with_settings = matches!(
-            command,
-            ControllerCommand::Settings(_) | ControllerCommand::StartWith(_)
-        );
+        let with_settings = matches!(command, ControlCommand::Settings { .. });
         let outcome = match command {
-            ControllerCommand::Config | ControllerCommand::ConfigJson => {
-                let config = Box::new(self.configuration.clone());
-                let _ = respond.send(ControlReply::Config(config));
-                return Ok(());
-            }
-            ControllerCommand::Metrics | ControllerCommand::MetricsJson => {
-                metrics_waiters.push(respond);
-                return Ok(());
-            }
-            ControllerCommand::Start | ControllerCommand::StartWith(_) => {
-                let begun = match command {
-                    ControllerCommand::StartWith(settings) => {
-                        self.control_start_with(goose_attack_run_state, *settings)
-                    }
-                    _ => self.control_start_begin(goose_attack_run_state),
-                };
-                match begun {
-                    Ok(ControlStartBegin::Accepted(outcome)) => {
-                        start = true;
-                        Ok(outcome)
-                    }
-                    Ok(ControlStartBegin::Rejected(outcome)) => Ok(outcome),
-                    Err(e) => Err(e),
-                }
-            }
-            ControllerCommand::Stop => self.control_stop(goose_attack_run_state).await,
-            ControllerCommand::Quit => Ok(self.control_quit(goose_attack_run_state)),
-            ControllerCommand::Shutdown => self.control_shutdown(goose_attack_run_state).await,
-            ControllerCommand::Users(users) => {
-                self.control_set_users(goose_attack_run_state, users)
-            }
-            ControllerCommand::Settings(settings) => {
+            #[cfg(feature = "dashboard")]
+            ControlCommand::Settings {
+                settings,
+                start: true,
+            } => self
+                .control_start_with(goose_attack_run_state, *settings)
+                .map(started),
+            #[cfg(feature = "dashboard")]
+            ControlCommand::Settings { settings, .. } => {
                 self.control_settings(goose_attack_run_state, *settings)
             }
-            ControllerCommand::TestPlan(plan) => {
-                let settings = RunSettings {
-                    test_plan: Some(Some(plan)),
-                    ..RunSettings::default()
-                };
-                self.control_settings(goose_attack_run_state, settings)
-            }
-            command => {
-                self.control_settings(goose_attack_run_state, RunSettings::from_command(command))
-            }
+            ControlCommand::Command(command) => match command {
+                ControllerCommand::Config | ControllerCommand::ConfigJson => {
+                    let config = Box::new(self.configuration.clone());
+                    let _ = respond.send(ControlReply::Config(config));
+                    return Ok(());
+                }
+                ControllerCommand::Metrics | ControllerCommand::MetricsJson => {
+                    metrics_waiters.push(respond);
+                    return Ok(());
+                }
+                ControllerCommand::Start => self
+                    .control_start_begin(goose_attack_run_state)
+                    .map(started),
+                ControllerCommand::Stop => self.control_stop(goose_attack_run_state).await,
+                ControllerCommand::Quit => Ok(self.control_quit(goose_attack_run_state)),
+                ControllerCommand::Shutdown => self.control_shutdown(goose_attack_run_state).await,
+                ControllerCommand::Users(users) => {
+                    self.control_set_users(goose_attack_run_state, users)
+                }
+                ControllerCommand::TestPlan(plan) => {
+                    let settings = RunSettings {
+                        test_plan: Some(Some(plan)),
+                        ..RunSettings::default()
+                    };
+                    self.control_settings(goose_attack_run_state, settings)
+                }
+                command => self
+                    .control_settings(goose_attack_run_state, RunSettings::from_command(command)),
+            },
         };
         match outcome {
             Ok(outcome) => {
@@ -874,6 +897,7 @@ impl GooseAttack {
     /// Start is, and as [`Self::refuse_settings`] says. A refused Start, a
     /// prepare failure among them, puts back the configuration, test plan
     /// and run shape as they were, so nothing the settings changed stays.
+    #[cfg(feature = "dashboard")]
     fn control_start_with(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
@@ -2067,7 +2091,7 @@ pub(crate) mod tests {
         let (controller_tx, controller_rx) = flume::unbounded();
         run_state.controller_channel_rx = Some(controller_rx);
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
-        controller_tx.send((command, response_tx)).unwrap();
+        controller_tx.send((command.into(), response_tx)).unwrap();
         goose_attack
             .handle_control_requests(run_state)
             .await
@@ -2481,7 +2505,7 @@ pub(crate) mod tests {
             for (users, gone) in [(6, false), (7, false), (5, true)] {
                 let (response_tx, response_rx) = tokio::sync::oneshot::channel();
                 controller_tx
-                    .send((ControllerCommand::Users(users), response_tx))
+                    .send((ControllerCommand::Users(users).into(), response_tx))
                     .unwrap();
                 if !gone {
                     replies.push(response_rx);
@@ -2517,7 +2541,7 @@ pub(crate) mod tests {
             for users in 1..=17 {
                 let (response_tx, response_rx) = tokio::sync::oneshot::channel();
                 controller_tx
-                    .send((ControllerCommand::Users(users), response_tx))
+                    .send((ControllerCommand::Users(users).into(), response_tx))
                     .unwrap();
                 replies.push(response_rx);
             }
@@ -2562,13 +2586,13 @@ pub(crate) mod tests {
             for users in 1..=MAX_DRAIN + 1 {
                 let (respond, reply) = oneshot::channel();
                 controller_tx
-                    .send((ControllerCommand::Users(users), respond))
+                    .send((ControllerCommand::Users(users).into(), respond))
                     .unwrap();
                 queued.push(reply);
             }
             let (respond, mut reply) = oneshot::channel();
             dashboard_tx
-                .send((ControllerCommand::Users(42), respond))
+                .send((ControllerCommand::Users(42).into(), respond))
                 .unwrap();
             goose_attack
                 .handle_control_requests(&mut run_state)
@@ -2602,7 +2626,7 @@ pub(crate) mod tests {
             for users in 1..=MAX_DRAIN {
                 let (respond, reply) = oneshot::channel();
                 controller_tx
-                    .send((ControllerCommand::Users(users), respond))
+                    .send((ControllerCommand::Users(users).into(), respond))
                     .unwrap();
                 controller.push(reply);
             }
@@ -2610,7 +2634,7 @@ pub(crate) mod tests {
             for users in 100..=100 + MAX_DRAIN {
                 let (respond, reply) = oneshot::channel();
                 dashboard_tx
-                    .send((ControllerCommand::Users(users), respond))
+                    .send((ControllerCommand::Users(users).into(), respond))
                     .unwrap();
                 dashboard.push(reply);
             }
@@ -2644,12 +2668,12 @@ pub(crate) mod tests {
                 // The reply's receiver is dropped: the client has gone.
                 let (respond, _) = oneshot::channel();
                 controller_tx
-                    .send((ControllerCommand::Users(users), respond))
+                    .send((ControllerCommand::Users(users).into(), respond))
                     .unwrap();
             }
             let (respond, mut reply) = oneshot::channel();
             controller_tx
-                .send((ControllerCommand::Users(42), respond))
+                .send((ControllerCommand::Users(42).into(), respond))
                 .unwrap();
             goose_attack
                 .handle_control_requests(&mut run_state)
@@ -2697,7 +2721,7 @@ pub(crate) mod tests {
                 ControllerCommand::Metrics,
             ] {
                 let (respond, reply) = oneshot::channel();
-                controller_tx.send((command, respond)).unwrap();
+                controller_tx.send((command.into(), respond)).unwrap();
                 replies.push(reply);
             }
             goose_attack
@@ -3215,12 +3239,12 @@ pub(crate) mod tests {
     pub(crate) async fn command_outcome(
         goose_attack: &mut GooseAttack,
         run_state: &mut GooseAttackRunState,
-        command: ControllerCommand,
+        command: impl Into<ControlCommand>,
     ) -> ControlOutcome {
         let (controller_tx, controller_rx) = flume::unbounded();
         run_state.controller_channel_rx = Some(controller_rx);
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
-        controller_tx.send((command, response_tx)).unwrap();
+        controller_tx.send((command.into(), response_tx)).unwrap();
         goose_attack
             .handle_control_requests(run_state)
             .await
@@ -3244,10 +3268,7 @@ pub(crate) mod tests {
             Ok(settings) => Box::new(settings),
             Err(refused) => panic!("{}: refused as {:?}", body, refused),
         };
-        let command = match start {
-            true => ControllerCommand::StartWith(settings),
-            false => ControllerCommand::Settings(settings),
-        };
+        let command = ControlCommand::Settings { settings, start };
         command_outcome(goose_attack, run_state, command).await
     }
 
@@ -4071,7 +4092,10 @@ pub(crate) mod tests {
                 .await
                 .expect("the command must reach the parent")
                 .unwrap();
-        assert!(matches!(command, ControllerCommand::Users(5)));
+        assert!(matches!(
+            command,
+            ControlCommand::Command(ControllerCommand::Users(5))
+        ));
         let _ = respond.send(ControlReply::Outcome(ControlOutcome {
             ok: true,
             error: None,

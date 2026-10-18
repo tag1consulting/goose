@@ -20,8 +20,8 @@
 //! latency.
 
 use crate::controller::{
-    self, send_command, ControlReply, ControlRequest, ControllerCommand, RunSettings, SendError,
-    CONTROL_TIMEOUT,
+    self, send_command, ControlCommand, ControlReply, ControlRequest, ControllerCommand,
+    RunSettings, SendError, CONTROL_TIMEOUT,
 };
 use crate::metrics::dashboard_snapshot::{
     Heatmap, HeatmapColumn, HeatmapCursor, RequestSeries, SnapshotSave, SnapshotSettings,
@@ -2265,7 +2265,7 @@ fn try_acquire_control_slot(state: &DashboardState) -> Option<ControlInFlightGua
 /// had already started applying it, it can still apply after the 503.
 async fn dispatch_control(
     state: &DashboardState,
-    command: ControllerCommand,
+    command: impl Into<ControlCommand>,
     name: &str,
 ) -> Response<Body> {
     let Some(_slot) = try_acquire_control_slot(state) else {
@@ -2387,10 +2387,9 @@ async fn control_with_settings(
     }
     match parse_settings_body(body) {
         Ok(settings) => {
-            let settings = Box::new(settings);
-            let command = match name {
-                "start" => ControllerCommand::StartWith(settings),
-                _ => ControllerCommand::Settings(settings),
+            let command = ControlCommand::Settings {
+                settings: Box::new(settings),
+                start: name == "start",
             };
             dispatch_control(state, command, name).await
         }
@@ -2581,7 +2580,7 @@ mod tests {
     /// oneshot unanswered when `answer` gives none.
     fn spawn_control_parent(
         control_rx: flume::Receiver<ControlRequest>,
-        answer: fn(ControllerCommand) -> Option<ControlReply>,
+        answer: fn(ControlCommand) -> Option<ControlReply>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             while let Ok((command, respond)) = control_rx.recv_async().await {
@@ -2613,7 +2612,14 @@ mod tests {
     }
 
     /// A soft success for every control command.
-    fn answer_ok(command: ControllerCommand) -> Option<ControlReply> {
+    fn answer_ok(command: ControlCommand) -> Option<ControlReply> {
+        let command = match command {
+            ControlCommand::Settings { start: false, .. } => {
+                return outcome(true, None, "settings configured", "idle", 0, None);
+            }
+            ControlCommand::Settings { start: true, .. } => ControllerCommand::Start,
+            ControlCommand::Command(command) => command,
+        };
         match command {
             ControllerCommand::Start => {
                 outcome(true, None, "load test started", "increase", 0, Some(1))
@@ -2626,12 +2632,6 @@ mod tests {
             }
             ControllerCommand::Users(users) => {
                 outcome(true, None, "users configured", "idle", 0, Some(users))
-            }
-            ControllerCommand::Settings(_) => {
-                outcome(true, None, "settings configured", "idle", 0, None)
-            }
-            ControllerCommand::StartWith(_) => {
-                outcome(true, None, "load test started", "increase", 0, Some(1))
             }
             // The dashboard sends only the commands above.
             other => panic!("unexpected dashboard command {:?}", other),
