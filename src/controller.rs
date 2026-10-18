@@ -633,7 +633,8 @@ impl From<ControllerCommand> for ControlCommand {
     }
 }
 
-/// Logged as the command it carries, as before the dashboard's settings.
+/// Logs as the Controller command it carries, so a command's log line reads
+/// the same whichever front end sent it.
 impl std::fmt::Debug for ControlCommand {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -919,10 +920,7 @@ impl GooseAttack {
             self.configuration = configuration;
             self.test_plan = test_plan;
             self.run_shape = run_shape;
-            #[cfg(feature = "dashboard")]
-            {
-                self.settings = None;
-            }
+            self.settings = None;
         }
         begun
     }
@@ -3558,9 +3556,9 @@ pub(crate) mod tests {
                         step
                     );
 
-                    // Five seconds before the end the run still holds, past
-                    // the 60 second step it started with when that is
-                    // shorter; five seconds after, it has ramped down.
+                    // Five seconds before the new end the run still holds,
+                    // even where that is past the 60 second step it started
+                    // with. Five seconds after it, the run has ramped down.
                     rewind(&mut goose_attack, ends_after - 20 - 5);
                     goose_attack.maintain_attack(&mut run_state).await.unwrap();
                     assert_eq!(stage(&goose_attack), ("hold", Some(5)), "{}", context);
@@ -3594,6 +3592,10 @@ pub(crate) mod tests {
                         .await
                         .ok
                 );
+                // The restored hold step lasts from its start to 120 seconds.
+                assert_eq!(stage(&goose_attack), ("hold", Some(100)));
+                let step = goose_attack.test_plan.steps[1].1;
+                assert!((120_000..121_000).contains(&step), "{}", step);
                 rewind(&mut goose_attack, 10);
                 assert!(
                     set_run_time(&mut goose_attack, &mut run_state, 40, dashboard)
