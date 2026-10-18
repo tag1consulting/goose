@@ -506,12 +506,6 @@ function sendSettings(path: string): void {
   let users: number | undefined;
   if (targetPending() && targetField) {
     users = parseInt(targetField.text(), 10);
-    if (!isFinite(users) || users < 1) {
-      setControlStatus("Target must be an integer ≥ 1", "error");
-      setTargetInvalid(true);
-      if (ctrlTarget) ctrlTarget.focus();
-      return;
-    }
     body.users = users;
     targetField.sending(String(users));
   }
@@ -589,8 +583,8 @@ function onHostConfirm(): void {
     setControlStatus("Host changed: confirm where load will go", "info");
     return;
   }
-  // A number can have become unreadable while it asked.
-  if (badNumber()) {
+  // An edit can have become one the page refuses while it asked.
+  if (refusedOnPage()) {
     closeHostConfirm();
     return;
   }
@@ -606,19 +600,34 @@ function onHostCancel(): void {
   if (open) open.trigger.focus();
 }
 
-/** Refuse the form's edits on the page while a number in them can not be
- * read: a browser reports it as empty, which would send a clear. */
-function badNumber(): boolean {
+/**
+ * Refuse the pending edits on the page, before the host confirmation and
+ * again on Confirm, so nothing is confirmed that will not be sent: a number
+ * the browser can not read, which it reports as empty and would send as a
+ * clear, and in Idle a Target that is not a user count.
+ */
+function refusedOnPage(): boolean {
   const bad = form ? form.refuseBadNumber() : null;
-  if (bad === null) return false;
-  setControlStatus(bad + " must be a number", "error");
-  return true;
+  if (bad !== null) {
+    setControlStatus(bad + " must be a number", "error");
+    return true;
+  }
+  if (targetPending() && targetField) {
+    const users = parseInt(targetField.text(), 10);
+    if (!isFinite(users) || users < 1) {
+      setControlStatus("Target must be an integer ≥ 1", "error");
+      setTargetInvalid(true);
+      if (ctrlTarget) ctrlTarget.focus();
+      return true;
+    }
+  }
+  return false;
 }
 
 function onStartClick(): void {
   if (unavailable(ctrlStart)) return;
   if (currentPhase === "idle" && pendingCount() > 0 && ctrlStart) {
-    if (badNumber()) return;
+    if (refusedOnPage()) return;
     confirmHost(ctrlStart, () => {
       sendSettings("/api/v1/control/start");
     });
@@ -629,7 +638,7 @@ function onStartClick(): void {
 
 function onApplySettingsClick(): void {
   if (unavailable(setApply) || !setApply) return;
-  if (badNumber()) return;
+  if (refusedOnPage()) return;
   confirmHost(setApply, () => {
     sendSettings("/api/v1/control/settings");
   });

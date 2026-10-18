@@ -148,6 +148,11 @@ class Pair extends FollowedValue {
     return this.els.unit.value;
   }
 
+  /** Unreadable text stays an edit, to be refused, though it reads as none. */
+  protected blurred(): void {
+    if (!this.badNumber()) super.blurred();
+  }
+
   /** Whether the number is text a browser could not read as one. */
   badNumber(): boolean {
     const n = numberOf(this.numberText());

@@ -694,3 +694,46 @@ test("a number made unreadable while the host confirmation is open is refused on
   await settle(page.window);
   assert.equal(confirmationShows(page), "http://new.test");
 });
+
+test("an invalid Target is refused before the host confirmation, which then still asks", async () => {
+  const page = await acceptingPage();
+  type(page, "set-host", "http://new.test");
+  type(page, "ctrl-target", "0");
+  el(page, "ctrl-start").click();
+  await settle(page.window);
+  assert.equal(confirmationShows(page), null, "nothing to confirm while the Target is refused");
+  assert.equal(el(page, "ctrl-status").textContent, "Target must be an integer ≥ 1");
+  assert.deepEqual(controlPosts(page), []);
+  // Emptied while the confirmation is open: refused on Confirm.
+  type(page, "ctrl-target", "5");
+  el(page, "ctrl-start").click();
+  await settle(page.window);
+  assert.equal(confirmationShows(page), "http://new.test");
+  type(page, "ctrl-target", "");
+  el(page, "set-host-confirm-ok").click();
+  await settle(page.window);
+  assert.deepEqual(controlPosts(page), []);
+  assert.equal(el(page, "ctrl-status").textContent, "Target must be an integer ≥ 1");
+  // Nothing went out, so the next host change still asks.
+  type(page, "ctrl-target", "5");
+  type(page, "set-host", "http://other.test");
+  el(page, "ctrl-start").click();
+  await settle(page.window);
+  assert.equal(confirmationShows(page), "http://other.test");
+  const sent = await confirmAsShown(page);
+  assert.equal(sent.length, 1);
+  assert.deepEqual(sent[0].body, { host: "http://other.test", users: 5 });
+});
+
+test("unreadable text in a row the server has none for stays an edit, refused on the page", async () => {
+  const page = await acceptingPage("idle", { decrease_rate: null, decrease_time_secs: null });
+  const input = el(page, "set-down");
+  Object.defineProperty(input, "validity", { value: { badInput: true, valid: false } });
+  type(page, "set-down", "");
+  input.dispatchEvent(new page.window.Event("blur"));
+  assert.equal(label(page), "Edit settings (1 unapplied)");
+  el(page, "set-apply").click();
+  await settle(page.window);
+  assert.deepEqual(controlPosts(page), []);
+  assert.equal(el(page, "ctrl-status").textContent, "Ramp down must be a number");
+});
