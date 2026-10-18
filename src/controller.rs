@@ -3474,6 +3474,125 @@ pub(crate) mod tests {
         });
     }
 
+    /// Move a running users ramp `secs` seconds on: the step in progress
+    /// and a timed hold started that much earlier.
+    fn rewind(goose_attack: &mut GooseAttack, secs: u64) {
+        let secs = Duration::from_secs(secs);
+        goose_attack.step_started = goose_attack.step_started.map(|started| started - secs);
+        let shape = goose_attack.run_shape.as_mut().expect("a users ramp");
+        if let crate::run_shape::Hold::Timed { start, end } = shape.hold {
+            shape.hold = crate::run_shape::Hold::Timed {
+                start: start - secs,
+                end: end - secs,
+            };
+        }
+    }
+
+    /// A timed hold cleared and then given a run time again, while its
+    /// step is still in progress, ends when the snapshot says it does:
+    /// longer or shorter than the hold it replaced, and again after a
+    /// further run time change.
+    #[test]
+    #[serial_test::serial]
+    fn test_run_time_cleared_then_restored_during_hold() {
+        finishes(|| async {
+            for dashboard in run_time_front_ends() {
+                for (restored, ends_after) in [(100, 120), (30, 50)] {
+                    let (mut goose_attack, mut run_state) = ramp_attack(&[
+                        "--users",
+                        "10",
+                        "--increase-rate",
+                        "10",
+                        "--run-time",
+                        "60",
+                    ])
+                    .await;
+                    run_users_ramp(&mut goose_attack, &mut run_state, 10);
+                    goose_attack.advance_test_plan(&mut run_state);
+                    assert_eq!(stage(&goose_attack), ("hold", Some(60)));
+                    // Cleared ten seconds into the hold, restored ten later.
+                    rewind(&mut goose_attack, 10);
+                    let cleared =
+                        set_run_time(&mut goose_attack, &mut run_state, 0, dashboard).await;
+                    assert!(cleared.ok, "{:?}", cleared);
+                    assert_eq!(stage(&goose_attack), ("hold_until_stopped", None));
+                    rewind(&mut goose_attack, 10);
+                    let set =
+                        set_run_time(&mut goose_attack, &mut run_state, restored, dashboard).await;
+                    assert!(set.ok, "{:?}", set);
+                    let context = format!("restored to {restored}s, dashboard {dashboard}");
+                    assert_eq!(goose_attack.test_plan.current, 1, "{}", context);
+                    assert_eq!(
+                        stage(&goose_attack),
+                        ("hold", Some(restored as u64)),
+                        "{}",
+                        context
+                    );
+                    // The hold step lasts from its start to the new end.
+                    let step = goose_attack.test_plan.steps[1].1 as u64;
+                    assert!(
+                        (ends_after * 1_000..ends_after * 1_000 + 1_000).contains(&step),
+                        "{}: {}",
+                        context,
+                        step
+                    );
+
+                    // Five seconds before the end the run still holds, past
+                    // the 60 second step it started with when that is
+                    // shorter; five seconds after, it has ramped down.
+                    rewind(&mut goose_attack, ends_after - 20 - 5);
+                    goose_attack.maintain_attack(&mut run_state).await.unwrap();
+                    assert_eq!(stage(&goose_attack), ("hold", Some(5)), "{}", context);
+                    rewind(&mut goose_attack, 10);
+                    goose_attack.maintain_attack(&mut run_state).await.unwrap();
+                    assert_eq!(
+                        goose_attack.attack_phase,
+                        AttackPhase::Decrease,
+                        "{}",
+                        context
+                    );
+                    assert_eq!(stage(&goose_attack), ("ramping_down", None), "{}", context);
+                }
+
+                // Cleared, restored, and changed again: the last run time
+                // counts from the restore.
+                let (mut goose_attack, mut run_state) =
+                    ramp_attack(&["--users", "10", "--increase-rate", "10", "--run-time", "60"])
+                        .await;
+                run_users_ramp(&mut goose_attack, &mut run_state, 10);
+                goose_attack.advance_test_plan(&mut run_state);
+                rewind(&mut goose_attack, 10);
+                assert!(
+                    set_run_time(&mut goose_attack, &mut run_state, 0, dashboard)
+                        .await
+                        .ok
+                );
+                rewind(&mut goose_attack, 10);
+                assert!(
+                    set_run_time(&mut goose_attack, &mut run_state, 100, dashboard)
+                        .await
+                        .ok
+                );
+                rewind(&mut goose_attack, 10);
+                assert!(
+                    set_run_time(&mut goose_attack, &mut run_state, 40, dashboard)
+                        .await
+                        .ok
+                );
+                assert_eq!(stage(&goose_attack), ("hold", Some(30)));
+                // Twenty seconds before the last change, forty after it.
+                let step = goose_attack.test_plan.steps[1].1;
+                assert!((60_000..61_000).contains(&step), "{}", step);
+                rewind(&mut goose_attack, 25);
+                goose_attack.maintain_attack(&mut run_state).await.unwrap();
+                assert_eq!(stage(&goose_attack), ("hold", Some(5)));
+                rewind(&mut goose_attack, 10);
+                goose_attack.maintain_attack(&mut run_state).await.unwrap();
+                assert_eq!(stage(&goose_attack), ("ramping_down", None));
+            }
+        });
+    }
+
     /// Where a settings test runs.
     #[cfg(feature = "dashboard")]
     #[derive(Clone, Copy, Debug)]

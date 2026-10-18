@@ -340,20 +340,15 @@ impl RunShape {
             (Some(run_time), Hold::Timed { start, .. }) => {
                 let end = start + run_time;
                 self.hold = Hold::Timed { start, end };
-                // The hold in progress ends at the new end; a hold still
-                // ahead takes what is left of it when it is entered.
-                if self.kinds.get(current) == Some(&StepKind::Hold) {
-                    if let (Some(step), Some(started)) = (steps.get_mut(current), step_started) {
-                        step.1 = ms(end.saturating_duration_since(started));
-                    }
-                }
+                self.end_hold_step(end, steps, current, step_started);
                 return false;
             }
             (Some(run_time), Hold::UntilStopped { started: true }) => {
-                self.hold = Hold::Timed {
-                    start: now,
-                    end: now + run_time,
-                };
+                let end = now + run_time;
+                self.hold = Hold::Timed { start: now, end };
+                // A timed hold cleared while its step ran is still on that
+                // step, so it ends at the new end too.
+                self.end_hold_step(end, steps, current, step_started);
                 if current >= steps.len() {
                     // Past the last step: the hold is a new step, entered now.
                     steps.push((self.target, ms(run_time)));
@@ -368,6 +363,22 @@ impl RunShape {
         }
         self.regenerate_tail(steps, current);
         false
+    }
+
+    /// The hold step in progress, if step `current` is one, ends at `end`;
+    /// a hold still ahead takes what is left of it when it is entered.
+    fn end_hold_step(
+        &self,
+        end: Instant,
+        steps: &mut [(usize, usize)],
+        current: usize,
+        step_started: Option<Instant>,
+    ) {
+        if self.kinds.get(current) == Some(&StepKind::Hold) {
+            if let (Some(step), Some(started)) = (steps.get_mut(current), step_started) {
+                step.1 = ms(end.saturating_duration_since(started));
+            }
+        }
     }
 
     /// Generate the steps after step `current` again, as a ramp down change
