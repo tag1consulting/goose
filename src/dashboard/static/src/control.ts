@@ -236,6 +236,18 @@ function updateControlEnablement(): void {
   if (ctrlTarget) setReadOnly(ctrlTarget, reason !== "" || inFlight);
   if (ctrlStep) setReadOnly(ctrlStep, reason !== "" || inFlight);
   setReason(ctrlTargetReason, ctrlTarget, reason);
+  // The help says how a change applies, so it goes while the reason says
+  // none can; out of aria-describedby too, where hidden text is still read.
+  if (ctrlTargetHelp) {
+    ctrlTargetHelp.hidden = reason !== "";
+    if (ctrlTarget) {
+      if (reason === "") {
+        addDescribedBy(ctrlTarget, ctrlTargetHelp.id);
+      } else {
+        removeDescribedBy(ctrlTarget, ctrlTargetHelp.id);
+      }
+    }
+  }
 
   if (!hasToken) {
     controlPanel.classList.add("disabled");

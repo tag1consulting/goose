@@ -375,7 +375,7 @@ test("while a test plan runs the Target row is read only, with the reason", asyn
   const reason = el(page, "ctrl-target-reason");
   assert.equal(reason.hidden, false);
   assert.equal(reason.textContent, "The test plan sets users; edit the plan, or stop and switch mode");
-  assert.equal(target.getAttribute("aria-describedby"), "ctrl-target-help ctrl-target-reason");
+  assert.equal(target.getAttribute("aria-describedby"), "ctrl-target-reason");
   el(page, "ctrl-plus").click();
   await settle(page.window);
   assert.deepEqual(usersSent(page), []);
@@ -388,12 +388,33 @@ test("while a test plan runs the Target row is read only, with the reason", asyn
   assert.equal(target.getAttribute("aria-describedby"), "ctrl-target-help");
 });
 
+test("the Target help hides while a reason says users cannot change, and returns in Idle", async () => {
+  const page = await controlPage();
+  const target = el(page, "ctrl-target");
+  const help = el(page, "ctrl-target-help");
+  const reason = el(page, "ctrl-target-reason");
+  assert.equal(help.hidden, false);
+  assert.equal(target.getAttribute("aria-describedby"), "ctrl-target-help");
+
+  await emit(page, snapshot("maintain", 10, { users: null, test_plan: "10,60", stage: "test_plan" }));
+  assert.equal(help.hidden, true, "no help under a running test plan");
+  assert.equal(reason.hidden, false);
+  assert.equal(target.getAttribute("aria-describedby"), "ctrl-target-reason");
+
+  await emit(page, snapshot("idle", 0, { users: null, test_plan: "10,60" }));
+  assert.equal(help.hidden, false, "the help returns in Idle");
+  assert.equal(reason.hidden, true);
+  assert.equal(target.getAttribute("aria-describedby"), "ctrl-target-help");
+});
+
 test("with no token the Target and step are read only, saying why", async () => {
   const page = await openPage("/", FRESH, TOKEN, { controlEnabled: true, eventStream: true });
   await emit(page, snapshot("idle", 20));
   assert.equal(el(page, "ctrl-target").readOnly, true);
   assert.equal(el(page, "ctrl-target").disabled, false);
   assert.equal(el(page, "ctrl-target-reason").textContent, "Enter the control token to change settings");
+  assert.equal(el(page, "ctrl-target-help").hidden, true);
+  assert.equal(el(page, "ctrl-target").getAttribute("aria-describedby"), "ctrl-target-reason");
 });
 
 test("in Idle with a test plan, the Target is empty and says what Apply does", async () => {
