@@ -97,9 +97,9 @@ const form = SettingsForm.find(
 );
 // The host confirmation is asked once per page load.
 let hostConfirmed = false;
-// What the open host confirmation goes on to do, and the button it returns
-// focus to.
-let confirming: { trigger: HTMLButtonElement; then: () => void } | null = null;
+// The open host confirmation: the destination it shows, what it goes on to
+// do, and the button it returns focus to.
+let confirming: HostConfirmation | null = null;
 let step = 10;
 let inFlight = false;
 let lastSnap: DashboardSnapshot | null = null;
@@ -113,6 +113,13 @@ let controlTokenMissing = false;
 // The Controllers health reported, or null before it answers or when it did
 // not say (a failed probe).
 let controllers: HealthControllers | null = null;
+
+/** An open host confirmation. */
+interface HostConfirmation {
+  trigger: HTMLButtonElement;
+  destination: string;
+  then: () => void;
+}
 
 /** True while control is on and the page has no token. */
 export function isControlTokenMissing(): boolean {
@@ -307,6 +314,7 @@ function updateControlEnablement(): void {
   } else {
     controlPanel.classList.remove("disabled");
   }
+  refreshHostConfirm();
 }
 
 /** Notes for a stage the Target row cannot change users in. */
@@ -538,18 +546,49 @@ function confirmHost(trigger: HTMLButtonElement, then: () => void): void {
   if (form) form.open();
   hostConfirmText.textContent = "Load will go to " + change;
   hostConfirm.hidden = false;
-  confirming = { trigger, then };
+  confirming = { trigger, destination: change, then };
   hostConfirmOk.focus();
 }
 
-function closeHostConfirm(): { trigger: HTMLButtonElement; then: () => void } | null {
+/**
+ * Keep an open host confirmation true to what Confirm would send: the
+ * destination as the form now has it, or closed once the edits no longer
+ * change the host or its button can no longer act, as after a stage or
+ * token change.
+ */
+function refreshHostConfirm(): void {
+  if (!confirming) return;
+  const change = form ? form.hostChange() : null;
+  if (change === null || unavailable(confirming.trigger)) {
+    closeHostConfirm();
+    return;
+  }
+  if (change !== confirming.destination && hostConfirmText) {
+    confirming.destination = change;
+    hostConfirmText.textContent = "Load will go to " + change;
+  }
+}
+
+/** Close the confirmation; focus inside it returns to its button. */
+function closeHostConfirm(): HostConfirmation | null {
   const open = confirming;
   confirming = null;
-  if (hostConfirm) hostConfirm.hidden = true;
+  if (!hostConfirm) return open;
+  const focused = hostConfirm.contains(document.activeElement);
+  hostConfirm.hidden = true;
+  if (open && focused) open.trigger.focus();
   return open;
 }
 
 function onHostConfirm(): void {
+  if (!confirming) return;
+  const shown = confirming.destination;
+  refreshHostConfirm();
+  if (!confirming) return;
+  if (confirming.destination !== shown) {
+    setControlStatus("Host changed: confirm where load will go", "info");
+    return;
+  }
   const open = closeHostConfirm();
   if (!open) return;
   hostConfirmed = true;
