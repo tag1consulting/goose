@@ -218,8 +218,9 @@ impl FrontEnds {
         (dashboard.0.unwrap(), dashboard.1)
     }
 
-    /// As [`agree`], for a command only telnet and WebSocket take: the
-    /// dashboard does not set these yet.
+    /// As [`agree`], for a command only telnet and WebSocket take in this
+    /// form: the dashboard sends times as whole seconds and rates as JSON
+    /// numbers, so refuses their text forms with messages of its own.
     async fn agree_controllers(&mut self, line: &str) -> (bool, String) {
         let telnet = self.send(Via::Telnet, line, "", "").await;
         let websocket = self.send(Via::WebSocket, line, "", "").await;
@@ -335,7 +336,9 @@ async fn test_control_agreement() {
 
     // A time needs 2 users in Idle: the same refusal from all three.
     assert_eq!(
-        front.agree_controllers("increasetime 5").await,
+        front
+            .agree("increasetime 5", "settings", r#"{"increase_time_secs":5}"#)
+            .await,
         (true, "increase_time configured".to_string())
     );
     assert_eq!(
@@ -346,22 +349,30 @@ async fn test_control_agreement() {
         )
     );
     assert_eq!(
-        front.agree_controllers("increasetime 0").await,
+        front
+            .agree(
+                "increasetime 0",
+                "settings",
+                r#"{"increase_time_secs":null}"#
+            )
+            .await,
         (true, "increase_time cleared".to_string())
     );
 
     // A test plan sets users: a ramp setting is refused until users
     // switches back, which all three accept alike.
     assert_eq!(
-        front.agree_controllers("testplan 3,1s").await,
+        front
+            .agree("testplan 3,1s", "settings", r#"{"test_plan":"3,1s"}"#)
+            .await,
         (true, "test-plan configured".to_string())
     );
-    for (line, field) in [
-        ("increaserate 2", "increase_rate"),
-        ("runtime 10", "run_time"),
+    for (line, body, field) in [
+        ("increaserate 2", r#"{"increase_rate":2}"#, "increase_rate"),
+        ("runtime 10", r#"{"run_time_secs":10}"#, "run_time"),
     ] {
         assert_eq!(
-            front.agree_controllers(line).await,
+            front.agree(line, "settings", body).await,
             (
                 false,
                 format!("failed to configure {field}, a test plan is configured: set users first to switch to a users ramp")
@@ -375,7 +386,9 @@ async fn test_control_agreement() {
         (true, "users configured".to_string())
     );
     assert_eq!(
-        front.agree_controllers("increaserate 50").await,
+        front
+            .agree("increaserate 50", "settings", r#"{"increase_rate":50}"#)
+            .await,
         (true, "increase_rate configured".to_string())
     );
 
@@ -414,9 +427,56 @@ async fn test_control_agreement() {
         assert_eq!(replies, &expected.to_vec(), "{:?}", via);
     }
 
+    // Run time while a users ramp runs: set and cleared alike by all three,
+    // and refused alike once a ramp down is configured.
+    assert_eq!(
+        front.send(Via::Dashboard, "start", "start", "{}").await,
+        (Some(true), "load test started".to_string())
+    );
+    wait_for_phase(&front.client, &["increase", "maintain"]).await;
+    for (line, body, decision, message) in [
+        ("runtime 60", r#"{"run_time_secs":60}"#, true, "run_time configured"),
+        ("runtime 0", r#"{"run_time_secs":null}"#, true, "run_time cleared"),
+        ("decreaserate 2", r#"{"decrease_rate":2}"#, true, "decrease_rate configured"),
+        (
+            "runtime 0",
+            r#"{"run_time_secs":null}"#,
+            false,
+            "failed to clear run_time, a ramp down is configured: a running load test holds until stopped only without one",
+        ),
+        (
+            "increasetime 5",
+            r#"{"increase_time_secs":5}"#,
+            false,
+            "failed to configure increase_time, be sure load test is idle",
+        ),
+    ] {
+        assert_eq!(
+            front.agree(line, "settings", body).await,
+            (decision, message.to_string()),
+            "{}",
+            line
+        );
+    }
+    assert_eq!(
+        dashboard_post(&front.client, "stop", "{}").await,
+        (true, "load test stopped".to_string())
+    );
+    wait_for_phase(&front.client, &["idle"]).await;
+    assert_eq!(
+        dashboard_post(&front.client, "settings", r#"{"decrease_rate":null}"#).await,
+        (true, "decrease_rate cleared".to_string())
+    );
+
     // Users is refused by all three while a test plan runs.
     assert_eq!(
-        front.agree_controllers("testplan 3,1s;3,1m;0,0").await,
+        front
+            .agree(
+                "testplan 3,1s;3,1m;0,0",
+                "settings",
+                r#"{"test_plan":"3,1s;3,1m;0,0"}"#
+            )
+            .await,
         (true, "test-plan configured".to_string())
     );
     assert_eq!(
@@ -432,7 +492,9 @@ async fn test_control_agreement() {
         )
     );
     assert_eq!(
-        front.agree_controllers("decreaserate 2").await,
+        front
+            .agree("decreaserate 2", "settings", r#"{"decrease_rate":2}"#)
+            .await,
         (
             false,
             "failed to configure decrease_rate, a test plan is running".to_string()

@@ -94,6 +94,9 @@ pub(crate) struct RunShape {
     pub(crate) ramp_down: RampDown,
     /// Whether the configured ramp down has started.
     pub(crate) ramp_down_started: bool,
+    /// Whether a decrease rate set on this run added the ramp down, where
+    /// the run started with all users stopping at once.
+    pub(crate) ramp_down_added: bool,
     /// What each step of the run's test plan is, step for step.
     pub(crate) kinds: Vec<StepKind>,
 }
@@ -148,6 +151,7 @@ impl RunShape {
             hold,
             ramp_down,
             ramp_down_started: false,
+            ramp_down_added: false,
             kinds,
         })
     }
@@ -265,6 +269,105 @@ impl RunShape {
             self.kinds.push(kind);
         }
         steps
+    }
+
+    /// A decrease rate set on the running ramp: the ramp down still ahead
+    /// is generated again at `rate`, or added where all users would stop at
+    /// once. A run holding until stopped keeps holding: the rate is for the
+    /// next Users decrease, a later run time, and the next Start.
+    pub(crate) fn set_decrease_rate(
+        &mut self,
+        rate: f32,
+        steps: &mut Vec<(usize, usize)>,
+        current: usize,
+    ) {
+        if self.ramp_down == RampDown::None {
+            self.ramp_down_added = true;
+        }
+        self.ramp_down = RampDown::Rate(rate);
+        self.regenerate_tail(steps, current);
+    }
+
+    /// The decrease rate cleared on the running ramp, which the caller
+    /// allows only where this run added the ramp down, or none is ahead:
+    /// all users stop at once again.
+    pub(crate) fn clear_decrease_rate(&mut self, steps: &mut Vec<(usize, usize)>, current: usize) {
+        if matches!(self.ramp_down, RampDown::Rate(_)) {
+            self.ramp_down = RampDown::None;
+        }
+        self.ramp_down_added = false;
+        self.regenerate_tail(steps, current);
+    }
+
+    /// Whether clearing the decrease rate would remove a ramp down still
+    /// ahead that the run started with.
+    pub(crate) fn keeps_decrease_rate(&self) -> bool {
+        !matches!(self.hold, Hold::UntilStopped { .. })
+            && matches!(self.ramp_down, RampDown::Rate(_))
+            && !self.ramp_down_added
+    }
+
+    /// The run time changed on the running ramp at `now`, to hold for
+    /// `run_time` after the ramp up, or cleared with `None` to hold until
+    /// stopped, which the caller allows only with no ramp down.
+    ///
+    /// During a timed hold the hold ends at its start plus the new run
+    /// time, at once if that has passed. A run holding until stopped holds
+    /// from `now` for the new run time, then ramps down. Before the hold
+    /// starts, the new run time replaces the hold ahead.
+    ///
+    /// Returns true when a run holding past its last step has entered a new
+    /// hold step at `current`, which the caller starts timing from `now`.
+    pub(crate) fn set_run_time(
+        &mut self,
+        run_time: Option<Duration>,
+        steps: &mut Vec<(usize, usize)>,
+        current: usize,
+        step_started: Option<Instant>,
+        now: Instant,
+    ) -> bool {
+        if self.ramp_down_started {
+            return false;
+        }
+        match (run_time, self.hold) {
+            (None, Hold::UntilStopped { .. }) => return false,
+            (None, Hold::Pending(_)) => self.hold = Hold::UntilStopped { started: false },
+            (None, Hold::Timed { .. }) => self.hold = Hold::UntilStopped { started: true },
+            (Some(run_time), Hold::Pending(_)) => self.hold = Hold::Pending(run_time),
+            (Some(run_time), Hold::UntilStopped { started: false }) => {
+                self.hold = Hold::Pending(run_time);
+            }
+            (Some(run_time), Hold::Timed { start, .. }) => {
+                let end = start + run_time;
+                self.hold = Hold::Timed { start, end };
+                // The hold in progress ends at the new end; a hold still
+                // ahead takes what is left of it when it is entered.
+                if self.kinds.get(current) == Some(&StepKind::Hold) {
+                    if let (Some(step), Some(started)) = (steps.get_mut(current), step_started) {
+                        step.1 = ms(end.saturating_duration_since(started));
+                    }
+                }
+                return false;
+            }
+            (Some(run_time), Hold::UntilStopped { started: true }) => {
+                self.hold = Hold::Timed {
+                    start: now,
+                    end: now + run_time,
+                };
+                if current >= steps.len() {
+                    // Past the last step: the hold is a new step, entered now.
+                    steps.push((self.target, ms(run_time)));
+                    self.kinds.push(StepKind::Hold);
+                    for (step, kind) in self.tail(false) {
+                        steps.push(step);
+                        self.kinds.push(kind);
+                    }
+                    return true;
+                }
+            }
+        }
+        self.regenerate_tail(steps, current);
+        false
     }
 
     /// Generate the steps after step `current` again, as a ramp down change

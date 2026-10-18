@@ -131,6 +131,19 @@ pub enum ControllerCommand {
     ///
     /// Goose must be idle to process this command.
     Quit,
+    /// Apply several run settings together, all or none: the dashboard's
+    /// Apply settings. Controllers have no text for it; they set one
+    /// setting per command.
+    ///
+    /// Each setting is checked against the phase as its own command is.
+    Settings(Box<RunSettings>),
+    /// Apply several run settings and start an idle test in one step, so no
+    /// other client can change a setting in between: the dashboard's Start
+    /// with changes. A refused setting or Start leaves every setting as it
+    /// was. Controllers have no text for it.
+    ///
+    /// Goose must be idle to process this command.
+    StartWith(Box<RunSettings>),
     /// Configure the host to load test, a valid http or https url.
     ///
     /// # Example
@@ -207,8 +220,12 @@ pub enum ControllerCommand {
     /// runtime 60
     /// ```
     ///
-    /// Goose must be idle to process this command: the run time is read when
-    /// the load test starts.
+    /// Goose can be idle or running a users ramp when processing this
+    /// command. On a running test the hold ends at its start plus the new
+    /// run time, or the ramp down starts at once if that has passed; a run
+    /// holding until stopped holds for the new run time from now. 0 on a
+    /// running test holds until stopped, refused when a ramp down is
+    /// configured.
     RunTime(usize),
     /// Define a load test plan: at most 100 steps of up to 30 days each, in
     /// at most 4096 bytes, starting 1 to 100000 users in total. This will
@@ -266,11 +283,159 @@ pub enum ControllerCommand {
 impl ControllerCommand {
     /// `users`, refused unless 1 to [`MAX_CONTROL_USERS`].
     pub(crate) fn users(users: u64) -> Result<Self, &'static str> {
-        if (1..=MAX_CONTROL_USERS as u64).contains(&users) {
-            Ok(Self::Users(users as usize))
-        } else {
-            Err(INVALID_USERS_MSG)
+        bounded_users(users).map(Self::Users)
+    }
+}
+
+/// Run settings applied together by
+/// [`ControllerCommand::Settings`] and [`ControllerCommand::StartWith`],
+/// each already parsed and bounded: a field that is `None` is left alone,
+/// `Some(None)` clears it back to Goose's default, and `Some(Some(value))`
+/// sets it. Built by the dashboard from its control requests.
+#[derive(Clone, Debug, Default)]
+pub struct RunSettings {
+    pub(crate) host: Option<Option<String>>,
+    /// Users can not be cleared, only switched to.
+    pub(crate) users: Option<usize>,
+    pub(crate) increase_rate: Option<Option<f32>>,
+    pub(crate) increase_time: Option<Option<usize>>,
+    pub(crate) decrease_rate: Option<Option<f32>>,
+    pub(crate) decrease_time: Option<Option<usize>>,
+    pub(crate) run_time: Option<Option<usize>>,
+    pub(crate) test_plan: Option<Option<TestPlan>>,
+}
+
+impl RunSettings {
+    /// The settings one Controller command sets: 0 clears a time.
+    fn from_command(command: ControllerCommand) -> Self {
+        let time = |seconds: usize| Some((seconds > 0).then_some(seconds));
+        let mut settings = Self::default();
+        match command {
+            ControllerCommand::Host(host) => settings.host = Some(Some(host)),
+            ControllerCommand::IncreaseRate(rate) => settings.increase_rate = Some(Some(rate)),
+            ControllerCommand::DecreaseRate(rate) => settings.decrease_rate = Some(Some(rate)),
+            ControllerCommand::IncreaseTime(seconds) => settings.increase_time = time(seconds),
+            ControllerCommand::DecreaseTime(seconds) => settings.decrease_time = time(seconds),
+            ControllerCommand::RunTime(seconds) => settings.run_time = time(seconds),
+            _ => {}
         }
+        settings
+    }
+
+    /// The settings sent, each named as a refusal names it, in the order
+    /// they are checked.
+    pub(crate) fn fields(&self) -> Vec<&'static str> {
+        [
+            ("host", self.host.is_some()),
+            ("users", self.users.is_some()),
+            ("increase_rate", self.increase_rate.is_some()),
+            ("increase_time", self.increase_time.is_some()),
+            ("decrease_rate", self.decrease_rate.is_some()),
+            ("decrease_time", self.decrease_time.is_some()),
+            ("run_time", self.run_time.is_some()),
+            ("test_plan", self.test_plan.is_some()),
+        ]
+        .iter()
+        .filter_map(|&(field, sent)| sent.then_some(field))
+        .collect()
+    }
+
+    /// The ramp settings that set a value rather than clear one.
+    pub(crate) fn ramp_values(&self) -> Vec<&'static str> {
+        [
+            ("increase_rate", matches!(self.increase_rate, Some(Some(_)))),
+            ("increase_time", matches!(self.increase_time, Some(Some(_)))),
+            ("decrease_rate", matches!(self.decrease_rate, Some(Some(_)))),
+            ("decrease_time", matches!(self.decrease_time, Some(Some(_)))),
+            ("run_time", matches!(self.run_time, Some(Some(_)))),
+        ]
+        .iter()
+        .filter_map(|&(field, set)| set.then_some(field))
+        .collect()
+    }
+
+    /// Whether this switches to a test plan.
+    pub(crate) fn sets_test_plan(&self) -> bool {
+        matches!(self.test_plan, Some(Some(_)))
+    }
+
+    /// Why these settings can not go together, whatever the state: the
+    /// setting at fault and the reason. A test plan sets users, so it is
+    /// refused with users or a ramp setting, and clearing it needs users to
+    /// switch to; a rate and its own time each replace the other.
+    #[cfg(feature = "dashboard")]
+    pub(crate) fn conflict(&self) -> Option<(&'static str, &'static str)> {
+        if self.sets_test_plan() {
+            if self.users.is_some() {
+                return Some((
+                    "test_plan",
+                    "test_plan sets users, so it can not be sent with users",
+                ));
+            }
+            if let Some(field) = self.ramp_values().first() {
+                return Some((
+                    field,
+                    "a test plan sets its own ramp, so it can not be sent with a ramp setting",
+                ));
+            }
+        }
+        if matches!(self.test_plan, Some(None)) && self.users.is_none() {
+            return Some((
+                "test_plan",
+                "test_plan can be cleared only with users, to switch to a users ramp",
+            ));
+        }
+        if matches!(
+            (self.increase_rate, self.increase_time),
+            (Some(Some(_)), Some(Some(_)))
+        ) {
+            return Some((
+                "increase_rate",
+                "increase_rate and increase_time each replace the other, send one",
+            ));
+        }
+        if matches!(
+            (self.decrease_rate, self.decrease_time),
+            (Some(Some(_)), Some(Some(_)))
+        ) {
+            return Some((
+                "decrease_rate",
+                "decrease_rate and decrease_time each replace the other, send one",
+            ));
+        }
+        None
+    }
+}
+
+/// The message for applied `settings`: for one setting its own, as the
+/// Controller command for it answers.
+fn settings_message(settings: &RunSettings) -> String {
+    match settings.fields().as_slice() {
+        ["test_plan"] => "test-plan configured".to_string(),
+        ["users"] => "users configured".to_string(),
+        ["host"] if matches!(settings.host, Some(None)) => "host cleared".to_string(),
+        ["host"] => "host configured".to_string(),
+        [field] if settings.ramp_values().contains(field) => format!("{field} configured"),
+        [field] => format!("{field} cleared"),
+        _ => "settings configured".to_string(),
+    }
+}
+
+/// A user count from 1 to [`MAX_CONTROL_USERS`].
+pub(crate) fn bounded_users(users: u64) -> Result<usize, &'static str> {
+    if (1..=MAX_CONTROL_USERS as u64).contains(&users) {
+        Ok(users as usize)
+    } else {
+        Err(INVALID_USERS_MSG)
+    }
+}
+
+/// A time span in whole seconds, up to [`MAX_CONTROL_SECS`]; 0 means unset.
+pub(crate) fn bounded_secs(seconds: u64, error: &'static str) -> Result<usize, &'static str> {
+    if seconds <= MAX_CONTROL_SECS as u64 {
+        Ok(seconds as usize)
+    } else {
+        Err(error)
     }
 }
 
@@ -357,10 +522,8 @@ pub(crate) fn time(value: &str, error: &'static str) -> Result<usize, &'static s
         return Err(error);
     }
     let value = grammar(&TIME, value, error)?.to_ascii_lowercase();
-    match crate::util::parse_timespan(&value) {
-        Some(seconds) if seconds <= MAX_CONTROL_SECS => Ok(seconds),
-        _ => Err(error),
-    }
+    let seconds = crate::util::parse_timespan(&value).ok_or(error)?;
+    bounded_secs(seconds as u64, error)
 }
 
 /// A test plan: at most [`MAX_CONTROL_PLAN_STEPS`] steps of up to
@@ -595,6 +758,12 @@ impl GooseAttack {
         // An accepted Start is answered first and then finished, so the
         // client is not blocked on reset_run_state and test_start.
         let mut start = false;
+        // The dashboard's settings commands answer with the settings.
+        #[cfg(feature = "dashboard")]
+        let with_settings = matches!(
+            command,
+            ControllerCommand::Settings(_) | ControllerCommand::StartWith(_)
+        );
         let outcome = match command {
             ControllerCommand::Config | ControllerCommand::ConfigJson => {
                 let config = Box::new(self.configuration.clone());
@@ -605,27 +774,52 @@ impl GooseAttack {
                 metrics_waiters.push(respond);
                 return Ok(());
             }
-            ControllerCommand::Start => match self.control_start_begin(goose_attack_run_state) {
-                Ok(ControlStartBegin::Accepted(outcome)) => {
-                    start = true;
-                    Ok(outcome)
+            ControllerCommand::Start | ControllerCommand::StartWith(_) => {
+                let begun = match command {
+                    ControllerCommand::StartWith(settings) => {
+                        self.control_start_with(goose_attack_run_state, *settings)
+                    }
+                    _ => self.control_start_begin(goose_attack_run_state),
+                };
+                match begun {
+                    Ok(ControlStartBegin::Accepted(outcome)) => {
+                        start = true;
+                        Ok(outcome)
+                    }
+                    Ok(ControlStartBegin::Rejected(outcome)) => Ok(outcome),
+                    Err(e) => Err(e),
                 }
-                Ok(ControlStartBegin::Rejected(outcome)) => Ok(outcome),
-                Err(e) => Err(e),
-            },
+            }
             ControllerCommand::Stop => self.control_stop(goose_attack_run_state).await,
             ControllerCommand::Quit => Ok(self.control_quit(goose_attack_run_state)),
             ControllerCommand::Shutdown => self.control_shutdown(goose_attack_run_state).await,
             ControllerCommand::Users(users) => {
                 self.control_set_users(goose_attack_run_state, users)
             }
-            ControllerCommand::TestPlan(plan) => {
-                self.control_set_plan(goose_attack_run_state, plan)
+            ControllerCommand::Settings(settings) => {
+                self.control_settings(goose_attack_run_state, *settings)
             }
-            command => Ok(self.control_setting(goose_attack_run_state, command)),
+            ControllerCommand::TestPlan(plan) => {
+                let settings = RunSettings {
+                    test_plan: Some(Some(plan)),
+                    ..RunSettings::default()
+                };
+                self.control_settings(goose_attack_run_state, settings)
+            }
+            command => {
+                self.control_settings(goose_attack_run_state, RunSettings::from_command(command))
+            }
         };
         match outcome {
             Ok(outcome) => {
+                #[cfg(feature = "dashboard")]
+                let outcome = match with_settings {
+                    true => ControlOutcome {
+                        settings: Some(Box::new(self.snapshot_settings(goose_attack_run_state))),
+                        ..outcome
+                    },
+                    false => outcome,
+                };
                 debug!(
                     "[control]: ok={} error={:?} phase={} active_users={} target_users={:?}: {}",
                     outcome.ok,
@@ -657,184 +851,356 @@ impl GooseAttack {
         }
     }
 
-    /// Apply host, a rate, a time or the run time, refused when the phase
-    /// cannot change it (`invalid_phase`), in test plan mode without users,
-    /// for a rate while its own time is set on a running test, or by the
-    /// command line's cross field rules (`conflicting_settings`). Every
-    /// refusal names the setting at fault.
-    fn control_setting(
+    /// Apply `settings` together, all or none, refused as
+    /// [`Self::refuse_settings`] says. A single Controller setting is
+    /// applied as settings of its own, so every front end decides alike.
+    /// Hard error: `weight_scenario_users` when a test plan replaces a
+    /// running test's.
+    fn control_settings(
         &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+        settings: RunSettings,
+    ) -> Result<ControlOutcome, GooseError> {
+        if let Some(refused) = self.refuse_settings(goose_attack_run_state, &settings) {
+            return Ok(refused);
+        }
+        let message = settings_message(&settings);
+        let target_users = settings.users;
+        self.apply_settings(goose_attack_run_state, settings)?;
+        Ok(self.control_outcome(goose_attack_run_state, true, None, message, target_users))
+    }
+
+    /// Apply `settings` and start, as one step: refused unless idle, as a
+    /// Start is, and as [`Self::refuse_settings`] says. A refused Start, a
+    /// prepare failure among them, puts back the configuration, test plan
+    /// and run shape as they were, so nothing the settings changed stays.
+    fn control_start_with(
+        &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+        settings: RunSettings,
+    ) -> Result<ControlStartBegin, GooseError> {
+        if self.attack_phase != AttackPhase::Idle {
+            return self.control_start_begin(goose_attack_run_state);
+        }
+        if let Some(refused) = self.refuse_settings(goose_attack_run_state, &settings) {
+            return Ok(ControlStartBegin::Rejected(refused));
+        }
+        let configuration = self.configuration.clone();
+        let test_plan = self.test_plan.clone();
+        let run_shape = self.run_shape.clone();
+        let begun = self
+            .apply_settings(goose_attack_run_state, settings)
+            .and_then(|()| self.control_start_begin(goose_attack_run_state));
+        if !matches!(begun, Ok(ControlStartBegin::Accepted(_))) {
+            self.configuration = configuration;
+            self.test_plan = test_plan;
+            self.run_shape = run_shape;
+            #[cfg(feature = "dashboard")]
+            {
+                self.settings = None;
+            }
+        }
+        begun
+    }
+
+    /// Why `settings` can not be applied now, checked in this order, the
+    /// first refusal answered and naming the setting at fault:
+    ///
+    /// 1. `invalid_phase`: a setting the phase can not change, whether set
+    ///    or cleared. Host and the ramp times change only in Idle; the rates
+    ///    and run time also on a running users ramp until its ramp down
+    ///    starts; a test plan in any phase but stopping. Users go with other
+    ///    settings only in Idle. Clearing a ramp setting alongside a test
+    ///    plan is allowed wherever the test plan is.
+    /// 2. `conflicting_settings` naming users: a ramp setting while a test
+    ///    plan is configured, unless users or a test plan comes with it.
+    /// 3. `conflicting_settings` naming the rate: a rate on a running test
+    ///    while its own time is set, as times change only in Idle.
+    /// 4. `conflicting_settings`: clearing on a running test the decrease
+    ///    rate of a ramp down it started with, or the run time while a ramp
+    ///    down is configured.
+    /// 5. `conflicting_settings`: the command line's cross field rules on
+    ///    the settings as they would be.
+    /// 6. `no_host`: clearing host leaves a scenario, or a `test_start` or
+    ///    `test_stop` transaction, with no host.
+    fn refuse_settings(
+        &self,
         goose_attack_run_state: &GooseAttackRunState,
-        command: ControllerCommand,
-    ) -> ControlOutcome {
-        let field = match &command {
-            ControllerCommand::Host(_) => "host",
-            ControllerCommand::IncreaseRate(_) => "increase_rate",
-            ControllerCommand::DecreaseRate(_) => "decrease_rate",
-            ControllerCommand::IncreaseTime(_) => "increase_time",
-            ControllerCommand::DecreaseTime(_) => "decrease_time",
-            ControllerCommand::RunTime(_) => "run_time",
-            // Every other command has its own arm in `control`.
-            _ => "",
-        };
-        let refuse = |goose: &Self, error, field, message: String| {
-            goose
-                .control_outcome(goose_attack_run_state, false, Some(error), message, None)
-                .with_field(field)
+        settings: &RunSettings,
+    ) -> Option<ControlOutcome> {
+        let refuse = |error, field, message: String| {
+            Some(
+                self.control_outcome(goose_attack_run_state, false, Some(error), message, None)
+                    .with_field(field),
+            )
         };
         let idle = self.attack_phase == AttackPhase::Idle;
-        let rate = matches!(
-            command,
-            ControllerCommand::IncreaseRate(_) | ControllerCommand::DecreaseRate(_)
-        );
+        let stopping =
+            goose_attack_run_state.stopping || self.attack_phase == AttackPhase::Shutdown;
 
-        // The phase: host and the times only in Idle; the rates also on a
-        // running users ramp, but not during its ramp down.
-        let phase = if idle {
-            None
-        } else if !rate {
-            Some(match command {
-                ControllerCommand::Host(_) => {
-                    "failed to reconfigure host, load test is not idle".to_string()
+        // The phase.
+        for field in settings.fields() {
+            let ramp = !matches!(field, "host" | "users" | "test_plan");
+            let message = if idle {
+                None
+            } else if field == "test_plan" {
+                self.refuse_reconfigure(goose_attack_run_state, "test-plan")
+                    .map(|refused| refused.message)
+            } else if ramp && settings.sets_test_plan() && !stopping {
+                // Cleared with the test plan that replaces the ramp; a ramp
+                // value with a test plan was refused before it got here.
+                None
+            } else {
+                match field {
+                    "host" => Some("failed to reconfigure host, load test is not idle".to_string()),
+                    "users" => Some(
+                        "failed to configure users, a running load test changes users only on its own"
+                            .to_string(),
+                    ),
+                    "increase_time" | "decrease_time" => {
+                        Some(format!("failed to configure {field}, be sure load test is idle"))
+                    }
+                    _ if stopping => Some(format!("failed to configure {field}, load test is stopping")),
+                    _ => match &self.run_shape {
+                        None => Some(format!("failed to configure {field}, a test plan is running")),
+                        Some(shape) if shape.ramp_down_started => {
+                            Some(format!("failed to configure {field}, load test is ramping down"))
+                        }
+                        Some(_) => None,
+                    },
                 }
-                _ => format!("failed to configure {field}, be sure load test is idle"),
-            })
-        } else if goose_attack_run_state.stopping || self.attack_phase == AttackPhase::Shutdown {
-            Some(format!(
-                "failed to configure {field}, load test is stopping"
-            ))
-        } else {
-            match &self.run_shape {
-                None => Some(format!(
-                    "failed to configure {field}, a test plan is running"
-                )),
-                Some(shape) if shape.ramp_down_started => Some(format!(
-                    "failed to configure {field}, load test is ramping down"
-                )),
-                Some(_) => None,
+            };
+            if let Some(message) = message {
+                return refuse("invalid_phase", field, message);
             }
-        };
-        if let Some(message) = phase {
-            return refuse(self, "invalid_phase", field, message);
         }
 
         // The mode: a ramp setting needs users, which a test plan leaves
         // unset; starting with none would never finish weighting users.
-        let clears = matches!(
-            command,
-            ControllerCommand::IncreaseTime(0)
-                | ControllerCommand::DecreaseTime(0)
-                | ControllerCommand::RunTime(0)
-        );
-        let ramp = !matches!(command, ControllerCommand::Host(_)) && !clears;
-        if ramp && self.configuration.test_plan.is_some() {
-            return refuse(
-                self,
-                "conflicting_settings",
-                "users",
-                format!("failed to configure {field}, a test plan is configured: set users first to switch to a users ramp"),
-            );
+        if self.configuration.test_plan.is_some()
+            && settings.users.is_none()
+            && !settings.sets_test_plan()
+        {
+            if let Some(field) = settings.ramp_values().first() {
+                return refuse(
+                    "conflicting_settings",
+                    "users",
+                    format!("failed to configure {field}, a test plan is configured: set users first to switch to a users ramp"),
+                );
+            }
         }
 
-        // A time cannot change while running, so neither can a rate that
-        // would clear it.
-        let own_time = match command {
-            ControllerCommand::IncreaseRate(_) => self.configuration.increase_time_secs() > 0,
-            ControllerCommand::DecreaseRate(_) => self.configuration.decrease_time_secs() > 0,
-            _ => false,
-        };
-        if !idle && own_time {
-            let time = field.replace("rate", "time");
-            return refuse(
-                self,
-                "conflicting_settings",
-                field,
-                format!("failed to configure {field}, {time} is set and changes only when idle"),
-            );
-        }
-
-        // The command line's cross field rules: run time is refused with
-        // --iterations in every phase, and a time needs at least 2 users in
-        // Idle, where it shapes the next Start.
-        let cross = match command {
-            ControllerCommand::RunTime(seconds)
-                if seconds > 0 && self.configuration.iterations() > 0 =>
-            {
-                Some("it can not be set with --iterations")
-            }
-            ControllerCommand::IncreaseTime(seconds) | ControllerCommand::DecreaseTime(seconds)
-                if seconds > 0 && self.configuration.users.is_some_and(|users| users < 2) =>
-            {
-                Some("it needs at least 2 users")
-            }
-            _ => None,
-        };
-        if let Some(reason) = cross {
-            return refuse(
-                self,
-                "conflicting_settings",
-                field,
-                format!("failed to configure {field}, {reason}"),
-            );
-        }
-
-        let message = match command {
-            ControllerCommand::Host(host) => {
-                self.configuration.host = Some(host);
-                "host configured"
-            }
-            ControllerCommand::IncreaseRate(rate) => {
-                self.configuration.increase_time = None;
-                self.configuration.increase_rate = Some(rate.to_string());
-                "increase_rate configured"
-            }
-            ControllerCommand::DecreaseRate(rate) => {
-                self.configuration.decrease_time = None;
-                self.configuration.decrease_rate = Some(rate.to_string());
-                // On a running users ramp with a hold that ends, the ramp
-                // down still ahead is generated again at the new rate, or
-                // added where all users would stop at once. A run holding
-                // until stopped keeps holding: the rate is for the next
-                // Users decrease and the next Start.
-                if let Some(shape) = self.run_shape.as_mut() {
-                    if !matches!(shape.hold, crate::run_shape::Hold::UntilStopped { .. }) {
-                        shape.ramp_down = crate::run_shape::RampDown::Rate(rate);
-                        shape.regenerate_tail(&mut self.test_plan.steps, self.test_plan.current);
-                    }
+        // A time changes only in Idle, so on a running test neither can a
+        // rate that would clear it.
+        if !idle {
+            for (field, rate, time) in [
+                (
+                    "increase_rate",
+                    &settings.increase_rate,
+                    self.configuration.increase_time_secs(),
+                ),
+                (
+                    "decrease_rate",
+                    &settings.decrease_rate,
+                    self.configuration.decrease_time_secs(),
+                ),
+            ] {
+                if matches!(rate, Some(Some(_))) && time > 0 {
+                    let time = field.replace("rate", "time");
+                    return refuse(
+                        "conflicting_settings",
+                        field,
+                        format!(
+                            "failed to configure {field}, {time} is set and changes only when idle"
+                        ),
+                    );
                 }
-                "decrease_rate configured"
             }
-            // 0 clears a time, as `null` does on the dashboard: back to
-            // Goose's default, leaving the rate and any test plan alone.
-            ControllerCommand::IncreaseTime(0) => {
-                self.configuration.increase_time = None;
-                "increase_time cleared"
+        }
+
+        let candidate = self.candidate_configuration(settings);
+
+        // Clearing on a running users ramp.
+        if let (false, Some(shape)) = (idle || settings.sets_test_plan(), &self.run_shape) {
+            if matches!(settings.decrease_rate, Some(None)) && shape.keeps_decrease_rate() {
+                return refuse(
+                    "conflicting_settings",
+                    "decrease_rate",
+                    "failed to clear decrease_rate, the run started with this ramp down: change its rate, or clear it when idle".to_string(),
+                );
             }
-            ControllerCommand::DecreaseTime(0) => {
-                self.configuration.decrease_time = None;
-                "decrease_time cleared"
+            let ramp_down = candidate.decrease_time_secs() > 0 || candidate.decrease_rate.is_some();
+            if matches!(settings.run_time, Some(None)) && ramp_down {
+                return refuse(
+                    "conflicting_settings",
+                    "run_time",
+                    "failed to clear run_time, a ramp down is configured: a running load test holds until stopped only without one".to_string(),
+                );
             }
-            ControllerCommand::RunTime(0) => {
-                self.configuration.run_time = None;
-                "run_time cleared"
+        }
+
+        // The command line's cross field rules: run time and a test plan
+        // are refused with --iterations, a test plan with
+        // --no-reset-metrics, in every phase; and a time needs at least 2
+        // users in Idle, where it shapes the next Start.
+        if matches!(settings.run_time, Some(Some(_))) && candidate.iterations() > 0 {
+            return refuse(
+                "conflicting_settings",
+                "run_time",
+                "failed to configure run_time, it can not be set with --iterations".to_string(),
+            );
+        }
+        if settings.sets_test_plan() {
+            let flag = if candidate.iterations() > 0 {
+                Some("--iterations")
+            } else if candidate.no_reset_metrics {
+                Some("--no-reset-metrics")
+            } else {
+                None
+            };
+            if let Some(flag) = flag {
+                return refuse(
+                    "conflicting_settings",
+                    "test_plan",
+                    format!("failed to configure test-plan, it can not be set with {flag}"),
+                );
             }
-            ControllerCommand::IncreaseTime(seconds) => {
-                self.configuration.increase_rate = None;
-                self.configuration.increase_time = Some(seconds.to_string());
-                "increase_time configured"
+        }
+        if idle && candidate.users.is_some_and(|users| users < 2) {
+            for (field, secs) in [
+                ("increase_time", candidate.increase_time_secs()),
+                ("decrease_time", candidate.decrease_time_secs()),
+            ] {
+                if secs == 0 {
+                    continue;
+                }
+                let sent = match field {
+                    "increase_time" => matches!(settings.increase_time, Some(Some(_))),
+                    _ => matches!(settings.decrease_time, Some(Some(_))),
+                };
+                return if sent {
+                    refuse(
+                        "conflicting_settings",
+                        field,
+                        format!("failed to configure {field}, it needs at least 2 users"),
+                    )
+                } else {
+                    refuse(
+                        "conflicting_settings",
+                        "users",
+                        format!("failed to configure users, {field} needs at least 2 users"),
+                    )
+                };
             }
-            ControllerCommand::DecreaseTime(seconds) => {
-                self.configuration.decrease_rate = None;
-                self.configuration.decrease_time = Some(seconds.to_string());
-                "decrease_time configured"
+        }
+
+        // A host must stay for everything that needs one.
+        if matches!(settings.host, Some(None)) {
+            if let Some(what) = self.without_host(&candidate) {
+                return refuse(
+                    "no_host",
+                    "host",
+                    format!("failed to clear host, {what} would have no host"),
+                );
             }
-            ControllerCommand::RunTime(seconds) => {
-                self.configuration.run_time = Some(seconds.to_string());
-                "run_time configured"
+        }
+        None
+    }
+
+    /// The configuration with `settings` applied: a test plan clears users
+    /// and the ramp settings, users clears the test plan, and a rate or a
+    /// time clears the other of its pair.
+    fn candidate_configuration(&self, settings: &RunSettings) -> GooseConfiguration {
+        let mut configuration = self.configuration.clone();
+        if let Some(Some(plan)) = &settings.test_plan {
+            configuration.test_plan = Some(plan.clone());
+            configuration.users = None;
+            configuration.increase_rate = None;
+            configuration.increase_time = None;
+            configuration.decrease_rate = None;
+            configuration.decrease_time = None;
+            configuration.run_time = None;
+        }
+        if let Some(users) = settings.users {
+            configuration.test_plan = None;
+            configuration.users = Some(users);
+        }
+        if let Some(host) = &settings.host {
+            configuration.host = host.clone();
+        }
+        let pair = |value: Option<Option<String>>,
+                    mine: &mut Option<String>,
+                    other: &mut Option<String>| {
+            match value {
+                Some(Some(value)) => {
+                    *mine = Some(value);
+                    *other = None;
+                }
+                Some(None) => *mine = None,
+                None => {}
             }
-            _ => "",
         };
-        self.control_outcome(goose_attack_run_state, true, None, message, None)
+        let rate = |rate: Option<Option<f32>>| rate.map(|rate| rate.map(|rate| rate.to_string()));
+        let secs = |secs: Option<Option<usize>>| secs.map(|secs| secs.map(|secs| secs.to_string()));
+        pair(
+            rate(settings.increase_rate),
+            &mut configuration.increase_rate,
+            &mut configuration.increase_time,
+        );
+        pair(
+            secs(settings.increase_time),
+            &mut configuration.increase_time,
+            &mut configuration.increase_rate,
+        );
+        pair(
+            rate(settings.decrease_rate),
+            &mut configuration.decrease_rate,
+            &mut configuration.decrease_time,
+        );
+        pair(
+            secs(settings.decrease_time),
+            &mut configuration.decrease_time,
+            &mut configuration.decrease_rate,
+        );
+        if let Some(run_time) = secs(settings.run_time) {
+            configuration.run_time = run_time;
+        }
+        configuration
+    }
+
+    /// Apply `settings`, which [`Self::refuse_settings`] accepted: to the
+    /// configuration, and on a running test to the run. A test plan
+    /// replaces the running test's from its first step; a decrease rate
+    /// and the run time change the users ramp's steps still ahead.
+    fn apply_settings(
+        &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+        settings: RunSettings,
+    ) -> Result<(), GooseError> {
+        self.configuration = self.candidate_configuration(&settings);
+        if self.attack_phase == AttackPhase::Idle {
+            return Ok(());
+        }
+        if let Some(Some(plan)) = settings.test_plan {
+            return self.run_test_plan(goose_attack_run_state, plan);
+        }
+        if let Some(shape) = self.run_shape.as_mut() {
+            let steps = &mut self.test_plan.steps;
+            let current = self.test_plan.current;
+            match settings.decrease_rate {
+                Some(Some(rate)) => shape.set_decrease_rate(rate, steps, current),
+                Some(None) => shape.clear_decrease_rate(steps, current),
+                None => {}
+            }
+            if let Some(run_time) = settings.run_time {
+                let run_time = run_time.map(|secs| Duration::from_secs(secs as u64));
+                let now = std::time::Instant::now();
+                if shape.set_run_time(run_time, steps, current, self.step_started, now) {
+                    self.step_started = Some(now);
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Current metrics from the dedicated metrics processor, or the main
@@ -1861,8 +2227,9 @@ pub(crate) mod tests {
         });
     }
 
-    /// Gap 7: run time is only read at Start, so it is refused unless idle,
-    /// as increase and decrease time and host are.
+    /// Host and the increase and decrease times are only read at Start, so
+    /// they are refused unless idle; run time is refused while a test plan
+    /// runs, as the plan sets how long it runs.
     #[test]
     #[serial_test::serial]
     fn test_control_run_time_refused_unless_idle() {
@@ -1878,7 +2245,7 @@ pub(crate) mod tests {
                 for (line, refusal) in [
                     (
                         "runtime 10",
-                        "failed to configure run_time, be sure load test is idle",
+                        "failed to configure run_time, a test plan is running",
                     ),
                     (
                         "increasetime 10",
@@ -2430,18 +2797,7 @@ pub(crate) mod tests {
         line: &str,
     ) -> ControlOutcome {
         let command = line.parse::<ControllerCommand>().expect("a command");
-        let (controller_tx, controller_rx) = flume::unbounded();
-        run_state.controller_channel_rx = Some(controller_rx);
-        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
-        controller_tx.send((command, response_tx)).unwrap();
-        goose_attack
-            .handle_control_requests(run_state)
-            .await
-            .unwrap();
-        match response_rx.await.expect("the parent must reply") {
-            ControlReply::Outcome(outcome) => outcome,
-            _ => panic!("{}: not an outcome", line),
-        }
+        command_outcome(goose_attack, run_state, command).await
     }
 
     /// A load test with one scenario and a host, so a users increase can
@@ -2855,6 +3211,703 @@ pub(crate) mod tests {
         });
     }
 
+    /// The parent's outcome for `command`, sent as a Controller sends it.
+    pub(crate) async fn command_outcome(
+        goose_attack: &mut GooseAttack,
+        run_state: &mut GooseAttackRunState,
+        command: ControllerCommand,
+    ) -> ControlOutcome {
+        let (controller_tx, controller_rx) = flume::unbounded();
+        run_state.controller_channel_rx = Some(controller_rx);
+        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+        controller_tx.send((command, response_tx)).unwrap();
+        goose_attack
+            .handle_control_requests(run_state)
+            .await
+            .unwrap();
+        match response_rx.await.expect("the parent must reply") {
+            ControlReply::Outcome(outcome) => outcome,
+            _ => panic!("not an outcome"),
+        }
+    }
+
+    /// The outcome of a dashboard settings `body`, applied alone, or with a
+    /// Start when `start`.
+    #[cfg(feature = "dashboard")]
+    pub(crate) async fn settings(
+        goose_attack: &mut GooseAttack,
+        run_state: &mut GooseAttackRunState,
+        body: &str,
+        start: bool,
+    ) -> ControlOutcome {
+        let settings = match crate::dashboard::parse_settings_body(body.as_bytes()) {
+            Ok(settings) => Box::new(settings),
+            Err(refused) => panic!("{}: refused as {:?}", body, refused),
+        };
+        let command = match start {
+            true => ControllerCommand::StartWith(settings),
+            false => ControllerCommand::Settings(settings),
+        };
+        command_outcome(goose_attack, run_state, command).await
+    }
+
+    /// The outcome of setting the run time to `secs` (0 to clear) through
+    /// a Controller, or through the dashboard when `dashboard`.
+    async fn set_run_time(
+        goose_attack: &mut GooseAttack,
+        run_state: &mut GooseAttackRunState,
+        secs: usize,
+        dashboard: bool,
+    ) -> ControlOutcome {
+        if dashboard {
+            #[cfg(feature = "dashboard")]
+            {
+                let body = match secs {
+                    0 => r#"{"run_time_secs":null}"#.to_string(),
+                    secs => format!(r#"{{"run_time_secs":{secs}}}"#),
+                };
+                return settings(goose_attack, run_state, &body, false).await;
+            }
+        }
+        outcome(goose_attack, run_state, &format!("runtime {secs}")).await
+    }
+
+    /// Each front end a run time can be sent through: a Controller, and the
+    /// dashboard when it is built.
+    fn run_time_front_ends() -> Vec<bool> {
+        if cfg!(feature = "dashboard") {
+            vec![false, true]
+        } else {
+            vec![false]
+        }
+    }
+
+    /// Run time before the hold starts replaces the hold ahead, adding one
+    /// where the run would ramp straight down, and clearing it holds until
+    /// stopped.
+    #[test]
+    #[serial_test::serial]
+    fn test_run_time_before_hold() {
+        finishes(|| async {
+            for dashboard in run_time_front_ends() {
+                let (mut goose_attack, mut run_state) = ramp_attack(&[
+                    "--users",
+                    "10",
+                    "--increase-rate",
+                    "10",
+                    "--run-time",
+                    "60",
+                    "--decrease-rate",
+                    "5",
+                ])
+                .await;
+                run_users_ramp(&mut goose_attack, &mut run_state, 4);
+                let set = set_run_time(&mut goose_attack, &mut run_state, 120, dashboard).await;
+                assert!(set.ok, "{:?}", set);
+                assert_eq!(set.message, "run_time configured");
+                assert_eq!(
+                    goose_attack.test_plan.steps,
+                    [(10, 1_000), (10, 120_000), (0, 2_000)]
+                );
+                assert_eq!(goose_attack.configuration.run_time_secs(), 120);
+                assert_eq!(stage(&goose_attack), ("ramp_up", None));
+                run_state.active_users = 10;
+                goose_attack.advance_test_plan(&mut run_state);
+                assert_eq!(stage(&goose_attack), ("hold", Some(120)));
+
+                // No run time, so the run would ramp straight down: a hold
+                // is added before the ramp down.
+                let (mut goose_attack, mut run_state) = ramp_attack(&[
+                    "--users",
+                    "10",
+                    "--increase-rate",
+                    "10",
+                    "--decrease-rate",
+                    "5",
+                ])
+                .await;
+                run_users_ramp(&mut goose_attack, &mut run_state, 4);
+                assert!(
+                    set_run_time(&mut goose_attack, &mut run_state, 30, dashboard)
+                        .await
+                        .ok
+                );
+                assert_eq!(
+                    goose_attack.test_plan.steps,
+                    [(10, 1_000), (10, 30_000), (0, 2_000)]
+                );
+
+                // Cleared with no ramp down: the ramp up is all that is left.
+                let (mut goose_attack, mut run_state) =
+                    ramp_attack(&["--users", "10", "--increase-rate", "10", "--run-time", "60"])
+                        .await;
+                run_users_ramp(&mut goose_attack, &mut run_state, 4);
+                let cleared = set_run_time(&mut goose_attack, &mut run_state, 0, dashboard).await;
+                assert!(cleared.ok, "{:?}", cleared);
+                assert_eq!(cleared.message, "run_time cleared");
+                assert_eq!(goose_attack.test_plan.steps, [(10, 1_000)]);
+                run_state.active_users = 10;
+                goose_attack.advance_test_plan(&mut run_state);
+                assert_eq!(stage(&goose_attack), ("hold_until_stopped", None));
+            }
+        });
+    }
+
+    /// Run time during a timed hold moves its end to its start plus the new
+    /// run time, and ramps down at once when that has passed; clearing it
+    /// holds until stopped, refused when a ramp down is configured.
+    #[test]
+    #[serial_test::serial]
+    fn test_run_time_during_hold() {
+        finishes(|| async {
+            for dashboard in run_time_front_ends() {
+                let (mut goose_attack, mut run_state) =
+                    ramp_attack(&["--users", "10", "--increase-rate", "10", "--run-time", "60"])
+                        .await;
+                run_users_ramp(&mut goose_attack, &mut run_state, 10);
+                goose_attack.advance_test_plan(&mut run_state);
+                assert_eq!(stage(&goose_attack), ("hold", Some(60)));
+                assert!(
+                    set_run_time(&mut goose_attack, &mut run_state, 120, dashboard)
+                        .await
+                        .ok
+                );
+                assert_eq!(stage(&goose_attack), ("hold", Some(120)));
+                assert_eq!(goose_attack.test_plan.steps[1], (10, 120_000));
+
+                // Ninety seconds into the hold, a run time of 60 has passed.
+                let now = std::time::Instant::now();
+                let start = now - Duration::from_secs(90);
+                goose_attack.run_shape.as_mut().unwrap().hold = crate::run_shape::Hold::Timed {
+                    start,
+                    end: start + Duration::from_secs(120),
+                };
+                goose_attack.step_started = Some(start);
+                assert!(
+                    set_run_time(&mut goose_attack, &mut run_state, 60, dashboard)
+                        .await
+                        .ok
+                );
+                assert_eq!(goose_attack.test_plan.steps[1], (10, 60_000));
+                assert_eq!(stage(&goose_attack), ("hold", Some(0)));
+                goose_attack.maintain_attack(&mut run_state).await.unwrap();
+                assert_eq!(goose_attack.attack_phase, AttackPhase::Decrease);
+                assert_eq!(stage(&goose_attack), ("ramping_down", None));
+                // No run time once the ramp down has started.
+                let refused = set_run_time(&mut goose_attack, &mut run_state, 30, dashboard).await;
+                assert_eq!(refused.error, Some("invalid_phase"));
+                assert_eq!(refused.field, Some("run_time"));
+
+                // Cleared with no ramp down: the hold no longer ends.
+                let (mut goose_attack, mut run_state) =
+                    ramp_attack(&["--users", "10", "--increase-rate", "10", "--run-time", "60"])
+                        .await;
+                run_users_ramp(&mut goose_attack, &mut run_state, 10);
+                goose_attack.advance_test_plan(&mut run_state);
+                assert!(
+                    set_run_time(&mut goose_attack, &mut run_state, 0, dashboard)
+                        .await
+                        .ok
+                );
+                assert_eq!(stage(&goose_attack), ("hold_until_stopped", None));
+                assert_eq!(goose_attack.test_plan.steps.len(), 2);
+                assert_eq!(goose_attack.configuration.run_time_secs(), 0);
+
+                // Cleared with a ramp down configured: refused.
+                let (mut goose_attack, mut run_state) = ramp_attack(&[
+                    "--users",
+                    "10",
+                    "--increase-rate",
+                    "10",
+                    "--run-time",
+                    "60",
+                    "--decrease-rate",
+                    "5",
+                ])
+                .await;
+                run_users_ramp(&mut goose_attack, &mut run_state, 10);
+                goose_attack.advance_test_plan(&mut run_state);
+                let steps = goose_attack.test_plan.steps.clone();
+                let refused = set_run_time(&mut goose_attack, &mut run_state, 0, dashboard).await;
+                assert_eq!(refused.error, Some("conflicting_settings"), "{:?}", refused);
+                assert_eq!(refused.field, Some("run_time"));
+                assert_eq!(goose_attack.test_plan.steps, steps);
+                assert_eq!(goose_attack.configuration.run_time_secs(), 60);
+                assert_eq!(stage(&goose_attack), ("hold", Some(60)));
+            }
+        });
+    }
+
+    /// Run time on a run holding until stopped holds from now for the new
+    /// run time, then ramps down as configured, or stops all users at once.
+    #[test]
+    #[serial_test::serial]
+    fn test_run_time_holding_until_stopped() {
+        finishes(|| async {
+            for dashboard in run_time_front_ends() {
+                for (decrease_rate, ramp_down) in [(None, 0), (Some("5"), 2_000)] {
+                    let (mut goose_attack, mut run_state) =
+                        ramp_attack(&["--users", "10", "--increase-rate", "5"]).await;
+                    run_users_ramp(&mut goose_attack, &mut run_state, 10);
+                    goose_attack.advance_test_plan(&mut run_state);
+                    assert_eq!(stage(&goose_attack), ("hold_until_stopped", None));
+                    if let Some(rate) = decrease_rate {
+                        let line = format!("decreaserate {rate}");
+                        assert!(control(&mut goose_attack, &mut run_state, &line).await);
+                        assert_eq!(stage(&goose_attack), ("hold_until_stopped", None));
+                    }
+                    let set = set_run_time(&mut goose_attack, &mut run_state, 30, dashboard).await;
+                    assert!(set.ok, "{:?}", set);
+                    assert_eq!(
+                        goose_attack.test_plan.steps,
+                        [(10, 2_000), (10, 30_000), (0, ramp_down)]
+                    );
+                    assert_eq!(goose_attack.test_plan.current, 1);
+                    assert_eq!(stage(&goose_attack), ("hold", Some(30)));
+                    // The hold runs; then the ramp down.
+                    goose_attack.maintain_attack(&mut run_state).await.unwrap();
+                    assert_eq!(goose_attack.attack_phase, AttackPhase::Maintain);
+                    goose_attack.advance_test_plan(&mut run_state);
+                    assert_eq!(stage(&goose_attack), ("ramping_down", None));
+                }
+            }
+        });
+    }
+
+    /// Where a settings test runs.
+    #[cfg(feature = "dashboard")]
+    #[derive(Clone, Copy, Debug)]
+    enum Phase {
+        Idle,
+        UsersRamp,
+        TestPlan,
+        RampingDown,
+        Stopping,
+    }
+
+    /// A load test in `phase`, configured as a users ramp of 10 users with a
+    /// run time and a ramp down, or running a test plan.
+    #[cfg(feature = "dashboard")]
+    async fn in_phase(phase: Phase) -> (GooseAttack, GooseAttackRunState) {
+        let (mut goose_attack, mut run_state) = ramp_attack(&[
+            "--users",
+            "10",
+            "--increase-rate",
+            "10",
+            "--run-time",
+            "60",
+            "--decrease-rate",
+            "5",
+        ])
+        .await;
+        match phase {
+            Phase::Idle => {}
+            Phase::UsersRamp => {
+                run_users_ramp(&mut goose_attack, &mut run_state, 10);
+                goose_attack.advance_test_plan(&mut run_state);
+            }
+            Phase::TestPlan => {
+                let plan = TestPlan::parse("10,1s;10,1m;0,1s").unwrap();
+                let configuration = &mut goose_attack.configuration;
+                configuration.users = None;
+                configuration.increase_rate = None;
+                configuration.decrease_rate = None;
+                configuration.run_time = None;
+                configuration.test_plan = Some(plan.clone());
+                goose_attack.test_plan = plan;
+                goose_attack.set_attack_phase(&mut run_state, AttackPhase::Increase);
+                goose_attack.step_started = Some(std::time::Instant::now());
+                run_state.active_users = 10;
+            }
+            Phase::RampingDown => {
+                run_users_ramp(&mut goose_attack, &mut run_state, 10);
+                goose_attack.advance_test_plan(&mut run_state);
+                goose_attack.advance_test_plan(&mut run_state);
+            }
+            Phase::Stopping => {
+                run_users_ramp(&mut goose_attack, &mut run_state, 10);
+                goose_attack.cancel_attack(&mut run_state).await.unwrap();
+            }
+        }
+        (goose_attack, run_state)
+    }
+
+    /// Each setting is accepted or refused by phase: host and the ramp
+    /// times only in Idle; the rates and run time also on a running users
+    /// ramp; a test plan in every phase but stopping; users with other
+    /// settings only in Idle, and on its own also on a running users ramp
+    /// and during its ramp down. A refusal is `invalid_phase` naming the
+    /// setting, set or cleared, and changes nothing.
+    #[cfg(feature = "dashboard")]
+    #[test]
+    #[serial_test::serial]
+    fn test_settings_phase_table() {
+        finishes(|| async {
+            let cells = [
+                ("host", r#"{"host":"http://127.0.0.2"}"#, r#"{"host":null}"#),
+                ("users", r#"{"users":5}"#, ""),
+                (
+                    "increase_rate",
+                    r#"{"increase_rate":2}"#,
+                    r#"{"increase_rate":null}"#,
+                ),
+                (
+                    "increase_time",
+                    r#"{"increase_time_secs":5}"#,
+                    r#"{"increase_time_secs":null}"#,
+                ),
+                (
+                    "decrease_rate",
+                    r#"{"decrease_rate":2}"#,
+                    r#"{"decrease_rate":null}"#,
+                ),
+                (
+                    "decrease_time",
+                    r#"{"decrease_time_secs":5}"#,
+                    r#"{"decrease_time_secs":null}"#,
+                ),
+                (
+                    "run_time",
+                    r#"{"run_time_secs":30}"#,
+                    r#"{"run_time_secs":null}"#,
+                ),
+                ("test_plan", r#"{"test_plan":"5,1s;0,1s"}"#, ""),
+            ];
+            for (phase, accepted, users) in [
+                (Phase::Idle, [true; 8], true),
+                (
+                    Phase::UsersRamp,
+                    [false, false, true, false, true, false, true, true],
+                    true,
+                ),
+                (
+                    Phase::TestPlan,
+                    [false, false, false, false, false, false, false, true],
+                    false,
+                ),
+                (
+                    Phase::RampingDown,
+                    [false, false, false, false, false, false, false, true],
+                    true,
+                ),
+                (Phase::Stopping, [false; 8], false),
+            ] {
+                for ((field, set, clear), accepted) in cells.iter().zip(accepted) {
+                    let (mut goose_attack, mut run_state) = in_phase(phase).await;
+                    let configuration = format!("{:?}", goose_attack.configuration);
+                    let outcome = settings(&mut goose_attack, &mut run_state, set, false).await;
+                    assert_eq!(
+                        outcome.ok, accepted,
+                        "{} in {:?}: {:?}",
+                        set, phase, outcome
+                    );
+                    if accepted {
+                        assert!(outcome.settings.is_some(), "{} in {:?}", set, phase);
+                        continue;
+                    }
+                    assert_eq!(
+                        outcome.error,
+                        Some("invalid_phase"),
+                        "{} in {:?}",
+                        set,
+                        phase
+                    );
+                    assert_eq!(outcome.field, Some(*field), "{} in {:?}", set, phase);
+                    assert_eq!(format!("{:?}", goose_attack.configuration), configuration);
+                    if !clear.is_empty() {
+                        let outcome =
+                            settings(&mut goose_attack, &mut run_state, clear, false).await;
+                        assert_eq!(
+                            outcome.error,
+                            Some("invalid_phase"),
+                            "{} in {:?}",
+                            clear,
+                            phase
+                        );
+                        assert_eq!(outcome.field, Some(*field), "{} in {:?}", clear, phase);
+                        assert_eq!(format!("{:?}", goose_attack.configuration), configuration);
+                    }
+                }
+                // Users on its own, as the Target row sends it.
+                let (mut goose_attack, mut run_state) = in_phase(phase).await;
+                let outcome = outcome(&mut goose_attack, &mut run_state, "users 8").await;
+                assert_eq!(outcome.ok, users, "users in {:?}: {:?}", phase, outcome);
+            }
+        });
+    }
+
+    /// A field left out is left alone and `null` clears it, back to Goose's
+    /// default; several settings apply together.
+    #[cfg(feature = "dashboard")]
+    #[test]
+    #[serial_test::serial]
+    fn test_settings_absent_and_null() {
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) = in_phase(Phase::Idle).await;
+            let cleared = settings(
+                &mut goose_attack,
+                &mut run_state,
+                r#"{"increase_rate":null}"#,
+                false,
+            )
+            .await;
+            assert!(cleared.ok, "{:?}", cleared);
+            assert_eq!(cleared.message, "increase_rate cleared");
+            let configuration = &goose_attack.configuration;
+            assert_eq!(configuration.increase_rate, None);
+            assert_eq!(configuration.decrease_rate.as_deref(), Some("5"));
+            assert_eq!(configuration.run_time_secs(), 60);
+            assert_eq!(configuration.host.as_deref(), Some("http://127.0.0.1"));
+
+            let applied = settings(
+                &mut goose_attack,
+                &mut run_state,
+                r#"{"host":"http://127.0.0.2","increase_time_secs":5,"decrease_rate":null,"run_time_secs":null}"#,
+                false,
+            )
+            .await;
+            assert!(applied.ok, "{:?}", applied);
+            assert_eq!(applied.message, "settings configured");
+            let configuration = &goose_attack.configuration;
+            assert_eq!(configuration.host.as_deref(), Some("http://127.0.0.2"));
+            assert_eq!(configuration.increase_time_secs(), 5);
+            assert_eq!(configuration.decrease_rate, None);
+            assert_eq!(configuration.run_time, None);
+            assert_eq!(configuration.users, Some(10));
+            let reply = applied.settings.expect("settings in the reply");
+            assert_eq!(reply.host.as_deref(), Some("http://127.0.0.2"));
+            assert_eq!(reply.increase_time_secs, Some(5));
+            assert_eq!(reply.run_time_secs, None);
+
+            // A test plan switches modes, clearing users and the ramp; users
+            // switches back, clearing the test plan.
+            let plan = settings(
+                &mut goose_attack,
+                &mut run_state,
+                r#"{"test_plan":"4,5s;0,5s","increase_time_secs":null}"#,
+                false,
+            )
+            .await;
+            assert!(plan.ok, "{:?}", plan);
+            assert_eq!(goose_attack.configuration.users, None);
+            assert_eq!(goose_attack.configuration.increase_time, None);
+            assert!(goose_attack.configuration.test_plan.is_some());
+            let users = settings(
+                &mut goose_attack,
+                &mut run_state,
+                r#"{"users":3,"test_plan":null,"increase_rate":4}"#,
+                false,
+            )
+            .await;
+            assert!(users.ok, "{:?}", users);
+            assert_eq!(users.target_users, Some(3));
+            assert!(goose_attack.configuration.test_plan.is_none());
+            assert_eq!(goose_attack.configuration.users, Some(3));
+            assert_eq!(
+                goose_attack.configuration.increase_rate.as_deref(),
+                Some("4")
+            );
+        });
+    }
+
+    /// The refusals that depend on the state, each with its code and the
+    /// setting it names, checked in order, leaving everything as it was.
+    #[cfg(feature = "dashboard")]
+    #[test]
+    #[serial_test::serial]
+    fn test_settings_refusals() {
+        finishes(|| async {
+            async fn refused(args: &[&str], running: bool, body: &str, error: &str, field: &str) {
+                let (mut goose_attack, mut run_state) = ramp_attack(args).await;
+                if running {
+                    run_users_ramp(&mut goose_attack, &mut run_state, 10);
+                    goose_attack.advance_test_plan(&mut run_state);
+                }
+                let configuration = format!("{:?}", goose_attack.configuration);
+                let steps = goose_attack.test_plan.steps.clone();
+                let outcome = settings(&mut goose_attack, &mut run_state, body, false).await;
+                assert!(!outcome.ok, "{}: {:?}", body, outcome);
+                assert_eq!(outcome.error, Some(error), "{}: {:?}", body, outcome);
+                assert_eq!(outcome.field, Some(field), "{}: {:?}", body, outcome);
+                assert_eq!(
+                    format!("{:?}", goose_attack.configuration),
+                    configuration,
+                    "{}",
+                    body
+                );
+                assert_eq!(goose_attack.test_plan.steps, steps, "{}", body);
+            }
+            let plan = &["--test-plan", "5,1s;0,1s"][..];
+            let ramp = &["--users", "10", "--run-time", "60", "--decrease-rate", "5"][..];
+            let timed = &["--users", "10", "--increase-time", "5", "--run-time", "60"][..];
+            for (args, running, body, error, field) in [
+                // The phase comes first.
+                (
+                    timed,
+                    true,
+                    r#"{"host":"http://127.0.0.2","increase_rate":2}"#,
+                    "invalid_phase",
+                    "host",
+                ),
+                // A ramp setting while a test plan is configured.
+                (
+                    plan,
+                    false,
+                    r#"{"increase_rate":2}"#,
+                    "conflicting_settings",
+                    "users",
+                ),
+                (
+                    plan,
+                    false,
+                    r#"{"run_time_secs":10,"host":"http://127.0.0.2"}"#,
+                    "conflicting_settings",
+                    "users",
+                ),
+                // A rate on a running test while its own time is set.
+                (
+                    timed,
+                    true,
+                    r#"{"increase_rate":2}"#,
+                    "conflicting_settings",
+                    "increase_rate",
+                ),
+                // Clearing what a running test started with.
+                (
+                    ramp,
+                    true,
+                    r#"{"decrease_rate":null}"#,
+                    "conflicting_settings",
+                    "decrease_rate",
+                ),
+                (
+                    ramp,
+                    true,
+                    r#"{"run_time_secs":null}"#,
+                    "conflicting_settings",
+                    "run_time",
+                ),
+                // The command line's cross field rules.
+                (
+                    &["--users", "2", "--iterations", "1"],
+                    false,
+                    r#"{"run_time_secs":10}"#,
+                    "conflicting_settings",
+                    "run_time",
+                ),
+                (
+                    &["--users", "2", "--iterations", "1"],
+                    false,
+                    r#"{"test_plan":"2,1s"}"#,
+                    "conflicting_settings",
+                    "test_plan",
+                ),
+                (
+                    &["--users", "2", "--no-reset-metrics"],
+                    false,
+                    r#"{"test_plan":"2,1s"}"#,
+                    "conflicting_settings",
+                    "test_plan",
+                ),
+                (
+                    &["--users", "1"],
+                    false,
+                    r#"{"increase_time_secs":5}"#,
+                    "conflicting_settings",
+                    "increase_time",
+                ),
+                (
+                    &["--users", "5", "--decrease-time", "5"],
+                    false,
+                    r#"{"users":1}"#,
+                    "conflicting_settings",
+                    "users",
+                ),
+                // Clearing the only host.
+                (ramp, false, r#"{"host":null}"#, "no_host", "host"),
+            ] {
+                refused(args, running, body, error, field).await;
+            }
+
+            // Accepted: a time cleared with the users that would refuse it, and
+            // a test plan with its ramp settings cleared in test plan mode.
+            for (args, body) in [
+                (
+                    &["--users", "5", "--decrease-time", "5"][..],
+                    r#"{"users":1,"decrease_time_secs":null}"#,
+                ),
+                (plan, r#"{"increase_time_secs":null}"#),
+                (plan, r#"{"test_plan":"3,1s","run_time_secs":null}"#),
+            ] {
+                let (mut goose_attack, mut run_state) = ramp_attack(args).await;
+                let outcome = settings(&mut goose_attack, &mut run_state, body, false).await;
+                assert!(outcome.ok, "{}: {:?}", body, outcome);
+            }
+        });
+    }
+
+    /// A decrease rate set on a run that would stop all users at once adds
+    /// a ramp down, and clearing it stops them all at once again; clearing
+    /// it with the run time leaves the run holding until stopped.
+    #[cfg(feature = "dashboard")]
+    #[test]
+    #[serial_test::serial]
+    fn test_settings_added_ramp_down_cleared() {
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) =
+                ramp_attack(&["--users", "10", "--increase-rate", "10", "--run-time", "60"]).await;
+            run_users_ramp(&mut goose_attack, &mut run_state, 10);
+            goose_attack.advance_test_plan(&mut run_state);
+            assert_eq!(goose_attack.test_plan.steps[2], (0, 0));
+            let body = r#"{"decrease_rate":2}"#;
+            assert!(
+                settings(&mut goose_attack, &mut run_state, body, false)
+                    .await
+                    .ok
+            );
+            assert_eq!(goose_attack.test_plan.steps[2], (0, 5_000));
+            let body = r#"{"run_time_secs":null}"#;
+            let refused = settings(&mut goose_attack, &mut run_state, body, false).await;
+            assert_eq!(refused.field, Some("run_time"));
+            let body = r#"{"decrease_rate":null}"#;
+            assert!(
+                settings(&mut goose_attack, &mut run_state, body, false)
+                    .await
+                    .ok
+            );
+            assert_eq!(goose_attack.test_plan.steps[2], (0, 0));
+            assert_eq!(goose_attack.configuration.decrease_rate, None);
+
+            let body = r#"{"decrease_rate":2}"#;
+            assert!(
+                settings(&mut goose_attack, &mut run_state, body, false)
+                    .await
+                    .ok
+            );
+            let body = r#"{"decrease_rate":null,"run_time_secs":null}"#;
+            let cleared = settings(&mut goose_attack, &mut run_state, body, false).await;
+            assert!(cleared.ok, "{:?}", cleared);
+            assert_eq!(stage(&goose_attack), ("hold_until_stopped", None));
+            assert_eq!(goose_attack.test_plan.steps.len(), 2);
+        });
+    }
+
+    /// Settings with a Start are refused unless idle, as a Start is.
+    #[cfg(feature = "dashboard")]
+    #[test]
+    #[serial_test::serial]
+    fn test_start_with_settings_refused_unless_idle() {
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) = in_phase(Phase::UsersRamp).await;
+            let configuration = format!("{:?}", goose_attack.configuration);
+            let body = r#"{"increase_rate":2}"#;
+            let outcome = settings(&mut goose_attack, &mut run_state, body, true).await;
+            assert_eq!(outcome.error, Some("invalid_phase"));
+            assert_eq!(outcome.message, "unable to start load test, it is not idle");
+            assert_eq!(format!("{:?}", goose_attack.configuration), configuration);
+        });
+    }
+
     /// Read from a telnet Controller until its prompt.
     async fn telnet_reply(client: &mut TcpStream) -> String {
         let mut text = Vec::new();
@@ -2902,6 +3955,8 @@ pub(crate) mod tests {
             active_users: 0,
             target_users: Some(5),
             field: None,
+            #[cfg(feature = "dashboard")]
+            settings: None,
         }));
         assert_eq!(telnet_reply(&mut client).await, "users configured\ngoose> ");
     }
