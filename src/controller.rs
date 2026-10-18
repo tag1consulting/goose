@@ -954,7 +954,7 @@ impl GooseAttack {
                 match field {
                     "host" => Some("failed to reconfigure host, load test is not idle".to_string()),
                     "users" => Some(
-                        "failed to configure users, a running load test changes users only on its own"
+                        "failed to configure users, a running load test changes users only through the users command"
                             .to_string(),
                     ),
                     "increase_time" | "decrease_time" => {
@@ -3732,6 +3732,12 @@ pub(crate) mod tests {
                         phase
                     );
                     assert_eq!(outcome.field, Some(*field), "{} in {:?}", set, phase);
+                    if *field == "users" && matches!(phase, Phase::UsersRamp) {
+                        assert_eq!(
+                            outcome.message,
+                            "failed to configure users, a running load test changes users only through the users command"
+                        );
+                    }
                     assert_eq!(format!("{:?}", goose_attack.configuration), configuration);
                     if !clear.is_empty() {
                         let outcome =
