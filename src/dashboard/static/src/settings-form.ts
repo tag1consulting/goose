@@ -8,6 +8,7 @@ import { optionalElement } from "./dom";
 import {
   addDescribedBy,
   FollowedField,
+  FollowedValue,
   removeDescribedBy,
   setReadOnly,
 } from "./follow";
@@ -60,55 +61,99 @@ interface RowElements {
   help: HTMLElement | null;
 }
 
-/** A number and its unit, followed as two fields and counted as one edit. */
-class Pair {
-  readonly number: FollowedField;
-  readonly unit: FollowedField;
+/** A pair's value: its number's text and its unit, as `"10 min"`. */
+function pairValue(number: string, unit: string): string {
+  return number + " " + unit;
+}
+
+/** The number's text and the unit of a pair's value. */
+function pairParts(value: string): [string, string] {
+  const at = value.lastIndexOf(" ");
+  return [value.slice(0, at), value.slice(at + 1)];
+}
+
+/**
+ * The quantity a pair's value sets, so values the server writes another way
+ * compare equal: a time in seconds, whatever its unit, and a rate as the
+ * `f32` the server keeps; empty for none, whatever the unit, and the text
+ * itself when it is not a number.
+ */
+function quantity(value: string): string {
+  const [number, unit] = pairParts(value);
+  const n = numberOf(number);
+  if (n === null) return "";
+  if (isNaN(n)) return value;
+  return unit === "rate" ? "rate " + Math.fround(n) : "s " + seconds(n, unit);
+}
+
+/**
+ * A number and its unit, followed as one setting: what the server has is a
+ * quantity, which it shows in its own unit, so the two are compared, shown
+ * and edited together. The unit select puts back a change while it says it
+ * is unavailable, as a FollowedField select does.
+ */
+class Pair extends FollowedValue {
+  /** The unit the select last showed. */
+  private shownUnit: string;
 
   constructor(
     readonly els: RowElements,
-    readonly label: string,
-    private readonly note: (text: string) => void
+    label: string,
+    note: (text: string) => void
   ) {
-    const quiet = (): void => {};
-    this.number = new FollowedField(els.number, label, note);
-    this.unit = new FollowedField(els.unit, label + " unit", quiet);
-  }
-
-  pending(): boolean {
-    return this.number.pending() || this.unit.pending();
-  }
-
-  fromServer(number: string, unit: Unit): void {
-    this.unit.fromServer(unit);
-    this.number.fromServer(number);
-  }
-
-  /** Discard an edit, saying why once. */
-  discard(reason: string): void {
-    if (!this.pending()) return;
-    this.revert();
-    this.note(reason + "; unapplied " + this.label + " edit discarded");
-  }
-
-  revert(): void {
-    this.number.revert();
-    this.unit.revert();
-  }
-
-  sending(): void {
-    this.number.sending(this.number.text());
-    this.unit.sending(this.unit.text());
-  }
-
-  settled(ok: boolean, number: string, unit: string): void {
-    if (ok) {
-      this.number.accepted(number);
-      this.unit.accepted(unit);
-    } else {
-      this.number.refused(number);
-      this.unit.refused(unit);
+    super(label, note, (a, b) => quantity(a) === quantity(b));
+    this.shownUnit = els.unit.value;
+    els.number.addEventListener("input", () => {
+      this.edited(this.value());
+    });
+    els.unit.addEventListener("change", () => {
+      if (els.unit.getAttribute("aria-disabled") === "true") {
+        els.unit.value = this.shownUnit;
+        return;
+      }
+      this.edited(this.value());
+    });
+    for (const el of [els.number, els.unit]) {
+      el.addEventListener("blur", () => {
+        this.blurred();
+      });
     }
+  }
+
+  /** The number and unit the row shows, as one value. */
+  value(): string {
+    return pairValue(this.els.number.value, this.els.unit.value);
+  }
+
+  numberText(): string {
+    return this.els.number.value;
+  }
+
+  unitText(): string {
+    return this.els.unit.value;
+  }
+
+  /** Whether an unapplied edit changes the unit from the server's. */
+  unitEdited(): boolean {
+    return this.pending() && this.server !== null && pairParts(this.server)[1] !== this.unitText();
+  }
+
+  /** The server's number and unit. */
+  fromServerParts(number: string, unit: Unit): void {
+    this.fromServer(pairValue(number, unit));
+  }
+
+  protected show(text: string): void {
+    const [number, unit] = pairParts(text);
+    this.shownUnit = unit;
+    if (this.els.number.value !== number) this.els.number.value = number;
+    if (this.els.unit.value !== unit) this.els.unit.value = unit;
+  }
+
+  protected describe(value: string): string {
+    const [number, unit] = pairParts(value);
+    if (number.trim() === "") return "none";
+    return number + " " + (unit === "rate" ? "users per second" : unit);
   }
 }
 
@@ -194,7 +239,7 @@ export class SettingsForm {
   private editable: Editable = NONE;
   private opened = false;
   /** The values in flight, so the reply settles exactly what was sent. */
-  private sent: { host?: string; up?: [string, string]; down?: [string, string]; run?: [string, string] } = {};
+  private sent: { host?: string; up?: string; down?: string; run?: string } = {};
 
   private constructor(
     private readonly details: HTMLDetailsElement,
@@ -209,7 +254,8 @@ export class SettingsForm {
     onChange: () => void,
     note: (text: string) => void
   ) {
-    this.host = new FollowedField(hostInput, "Host", note);
+    // The server keeps the host as sent, which is trimmed.
+    this.host = new FollowedField(hostInput, "Host", note, (a, b) => a.trim() === b.trim());
     this.up = new Pair(upEls, "Ramp up", note);
     this.down = new Pair(downEls, "Ramp down", note);
     this.run = new Pair(runEls, "Run time", note);
@@ -283,8 +329,8 @@ export class SettingsForm {
     const idle = this.stage === "idle";
     const ramp = (pair: Pair, rate: "increase_rate" | "decrease_rate", time: "increase_time_secs" | "decrease_time_secs"): void => {
       if (!pair.pending()) return;
-      const n = numberOf(pair.number.text());
-      const unit = pair.unit.text();
+      const n = numberOf(pair.numberText());
+      const unit = pair.unitText();
       if (!idle) {
         body[rate] = n;
         return;
@@ -303,8 +349,8 @@ export class SettingsForm {
     ramp(this.up, "increase_rate", "increase_time_secs");
     ramp(this.down, "decrease_rate", "decrease_time_secs");
     if (this.run.pending()) {
-      const n = numberOf(this.run.number.text());
-      body.run_time_secs = n === null ? null : seconds(n, this.run.unit.text());
+      const n = numberOf(this.run.numberText());
+      body.run_time_secs = n === null ? null : seconds(n, this.run.unitText());
     }
     return body;
   }
@@ -334,8 +380,9 @@ export class SettingsForm {
     ];
     for (const [key, pair] of pairs) {
       if (!pair.pending()) continue;
-      this.sent[key] = [pair.number.text(), pair.unit.text()];
-      pair.sending();
+      const value = pair.value();
+      this.sent[key] = value;
+      pair.sending(value);
     }
   }
 
@@ -347,13 +394,15 @@ export class SettingsForm {
       if (ok) this.host.accepted(sent.host);
       else this.host.refused(sent.host);
     }
-    const pairs: [[string, string] | undefined, Pair][] = [
+    const pairs: [string | undefined, Pair][] = [
       [sent.up, this.up],
       [sent.down, this.down],
       [sent.run, this.run],
     ];
-    for (const [values, pair] of pairs) {
-      if (values) pair.settled(ok, values[0], values[1]);
+    for (const [value, pair] of pairs) {
+      if (value === undefined) continue;
+      if (ok) pair.accepted(value);
+      else pair.refused(value);
     }
     // The reply's settings for what was not sent, such as a time a rate
     // cleared; what was sent waits for a snapshot to report it, so one from
@@ -425,8 +474,8 @@ export class SettingsForm {
       const reason = stageChange(settings.stage);
       if (before.host && !now.host) this.host.discard(reason);
       const pairs: [Pair, boolean, boolean, boolean, boolean][] = [
-        [this.up, before.up, now.up, now.upUnit, this.up.unit.pending()],
-        [this.down, before.down, now.down, now.downUnit, this.down.unit.pending()],
+        [this.up, before.up, now.up, now.upUnit, this.up.unitEdited()],
+        [this.down, before.down, now.down, now.downUnit, this.down.unitEdited()],
         [this.run, before.run, now.run, true, false],
       ];
       for (const [pair, was, is, unit, unitEdit] of pairs) {
@@ -443,12 +492,12 @@ export class SettingsForm {
     this.settings = settings;
     if (skip.host === undefined) this.host.fromServer(settings.host || "");
     const [up, upUnit] = rampServer(settings.increase_rate, settings.increase_time_secs);
-    if (skip.up === undefined) this.up.fromServer(up, upUnit);
+    if (skip.up === undefined) this.up.fromServerParts(up, upUnit);
     const [down, downUnit] = rampServer(settings.decrease_rate, settings.decrease_time_secs);
-    if (skip.down === undefined) this.down.fromServer(down, downUnit);
+    if (skip.down === undefined) this.down.fromServerParts(down, downUnit);
     const [run, runUnit] =
-      settings.run_time_secs == null ? ["", this.run.unit.text() as Unit] : timeParts(settings.run_time_secs);
-    if (skip.run === undefined) this.run.fromServer(run, runUnit === "rate" ? "s" : runUnit);
+      settings.run_time_secs == null ? ["", this.run.unitText() as Unit] : timeParts(settings.run_time_secs);
+    if (skip.run === undefined) this.run.fromServerParts(run, runUnit === "rate" ? "s" : runUnit);
   }
 
   /** Read only states, reasons, help, placeholders and the disclosure's
@@ -480,7 +529,7 @@ export class SettingsForm {
     const running = this.stage !== "idle";
     for (const pair of [this.up, this.down]) {
       for (const option of Array.from(pair.els.unit.options)) {
-        option.hidden = running && option.value !== "rate" && pair.unit.text() === "rate";
+        option.hidden = running && option.value !== "rate" && pair.unitText() === "rate";
       }
     }
 
@@ -510,7 +559,7 @@ export class SettingsForm {
 
     // Run time help: what it is, and what empty means with the form's ramp down.
     if (this.run.els.help) {
-      const downSet = this.down.number.text().trim() !== "";
+      const downSet = this.down.numberText().trim() !== "";
       const parts = ["Time at full users after the ramp up, not total time."];
       parts.push(
         downSet

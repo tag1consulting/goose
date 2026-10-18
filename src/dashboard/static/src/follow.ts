@@ -13,58 +13,59 @@
 /** A text or number input, or a select: the fields that follow the server. */
 export type FollowedElement = HTMLInputElement | HTMLSelectElement;
 
+/** Whether two values of a followed setting are the same setting. */
+export type Same = (a: string, b: string) => boolean;
+
 /**
- * One input or select that follows a server value. Values are compared as
- * text. A select has no read only state, so while it says it is unavailable
- * (`aria-disabled`) a change puts back the value it showed.
+ * A value that follows the server unless being edited, as text, wherever it
+ * is shown: one input or select (FollowedField), or a number and its unit
+ * followed as one setting. Values are compared with `same`, so text the
+ * server writes another way than the user typed it is still what was sent.
  */
-export class FollowedField {
+export abstract class FollowedValue {
   /** The server's value as of the last snapshot or accepted reply. */
-  private server: string | null = null;
+  protected server: string | null = null;
   /** The server's value before this tab's first unconfirmed change. */
   private baseline: string | null = null;
   /** The user's unapplied text, or null while following the server. */
   private edit: string | null = null;
   /** Values this tab sent that no snapshot has reported yet, oldest first. */
   private awaiting: string[] = [];
-  /** The value the field last showed, which a refused select change keeps. */
-  private shown = "";
 
   /**
-   * @param input the field
    * @param label its name in notes, such as "Target"
    * @param note says something once through the status line
+   * @param same whether two values are the same setting; equal text by default
    */
   constructor(
-    private readonly input: FollowedElement,
-    private readonly label: string,
-    private readonly note: (text: string) => void
-  ) {
-    this.shown = input.value;
-    const select = input instanceof HTMLSelectElement;
-    input.addEventListener(select ? "change" : "input", () => {
-      if (select && input.getAttribute("aria-disabled") === "true") {
-        input.value = this.shown;
-        return;
-      }
-      this.edited(input.value);
-    });
-    input.addEventListener("blur", () => {
-      // Typing the server's own value back is not an edit.
-      if (this.edit !== null && this.awaiting.length === 0 && this.edit === this.server) {
-        this.edit = null;
-      }
-    });
+    protected readonly label: string,
+    private readonly note: (text: string) => void,
+    private readonly same: Same = (a, b) => a === b
+  ) {}
+
+  /** Show `text`. */
+  protected abstract show(text: string): void;
+
+  /** `value` as a note names it. */
+  protected describe(value: string): string {
+    return value === "" ? "none" : value;
+  }
+
+  /** Focus left the field: typing the server's own value back is not an edit. */
+  protected blurred(): void {
+    if (
+      this.edit !== null &&
+      this.awaiting.length === 0 &&
+      this.server !== null &&
+      this.same(this.edit, this.server)
+    ) {
+      this.edit = null;
+    }
   }
 
   /** Whether the user has an unapplied edit. */
   pending(): boolean {
     return this.edit !== null;
-  }
-
-  /** The value the field shows. */
-  text(): string {
-    return this.input.value;
   }
 
   /** The user (or a button acting for them) set the field to `text`. */
@@ -116,19 +117,19 @@ export class FollowedField {
   fromServer(value: string | null): void {
     if (value === null) return;
     this.server = value;
+    const same = (other: string | null): boolean => other !== null && this.same(other, value);
     if (this.awaiting.length > 0) {
-      const latest = this.awaiting[this.awaiting.length - 1];
-      if (value === latest) {
+      if (same(this.awaiting[this.awaiting.length - 1])) {
         this.awaiting = [];
         this.baseline = value;
-        if (this.edit === null || this.edit === value) {
+        if (this.edit === null || same(this.edit)) {
           this.edit = null;
           this.show(value);
         }
         return;
       }
       // A snapshot from before this tab's change reached the server.
-      if (value === this.baseline || this.awaiting.indexOf(value) >= 0) return;
+      if (same(this.baseline) || this.awaiting.some(same)) return;
       this.awaiting = [];
       this.changedElsewhere(value);
       return;
@@ -136,29 +137,71 @@ export class FollowedField {
     if (this.edit !== null) {
       // The server has the user's own value, as when an apply timed out
       // but landed: the edit is done, not changed elsewhere.
-      if (value === this.edit) {
+      if (same(this.edit)) {
         this.edit = null;
         this.baseline = value;
         this.show(value);
         return;
       }
-      if (value !== this.baseline) this.changedElsewhere(value);
+      if (!same(this.baseline)) this.changedElsewhere(value);
       return;
     }
     this.baseline = value;
     this.show(value);
   }
 
-  private show(text: string): void {
-    this.shown = text;
-    if (this.input.value !== text) this.input.value = text;
-  }
-
   private changedElsewhere(value: string): void {
     this.edit = null;
     this.baseline = value;
     this.show(value);
-    this.note(this.label + " changed elsewhere to " + (value === "" ? "none" : value));
+    this.note(this.label + " changed elsewhere to " + this.describe(value));
+  }
+}
+
+/**
+ * One input or select that follows a server value. A select has no read
+ * only state, so while it says it is unavailable (`aria-disabled`) a change
+ * puts back the value it showed.
+ */
+export class FollowedField extends FollowedValue {
+  /** The value the field last showed, which a refused select change keeps. */
+  private shown = "";
+
+  /**
+   * @param input the field
+   * @param label its name in notes, such as "Target"
+   * @param note says something once through the status line
+   * @param same whether two values are the same setting; equal text by default
+   */
+  constructor(
+    private readonly input: FollowedElement,
+    label: string,
+    note: (text: string) => void,
+    same?: Same
+  ) {
+    super(label, note, same);
+    this.shown = input.value;
+    const select = input instanceof HTMLSelectElement;
+    input.addEventListener(select ? "change" : "input", () => {
+      if (select && input.getAttribute("aria-disabled") === "true") {
+        input.value = this.shown;
+        return;
+      }
+      this.edited(input.value);
+    });
+    input.addEventListener("blur", () => {
+      this.blurred();
+    });
+  }
+
+  /** The value the field shows. */
+  text(): string {
+    return this.input.value;
+  }
+
+  protected show(text: string): void {
+    this.shown = text;
+    if (this.input.value !== text) this.input.value = text;
   }
 }
 
