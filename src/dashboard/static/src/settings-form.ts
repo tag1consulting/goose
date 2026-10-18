@@ -282,8 +282,7 @@ export class SettingsForm {
     onChange: () => void,
     note: (text: string) => void
   ) {
-    // The server keeps the host as sent, which is trimmed.
-    this.host = new FollowedField(hostInput, "Host", note, (a, b) => a.trim() === b.trim());
+    this.host = new FollowedField(hostInput, "Host", note);
     this.up = new Pair(upEls, "Ramp up", note, "rate");
     this.down = new Pair(downEls, "Ramp down", note, "rate");
     this.run = new Pair(runEls, "Run time", note, null);
