@@ -531,7 +531,8 @@ export class SettingsForm {
         [this.run, values.run, before.run, now.run, true, false],
       ];
       for (const [pair, value, was, is, unit, unitEdit] of pairs) {
-        if (pair.editIs(value)) continue;
+        // Unreadable text reads as none too, so it is no such edit.
+        if (pair.editIs(value) && !pair.badNumber()) continue;
         if ((was && !is) || (unitEdit && !unit)) pair.discard(reason);
       }
     }

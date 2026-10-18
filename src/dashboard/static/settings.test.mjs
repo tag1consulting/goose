@@ -788,3 +788,17 @@ test("unreadable text fixed after another client's change is said to be overtake
   assert.equal(el(page, "set-up").value, "7");
   assert.equal(el(page, "ctrl-status").textContent, "Ramp up changed elsewhere to 7 users per second");
 });
+
+test("unreadable text in a row the server has none for is discarded when the stage can no longer take it", async () => {
+  const page = await acceptingPage("hold", { decrease_rate: null, decrease_time_secs: null, hold_ends_in_secs: 30 });
+  const input = el(page, "set-down");
+  const writes = [];
+  Object.defineProperty(input, "validity", { value: { badInput: true, valid: false } });
+  Object.defineProperty(input, "value", { get: () => "", set: (v) => writes.push(v), configurable: true });
+  input.dispatchEvent(new page.window.Event("input"));
+  assert.equal(label(page), "Edit settings (1 unapplied)");
+  await emit(page, snapshot("decrease", "ramping_down", page.server.settings));
+  assert.equal(el(page, "ctrl-status").textContent, "Ramp down started; unapplied Ramp down edit discarded");
+  assert.equal(label(page), "Edit settings");
+  assert.deepEqual(writes, [""], "the text goes");
+});
