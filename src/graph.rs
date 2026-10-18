@@ -860,6 +860,7 @@ impl LatencyRing {
         sink: &mut ColumnSink<'_>,
         mut add: impl FnMut(&mut SecondHistogram),
     ) {
+        let feeds = self.columns.is_some() || sink.all.is_some();
         let folded = match self.slot_mut(second, rev, sink) {
             Some(histogram) => {
                 add(histogram);
@@ -867,7 +868,7 @@ impl LatencyRing {
             }
             None => true,
         };
-        if folded {
+        if feeds && folded {
             sink.feed(self.columns.as_mut(), second, add);
         }
     }
@@ -1597,7 +1598,11 @@ impl LatencyHistograms {
     fn report_heatmap(&self, co_active: bool, started: DateTime<Utc>) -> Option<ReportHeatmap<'_>> {
         let all = self.all_columns.as_ref()?;
         let synthetic = self.synthetic.as_ref().filter(|_| co_active);
-        let synthetic_all = synthetic.and_then(|(all, _)| all.columns.as_ref());
+        // Columns with no synthetic time, as after a reset, offer no view.
+        let held = |columns: &&Columns| columns.columns.iter().any(|column| column.counter > 0);
+        let synthetic_all = synthetic
+            .and_then(|(all, _)| all.columns.as_ref())
+            .filter(held);
         let mut series = vec![ReportSeries {
             name: "All requests",
             width: self.all_width,
@@ -1612,7 +1617,8 @@ impl LatencyHistograms {
             };
             let added = synthetic
                 .and_then(|(_, by_request)| by_request.get(name))
-                .and_then(|ring| ring.columns.as_ref());
+                .and_then(|ring| ring.columns.as_ref())
+                .filter(held);
             series.push(ReportSeries {
                 name,
                 width: self.request_width,
@@ -1947,6 +1953,15 @@ impl GraphData {
                 .get(second)
                 .cloned(),
         }
+    }
+
+    /// GraphData keeping whole run columns with budgets of `all` columns for
+    /// all requests and `request` for each name (unit tests).
+    #[cfg(test)]
+    pub(crate) fn with_latency_budgets(all: usize, request: usize) -> Self {
+        let mut graph = GraphData::new();
+        graph.latency = Some(LatencyHistograms::with_budgets(false, all, request));
+        graph
     }
 
     /// The whole run columns of all requests (`key` `None`) or of `key`, as
@@ -6033,10 +6048,16 @@ mod test {
         for second in 0..700 {
             graph.record_request_per_second_and_latency("GET /a", second, Some(10));
         }
-        // Second 5 left the ring long ago; 650 is still in it.
+        // Second 305 takes slot 5 in the synthetic rings, so they refuse
+        // second 5, which goes to the columns directly.
+        graph.record_synthetic_latency("GET /a", 305, 1_000);
         graph.record_synthetic_latency("GET /a", 5, 2_000);
+        // Second 653 packs 650, so a later time for 650 is a late write.
         graph.record_synthetic_latency("GET /a", 650, 3_000);
-        // A name without a ring adds only to all requests.
+        graph.record_synthetic_latency("GET /a", 653, 1_000);
+        graph.record_synthetic_latency("GET /a", 650, 3_000);
+        // A name without a measured ring adds only to all requests.
+        graph.record_synthetic_latency("GET /none", 653, 1_000);
         graph.finish_latency_columns();
         let latency = latency(&graph);
         assert_eq!((latency.all_width, latency.request_width), (8, 16));
@@ -6049,8 +6070,9 @@ mod test {
                 .map(|(index, column)| (index, column.counter))
                 .collect()
         };
-        assert_eq!(counts(synthetic_all), [(0, 1), (650 / 8, 1)]);
-        assert_eq!(counts(synthetic_a), [(0, 1), (650 / 16, 1)]);
+        assert_eq!(counts(synthetic_all), [(0, 1), (305 / 8, 1), (650 / 8, 4)]);
+        assert_eq!(counts(synthetic_a), [(0, 1), (305 / 16, 1), (650 / 16, 3)]);
+        assert!(!by_request.contains_key("GET /none"));
         assert_eq!(synthetic_all.columns[0].maximum_time, 2_000);
         assert_eq!(synthetic_a.columns[650 / 16].maximum_time, 3_000);
 
@@ -6069,6 +6091,24 @@ mod test {
         assert_eq!(measured, 8);
         // Without mitigation events there is no adjusted view.
         let heatmap = latency.report_heatmap(false, Utc::now()).unwrap();
+        assert!(heatmap
+            .series
+            .iter()
+            .all(|series| series.adjusted.is_none()));
+    }
+
+    /// After a reset that cleared every synthetic time, no series offers
+    /// an Adjusted view, even with mitigation events recorded before it.
+    #[test]
+    fn no_adjusted_view_without_synthetic_times() {
+        let mut graph = column_graph(true, 600, 120);
+        graph.record_request_per_second_and_latency("GET /a", 1, Some(10));
+        graph.record_synthetic_latency("GET /a", 1, 900);
+        graph.reset_rate_series(5);
+        graph.record_request_per_second_and_latency("GET /a", 6, Some(10));
+        graph.finish_latency_columns();
+        let heatmap = latency(&graph).report_heatmap(true, Utc::now()).unwrap();
+        assert_eq!(heatmap.series.len(), 2);
         assert!(heatmap
             .series
             .iter()

@@ -5793,6 +5793,58 @@ mod tests {
         }
     }
 
+    /// Through the batch path, as users send them: after every batch the
+    /// report heatmap's columns stay within their budgets, widening as the
+    /// run goes on, and at the end they hold every request once, in the
+    /// column of the second it started (#746).
+    #[test]
+    fn batches_keep_the_columns_within_their_budgets() {
+        let configuration = GooseConfiguration::parse_args_default::<&str>(&[]).unwrap();
+        assert!(configuration.records_latency_columns());
+        // Only successes, so every time goes through the batches.
+        let mut requests = seeded_requests(746, 8, 40);
+        for request in requests.iter_mut() {
+            request.failed = false;
+        }
+        let mut processor = test_processor(&configuration);
+        *processor.graph_data_for_test() = crate::graph::GraphData::with_latency_budgets(4, 2);
+        for batch in batch_through_users(&configuration, 8, &requests) {
+            processor.process_batch_for_test(batch);
+            let graph = processor.graph_data_for_test();
+            for (key, budget) in [(None, 4), (Some("GET /p0"), 2)] {
+                if let Some((_, counts)) = graph.latency_columns_for_test(key) {
+                    assert!(
+                        counts.iter().all(|&(column, _)| column < budget),
+                        "{:?} {:?}",
+                        key,
+                        counts
+                    );
+                }
+            }
+        }
+        let graph = processor.graph_data_for_test();
+        graph.finish_latency_columns();
+        let (width, counts) = graph.latency_columns_for_test(None).unwrap();
+        let last = requests
+            .iter()
+            .map(|request| request.elapsed / 1000)
+            .max()
+            .unwrap() as usize;
+        assert!(
+            width > 1 && last / width < 4 && last / (width / 2) >= 4,
+            "width {} for second {}",
+            width,
+            last
+        );
+        let mut expected: std::collections::BTreeMap<usize, usize> = Default::default();
+        for request in &requests {
+            *expected
+                .entry(request.elapsed as usize / 1000 / width)
+                .or_default() += 1;
+        }
+        assert_eq!(counts, expected.into_iter().collect::<Vec<_>>());
+    }
+
     /// Whole run results (every request's aggregate, errors, and all requests
     /// together with their status codes) are the same with percentiles over
     /// time collected, with per second graphs but no percentiles, with no
