@@ -380,6 +380,10 @@ pub(crate) struct ControlOutcome {
     /// `increase_rate`, `increase_time`, `decrease_rate`, `decrease_time`,
     /// `run_time` or `test_plan`.
     pub field: Option<&'static str>,
+    /// The run settings after a dashboard settings command, applied or
+    /// not, so the page that sent it has them before the next snapshot.
+    #[cfg(feature = "dashboard")]
+    pub settings: Option<Box<metrics::dashboard_snapshot::SnapshotSettings>>,
 }
 
 impl ControlOutcome {
@@ -2561,6 +2565,8 @@ impl GooseAttack {
             active_users: goose_attack_run_state.active_users,
             target_users,
             field: None,
+            #[cfg(feature = "dashboard")]
+            settings: None,
         }
     }
 
@@ -2881,68 +2887,46 @@ impl GooseAttack {
         ))
     }
 
-    /// Replace the test plan (Controller `test-plan` command), already
-    /// bounded by the parser, and on a running load test switch to it.
+    /// Switch a running load test to `test_plan`, from its first step and
+    /// the current user count, replacing a users ramp and its shape.
     ///
-    /// Soft failure: `invalid_phase` as [`Self::refuse_reconfigure`] says.
-    /// Hard error: `weight_scenario_users` when running.
-    pub(crate) fn control_set_plan(
+    /// Hard error: `weight_scenario_users`.
+    pub(crate) fn run_test_plan(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
         test_plan: TestPlan,
-    ) -> Result<ControlOutcome, GooseError> {
-        if let Some(refused) = self.refuse_reconfigure(goose_attack_run_state, "test-plan") {
-            return Ok(refused.with_field("test_plan"));
+    ) -> Result<(), GooseError> {
+        self.run_shape = None;
+        self.test_plan = test_plan;
+        // Reallocate users.
+        self.weighted_users = self.weight_scenario_users(self.test_plan.total_users())?;
+        // Insert the current state of the test plan before the new test plan.
+        let elapsed = self.step_elapsed() as usize;
+        self.test_plan
+            .steps
+            .insert(0, (goose_attack_run_state.active_users, elapsed));
+        // Finally, advance to the next step to adjust user count.
+        self.advance_test_plan(goose_attack_run_state);
+        Ok(())
+    }
+
+    /// What would have no host with `configuration`: a `test_start` or
+    /// `test_stop` transaction, or a scenario, as a Start checks them but
+    /// without resolving a url.
+    pub(crate) fn without_host(&self, configuration: &GooseConfiguration) -> Option<String> {
+        if configuration.host().is_some() || self.defaults.host.is_some() {
+            return None;
         }
-        // The command line's rules, in every phase.
-        let conflict = if self.configuration.iterations() > 0 {
-            Some("failed to configure test-plan, it can not be set with --iterations")
-        } else if self.configuration.no_reset_metrics {
-            Some("failed to configure test-plan, it can not be set with --no-reset-metrics")
-        } else {
-            None
-        };
-        if let Some(message) = conflict {
-            return Ok(self
-                .control_outcome(
-                    goose_attack_run_state,
-                    false,
-                    Some("conflicting_settings"),
-                    message,
-                    None,
-                )
-                .with_field("test_plan"));
+        if self.test_start_transaction.is_some() {
+            return Some(format!("the {} transaction", HOST_TRANSACTIONS[0]));
         }
-        // Switch the configuration to use the test plan.
-        self.configuration.test_plan = Some(test_plan.clone());
-        self.configuration.users = None;
-        self.configuration.increase_rate = None;
-        self.configuration.increase_time = None;
-        self.configuration.decrease_rate = None;
-        self.configuration.decrease_time = None;
-        self.configuration.run_time = None;
-        // If the load test is running, rebuild the active test plan.
-        if self.attack_phase != AttackPhase::Idle {
-            // A test plan replaces a users ramp, and its shape.
-            self.run_shape = None;
-            self.test_plan = test_plan;
-            // Reallocate users.
-            self.weighted_users = self.weight_scenario_users(self.test_plan.total_users())?;
-            // Insert the current state of the test plan before the new test plan.
-            let elapsed = self.step_elapsed() as usize;
-            self.test_plan
-                .steps
-                .insert(0, (goose_attack_run_state.active_users, elapsed));
-            // Finally, advance to the next step to adjust user count.
-            self.advance_test_plan(goose_attack_run_state);
+        if self.test_stop_transaction.is_some() {
+            return Some(format!("the {} transaction", HOST_TRANSACTIONS[1]));
         }
-        Ok(self.control_outcome(
-            goose_attack_run_state,
-            true,
-            None,
-            "test-plan configured",
-            None,
-        ))
+        self.scenarios
+            .iter()
+            .find(|scenario| scenario.host.is_none())
+            .map(|scenario| format!("the {} scenario", scenario.name))
     }
 
     // Quickly abort and shut down an active [`GooseAttack`](./struct.GooseAttack.html).
@@ -3911,6 +3895,47 @@ mod tests {
         assert!(!controller::tests::control(&mut goose_attack, &mut run_state, "start").await);
         assert_eq!(goose_attack.snapshot_settings(&run_state), settings);
         assert_eq!(goose_attack.current_target_users(), target);
+        assert!(goose_attack.run_shape.is_none());
+    }
+
+    /// A Start with settings whose prepare fails puts every setting back:
+    /// the run settings, the target users and the configuration are as they
+    /// were, and no run shape is left.
+    #[cfg(feature = "dashboard")]
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_refused_start_with_settings_leaves_settings() {
+        async fn noop(_user: &mut GooseUser) -> crate::goose::TransactionResult {
+            Ok(())
+        }
+        let configuration = GooseConfiguration::parse_args_default(&[
+            "--no-telnet",
+            "--no-websocket",
+            "--no-save",
+            "--users",
+            "5",
+            "--increase-rate",
+            "2",
+        ])
+        .unwrap();
+        let mut goose_attack = GooseAttack::initialize_with_config(configuration)
+            .unwrap()
+            .register_scenario(scenario!("NoHost").register_transaction(transaction!(noop)));
+        let mut run_state = goose_attack.initialize_attack().await.unwrap();
+        let settings = goose_attack.snapshot_settings(&run_state);
+        let target = goose_attack.current_target_users();
+        let configuration = format!("{:?}", goose_attack.configuration);
+        let body = r#"{"users":8,"increase_time_secs":4,"run_time_secs":30,"decrease_rate":3}"#;
+        let refused =
+            controller::tests::settings(&mut goose_attack, &mut run_state, body, true).await;
+        assert!(!refused.ok);
+        assert_eq!(refused.error, Some("prepare_failed"));
+        assert_eq!(refused.field, Some("host"));
+        assert_eq!(refused.phase, "idle");
+        assert_eq!(goose_attack.snapshot_settings(&run_state), settings);
+        assert_eq!(refused.settings.as_deref(), Some(&settings));
+        assert_eq!(goose_attack.current_target_users(), target);
+        assert_eq!(format!("{:?}", goose_attack.configuration), configuration);
         assert!(goose_attack.run_shape.is_none());
     }
 

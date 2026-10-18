@@ -51,7 +51,10 @@ function fileResponse(status, body, filename) {
 // `controlBody` is the body a control answer other than 200 carries (default a
 // 503 style `busy`).
 // `controlDelayMs` (default 0) holds each control answer that long, so a test
-// can act while a request is in flight.
+// can act while a request is in flight. `controlAnswer(command, body)`, given
+// the command (the last path segment) and the parsed body, may return
+// `{ status, body }` to answer an authorized control request with, or
+// undefined for the default answer.
 //
 // Request heatmaps: `GET /api/v1/series` answers `seriesStatus` (default 200)
 // with the `series` body (default: an empty heatmap for the requested name),
@@ -77,6 +80,7 @@ export function stubServer(token, options = {}) {
     series = null,
     seriesDelayMs = 0,
     controlDelayMs = 0,
+    controlAnswer = null,
   } = options;
   const requests = [];
   function fetch(input, init) {
@@ -123,8 +127,12 @@ export function stubServer(token, options = {}) {
       }
       // Quit leaves idle for decrease on its way out; the others run.
       const command = url.pathname.split("/").pop();
-      const answer =
-        controlStatus === 200
+      const custom = controlAnswer
+        ? controlAnswer(command, body === undefined ? undefined : JSON.parse(body))
+        : undefined;
+      const answer = custom
+        ? jsonResponse(custom.status, custom.body)
+        : controlStatus === 200
           ? jsonResponse(200, {
               ok: true,
               command,

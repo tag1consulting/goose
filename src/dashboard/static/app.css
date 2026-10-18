@@ -377,6 +377,130 @@ body {
   color: var(--muted);
 }
 
+/* The run settings form: a disclosure under the summary line, two columns
+   wide, one column on a narrow screen with each select beside its number. */
+.control-settings {
+  margin: 0 0 0.75rem;
+}
+
+.control-settings > summary {
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 600;
+  width: fit-content;
+}
+
+.control-settings > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.settings-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem 1.25rem;
+  margin-top: 0.65rem;
+}
+
+.settings-row {
+  min-width: 0;
+}
+
+.settings-host,
+.settings-actions,
+#set-reason {
+  grid-column: 1 / -1;
+}
+
+.settings-actions {
+  margin: 0;
+}
+
+#set-reason {
+  margin: 0;
+}
+
+.settings-label {
+  display: block;
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin-bottom: 0.25rem;
+}
+
+.settings-inputs {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.settings-inputs input,
+.settings-inputs select {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--muted);
+  border-radius: 6px;
+  padding: 0.3rem 0.45rem;
+  font: inherit;
+  font-size: 0.9rem;
+  min-width: 0;
+}
+
+.settings-inputs input[type="number"] {
+  width: 8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+#set-host {
+  flex: 1 1 auto;
+  max-width: 40rem;
+}
+
+/* Read only says so by its colour, as the Target row does. */
+.settings-inputs [aria-disabled="true"] {
+  background: color-mix(in srgb, var(--bg) 45%, var(--card));
+  cursor: not-allowed;
+}
+
+.settings-inputs [aria-invalid="true"],
+.control-label input[aria-invalid="true"] {
+  border-color: var(--err);
+  outline: 1px solid var(--err);
+}
+
+.settings-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--warn);
+  border-radius: 6px;
+  max-width: 40rem;
+}
+
+.settings-confirm[hidden] {
+  display: none;
+}
+
+.settings-confirm p {
+  flex-basis: 100%;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .settings-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-inputs input[type="number"] {
+    width: auto;
+    flex: 1 1 5rem;
+  }
+}
+
 /* KPIs */
 .kpi-row {
   display: grid;

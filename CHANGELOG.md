@@ -1,6 +1,11 @@
 # Changelog
 
 ## 0.19.0-dev
+ - [#762](https://github.com/tag1consulting/goose/pull/762) set the host, ramps and run time from the dashboard's control panel, and start with them in one request, all or none (#712)
+    o the Edit settings form sends its edits with Apply settings, or with the start through Start with changes; the first host change in a page load asks for confirmation
+    o `POST /api/v1/control/settings` is new and `POST /api/v1/control/start` takes the same settings body; both, and the new error codes `invalid_value` and `no_host`, are additive under `version: 1`
+    o **behavior change**: `runtime` on a running users ramp changes this run, from a Controller or the dashboard, where it was refused unless idle; `runtime 0` holds until stopped, and is refused while a ramp down is configured
+    o the book's description of Stop is corrected: a Stop stops all users at once
  - [#761](https://github.com/tag1consulting/goose/pull/761) keep the dashboard's run settings in step with the server: every snapshot carries `settings`, what the next Start runs and where the running test is, the control panel and the read only header show it as one summary line, and the Target field follows changes from telnet, WebSocket and other tabs (#706); a running users ramp keeps its shape when users or the decrease rate change, and run shape defects are fixed
     o snapshots have a `settings` object: `host`, `hosts` (what the next Start will load test), `users`, the rates, `increase_time_secs`, `decrease_time_secs`, `run_time_secs`, `test_plan` in canonical form, `hold_ends_in_secs` and `stage`; additive under `version: 1`, as are a new `field` naming the setting a control refusal faults and the new error code `conflicting_settings` for a refusal that conflicts with other settings
     o **bug fix**: after one Apply or Start from the dashboard, the Target field ignored every later change from telnet, WebSocket or another tab, so `+` stepped from a stale count; it now follows the server unless being edited, and an edit that another client overtakes says it changed elsewhere (#706)

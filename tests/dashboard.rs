@@ -916,6 +916,96 @@ async fn test_control_start_stop() {
     load.abort().await;
 }
 
+/// Wait until `mock` has been called, or fail after 30 seconds.
+async fn wait_for_calls(mock: &Mock<'_>, what: &str) {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while mock.calls() == 0 {
+        assert!(Instant::now() < deadline, "no traffic reached {}", what);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// A Start with a new host and an invalid rate is refused before anything
+/// changes: the load test stays idle, and a plain Start runs against the
+/// original host. The same Start with a valid rate is accepted, and the
+/// snapshot shows the new host and a running phase.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn test_control_start_with_settings() {
+    let server = MockServer::start();
+    let original = setup_mock_endpoints(&server);
+    let other = MockServer::start();
+    let moved = setup_mock_endpoints(&other);
+    let port = reserve_port();
+    let base_v4 = format!("http://127.0.0.1:{port}");
+    let configuration =
+        build_control_config(&server, "127.0.0.1", port, ControlTestOpts::default());
+    let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
+    let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
+    let (base, _) = wait_for_health(&[&base_v4], 80).await;
+    let client = reqwest::Client::new();
+    let token = Some(AUTH_TOKEN);
+    wait_for_phase(&client, &base, token, &["idle"], Duration::from_secs(15)).await;
+
+    // A new host with an invalid rate: refused, and nothing changes.
+    let invalid = format!(r#"{{"host":"{}","increase_rate":0}}"#, other.base_url());
+    let refused = post_control(
+        &client,
+        &base,
+        "/api/v1/control/start",
+        Some(&invalid),
+        true,
+    )
+    .await;
+    assert_eq!(refused.status(), 400);
+    let refused: serde_json::Value = refused.json().await.expect("start json");
+    assert_eq!(refused["ok"], false);
+    assert_eq!(refused["error"], "invalid_value");
+    assert_eq!(refused["field"], "increase_rate");
+    let idle = wait_for_phase(&client, &base, token, &["idle"], Duration::from_secs(15)).await;
+    assert_eq!(idle["settings"]["host"], server.base_url());
+
+    // A plain Start runs against the original host.
+    let start = post_control(&client, &base, "/api/v1/control/start", None, true).await;
+    let start: serde_json::Value = start.json().await.expect("start json");
+    assert_eq!(start["ok"], true, "{start}");
+    wait_for_phase(
+        &client,
+        &base,
+        token,
+        &["increase", "maintain"],
+        Duration::from_secs(30),
+    )
+    .await;
+    wait_for_calls(&original[0], "the original host").await;
+    assert_eq!(moved[0].calls(), 0, "the refused host was load tested");
+    let stop = post_control(&client, &base, "/api/v1/control/stop", None, true).await;
+    assert_eq!(stop.status(), 200);
+    wait_for_phase(&client, &base, token, &["idle"], Duration::from_secs(60)).await;
+
+    // The same Start with a valid rate: accepted, against the new host.
+    let valid = format!(r#"{{"host":"{}","increase_rate":50}}"#, other.base_url());
+    let start = post_control(&client, &base, "/api/v1/control/start", Some(&valid), true).await;
+    assert_eq!(start.status(), 200);
+    let start: serde_json::Value = start.json().await.expect("start json");
+    assert_eq!(start["ok"], true, "{start}");
+    assert_eq!(start["command"], "start");
+    assert_eq!(start["settings"]["host"], other.base_url());
+    assert_eq!(start["settings"]["increase_rate"], 50.0);
+    let running = wait_for_phase(
+        &client,
+        &base,
+        token,
+        &["increase", "maintain"],
+        Duration::from_secs(30),
+    )
+    .await;
+    assert_eq!(running["settings"]["host"], other.base_url());
+    wait_for_calls(&moved[0], "the new host").await;
+
+    load.abort().await;
+}
+
 /// Case 4: while running, POST higher users with pinned high increase-rate.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial]

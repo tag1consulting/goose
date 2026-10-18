@@ -20,10 +20,11 @@
 //! latency.
 
 use crate::controller::{
-    send_command, ControlReply, ControlRequest, ControllerCommand, SendError, CONTROL_TIMEOUT,
+    self, send_command, ControlCommand, ControlReply, ControlRequest, ControllerCommand,
+    RunSettings, SendError, CONTROL_TIMEOUT,
 };
 use crate::metrics::dashboard_snapshot::{
-    Heatmap, HeatmapColumn, HeatmapCursor, RequestSeries, SnapshotSave,
+    Heatmap, HeatmapColumn, HeatmapCursor, RequestSeries, SnapshotSave, SnapshotSettings,
 };
 use crate::metrics::DashboardSnapshot;
 use crate::runs;
@@ -95,7 +96,9 @@ const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(10);
 /// control requests, and monitors and scripts need a few more.
 const EXTRA_CONNECTIONS: usize = 16;
 
-/// Max JSON body size for control POSTs (start/stop are tiny; users is one int).
+/// Max JSON body size for control POSTs (stop is empty, users one int, and
+/// start or settings at most every run setting, a test plan of up to 4096
+/// bytes among them).
 const CONTROL_BODY_LIMIT: usize = 16 * 1024;
 
 /// Max concurrent control POSTs waiting on the main loop (admission control).
@@ -183,6 +186,10 @@ struct ControlResult {
     /// The setting at fault in a refusal, when one is.
     #[serde(skip_serializing_if = "Option::is_none")]
     field: Option<String>,
+    /// The run settings after a settings request or a Start with settings,
+    /// as the snapshot's `settings`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    settings: Option<Box<SnapshotSettings>>,
 }
 
 impl ControlResult {
@@ -197,6 +204,7 @@ impl ControlResult {
             active_users: outcome.active_users as u64,
             target_users: outcome.target_users.map(|u| u as u64),
             field: outcome.field.map(str::to_string),
+            settings: outcome.settings,
         }
     }
 }
@@ -227,6 +235,12 @@ impl ControlHttpErrorBody {
             target_users: None,
             field: None,
         }
+    }
+
+    /// As [`Self::new`], naming the setting at fault.
+    fn with_field(mut self, field: Option<&str>) -> Self {
+        self.field = field.map(str::to_string);
+        self
     }
 }
 
@@ -1299,6 +1313,7 @@ fn build_router(state: DashboardState, loopback_bind: bool) -> Router {
             .route("/api/v1/control/quit", post(control_quit_handler))
             .route("/api/v1/runs/{id}", delete(delete_run_handler))
             .route("/api/v1/control/users", post(control_users_handler))
+            .route("/api/v1/control/settings", post(control_settings_handler))
             .layer(axum::extract::DefaultBodyLimit::max(CONTROL_BODY_LIMIT));
         router = router.merge(control_routes);
     }
@@ -2042,6 +2057,158 @@ fn parse_users_body(body: &[u8]) -> Result<ControllerCommand, (&'static str, &'s
     ControllerCommand::users(users).map_err(|message| ("invalid_users", message))
 }
 
+/// The body of `POST /api/v1/control/settings`, and of a Start with
+/// settings, as JSON: each field absent to leave the setting alone, `null`
+/// to clear it, or a value, which [`parse_settings_body`] bounds.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SettingsBody {
+    #[serde(default, deserialize_with = "present")]
+    host: Option<serde_json::Value>,
+    #[serde(default, deserialize_with = "present")]
+    users: Option<serde_json::Value>,
+    #[serde(default, deserialize_with = "present")]
+    increase_rate: Option<serde_json::Value>,
+    #[serde(default, deserialize_with = "present")]
+    increase_time_secs: Option<serde_json::Value>,
+    #[serde(default, deserialize_with = "present")]
+    decrease_rate: Option<serde_json::Value>,
+    #[serde(default, deserialize_with = "present")]
+    decrease_time_secs: Option<serde_json::Value>,
+    #[serde(default, deserialize_with = "present")]
+    run_time_secs: Option<serde_json::Value>,
+    #[serde(default, deserialize_with = "present")]
+    test_plan: Option<serde_json::Value>,
+}
+
+/// A field that is present, `null` included, so `null` is told from absent.
+fn present<'de, D>(deserializer: D) -> Result<Option<serde_json::Value>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    serde_json::Value::deserialize(deserializer).map(Some)
+}
+
+/// Refusal for `users: null`: users can only be switched to.
+const NULL_USERS_MSG: &str =
+    "users can not be cleared: send a user count, or a test_plan to switch to";
+
+/// Refusal for a time outside the bounds, sent as whole seconds.
+fn invalid_secs_msg(field: &str) -> &'static str {
+    match field {
+        "increase_time" => {
+            "increase_time_secs must be whole seconds from 1 to 2592000, or null to clear"
+        }
+        "decrease_time" => {
+            "decrease_time_secs must be whole seconds from 1 to 2592000, or null to clear"
+        }
+        _ => "run_time_secs must be whole seconds from 1 to 2592000, or null to clear",
+    }
+}
+
+/// A refused settings body: the error code, the message and the setting
+/// at fault, answered as a 400.
+type BodyRefusal = (&'static str, &'static str, Option<&'static str>);
+
+/// Parse a settings body, bounding every value with the Controllers'
+/// validators, so a setting is bounded alike from every front end. Refused
+/// in this order: `bad_request` for malformed JSON or an unknown field,
+/// `invalid_value` for a value of the wrong type or out of bounds (and
+/// `users: null`), then `conflicting_settings` for settings that can not go
+/// together whatever the state.
+pub(crate) fn parse_settings_body(body: &[u8]) -> Result<RunSettings, BodyRefusal> {
+    let bad_request = (
+        "bad_request",
+        "request body must be a JSON object of run settings: host, users, increase_rate, increase_time_secs, decrease_rate, decrease_time_secs, run_time_secs and test_plan",
+        None,
+    );
+    let body: serde_json::Value =
+        serde_json::from_slice(trim_ascii_whitespace(body)).map_err(|_| bad_request)?;
+    if !body.is_object() {
+        return Err(bad_request);
+    }
+    let body: SettingsBody = serde_json::from_value(body).map_err(|_| bad_request)?;
+    let invalid = |field, message| ("invalid_value", message, Some(field));
+    // `Some(None)` for `null`, `Some(Some(value))` for a value.
+    fn read<T>(
+        value: Option<serde_json::Value>,
+        parse: impl FnOnce(&serde_json::Value) -> Option<Result<T, &'static str>>,
+        error: &'static str,
+    ) -> Result<Option<Option<T>>, &'static str> {
+        match value {
+            None => Ok(None),
+            Some(serde_json::Value::Null) => Ok(Some(None)),
+            Some(value) => parse(&value).unwrap_or(Err(error)).map(|v| Some(Some(v))),
+        }
+    }
+    let rate = |field, value, error| {
+        read(
+            value,
+            |value: &serde_json::Value| {
+                value
+                    .as_f64()
+                    .map(|rate| controller::bounded_rate(rate as f32, error))
+            },
+            error,
+        )
+        .map_err(|message| invalid(field, message))
+    };
+    let secs = |field, value| {
+        let error = invalid_secs_msg(field);
+        read(
+            value,
+            |value: &serde_json::Value| {
+                value
+                    .as_u64()
+                    .filter(|&secs| secs > 0)
+                    .map(|secs| controller::bounded_secs(secs, error))
+            },
+            error,
+        )
+        .map_err(|message| invalid(field, message))
+    };
+    let settings = RunSettings {
+        host: read(
+            body.host,
+            |value| value.as_str().map(controller::host),
+            controller::INVALID_HOST_MSG,
+        )
+        .map_err(|message| invalid("host", message))?,
+        users: match read(
+            body.users,
+            |value| value.as_u64().map(controller::bounded_users),
+            controller::INVALID_USERS_MSG,
+        ) {
+            Ok(Some(None)) => return Err(invalid("users", NULL_USERS_MSG)),
+            Ok(users) => users.flatten(),
+            Err(message) => return Err(invalid("users", message)),
+        },
+        increase_rate: rate(
+            "increase_rate",
+            body.increase_rate,
+            controller::INVALID_INCREASE_RATE_MSG,
+        )?,
+        increase_time: secs("increase_time", body.increase_time_secs)?,
+        decrease_rate: rate(
+            "decrease_rate",
+            body.decrease_rate,
+            controller::INVALID_DECREASE_RATE_MSG,
+        )?,
+        decrease_time: secs("decrease_time", body.decrease_time_secs)?,
+        run_time: secs("run_time", body.run_time_secs)?,
+        test_plan: read(
+            body.test_plan,
+            |value| value.as_str().map(controller::test_plan),
+            controller::INVALID_PLAN_MSG,
+        )
+        .map_err(|message| invalid("test_plan", message))?,
+    };
+    match settings.conflict() {
+        Some((field, message)) => Err(("conflicting_settings", message, Some(field))),
+        None => Ok(settings),
+    }
+}
+
 fn trim_ascii_whitespace(bytes: &[u8]) -> &[u8] {
     let start = bytes
         .iter()
@@ -2098,7 +2265,7 @@ fn try_acquire_control_slot(state: &DashboardState) -> Option<ControlInFlightGua
 /// had already started applying it, it can still apply after the 503.
 async fn dispatch_control(
     state: &DashboardState,
-    command: ControllerCommand,
+    command: impl Into<ControlCommand>,
     name: &str,
 ) -> Response<Body> {
     let Some(_slot) = try_acquire_control_slot(state) else {
@@ -2173,21 +2340,64 @@ async fn control_without_body(
     dispatch_control(state, command, name).await
 }
 
+/// Start: with an empty body or `{}` as it is, or with a settings body
+/// applied and started in one step on the main loop.
 async fn control_start_handler(
     State(state): State<Arc<DashboardState>>,
     headers: HeaderMap,
     Query(query): Query<TokenQuery>,
     body: Bytes,
 ) -> Response<Body> {
-    control_without_body(
-        &state,
-        &headers,
-        query,
-        &body,
-        ControllerCommand::Start,
-        "start",
-    )
-    .await
+    if parse_empty_control_body(&body).is_ok() {
+        return control_without_body(
+            &state,
+            &headers,
+            query,
+            &body,
+            ControllerCommand::Start,
+            "start",
+        )
+        .await;
+    }
+    control_with_settings(&state, &headers, query, &body, "start").await
+}
+
+/// Apply run settings without starting.
+async fn control_settings_handler(
+    State(state): State<Arc<DashboardState>>,
+    headers: HeaderMap,
+    Query(query): Query<TokenQuery>,
+    body: Bytes,
+) -> Response<Body> {
+    control_with_settings(&state, &headers, query, &body, "settings").await
+}
+
+/// Start with settings, or settings alone: authorized, then the body parsed
+/// and bounded, a refusal answered as a 400 naming the setting at fault.
+async fn control_with_settings(
+    state: &DashboardState,
+    headers: &HeaderMap,
+    query: TokenQuery,
+    body: &[u8],
+    name: &str,
+) -> Response<Body> {
+    if !authorize_control(&state.auth_token, headers, query.token.as_deref()) {
+        warn!("[dashboard]: control {name} auth failure");
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    match parse_settings_body(body) {
+        Ok(settings) => {
+            let command = ControlCommand::Settings {
+                settings: Box::new(settings),
+                start: name == "start",
+            };
+            dispatch_control(state, command, name).await
+        }
+        Err((code, message, field)) => {
+            let body = ControlHttpErrorBody::new(name, code, message).with_field(field);
+            (StatusCode::BAD_REQUEST, Json(body)).into_response()
+        }
+    }
 }
 
 async fn control_stop_handler(
@@ -2370,7 +2580,7 @@ mod tests {
     /// oneshot unanswered when `answer` gives none.
     fn spawn_control_parent(
         control_rx: flume::Receiver<ControlRequest>,
-        answer: fn(ControllerCommand) -> Option<ControlReply>,
+        answer: fn(ControlCommand) -> Option<ControlReply>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             while let Ok((command, respond)) = control_rx.recv_async().await {
@@ -2397,11 +2607,19 @@ mod tests {
             active_users,
             target_users,
             field: None,
+            settings: None,
         }))
     }
 
     /// A soft success for every control command.
-    fn answer_ok(command: ControllerCommand) -> Option<ControlReply> {
+    fn answer_ok(command: ControlCommand) -> Option<ControlReply> {
+        let command = match command {
+            ControlCommand::Settings { start: false, .. } => {
+                return outcome(true, None, "settings configured", "idle", 0, None);
+            }
+            ControlCommand::Settings { start: true, .. } => ControllerCommand::Start,
+            ControlCommand::Command(command) => command,
+        };
         match command {
             ControllerCommand::Start => {
                 outcome(true, None, "load test started", "increase", 0, Some(1))
@@ -2415,7 +2633,7 @@ mod tests {
             ControllerCommand::Users(users) => {
                 outcome(true, None, "users configured", "idle", 0, Some(users))
             }
-            // The dashboard sends only the four commands above.
+            // The dashboard sends only the commands above.
             other => panic!("unexpected dashboard command {:?}", other),
         }
     }
@@ -2709,6 +2927,210 @@ mod tests {
         assert_eq!(err.0, "invalid_users");
         let err = parse_users_body(users(309).as_bytes()).unwrap_err();
         assert_eq!(err, ("bad_request", "malformed JSON body"));
+    }
+
+    /// A settings body: absent leaves a setting alone and `null` clears it;
+    /// refused as `bad_request`, then `invalid_value`, then
+    /// `conflicting_settings`, each naming the setting at fault.
+    #[test]
+    fn parse_settings_body_rules() {
+        let settings = parse_settings_body(br#"{}"#).unwrap();
+        assert!(settings.fields().is_empty());
+        let settings = parse_settings_body(
+            br#"{"host":"https://example.com","users":5,"increase_rate":2.5,"decrease_time_secs":null,"run_time_secs":90}"#,
+        )
+        .unwrap();
+        assert_eq!(settings.host, Some(Some("https://example.com".to_string())));
+        assert_eq!(settings.users, Some(5));
+        assert_eq!(settings.increase_rate, Some(Some(2.5)));
+        assert_eq!(settings.increase_time, None);
+        assert_eq!(settings.decrease_rate, None);
+        assert_eq!(settings.decrease_time, Some(None));
+        assert_eq!(settings.run_time, Some(Some(90)));
+        assert!(settings.test_plan.is_none());
+        let settings =
+            parse_settings_body(br#"{"host":null,"test_plan":"5,1s;0,1s","increase_rate":null}"#)
+                .unwrap();
+        assert_eq!(settings.host, Some(None));
+        assert_eq!(settings.increase_rate, Some(None));
+        assert_eq!(
+            settings.test_plan.unwrap().unwrap().steps,
+            [(5, 1_000), (0, 1_000)]
+        );
+        assert!(parse_settings_body(br#"{"users":2,"test_plan":null}"#).is_ok());
+        assert!(parse_settings_body(br#"{"increase_rate":2,"increase_time_secs":null}"#).is_ok());
+
+        for (body, refusal) in [
+            // Malformed, not an object, or an unknown field, whatever else.
+            (&b"{"[..], ("bad_request", None)),
+            (b"[1]", ("bad_request", None)),
+            (b"5", ("bad_request", None)),
+            (
+                br#"{"increase_rate":0,"iterations":1}"#,
+                ("bad_request", None),
+            ),
+            (br#"{"run_time":60}"#, ("bad_request", None)),
+            // A value of the wrong type or out of bounds, before conflicts.
+            (
+                br#"{"host":"ftp://example.com"}"#,
+                ("invalid_value", Some("host")),
+            ),
+            (
+                br#"{"host":"http://user:secret@example.com"}"#,
+                ("invalid_value", Some("host")),
+            ),
+            (br#"{"host":5}"#, ("invalid_value", Some("host"))),
+            (br#"{"users":null}"#, ("invalid_value", Some("users"))),
+            (br#"{"users":0}"#, ("invalid_value", Some("users"))),
+            (br#"{"users":"5"}"#, ("invalid_value", Some("users"))),
+            (
+                br#"{"increase_rate":0.001,"test_plan":"1,1s","users":3}"#,
+                ("invalid_value", Some("increase_rate")),
+            ),
+            (
+                br#"{"decrease_rate":"2"}"#,
+                ("invalid_value", Some("decrease_rate")),
+            ),
+            (
+                br#"{"decrease_rate":100001}"#,
+                ("invalid_value", Some("decrease_rate")),
+            ),
+            (
+                br#"{"increase_time_secs":0}"#,
+                ("invalid_value", Some("increase_time")),
+            ),
+            (
+                br#"{"decrease_time_secs":1.5}"#,
+                ("invalid_value", Some("decrease_time")),
+            ),
+            (
+                br#"{"run_time_secs":2592001}"#,
+                ("invalid_value", Some("run_time")),
+            ),
+            (
+                br#"{"run_time_secs":-1}"#,
+                ("invalid_value", Some("run_time")),
+            ),
+            (
+                br#"{"test_plan":"0,1s"}"#,
+                ("invalid_value", Some("test_plan")),
+            ),
+            (br#"{"test_plan":10}"#, ("invalid_value", Some("test_plan"))),
+            // Settings that never go together.
+            (
+                br#"{"test_plan":"1,1s","users":3}"#,
+                ("conflicting_settings", Some("test_plan")),
+            ),
+            (
+                br#"{"test_plan":"1,1s","run_time_secs":10}"#,
+                ("conflicting_settings", Some("run_time")),
+            ),
+            (
+                br#"{"test_plan":null}"#,
+                ("conflicting_settings", Some("test_plan")),
+            ),
+            (
+                br#"{"increase_rate":2,"increase_time_secs":5}"#,
+                ("conflicting_settings", Some("increase_rate")),
+            ),
+            (
+                br#"{"decrease_rate":2,"decrease_time_secs":5}"#,
+                ("conflicting_settings", Some("decrease_rate")),
+            ),
+        ] {
+            let (code, _, field) = parse_settings_body(body).unwrap_err();
+            assert_eq!((code, field), refusal, "{}", String::from_utf8_lossy(body));
+        }
+        let plan = format!(r#"{{"test_plan":"{}"}}"#, "1,1s;".repeat(1000));
+        let (code, _, field) = parse_settings_body(plan.as_bytes()).unwrap_err();
+        assert_eq!((code, field), ("invalid_value", Some("test_plan")));
+    }
+
+    /// The settings route and a Start with settings take only the control
+    /// token, as a Bearer header; a body refused before the main loop is a
+    /// 400 naming the setting, and an accepted one reaches it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn settings_routes_require_token_and_check_body() {
+        let (control_tx, control_rx) = flume::unbounded();
+        let (setup, base) = bind_dashboard_with("s3cret", 0, Some(control_tx)).await;
+        let parent = spawn_mock_parent(setup.request_rx, Arc::new(AtomicU64::new(0)));
+        let control = spawn_control_parent(control_rx, answer_ok);
+        drop(setup.close_tx);
+        let client = reqwest::Client::new();
+        let post = |path: &str, auth: Option<&str>, body: &str| {
+            let mut request = client
+                .post(format!("{base}/api/v1/control/{path}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(body.to_string());
+            if let Some(auth) = auth {
+                request = request.header(header::AUTHORIZATION, auth.to_string());
+            }
+            request.send()
+        };
+        let body = r#"{"host":"https://example.com","increase_rate":2}"#;
+        for path in [
+            "settings",
+            "start",
+            "settings?token=s3cret",
+            "start?token=s3cret",
+        ] {
+            for auth in [None, Some("Bearer wrong")] {
+                let resp = post(path, auth, body).await.expect("post");
+                assert_eq!(resp.status(), 401, "{} {:?}", path, auth);
+            }
+        }
+        let resp = post("settings?token=s3cret", Some("Bearer s3cret"), body)
+            .await
+            .expect("post");
+        assert_eq!(resp.status(), 401);
+
+        for (path, message) in [
+            ("settings", "settings configured"),
+            ("start", "load test started"),
+        ] {
+            let resp = post(path, Some("Bearer s3cret"), body).await.expect("post");
+            assert_eq!(resp.status(), 200, "{}", path);
+            let reply: serde_json::Value = resp.json().await.expect("json");
+            assert_eq!(reply["ok"], true, "{}", path);
+            assert_eq!(reply["command"], path);
+            assert_eq!(reply["message"], message);
+
+            let resp = post(path, Some("Bearer s3cret"), r#"{"increase_rate":0}"#)
+                .await
+                .expect("post");
+            assert_eq!(resp.status(), 400, "{}", path);
+            let reply: serde_json::Value = resp.json().await.expect("json");
+            assert_eq!(reply["error"], "invalid_value");
+            assert_eq!(reply["field"], "increase_rate");
+            assert_eq!(reply["command"], path);
+
+            let resp = post(path, Some("Bearer s3cret"), r#"{"bogus":1}"#)
+                .await
+                .expect("post");
+            assert_eq!(resp.status(), 400, "{}", path);
+            let reply: serde_json::Value = resp.json().await.expect("json");
+            assert_eq!(reply["error"], "bad_request");
+            assert_eq!(reply["field"], serde_json::Value::Null);
+
+            let resp = post(
+                path,
+                Some("Bearer s3cret"),
+                r#"{"increase_rate":2,"increase_time_secs":5}"#,
+            )
+            .await
+            .expect("post");
+            assert_eq!(resp.status(), 400, "{}", path);
+            let reply: serde_json::Value = resp.json().await.expect("json");
+            assert_eq!(reply["error"], "conflicting_settings");
+            assert_eq!(reply["field"], "increase_rate");
+
+            // Over the control body limit.
+            let big = format!(r#"{{"test_plan":"{}"}}"#, " ".repeat(CONTROL_BODY_LIMIT));
+            let resp = post(path, Some("Bearer s3cret"), &big).await.expect("post");
+            assert_eq!(resp.status(), 413, "{}", path);
+        }
+        parent.abort();
+        control.abort();
     }
 
     #[test]

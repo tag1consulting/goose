@@ -4,7 +4,7 @@
 
 Goose can optionally serve a **live web dashboard** while a load test runs. The dashboard streams compact metric snapshots (including trailing RPS, users, and latency series) over Server-Sent Events (SSE), with a short poll fallback if SSE is unavailable.
 
-By default the dashboard is **observe-only**: start, stop, user counts, and other control remain on the [Telnet](telnet.md) and [WebSocket](websocket.md) Controllers. With an explicit opt-in (`--dashboard-control` plus a required auth token), the same browser can also **Start**, **Stop**, and **set the target user count**. Controllers remain the power-user path for host/test-plan changes, rate tuning, and process **shutdown** (not available from the dashboard).
+By default the dashboard is **observe-only**: start, stop, user counts, and other control remain on the [Telnet](telnet.md) and [WebSocket](websocket.md) Controllers. With an explicit opt-in (`--dashboard-control` plus a required auth token), the same browser can also **Start**, **Stop**, **set the target user count**, and edit the host, the ramps and the run time. Controllers remain the power-user path for test plan changes, `config` and `metrics`, and process **shutdown** (not available from the dashboard).
 
 ## Enabling the dashboard
 
@@ -172,7 +172,7 @@ cargo run --release --features dashboard --example simple -- \
   -u 50 -t 10m
 ```
 
-Open `http://127.0.0.1:5118/?token=$DASHBOARD_TOKEN`. The header shows `Live dashboard · control`, and a control panel appears with **Start**, **Stop**, and a target-users input (`Apply`, `−` / `+` step buttons).
+Open `http://127.0.0.1:5118/?token=$DASHBOARD_TOKEN`. The header shows `Live dashboard · control`, and a control panel appears with **Start**, **Stop**, a target-users input (`Apply`, `−` / `+` step buttons), and **Edit settings**, a form for the host, the ramps and the run time.
 
 ### `--no-autostart` recipe
 
@@ -197,7 +197,8 @@ Then Start from the UI or via `POST /api/v1/control/start`. Without Controllers 
 
 | Method | Path | Body | Description |
 |--------|------|------|-------------|
-| `POST` | `/api/v1/control/start` | empty or `{}` | Start an idle load test → enters **Increase** |
+| `POST` | `/api/v1/control/start` | empty, `{}`, or run settings | Start an idle load test → enters **Increase**; with run settings, apply them and start in one step, all or none |
+| `POST` | `/api/v1/control/settings` | run settings | Apply run settings without starting, all or none; see [Run settings](#run-settings) |
 | `POST` | `/api/v1/control/stop` | empty or `{}` | Begin cancel → enters **Decrease** (eventual Idle) |
 | `POST` | `/api/v1/control/users` | `{"users": N}` | Set absolute target user count (`N` integer, 1–100_000) |
 | `POST` | `/api/v1/control/quit` | empty or `{}` | Shut Goose down; accepted only in **Idle** |
@@ -224,6 +225,20 @@ curl -sS -X POST \
   -H "Content-Type: application/json" \
   -d '{}' \
   "$BASE/api/v1/control/stop"
+
+# Start against another host at 20 users per second, holding 10 minutes
+curl -sS -X POST \
+  -H "Authorization: Bearer $DASHBOARD_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"host":"https://staging.example.com","increase_rate":20,"run_time_secs":600}' \
+  "$BASE/api/v1/control/start"
+
+# Hold the running test 5 more minutes than it started with
+curl -sS -X POST \
+  -H "Authorization: Bearer $DASHBOARD_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"run_time_secs":900}' \
+  "$BASE/api/v1/control/settings"
 
 # Set absolute user count
 curl -sS -X POST \
@@ -264,7 +279,7 @@ Example success bodies:
 }
 ```
 
-Logical rejections return **HTTP 200** with `"ok": false` and a stable `error` code: `invalid_phase` when the phase cannot take the command, `prepare_failed` when a Start cannot prepare the load test, and `conflicting_settings` when the command conflicts with other settings, such as `users 1` while an increase time is set. When one setting is at fault the body also names it in `field` (for example `"field": "users"`, or `"field": "host"` for a Start with no host); `field` is left out otherwise. A malformed body returns **400** with `error` set to `bad_request`, and a `users` value that is not an integer from 1 to 100000 returns **400** with `invalid_users`; a 400 body has `"field": null`. A body larger than 16 KiB gets **413** with a plain text body, before the token is checked.
+Logical rejections return **HTTP 200** with `"ok": false` and a stable `error` code: `invalid_phase` when the phase cannot take the command, `prepare_failed` when a Start cannot prepare the load test, `conflicting_settings` when the command conflicts with other settings, such as `users 1` while an increase time is set, and `no_host` when clearing the host would leave something with no host. When one setting is at fault the body also names it in `field` (for example `"field": "users"`, or `"field": "host"` for a Start with no host); `field` is left out otherwise. A malformed body returns **400** with `error` set to `bad_request`, and a `users` value that is not an integer from 1 to 100000 returns **400** with `invalid_users`; a 400 body has `"field": null`. A run settings body has 400 refusals of its own, which name the field; see [Run settings](#run-settings). A body larger than 16 KiB gets **413** with a plain text body, before the token is checked.
 
 A Start is refused with `prepare_failed` and `"field": "host"` before it replies when some scenario has no host from `--host`, the scenario itself or the default host, and also when a `test_start` or `test_stop` transaction is registered and neither `--host` nor the default host is set, since those run with no scenario host. An autostarted run with the same configuration fails at launch instead.
 
@@ -280,7 +295,7 @@ When the main loop does not answer, a control POST returns **503** with `"ok": f
 
 **Start success means the test entered Increase**, not that `test_start` transactions finished. Goose replies as soon as the phase transitions (same timing as Controllers), then runs `reset_run_state` / user `test_start` on the main loop. A long `test_start` does not block the HTTP 200.
 
-**Stop is not instantaneous idle.** A successful Stop begins a **cancel ramp** through `AttackPhase::Decrease` (Canceling). Active users wind down according to decrease rate/time settings. The process returns to **Idle** only after decrease finishes (and Goose is not configured to shut down after stop). While phase is `decrease`:
+**Stop is not instantaneous idle.** A successful Stop begins a **cancel** through `AttackPhase::Decrease` (Canceling), which stops all users at once, whatever the decrease rate or time: those shape a users ramp's own ramp down, never a Stop. The process returns to **Idle** only after decrease finishes (and Goose is not configured to shut down after stop). While phase is `decrease`:
 
 - **Stop** is disabled (cannot stop again mid-ramp)
 - **Start** stays disabled until phase is `idle` again
@@ -299,7 +314,70 @@ A users ramp keeps its shape when **Users** changes it mid run: Goose keeps the 
 | During the ramp down | The ramp down is abandoned, and the run holds the new count until stopped |
 | While holding until stopped | Ramp to the new count, and keep holding |
 
-Adding users ramps at the increase rate; removing them at the decrease rate, else the increase rate; 1 per second when neither is set. Increase and decrease times are not used for these changes. A decrease rate sent while a users ramp runs regenerates the ramp down still ahead at the new rate; on a run with a run time and no ramp down, where all users would stop at once when the hold ends, it adds a ramp down at that rate; on a run holding until stopped it only sets the rate for the next Users decrease and the next Start. An increase rate sent while running is for the next Users increase, and never re-paces a ramp in progress. While running, either rate is refused with `conflicting_settings` when its own time is set, since a time changes only in Idle, and both are refused during the ramp down, while stopping, and while a test plan runs.
+Adding users ramps at the increase rate; removing them at the decrease rate, else the increase rate; 1 per second when neither is set. Increase and decrease times are not used for these changes. A decrease rate sent while a users ramp runs regenerates the ramp down still ahead at the new rate; on a run with a run time and no ramp down, where all users would stop at once when the hold ends, it adds a ramp down at that rate; on a run holding until stopped it only sets the rate for the next Users decrease, a later run time, and the next Start. Clearing the decrease rate (`null`) on a running test removes a ramp down this run added, so all users stop at once again, and is refused with `conflicting_settings` when the run started with that ramp down. An increase rate sent while running is for the next Users increase, and never re-paces a ramp in progress. While running, either rate is refused with `conflicting_settings` when its own time is set, since a time changes only in Idle, and both are refused during the ramp down, while stopping, and while a test plan runs.
+
+### Run settings
+
+`POST /api/v1/control/settings` applies run settings, and `POST /api/v1/control/start` applies them and starts in one step, so no other client can change a setting in between. Both take the control token and the 16 KiB body limit, and go to the main loop as one command, checked as a whole: a refusal, a Start's `prepare_failed` among them, leaves every setting, the test plan, the running test and `target_users` as they were.
+
+```json
+{
+  "host": "https://staging.example.com",
+  "users": 100,
+  "increase_rate": 10,
+  "increase_time_secs": null,
+  "decrease_rate": 5,
+  "decrease_time_secs": null,
+  "run_time_secs": 600,
+  "test_plan": null
+}
+```
+
+- A field left out is left alone, and `null` clears it back to Goose's default. Clearing `host` goes back to each scenario's host, or the default host. Any other field is refused.
+- Values are bounded as the Controllers bound them: `host` an `http` or `https` url with no user name or password; `users` 1 to 100000; the rates 0.01 to 100000 users per second; the times whole seconds from 1 to 30 days (`0` is refused: send `null` to clear); `test_plan` as `--test-plan` takes it.
+- `test_plan` switches to a test plan and clears users and the ramp settings; `users` switches back and clears the test plan. `test_plan: null` is accepted only with `users`. While a test plan is configured, a ramp setting without `users` is refused with `"field": "users"`.
+- A rate and its own time each replace the other, so a rate alone clears its time, and a time alone clears its rate; the two can not both be set in one body. A test plan can not be sent with `users` or a ramp setting, though clearing one beside it with `null` is accepted.
+- `users: null` is refused. On a running test `users` is refused in a settings body: change users on its own with `/api/v1/control/users`.
+
+Refusals are checked in this order, and the first one is answered:
+
+| Status | `error` | When |
+|--------|---------|------|
+| 400 | `bad_request` | The body is not JSON, not an object, or has a field Goose does not know |
+| 400 | `invalid_value` | A value of the wrong type or out of bounds, and `users: null` |
+| 400 | `conflicting_settings` | Settings that never go together, whatever the state |
+| 200 | `invalid_phase` | A setting the phase can not change, set or cleared |
+| 200 | `conflicting_settings` | A ramp setting while a test plan is configured (`"field": "users"`); a rate on a running test while its own time is set; clearing the decrease rate or the run time on a running test where that is refused; the command line's rules (run time and a test plan under `--iterations`, a test plan under `--no-reset-metrics`, and in Idle a time with fewer than 2 users) |
+| 200 | `no_host` | `host: null` would leave a scenario, or a `test_start` or `test_stop` transaction, with no host |
+| 200 | `prepare_failed` | A Start that can not prepare the load test, as without settings |
+
+Each names the setting at fault in `field` (`host`, `users`, `increase_rate`, `increase_time`, `decrease_rate`, `decrease_time`, `run_time` or `test_plan`); a `bad_request` has `"field": null`. An accepted reply, and a refusal from the main loop, carry `settings` as the snapshot does, so the page that sent them has the settings before the next snapshot; after a 503 `timeout`, read them from the next snapshot.
+
+Which settings each phase takes, by `settings.stage`: `ramp_up`, `hold` and `hold_until_stopped` are a running users ramp, `test_plan` a running test plan, `ramping_down` the configured ramp down, and `stopping` a Stop, `shutdown` or Ctrl-C:
+
+| Setting | Idle | Running, users ramp | Running, test plan | Ramping down | Stopping |
+|---------|------|---------------------|--------------------|--------------|----------|
+| `host` | yes | no | no | no | no |
+| `users` (`/api/v1/control/users`) | yes | yes | no | yes, abandons the ramp down and holds | no |
+| `increase_rate` | yes | yes, for the next Users increase; refused while the increase time is set | no | no | no |
+| `decrease_rate` | yes | yes, regenerates the ramp down ahead; refused while the decrease time is set | no | no | no |
+| `increase_time_secs`, `decrease_time_secs` | yes | no | no | no | no |
+| `run_time_secs` | yes | yes | no, the plan sets how long it runs | no | no |
+| `test_plan` | yes | yes, replaces the ramp | yes, restarts from its first step | yes, replaces the ramp down | no |
+
+A test plan sent to a running test starts from its first step, ramping from the current user count.
+
+### Run time on a running test
+
+The run time is the hold at full users after the ramp up, on a running test as in Idle. A new value is always written to the configuration, which `settings.run_time_secs` and the next Start read, and changes this run:
+
+| When the run time changes | What happens |
+|---------------------------|--------------|
+| During the ramp up, before the hold | The hold ahead takes the new run time; with no run time before, a hold is added before the ramp down |
+| During the hold | The hold ends at its start plus the new run time; if that has passed, the ramp down starts at once |
+| While holding until stopped | The run holds from now for the new run time, then ramps down as configured, or stops all users at once |
+
+Clearing it (`null`, or `runtime 0` from a Controller) on a running test holds until stopped, and is refused with `conflicting_settings` while a ramp down is configured. The run time is refused during the ramp down, while stopping and while a test plan runs. Telnet and WebSocket take the same rules for `runtime`.
 
 ### Run settings in the snapshot
 
@@ -346,8 +424,9 @@ When `health.control_enabled` is true and the SPA has a token:
 3. **Stop** is enabled in `increase` and `maintain` only.
 4. **Summary line**: one line above the buttons says what the next Start runs, for example `https://example.com/ · 100 users at 10/s · hold 10 min · then 10/s down`, and while running where the run is: `ramping to 100 users at 10/s`, `ramp down in 6 min 52 s` during the hold, `holding until stopped`, `ramping down at 10/s`, `stopping`, or for a test plan `test plan: 3 steps, peak 100 users, 1 h 1 min total`. Its wording comes from `settings.stage`. It is not a live region, so the countdown is not announced.
 5. **Target users**: enter an absolute count and **Apply**, or use **−** / **+** with a configurable step (default 10). Active user count is a read-only label from the latest snapshot. In Idle the field shows the configured users the next Start runs (empty with a test plan, where applying a count replaces the plan with a users ramp); while running, the count the run ramps toward. It follows the server unless you are editing it: an edit holds until its Apply succeeds and a snapshot reports the value, or until another client changes the count, when the field shows the new count and the status line says it changed elsewhere. **−** and **+** step from what the field shows. An unapplied edit is discarded, and the status line says so once, when the run starts stopping or a test plan starts. The field and step are read only, never disabled, with the reason under them, while `stopping` is set, while a test plan runs, and without a token.
-6. Status line shows server `message` on success, or an error banner on soft failure / 401 / 503.
-7. **Quit** shows only in `idle`, and shuts Goose down; the status line then reads `Goose is shutting down.`
+6. **Edit settings** opens a form under the summary line for **Host**, **Ramp up** and **Ramp down** (each a number with users per second, or a total time in s, min or h), and **Run time**. It starts open in Idle and closed while running, and remembers whether you opened or closed it. Each field follows the server unless you are editing it, as Target does. An unapplied edit is pending: the form reads `Edit settings (N unapplied)`, **Apply settings** sends the pending edits, **Discard edits** drops them, and in Idle **Start** reads **Start with changes** and sends them with the start, the Target count among them. An emptied field goes out as `null`, and a field you did not touch is left out. A number the browser can not read is refused on the page, naming the field, rather than sent as a clear. While edits are pending in Idle, Target's own Apply waits, and **−** / **+** only change the field. The first change of host in a page load asks first: `Load will go to …` under Host, with Confirm and Cancel, before anything is sent. Editing Host while it asks changes the destination it names, and it closes, sending nothing, once the edits no longer change the host or the button that opened it can no longer act. A time shows in the largest unit that divides it evenly, so an applied `120 s` reads `2 min`, the same setting. While a users ramp runs, a ramp set by rate changes only its rate, a ramp set by time is read only (`Set by time: 5 min; change it when idle`), and the run time stays live, with `held 3 min 8 s of 10 min` under it during the hold. Fields the stage can not change are read only, with the reason under them, and an edit the stage can no longer take is discarded, the status line saying so once. On a refusal that names a setting, the form opens, marks the field and moves focus to it. A test plan is set from a Controller or through `/api/v1/control/settings`.
+7. Status line shows server `message` on success, or an error banner on soft failure / 401 / 503.
+8. **Quit** shows only in `idle`, and shuts Goose down; the status line then reads `Goose is shutting down.`
 
 Quit is refused outside `idle` (`"ok": false` with `invalid_phase`), so stop a running test first. A Controller `shutdown` command exits the Goose process from any phase.
 
@@ -668,10 +747,11 @@ Both flags are also true under `--no-metrics`, where both tables say metrics are
 | Need | Prefer |
 |------|--------|
 | Watch live charts and tables | Live Dashboard (`--dashboard`) |
-| Start / Stop / set users from a browser | Dashboard control (`--dashboard-control` + token) |
-| Host, test plan, increase/decrease rates, full command set | [Telnet](telnet.md) / [WebSocket](websocket.md) Controllers |
+| Start / Stop / set users, host, ramps and run time from a browser | Dashboard control (`--dashboard-control` + token) |
+| Test plan from a script | Dashboard control (`/api/v1/control/settings`) or the Controllers |
+| Full command set, `config` and `metrics` | [Telnet](telnet.md) / [WebSocket](websocket.md) Controllers |
 | Process shutdown | Controllers only (`shutdown`) |
 
-Dashboard control reuses the same phase-transition logic as Controllers (shared helpers). Controllers are unchanged and remain available alongside the dashboard.
+Dashboard control reuses the same phase-transition logic as Controllers (shared helpers), and Controllers remain available alongside the dashboard. One Controller command behaves differently since the settings form: `runtime` on a running users ramp changes this run, where it was refused unless idle; see [Run time on a running test](#run-time-on-a-running-test).
 
 For full Controller documentation, see [Controlling A Running Goose Load Test](overview.md).
