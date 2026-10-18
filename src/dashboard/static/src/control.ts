@@ -589,6 +589,11 @@ function onHostConfirm(): void {
     setControlStatus("Host changed: confirm where load will go", "info");
     return;
   }
+  // A number can have become unreadable while it asked.
+  if (badNumber()) {
+    closeHostConfirm();
+    return;
+  }
   const open = closeHostConfirm();
   if (!open) return;
   hostConfirmed = true;

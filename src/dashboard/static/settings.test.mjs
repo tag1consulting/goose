@@ -650,3 +650,47 @@ test("number text a browser can not read is refused on the page, never sent as a
   await settle(page.window);
   assert.deepEqual(controlPosts(page), [], "nor with Start");
 });
+
+test("a run time edit with no run time on the server keeps its unit across snapshots", async () => {
+  const page = await acceptingPage("idle", { run_time_secs: null });
+  assert.equal(shown(page, "set-run"), " min");
+  type(page, "set-run", "5");
+  choose(page, "set-run-unit", "s");
+  await emit(page, snapshot("idle", "idle", page.server.settings));
+  assert.equal(shown(page, "set-run"), "5 s");
+  assert.equal(label(page), "Edit settings (1 unapplied)");
+  choose(page, "set-run-unit", "h");
+  type(page, "set-run", "2");
+  await emit(page, snapshot("idle", "idle", page.server.settings));
+  assert.equal(shown(page, "set-run"), "2 h");
+  assert.equal(label(page), "Edit settings (1 unapplied)");
+  assert.doesNotMatch(el(page, "ctrl-status").textContent, /changed elsewhere/);
+  el(page, "set-apply").click();
+  await settle(page.window);
+  assert.deepEqual(controlPosts(page).at(-1).body, { run_time_secs: 7200 });
+});
+
+test("a number made unreadable while the host confirmation is open is refused on Confirm", async () => {
+  const page = await acceptingPage();
+  type(page, "set-host", "http://new.test");
+  el(page, "set-apply").click();
+  await settle(page.window);
+  assert.equal(confirmationShows(page), "http://new.test");
+  const input = el(page, "set-up");
+  const validity = { badInput: true, valid: false };
+  Object.defineProperty(input, "validity", { value: validity });
+  type(page, "set-up", "");
+  el(page, "set-host-confirm-ok").click();
+  await settle(page.window);
+  assert.deepEqual(controlPosts(page), [], "nothing is sent");
+  assert.equal(el(page, "ctrl-status").textContent, "Ramp up must be a number");
+  assert.equal(page.window.document.activeElement, input);
+  assert.equal(confirmationShows(page), null);
+  // The host was never sent, so the next host change still asks.
+  validity.badInput = false;
+  validity.valid = true;
+  type(page, "set-up", "5");
+  el(page, "set-apply").click();
+  await settle(page.window);
+  assert.equal(confirmationShows(page), "http://new.test");
+});

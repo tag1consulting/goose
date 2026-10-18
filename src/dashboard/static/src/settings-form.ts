@@ -75,13 +75,15 @@ function pairParts(value: string): [string, string] {
 /**
  * The quantity a pair's value sets, so values the server writes another way
  * compare equal: a time in seconds, whatever its unit, and a rate as the
- * `f32` the server keeps; none in its unit, which a unit chosen before the
- * number keeps, and the text itself when it is not a number.
+ * `f32` the server keeps; and the text itself when it is not a number.
+ * An empty number is none: in its unit where the server shows none in a
+ * unit of its own (`emptyUnit`), so a unit chosen before the number is an
+ * edit, and in any unit where the server shows none in the row's unit.
  */
-function quantity(value: string): string {
+function quantity(value: string, emptyUnit: Unit | null): string {
   const [number, unit] = pairParts(value);
   const n = numberOf(number);
-  if (n === null) return "none " + unit;
+  if (n === null) return emptyUnit === null ? "none" : "none " + unit;
   if (isNaN(n)) return value;
   return unit === "rate" ? "rate " + Math.fround(n) : "s " + seconds(n, unit);
 }
@@ -106,7 +108,7 @@ class Pair extends FollowedValue {
     note: (text: string) => void,
     private readonly emptyUnit: Unit | null
   ) {
-    super(label, note, (a, b) => quantity(a) === quantity(b));
+    super(label, note, (a, b) => quantity(a, emptyUnit) === quantity(b, emptyUnit));
     this.shownUnit = els.unit.value;
     els.number.addEventListener("input", () => {
       this.edited(this.value());
