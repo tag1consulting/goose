@@ -52,4 +52,17 @@ export const IDLE_SNAPSHOT = {
     percentiles_over_time: true,
   },
   save: { state: "on", reason: null, dir: "goose-runs", last_run: null },
+  settings: {
+    host: null,
+    hosts: [],
+    users: null,
+    increase_rate: null,
+    increase_time_secs: null,
+    decrease_rate: null,
+    decrease_time_secs: null,
+    run_time_secs: null,
+    test_plan: null,
+    hold_ends_in_secs: null,
+    stage: "idle",
+  },
 };

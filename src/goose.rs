@@ -3752,10 +3752,17 @@ pub fn get_base_url(
                         })?,
                     )
                 }
-                // Otherwise, use global `GooseAttack.host`. `unwrap` okay as host validation was done at startup.
+                // Otherwise, use global `GooseAttack.host`, refused when
+                // there is none: a Start checks for a host before it runs,
+                // so this only answers a caller that did not.
                 None => {
-                    // Host is required, if we get here it's safe to unwrap this variable.
-                    let default_host = default_host.unwrap();
+                    let Some(default_host) = default_host else {
+                        return Err(GooseError::InvalidOption {
+                            option: "--host".to_string(),
+                            value: "".to_string(),
+                            detail: "A host must be defined via the --host option, the GooseAttack.set_default() function, or the Scenario.set_host() function.".to_string(),
+                        });
+                    };
                     Ok(
                         Url::parse(&default_host).map_err(|parse_error| GooseError::InvalidHost {
                             host: default_host.to_string(),
@@ -6260,6 +6267,7 @@ mod tests {
                         dir: "goose-runs".to_string(),
                         last_run: None,
                     },
+                    settings: crate::metrics::dashboard_snapshot::SnapshotSettings::idle(),
                     percentiles_over_time: false,
                     series_keys: std::collections::HashSet::new(),
                 },

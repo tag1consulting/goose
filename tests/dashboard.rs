@@ -1338,11 +1338,12 @@ async fn test_control_users_while_decreasing() {
     load.abort().await;
 }
 
-/// Case 8b: a test plan's own ramp down is not a cancel. The snapshot does not
-/// report it as stopping, and Users is accepted and takes effect.
+/// Case 8b: a users ramp's own ramp down is not a cancel. The snapshot does
+/// not report it as stopping, and Users is accepted: it abandons the ramp
+/// down and holds the new count until stopped.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial]
-async fn test_control_users_during_plan_ramp_down() {
+async fn test_control_users_during_ramp_down() {
     let server = MockServer::start();
     let _mocks = setup_mock_endpoints(&server);
     let port = reserve_port();
@@ -1354,7 +1355,10 @@ async fn test_control_users_during_plan_ramp_down() {
         "127.0.0.1",
         port,
         ControlTestOpts {
-            test_plan: Some("10,1s;10,1s;0,30s"),
+            users: 10,
+            increase_rate: "10",
+            run_time: "1",
+            decrease_rate: Some("0.34"),
             ..ControlTestOpts::default()
         },
     );
@@ -1380,9 +1384,10 @@ async fn test_control_users_during_plan_ramp_down() {
     .await;
     assert_eq!(
         ramp_down["stopping"], false,
-        "a plan's ramp down is not a cancel: {}",
+        "a ramp down is not a cancel: {}",
         ramp_down
     );
+    assert_eq!(ramp_down["settings"]["stage"], "ramping_down");
 
     let users = post_control(
         &client,
@@ -1396,14 +1401,14 @@ async fn test_control_users_during_plan_ramp_down() {
     let users_body: serde_json::Value = users.json().await.expect("json");
     assert_eq!(
         users_body["ok"], true,
-        "users during a plan ramp down: {}",
+        "users during a ramp down: {}",
         users_body
     );
     assert_eq!(users_body["command"], "users");
     assert_eq!(users_body["phase"], "decrease");
     assert_eq!(users_body["target_users"], 4);
 
-    // The new count replaces the rest of the plan: hold 4 users.
+    // The new count replaces the ramp down: hold 4 users until stopped.
     let held = wait_for_phase(
         &client,
         &base,
@@ -1414,8 +1419,128 @@ async fn test_control_users_during_plan_ramp_down() {
     .await;
     assert_eq!(held["target_users"], 4, "maintain after users: {}", held);
     assert_eq!(held["stopping"], false);
+    assert_eq!(held["settings"]["stage"], "hold_until_stopped");
 
     load.abort().await;
+}
+
+/// Case 8c: Users is refused while a test plan runs, naming users: the plan
+/// sets users. The plan keeps running.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn test_control_users_refused_during_test_plan() {
+    let server = MockServer::start();
+    let _mocks = setup_mock_endpoints(&server);
+    let port = reserve_port();
+    let base_v4 = format!("http://127.0.0.1:{port}");
+
+    let configuration = build_control_config(
+        &server,
+        "127.0.0.1",
+        port,
+        ControlTestOpts {
+            test_plan: Some("4,1s;4,30s;0,1s"),
+            ..ControlTestOpts::default()
+        },
+    );
+    let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
+    let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
+
+    let (base, _) = wait_for_health(&[&base_v4], 80).await;
+    let client = reqwest::Client::new();
+    let token = Some(AUTH_TOKEN);
+    let start = post_control(&client, &base, "/api/v1/control/start", Some("{}"), true).await;
+    assert_eq!(start.status(), 200);
+    let running = wait_for_phase(
+        &client,
+        &base,
+        token,
+        &["maintain"],
+        Duration::from_secs(30),
+    )
+    .await;
+    assert_eq!(running["settings"]["stage"], "test_plan");
+    assert_eq!(running["settings"]["test_plan"], "4,1;4,30;0,1");
+    assert!(running["settings"]["users"].is_null());
+
+    let users = post_control(
+        &client,
+        &base,
+        "/api/v1/control/users",
+        Some(r#"{"users":6}"#),
+        true,
+    )
+    .await;
+    assert_eq!(users.status(), 200);
+    let body: serde_json::Value = users.json().await.expect("json");
+    assert_eq!(body["ok"], false, "users during a test plan: {}", body);
+    assert_eq!(body["error"], "invalid_phase");
+    assert_eq!(body["field"], "users");
+    assert_eq!(
+        body["message"],
+        "failed to reconfigure users, the test plan sets users: edit the plan, or stop and switch mode"
+    );
+    let still = wait_for_phase(&client, &base, token, &["maintain"], Duration::from_secs(5)).await;
+    assert_eq!(still["target_users"], 4);
+
+    load.abort().await;
+}
+
+/// Users on an autostarted `-t` run keeps its run time: the run still ends
+/// on time instead of holding until stopped, as it did before.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn test_control_users_keeps_run_time() {
+    let server = MockServer::start();
+    let _mocks = setup_mock_endpoints(&server);
+    let port = reserve_port();
+    let base_v4 = format!("http://127.0.0.1:{port}");
+
+    let configuration = build_control_config(
+        &server,
+        "127.0.0.1",
+        port,
+        ControlTestOpts {
+            users: 2,
+            increase_rate: "50",
+            run_time: "3",
+            no_autostart: false,
+            ..ControlTestOpts::default()
+        },
+    );
+    let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
+    let started = Instant::now();
+    let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
+
+    let (base, _) = wait_for_health(&[&base_v4], 80).await;
+    let client = reqwest::Client::new();
+    let held = wait_for_phase(
+        &client,
+        &base,
+        Some(AUTH_TOKEN),
+        &["maintain"],
+        Duration::from_secs(30),
+    )
+    .await;
+    assert_eq!(held["settings"]["stage"], "hold");
+    assert_eq!(held["settings"]["run_time_secs"], 3);
+    let users = post_control(
+        &client,
+        &base,
+        "/api/v1/control/users",
+        Some(r#"{"users":4}"#),
+        true,
+    )
+    .await;
+    let body: serde_json::Value = users.json().await.expect("json");
+    assert_eq!(body["ok"], true, "users on a timed run: {}", body);
+
+    // The run ends by itself: no tab is open, so Goose shuts down.
+    tokio::time::timeout(Duration::from_secs(20), load.join())
+        .await
+        .expect("the run must end on time, not hold until stopped")
+        .expect("load test");
+    assert!(started.elapsed() < Duration::from_secs(20));
 }
 
 /// Case 9: open SSE, then Start; control still completes (shared flume FIFO).

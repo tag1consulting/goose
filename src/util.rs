@@ -391,7 +391,7 @@ pub fn parse_rate(rate: Option<String>) -> f32 {
 const MIN_RATE: f32 = 1.0 / 86_400.0;
 
 /// Whether `rate`, in users per second, is slower than one user a day: the
-/// check the Controllers and the command line share. `NaN` is not.
+/// command line's check. `NaN` is not.
 pub(crate) fn below_one_user_a_day(rate: f32) -> bool {
     rate < MIN_RATE
 }

@@ -16,6 +16,7 @@
     <div class="header-meta">
       <span id="phase-badge" class="phase-badge phase-idle">idle</span>
       <span id="hosts" class="meta-item" title="Target hosts">—</span>
+      <span id="run-settings" class="meta-item meta-wrap" hidden></span>
       <span id="duration" class="meta-item" title="Test duration">0s</span>
       <span id="save-status" class="meta-item save-status" title="Saved runs"></span>
       <span id="connection" class="connection disconnected" title="Connection status">
@@ -33,6 +34,7 @@
 
   <section id="control-panel" class="card control-panel hidden" aria-label="Load test control">
     <h2>Control</h2>
+    <p id="ctrl-summary" class="control-summary"></p>
     <div class="control-row">
       <button type="button" id="ctrl-start" class="ctrl-btn ctrl-start">Start</button>
       <button type="button" id="ctrl-stop" class="ctrl-btn ctrl-stop">Stop</button>
@@ -44,7 +46,7 @@
       </span>
       <label class="control-label" for="ctrl-target">
         Target
-        <input id="ctrl-target" type="number" min="1" step="1" inputmode="numeric" autocomplete="off">
+        <input id="ctrl-target" type="number" min="1" step="1" inputmode="numeric" autocomplete="off" aria-describedby="ctrl-target-help">
       </label>
       <button type="button" id="ctrl-apply" class="ctrl-btn">Apply</button>
       <button type="button" id="ctrl-minus" class="ctrl-btn ctrl-step-btn" title="Decrease target by step" aria-label="Decrease target by step">−</button>
@@ -54,6 +56,8 @@
         <input id="ctrl-step" type="number" min="1" step="1" value="10" inputmode="numeric" autocomplete="off">
       </label>
     </div>
+    <p id="ctrl-target-reason" class="control-help control-reason" hidden></p>
+    <p id="ctrl-target-help" class="control-help"></p>
     <p id="ctrl-status" class="control-status" role="status"></p>
   </section>
 

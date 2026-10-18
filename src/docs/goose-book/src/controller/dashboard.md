@@ -264,7 +264,9 @@ Example success bodies:
 }
 ```
 
-Logical rejections (wrong phase, prepare failure) return **HTTP 200** with `"ok": false` and a stable `error` code (for example `invalid_phase`). A malformed body returns **400** with `error` set to `bad_request`, and a `users` value that is not an integer from 1 to 100000 returns **400** with `invalid_users`. A body larger than 16 KiB gets **413** with a plain text body, before the token is checked.
+Logical rejections return **HTTP 200** with `"ok": false` and a stable `error` code: `invalid_phase` when the phase cannot take the command, `prepare_failed` when a Start cannot prepare the load test, and `conflicting_settings` when the command conflicts with other settings, such as `users 1` while an increase time is set. When one setting is at fault the body also names it in `field` (for example `"field": "users"`, or `"field": "host"` for a Start with no host); `field` is left out otherwise. A malformed body returns **400** with `error` set to `bad_request`, and a `users` value that is not an integer from 1 to 100000 returns **400** with `invalid_users`; a 400 body has `"field": null`. A body larger than 16 KiB gets **413** with a plain text body, before the token is checked.
+
+A Start is refused with `prepare_failed` and `"field": "host"` before it replies when some scenario has no host from `--host`, the scenario itself or the default host, and also when a `test_start` or `test_stop` transaction is registered and neither `--host` nor the default host is set, since those run with no scenario host. An autostarted run with the same configuration fails at launch instead.
 
 When the main loop does not answer, a control POST returns **503** with `"ok": false`, an `error` code from this table, and `phase`, `active_users` and `target_users` set to `null`:
 
@@ -284,7 +286,56 @@ When the main loop does not answer, a control POST returns **503** with `"ok": f
 - **Start** stays disabled until phase is `idle` again
 - **Users** is refused until phase is `idle` again (the dashboard returns `"ok": false` with `invalid_phase`, a Controller replies false), so Users cannot turn a Stop back into a running load test
 
-The snapshot's `stopping` field is `true` from the Stop until `idle`; a Controller `shutdown` and Ctrl-C set it the same way. A test plan's own ramp down is also phase `decrease`, but `stopping` stays `false` and **Users** is accepted there.
+The snapshot's `stopping` field is `true` from the Stop until `idle`; a Controller `shutdown` and Ctrl-C set it the same way. A users ramp's own ramp down is also phase `decrease`, but `stopping` stays `false` and **Users** is accepted there: the ramp down is abandoned and the run holds the new count until stopped. While a test plan runs, **Users** is refused with `invalid_phase` and `"field": "users"`, as the plan sets users: edit the plan, or stop and set users to switch to a users ramp.
+
+### Users on a running test
+
+A users ramp keeps its shape when **Users** changes it mid run: Goose keeps the target user count, the hold (the run time after the ramp up) and the ramp down, and generates the steps still ahead again from them.
+
+| When Users arrives | What happens |
+|--------------------|--------------|
+| During the ramp up | Ramp to the new count, then hold for the full run time, then ramp down for the new count |
+| During the hold | Ramp to the new count; the hold keeps its end, and if the ramp outlasts it, the ramp down starts when the ramp finishes |
+| During the ramp down | The ramp down is abandoned, and the run holds the new count until stopped |
+| While holding until stopped | Ramp to the new count, and keep holding |
+
+Adding users ramps at the increase rate; removing them at the decrease rate, else the increase rate; 1 per second when neither is set. Increase and decrease times are not used for these changes. A decrease rate sent while a users ramp runs regenerates the ramp down still ahead at the new rate; on a run with a run time and no ramp down, where all users would stop at once when the hold ends, it adds a ramp down at that rate; on a run holding until stopped it only sets the rate for the next Users decrease and the next Start. An increase rate sent while running is for the next Users increase, and never re-paces a ramp in progress. While running, either rate is refused with `conflicting_settings` when its own time is set, since a time changes only in Idle, and both are refused during the ramp down, while stopping, and while a test plan runs.
+
+### Run settings in the snapshot
+
+Every snapshot carries `settings`: what the next Start runs, and where the running test is. It reaches every tab within a tick of a change from any front end.
+
+```json
+"settings": {
+  "host": "https://example.com",
+  "hosts": ["https://example.com/"],
+  "users": 100,
+  "increase_rate": 10.0,
+  "increase_time_secs": null,
+  "decrease_rate": null,
+  "decrease_time_secs": null,
+  "run_time_secs": 600,
+  "test_plan": null,
+  "hold_ends_in_secs": 412,
+  "stage": "hold"
+}
+```
+
+Names are the command line's flags in snake case, durations are whole seconds with a `_secs` suffix, and `null` means unset, so Goose's default applies.
+
+| Field | Meaning |
+|-------|---------|
+| `host` | The `--host` override, or `null` |
+| `hosts` | The hosts the next Start will load test: per scenario, `--host`, else the scenario's host, else the default host, sorted and deduplicated, written as the top level `hosts` writes them (`http://localhost/`, with the slash). A scenario with no host from any source adds nothing, so it is right in Idle, after a host change, and under `--no-autostart` with no host yet. The top level `hosts` keeps meaning the current or last run's hosts |
+| `users` | The configured user count, `null` only with a test plan. `target_users` is different: the count the current step ramps toward |
+| `increase_rate`, `decrease_rate` | Users per second |
+| `increase_time_secs`, `decrease_time_secs` | The ramp up or ramp down as a time |
+| `run_time_secs` | The hold at full users after the ramp up, not the total run time |
+| `test_plan` | The test plan as `--test-plan` takes it, in canonical form: each step's duration in whole seconds, so `10,1h30m` reads `10,5400` |
+| `hold_ends_in_secs` | Seconds until the hold ends once it has a fixed end, and `0` while a ramp runs past it; `null` in Idle, during the first ramp up, once the ramp down starts, with no run time, and with a test plan |
+| `stage` | Where the run is: `idle`, `ramp_up`, `hold`, `hold_until_stopped`, `ramping_down` or `stopping` for a users ramp; `idle`, `test_plan` or `stopping` for a test plan |
+
+`phase` alone cannot say this: `decrease` with `stopping` false is either a Users decrease or the configured ramp down. After Users during a ramp down, `run_time_secs` is unchanged while `stage` reads `hold_until_stopped`.
 
 ### UI walkthrough (control panel)
 
@@ -293,9 +344,10 @@ When `health.control_enabled` is true and the SPA has a token:
 1. **Phase badge** still shows `idle` / `increase` / `maintain` / `decrease` / `shutdown`.
 2. **Start** is enabled only in `idle`.
 3. **Stop** is enabled in `increase` and `maintain` only.
-4. **Target users**: enter an absolute count and **Apply**, or use **−** / **+** with a configurable step (default 10). Active user count is a read-only label from the latest snapshot. **Apply**, **−** and **+** are disabled while `stopping` is set.
-5. Status line shows server `message` on success, or an error banner on soft failure / 401 / 503.
-6. **Quit** shows only in `idle`, and shuts Goose down; the status line then reads `Goose is shutting down.`
+4. **Summary line**: one line above the buttons says what the next Start runs, for example `https://example.com/ · 100 users at 10/s · hold 10 min · then 10/s down`, and while running where the run is: `ramping to 100 users at 10/s`, `ramp down in 6 min 52 s` during the hold, `holding until stopped`, `ramping down at 10/s`, `stopping`, or for a test plan `test plan: 3 steps, peak 100 users, 1 h 1 min total`. Its wording comes from `settings.stage`. It is not a live region, so the countdown is not announced.
+5. **Target users**: enter an absolute count and **Apply**, or use **−** / **+** with a configurable step (default 10). Active user count is a read-only label from the latest snapshot. In Idle the field shows the configured users the next Start runs (empty with a test plan, where applying a count replaces the plan with a users ramp); while running, the count the run ramps toward. It follows the server unless you are editing it: an edit holds until its Apply succeeds and a snapshot reports the value, or until another client changes the count, when the field shows the new count and the status line says it changed elsewhere. **−** and **+** step from what the field shows. An unapplied edit is discarded, and the status line says so once, when the run starts stopping or a test plan starts. The field and step are read only, never disabled, with the reason under them, while `stopping` is set, while a test plan runs, and without a token.
+6. Status line shows server `message` on success, or an error banner on soft failure / 401 / 503.
+7. **Quit** shows only in `idle`, and shuts Goose down; the status line then reads `Goose is shutting down.`
 
 Quit is refused outside `idle` (`"ok": false` with `invalid_phase`), so stop a running test first. A Controller `shutdown` command exits the Goose process from any phase.
 
@@ -352,7 +404,9 @@ These counters are ops-safe (timing and client counts only). The response does *
 - **Charts**: trailing series window (default 300 seconds) for RPS and failures per second and active users, and the response time heatmap; see [The response time heatmap](#the-response-time-heatmap). Their colours follow the system's light or dark theme, and change with it while the page is open.
 - **Whole run** card: requests, failures, RPS, failures per second, fail %, average, p50, p95 and p99, and minimum and maximum response times
 - **Sortable tables**: Scenarios, Transactions, Requests and Errors. The scenario and transaction tables list every registered scenario and transaction and are never truncated; the request and error tables show the top rows (truncated server-side for large runs). The Transactions and Requests tables show failures per second and minimum and maximum response times, and the Requests table each request's status codes, most frequent first: the top three and how many more, such as `200 9,812 · 404 3 · +1`, with every code on hover (empty with `--no-status-codes`)
-- **Control panel** (only when `--dashboard-control`): Start / Stop / Quit / target users; see [Controlling a load test from the dashboard](#controlling-a-load-test-from-the-dashboard)
+- **Hosts** in the header: the current or last run's hosts. In Idle, when the next Start would load test other hosts, they read `Last run: …`.
+- **Run settings** in the header, with control off: the same summary line the control panel shows, leaving out the hosts while running, and including the next Start's hosts in Idle when they differ from the last run's; see [Run settings in the snapshot](#run-settings-in-the-snapshot)
+- **Control panel** (only when `--dashboard-control`): the run settings summary, Start / Stop / Quit / target users; see [Controlling a load test from the dashboard](#controlling-a-load-test-from-the-dashboard)
 - **Save state** in the header: `Saving to goose-runs`, `Not saving (turned off)`, or `Not saving: can't create goose-runs (reason)`; see [Saved runs](#saved-runs)
 - **Saved runs panel**: every saved run, with downloads and comparisons, and with `--dashboard-control` a Delete button for each
 

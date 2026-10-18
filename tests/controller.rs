@@ -438,9 +438,8 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                         // Confirm increase_rate is not configured.
                         3 => {
-                            assert!(response.starts_with(
-                                "increase_rate must be a number of at least 0.0000116 (one user a day)"
-                            ));
+                            assert!(response
+                                .starts_with("increase_rate must be a number from 0.01 to 100000"));
 
                             // Configure increase_rate with a single integer.
                             make_request(
@@ -517,9 +516,8 @@ async fn run_standalone_test(test_type: TestType) {
                         }
                         // Confirm decrease_rate is not configured.
                         2 => {
-                            assert!(response.starts_with(
-                                "decrease_rate must be a number of at least 0.0000116 (one user a day)"
-                            ));
+                            assert!(response
+                                .starts_with("decrease_rate must be a number from 0.01 to 100000"));
 
                             // Configure decrease_rate with a single integer.
                             make_request(&mut test_state, "decreaserate 2\r\n").await;
