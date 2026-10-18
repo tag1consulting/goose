@@ -337,6 +337,18 @@ pub(crate) fn attack_phase_str(phase: AttackPhase) -> &'static str {
 /// configured; a refused Start reads its cause from it.
 const NO_HOST_OPTION: &str = "--host";
 
+/// The transactions that run with no scenario host, so need a default host.
+const HOST_TRANSACTIONS: [&str; 2] = ["test_start", "test_stop"];
+
+/// The detail of the [`NO_HOST_OPTION`] error refusing a run whose
+/// `transaction`, one of [`HOST_TRANSACTIONS`], has no host; a refused Start
+/// reads the transaction back from it.
+fn no_transaction_host_detail(transaction: &str) -> String {
+    format!(
+        "A host must be defined via the --host option or the GooseAttack.set_default() function (no host defined for the {transaction} transaction)."
+    )
+}
+
 /// The option a [`GooseError::InvalidOption`] names when there are no users
 /// to start; a refused Start reads its cause from it.
 const NO_USERS_OPTION: &str = "`configuration.users`";
@@ -1327,9 +1339,9 @@ impl GooseAttack {
     fn validate_host(&mut self) -> Result<(), GooseError> {
         if self.configuration.host().is_none() && self.defaults.host.is_none() {
             let transaction = if self.test_start_transaction.is_some() {
-                Some("test_start")
+                Some(HOST_TRANSACTIONS[0])
             } else if self.test_stop_transaction.is_some() {
-                Some("test_stop")
+                Some(HOST_TRANSACTIONS[1])
             } else {
                 None
             };
@@ -1337,9 +1349,7 @@ impl GooseAttack {
                 return Err(GooseError::InvalidOption {
                     option: NO_HOST_OPTION.to_string(),
                     value: "".to_string(),
-                    detail: format!(
-                        "A host must be defined via the --host option or the GooseAttack.set_default() function (no host defined for the {transaction} transaction)."
-                    ),
+                    detail: no_transaction_host_detail(transaction),
                 });
             }
         }
@@ -2588,8 +2598,17 @@ impl GooseAttack {
             // the cause: prepare_load_test refuses no host and no users itself,
             // with the options these constants name.
             let (reason, field) = match e {
-                GooseError::InvalidOption { option, .. } if option == NO_HOST_OPTION => {
-                    ("no host is configured".to_string(), Some("host"))
+                GooseError::InvalidOption { option, detail, .. } if option == NO_HOST_OPTION => {
+                    let reason = match HOST_TRANSACTIONS
+                        .iter()
+                        .find(|transaction| detail == no_transaction_host_detail(transaction))
+                    {
+                        Some(transaction) => {
+                            format!("no host is configured for the {transaction} transaction")
+                        }
+                        None => "no host is configured".to_string(),
+                    };
+                    (reason, Some("host"))
                 }
                 GooseError::InvalidOption { option, .. } if option == NO_USERS_OPTION => {
                     ("there are no users to start".to_string(), None)
@@ -3655,7 +3674,7 @@ mod tests {
 
     /// A Start with scenario hosts only, no default host and a `test_start`
     /// or `test_stop` transaction is refused before it replies, naming the
-    /// host; it used to panic after replying ok. An autostarted run fails
+    /// host and the transaction; it used to panic after replying ok. An autostarted run fails
     /// at launch instead.
     #[tokio::test]
     #[serial_test::serial]
@@ -3689,9 +3708,12 @@ mod tests {
                 ControlStartBegin::Rejected(outcome) => {
                     assert_eq!(outcome.error, Some("prepare_failed"));
                     assert_eq!(outcome.field, Some("host"));
+                    let transaction = if test_stop { "test_stop" } else { "test_start" };
                     assert_eq!(
                         outcome.message,
-                        "unable to start load test, no host is configured"
+                        format!(
+                            "unable to start load test, no host is configured for the {transaction} transaction"
+                        )
                     );
                 }
                 ControlStartBegin::Accepted(outcome) => panic!("accepted: {:?}", outcome),
