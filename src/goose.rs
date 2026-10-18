@@ -5845,6 +5845,34 @@ mod tests {
         assert_eq!(counts, expected.into_iter().collect::<Vec<_>>());
     }
 
+    /// A batch holding a request from the second after its own widens the
+    /// columns for that second before it writes it (#746).
+    #[test]
+    fn a_batch_fits_its_next_second_in_the_columns() {
+        let configuration = GooseConfiguration::parse_args_default::<&str>(&[]).unwrap();
+        let requests = [(3_900, 20), (4_100, 20)].map(|(elapsed, response_time)| SeededRequest {
+            user: 0,
+            name: "/a".to_string(),
+            elapsed,
+            response_time,
+            failed: false,
+        });
+        let batches = batch_through_users(&configuration, 1, &requests);
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batch_seconds(&batches[0]), [(3, 1), (4, 1)]);
+        let mut processor = test_processor(&configuration);
+        *processor.graph_data_for_test() = crate::graph::GraphData::with_latency_budgets(4, 4);
+        for batch in batches {
+            processor.process_batch_for_test(batch);
+        }
+        let graph = processor.graph_data_for_test();
+        graph.finish_latency_columns();
+        assert_eq!(
+            graph.latency_columns_for_test(None),
+            Some((2, vec![(1, 1), (2, 1)]))
+        );
+    }
+
     /// Whole run results (every request's aggregate, errors, and all requests
     /// together with their status codes) are the same with percentiles over
     /// time collected, with per second graphs but no percentiles, with no

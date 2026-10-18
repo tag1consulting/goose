@@ -6145,6 +6145,28 @@ mod test {
         assert_eq!((latency.all_width, latency.request_width), (8, 32));
     }
 
+    /// A synthetic time from a second later than any measured one widens
+    /// the columns before it is written.
+    #[test]
+    fn a_synthetic_time_fits_its_second_in_the_columns() {
+        let mut graph = column_graph(true, 4, 2);
+        graph.record_request_per_second_and_latency("GET /a", 0, Some(10));
+        graph.record_synthetic_latency("GET /a", 9, 500);
+        let latency = latency(&graph);
+        assert_eq!((latency.all_width, latency.request_width), (4, 8));
+        let synthetic = latency.synthetic.as_ref().unwrap();
+        assert!(synthetic.0.columns.as_ref().unwrap().columns.len() <= 4);
+        assert!(
+            synthetic.1["GET /a"]
+                .columns
+                .as_ref()
+                .unwrap()
+                .columns
+                .len()
+                <= 2
+        );
+    }
+
     /// A name first seen after the per name columns widened gets columns of
     /// the same width, so its measured and synthetic columns line up with
     /// every other name's.
@@ -6212,6 +6234,11 @@ mod test {
             .collect();
         assert_eq!(counts, [(0, 1), (1, 1)]);
         assert_eq!(all.columns[0].maximum_time, 30);
+        // The report places column 0 at the reset's second.
+        assert_eq!(
+            latency.report_heatmap(false, Utc::now()).unwrap().origin,
+            20
+        );
     }
 
     /// The first 100 names get columns of their own; later names count
