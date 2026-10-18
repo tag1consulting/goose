@@ -364,3 +364,237 @@ test("the form starts open in Idle and closed while running, unless the viewer c
   page = await formPage({}, { "goose-dashboard-settings-open": "closed" });
   assert.equal(el(page, "ctrl-settings").open, false);
 });
+
+// A server that accepts every settings body, answering with the configured
+// settings and the body applied, each time in its canonical form, and its
+// snapshots in `stage` until told otherwise: `page.server.settings` is
+// what it has.
+async function acceptingPage(stage = "idle", settings = {}, options = {}) {
+  const server = { settings: { ...CONFIGURED, ...settings } };
+  const page = await formPage({
+    controlAnswer: (command, body) => {
+      if (command !== "settings" && command !== "start") return undefined;
+      const applied = { ...server.settings };
+      for (const [key, value] of Object.entries(body)) {
+        if (key !== "users") applied[key] = value;
+      }
+      server.settings = applied;
+      if (options.timeout) {
+        return { status: 503, body: { ok: false, command, error: "timeout", message: "timed out" } };
+      }
+      return {
+        status: 200,
+        body: {
+          ok: true,
+          command,
+          message: "settings configured",
+          phase: stage === "idle" ? "idle" : "maintain",
+          settings: { ...IDLE_SNAPSHOT.settings, ...applied, stage },
+        },
+      };
+    },
+  });
+  page.server = server;
+  if (stage !== "idle" || Object.keys(settings).length) {
+    await emit(page, snapshot(stage === "idle" ? "idle" : "maintain", stage, server.settings));
+  }
+  return page;
+}
+
+// The three quantities with a number and a unit, each configured as 600
+// seconds, which the form shows as 10 min.
+const QUANTITIES = [
+  { label: "Ramp up", id: "set-up", key: "increase_time_secs", settings: { increase_rate: null, increase_time_secs: 600 } },
+  { label: "Ramp down", id: "set-down", key: "decrease_time_secs", settings: { decrease_time_secs: 600 } },
+  { label: "Run time", id: "set-run", key: "run_time_secs", settings: { run_time_secs: 600 } },
+];
+
+function shown(page, id) {
+  return el(page, id).value + " " + el(page, id + "-unit").value;
+}
+
+for (const q of QUANTITIES) {
+  test(q.label + ": an applied 120 s is acknowledged as the server's 2 min, after stale and repeated snapshots", async () => {
+    const page = await acceptingPage("idle", q.settings);
+    assert.equal(shown(page, q.id), "10 min");
+    type(page, q.id, "120");
+    choose(page, q.id + "-unit", "s");
+    assert.equal(label(page), "Edit settings (1 unapplied)");
+    el(page, "set-apply").click();
+    await settle(page.window);
+    assert.equal(controlPosts(page).at(-1).body[q.key], 120);
+    assert.equal(label(page), "Edit settings");
+    // A snapshot from before the apply reached the server changes nothing.
+    await emit(page, snapshot("idle", "idle", q.settings));
+    assert.equal(shown(page, q.id), "120 s");
+    assert.equal(label(page), "Edit settings");
+    for (let i = 0; i < 2; i++) {
+      await emit(page, snapshot("idle", "idle", page.server.settings));
+      assert.equal(shown(page, q.id), "2 min");
+      assert.equal(label(page), "Edit settings");
+    }
+    assert.doesNotMatch(el(page, "ctrl-status").textContent, /changed elsewhere/);
+
+    // A later edit is its own.
+    type(page, q.id, "3");
+    choose(page, q.id + "-unit", "h");
+    assert.equal(label(page), "Edit settings (1 unapplied)");
+    el(page, "set-apply").click();
+    await settle(page.window);
+    assert.equal(controlPosts(page).at(-1).body[q.key], 10800);
+    await emit(page, snapshot("idle", "idle", page.server.settings));
+    assert.equal(shown(page, q.id), "3 h");
+    assert.equal(label(page), "Edit settings");
+  });
+
+  test(q.label + ": an apply that timed out but landed is acknowledged by the snapshot", async () => {
+    const page = await acceptingPage("idle", q.settings, { timeout: true });
+    type(page, q.id, "120");
+    choose(page, q.id + "-unit", "s");
+    el(page, "set-apply").click();
+    await settle(page.window);
+    assert.equal(label(page), "Edit settings (1 unapplied)", "the edit stays while unconfirmed");
+    await emit(page, snapshot("idle", "idle", page.server.settings));
+    assert.equal(shown(page, q.id), "2 min");
+    assert.equal(label(page), "Edit settings");
+    assert.doesNotMatch(el(page, "ctrl-status").textContent, /changed elsewhere/);
+  });
+
+  test(q.label + ": a change elsewhere to another unit replaces a pending edit and says so", async () => {
+    const page = await acceptingPage("idle", q.settings);
+    type(page, q.id, "20");
+    assert.equal(shown(page, q.id), "20 min");
+    assert.equal(label(page), "Edit settings (1 unapplied)");
+    await emit(page, snapshot("idle", "idle", { ...q.settings, [q.key]: 36000 }));
+    assert.equal(shown(page, q.id), "10 h");
+    assert.equal(label(page), "Edit settings");
+    assert.equal(el(page, "ctrl-status").textContent, q.label + " changed elsewhere to 10 h");
+  });
+
+  test(q.label + ": Discard edits puts back the number and its unit", async () => {
+    const page = await acceptingPage("idle", q.settings);
+    type(page, q.id, "120");
+    choose(page, q.id + "-unit", "s");
+    el(page, "set-discard").click();
+    await settle(page.window);
+    assert.equal(shown(page, q.id), "10 min");
+    assert.equal(label(page), "Edit settings");
+    await emit(page, snapshot("idle", "idle", q.settings));
+    assert.equal(shown(page, q.id), "10 min");
+    assert.equal(label(page), "Edit settings");
+  });
+}
+
+test("a run time applied while running is acknowledged in the server's unit", async () => {
+  const page = await acceptingPage("hold", { run_time_secs: 600, hold_ends_in_secs: 300 });
+  type(page, "set-run", "120");
+  choose(page, "set-run-unit", "s");
+  el(page, "set-apply").click();
+  await settle(page.window);
+  assert.deepEqual(controlPosts(page).at(-1).body, { run_time_secs: 120 });
+  await emit(page, snapshot("maintain", "hold", { ...page.server.settings, hold_ends_in_secs: 0 }));
+  assert.equal(shown(page, "set-run"), "2 min");
+  assert.equal(label(page), "Edit settings");
+  assert.doesNotMatch(el(page, "ctrl-status").textContent, /changed elsewhere/);
+});
+
+test("a host typed with spaces, and a rate the server writes another way, are not changes from elsewhere", async () => {
+  const page = await acceptingPage();
+  type(page, "set-host", "  http://new.test ");
+  type(page, "set-up", "2.50");
+  type(page, "set-down", "0.123456789");
+  el(page, "set-apply").click();
+  await settle(page.window);
+  el(page, "set-host-confirm-ok").click();
+  await settle(page.window);
+  const body = controlPosts(page).at(-1).body;
+  assert.equal(body.host, "http://new.test");
+  // The server reads a rate as an f32 and writes it back as one.
+  const server = { ...page.server.settings, increase_rate: 2.5, decrease_rate: 0.12345679 };
+  for (let i = 0; i < 2; i++) {
+    await emit(page, snapshot("idle", "idle", server));
+    assert.equal(label(page), "Edit settings");
+    assert.doesNotMatch(el(page, "ctrl-status").textContent, /changed elsewhere/);
+  }
+  assert.equal(el(page, "set-host").value, "http://new.test");
+  assert.equal(el(page, "set-up").value, "2.5");
+});
+
+// The destination the open confirmation shows, or null while it is closed.
+function confirmationShows(page) {
+  if (el(page, "set-host-confirm").hidden) return null;
+  return el(page, "set-host-confirm-text").textContent.replace(/^Load will go to /, "");
+}
+
+// Press Confirm: every request it sends goes where the confirmation said.
+async function confirmAsShown(page) {
+  const showing = confirmationShows(page);
+  const before = controlPosts(page).length;
+  el(page, "set-host-confirm-ok").click();
+  await settle(page.window);
+  const sent = controlPosts(page).slice(before);
+  for (const post of sent) {
+    assert.notEqual(showing, null, "nothing is sent without a visible confirmation");
+    assert.equal(post.body.host, showing, "the request goes where the confirmation said");
+  }
+  return sent;
+}
+
+test("a host edited while its confirmation is open is confirmed as edited, never as first shown", async () => {
+  const page = await acceptingPage();
+  type(page, "set-host", "http://a.test");
+  el(page, "set-apply").click();
+  await settle(page.window);
+  assert.equal(confirmationShows(page), "http://a.test");
+  type(page, "set-host", "http://b.test");
+  await settle(page.window);
+  let sent = await confirmAsShown(page);
+  if (sent.length === 0) {
+    // The confirmation was refreshed or closed: confirming again sends B.
+    if (confirmationShows(page) === null) {
+      el(page, "set-apply").click();
+      await settle(page.window);
+    }
+    assert.equal(confirmationShows(page), "http://b.test");
+    sent = await confirmAsShown(page);
+  }
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].body.host, "http://b.test");
+});
+
+test("a host confirmation for Start with changes is not sent once the run has started elsewhere", async () => {
+  const page = await acceptingPage();
+  type(page, "set-host", "http://a.test");
+  el(page, "ctrl-start").click();
+  await settle(page.window);
+  assert.equal(confirmationShows(page), "http://a.test");
+  await emit(page, snapshot("increase", "ramp_up"));
+  if (confirmationShows(page) !== null) {
+    el(page, "set-host-confirm-ok").click();
+    await settle(page.window);
+  }
+  assert.deepEqual(controlPosts(page), [], "nothing is sent");
+  assert.equal(confirmationShows(page), null);
+});
+
+test("a host confirmation whose fallback the server already has closes, sending nothing", async () => {
+  const page = await acceptingPage();
+  type(page, "set-host", "");
+  el(page, "set-apply").click();
+  await settle(page.window);
+  assert.equal(confirmationShows(page), "each scenario's own host");
+  const confirm = el(page, "set-host-confirm-ok");
+  assert.equal(page.window.document.activeElement, confirm);
+  // Another client clears the host: the edit is now the server's value.
+  await emit(page, snapshot("idle", "idle", { host: null, hosts: ["http://scenario.test/"] }));
+  if (confirmationShows(page) !== null) {
+    await confirmAsShown(page);
+  }
+  assert.equal(confirmationShows(page), null);
+  assert.deepEqual(
+    controlPosts(page).filter((post) => "host" in post.body),
+    [],
+    "no host is sent"
+  );
+  assert.notEqual(page.window.document.activeElement, confirm, "focus leaves the hidden Confirm");
+});
