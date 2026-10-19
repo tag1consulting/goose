@@ -7,12 +7,20 @@ type DashboardSnapshotVersion = 1;
 
 type AggregateMetrics = { total_requests: number, total_failures: number, requests_per_second: number, failures_per_second: number, failure_rate: number, response_time_avg_ms: number, response_time_min_ms: number, response_time_max_ms: number, percentile_ms: Percentiles,
 /**
+ * The same times to the microsecond, null when any came without them.
+ */
+response_time_us: MicrosecondTimes | null,
+/**
  * True iff coordinated-omission metrics object is present AND has recorded
  * at least one CO event (or synthetic request).
  */
 co_active: boolean, co_adjusted: CoAdjusted | null, };
 
-type CoAdjusted = { response_time_avg_ms: number, response_time_max_ms: number, percentile_ms: Percentiles, };
+type CoAdjusted = { response_time_avg_ms: number, response_time_max_ms: number, percentile_ms: Percentiles,
+/**
+ * The same times to the microsecond, null when any came without them.
+ */
+response_time_us: MicrosecondTimes | null, };
 
 type DashboardSnapshot = { version: number, generated_at: string, goose_version: string, phase: string,
 /**
@@ -92,6 +100,12 @@ hold_from: number,
  */
 buckets: Array<[number, number, number]>,
 /**
+ * The same table in microseconds, which also tells apart the buckets
+ * under a millisecond that `buckets` shows as 0: those are 100
+ * microseconds each.
+ */
+buckets_us: Array<[number, number, number]>,
+/**
  * The columns that changed, oldest first.
  */
 columns: Array<HeatmapColumn>, };
@@ -111,9 +125,15 @@ measured: Array<number>,
  */
 synthetic: Array<number>, };
 
+type MicrosecondTimes = { min: number, max: number, p50: number, p95: number, p99: number, };
+
 type Percentiles = { p50: number, p95: number, p99: number, };
 
-type RequestRow = { method: string, name: string, request_count: number, failure_count: number, requests_per_second: number, failures_per_second: number, response_time_avg_ms: number, response_time_min_ms: number, response_time_max_ms: number, percentile_ms: Percentiles, status_codes: Array<[number, number]>, co_adjusted: CoAdjusted | null,
+type RequestRow = { method: string, name: string, request_count: number, failure_count: number, requests_per_second: number, failures_per_second: number, response_time_avg_ms: number, response_time_min_ms: number, response_time_max_ms: number, percentile_ms: Percentiles,
+/**
+ * The same times to the microsecond, null when any came without them.
+ */
+response_time_us: MicrosecondTimes | null, status_codes: Array<[number, number]>, co_adjusted: CoAdjusted | null,
 /**
  * True when the response time heatmap can show this request alone:
  * they are kept for the first 100 request names seen since metrics were

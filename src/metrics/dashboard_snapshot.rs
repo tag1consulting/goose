@@ -178,6 +178,8 @@ pub(crate) struct AggregateMetrics {
     pub response_time_min_ms: u64,
     pub response_time_max_ms: u64,
     pub percentile_ms: Percentiles,
+    /// The same times to the microsecond, null when any came without them.
+    pub response_time_us: Option<MicrosecondTimes>,
     /// True iff coordinated-omission metrics object is present AND has recorded
     /// at least one CO event (or synthetic request).
     pub co_active: bool,
@@ -197,6 +199,8 @@ pub(crate) struct RequestRow {
     pub response_time_min_ms: u64,
     pub response_time_max_ms: u64,
     pub percentile_ms: Percentiles,
+    /// The same times to the microsecond, null when any came without them.
+    pub response_time_us: Option<MicrosecondTimes>,
     pub status_codes: Vec<(u16, u64)>,
     pub co_adjusted: Option<CoAdjusted>,
     /// True when the response time heatmap can show this request alone:
@@ -312,6 +316,10 @@ pub(crate) struct Heatmap {
     /// of measured times that round to it. A longer table replaces a shorter
     /// one; entries never change.
     pub buckets: Vec<[u64; 3]>,
+    /// The same table in microseconds, which also tells apart the buckets
+    /// under a millisecond that `buckets` shows as 0: those are 100
+    /// microseconds each.
+    pub buckets_us: Vec<[u64; 3]>,
     /// The columns that changed, oldest first.
     pub columns: Vec<HeatmapColumn>,
 }
@@ -383,12 +391,14 @@ pub(crate) struct CoAdjusted {
     pub response_time_avg_ms: f64,
     pub response_time_max_ms: u64,
     pub percentile_ms: Percentiles,
+    /// The same times to the microsecond, null when any came without them.
+    pub response_time_us: Option<MicrosecondTimes>,
 }
 
 impl CoAdjusted {
     fn from_timing_data(data: &GooseRequestMetricTimingData) -> Self {
         CoAdjusted {
-            response_time_avg_ms: average_ms(data.total_time, data.counter),
+            response_time_avg_ms: average_of(data),
             response_time_max_ms: data.maximum_time as u64,
             percentile_ms: Percentiles::from_times(
                 &data.times,
@@ -396,7 +406,45 @@ impl CoAdjusted {
                 data.minimum_time,
                 data.maximum_time,
             ),
+            response_time_us: MicrosecondTimes::of(data),
         }
+    }
+}
+
+/// Response times in microseconds, beside the whole milliseconds of the same
+/// row: its fastest, slowest and percentiles.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub(crate) struct MicrosecondTimes {
+    pub min: u64,
+    pub max: u64,
+    pub p50: u64,
+    pub p95: u64,
+    pub p99: u64,
+}
+
+impl MicrosecondTimes {
+    /// `data`'s times in microseconds, `None` when it did not keep them or
+    /// has none.
+    fn of(data: &GooseRequestMetricTimingData) -> Option<Self> {
+        data.agreeing_micros().filter(|_| data.counter > 0)?;
+        Some(MicrosecondTimes {
+            min: data.minimum_micros(),
+            max: data.maximum_micros(),
+            p50: data.percentile_micros(0.5),
+            p95: data.percentile_micros(0.95),
+            p99: data.percentile_micros(0.99),
+        })
+    }
+}
+
+/// The mean of `data`'s times in milliseconds, to the microsecond when it
+/// kept them, 0 without times.
+fn average_of(data: &GooseRequestMetricTimingData) -> f64 {
+    if data.counter > 0 {
+        data.average_millis()
+    } else {
+        0.0
     }
 }
 
@@ -512,6 +560,7 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
                 response_time_min_ms: 0,
                 response_time_max_ms: 0,
                 percentile_ms: Percentiles::zero(),
+                response_time_us: None,
                 co_active: false,
                 co_adjusted: None,
             },
@@ -641,11 +690,7 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
     } else {
         0.0
     };
-    let response_time_avg_ms = if aggregate.counter > 0 {
-        aggregate.total_time as f64 / aggregate.counter as f64
-    } else {
-        0.0
-    };
+    let response_time_avg_ms = average_of(&aggregate);
 
     let mut hosts: Vec<String> = input.metrics.hosts.iter().cloned().collect();
     hosts.sort();
@@ -677,6 +722,7 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
                 aggregate.minimum_time,
                 aggregate.maximum_time,
             ),
+            response_time_us: MicrosecondTimes::of(&aggregate),
             co_active,
             co_adjusted: co_aggregate.as_ref().map(CoAdjusted::from_timing_data),
         },
@@ -709,11 +755,7 @@ fn request_row_from_aggregate(
 ) -> RequestRow {
     let total_count = request.success_count + request.fail_count;
     let (rps, fps) = per_second_calculations(duration, total_count, request.fail_count);
-    let avg = if request.raw_data.counter > 0 {
-        request.raw_data.total_time as f64 / request.raw_data.counter as f64
-    } else {
-        0.0
-    };
+    let avg = average_of(&request.raw_data);
     let status_codes = if no_status_codes {
         Vec::new()
     } else {
@@ -742,6 +784,7 @@ fn request_row_from_aggregate(
             request.raw_data.minimum_time,
             request.raw_data.maximum_time,
         ),
+        response_time_us: MicrosecondTimes::of(&request.raw_data),
         status_codes,
         co_adjusted: if co_active {
             request

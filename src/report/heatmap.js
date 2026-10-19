@@ -38,11 +38,18 @@
     document.getElementById('graph-latency-heatmap-ramp').style.background =
         'linear-gradient(to right, ' + color(0) + ', ' + color(1000) + ')';
 
-    // A bucket's span on the logarithmic axis: from its lowest time to past
-    // its highest. Times under a millisecond start at 0.5 ms.
+    // With microseconds, the buckets under a millisecond are 100
+    // microseconds each, and their rows come from buckets_us.
+    var micros = data.buckets_us && data.buckets_us.length ? data.buckets_us : null;
+
+    // A bucket's span on the logarithmic axis, in milliseconds: from its
+    // lowest time to past its highest. A bucket from 0 starts at half its
+    // end: 0.5 ms without microseconds, 0.05 ms with them.
     function span(bucket) {
-        var row = data.buckets[bucket];
-        return [row[1] === 0 ? 0.5 : row[1], row[2] + 1];
+        var row = micros ? micros[bucket] : data.buckets[bucket];
+        var scale = micros ? 1000 : 1;
+        var end = (row[2] + 1) / scale;
+        return [row[1] === 0 ? end / 2 : row[1] / scale, end];
     }
 
     function pad(number) {
@@ -63,6 +70,10 @@
 
     function bucketText(bucket) {
         var row = data.buckets[bucket];
+        if (micros && micros[bucket][2] < 1000) {
+            return (micros[bucket][1] / 1000) + ' to ' +
+                ((micros[bucket][2] + 1) / 1000) + ' ms';
+        }
         if (row[2] === 0) {
             return 'under 1 ms';
         }

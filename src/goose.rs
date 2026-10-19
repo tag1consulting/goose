@@ -1923,7 +1923,7 @@ impl GooseUser {
         let response = self.client.execute(built_request).await;
         // Record Time to First Byte (TTFB): client.execute() returns when response headers
         // are received, not when the complete response body is downloaded.
-        request_metric.set_response_time(started.elapsed().as_millis());
+        request_metric.set_response_duration(started.elapsed());
 
         // Determine if the request suceeded or failed.
         match &response {
@@ -2369,7 +2369,9 @@ impl GooseUser {
         );
 
         // Pre-aggregate timing data using the same bucketing logic.
-        entry.raw_data.record_time(request_metric.response_time);
+        entry
+            .raw_data
+            .record_time_us(request_metric.response_time_micros());
 
         if !self.config.no_status_codes {
             // Increment status-code count.
@@ -2480,15 +2482,17 @@ impl GooseUser {
         // Pre-aggregate timing data using the same bucketing logic.
         if next_second {
             match batch.next_second.get_mut(key) {
-                Some(next) => next.record_time(request_metric.response_time),
+                Some(next) => next.record_time_us(request_metric.response_time_micros()),
                 None => {
                     let mut next = GooseRequestMetricTimingData::new(None);
-                    next.record_time(request_metric.response_time);
+                    next.record_time_us(request_metric.response_time_micros());
                     batch.next_second.insert(key.to_string(), next);
                 }
             }
         } else {
-            entry.raw_data.record_time(request_metric.response_time);
+            entry
+                .raw_data
+                .record_time_us(request_metric.response_time_micros());
         }
 
         if !self.config.no_status_codes {
@@ -2884,8 +2888,9 @@ impl GooseUser {
     ///   in metrics output, e.g. `"send_file"` or `"tcp_echo"`).
     /// - `response_time`: How long the operation took, **in milliseconds**. Use
     ///   `started.elapsed().as_millis() as u64`. Note that `as_millis()` truncates to whole
-    ///   milliseconds — sub-millisecond operations will be recorded as `0 ms`, matching the
-    ///   resolution of HTTP request timing in Goose.
+    ///   milliseconds: sub-millisecond operations will be recorded as `0 ms`. To keep
+    ///   the microseconds, as Goose does for HTTP requests, call
+    ///   [`record_custom_request_duration`](Self::record_custom_request_duration) instead.
     /// - `success`: Whether the operation succeeded. Unlike HTTP requests where Goose
     ///   infers success from the status code, for custom protocols you control this directly.
     /// - `status_code`: A protocol-specific status or result code. Pass `None` when the
@@ -2938,6 +2943,67 @@ impl GooseUser {
         status_code: Option<u16>,
         error: Option<&str>,
     ) -> TransactionResult {
+        self.record_custom(
+            method,
+            name,
+            response_time.saturating_mul(1000),
+            success,
+            status_code,
+            error,
+        )
+        .await
+    }
+
+    /// [`record_custom_request`](Self::record_custom_request) with the time the
+    /// operation took as a [`Duration`](std::time::Duration), such as
+    /// `started.elapsed()`, so a sub millisecond operation keeps its microseconds
+    /// as an HTTP request does.
+    ///
+    /// # Example
+    /// ```rust
+    /// use goose::prelude::*;
+    /// use std::time::Instant;
+    ///
+    /// let mut transaction = transaction!(udp_ping);
+    ///
+    /// async fn udp_ping(user: &mut GooseUser) -> TransactionResult {
+    ///     let started = Instant::now();
+    ///     // Send a datagram and wait for the answer here.
+    ///     user.record_custom_request_duration("UDP", "ping", started.elapsed(), true, None, None)
+    ///         .await?;
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn record_custom_request_duration(
+        &mut self,
+        method: &str,
+        name: &str,
+        response_time: std::time::Duration,
+        success: bool,
+        status_code: Option<u16>,
+        error: Option<&str>,
+    ) -> TransactionResult {
+        self.record_custom(
+            method,
+            name,
+            response_time.as_micros() as u64,
+            success,
+            status_code,
+            error,
+        )
+        .await
+    }
+
+    /// Record a custom request that took `response_time_us` microseconds.
+    async fn record_custom(
+        &mut self,
+        method: &str,
+        name: &str,
+        response_time_us: u64,
+        success: bool,
+        status_code: Option<u16>,
+        error: Option<&str>,
+    ) -> TransactionResult {
         // The aggregation key uses "{method} {name}", so both must be non-empty
         // and the method label must not contain whitespace.
         if method.is_empty() || method.contains(char::is_whitespace) {
@@ -2971,7 +3037,7 @@ impl GooseUser {
             self.weighted_users_index,
         );
 
-        request_metric.response_time = response_time;
+        request_metric.set_response_micros(response_time_us);
         // For custom protocol requests there is no redirect URL; reuse `name` so that
         // per-request log entries and report displays have something meaningful to show.
         request_metric.final_url = name.to_string();
@@ -6503,7 +6569,7 @@ mod tests {
                     &m.percentile_100,
                 ]
                 .iter()
-                .map(|value| value.value())
+                .map(|value| value.value().whole_ms())
                 .collect()
             };
             for (response, request) in report.raw_response_metrics.iter().zip(
@@ -6523,8 +6589,8 @@ mod tests {
                     goose_figures(
                         &report_values(response),
                         &report_percents,
-                        request.response_time_minimum.value(),
-                        request.response_time_maximum.value(),
+                        request.response_time_minimum.value().whole_ms(),
+                        request.response_time_maximum.value().whole_ms(),
                         // As the reports print it.
                         format!("{:.2}", request.response_time_average.value()),
                     ),
@@ -6713,6 +6779,7 @@ mod tests {
         let mut metric = recv_request_metric(&rx);
         metric.elapsed = 1234;
         metric.response_time = 5;
+        metric.response_time_fraction_us = 0;
         metric.raw.url = "http://target/a".to_string();
         metric.final_url = "http://target/a".to_string();
         metric
@@ -6756,9 +6823,9 @@ mod tests {
                 None,
                 "Front Page",
                 [
-                    "{\"coordinated_omission_elapsed\":0,\"elapsed\":1234,\"error\":\"\",\"final_url\":\"http://target/a\",\"name\":\"Front Page\",\"raw\":{\"body\":\"\",\"custom_method\":\"\",\"headers\":[],\"method\":\"Get\",\"url\":\"http://target/a\"},\"redirected\":false,\"response_time\":5,\"scenario_index\":0,\"scenario_name\":\"Scenario One\",\"status_code\":200,\"success\":true,\"transaction_index\":3,\"transaction_name\":{\"InheritNameByRequests\":\"Front Page\"},\"update\":false,\"user\":0,\"user_cadence\":0}",
-                    "GooseRequestMetric { elapsed: 1234, scenario_index: 0, scenario_name: \"Scenario One\", transaction_index: 3, transaction_name: InheritNameByRequests(\"Front Page\"), raw: GooseRawRequest { method: Get, url: \"http://target/a\", headers: [], body: \"\", custom_method: \"\" }, name: \"Front Page\", final_url: \"http://target/a\", redirected: false, response_time: 5, status_code: 200, success: true, update: false, user: 0, error: \"\", coordinated_omission_elapsed: 0, user_cadence: 0 }",
-                    "1234,0,Scenario One,3,Front Page,\"GooseRawRequest { method: Get, url: \"\"http://target/a\"\", headers: [], body: \"\"\"\", custom_method: \"\"\"\" }\",Front Page,http://target/a,false,5,200,true,false,0,,0,0",
+                    "{\"coordinated_omission_elapsed\":0,\"elapsed\":1234,\"error\":\"\",\"final_url\":\"http://target/a\",\"name\":\"Front Page\",\"raw\":{\"body\":\"\",\"custom_method\":\"\",\"headers\":[],\"method\":\"Get\",\"url\":\"http://target/a\"},\"redirected\":false,\"response_time\":5,\"response_time_fraction_us\":0,\"scenario_index\":0,\"scenario_name\":\"Scenario One\",\"status_code\":200,\"success\":true,\"transaction_index\":3,\"transaction_name\":{\"InheritNameByRequests\":\"Front Page\"},\"update\":false,\"user\":0,\"user_cadence\":0}",
+                    "GooseRequestMetric { elapsed: 1234, scenario_index: 0, scenario_name: \"Scenario One\", transaction_index: 3, transaction_name: InheritNameByRequests(\"Front Page\"), raw: GooseRawRequest { method: Get, url: \"http://target/a\", headers: [], body: \"\", custom_method: \"\" }, name: \"Front Page\", final_url: \"http://target/a\", redirected: false, response_time: 5, status_code: 200, success: true, update: false, user: 0, error: \"\", coordinated_omission_elapsed: 0, user_cadence: 0, response_time_fraction_us: 0 }",
+                    "1234,0,Scenario One,3,Front Page,\"GooseRawRequest { method: Get, url: \"\"http://target/a\"\", headers: [], body: \"\"\"\", custom_method: \"\"\"\" }\",Front Page,http://target/a,false,5,200,true,false,0,,0,0,5000",
                 ],
             ),
             (
@@ -6767,9 +6834,9 @@ mod tests {
                 None,
                 "/a",
                 [
-                    "{\"coordinated_omission_elapsed\":0,\"elapsed\":1234,\"error\":\"\",\"final_url\":\"http://target/a\",\"name\":\"/a\",\"raw\":{\"body\":\"\",\"custom_method\":\"\",\"headers\":[],\"method\":\"Get\",\"url\":\"http://target/a\"},\"redirected\":false,\"response_time\":5,\"scenario_index\":0,\"scenario_name\":\"Scenario One\",\"status_code\":200,\"success\":true,\"transaction_index\":3,\"transaction_name\":{\"TransactionOnly\":\"Front Page\"},\"update\":false,\"user\":0,\"user_cadence\":0}",
-                    "GooseRequestMetric { elapsed: 1234, scenario_index: 0, scenario_name: \"Scenario One\", transaction_index: 3, transaction_name: TransactionOnly(\"Front Page\"), raw: GooseRawRequest { method: Get, url: \"http://target/a\", headers: [], body: \"\", custom_method: \"\" }, name: \"/a\", final_url: \"http://target/a\", redirected: false, response_time: 5, status_code: 200, success: true, update: false, user: 0, error: \"\", coordinated_omission_elapsed: 0, user_cadence: 0 }",
-                    "1234,0,Scenario One,3,,\"GooseRawRequest { method: Get, url: \"\"http://target/a\"\", headers: [], body: \"\"\"\", custom_method: \"\"\"\" }\",/a,http://target/a,false,5,200,true,false,0,,0,0",
+                    "{\"coordinated_omission_elapsed\":0,\"elapsed\":1234,\"error\":\"\",\"final_url\":\"http://target/a\",\"name\":\"/a\",\"raw\":{\"body\":\"\",\"custom_method\":\"\",\"headers\":[],\"method\":\"Get\",\"url\":\"http://target/a\"},\"redirected\":false,\"response_time\":5,\"response_time_fraction_us\":0,\"scenario_index\":0,\"scenario_name\":\"Scenario One\",\"status_code\":200,\"success\":true,\"transaction_index\":3,\"transaction_name\":{\"TransactionOnly\":\"Front Page\"},\"update\":false,\"user\":0,\"user_cadence\":0}",
+                    "GooseRequestMetric { elapsed: 1234, scenario_index: 0, scenario_name: \"Scenario One\", transaction_index: 3, transaction_name: TransactionOnly(\"Front Page\"), raw: GooseRawRequest { method: Get, url: \"http://target/a\", headers: [], body: \"\", custom_method: \"\" }, name: \"/a\", final_url: \"http://target/a\", redirected: false, response_time: 5, status_code: 200, success: true, update: false, user: 0, error: \"\", coordinated_omission_elapsed: 0, user_cadence: 0, response_time_fraction_us: 0 }",
+                    "1234,0,Scenario One,3,,\"GooseRawRequest { method: Get, url: \"\"http://target/a\"\", headers: [], body: \"\"\"\", custom_method: \"\"\"\" }\",/a,http://target/a,false,5,200,true,false,0,,0,0,5000",
                 ],
             ),
             (
@@ -6778,9 +6845,9 @@ mod tests {
                 Some("named request"),
                 "named request",
                 [
-                    "{\"coordinated_omission_elapsed\":0,\"elapsed\":1234,\"error\":\"\",\"final_url\":\"http://target/a\",\"name\":\"named request\",\"raw\":{\"body\":\"\",\"custom_method\":\"\",\"headers\":[],\"method\":\"Get\",\"url\":\"http://target/a\"},\"redirected\":false,\"response_time\":5,\"scenario_index\":0,\"scenario_name\":\"Scenario One\",\"status_code\":200,\"success\":true,\"transaction_index\":3,\"transaction_name\":{\"InheritNameByRequests\":\"Front Page\"},\"update\":false,\"user\":0,\"user_cadence\":0}",
-                    "GooseRequestMetric { elapsed: 1234, scenario_index: 0, scenario_name: \"Scenario One\", transaction_index: 3, transaction_name: InheritNameByRequests(\"Front Page\"), raw: GooseRawRequest { method: Get, url: \"http://target/a\", headers: [], body: \"\", custom_method: \"\" }, name: \"named request\", final_url: \"http://target/a\", redirected: false, response_time: 5, status_code: 200, success: true, update: false, user: 0, error: \"\", coordinated_omission_elapsed: 0, user_cadence: 0 }",
-                    "1234,0,Scenario One,3,Front Page,\"GooseRawRequest { method: Get, url: \"\"http://target/a\"\", headers: [], body: \"\"\"\", custom_method: \"\"\"\" }\",named request,http://target/a,false,5,200,true,false,0,,0,0",
+                    "{\"coordinated_omission_elapsed\":0,\"elapsed\":1234,\"error\":\"\",\"final_url\":\"http://target/a\",\"name\":\"named request\",\"raw\":{\"body\":\"\",\"custom_method\":\"\",\"headers\":[],\"method\":\"Get\",\"url\":\"http://target/a\"},\"redirected\":false,\"response_time\":5,\"response_time_fraction_us\":0,\"scenario_index\":0,\"scenario_name\":\"Scenario One\",\"status_code\":200,\"success\":true,\"transaction_index\":3,\"transaction_name\":{\"InheritNameByRequests\":\"Front Page\"},\"update\":false,\"user\":0,\"user_cadence\":0}",
+                    "GooseRequestMetric { elapsed: 1234, scenario_index: 0, scenario_name: \"Scenario One\", transaction_index: 3, transaction_name: InheritNameByRequests(\"Front Page\"), raw: GooseRawRequest { method: Get, url: \"http://target/a\", headers: [], body: \"\", custom_method: \"\" }, name: \"named request\", final_url: \"http://target/a\", redirected: false, response_time: 5, status_code: 200, success: true, update: false, user: 0, error: \"\", coordinated_omission_elapsed: 0, user_cadence: 0, response_time_fraction_us: 0 }",
+                    "1234,0,Scenario One,3,Front Page,\"GooseRawRequest { method: Get, url: \"\"http://target/a\"\", headers: [], body: \"\"\"\", custom_method: \"\"\"\" }\",named request,http://target/a,false,5,200,true,false,0,,0,0,5000",
                 ],
             ),
             (
@@ -6789,9 +6856,9 @@ mod tests {
                 None,
                 "/a",
                 [
-                    "{\"coordinated_omission_elapsed\":0,\"elapsed\":1234,\"error\":\"\",\"final_url\":\"http://target/a\",\"name\":\"/a\",\"raw\":{\"body\":\"\",\"custom_method\":\"\",\"headers\":[],\"method\":\"Get\",\"url\":\"http://target/a\"},\"redirected\":false,\"response_time\":5,\"scenario_index\":0,\"scenario_name\":\"Scenario One\",\"status_code\":200,\"success\":true,\"transaction_index\":3,\"transaction_name\":{\"TransactionOnly\":\"\"},\"update\":false,\"user\":0,\"user_cadence\":0}",
-                    "GooseRequestMetric { elapsed: 1234, scenario_index: 0, scenario_name: \"Scenario One\", transaction_index: 3, transaction_name: TransactionOnly(\"\"), raw: GooseRawRequest { method: Get, url: \"http://target/a\", headers: [], body: \"\", custom_method: \"\" }, name: \"/a\", final_url: \"http://target/a\", redirected: false, response_time: 5, status_code: 200, success: true, update: false, user: 0, error: \"\", coordinated_omission_elapsed: 0, user_cadence: 0 }",
-                    "1234,0,Scenario One,3,,\"GooseRawRequest { method: Get, url: \"\"http://target/a\"\", headers: [], body: \"\"\"\", custom_method: \"\"\"\" }\",/a,http://target/a,false,5,200,true,false,0,,0,0",
+                    "{\"coordinated_omission_elapsed\":0,\"elapsed\":1234,\"error\":\"\",\"final_url\":\"http://target/a\",\"name\":\"/a\",\"raw\":{\"body\":\"\",\"custom_method\":\"\",\"headers\":[],\"method\":\"Get\",\"url\":\"http://target/a\"},\"redirected\":false,\"response_time\":5,\"response_time_fraction_us\":0,\"scenario_index\":0,\"scenario_name\":\"Scenario One\",\"status_code\":200,\"success\":true,\"transaction_index\":3,\"transaction_name\":{\"TransactionOnly\":\"\"},\"update\":false,\"user\":0,\"user_cadence\":0}",
+                    "GooseRequestMetric { elapsed: 1234, scenario_index: 0, scenario_name: \"Scenario One\", transaction_index: 3, transaction_name: TransactionOnly(\"\"), raw: GooseRawRequest { method: Get, url: \"http://target/a\", headers: [], body: \"\", custom_method: \"\" }, name: \"/a\", final_url: \"http://target/a\", redirected: false, response_time: 5, status_code: 200, success: true, update: false, user: 0, error: \"\", coordinated_omission_elapsed: 0, user_cadence: 0, response_time_fraction_us: 0 }",
+                    "1234,0,Scenario One,3,,\"GooseRawRequest { method: Get, url: \"\"http://target/a\"\", headers: [], body: \"\"\"\", custom_method: \"\"\"\" }\",/a,http://target/a,false,5,200,true,false,0,,0,0,5000",
                 ],
             ),
             (
@@ -6800,9 +6867,9 @@ mod tests {
                 None,
                 "/a",
                 [
-                    "{\"coordinated_omission_elapsed\":0,\"elapsed\":1234,\"error\":\"\",\"final_url\":\"http://target/a\",\"name\":\"/a\",\"raw\":{\"body\":\"\",\"custom_method\":\"\",\"headers\":[],\"method\":\"Get\",\"url\":\"http://target/a\"},\"redirected\":false,\"response_time\":5,\"scenario_index\":0,\"scenario_name\":\"Scenario One\",\"status_code\":200,\"success\":true,\"transaction_index\":3,\"transaction_name\":{\"InheritNameByRequests\":\"\"},\"update\":false,\"user\":0,\"user_cadence\":0}",
-                    "GooseRequestMetric { elapsed: 1234, scenario_index: 0, scenario_name: \"Scenario One\", transaction_index: 3, transaction_name: InheritNameByRequests(\"\"), raw: GooseRawRequest { method: Get, url: \"http://target/a\", headers: [], body: \"\", custom_method: \"\" }, name: \"/a\", final_url: \"http://target/a\", redirected: false, response_time: 5, status_code: 200, success: true, update: false, user: 0, error: \"\", coordinated_omission_elapsed: 0, user_cadence: 0 }",
-                    "1234,0,Scenario One,3,,\"GooseRawRequest { method: Get, url: \"\"http://target/a\"\", headers: [], body: \"\"\"\", custom_method: \"\"\"\" }\",/a,http://target/a,false,5,200,true,false,0,,0,0",
+                    "{\"coordinated_omission_elapsed\":0,\"elapsed\":1234,\"error\":\"\",\"final_url\":\"http://target/a\",\"name\":\"/a\",\"raw\":{\"body\":\"\",\"custom_method\":\"\",\"headers\":[],\"method\":\"Get\",\"url\":\"http://target/a\"},\"redirected\":false,\"response_time\":5,\"response_time_fraction_us\":0,\"scenario_index\":0,\"scenario_name\":\"Scenario One\",\"status_code\":200,\"success\":true,\"transaction_index\":3,\"transaction_name\":{\"InheritNameByRequests\":\"\"},\"update\":false,\"user\":0,\"user_cadence\":0}",
+                    "GooseRequestMetric { elapsed: 1234, scenario_index: 0, scenario_name: \"Scenario One\", transaction_index: 3, transaction_name: InheritNameByRequests(\"\"), raw: GooseRawRequest { method: Get, url: \"http://target/a\", headers: [], body: \"\", custom_method: \"\" }, name: \"/a\", final_url: \"http://target/a\", redirected: false, response_time: 5, status_code: 200, success: true, update: false, user: 0, error: \"\", coordinated_omission_elapsed: 0, user_cadence: 0, response_time_fraction_us: 0 }",
+                    "1234,0,Scenario One,3,,\"GooseRawRequest { method: Get, url: \"\"http://target/a\"\", headers: [], body: \"\"\"\", custom_method: \"\"\"\" }\",/a,http://target/a,false,5,200,true,false,0,,0,0,5000",
                 ],
             ),
             (
@@ -6811,9 +6878,9 @@ mod tests {
                 None,
                 "/a",
                 [
-                    "{\"coordinated_omission_elapsed\":0,\"elapsed\":1234,\"error\":\"\",\"final_url\":\"http://target/a\",\"name\":\"/a\",\"raw\":{\"body\":\"\",\"custom_method\":\"\",\"headers\":[],\"method\":\"Get\",\"url\":\"http://target/a\"},\"redirected\":false,\"response_time\":5,\"scenario_index\":0,\"scenario_name\":\"Scenario One\",\"status_code\":200,\"success\":true,\"transaction_index\":18446744073709551615,\"transaction_name\":{\"TransactionOnly\":\"\"},\"update\":false,\"user\":0,\"user_cadence\":0}",
-                    "GooseRequestMetric { elapsed: 1234, scenario_index: 0, scenario_name: \"Scenario One\", transaction_index: 18446744073709551615, transaction_name: TransactionOnly(\"\"), raw: GooseRawRequest { method: Get, url: \"http://target/a\", headers: [], body: \"\", custom_method: \"\" }, name: \"/a\", final_url: \"http://target/a\", redirected: false, response_time: 5, status_code: 200, success: true, update: false, user: 0, error: \"\", coordinated_omission_elapsed: 0, user_cadence: 0 }",
-                    "1234,0,Scenario One,18446744073709551615,,\"GooseRawRequest { method: Get, url: \"\"http://target/a\"\", headers: [], body: \"\"\"\", custom_method: \"\"\"\" }\",/a,http://target/a,false,5,200,true,false,0,,0,0",
+                    "{\"coordinated_omission_elapsed\":0,\"elapsed\":1234,\"error\":\"\",\"final_url\":\"http://target/a\",\"name\":\"/a\",\"raw\":{\"body\":\"\",\"custom_method\":\"\",\"headers\":[],\"method\":\"Get\",\"url\":\"http://target/a\"},\"redirected\":false,\"response_time\":5,\"response_time_fraction_us\":0,\"scenario_index\":0,\"scenario_name\":\"Scenario One\",\"status_code\":200,\"success\":true,\"transaction_index\":18446744073709551615,\"transaction_name\":{\"TransactionOnly\":\"\"},\"update\":false,\"user\":0,\"user_cadence\":0}",
+                    "GooseRequestMetric { elapsed: 1234, scenario_index: 0, scenario_name: \"Scenario One\", transaction_index: 18446744073709551615, transaction_name: TransactionOnly(\"\"), raw: GooseRawRequest { method: Get, url: \"http://target/a\", headers: [], body: \"\", custom_method: \"\" }, name: \"/a\", final_url: \"http://target/a\", redirected: false, response_time: 5, status_code: 200, success: true, update: false, user: 0, error: \"\", coordinated_omission_elapsed: 0, user_cadence: 0, response_time_fraction_us: 0 }",
+                    "1234,0,Scenario One,18446744073709551615,,\"GooseRawRequest { method: Get, url: \"\"http://target/a\"\", headers: [], body: \"\"\"\", custom_method: \"\"\"\" }\",/a,http://target/a,false,5,200,true,false,0,,0,0,5000",
                 ],
             ),
         ];

@@ -1844,8 +1844,9 @@ async fn test_dashboard_latency_by_second() {
         heatmap["end_second"].as_u64().unwrap(),
         heatmap["start_second"].as_u64().unwrap() + rps_len - 1
     );
-    assert!(heatmap["buckets"].as_array().expect("buckets").len() >= 205);
-    assert_eq!(heatmap["buckets"][100], serde_json::json!([100, 100, 104]));
+    assert!(heatmap["buckets"].as_array().expect("buckets").len() >= 214);
+    assert_eq!(heatmap["buckets"][109], serde_json::json!([100, 100, 104]));
+    assert_eq!(heatmap["buckets_us"][0], serde_json::json!([0, 0, 99]));
     let columns = heatmap_columns(heatmap);
     assert!(json_sum(&series["rps"]) > 0.0);
     assert_eq!(

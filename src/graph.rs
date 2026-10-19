@@ -82,7 +82,7 @@ impl PendingLatency {
     fn add(&mut self, at: usize, data: &GooseRequestMetricTimingData) {
         self.add_totals(at, data);
         for (&rounded, &count) in &data.times {
-            self.add_bucket(at, rounded, count);
+            self.add_timing_bucket(at, data, rounded, count);
         }
     }
 
@@ -97,15 +97,26 @@ impl PendingLatency {
         totals[3] += data.counter;
     }
 
-    /// Add `count` responses that round to `rounded` to held second `at`.
-    fn add_bucket(&mut self, at: usize, rounded: usize, count: usize) {
-        match dense_index(rounded) {
-            Some(index) => {
-                let held = &mut self.counts[index][at];
+    /// Add `count` of `data`'s responses that round to `rounded` to held
+    /// second `at`, those under a millisecond by their microseconds.
+    fn add_timing_bucket(
+        &mut self,
+        at: usize,
+        data: &GooseRequestMetricTimingData,
+        rounded: usize,
+        count: usize,
+    ) {
+        let (counts, pending_overflow) = (&mut self.counts, &mut self.overflow);
+        for_each_bucket(
+            data,
+            rounded,
+            count,
+            |index, count| {
+                let held = &mut counts[index][at];
                 *held = held.saturating_add(u32::try_from(count).unwrap_or(u32::MAX));
-            }
-            None => self.overflow.push((at, rounded, count)),
-        }
+            },
+            |rounded, count| pending_overflow.push((at, rounded, count)),
+        );
     }
 
     /// Move everything held to `ring`, each second marked with `rev` of its
@@ -251,18 +262,24 @@ impl ItemsPerSecond {
 /// count toward the all requests series.
 pub(crate) const MAX_REQUEST_SERIES: usize = 100;
 
+/// Fixed indexes for times under a millisecond: one for each 100
+/// microseconds, all rounding to 0 ms.
+const SUB_MILLISECOND_BUCKETS: usize = 10;
+
 /// Rounded response times up to the default 60 second timeout each have a
-/// fixed index: every millisecond to 100 ms, then 110 to 500 ms by 10, 600
-/// to 1000 ms by 100 and 2 to 60 seconds by 1000.
-const FIXED_BUCKETS: usize = 205;
+/// fixed index: under a millisecond by 100 microseconds (0 ms when the
+/// microseconds were not kept), every millisecond to 100 ms, then 110 to 500
+/// ms by 10, 600 to 1000 ms by 100 and 2 to 60 seconds by 1000.
+const FIXED_BUCKETS: usize = 214;
 
 /// The fixed index of a rounded response time, if it has one.
 fn dense_index(rounded: usize) -> Option<usize> {
     match rounded {
-        0..=100 => Some(rounded),
-        101..=500 => Some(100 + (rounded - 100) / 10),
-        501..=1000 => Some(140 + (rounded - 500) / 100),
-        1001..=60_000 => Some(145 + (rounded - 1000) / 1000),
+        0 => Some(0),
+        1..=100 => Some(rounded + 9),
+        101..=500 => Some(109 + (rounded - 100) / 10),
+        501..=1000 => Some(149 + (rounded - 500) / 100),
+        1001..=60_000 => Some(154 + (rounded - 1000) / 1000),
         _ => None,
     }
 }
@@ -270,10 +287,40 @@ fn dense_index(rounded: usize) -> Option<usize> {
 /// The rounded response time a fixed index stands for.
 fn dense_value(index: usize) -> usize {
     match index {
-        0..=100 => index,
-        101..=140 => 100 + (index - 100) * 10,
-        141..=145 => 500 + (index - 140) * 100,
-        _ => 1000 + (index - 145) * 1000,
+        0..=9 => 0,
+        10..=109 => index - 9,
+        110..=149 => 100 + (index - 109) * 10,
+        150..=154 => 500 + (index - 149) * 100,
+        _ => 1000 + (index - 154) * 1000,
+    }
+}
+
+/// The fixed index of a time under a millisecond in a 10 microsecond
+/// bucket of [`GooseRequestMetricMicros`](crate::metrics::GooseRequestMetricMicros).
+fn sub_millisecond_index(bucket_us: usize) -> usize {
+    (bucket_us / 100).min(SUB_MILLISECOND_BUCKETS - 1)
+}
+
+/// `data`'s buckets as `(fixed index, count)` when the bucket has one, or
+/// `(rounded time, count)` for `overflow`: times under a millisecond by 100
+/// microseconds when `data` kept them, every other bucket by rounded time.
+fn for_each_bucket(
+    data: &GooseRequestMetricTimingData,
+    rounded: usize,
+    count: usize,
+    mut dense: impl FnMut(usize, usize),
+    mut overflow: impl FnMut(usize, usize),
+) {
+    match (rounded, data.micros.as_ref()) {
+        (0, Some(micros)) => {
+            for (&bucket_us, &count) in &micros.sub_millisecond_times {
+                dense(sub_millisecond_index(bucket_us), count);
+            }
+        }
+        _ => match dense_index(rounded) {
+            Some(index) => dense(index, count),
+            None => overflow(rounded, count),
+        },
     }
 }
 
@@ -459,7 +506,17 @@ impl SecondHistogram {
     /// [`GooseRequestMetricTimingData::merge`] adds them.
     pub(crate) fn merge_timing(&mut self, other: &GooseRequestMetricTimingData) {
         for (&rounded, &count) in &other.times {
-            self.add_bucket(rounded, count);
+            let mut overflow = Vec::new();
+            for_each_bucket(
+                other,
+                rounded,
+                count,
+                |index, count| self.add_dense(index, count),
+                |rounded, count| overflow.push((rounded, count)),
+            );
+            for (rounded, count) in overflow {
+                self.add_overflow(rounded, count);
+            }
         }
         self.add_totals(
             other.minimum_time,
@@ -593,6 +650,23 @@ fn bucket_entry(value: u64) -> [u64; 3] {
         first_rounding_to(value),
         first_rounding_to(value + 1) - 1,
     ]
+}
+
+/// [`bucket_table`] in microseconds: the buckets under a millisecond by 100
+/// microseconds, the others from their first to their last microsecond.
+fn bucket_table_us(last: usize) -> Vec<[u64; 3]> {
+    bucket_table(last)
+        .into_iter()
+        .enumerate()
+        .map(|(index, [time, lowest, highest])| {
+            if index < SUB_MILLISECOND_BUCKETS {
+                let start = index as u64 * 100;
+                [start, start, start + 99]
+            } else {
+                [time * 1000, lowest * 1000, highest * 1000 + 999]
+            }
+        })
+        .collect()
 }
 
 /// The heatmap's bucket table, `[time, lowest, highest]` for each index from
@@ -1417,6 +1491,7 @@ impl LatencyHistograms {
             end_second: end as u64,
             hold_from: hold_from as u64,
             buckets: bucket_table(last_index),
+            buckets_us: bucket_table_us(last_index),
             columns,
         }
     }
@@ -1493,6 +1568,8 @@ struct ReportHeatmap<S> {
     origin: usize,
     /// `[time, lowest, highest]` of each bucket index used.
     buckets: Vec<[u64; 3]>,
+    /// The same in microseconds.
+    buckets_us: Vec<[u64; 3]>,
     series: S,
 }
 
@@ -1673,6 +1750,7 @@ impl LatencyHistograms {
             ) * 1000,
             origin: self.origin,
             buckets: bucket_table(last),
+            buckets_us: bucket_table_us(last),
             series,
         })
     }
@@ -1930,7 +2008,7 @@ impl GraphData {
             Some(at) => {
                 pending.add_totals(at, data);
                 whole_run.merge_also(data, |rounded, count| {
-                    pending.add_bucket(at, rounded, count)
+                    pending.add_timing_bucket(at, data, rounded, count)
                 });
             }
             None => {
@@ -4555,8 +4633,14 @@ mod test {
         rounded.extend((110..=500).step_by(10));
         rounded.extend((600..=1000).step_by(100));
         rounded.extend((2000..=60_000).step_by(1000));
-        assert_eq!(rounded.len(), FIXED_BUCKETS);
+        // The buckets under a millisecond all round to 0 ms, before 1 ms.
+        assert_eq!(rounded.len(), FIXED_BUCKETS - (SUB_MILLISECOND_BUCKETS - 1));
         for (index, &value) in rounded.iter().enumerate() {
+            let index = if index == 0 {
+                0
+            } else {
+                index + SUB_MILLISECOND_BUCKETS - 1
+            };
             assert_eq!(dense_index(value), Some(index));
             assert_eq!(dense_value(index), value);
         }
@@ -4613,9 +4697,9 @@ mod test {
 
         // A bucket past the most one entry holds continues in the next.
         let mut full = SecondHistogram::default();
-        full.add_indexed(0, 5, COUNT_MAX as usize + 10);
-        full.add_indexed(0, 5, 3);
-        full.add_indexed(0, 4, 1);
+        full.add_indexed(0, dense_index(5).unwrap(), COUNT_MAX as usize + 10);
+        full.add_indexed(0, dense_index(5).unwrap(), 3);
+        full.add_indexed(0, dense_index(4).unwrap(), 1);
         assert_eq!(
             full.buckets().collect::<Vec<_>>(),
             vec![(4, 1), (5, COUNT_MAX as usize), (5, 13)]
@@ -4819,34 +4903,78 @@ mod test {
         let table = bucket_table(FIXED_BUCKETS);
         assert_eq!(table.len(), FIXED_BUCKETS + 1);
         // Every measured time from 0 to past 61 seconds falls in exactly the
-        // bucket whose range holds it, and the ranges meet end to end.
+        // bucket whose range holds it, and the ranges meet end to end. The
+        // buckets under a millisecond are all 0 ms, the first of them
+        // standing for 0 ms when the microseconds were not kept.
         for (index, entry) in table.iter().enumerate() {
+            if (1..SUB_MILLISECOND_BUCKETS).contains(&index) {
+                assert_eq!(*entry, [0, 0, 0]);
+                continue;
+            }
             let [value, lowest, highest] = *entry;
             assert!(lowest <= value && value <= highest, "{:?}", entry);
             for time in [lowest, highest] {
                 assert_eq!(round_metric_time(time) as u64, value, "{entry:?}");
                 assert_eq!(heat_index(round_metric_time(time)), index, "{entry:?}");
             }
-            if index > 0 {
+            if index >= SUB_MILLISECOND_BUCKETS {
                 assert_eq!(table[index - 1][2] + 1, lowest, "{entry:?}");
             }
         }
         for (index, entry) in [
             (0, [0, 0, 0]),
-            (1, [1, 1, 1]),
-            (99, [99, 99, 99]),
-            (100, [100, 100, 104]),
-            (101, [110, 105, 114]),
-            (140, [500, 495, 549]),
-            (141, [600, 550, 649]),
-            (145, [1000, 950, 1499]),
-            (146, [2000, 1500, 2499]),
-            (204, [60_000, 59_500, 60_499]),
-            (205, [61_000, 60_500, 61_499]),
+            (10, [1, 1, 1]),
+            (108, [99, 99, 99]),
+            (109, [100, 100, 104]),
+            (110, [110, 105, 114]),
+            (149, [500, 495, 549]),
+            (150, [600, 550, 649]),
+            (154, [1000, 950, 1499]),
+            (155, [2000, 1500, 2499]),
+            (213, [60_000, 59_500, 60_499]),
+            (214, [61_000, 60_500, 61_499]),
         ] {
             assert_eq!(table[index], entry, "index {index}");
         }
         assert_eq!(bucket_table(0).len(), FIXED_BUCKETS);
+    }
+
+    /// The microsecond table's ranges meet end to end from 0, by 100
+    /// microseconds under a millisecond, and hold the millisecond table's.
+    #[test]
+    fn heatmap_microsecond_bucket_table() {
+        let table = bucket_table(FIXED_BUCKETS);
+        let table_us = bucket_table_us(FIXED_BUCKETS);
+        assert_eq!(table_us.len(), table.len());
+        assert_eq!(table_us[0], [0, 0, 99]);
+        assert_eq!(table_us[9], [900, 900, 999]);
+        assert_eq!(table_us[10], [1000, 1000, 1999]);
+        for index in 1..table_us.len() {
+            assert_eq!(
+                table_us[index - 1][2] + 1,
+                table_us[index][1],
+                "index {index}"
+            );
+        }
+        for index in SUB_MILLISECOND_BUCKETS..table.len() {
+            let [value, lowest, highest] = table[index];
+            assert_eq!(
+                table_us[index],
+                [value * 1000, lowest * 1000, highest * 1000 + 999]
+            );
+        }
+        // A batch's times under a millisecond land in their 100 microsecond
+        // row, the others where they always did.
+        let mut data = GooseRequestMetricTimingData::new(None);
+        for time_us in [40, 450, 460, 999, 37_400] {
+            data.record_time_us(time_us);
+        }
+        let mut histogram = SecondHistogram::open();
+        histogram.merge_timing(&data);
+        assert_eq!(
+            histogram.indexed().collect::<Vec<_>>(),
+            [(0, 1), (4, 2), (9, 1), (dense_index(37).unwrap(), 1)]
+        );
     }
 
     /// A column's cells are kept from one heatmap to the next, and rebuilt
@@ -4860,7 +4988,7 @@ mod test {
             .export_series_window_until(300, Some(4))
             .heatmap
             .unwrap();
-        assert_eq!(measured_pairs(&first, 1), [(5, 1)]);
+        assert_eq!(measured_pairs(&first, 1), [(14, 1)]);
         let again = graph
             .export_series_window_until(300, Some(4))
             .heatmap
@@ -4871,7 +4999,7 @@ mod test {
             .export_series_window_until(300, Some(4))
             .heatmap
             .unwrap();
-        assert_eq!(measured_pairs(&changed, 1), [(5, 1), (6, 1)]);
+        assert_eq!(measured_pairs(&changed, 1), [(14, 1), (15, 1)]);
     }
 
     #[test]
@@ -4891,9 +5019,9 @@ mod test {
             (0, 4, 3)
         );
         assert_eq!(first.columns.len(), 2);
-        assert_eq!(measured_pairs(&first, 1), [(5, 1)]);
-        // 120 ms is in the 120 ms bucket, index 102.
-        assert_eq!(measured_pairs(&first, 2), [(7, 2), (102, 1)]);
+        assert_eq!(measured_pairs(&first, 1), [(14, 1)]);
+        // 120 ms is in the 120 ms bucket, index 111.
+        assert_eq!(measured_pairs(&first, 2), [(16, 2), (111, 1)]);
         assert!(first
             .columns
             .iter()
@@ -4928,12 +5056,12 @@ mod test {
                 .collect::<Vec<_>>(),
             [1, 3]
         );
-        assert_eq!(measured_pairs(&delta, 1), [(5, 1), (6, 1)]);
-        // Past 60 seconds one row per second: 75 s is index 219, and the
+        assert_eq!(measured_pairs(&delta, 1), [(14, 1), (15, 1)]);
+        // Past 60 seconds one row per second: 75 s is index 228, and the
         // table grows to cover it.
-        assert_eq!(measured_pairs(&delta, 3), [(219, 1)]);
-        assert_eq!(delta.buckets.len(), 220);
-        assert_eq!(delta.buckets[219], [75_000, 74_500, 75_499]);
+        assert_eq!(measured_pairs(&delta, 3), [(228, 1)]);
+        assert_eq!(delta.buckets.len(), 229);
+        assert_eq!(delta.buckets[228], [75_000, 74_500, 75_499]);
 
         // A cursor of another generation, or from the future, gets the whole
         // window.
@@ -4977,7 +5105,7 @@ mod test {
             .export_series_window_until(300, Some(7))
             .heatmap
             .unwrap();
-        assert_eq!(measured_pairs(&heatmap, 5), [(145, 10)]);
+        assert_eq!(measured_pairs(&heatmap, 5), [(154, 10)]);
 
         // A bucket past the most one packed entry holds is still one cell.
         let mut full = SecondHistogram::default();
@@ -5170,12 +5298,12 @@ mod test {
         assert_eq!(series.name, "/a");
         let heatmap = &series.heatmap;
         assert_eq!((heatmap.start_second, heatmap.end_second), (0, 5));
-        assert_eq!(measured_pairs(heatmap, 1), [(30, 3)]);
-        assert_eq!(measured_pairs(heatmap, 2), [(30, 3)]);
-        // 4 s is index 148.
+        assert_eq!(measured_pairs(heatmap, 1), [(39, 3)]);
+        assert_eq!(measured_pairs(heatmap, 2), [(39, 3)]);
+        // 4 s is index 157.
         assert_eq!(
             HeatmapColumn::pairs(&heatmap.column(1).unwrap().synthetic),
-            [(148, 1)]
+            [(157, 1)]
         );
         // Not co_active: no synthetic times.
         let series = graph

@@ -293,7 +293,7 @@ async fn invoke_transaction_function(
     thread_user.transaction_index = Some(thread_transaction_index);
 
     let success = function(thread_user).await.is_ok();
-    raw_transaction.set_time(started.elapsed().as_millis(), success);
+    raw_transaction.set_duration(started.elapsed(), success);
 
     // Exit if all metrics or transaction metrics are disabled.
     if thread_user.config.no_metrics || thread_user.config.no_transaction_metrics {

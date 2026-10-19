@@ -384,6 +384,7 @@ fn requests_csv_header() -> String {
         "error",
         "coordinated_omission_elapsed",
         "user_cadence",
+        "response_time_us",
     )
 }
 
@@ -397,6 +398,7 @@ fn transactions_csv_header() -> String {
         "run_time",
         "success",
         "user",
+        "run_time_us",
     )
 }
 
@@ -505,6 +507,7 @@ impl GooseLogger<GooseRequestMetric> for GooseConfiguration {
                         message.error,
                         message.coordinated_omission_elapsed,
                         message.user_cadence,
+                        message.response_time_micros(),
                     )
                 }
             }
@@ -536,6 +539,7 @@ impl GooseLogger<TransactionMetric> for GooseConfiguration {
                         message.run_time,
                         message.success,
                         message.user,
+                        message.run_time_micros(),
                     )
                 }
             }
