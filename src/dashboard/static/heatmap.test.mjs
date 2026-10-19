@@ -14,6 +14,7 @@ import {
   TITLE,
   applyHeatmap,
   bucketSpan,
+  bucketTable as heatmapBucketTable,
   cellColor,
   countPosition,
   heatmapCursor,
@@ -102,6 +103,39 @@ test("the bucket table matches the server's", () => {
   assert.deepEqual(BUCKETS[140], [500, 495, 549]);
   assert.deepEqual(BUCKETS[S_1], [1000, 950, 1499]);
   assert.deepEqual(BUCKETS[204], [60000, 59500, 60499]);
+});
+
+// The server's tables with microseconds: 10 rows of 100 microseconds under
+// a millisecond, then every bucket of BUCKETS from 1 ms up, 9 indexes later.
+function microsecondTables() {
+  const sub = Array.from({ length: 10 }, (_, i) => [i * 100, i * 100, i * 100 + 99]);
+  const rest = BUCKETS.slice(1);
+  return {
+    buckets: [...sub.map(() => [0, 0, 0]), ...rest],
+    buckets_us: [...sub, ...rest.map(([t, l, h]) => [t * 1000, l * 1000, h * 1000 + 999])],
+  };
+}
+
+test("with microseconds, rows under a millisecond are 100 microseconds each", () => {
+  const tables = microsecondTables();
+  const table = heatmapBucketTable(heatmap(tables));
+  assert.equal(table.length, 214);
+  const us = (span) => span.map((v) => Math.round(v * 1000));
+  assert.deepEqual(us(bucketSpan(table[0])), [50, 100]);
+  assert.deepEqual(us(bucketSpan(table[4])), [400, 500]);
+  // 37 ms spans 37 to 38 ms, as without microseconds.
+  assert.deepEqual(us(bucketSpan(table[37 + 9])), us(bucketSpan(BUCKETS[37])));
+  const state = applyHeatmap(null, heatmap({ ...tables, columns: [column(1, [4, 2, 46, 1])] }));
+  const view = heatmapView(state, false);
+  assert.deepEqual(
+    view.rows.map((row) => row.time),
+    [0.4, 0.5, 0.6, 0.7, 0.8, 0.9].concat(Array.from({ length: 37 }, (_, i) => i + 1))
+  );
+  const labels = view.ticks.map((t) => t.label);
+  assert.equal(labels.includes("<1 ms"), false);
+  assert.deepEqual(labels.slice(0, 2), ["0.5 ms", "1 ms"]);
+  // The second's median is in the 0.4 ms row.
+  assert.equal(view.percentiles.get(1).p50, 0.4);
 });
 
 // --- Applying updates -------------------------------------------------------
