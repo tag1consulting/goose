@@ -89,8 +89,8 @@ pub async fn get_index_long_name(user: &mut GooseUser) -> TransactionResult {
     Ok(())
 }
 
-/// A report of more than 2 MB still prints: Chrome loads the page from a
-/// file, not from a data URL it refuses at that size.
+/// A report of more than 2 MB still prints: Chrome gets the page as a blank
+/// page's content, not as a data URL it refuses at that size.
 #[cfg(feature = "pdf-reports")]
 #[tokio::test]
 #[serial]
