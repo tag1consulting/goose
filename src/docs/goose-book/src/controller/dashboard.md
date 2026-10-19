@@ -1,6 +1,6 @@
 # Live Dashboard
 
-> **Experimental:** the dashboard UI and the `/api/v1` endpoints may change before Goose 1.0.
+> The dashboard is an opt in crate feature: build Goose with `--features dashboard`. [Stability](#stability) says what the dashboard and its `/api/v1` endpoints promise from one release to the next.
 
 Goose can optionally serve a **live web dashboard** while a load test runs. The dashboard streams compact metric snapshots (including trailing RPS, users, and latency series) over Server-Sent Events (SSE), with a short poll fallback if SSE is unavailable.
 
@@ -606,6 +606,24 @@ Run finished. Download it from the dashboard at http://127.0.0.1:5118. Press Ctr
 ```
 
 The phase goes back to `idle`, and the test does not start again. Goose exits on Quit in the dashboard, on Ctrl-C, or on a Controller `shutdown`; there is no exit timer, so closing the tab does not end the wait. Nothing is saved or printed again, and `test_stop` does not run again. Any client on `/api/v1/events` counts, not only browser tabs: a script tailing the event stream when the run ends keeps Goose up until Goose is told to quit. With no client connected when the run ends, Goose exits at once, as before. A run stopped from the dashboard or a Controller, or canceled with Ctrl-C, never waits.
+
+## Stability
+
+### Building it in
+
+In 0.19 and 0.20 the dashboard is an opt in crate feature: build with `--features dashboard`. The goal is to make it a default feature in 1.0, a decision to be made on the feedback from 0.19 and 0.20.
+
+### `/api/v1` in 0.19 and 0.20
+
+Changes are additive where possible: new fields, new endpoints and new error codes, under snapshot `version: 1`. A client must ignore fields it does not know and must not fail on an error code it does not know. Every change to `/api/v1` is listed in the CHANGELOG. A change that is not additive, such as a field or endpoint removed, renamed or given a different meaning, raises the snapshot `version`, and the CHANGELOG says so. 0.20 brings back distributed load testing (Gaggle) and may make such changes so the API can describe more than one worker.
+
+### `/api/v1` from 1.0
+
+Semver covers it: within 1.x no field, endpoint or error code is removed, renamed or given a different meaning. New ones may be added, so a client must ignore fields it does not know and must not fail on an error code it does not know.
+
+### What the contract is
+
+The contract is the JSON served under `/api/v1` and the snapshot `version`, a top level field in every snapshot. The Rust types behind it are internal and are not part of the public crate API. The bundled client is built for one `version` and refuses any other, and a client of your own should check `version` the same way.
 
 ## Building the dashboard UI (TypeScript)
 
