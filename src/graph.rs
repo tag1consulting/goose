@@ -2110,10 +2110,28 @@ impl GraphData {
             .map(|average| average.average)
     }
 
+    /// How many response times the average for `key` in `second` holds
+    /// (unit tests).
+    #[cfg(test)]
+    pub(crate) fn average_count_in_second_for_test(&self, key: &str, second: usize) -> u32 {
+        self.average_response_time_per_second
+            .get(key)
+            .map_or(0, |series| series.get(second).count)
+    }
+
     /// The requests per second count for `key` in `second` (unit tests).
     #[cfg(test)]
     pub(crate) fn requests_in_second_for_test(&self, key: &str, second: usize) -> u32 {
         self.requests_per_second
+            .series
+            .get(key)
+            .map_or(0, |series| series.get(second))
+    }
+
+    /// The errors per second count for `key` in `second` (unit tests).
+    #[cfg(test)]
+    pub(crate) fn errors_in_second_for_test(&self, key: &str, second: usize) -> u32 {
+        self.errors_per_second
             .series
             .get(key)
             .map_or(0, |series| series.get(second))
@@ -2140,6 +2158,15 @@ impl GraphData {
             .initialize_or_increment(key, second, 1);
 
         debug!("incremented second {second} for errors per second counter: {value}");
+    }
+
+    /// Take back an error recorded in `second`, for a failed request that
+    /// `set_success()` marked a success. Does nothing when the second is no
+    /// longer held.
+    pub(crate) fn remove_error_per_second(&mut self, key: &str, second: usize) {
+        if let Some(series) = self.errors_per_second.series.get_mut(key) {
+            series.decrement(second);
+        }
     }
 
     /// Record average response time per second metric.
@@ -3224,6 +3251,22 @@ impl<T: Clone + TimeSeriesValue<T, U>, U> TimeSeries<T, U> {
     }
 }
 
+impl TimeSeries<u32, u32> {
+    /// Takes one back from a given second, stopping at zero. Does nothing for
+    /// a second the series does not hold.
+    fn decrement(&mut self, second: usize) {
+        if second < self.origin {
+            return;
+        }
+        if let Some(held) = self.data.get_mut(second - self.origin) {
+            if *held > 0 {
+                *held -= 1;
+                self.total -= 1;
+            }
+        }
+    }
+}
+
 /// Defines a single value in a TimeSeries.
 pub trait TimeSeriesValue<T, U> {
     /// Initial ("zero") value.
@@ -3767,6 +3810,37 @@ mod test {
             );
         }
         assert_eq!(graph.errors_per_second.get("GET /").unwrap().total(), 16);
+    }
+
+    #[test]
+    fn test_remove_error_per_second() {
+        let mut graph = GraphData::new();
+        graph.record_errors_per_second("GET /", 2);
+        graph.record_errors_per_second("GET /", 2);
+
+        graph.remove_error_per_second("GET /", 2);
+        assert_eq!(graph.errors_in_second_for_test("GET /", 2), 1);
+        graph.remove_error_per_second("GET /", 2);
+        graph.remove_error_per_second("GET /", 2);
+        assert_eq!(graph.errors_in_second_for_test("GET /", 2), 0);
+        assert_eq!(graph.errors_per_second.get("GET /").unwrap().total(), 0);
+
+        // A second past the series and a key it does not have change nothing.
+        graph.remove_error_per_second("GET /", 50);
+        assert_eq!(graph.errors_per_second.get("GET /").unwrap().data.len(), 3);
+        graph.remove_error_per_second("GET /other", 2);
+        assert_eq!(graph.errors_per_second.len(), 1);
+
+        // Nor does a second before a pruned series' origin.
+        graph.record_errors_per_second("GET /", 9);
+        graph
+            .errors_per_second
+            .series
+            .get_mut("GET /")
+            .unwrap()
+            .prune_to_window(2);
+        graph.remove_error_per_second("GET /", 2);
+        assert_eq!(graph.errors_in_second_for_test("GET /", 9), 1);
     }
 
     #[test]
