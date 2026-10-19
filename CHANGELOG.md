@@ -2,10 +2,10 @@
 
 ## 0.19.0-dev
  - [#763](https://github.com/tag1consulting/goose/pull/763) add a whole run response time heatmap to the HTML report, and so to the PDF (#746)
-    o on by default for a saved run and for `--report-file`; `--no-percentiles-over-time` and `GooseDefault::NoPercentilesOverTime` turn it off, and are now accepted without `--dashboard`
-    o memory stops growing: at most 600 columns for all requests and 60 for each of the first 100 request names, and a full series merges its columns in pairs, doubling their width
-    o **behavior change**: saved runs and `--report-file` keep the dashboard's per second response time histograms; as with `--dashboard`, a user's batch then holds response times for its own second and the next only, and a request from any other second sends it early
-    o **bug fix**: a PDF report failed with `net::ERR_ABORTED` once its data URL passed about 2 MB, a length Chrome refuses; Chrome now gets the HTML as the content of a blank page
+    o on by default for a saved run and for `--report-file`; `--no-percentiles-over-time` turns it off and is now accepted without `--dashboard`, and `GooseDefault::NoPercentilesOverTime` now applies without `--dashboard` too
+    o the heatmap's memory stops growing: at most 600 columns for all requests and 60 for each of the first 100 request names, and full columns merge in pairs, doubling their width
+    o **behavior change**: saved runs and `--report-file` keep the dashboard's per second response time histograms; as with `--dashboard`, each user's batch of request metrics then holds response times from only the second it began in and the next, and a request from any other second sends the batch early
+    o **bug fix**: a PDF report failed with `net::ERR_ABORTED` once the HTML report's data URL passed about 2 MB, a length Chrome refuses; Chrome now gets the HTML as the content of a blank page
  - [#762](https://github.com/tag1consulting/goose/pull/762) set the host, ramps and run time from the dashboard's control panel, and start with them in one request, all or none (#712)
     o the Edit settings form sends its edits with Apply settings, or with the start through Start with changes; the first host change in a page load asks for confirmation
     o `POST /api/v1/control/settings` is new and `POST /api/v1/control/start` takes the same settings body; both, and the new error codes `invalid_value` and `no_host`, are additive under `version: 1`
