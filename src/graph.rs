@@ -686,6 +686,17 @@ impl Columns {
         &mut self.columns[column]
     }
 
+    /// The highest heatmap bucket index any column uses.
+    fn last_bucket(&self) -> Option<usize> {
+        self.columns
+            .iter()
+            .filter_map(|column| {
+                let cells = column.heat_cells();
+                cells.len().checked_sub(2).map(|at| cells[at] as usize)
+            })
+            .max()
+    }
+
     /// Merge adjacent pairs of columns, for a width twice as wide.
     fn double(&mut self) {
         for column in self.open.drain(..) {
@@ -1468,9 +1479,10 @@ impl LatencyHistograms {
 
 /// The report's response time heatmap, embedded in the report as JSON for
 /// its chart script: every series with whole run columns, each column's
-/// cells and percentiles worked out here.
+/// cells and percentiles worked out here. `S` is the series: a
+/// [`SeriesStream`] for the report, which builds each as it is written.
 #[derive(Serialize)]
-struct ReportHeatmap<'a> {
+struct ReportHeatmap<S> {
     /// When the test started, in milliseconds since the epoch, as the
     /// report's other graphs count it.
     start: i64,
@@ -1481,7 +1493,24 @@ struct ReportHeatmap<'a> {
     origin: usize,
     /// `[time, lowest, highest]` of each bucket index used.
     buckets: Vec<[u64; 3]>,
-    series: Vec<ReportSeries<'a>>,
+    series: S,
+}
+
+/// The heatmap's series, built one at a time as they are serialized, so
+/// only one series' columns are held at once.
+struct SeriesStream<'a> {
+    latency: &'a LatencyHistograms,
+    co_active: bool,
+}
+
+impl Serialize for SeriesStream<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_seq(
+            self.latency
+                .report_sources(self.co_active)
+                .map(ReportSeries::new),
+        )
+    }
 }
 
 /// One series of the report's heatmap.
@@ -1496,6 +1525,22 @@ struct ReportSeries<'a> {
     /// mitigation recorded synthetic times and the series has columns of
     /// them.
     adjusted: Option<ReportView>,
+}
+
+/// Where a series of the report's heatmap comes from: its name, its column
+/// width, its measured columns, and its synthetic columns when it offers
+/// an Adjusted view.
+type ReportSource<'a> = (&'a str, usize, &'a Columns, Option<&'a Columns>);
+
+impl<'a> ReportSeries<'a> {
+    fn new((name, width, measured, added): ReportSource<'a>) -> Self {
+        ReportSeries {
+            name,
+            width,
+            measured: ReportView::new(measured, None),
+            adjusted: added.map(|added| ReportView::new(measured, Some(added))),
+        }
+    }
 }
 
 /// The columns of one view of a series, and the sparsest and busiest cell
@@ -1574,56 +1619,49 @@ impl ReportView {
         let place = (count as f64 / min as f64).ln() / (max as f64 / min as f64).ln();
         (place.clamp(0.0, 1.0) * 1000.0).round() as usize
     }
-
-    /// The highest bucket index any cell uses.
-    fn last_bucket(&self) -> Option<usize> {
-        self.columns
-            .iter()
-            .flat_map(|column| column[4..].chunks(3).map(|cell| cell[0]))
-            .max()
-    }
 }
 
 impl LatencyHistograms {
-    /// The report's heatmap, when whole run columns are kept: all requests
+    /// Where each series of the report's heatmap comes from: all requests
     /// first, then each request name with columns, by name. `co_active`
     /// says coordinated omission mitigation recorded synthetic times.
-    fn report_heatmap(&self, co_active: bool, started: DateTime<Utc>) -> Option<ReportHeatmap<'_>> {
-        let all = self.all_columns.as_ref()?;
+    fn report_sources(&self, co_active: bool) -> impl Iterator<Item = ReportSource<'_>> {
         let synthetic = self.synthetic.as_ref().filter(|_| co_active);
         // All requests' synthetic columns outlive a reset empty, and then
         // offer no view; a name's synthetic ring exists only once it has a
         // time.
-        let synthetic_all = synthetic
-            .and_then(|(all, _)| all.columns.as_ref())
-            .filter(|columns| columns.columns.iter().any(|column| column.counter > 0));
-        let mut series = vec![ReportSeries {
-            name: "All requests",
-            width: self.all_width,
-            measured: ReportView::new(all, None),
-            adjusted: synthetic_all.map(|added| ReportView::new(all, Some(added))),
-        }];
+        let all = self.all_columns.as_ref().map(|all| {
+            let added = synthetic
+                .and_then(|(all, _)| all.columns.as_ref())
+                .filter(|columns| columns.columns.iter().any(|column| column.counter > 0));
+            ("All requests", self.all_width, all, added)
+        });
         let mut names: Vec<(&String, &usize)> = self.by_request.iter().collect();
         names.sort();
-        for (name, &index) in names {
-            let Some(measured) = self.rings[index].columns.as_ref() else {
-                continue;
-            };
+        let names = names.into_iter().filter_map(move |(name, &index)| {
+            let measured = self.rings[index].columns.as_ref()?;
             let added = synthetic
                 .and_then(|(_, by_request)| by_request.get(name))
                 .and_then(|ring| ring.columns.as_ref());
-            series.push(ReportSeries {
-                name,
-                width: self.request_width,
-                measured: ReportView::new(measured, None),
-                adjusted: added.map(|added| ReportView::new(measured, Some(added))),
-            });
-        }
-        let last = series
-            .iter()
-            .flat_map(|series| [Some(&series.measured), series.adjusted.as_ref()])
+            Some((name.as_str(), self.request_width, measured, added))
+        });
+        all.into_iter().chain(names)
+    }
+
+    /// The report's heatmap, when whole run columns are kept, with `series`
+    /// as its series.
+    fn report_heatmap_with<S>(
+        &self,
+        co_active: bool,
+        started: DateTime<Utc>,
+        series: S,
+    ) -> Option<ReportHeatmap<S>> {
+        self.all_columns.as_ref()?;
+        let last = self
+            .report_sources(co_active)
+            .flat_map(|(_, _, measured, added)| [Some(measured), added])
             .flatten()
-            .filter_map(ReportView::last_bucket)
+            .filter_map(Columns::last_bucket)
             .max()
             .unwrap_or(0);
         Some(ReportHeatmap {
@@ -1638,25 +1676,50 @@ impl LatencyHistograms {
             series,
         })
     }
+
+    /// The report's heatmap with every series built (unit tests).
+    #[cfg(test)]
+    fn report_heatmap(
+        &self,
+        co_active: bool,
+        started: DateTime<Utc>,
+    ) -> Option<ReportHeatmap<Vec<ReportSeries<'_>>>> {
+        let series = self
+            .report_sources(co_active)
+            .map(ReportSeries::new)
+            .collect();
+        self.report_heatmap_with(co_active, started, series)
+    }
 }
 
-/// `value` as JSON that is safe inside a `<script>` element: `<`, `>` and
-/// `&` escaped, so no string in it can close the element or start markup,
-/// and U+2028 and U+2029 escaped, which older script parsers end a line at.
-fn script_json(value: &impl Serialize) -> String {
-    let json = serde_json::to_string(value).unwrap_or_else(|_| "null".to_string());
-    let mut safe = String::with_capacity(json.len());
-    for c in json.chars() {
-        match c {
-            '<' => safe.push_str("\\u003c"),
-            '>' => safe.push_str("\\u003e"),
-            '&' => safe.push_str("\\u0026"),
-            '\u{2028}' => safe.push_str("\\u2028"),
-            '\u{2029}' => safe.push_str("\\u2029"),
-            c => safe.push(c),
+/// Writes JSON that is safe inside a `<script>` element: `<`, `>` and `&`
+/// escaped, so no string in it can close the element or start markup, and
+/// U+2028 and U+2029 escaped, which older script parsers end a line at.
+/// Only strings can hold them, so only string fragments are checked.
+struct ScriptFormatter;
+
+impl serde_json::ser::Formatter for ScriptFormatter {
+    fn write_string_fragment<W: ?Sized + std::io::Write>(
+        &mut self,
+        writer: &mut W,
+        fragment: &str,
+    ) -> std::io::Result<()> {
+        let mut from = 0;
+        for (at, c) in fragment.char_indices() {
+            let escaped = match c {
+                '<' => "\\u003c",
+                '>' => "\\u003e",
+                '&' => "\\u0026",
+                '\u{2028}' => "\\u2028",
+                '\u{2029}' => "\\u2029",
+                _ => continue,
+            };
+            writer.write_all(&fragment.as_bytes()[from..at])?;
+            writer.write_all(escaped.as_bytes())?;
+            from = at + c.len_utf8();
         }
+        writer.write_all(&fragment.as_bytes()[from..])
     }
-    safe
 }
 
 /// The report heatmap's chart script. It reads the data from the JSON
@@ -1664,6 +1727,59 @@ fn script_json(value: &impl Serialize) -> String {
 /// `custom` series, one rectangle per cell. Request names reach the page
 /// only as the text of the select's options.
 const REPORT_HEATMAP_SCRIPT: &str = include_str!("report/heatmap.js");
+
+/// The report heatmap card's markup before its JSON.
+const REPORT_HEATMAP_HEAD: &str = r#"<div class="graph heatmap">
+                <style>
+                    .graph.heatmap {
+                        break-inside: avoid;
+                    }
+                    .heatmap-controls button {
+                        border: 1px solid #2c664f;
+                        background: white;
+                        padding: 0.2em 0.8em;
+                    }
+                    .heatmap-controls button.active {
+                        background: #2c664f;
+                        color: white;
+                    }
+                    .heatmap-legend {
+                        display: flex;
+                        align-items: center;
+                        gap: 0.5em;
+                        width: 1000px;
+                        font-size: 0.9em;
+                    }
+                    .heatmap-ramp {
+                        display: inline-block;
+                        width: 200px;
+                        height: 0.8em;
+                        print-color-adjust: exact;
+                        -webkit-print-color-adjust: exact;
+                    }
+                </style>
+                <h3>Response time heatmap</h3>
+                <div class="heatmap-controls">
+                    <label>Series <select id="graph-latency-heatmap-series"></select></label>
+                    <span id="graph-latency-heatmap-views" hidden>
+                        <button type="button" data-view="adjusted">Adjusted</button>
+                        <button type="button" data-view="measured">Measured</button>
+                    </span>
+                </div>
+                <p id="graph-latency-heatmap-width" class="heatmap-note"></p>
+                <div id="graph-latency-heatmap" style="width: 1000px; height:500px; background: white;"></div>
+                <div class="heatmap-legend">
+                    <span id="graph-latency-heatmap-min"></span>
+                    <span id="graph-latency-heatmap-ramp" class="heatmap-ramp"></span>
+                    <span id="graph-latency-heatmap-max"></span>
+                </div>
+                <script type="application/json" id="graph-latency-heatmap-data">"#;
+/// The markup between the card's JSON and its chart script.
+const REPORT_HEATMAP_MIDDLE: &str = r#"</script>
+                <script type="text/javascript">"#;
+/// The markup after the card's chart script.
+const REPORT_HEATMAP_TAIL: &str = r#"</script>
+            </div>"#;
 
 /// Used to collect graph data during a load test.
 pub(crate) struct GraphData {
@@ -1866,65 +1982,31 @@ impl GraphData {
     ) -> String {
         // A run with no requests since the start or the last reset has no
         // heatmap to show.
-        let Some(heatmap) = self
-            .latency
-            .as_ref()
-            .and_then(|latency| latency.report_heatmap(co_active, started))
-            .filter(|heatmap| !heatmap.series[0].measured.columns.is_empty())
+        let Some(latency) = self.latency.as_ref().filter(|latency| {
+            latency
+                .all_columns
+                .as_ref()
+                .is_some_and(|all| all.columns.iter().any(|column| column.counter > 0))
+        }) else {
+            return String::new();
+        };
+        let Some(heatmap) =
+            latency.report_heatmap_with(co_active, started, SeriesStream { latency, co_active })
         else {
             return String::new();
         };
-        format!(
-            r#"<div class="graph heatmap">
-                <style>
-                    .graph.heatmap {{
-                        break-inside: avoid;
-                    }}
-                    .heatmap-controls button {{
-                        border: 1px solid #2c664f;
-                        background: white;
-                        padding: 0.2em 0.8em;
-                    }}
-                    .heatmap-controls button.active {{
-                        background: #2c664f;
-                        color: white;
-                    }}
-                    .heatmap-legend {{
-                        display: flex;
-                        align-items: center;
-                        gap: 0.5em;
-                        width: 1000px;
-                        font-size: 0.9em;
-                    }}
-                    .heatmap-ramp {{
-                        display: inline-block;
-                        width: 200px;
-                        height: 0.8em;
-                        print-color-adjust: exact;
-                        -webkit-print-color-adjust: exact;
-                    }}
-                </style>
-                <h3>Response time heatmap</h3>
-                <div class="heatmap-controls">
-                    <label>Series <select id="graph-latency-heatmap-series"></select></label>
-                    <span id="graph-latency-heatmap-views" hidden>
-                        <button type="button" data-view="adjusted">Adjusted</button>
-                        <button type="button" data-view="measured">Measured</button>
-                    </span>
-                </div>
-                <p id="graph-latency-heatmap-width" class="heatmap-note"></p>
-                <div id="graph-latency-heatmap" style="width: 1000px; height:500px; background: white;"></div>
-                <div class="heatmap-legend">
-                    <span id="graph-latency-heatmap-min"></span>
-                    <span id="graph-latency-heatmap-ramp" class="heatmap-ramp"></span>
-                    <span id="graph-latency-heatmap-max"></span>
-                </div>
-                <script type="application/json" id="graph-latency-heatmap-data">{data}</script>
-                <script type="text/javascript">{script}</script>
-            </div>"#,
-            data = script_json(&heatmap),
-            script = REPORT_HEATMAP_SCRIPT,
-        )
+        // The JSON goes straight into the card, one series at a time, so
+        // no other copy of it, or of every series' columns, is ever held.
+        let mut card = REPORT_HEATMAP_HEAD.as_bytes().to_vec();
+        let mut serializer = serde_json::Serializer::with_formatter(&mut card, ScriptFormatter);
+        if heatmap.serialize(&mut serializer).is_err() {
+            return String::new();
+        }
+        card.extend_from_slice(REPORT_HEATMAP_MIDDLE.as_bytes());
+        card.extend_from_slice(REPORT_HEATMAP_SCRIPT.as_bytes());
+        card.extend_from_slice(REPORT_HEATMAP_TAIL.as_bytes());
+        card.shrink_to_fit();
+        String::from_utf8(card).unwrap_or_default()
     }
 
     /// Whether response times are kept by second for the heatmaps.
@@ -6473,6 +6555,36 @@ mod test {
         assert_eq!((a.name, a.width), ("GET /a", 8));
         check(&a.measured, &measured, 8);
         check(a.adjusted.as_ref().unwrap(), &both, 8);
+    }
+
+    /// The card's JSON, written one series at a time, is the heatmap with
+    /// every series built, which the other tests check.
+    #[test]
+    fn card_json_is_the_built_heatmap() {
+        let mut graph = GraphData::with_latency_budgets(true, 4, 2);
+        let mut state = 763;
+        for second in 0..20 {
+            for name in ["GET /a", "GET /b"] {
+                graph.record_request_per_second_and_latency(
+                    name,
+                    second,
+                    Some(seeded_time(&mut state)),
+                );
+            }
+            if second % 3 == 0 {
+                graph.record_synthetic_latency("GET /a", second, 2_500);
+            }
+        }
+        graph.finish_latency_columns();
+        let started = Utc::now();
+        let markup = graph.get_latency_heatmap_markup(true, started);
+        let start = markup.find("graph-latency-heatmap-data\">").unwrap() + 28;
+        let end = start + markup[start..].find("</script>").unwrap();
+        let card: serde_json::Value = serde_json::from_str(&markup[start..end]).unwrap();
+        let built = latency(&graph).report_heatmap(true, started).unwrap();
+        assert_eq!(card, serde_json::to_value(&built).unwrap());
+        assert_eq!(card["series"].as_array().unwrap().len(), 3);
+        assert!(!card["series"][1]["adjusted"].is_null());
     }
 
     /// A hostile request name stays text: the report's JSON has no `<`,
