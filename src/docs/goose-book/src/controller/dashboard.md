@@ -489,7 +489,7 @@ These counters are ops-safe (timing and client counts only). The response does *
 - **Save state** in the header: `Saving to goose-runs`, `Not saving (turned off)`, or `Not saving: can't create goose-runs (reason)`; see [Saved runs](#saved-runs)
 - **Saved runs panel**: every saved run, with downloads and comparisons, and with `--dashboard-control` a Delete button for each
 
-Every figure in the KPI strip, the **Whole run** card and the tables covers the whole run, since the test started or since metrics were last reset; the labels say so, and hovering a table's `avg ms`, `min ms`, `p50`, `p95`, `p99`, `max ms` or `status codes` heading says "Whole run". Only the charts and the heatmap are by second. Goose measures response times in whole milliseconds, so a response under a millisecond counts as 0 ms.
+Every figure in the KPI strip, the **Whole run** card and the tables covers the whole run, since the test started or since metrics were last reset; the labels say so, and hovering a table's `avg ms`, `min ms`, `p50`, `p95`, `p99`, `max ms` or `status codes` heading says "Whole run". Only the charts and the heatmap are by second. Goose measures request times to the microsecond, and request times under 10 ms are shown to the hundredth of a millisecond; transaction and scenario times are whole milliseconds, so a run under a millisecond counts as 0 ms.
 
 Transaction times cover the whole transaction function, so they include `--throttle-requests` delays and any sleep inside it, and scenario times include the wait after each transaction. Every registered scenario and transaction has a row, so a scenario excluded by `--scenarios`, or one no user was assigned to, stays at 0 runs.
 
