@@ -1,6 +1,8 @@
 # Changelog
 
 ## 0.19.0-dev
+ - [#766](https://github.com/tag1consulting/goose/pull/766) stop graphing `set_success()` and `set_failure()` updates as requests (#735)
+    o **bug fix**: the update they send was counted as another request in the requests per second graphs and its response time was counted twice in the average response time graphs, and after `set_success()` the failure stayed in errors per second; an update now only adds or takes back the failure in errors per second
  - [#765](https://github.com/tag1consulting/goose/pull/765) say what the dashboard and `/api/v1` promise in 0.19, 0.20 and 1.0, in place of the book's "Experimental" banner (#701)
  - [#763](https://github.com/tag1consulting/goose/pull/763) add a whole run response time heatmap to the HTML report, and so to the PDF (#746)
     o on by default for saved runs (every run unless given `--no-save`) and for `--report-file`; `--no-percentiles-over-time` turns it off. That flag and `GooseDefault::NoPercentilesOverTime` now both work without `--dashboard`

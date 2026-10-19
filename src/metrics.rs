@@ -3650,25 +3650,32 @@ impl MetricsProcessor {
                     request_metric.raw.method_label(),
                     request_metric.name
                 );
-                // Coordinated omission copies and updates are not new
-                // measurements, so they stay out of the heatmap.
-                let latency = (!request_metric.update
-                    && request_metric.coordinated_omission_elapsed == 0)
-                    .then_some(request_metric.response_time);
-                self.graph_data.record_request_per_second_and_latency(
-                    &key,
-                    seconds_since_start,
-                    latency,
-                );
-                self.graph_data.record_average_response_time_per_second(
-                    key.clone(),
-                    seconds_since_start,
-                    request_metric.response_time,
-                );
+                // An update from set_success() or set_failure() names a
+                // request already counted in its second: only whether it
+                // failed changes.
+                if !request_metric.update {
+                    // Coordinated omission copies are not new measurements,
+                    // so they stay out of the heatmap.
+                    let latency = (request_metric.coordinated_omission_elapsed == 0)
+                        .then_some(request_metric.response_time);
+                    self.graph_data.record_request_per_second_and_latency(
+                        &key,
+                        seconds_since_start,
+                        latency,
+                    );
+                    self.graph_data.record_average_response_time_per_second(
+                        key.clone(),
+                        seconds_since_start,
+                        request_metric.response_time,
+                    );
+                }
 
                 if !request_metric.success {
                     self.graph_data
                         .record_errors_per_second(&key, seconds_since_start);
+                } else if request_metric.update {
+                    self.graph_data
+                        .remove_error_per_second(&key, seconds_since_start);
                 }
                 // Do not prune here: per-request pruning is O(unique keys) and
                 // would dominate at high RPS. Pruning runs from low-frequency
@@ -7116,18 +7123,27 @@ mod test {
     fn make_latency_test_processor(
         mitigation: GooseCoordinatedOmissionMitigation,
     ) -> MetricsProcessor {
-        let configuration = GooseConfiguration {
+        make_graph_test_processor(&GooseConfiguration {
             dashboard: true,
-            co_mitigation: Some(mitigation.clone()),
+            co_mitigation: Some(mitigation),
             ..Default::default()
-        };
+        })
+    }
+
+    /// A processor with the graph data and coordinated omission metrics the
+    /// attack creates for `configuration`.
+    fn make_graph_test_processor(configuration: &GooseConfiguration) -> MetricsProcessor {
         let mut processor = make_dashboard_test_processor(configuration.clone());
         processor.graph_data = GraphData::for_metrics_processor(
             configuration.records_latency_series(),
             configuration.records_synthetic_latency(),
             configuration.records_latency_columns(),
         );
-        if mitigation != GooseCoordinatedOmissionMitigation::Disabled {
+        if let Some(mitigation) = configuration
+            .co_mitigation
+            .clone()
+            .filter(|m| m != &GooseCoordinatedOmissionMitigation::Disabled)
+        {
             processor.metrics.coordinated_omission_metrics =
                 Some(CoordinatedOmissionMetrics::new(mitigation));
         }
@@ -7201,6 +7217,161 @@ mod test {
             );
             let series = request_series(&mut processor, "/fail", false).unwrap();
             assert_eq!(series.heatmap.counts(2), (1, 0), "cadence {user_cadence}");
+        }
+    }
+
+    /// Send `original` through a user thread built from `configuration`, mark
+    /// it with `set_failure()` when `mark_failure` is set and `set_success()`
+    /// otherwise, and process what the thread sends: the original, then its
+    /// update.
+    fn process_original_and_update(
+        processor: &mut MetricsProcessor,
+        configuration: &GooseConfiguration,
+        original: GooseRequestMetric,
+        mark_failure: bool,
+    ) {
+        let mut user =
+            crate::goose::GooseUser::single("http://localhost/".parse().unwrap(), configuration)
+                .unwrap();
+        let (metrics_tx, metrics_rx) = flume::unbounded::<GooseMetric>();
+        user.metrics_channel = Some(metrics_tx);
+        user.metrics_batch = Some(GooseMetricBatch::new(0));
+        let mut request = original.clone();
+        user.pending_request = Some(original);
+        if mark_failure {
+            assert!(user
+                .set_failure("string missing", &mut request, None, None)
+                .is_err());
+        } else {
+            user.set_success(&mut request).unwrap();
+        }
+        let mut updates = 0;
+        while let Ok(metric) = metrics_rx.try_recv() {
+            if matches!(&metric, GooseMetric::Request(request) if request.update) {
+                updates += 1;
+            }
+            processor.process_metric(metric);
+        }
+        assert_eq!(updates, 1);
+    }
+
+    /// A `GET /` request from second 3 that took 40 ms, a success or a 404.
+    fn update_test_request(success: bool) -> GooseRequestMetric {
+        let mut request = make_request_metric("/", 40, if success { 200 } else { 404 }, 3_400);
+        if !success {
+            request.success = false;
+            request.error = "404 Not Found".to_string();
+        }
+        request
+    }
+
+    /// The configurations the update tests run under: the dashboard with its
+    /// heatmap, and a report without one.
+    fn update_test_configurations() -> [GooseConfiguration; 2] {
+        [
+            GooseConfiguration {
+                dashboard: true,
+                no_save: true,
+                co_mitigation: Some(GooseCoordinatedOmissionMitigation::Average),
+                ..Default::default()
+            },
+            GooseConfiguration {
+                report_file: vec!["report.html".to_string()],
+                no_save: true,
+                no_percentiles_over_time: true,
+                co_mitigation: Some(GooseCoordinatedOmissionMitigation::Average),
+                ..Default::default()
+            },
+        ]
+    }
+
+    /// set_failure() on a success leaves one request and one failure in its
+    /// second, set_success() on a failure one request and no failure. A
+    /// failed original goes through the batch's individual requests with
+    /// the heatmap on or off; a successful one takes the by second path with
+    /// it on and the summed path with it off.
+    #[test]
+    fn update_counts_the_request_once() {
+        for configuration in update_test_configurations() {
+            let heatmap = configuration.records_latency_series();
+            for mark_failure in [true, false] {
+                let mut processor = make_graph_test_processor(&configuration);
+                process_original_and_update(
+                    &mut processor,
+                    &configuration,
+                    update_test_request(mark_failure),
+                    mark_failure,
+                );
+                let graph = &processor.graph_data;
+                // The update carries the original's time, so only the count
+                // shows a second sample in the average.
+                assert_eq!(
+                    (
+                        graph.requests_in_second_for_test("GET /", 3),
+                        graph.errors_in_second_for_test("GET /", 3),
+                        graph.average_in_second_for_test("GET /", 3),
+                        graph.average_count_in_second_for_test("GET /", 3),
+                    ),
+                    (1, u32::from(mark_failure), Some(40.0), 1),
+                    "heatmap {heatmap}, set_failure {mark_failure}"
+                );
+            }
+        }
+    }
+
+    /// The dashboard prunes its series to a trailing window, so an update can
+    /// arrive after the original's second is gone: it must not panic or
+    /// reach another second, while an update in the window still counts its
+    /// request once.
+    #[test]
+    fn update_after_its_second_was_pruned_changes_nothing() {
+        let configuration = &update_test_configurations()[0];
+        assert!(!configuration.keeps_full_graph());
+        let far_second = dashboard_snapshot::SERIES_WINDOW_SECS as usize * 2 + 120;
+        let update_of = |original: &GooseRequestMetric, mark_failure: bool| {
+            let mut update = original.clone();
+            update.update = true;
+            update.success = !mark_failure;
+            update
+        };
+        for mark_failure in [true, false] {
+            let mut processor = make_graph_test_processor(configuration);
+            let early = update_test_request(mark_failure);
+            let mut late = update_test_request(mark_failure);
+            late.elapsed = far_second as u64 * 1_000;
+            processor.process_request_metric(&early);
+            processor.process_request_metric(&late);
+            assert!(!processor.handle_command(MetricsCommand::RecordUsers {
+                active_users: 1,
+                elapsed_secs: far_second,
+            }));
+            assert_eq!(
+                processor.graph_data.requests_in_second_for_test("GET /", 3),
+                0
+            );
+
+            processor.process_request_metric(&update_of(&early, mark_failure));
+            processor.process_request_metric(&update_of(&late, mark_failure));
+
+            let graph = &processor.graph_data;
+            let failures = u32::from(mark_failure);
+            for (second, requests, errors) in [(3, 0, 0), (far_second, 1, failures)] {
+                assert_eq!(
+                    graph.requests_in_second_for_test("GET /", second),
+                    requests,
+                    "set_failure {mark_failure}, second {second}"
+                );
+                assert_eq!(
+                    graph.errors_in_second_for_test("GET /", second),
+                    errors,
+                    "set_failure {mark_failure}, second {second}"
+                );
+                assert_eq!(
+                    graph.average_count_in_second_for_test("GET /", second),
+                    requests,
+                    "set_failure {mark_failure}, second {second}"
+                );
+            }
         }
     }
 
