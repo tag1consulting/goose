@@ -57,7 +57,6 @@ tokio = { version = "1", features = [
 tokio-tungstenite = "0.28"
 url = "2"
 headless_chrome = { version = "1.0", optional = true }
-urlencoding = { version = "2.1", optional = true }
 axum = { version = "0.8", optional = true }
 hyper = { version = "1", optional = true, features = ["http1", "server"] }
 hyper-util = { version = "0.1", optional = true, features = ["service", "tokio"] }
@@ -70,7 +69,7 @@ default = ["cookies"]
 rustls-tls = ["tokio-tungstenite/rustls"]
 # Cookie support - can be completely disabled by compiling with --no-default-features for maximum performance
 cookies = ["reqwest/cookies"]
-pdf-reports = ["headless_chrome", "urlencoding"]
+pdf-reports = ["headless_chrome"]
 # Live web dashboard HTTP server (axum). DTO/builder always compiled; only HTTP is gated.
 # Opt-in so default builds do not compile axum/tower-http. Enable with --features dashboard.
 dashboard = ["axum", "hyper", "hyper-util", "tower-http"]

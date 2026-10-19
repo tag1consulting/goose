@@ -484,8 +484,8 @@ Dashboard:
           Don't track per-second response times
 
           Leaves out the response time percentiles for each second behind the
-          dashboard's response time heatmap, which saves memory. Needs
-          --dashboard.
+          dashboard's response time heatmap, which saves memory. Also turns off
+          the report's response time heatmap.
 
           Set in code with GooseDefault::NoPercentilesOverTime.
 

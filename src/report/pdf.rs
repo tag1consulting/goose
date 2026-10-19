@@ -9,7 +9,7 @@
 use crate::logger::ScopedLogLevel;
 use crate::report::chrome::ResolvedChrome;
 use crate::GooseError;
-use headless_chrome::{Browser, LaunchOptions};
+use headless_chrome::{protocol::cdp::Page, Browser, LaunchOptions};
 use log::{debug, LevelFilter};
 use std::{
     ffi::OsStr,
@@ -338,19 +338,32 @@ fn render_pdf(
         .new_tab()
         .map_err(|e| pdf_errors::chrome_operation_error("tab creation", e.to_string()))?;
 
-    // Create a data URL from the HTML content
-    let encoded_html = urlencoding::encode(html_content);
-    let data_url = format!("data:text/html;charset=utf-8,{encoded_html}");
-
-    // Navigate to the data URL
+    // Give Chrome the HTML as a blank page's content. A data URL, which
+    // Chrome refuses past about 2 MB, would fail for a report with many
+    // request names, and a file would give the page access to local files.
     chrome_session.check_timeout(timeout)?;
-    tab.navigate_to(&data_url)
+    tab.navigate_to("about:blank")
+        .and_then(|tab| tab.wait_until_navigated())
+        .and_then(|tab| tab.call_method(Page::GetFrameTree(None)))
+        .and_then(|tree| {
+            tab.call_method(Page::SetDocumentContent {
+                frame_id: tree.frame_tree.frame.id,
+                html: html_content.to_string(),
+            })
+        })
         .map_err(|e| pdf_errors::chrome_operation_error("HTML loading", e.to_string()))?;
 
-    // Wait for the page to load
-    chrome_session.check_timeout(timeout)?;
-    tab.wait_until_navigated()
-        .map_err(|e| pdf_errors::chrome_operation_error("page loading", e.to_string()))?;
+    // Wait for the page, and the chart library it loads, to finish loading.
+    loop {
+        chrome_session.check_timeout(timeout)?;
+        let state = tab
+            .evaluate("document.readyState", false)
+            .map_err(|e| pdf_errors::chrome_operation_error("page loading", e.to_string()))?;
+        if state.value.as_ref().and_then(|value| value.as_str()) == Some("complete") {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
 
     // Optimized content height calculation using document.documentElement.scrollHeight
     // This is significantly more performant than iterating through all DOM elements

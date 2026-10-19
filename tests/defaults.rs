@@ -256,9 +256,10 @@ async fn test_defaults() {
 }
 
 #[tokio::test]
-// A load test that sets GooseDefault::NoPercentilesOverTime runs without the
-// dashboard, which then ignores the default (#713).
-async fn test_no_percentiles_over_time_default_without_dashboard() {
+// A load test that sets GooseDefault::NoPercentilesOverTime also runs
+// without the dashboard, where the default turns off the report's heatmap
+// (#713, #746).
+async fn test_no_percentiles_over_time_default_runs_without_dashboard() {
     let server = MockServer::start();
     let mock_endpoints = setup_mock_server_endpoints(&server);
     let mut config = common::build_configuration(&server, vec![]);

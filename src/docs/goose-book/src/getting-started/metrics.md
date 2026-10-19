@@ -350,7 +350,9 @@ If your load test needs to measure total download time including the response bo
 
 In the following graph, it's apparent that POST requests had the slowest responses, which is logical as they are not cached. As before, it's possible to click on the request names at the top of the graph to hide/show details about specific requests.
 
-Below the graph is a table that shows per-request details:
+Below the graph is a response time heatmap for the whole run, drawn as the [live dashboard](../controller/dashboard.md#the-response-time-heatmap) draws its own: each column holds the requests that started in it, each row is one of Goose's response time buckets on a logarithmic axis, the color shows how many requests took that long on a logarithmic scale with the sparsest and busiest counts on the legend, and three lines show each column's p50, p95 and p99. A column starts as one second wide. The heatmap keeps at most 600 columns for all requests and 60 for each of the first 100 request names; when a series fills them, adjacent pairs merge and the columns double in width, so the chart states how wide each column is ("Each column is 8 seconds") and its memory stops growing however long the test runs. A column's percentiles are worked out from all of its requests, never averaged. A select chooses all requests or one request name, and when coordinated omission mitigation recorded synthetic times, **Adjusted** and **Measured** buttons choose whether they are counted. The heatmap is on for a saved run and for a `--report-file`; `--no-percentiles-over-time` turns it off. The Markdown and JSON reports have no heatmap.
+
+Below that is a table that shows per-request details:
 ![Response time metrics](metrics-response-time.jpg)
 
 #### Response time breakdowns by status code
@@ -553,7 +555,7 @@ Goose doesn't currently have built-in support for custom metrics aggregation, so
 
 ### Live dashboard
 
-For **live** metrics while a load test is running (RPS, users, latency charts, request/error tables), enable the optional [Live Dashboard](../controller/dashboard.md): compile with `--features dashboard` and run with `--dashboard`. By default it is observe-only; with `--dashboard-control` and a required auth token the browser can also Start, Stop, and set users. Controllers remain the power-user path for host/test-plan changes, rate tuning, and process shutdown. Enabling the dashboard records the same per-second GraphData series used for HTML report graphs.
+For **live** metrics while a load test is running (RPS, users, latency charts, request/error tables), enable the optional [Live Dashboard](../controller/dashboard.md): compile with `--features dashboard` and run with `--dashboard`. By default it is observe-only; with `--dashboard-control` and a required auth token the browser can also Start, Stop, and set users. Controllers remain the power-user path for host/test-plan changes, rate tuning, and process shutdown. Enabling the dashboard records the same per-second GraphData series used for HTML report graphs, and the per second response time histograms behind both heatmaps.
 
 ### Developer documentation
 Additional details about how metrics are collected, stored, and displayed can be found [in the developer documentation](https://docs.rs/goose/*/goose/metrics/index.html).

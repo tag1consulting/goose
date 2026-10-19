@@ -1,6 +1,11 @@
 # Changelog
 
 ## 0.19.0-dev
+ - [#763](https://github.com/tag1consulting/goose/pull/763) add a whole run response time heatmap to the HTML report, and so to the PDF (#746)
+    o on by default for saved runs (every run unless given `--no-save`) and for `--report-file`; `--no-percentiles-over-time` turns it off. That flag and `GooseDefault::NoPercentilesOverTime` now both work without `--dashboard`
+    o the heatmap's memory stops growing: it keeps at most 600 columns for all requests and 60 for each of the first 100 request names, and as many again for synthetic times under `--co-mitigation`. When a set of columns is full, adjacent columns merge in pairs, doubling their width
+    o **behavior change**: with the heatmap on, saved runs and `--report-file` keep the dashboard's per second response time histograms, as `--dashboard` does. Each user's batch of request metrics then holds response times from only the second it began in and the next. A request from any other second sends the batch early
+    o **bug fix**: a PDF report failed with `net::ERR_ABORTED` once the HTML report's data URL passed about 2 MB, a length Chrome refuses; Chrome now gets the HTML as the content of a blank page
  - [#762](https://github.com/tag1consulting/goose/pull/762) set the host, ramps and run time from the dashboard's control panel, and start with them in one request, all or none (#712)
     o the Edit settings form sends its edits with Apply settings, or with the start through Start with changes; the first host change in a page load asks for confirmation
     o `POST /api/v1/control/settings` is new and `POST /api/v1/control/start` takes the same settings body; both, and the new error codes `invalid_value` and `no_host`, are additive under `version: 1`

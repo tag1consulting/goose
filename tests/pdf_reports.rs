@@ -80,6 +80,53 @@ async fn test_pdf_generation_with_feature() {
     common::cleanup_files(vec![pdf_file]);
 }
 
+/// A request name of 3 MB, so the report is larger than Chrome loads from a
+/// data URL.
+#[cfg(feature = "pdf-reports")]
+pub async fn get_index_long_name(user: &mut GooseUser) -> TransactionResult {
+    let name = "a".repeat(3_000_000);
+    let _goose = user.get_named(INDEX_PATH, &name).await?;
+    Ok(())
+}
+
+/// A report of more than 2 MB still prints: Chrome gets the page as a blank
+/// page's content, not as a data URL it refuses at that size.
+#[cfg(feature = "pdf-reports")]
+#[tokio::test]
+#[serial]
+async fn test_pdf_of_a_large_report() {
+    let pdf_file = "test-pdf-large-report.pdf";
+    let html_file = "test-pdf-large-report.html";
+
+    let server = MockServer::start();
+    let mock_endpoints = setup_mock_server_endpoints(&server);
+
+    let configuration_flags = vec![
+        "--users",
+        "1",
+        "--increase-rate",
+        "1",
+        "--run-time",
+        "1",
+        "--report-file",
+        html_file,
+        "--report-file",
+        pdf_file,
+    ];
+    let configuration = common::build_configuration(&server, configuration_flags);
+    let scenario = scenario!("LoadTest").register_transaction(transaction!(get_index_long_name));
+    let goose_attack = common::build_load_test(configuration, vec![scenario], None, None);
+    common::run_load_test(goose_attack, None).await;
+
+    assert!(mock_endpoints[0].calls() > 0);
+    let html = std::fs::metadata(html_file).expect("the HTML report").len();
+    assert!(html > 3_000_000, "the HTML report is {} bytes", html);
+    let pdf = std::fs::metadata(pdf_file).expect("the PDF report").len();
+    assert!(pdf > 0, "the PDF report is empty");
+
+    common::cleanup_files(vec![pdf_file, html_file]);
+}
+
 /// Test that the --pdf-print-html option works correctly even when the pdf-reports feature is NOT compiled in.
 /// This validates that HTML+CSS generation is available universally since it doesn't require Chromium.
 #[cfg(not(feature = "pdf-reports"))]
