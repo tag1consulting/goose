@@ -36,6 +36,8 @@ Recorded metrics appear in all Goose reports under the method label you provide:
 - **`status_code`** — `None` when the protocol has no concept of status codes (e.g. raw TCP); `Some(code)` to record a protocol-specific code (e.g. a gRPC status code). Internally, `None` is stored as `0`; if status code reporting is enabled, `0` will appear in status code tables for these requests.
 - **`error`** — An optional error description for failed operations.
 
+To keep the microseconds of a sub millisecond operation, as Goose does for HTTP requests, call `record_custom_request_duration` instead: it takes the same arguments, with the time as a `Duration` such as `started.elapsed()`.
+
 Coordinated Omission Mitigation applies to custom requests the same way it does to HTTP requests.
 
 ## Running the example

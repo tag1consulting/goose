@@ -1,6 +1,13 @@
 # Changelog
 
 ## 0.19.0-dev
+ - [#585](https://github.com/tag1consulting/goose/issues/585) measure request times to the microsecond and show those under 10 ms to the hundredth of a millisecond, without changing any public field's unit or any file format's existing fields
+    o requests are timed with `as_micros()`; `GooseRequestMetric::response_time` stays whole milliseconds and the new `response_time_fraction_us` holds the microseconds past them, so `response_time_micros()` returns the whole time; `TransactionMetric` gains `run_time_fraction_us` and `run_time_micros()` the same way
+    o `GooseRequestMetricTimingData` keeps its millisecond fields and buckets exactly as before and gains `micros`: the times under a millisecond in 10 microsecond buckets and the minimum, maximum and total in microseconds; it is absent in data from an older Goose, and then figures are read in whole milliseconds
+    o the console, HTML, Markdown and PDF reports show averages, minimums, maximums and percentiles under 10 ms to the hundredth (`0.42`); JSON report rows stay whole milliseconds, so reports load as baselines in either direction, and baseline deltas of minimums, maximums and percentiles keep whole milliseconds
+    o `record_custom_request_duration` records a custom request from a `Duration`, keeping its microseconds; `record_custom_request` is unchanged
+    o the request log's CSV format ends with a `response_time_us` column and the transaction log's with `run_time_us`; the other formats carry the new fields
+    o the dashboard's heatmap has 10 rows of 100 microseconds under a millisecond in place of one, so the indexes of every other row move up by 9; snapshots add `response_time_us` to the aggregate, request and adjusted figures and `buckets_us` to the heatmap, additive under `version: 1`
  - [#765](https://github.com/tag1consulting/goose/pull/765) say what the dashboard and `/api/v1` promise in 0.19, 0.20 and 1.0, in place of the book's "Experimental" banner (#701)
  - [#763](https://github.com/tag1consulting/goose/pull/763) add a whole run response time heatmap to the HTML report, and so to the PDF (#746)
     o on by default for saved runs (every run unless given `--no-save`) and for `--report-file`; `--no-percentiles-over-time` turns it off. That flag and `GooseDefault::NoPercentilesOverTime` now both work without `--dashboard`

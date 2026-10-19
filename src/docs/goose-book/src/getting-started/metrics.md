@@ -346,6 +346,8 @@ The next graph shows the response times measured for each request made. Goose me
 - **Resource efficiency**: Not downloading complete responses allows Goose to generate more load with fewer resources
 - **Real-world relevance**: Many applications stream responses or use chunked encoding where TTFB is the critical performance metric
 
+Goose measures request times to the microsecond. Request response times under 10 ms are shown to the hundredth of a millisecond, truncated, in the console, HTML, Markdown and PDF reports and on the dashboard, so a 0.42 ms response reads `0.42` where whole milliseconds showed `0`; times of 10 ms and more are shown in whole milliseconds as before. Percentiles under a millisecond come from 10 microsecond buckets, and those from 1 ms up from the same buckets as before, so a percentile between 1 and 10 ms is still a whole millisecond. The JSON report keeps whole milliseconds in its request and response rows, so it loads as a baseline in any Goose, and carries the microseconds in a `micros` field beside each request's timing data. Transaction and scenario times are still whole milliseconds.
+
 If your load test needs to measure total download time including the response body, see [Measuring Complete Download Time](#measuring-complete-download-time) below.
 
 In the following graph, it's apparent that POST requests had the slowest responses, which is logical as they are not cached. As before, it's possible to click on the request names at the top of the graph to hide/show details about specific requests.
