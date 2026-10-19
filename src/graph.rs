@@ -640,7 +640,7 @@ struct RingSlot {
 /// Most columns the report's heatmap keeps for all requests.
 const ALL_REQUESTS_COLUMNS: usize = 600;
 /// Most columns the report's heatmap keeps for each request name with a ring.
-const REQUEST_COLUMNS: usize = 120;
+const REQUEST_COLUMNS: usize = 60;
 
 /// A series' response times over the whole run, for the report's heatmap:
 /// one histogram for each column of a width in seconds that
