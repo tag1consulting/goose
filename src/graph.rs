@@ -1877,6 +1877,9 @@ impl GraphData {
         format!(
             r#"<div class="graph heatmap">
                 <style>
+                    .graph.heatmap {{
+                        break-inside: avoid;
+                    }}
                     .heatmap-controls button {{
                         border: 1px solid #2c664f;
                         background: white;
