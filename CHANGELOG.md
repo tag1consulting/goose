@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.19.0-dev
+ - [#765](https://github.com/tag1consulting/goose/pull/765) say what the dashboard and `/api/v1` promise in 0.19, 0.20 and 1.0, in place of the book's "Experimental" banner (#701)
  - [#763](https://github.com/tag1consulting/goose/pull/763) add a whole run response time heatmap to the HTML report, and so to the PDF (#746)
     o on by default for saved runs (every run unless given `--no-save`) and for `--report-file`; `--no-percentiles-over-time` turns it off. That flag and `GooseDefault::NoPercentilesOverTime` now both work without `--dashboard`
     o the heatmap's memory stops growing: it keeps at most 600 columns for all requests and 60 for each of the first 100 request names, and as many again for synthetic times under `--co-mitigation`. When a set of columns is full, adjacent columns merge in pairs, doubling their width
