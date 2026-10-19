@@ -127,8 +127,10 @@
             previous = column[0];
             for (var p = 0; p < 3; p++) {
                 // The value axis is logarithmic, so a percentile under a
-                // millisecond is drawn at 0.5 ms, as its bucket starts.
-                lines[p].push([(from + to) / 2, Math.max(column[1 + p], 0.5), column[1 + p]]);
+                // millisecond (0, as the percentiles are whole milliseconds)
+                // is drawn where the lowest bucket starts: 0.5 ms, or 0.05
+                // ms with the rows under a millisecond.
+                lines[p].push([(from + to) / 2, Math.max(column[1 + p], micros ? 0.05 : 0.5), column[1 + p]]);
             }
             for (var i = 4; i + 2 < column.length; i += 3) {
                 var bucketSpan = span(column[i]);
@@ -139,7 +141,7 @@
             }
         });
         if (cells.length === 0) {
-            low = 0.5;
+            low = micros ? 0.05 : 0.5;
             high = 1000;
         }
         note.textContent = 'Each column is ' +
