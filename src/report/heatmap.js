@@ -142,7 +142,7 @@
                 type: 'line',
                 symbol: 'none',
                 connectNulls: false,
-                lineStyle: { color: color, width: 1.5 },
+                lineStyle: { color: color, width: 2 },
                 itemStyle: { color: color },
                 encode: { x: 0, y: 1 },
                 data: values
@@ -172,15 +172,21 @@
                     // printed report has every cell.
                     progressive: 0,
                     renderItem: function (params, api) {
+                        // Edges on whole pixels, so neighbouring cells meet
+                        // without a pale seam between them.
                         var topLeft = api.coord([api.value(0), api.value(3)]);
                         var bottomRight = api.coord([api.value(1), api.value(2)]);
+                        var left = Math.round(topLeft[0]);
+                        var top = Math.round(topLeft[1]);
+                        var right = Math.round(bottomRight[0]);
+                        var bottom = Math.round(bottomRight[1]);
                         return {
                             type: 'rect',
                             shape: {
-                                x: topLeft[0],
-                                y: topLeft[1],
-                                width: Math.max(bottomRight[0] - topLeft[0], 1),
-                                height: Math.max(bottomRight[1] - topLeft[1], 1)
+                                x: left,
+                                y: top,
+                                width: Math.max(right - left, 1),
+                                height: Math.max(bottom - top, 1)
                             },
                             style: { fill: color(api.value(4)) }
                         };
