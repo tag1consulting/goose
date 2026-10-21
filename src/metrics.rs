@@ -1182,12 +1182,12 @@ impl PartialOrd for GooseRequestMetricAggregate {
     }
 }
 
-/// Response times, in microseconds, in buckets: how many fell in each, and
-/// the fastest, slowest and total. Below 1 ms the buckets are 10 µs wide,
-/// and each reports a time at most 5 µs off any it holds; from 1 ms each
-/// power of two is split into 64, each at most 1/128 (0.78%) off. From
-/// 1 µs to the default 60 second `--timeout` there are 1,114 buckets, and
-/// only those that hold a time are kept.
+/// Response times, in microseconds, in buckets that report a time at most
+/// 1/128 (0.78%) off any time they hold: how many fell in each, and the
+/// fastest, slowest and total. Every time under 128 µs has a bucket of its
+/// own, and each power of two above is split into 64; from 1 µs to the
+/// default 60 second `--timeout` there are 1,330 buckets, and only those
+/// that hold a time are kept.
 ///
 /// It serializes, in a JSON report or saved run, with each bucket once, in
 /// `times_us`, beside the fastest, slowest and total in microseconds and in
