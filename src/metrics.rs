@@ -5178,10 +5178,9 @@ mod test {
         from_zero.merge(&record(&[2]));
         assert_eq!(from_zero.minimum_time_us, 0);
 
-        // Percentiles are no longer clamped up to the fastest nonzero time:
-        // the 0 to 10 µs bucket reports its middle.
+        // Percentiles are no longer clamped up to the fastest nonzero time.
         let data = record(&[0, 0, 0, 5]);
-        assert!(data.percentile_us(0.5) <= 5);
+        assert_eq!(data.percentile_us(0.5), 0);
 
         // Status code summaries too.
         let mut summary = StatusCodeTimingSummary::default();

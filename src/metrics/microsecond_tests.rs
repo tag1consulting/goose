@@ -94,27 +94,17 @@ fn exact_percentile(sorted: &[u64], percent: f32) -> u64 {
     sorted[rank - 1]
 }
 
-/// Within the bucket error: half a 10 µs bucket below 1 ms, 1% from there.
-fn within_bucket(value: u64, expected: u64) -> bool {
-    if expected < 1_000 {
-        value.abs_diff(expected) <= 5
-    } else {
-        within_one_percent(value, expected)
-    }
-}
-
 fn within_one_percent(value: u64, expected: u64) -> bool {
     (value as f64 - expected as f64).abs() <= expected as f64 * 0.01
 }
 
-/// The value a bucket reports for `us` is within half a 10 µs bucket of it
-/// below 1 ms and within 1% from 1 ms, a bucket's value lands back in the
-/// same bucket, and so does its value.
+/// The value a bucket reports for `us` is within 1% of it, a bucket's
+/// value lands back in the same bucket, and so does its value.
 fn assert_bucket_holds(us: u64) {
     let value = bucket_value(us);
     assert!(
-        within_bucket(value, us),
-        "{} µs is reported as {} µs, more than 5 µs off below 1 ms or 1% off above",
+        within_one_percent(value, us),
+        "{} µs is reported as {} µs, more than 1% off",
         us,
         value
     );
@@ -157,7 +147,7 @@ fn bucket_error_bound_from_one_microsecond_to_the_default_timeout() {
 
     // Each boundary, and the times either side of it: a bucket ends where
     // the next index begins.
-    assert!(bucket_value(0) <= 5);
+    assert_eq!(bucket_value(0), 0);
     let mut start = 0;
     while start <= DEFAULT_TIMEOUT_US {
         let end = bucket_end(start);
@@ -173,36 +163,41 @@ fn bucket_error_bound_from_one_microsecond_to_the_default_timeout() {
     }
 }
 
-/// 10 µs buckets below 1 ms, the 1% buckets from 1 ms, and the first and
-/// last sub millisecond buckets.
+/// One log linear scheme: a bucket for every microsecond below 128 µs,
+/// then 64 buckets of equal width per power of two, through 1 ms and 10 ms.
 #[test]
-fn bucket_boundaries_around_one_millisecond() {
+fn bucket_boundaries_of_the_log_linear_scheme() {
     use super::buckets::{bucket_at, bucket_floor};
-    // Below 1 ms every bucket is 10 µs wide and reports its middle: the
-    // first is 0 to 10 µs, the last 990 to 1,000 µs.
-    for (us, floor) in [(1, 0), (9, 0), (10, 10), (500, 500), (990, 990), (999, 990)] {
-        assert_eq!(bucket_floor(us), floor, "{} µs", us);
-        assert_eq!(bucket_end(us), floor + 10, "{} µs", us);
-        assert_eq!(bucket_value(us), floor + 5, "{} µs", us);
+    // Exact below 128 µs: the first bucket is 0 µs, the last exact one 127.
+    for us in [0, 1, 63, 64, 127] {
+        assert_eq!(bucket_floor(us), us, "{} µs", us);
+        assert_eq!(bucket_end(us), us + 1, "{} µs", us);
+        assert_eq!(bucket_value(us), us, "{} µs", us);
+        assert_eq!(bucket_index(us), us as usize, "{} µs", us);
     }
-    assert_eq!((bucket_index(0), bucket_index(9)), (0, 0));
-    assert_eq!((bucket_index(990), bucket_index(999)), (99, 99));
-    // 0.99 ms is the last 10 µs bucket; 1.00 ms starts the 1% buckets and
-    // 1.01 ms is in the next one, each 8 µs wide there.
-    assert_eq!(bucket_end(999), 1_000);
-    assert_eq!(bucket_floor(1_000), 1_000);
-    assert_eq!(bucket_index(1_000), 100);
-    assert_eq!(bucket_end(1_000), 1_008);
-    assert_eq!(bucket_floor(1_010), 1_008);
-    assert_eq!(bucket_index(1_010), 101);
-    for us in [1_000, 1_010, 2_200, 2_500, 9_990, 10_000, 10_010] {
+    // Then 2 µs wide to 256 µs, 8 µs wide just under 1 ms, 16 µs from
+    // 1,024 µs and 128 µs around 10 ms.
+    assert_eq!((bucket_floor(128), bucket_end(128)), (128, 130));
+    assert_eq!((bucket_floor(999), bucket_end(999)), (992, 1_000));
+    assert_eq!((bucket_floor(1_000), bucket_end(1_000)), (1_000, 1_008));
+    assert_eq!((bucket_floor(1_010), bucket_end(1_010)), (1_008, 1_016));
+    assert_eq!((bucket_floor(1_024), bucket_end(1_024)), (1_024, 1_040));
+    assert_eq!(bucket_floor(9_990), 9_984);
+    assert_eq!(bucket_floor(10_000), 9_984);
+    assert_eq!((bucket_floor(10_010), bucket_end(10_010)), (9_984, 10_112));
+    for us in [128, 999, 1_000, 1_010, 2_200, 2_500, 9_990, 10_000, 10_010] {
         assert!(within_one_percent(bucket_value(us), us), "{} µs", us);
     }
-    for index in [0, 99, 100, 101, 999, 1_000, 1_500] {
+    for index in [0, 127, 128, 191, 192, 1_000, 1_329] {
         assert_eq!(bucket_index(bucket_at(index)), index, "index {}", index);
     }
-    // Shown as hundredths up to 10 ms, from buckets at most 1% off: 9.99
-    // ms is in the 9.984 to 10.112 ms bucket and reads 10.
+    // From 1 µs to the default timeout, 1,330 buckets.
+    assert_eq!(
+        bucket_index(DEFAULT_TIMEOUT_US) - bucket_index(1) + 1,
+        1_330
+    );
+    // Shown as hundredths up to 10 ms, from buckets at most 1% off: 9.99 ms
+    // is in the 9.984 to 10.112 ms bucket and reads 10.
     let shown: f64 = Millis(bucket_value(9_990)).to_string().parse().unwrap();
     assert!((shown - 9.99).abs() <= 9.99 * 0.01, "{}", shown);
     assert_eq!(Millis(10_000).to_string(), "10");
@@ -331,7 +326,7 @@ fn percentiles_from_the_buckets_are_within_one_percent() {
             let exact = exact_percentile(&times, percent);
             let got = data.percentile_us(percent);
             assert!(
-                within_bucket(got, exact),
+                within_one_percent(got, exact),
                 "{} p{}: {} µs from the buckets, {} µs exactly",
                 name,
                 percent,
@@ -616,8 +611,8 @@ fn dashboard_snapshot_carries_microseconds() {
         .as_ref()
         .expect("microseconds");
     assert_eq!((us.min, us.max), (40, 900));
-    assert!(within_bucket(us.p50, 400), "{}", us.p50);
-    assert!(within_bucket(us.p99, 900), "{}", us.p99);
+    assert!(within_one_percent(us.p50, 400), "{}", us.p50);
+    assert!(within_one_percent(us.p99, 900), "{}", us.p99);
     // The whole milliseconds beside them are truncated from them.
     assert_eq!(snap.aggregate.response_time_min_ms, 0);
     assert_eq!(snap.aggregate.percentile_ms.p50, 0);
