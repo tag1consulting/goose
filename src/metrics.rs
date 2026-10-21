@@ -8,14 +8,18 @@
 //! contained [`TransactionMetrics`], [`GooseRequestMetrics`], and
 //! [`GooseErrorMetrics`] are displayed in tables.
 
+pub(crate) mod buckets;
 mod common;
 pub mod coordinated_omission;
 pub(crate) mod dashboard_snapshot;
 mod delta;
+pub(crate) mod millis;
 mod nullable;
 
 #[cfg(test)]
-#[cfg(any())] // until implementation
+// Written as for edition 2021: under this crate's 2018 edition a message
+// with inline arguments prints as it is written.
+#[allow(non_fmt_panics, unused_variables, clippy::field_reassign_with_default)]
 mod microsecond_tests;
 
 #[cfg(feature = "dashboard")]
@@ -24,6 +28,7 @@ pub(crate) use common::{load_baseline_file, ReportData};
 pub use coordinated_omission::{CadenceCalculator, CoMetricsSummary, CoordinatedOmissionMetrics};
 pub(crate) use dashboard_snapshot::DashboardSnapshot;
 pub(crate) use delta::{ApplyBaseline, DeltaTo, Value};
+pub(crate) use millis::{format_micros, Millis};
 pub(crate) use nullable::NullableFloat;
 
 use crate::config::GooseDefaults;
@@ -43,7 +48,7 @@ use itertools::Itertools;
 use num_format::{Locale, ToFormattedString};
 use regex::RegexSet;
 use reqwest::StatusCode;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Serde helper for `Arc<str>` fields, enabling `#[serde(with = "arc_str_serde")]`.
 pub(crate) mod arc_str_serde {
@@ -69,6 +74,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
@@ -94,10 +100,13 @@ pub enum GooseMetric {
     ///
     /// Emitted when a scenario iteration completes with exactly one pending request
     /// metric and one pending transaction metric, avoiding three separate channel sends.
+    ///
+    /// The scenario is boxed with the request, so the variant stays as small
+    /// as [`GooseMetric::Transaction`] and every message stays small.
     All {
         request: Box<GooseRequestMetric>,
         transaction: TransactionMetric,
-        scenario: ScenarioMetric,
+        scenario: Box<ScenarioMetric>,
     },
     /// A batch of pre-aggregated metrics from a single GooseUser thread.
     ///
@@ -235,16 +244,8 @@ pub(crate) struct RequestBatchEntry {
 /// `(scenario_index, transaction_index)` pair within a batch.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct TransactionBatchEntry {
-    /// Bucketed run-time distribution (rounded_time -> count).
-    pub(crate) times: BTreeMap<usize, usize>,
-    /// Shortest run-time in this batch.
-    pub(crate) min_time: usize,
-    /// Longest run-time in this batch.
-    pub(crate) max_time: usize,
-    /// Total combined run-times in this batch.
-    pub(crate) total_time: usize,
-    /// Number of transactions in this batch entry.
-    pub(crate) counter: usize,
+    /// Run times in this batch, in microseconds, and how many.
+    pub(crate) run_times: GooseRequestMetricTimingData,
     /// Successful transaction count.
     pub(crate) success_count: usize,
     /// Failed transaction count.
@@ -254,16 +255,8 @@ pub(crate) struct TransactionBatchEntry {
 /// Pre-aggregated scenario timing data for a single scenario index.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct ScenarioBatchEntry {
-    /// Bucketed run-time distribution (rounded_time -> count).
-    pub(crate) times: BTreeMap<usize, usize>,
-    /// Shortest run-time in this batch.
-    pub(crate) min_time: usize,
-    /// Longest run-time in this batch.
-    pub(crate) max_time: usize,
-    /// Total combined run-times in this batch.
-    pub(crate) total_time: usize,
-    /// Number of scenario iterations in this batch entry.
-    pub(crate) counter: usize,
+    /// Run times in this batch, in microseconds, and how many.
+    pub(crate) run_times: GooseRequestMetricTimingData,
     /// The user index (single user per batch, since each GooseUser has its own batch).
     pub(crate) user: usize,
 }
@@ -833,6 +826,12 @@ pub struct GooseRequestMetric {
     /// [`Transaction`](../goose/struct.Transaction.html)s by this
     /// [`GooseUser`](../goose/struct.GooseUser.html) thread.
     pub user_cadence: u64,
+    /// The microseconds past [`response_time`](Self::response_time)'s whole
+    /// milliseconds, from 0 to 999, so a request under a millisecond keeps
+    /// its time. [`response_time_micros`](Self::response_time_micros) gives
+    /// both together. 0 when read from a log written before Goose kept them.
+    #[serde(default)]
+    pub response_time_fraction_us: u16,
 }
 
 impl GooseRequestMetric {
@@ -861,7 +860,33 @@ impl GooseRequestMetric {
             error: "".to_string(),
             coordinated_omission_elapsed: 0,
             user_cadence: 0,
+            response_time_fraction_us: 0,
         }
+    }
+
+    /// How long the request took, in microseconds.
+    pub fn response_time_micros(&self) -> u64 {
+        micros(self.response_time, self.response_time_fraction_us)
+    }
+
+    /// Record how long the request took: whole milliseconds in
+    /// `response_time`, the microseconds past them in
+    /// `response_time_fraction_us`.
+    pub(crate) fn set_response_duration(&mut self, response_time: Duration) {
+        self.set_response_micros(duration_micros(response_time));
+    }
+
+    /// [`Self::set_response_duration`] from microseconds.
+    pub(crate) fn set_response_micros(&mut self, us: u64) {
+        self.response_time = us / 1000;
+        self.response_time_fraction_us = (us % 1000) as u16;
+    }
+
+    /// Record how long the request took in whole milliseconds, with no
+    /// microseconds past them.
+    #[cfg(test)]
+    pub(crate) fn set_response_time(&mut self, response_time: u128) {
+        self.set_response_micros((response_time as u64).saturating_mul(1000));
     }
 
     // Record the final URL returned.
@@ -870,11 +895,6 @@ impl GooseRequestMetric {
         if self.final_url != self.raw.url {
             self.redirected = true;
         }
-    }
-
-    // Record how long the `response_time` took.
-    pub(crate) fn set_response_time(&mut self, response_time: u128) {
-        self.response_time = response_time as u64;
     }
 
     // Record the returned `status_code`.
@@ -966,23 +986,33 @@ impl GooseRequestMetricAggregate {
         }
     }
 
+    /// Record a response time in whole milliseconds (unit tests).
+    #[cfg(test)]
     pub(crate) fn record_time(&mut self, time_elapsed: u64, coordinated_omission_mitigation: bool) {
-        // Only add time_elapsed to raw_data if the time wasn't generated by Coordinated
+        self.record_time_us(
+            time_elapsed.saturating_mul(1000),
+            coordinated_omission_mitigation,
+        );
+    }
+
+    /// Record a response time in microseconds.
+    pub(crate) fn record_time_us(&mut self, us: u64, coordinated_omission_mitigation: bool) {
+        // Only add the time to raw_data if it wasn't generated by Coordinated
         // Omission Mitigation.
         if !coordinated_omission_mitigation {
-            self.raw_data.record_time(time_elapsed);
+            self.raw_data.record_time_us(us);
         }
 
         // A Coordinated Omission data object already exists, add a new time into the data.
         if let Some(coordinated_omission_data) = self.coordinated_omission_data.as_mut() {
-            coordinated_omission_data.record_time(time_elapsed);
+            coordinated_omission_data.record_time_us(us);
         }
         // Create a new Coordinated Omission data object by cloning the raw data.
         else if coordinated_omission_mitigation {
-            // If this time_elapsed was generated by Coordinated Omission Mitigation, it doesn't
+            // If this time was generated by Coordinated Omission Mitigation, it doesn't
             // exist in the raw_data, so add it.
             let mut coordinated_omission_data = self.raw_data.clone();
-            coordinated_omission_data.record_time(time_elapsed);
+            coordinated_omission_data.record_time_us(us);
             self.coordinated_omission_data = Some(coordinated_omission_data);
         }
     }
@@ -1005,14 +1035,19 @@ impl GooseRequestMetricAggregate {
         debug!("[metrics]: incremented {status_code} counter: {counter}");
     }
 
-    /// Record response time for a specific status code.
+    /// Record a response time in whole milliseconds for a specific status
+    /// code.
     ///
     /// Only tracks aggregate statistics (count, total, min, max) to keep memory
     /// overhead minimal compared to the full [`GooseRequestMetricTimingData`].
     pub fn record_status_code_time(&mut self, status_code: u16, time_elapsed: u64) {
-        let time = time_elapsed as usize;
+        self.record_status_code_time_us(status_code, time_elapsed.saturating_mul(1000));
+    }
+
+    /// [`Self::record_status_code_time`] with the time in microseconds.
+    pub fn record_status_code_time_us(&mut self, status_code: u16, us: u64) {
         let summary = self.status_code_timings.entry(status_code).or_default();
-        summary.record(time);
+        summary.record_us(us);
     }
 
     /// Returns per-status-code breakdown data if multiple status codes were recorded.
@@ -1035,12 +1070,12 @@ impl GooseRequestMetricAggregate {
                     0.0
                 },
                 average: if summary.count > 0 {
-                    summary.total_time as f32 / summary.count as f32
+                    (summary.total_time_us as f64 / summary.count as f64 / 1000.0) as f32
                 } else {
                     0.0
                 },
-                min_time: summary.min_time,
-                max_time: summary.max_time,
+                min_time_us: summary.min_time_us,
+                max_time_us: summary.max_time_us,
                 count: summary.count,
             })
             .collect();
@@ -1053,41 +1088,43 @@ impl GooseRequestMetricAggregate {
 ///
 /// Unlike [`GooseRequestMetricTimingData`] which stores the full response time distribution
 /// (a `BTreeMap` of all observed times) needed for percentile calculations, this only tracks
-/// aggregate statistics to minimize memory overhead.
+/// aggregate statistics to minimize memory overhead. Times are in microseconds.
 #[derive(Debug, Clone, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct StatusCodeTimingSummary {
     pub count: usize,
-    pub total_time: usize,
-    /// The fastest response, 0 before any.
-    pub min_time: usize,
-    pub max_time: usize,
+    /// Sum of the response times, in microseconds.
+    pub total_time_us: u64,
+    /// The fastest response in microseconds, 0 before any.
+    pub min_time_us: u64,
+    /// The slowest response in microseconds.
+    pub max_time_us: u64,
 }
 
 impl StatusCodeTimingSummary {
-    /// Count one response that took `time` ms. The count, not a minimum of
-    /// 0, says whether there is a time yet: a response under a millisecond
-    /// is a minimum of 0.
-    pub(crate) fn record(&mut self, time: usize) {
-        if self.count == 0 || time < self.min_time {
-            self.min_time = time;
+    /// Count one response that took `us` microseconds. The count, not a
+    /// minimum of 0, says whether there is a time yet: a response can take
+    /// 0 µs.
+    pub(crate) fn record_us(&mut self, us: u64) {
+        if self.count == 0 || us < self.min_time_us {
+            self.min_time_us = us;
         }
-        if time > self.max_time {
-            self.max_time = time;
+        if us > self.max_time_us {
+            self.max_time_us = us;
         }
         self.count += 1;
-        self.total_time += time;
+        self.total_time_us += us;
     }
 
     /// Add another summary of the same status code's responses.
     pub(crate) fn merge(&mut self, other: &StatusCodeTimingSummary) {
-        if other.count > 0 && (self.count == 0 || other.min_time < self.min_time) {
-            self.min_time = other.min_time;
+        if other.count > 0 && (self.count == 0 || other.min_time_us < self.min_time_us) {
+            self.min_time_us = other.min_time_us;
         }
-        if other.max_time > self.max_time {
-            self.max_time = other.max_time;
+        if other.max_time_us > self.max_time_us {
+            self.max_time_us = other.max_time_us;
         }
         self.count += other.count;
-        self.total_time += other.total_time;
+        self.total_time_us += other.total_time_us;
     }
 }
 
@@ -1095,9 +1132,12 @@ impl StatusCodeTimingSummary {
 pub struct StatusCodeBreakdown {
     pub status_code: u16,
     pub percentage: f32,
+    /// The average response time, in milliseconds.
     pub average: f32,
-    pub min_time: usize,
-    pub max_time: usize,
+    /// The fastest response, in microseconds.
+    pub min_time_us: u64,
+    /// The slowest response, in microseconds.
+    pub max_time_us: u64,
     pub count: usize,
 }
 
@@ -1127,155 +1167,244 @@ impl PartialOrd for GooseRequestMetricAggregate {
     }
 }
 
-/// Round a millisecond timing value into a histogram bucket.
+/// Response times, in microseconds, in buckets that report a time at most
+/// 1/128 (0.78%) off any time they hold: how many fell in each, and the
+/// fastest, slowest and total. Every time under 128 µs has a bucket of its
+/// own, and each power of two above is split into 64; from 1 µs to the
+/// default 60 second `--timeout` there are 1,330 buckets, and only those
+/// that hold a time are kept.
 ///
-/// Reduces memory usage by combining similar times:
-/// - 0–100ms: no rounding (stored exactly)
-/// - 101–500ms: rounded to nearest 10ms
-/// - 501–1000ms: rounded to nearest 100ms
-/// - >1000ms: rounded to nearest 1000ms
-pub(crate) fn round_metric_time(time: u64) -> usize {
-    match time {
-        0..=100 => time as usize,
-        101..=500 => ((time as f64 / 10.0).round() * 10.0) as usize,
-        501..=1000 => ((time as f64 / 100.0).round() * 100.0) as usize,
-        _ => ((time as f64 / 1000.0).round() * 1000.0) as usize,
-    }
-}
-
-/// Collects per-request timing metrics.
-#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+/// It serializes, in a JSON report or saved run, with both its microsecond
+/// fields and the whole millisecond fields older Goose wrote (`times`,
+/// `minimum_time`, `maximum_time`, `total_time`, computed from these), so
+/// any Goose reads it. A report without the microsecond fields reads as
+/// whole milliseconds.
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub struct GooseRequestMetricTimingData {
-    /// Per-response-time counters, tracking how often pages are returned with this response time.
-    ///
-    /// All response times between 1 and 100ms are stored without any rounding. Response times between
-    /// 100 and 500ms are rounded to the nearest 10ms and then stored. Response times betwee 500 and
-    /// 1000ms are rounded to the nearest 100ms. Response times larger than 1000ms are rounded to the
-    /// nearest 1000ms.
-    pub times: BTreeMap<usize, usize>,
-    /// The shortest response time seen so far.
-    ///
-    /// For example a `min_response_time` of `3` means the quickest response for this method-path
-    /// pair returned in 3 milliseconds. This value is not rounded.
-    pub minimum_time: usize,
-    /// The longest response time seen so far.
-    ///
-    /// For example a `max_response_time` of `2013` means the slowest response for this method-path
-    /// pair returned in 2013 milliseconds. This value is not rounded.
-    pub maximum_time: usize,
-    /// Total combined response times seen so far.
-    ///
-    /// A running total of all response times returned for this method-path pair.
-    pub total_time: usize,
-    /// Total number of response times seen so far.
-    ///
-    /// A count of how many requests have been tracked for this method-path pair.
+    /// How many times fell in each bucket, keyed by the bucket's fastest
+    /// time in microseconds. Every time under 128 µs has a bucket of its
+    /// own; above, each power of two is split into 64 buckets.
+    pub times_us: BTreeMap<u64, usize>,
+    /// The fastest time, in microseconds, not rounded. 0 before any.
+    pub minimum_time_us: u64,
+    /// The slowest time, in microseconds, not rounded.
+    pub maximum_time_us: u64,
+    /// All times added together, in microseconds.
+    pub total_time_us: u64,
+    /// How many times are counted.
     pub counter: usize,
-}
-impl Default for GooseRequestMetricTimingData {
-    /// Empty timing data.
-    fn default() -> Self {
-        GooseRequestMetricTimingData::new(None)
-    }
 }
 impl GooseRequestMetricTimingData {
     /// Create a new GooseRequestMetricAggregate object.
     pub(crate) fn new(metric_data: Option<&GooseRequestMetricTimingData>) -> Self {
         trace!("new GooseRequestMetricTimingData");
-        // Simply clone the exiting metric_data.
-        if let Some(data) = metric_data {
-            data.clone()
-        // Create a new empty metric_data.
-        } else {
-            GooseRequestMetricTimingData {
-                times: BTreeMap::new(),
-                minimum_time: 0,
-                maximum_time: 0,
-                total_time: 0,
-                counter: 0,
-            }
+        metric_data.cloned().unwrap_or_default()
+    }
+
+    /// [`Self::merge`], also handing each of `other`'s buckets, as its
+    /// fastest time in microseconds and its count, to `also`, so a caller
+    /// keeping the same times elsewhere walks them once.
+    pub(crate) fn merge_also(
+        &mut self,
+        other: &GooseRequestMetricTimingData,
+        mut also: impl FnMut(u64, usize),
+    ) {
+        for (&bucket, &count) in &other.times_us {
+            *self.times_us.entry(bucket).or_insert(0) += count;
+            also(bucket, count);
         }
+        self.merge_totals(other);
     }
 
     /// Merge another set of timing data into this one: combine the buckets and
     /// update the minimum, maximum, total and counter.
-    /// [`Self::merge`], also handing each of `other`'s buckets, as its
-    /// rounded time and count, to `also`, so a caller keeping the same times
-    /// elsewhere walks them once.
-    pub(crate) fn merge_also(
-        &mut self,
-        other: &GooseRequestMetricTimingData,
-        mut also: impl FnMut(usize, usize),
-    ) {
-        for (&time_bucket, &count) in &other.times {
-            *self.times.entry(time_bucket).or_insert(0) += count;
-            also(time_bucket, count);
-        }
-        if other.counter > 0 && (self.counter == 0 || other.minimum_time < self.minimum_time) {
-            self.minimum_time = other.minimum_time;
-        }
-        self.counter += other.counter;
-        self.total_time += other.total_time;
-        if other.maximum_time > self.maximum_time {
-            self.maximum_time = other.maximum_time;
-        }
-    }
-
     pub(crate) fn merge(&mut self, other: &GooseRequestMetricTimingData) {
-        for (time_bucket, count) in &other.times {
-            *self.times.entry(*time_bucket).or_insert(0) += count;
+        for (&bucket, &count) in &other.times_us {
+            *self.times_us.entry(bucket).or_insert(0) += count;
         }
+        self.merge_totals(other);
+    }
+
+    /// The fastest, slowest, total and counter of [`Self::merge`].
+    fn merge_totals(&mut self, other: &GooseRequestMetricTimingData) {
         // The counters, not a minimum of 0, say whether there are times yet:
-        // a response under a millisecond is a minimum of 0.
-        if other.counter > 0 && (self.counter == 0 || other.minimum_time < self.minimum_time) {
-            self.minimum_time = other.minimum_time;
+        // a time can be 0 µs.
+        if other.counter > 0 && (self.counter == 0 || other.minimum_time_us < self.minimum_time_us)
+        {
+            self.minimum_time_us = other.minimum_time_us;
         }
         self.counter += other.counter;
-        self.total_time += other.total_time;
-        if other.maximum_time > self.maximum_time {
-            self.maximum_time = other.maximum_time;
+        self.total_time_us += other.total_time_us;
+        if other.maximum_time_us > self.maximum_time_us {
+            self.maximum_time_us = other.maximum_time_us;
         }
     }
 
-    /// Record a new time.
+    /// Record a new time, in whole milliseconds (unit tests).
+    #[cfg(test)]
     pub(crate) fn record_time(&mut self, time_elapsed: u64) {
-        // Perform this conversin only once, then re-use throughout this funciton.
-        let time = time_elapsed as usize;
+        self.record_time_us(time_elapsed.saturating_mul(1000));
+    }
 
-        // Update minimum if this one is the first or the fastest yet. The
-        // counter, not a minimum of 0, says whether there is a time yet: a
-        // response under a millisecond is a minimum of 0.
-        if self.counter == 0 || time < self.minimum_time {
-            self.minimum_time = time;
+    /// Record a new time, in microseconds.
+    pub(crate) fn record_time_us(&mut self, us: u64) {
+        // The counter, not a minimum of 0, says whether there is a time yet.
+        if self.counter == 0 || us < self.minimum_time_us {
+            self.minimum_time_us = us;
         }
-
-        // Update maximum if this one is slowest yet.
-        if time > self.maximum_time {
-            self.maximum_time = time;
+        if us > self.maximum_time_us {
+            self.maximum_time_us = us;
         }
-
-        // Update total time, adding in this one.
-        self.total_time += time;
-
-        // Each time we store a new time, increment counter by one.
+        self.total_time_us += us;
         self.counter += 1;
+        *self.times_us.entry(buckets::bucket_floor(us)).or_insert(0) += 1;
+    }
 
-        let rounded_time = round_metric_time(time_elapsed);
+    /// The time `percent` (0.0 to 1.0) of these times finished within, in
+    /// microseconds: the middle of its bucket, kept between the fastest and
+    /// slowest. 0 without times.
+    pub fn percentile_us(&self, percent: f32) -> u64 {
+        buckets::percentile(
+            self.times_us
+                .iter()
+                .map(|(&bucket, &count)| (buckets::bucket_value(bucket), count)),
+            self.counter,
+            self.minimum_time_us,
+            self.maximum_time_us,
+            percent,
+        )
+    }
 
-        let counter = match self.times.get(&rounded_time) {
-            // We've seen this elapsed time before, increment counter.
-            Some(c) => {
-                debug!("got {rounded_time:?} counter: {c}");
-                *c + 1
-            }
-            // First time we've seen this elapsed time, initialize counter.
-            None => {
-                debug!("no match for counter: {rounded_time}");
-                1
-            }
-        };
-        debug!("incremented {rounded_time} counter: {counter}");
-        self.times.insert(rounded_time, counter);
+    /// The fastest time, in whole milliseconds, truncated.
+    pub fn minimum_time_ms(&self) -> usize {
+        (self.minimum_time_us / 1000) as usize
+    }
+
+    /// The slowest time, in whole milliseconds, truncated.
+    pub fn maximum_time_ms(&self) -> usize {
+        (self.maximum_time_us / 1000) as usize
+    }
+
+    /// The mean time in milliseconds, to the microsecond; NaN without times.
+    pub fn average_ms(&self) -> f64 {
+        self.total_time_us as f64 / self.counter as f64 / 1000.0
+    }
+
+    /// How many times fell in each whole millisecond, by the middle of each
+    /// bucket, truncated.
+    pub fn times_ms(&self) -> BTreeMap<usize, usize> {
+        whole_millisecond_times(&self.times_us)
+    }
+}
+
+/// How many of `times_us` fell in each whole millisecond, by the middle of
+/// each bucket, truncated.
+fn whole_millisecond_times(times_us: &BTreeMap<u64, usize>) -> BTreeMap<usize, usize> {
+    let mut times = BTreeMap::new();
+    for (&bucket, &count) in times_us {
+        *times
+            .entry((buckets::bucket_value(bucket) / 1000) as usize)
+            .or_insert(0) += count;
+    }
+    times
+}
+
+/// The buckets of whole millisecond `times`, as a file without microseconds
+/// holds them: each in the bucket of its time.
+fn microsecond_times(times: &BTreeMap<usize, usize>) -> BTreeMap<u64, usize> {
+    let mut times_us = BTreeMap::new();
+    for (&ms, &count) in times {
+        *times_us
+            .entry(buckets::bucket_floor((ms as u64).saturating_mul(1000)))
+            .or_insert(0) += count;
+    }
+    times_us
+}
+
+/// Whole milliseconds as microseconds.
+fn ms_to_us(ms: usize) -> u64 {
+    (ms as u64).saturating_mul(1000)
+}
+
+/// Microseconds as whole milliseconds, truncated.
+fn us_to_ms(us: u64) -> usize {
+    (us / 1000) as usize
+}
+
+/// [`GooseRequestMetricTimingData`] as it is written: the whole millisecond
+/// fields any Goose reads, then the microsecond ones.
+#[derive(Serialize)]
+struct TimingDataOut<'a> {
+    times: BTreeMap<usize, usize>,
+    minimum_time: usize,
+    maximum_time: usize,
+    total_time: usize,
+    counter: usize,
+    times_us: &'a BTreeMap<u64, usize>,
+    minimum_time_us: u64,
+    maximum_time_us: u64,
+    total_time_us: u64,
+}
+
+/// [`GooseRequestMetricTimingData`] as it is read: with microseconds, or
+/// only the whole milliseconds of a file written before them.
+#[derive(Deserialize)]
+struct TimingDataIn {
+    #[serde(default)]
+    times: BTreeMap<usize, usize>,
+    #[serde(default)]
+    minimum_time: usize,
+    #[serde(default)]
+    maximum_time: usize,
+    #[serde(default)]
+    total_time: usize,
+    #[serde(default)]
+    counter: usize,
+    times_us: Option<BTreeMap<u64, usize>>,
+    #[serde(default)]
+    minimum_time_us: Option<u64>,
+    #[serde(default)]
+    maximum_time_us: Option<u64>,
+    #[serde(default)]
+    total_time_us: Option<u64>,
+}
+
+impl Serialize for GooseRequestMetricTimingData {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        TimingDataOut {
+            times: self.times_ms(),
+            minimum_time: self.minimum_time_ms(),
+            maximum_time: self.maximum_time_ms(),
+            total_time: us_to_ms(self.total_time_us),
+            counter: self.counter,
+            times_us: &self.times_us,
+            minimum_time_us: self.minimum_time_us,
+            maximum_time_us: self.maximum_time_us,
+            total_time_us: self.total_time_us,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for GooseRequestMetricTimingData {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let data = TimingDataIn::deserialize(deserializer)?;
+        Ok(match data.times_us {
+            Some(times_us) => GooseRequestMetricTimingData {
+                times_us,
+                minimum_time_us: data.minimum_time_us.unwrap_or(0),
+                maximum_time_us: data.maximum_time_us.unwrap_or(0),
+                total_time_us: data.total_time_us.unwrap_or(0),
+                counter: data.counter,
+            },
+            None => GooseRequestMetricTimingData {
+                times_us: microsecond_times(&data.times),
+                minimum_time_us: ms_to_us(data.minimum_time),
+                maximum_time_us: ms_to_us(data.maximum_time),
+                total_time_us: ms_to_us(data.total_time),
+                counter: data.counter,
+            },
+        })
     }
 }
 /// The per-scenario metrics collected each time a scenario is run.
@@ -1288,28 +1417,52 @@ pub struct ScenarioMetric {
     pub name: Arc<str>,
     /// An index into [`GooseAttack`]`.scenarios`, indicating which scenario this is.
     pub index: usize,
-    /// How long scenario ran.
+    /// How many milliseconds the scenario ran, truncated.
     pub run_time: u64,
     /// Which GooseUser thread processed the request.
     pub user: usize,
+    /// The microseconds past [`run_time`](Self::run_time)'s whole
+    /// milliseconds, from 0 to 999. [`run_time_micros`](Self::run_time_micros)
+    /// gives both together. 0 when read from a log written before Goose kept
+    /// them.
+    #[serde(default)]
+    pub run_time_fraction_us: u16,
 }
 impl ScenarioMetric {
-    /// Create a new Scenario metric.
+    /// Create a new Scenario metric for a scenario that ran `run_time`.
     pub(crate) fn new(
         elapsed: u128,
         scenario_name: Arc<str>,
         index: usize,
-        run_time: u128,
+        run_time: Duration,
         user: usize,
     ) -> Self {
+        let us = duration_micros(run_time);
         ScenarioMetric {
             elapsed: elapsed as u64,
             name: scenario_name,
             index,
-            run_time: run_time as u64,
+            run_time: us / 1000,
             user,
+            run_time_fraction_us: (us % 1000) as u16,
         }
     }
+
+    /// How long the scenario ran, in microseconds.
+    pub fn run_time_micros(&self) -> u64 {
+        micros(self.run_time, self.run_time_fraction_us)
+    }
+}
+
+/// `duration` in whole microseconds, at most [`u64::MAX`].
+pub(crate) fn duration_micros(duration: Duration) -> u64 {
+    duration.as_micros().min(u64::MAX as u128) as u64
+}
+
+/// Whole milliseconds and the microseconds past them, as microseconds.
+fn micros(ms: u64, fraction_us: u16) -> u64 {
+    ms.saturating_mul(1000)
+        .saturating_add(u64::from(fraction_us))
 }
 
 /// The per-transaction metrics collected each time a transaction is invoked.
@@ -1324,12 +1477,18 @@ pub struct TransactionMetric {
     /// The optional name of the transaction.
     #[serde(with = "arc_str_serde")]
     pub name: Arc<str>,
-    /// How long transaction ran.
+    /// How many milliseconds the transaction ran, truncated.
     pub run_time: u64,
     /// Whether or not the request was successful.
     pub success: bool,
     /// Which GooseUser thread processed the request.
     pub user: usize,
+    /// The microseconds past [`run_time`](Self::run_time)'s whole
+    /// milliseconds, from 0 to 999. [`run_time_micros`](Self::run_time_micros)
+    /// gives both together. 0 when read from a log written before Goose kept
+    /// them.
+    #[serde(default)]
+    pub run_time_fraction_us: u16,
 }
 impl TransactionMetric {
     /// Create a new TransactionMetric metric.
@@ -1348,13 +1507,21 @@ impl TransactionMetric {
             run_time: 0,
             success: true,
             user,
+            run_time_fraction_us: 0,
         }
     }
 
-    /// Update a TransactionMetric metric.
-    pub(crate) fn set_time(&mut self, time: u128, success: bool) {
-        self.run_time = time as u64;
+    /// Record how long the transaction ran and whether it succeeded.
+    pub(crate) fn set_duration(&mut self, run_time: Duration, success: bool) {
+        let us = duration_micros(run_time);
+        self.run_time = us / 1000;
+        self.run_time_fraction_us = (us % 1000) as u16;
         self.success = success;
+    }
+
+    /// How long the transaction ran, in microseconds.
+    pub fn run_time_micros(&self) -> u64 {
+        micros(self.run_time, self.run_time_fraction_us)
     }
 }
 
@@ -1363,29 +1530,25 @@ impl TransactionMetric {
 /// [`TransactionMetric`]s are sent by [`GooseUser`](../goose/struct.GooseUser.html)
 /// threads to the Goose parent process where they are aggregated together into this
 /// structure, and stored in [`GooseMetrics::transactions`].
-#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+///
+/// It serializes with the whole millisecond fields older Goose wrote
+/// (`times`, `min_time`, `max_time`, `total_time` and `counter`, computed
+/// from [`run_times`](Self::run_times)) and the microsecond ones.
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct TransactionMetricAggregate {
     /// An index into [`GooseAttack`](../struct.GooseAttack.html)`.scenarios`,
     /// indicating which scenario this is.
     pub scenario_index: usize,
     /// The scenario name.
-    #[serde(with = "arc_str_serde")]
     pub scenario_name: Arc<str>,
     /// An index into [`Scenario`](../goose/struct.Scenario.html)`.transaction`,
     /// indicating which transaction this is.
     pub transaction_index: usize,
     /// An optional name for the transaction.
     pub transaction_name: TransactionName,
-    /// Per-run-time counters, tracking how often transactions take a given time to complete.
-    pub times: BTreeMap<usize, usize>,
-    /// The shortest run-time for this transaction.
-    pub min_time: usize,
-    /// The longest run-time for this transaction.
-    pub max_time: usize,
-    /// Total combined run-times for this transaction.
-    pub total_time: usize,
-    /// Total number of times transaction has run.
-    pub counter: usize,
+    /// The transaction's run times, in microseconds, and how many times it
+    /// ran.
+    pub run_times: GooseRequestMetricTimingData,
     /// Total number of times transaction has run successfully.
     pub success_count: usize,
     /// Total number of times transaction has failed.
@@ -1404,80 +1567,186 @@ impl TransactionMetricAggregate {
             scenario_name,
             transaction_index,
             transaction_name,
-            times: BTreeMap::new(),
-            min_time: 0,
-            max_time: 0,
-            total_time: 0,
-            counter: 0,
+            run_times: GooseRequestMetricTimingData::default(),
             success_count: 0,
             fail_count: 0,
         }
     }
 
-    /// Track transaction function elapsed time in milliseconds.
+    /// Track a transaction's run time in whole milliseconds.
+    #[cfg(test)]
     pub(crate) fn set_time(&mut self, time: u64, success: bool) {
-        // Perform this conversion only once, then re-use throughout this function.
-        let time_usize = time as usize;
+        self.set_time_us(time.saturating_mul(1000), success);
+    }
 
-        // Update minimum if this one is fastest yet.
-        if self.min_time == 0 || time_usize < self.min_time {
-            self.min_time = time_usize;
-        }
-
-        // Update maximum if this one is slowest yet.
-        if time_usize > self.max_time {
-            self.max_time = time_usize;
-        }
-
-        // Update total_time, adding in this one.
-        self.total_time += time_usize;
-
-        // Each time we store a new time, increment counter by one.
-        self.counter += 1;
-
+    /// Track a transaction's run time in microseconds.
+    pub(crate) fn set_time_us(&mut self, us: u64, success: bool) {
+        self.run_times.record_time_us(us);
         if success {
             self.success_count += 1;
         } else {
             self.fail_count += 1;
         }
-
-        let rounded_time = round_metric_time(time);
-
-        let counter = match self.times.get(&rounded_time) {
-            // We've seen this time before, increment counter.
-            Some(c) => *c + 1,
-            // First time we've seen this time, initialize counter.
-            None => 1,
-        };
-        self.times.insert(rounded_time, counter);
-        debug!("incremented {rounded_time} counter: {counter}");
     }
 }
+
+/// [`TransactionMetricAggregate`] as it is written.
+#[derive(Serialize)]
+struct TransactionAggregateOut<'a> {
+    scenario_index: usize,
+    scenario_name: &'a str,
+    transaction_index: usize,
+    transaction_name: &'a TransactionName,
+    #[serde(flatten)]
+    times: RunTimesOut<'a>,
+    success_count: usize,
+    fail_count: usize,
+}
+
+/// [`TransactionMetricAggregate`] as it is read.
+#[derive(Deserialize)]
+struct TransactionAggregateIn {
+    scenario_index: usize,
+    #[serde(with = "arc_str_serde")]
+    scenario_name: Arc<str>,
+    transaction_index: usize,
+    transaction_name: TransactionName,
+    #[serde(default)]
+    times: BTreeMap<usize, usize>,
+    #[serde(default)]
+    min_time: usize,
+    #[serde(default)]
+    max_time: usize,
+    #[serde(default)]
+    total_time: usize,
+    #[serde(default)]
+    counter: usize,
+    times_us: Option<BTreeMap<u64, usize>>,
+    #[serde(default)]
+    min_time_us: Option<u64>,
+    #[serde(default)]
+    max_time_us: Option<u64>,
+    #[serde(default)]
+    total_time_us: Option<u64>,
+    success_count: usize,
+    fail_count: usize,
+}
+
+impl Serialize for TransactionMetricAggregate {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        TransactionAggregateOut {
+            scenario_index: self.scenario_index,
+            scenario_name: &self.scenario_name,
+            transaction_index: self.transaction_index,
+            transaction_name: &self.transaction_name,
+            times: RunTimesOut::of(&self.run_times),
+            success_count: self.success_count,
+            fail_count: self.fail_count,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for TransactionMetricAggregate {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let data = TransactionAggregateIn::deserialize(deserializer)?;
+        Ok(TransactionMetricAggregate {
+            scenario_index: data.scenario_index,
+            scenario_name: data.scenario_name,
+            transaction_index: data.transaction_index,
+            transaction_name: data.transaction_name,
+            run_times: run_times(
+                data.times,
+                [data.min_time, data.max_time, data.total_time],
+                data.counter,
+                data.times_us,
+                [data.min_time_us, data.max_time_us, data.total_time_us],
+            ),
+            success_count: data.success_count,
+            fail_count: data.fail_count,
+        })
+    }
+}
+
+/// Run times as transaction and scenario aggregates write them: the whole
+/// millisecond fields any Goose reads, then the microsecond ones.
+#[derive(Serialize)]
+struct RunTimesOut<'a> {
+    times: BTreeMap<usize, usize>,
+    min_time: usize,
+    max_time: usize,
+    total_time: usize,
+    counter: usize,
+    times_us: &'a BTreeMap<u64, usize>,
+    min_time_us: u64,
+    max_time_us: u64,
+    total_time_us: u64,
+}
+
+impl<'a> RunTimesOut<'a> {
+    fn of(data: &'a GooseRequestMetricTimingData) -> Self {
+        RunTimesOut {
+            times: data.times_ms(),
+            min_time: data.minimum_time_ms(),
+            max_time: data.maximum_time_ms(),
+            total_time: us_to_ms(data.total_time_us),
+            counter: data.counter,
+            times_us: &data.times_us,
+            min_time_us: data.minimum_time_us,
+            max_time_us: data.maximum_time_us,
+            total_time_us: data.total_time_us,
+        }
+    }
+}
+
+/// Run times as a transaction or scenario aggregate was read: with
+/// microseconds (`times_us` and the fastest, slowest and total), or only the
+/// whole milliseconds of a file written before them.
+fn run_times(
+    times: BTreeMap<usize, usize>,
+    [min, max, total]: [usize; 3],
+    counter: usize,
+    times_us: Option<BTreeMap<u64, usize>>,
+    [min_us, max_us, total_us]: [Option<u64>; 3],
+) -> GooseRequestMetricTimingData {
+    match times_us {
+        Some(times_us) => GooseRequestMetricTimingData {
+            times_us,
+            minimum_time_us: min_us.unwrap_or(0),
+            maximum_time_us: max_us.unwrap_or(0),
+            total_time_us: total_us.unwrap_or(0),
+            counter,
+        },
+        None => GooseRequestMetricTimingData {
+            times_us: microsecond_times(&times),
+            minimum_time_us: ms_to_us(min),
+            maximum_time_us: ms_to_us(max),
+            total_time_us: ms_to_us(total),
+            counter,
+        },
+    }
+}
+
 /// Aggregated per-scenario metrics updated each time a scenario is run.
 ///
 /// [`ScenarioMetric`]s are sent by [`GooseUser`](../goose/struct.GooseUser.html)
 /// threads to the Goose parent process where they are aggregated together into this
 /// structure, and stored in [`GooseMetrics::transactions`].
-#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+///
+/// It serializes with the whole millisecond fields older Goose wrote
+/// (`times`, `min_time`, `max_time`, `total_time` and `counter`, computed
+/// from [`run_times`](Self::run_times)) and the microsecond ones.
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ScenarioMetricAggregate {
     /// An index into [`GooseAttack`](../struct.GooseAttack.html)`.scenarios`,
     /// indicating which scenario this is.
     pub index: usize,
     /// The scenario name.
-    #[serde(with = "arc_str_serde")]
     pub name: Arc<str>,
     /// List of users running this scenario.
     pub users: HashSet<usize>,
-    /// Per-run-time counters, tracking how often scenario takes a given time to complete.
-    pub times: BTreeMap<usize, usize>,
-    /// The shortest run-time for this scenario.
-    pub min_time: usize,
-    /// The longest run-time for this scenario.
-    pub max_time: usize,
-    /// Total combined run-times for this scenario.
-    pub total_time: usize,
-    /// Total number of times scenario has run.
-    pub counter: usize,
+    /// The scenario's run times, in microseconds, and how many times it ran.
+    pub run_times: GooseRequestMetricTimingData,
 }
 impl ScenarioMetricAggregate {
     /// Create a new ScenarioMetricAggregate.
@@ -1486,48 +1755,87 @@ impl ScenarioMetricAggregate {
             index,
             name,
             users: HashSet::new(),
-            times: BTreeMap::new(),
-            min_time: 0,
-            max_time: 0,
-            total_time: 0,
-            counter: 0,
+            run_times: GooseRequestMetricTimingData::default(),
         }
     }
 
-    /// Track scenario function elapsed time in milliseconds.
+    /// Track a scenario's run time in whole milliseconds.
+    #[cfg(test)]
     pub(crate) fn update(&mut self, time: u64, user: usize) {
+        self.update_us(time.saturating_mul(1000), user);
+    }
+
+    /// Track a scenario's run time in microseconds, and the user that ran it.
+    pub(crate) fn update_us(&mut self, us: u64, user: usize) {
         // Record each different user running this scenario.
         self.users.insert(user);
+        self.run_times.record_time_us(us);
+    }
+}
 
-        // Perform this conversion only once, then re-use throughout this function.
-        let time_usize = time as usize;
+/// [`ScenarioMetricAggregate`] as it is written.
+#[derive(Serialize)]
+struct ScenarioAggregateOut<'a> {
+    index: usize,
+    name: &'a str,
+    users: &'a HashSet<usize>,
+    #[serde(flatten)]
+    times: RunTimesOut<'a>,
+}
 
-        // Update minimum if this one is fastest yet.
-        if self.min_time == 0 || time_usize < self.min_time {
-            self.min_time = time_usize;
+/// [`ScenarioMetricAggregate`] as it is read.
+#[derive(Deserialize)]
+struct ScenarioAggregateIn {
+    index: usize,
+    #[serde(with = "arc_str_serde")]
+    name: Arc<str>,
+    users: HashSet<usize>,
+    #[serde(default)]
+    times: BTreeMap<usize, usize>,
+    #[serde(default)]
+    min_time: usize,
+    #[serde(default)]
+    max_time: usize,
+    #[serde(default)]
+    total_time: usize,
+    #[serde(default)]
+    counter: usize,
+    times_us: Option<BTreeMap<u64, usize>>,
+    #[serde(default)]
+    min_time_us: Option<u64>,
+    #[serde(default)]
+    max_time_us: Option<u64>,
+    #[serde(default)]
+    total_time_us: Option<u64>,
+}
+
+impl Serialize for ScenarioMetricAggregate {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        ScenarioAggregateOut {
+            index: self.index,
+            name: &self.name,
+            users: &self.users,
+            times: RunTimesOut::of(&self.run_times),
         }
+        .serialize(serializer)
+    }
+}
 
-        // Update maximum if this one is slowest yet.
-        if time_usize > self.max_time {
-            self.max_time = time_usize;
-        }
-
-        // Update total_time, adding in this one.
-        self.total_time += time_usize;
-
-        // Each time we store a new time, increment counter by one.
-        self.counter += 1;
-
-        let rounded_time = round_metric_time(time);
-
-        let counter = match self.times.get(&rounded_time) {
-            // We've seen this time before, increment counter.
-            Some(c) => *c + 1,
-            // First time we've seen this time, initialize counter.
-            None => 1,
-        };
-        self.times.insert(rounded_time, counter);
-        debug!("incremented {rounded_time} counter: {counter}");
+impl<'de> Deserialize<'de> for ScenarioMetricAggregate {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let data = ScenarioAggregateIn::deserialize(deserializer)?;
+        Ok(ScenarioMetricAggregate {
+            index: data.index,
+            name: data.name,
+            users: data.users,
+            run_times: run_times(
+                data.times,
+                [data.min_time, data.max_time, data.total_time],
+                data.counter,
+                data.times_us,
+                [data.min_time_us, data.max_time_us, data.total_time_us],
+            ),
+        })
     }
 }
 /// All metrics optionally collected during a Goose load test.
@@ -2082,11 +2390,8 @@ impl GooseMetrics {
             return Ok(());
         }
 
-        let mut aggregate_transaction_times: BTreeMap<usize, usize> = BTreeMap::new();
-        let mut aggregate_total_transaction_time: usize = 0;
-        let mut aggregate_transaction_time_counter: usize = 0;
-        let mut aggregate_min_transaction_time: usize = 0;
-        let mut aggregate_max_transaction_time: usize = 0;
+        // Every transaction's times together.
+        let mut aggregate = GooseRequestMetricTimingData::default();
         writeln!(
             fmt,
             " ------------------------------------------------------------------------------"
@@ -2122,83 +2427,27 @@ impl GooseMetrics {
                     displayed_scenario = true;
                 }
 
-                // Iterate over user transaction times, and merge into global transaction times.
-                aggregate_transaction_times =
-                    merge_times(aggregate_transaction_times, &transaction.times);
-
-                // Increment total transaction time counter.
-                aggregate_total_transaction_time += &transaction.total_time;
-
-                // Increment counter tracking individual transaction times seen.
-                aggregate_transaction_time_counter += &transaction.counter;
-
-                // If user had new fastest transaction time, update global fastest transaction time.
-                aggregate_min_transaction_time =
-                    update_min_time(aggregate_min_transaction_time, transaction.min_time);
-
-                // If user had new slowest transaction` time, update global slowest transaction` time.
-                aggregate_max_transaction_time =
-                    update_max_time(aggregate_max_transaction_time, transaction.max_time);
-
-                let average = match transaction.counter {
-                    0 => 0.00,
-                    _ => transaction.total_time as f32 / transaction.counter as f32,
-                };
-                let average_precision = determine_precision(average);
-
-                writeln!(
+                aggregate.merge(&transaction.run_times);
+                write_times_row(
                     fmt,
-                    " {:<24} | {:>11.avg_precision$} | {:>10} | {:>11} | {:>10}",
-                    util::truncate_string(
+                    &util::truncate_string(
                         &format!(
                             "  {}: {}",
                             transaction.transaction_index + 1,
                             transaction.transaction_name.name_for_transaction()
                         ),
-                        24
+                        24,
                     ),
-                    average,
-                    format_number(transaction.min_time),
-                    format_number(transaction.max_time),
-                    format_number(util::median(
-                        &transaction.times,
-                        transaction.counter,
-                        transaction.min_time,
-                        transaction.max_time
-                    )),
-                    avg_precision = average_precision,
+                    &transaction.run_times,
                 )?;
             }
         }
         if transaction_count > 1 {
-            let average = match aggregate_transaction_time_counter {
-                0 => 0.00,
-                _ => {
-                    aggregate_total_transaction_time as f32
-                        / aggregate_transaction_time_counter as f32
-                }
-            };
-            let average_precision = determine_precision(average);
-
             writeln!(
                 fmt,
                 " -------------------------+-------------+------------+-------------+-----------"
             )?;
-            writeln!(
-                fmt,
-                " {:<24} | {:>11.avg_precision$} | {:>10} | {:>11} | {:>10}",
-                "Aggregated",
-                average,
-                format_number(aggregate_min_transaction_time),
-                format_number(aggregate_max_transaction_time),
-                format_number(util::median(
-                    &aggregate_transaction_times,
-                    aggregate_transaction_time_counter,
-                    aggregate_min_transaction_time,
-                    aggregate_max_transaction_time
-                )),
-                avg_precision = average_precision,
-            )?;
+            write_times_row(fmt, "Aggregated", &aggregate)?;
         }
 
         Ok(())
@@ -2232,17 +2481,18 @@ impl GooseMetrics {
         let mut aggregate_counter = 0;
         for scenario in &self.scenarios {
             aggregate_users += scenario.users.len();
-            aggregate_counter += scenario.counter;
-            let (runs, _fails) = per_second_calculations(self.duration, scenario.counter, 0);
+            aggregate_counter += scenario.run_times.counter;
+            let (runs, _fails) =
+                per_second_calculations(self.duration, scenario.run_times.counter, 0);
             let runs_precision = determine_precision(runs);
-            let iterations = scenario.counter as f32 / scenario.users.len() as f32;
+            let iterations = scenario.run_times.counter as f32 / scenario.users.len() as f32;
             let iterations_precision = determine_precision(iterations);
             writeln!(
                 fmt,
                 " {:24 } | {:>8} | {:>12} | {:>11.runs_p$} | {:>10.iterations_p$}",
                 util::truncate_string(&format!("{}: {}", scenario.index + 1, scenario.name,), 24),
                 scenario.users.len(),
-                scenario.counter,
+                scenario.run_times.counter,
                 runs,
                 iterations,
                 runs_p = runs_precision,
@@ -2286,11 +2536,8 @@ impl GooseMetrics {
             return Ok(());
         }
 
-        let mut aggregate_scenario_times: BTreeMap<usize, usize> = BTreeMap::new();
-        let mut aggregate_total_scenario_time: usize = 0;
-        let mut aggregate_scenario_time_counter: usize = 0;
-        let mut aggregate_min_scenario_time: usize = 0;
-        let mut aggregate_max_scenario_time: usize = 0;
+        // Every scenario's times together.
+        let mut aggregate = GooseRequestMetricTimingData::default();
         writeln!(
             fmt,
             " ------------------------------------------------------------------------------"
@@ -2305,71 +2552,19 @@ impl GooseMetrics {
             " ------------------------------------------------------------------------------"
         )?;
         for scenario in &self.scenarios {
-            // Iterate over user transaction times, and merge into global transaction times.
-            aggregate_scenario_times = merge_times(aggregate_scenario_times, &scenario.times);
-
-            // Increment total scenario time counter.
-            aggregate_total_scenario_time += &scenario.total_time;
-
-            // Increment counter tracking individual scenario times seen.
-            aggregate_scenario_time_counter += &scenario.counter;
-
-            // If user had new fastest scenario time, update global fastest scenario time.
-            aggregate_min_scenario_time =
-                update_min_time(aggregate_min_scenario_time, scenario.min_time);
-
-            // If user had new slowest scenario time, update global slowest scenario time.
-            aggregate_max_scenario_time =
-                update_max_time(aggregate_max_scenario_time, scenario.max_time);
-
-            let average = match scenario.counter {
-                0 => 0.00,
-                _ => scenario.total_time as f32 / scenario.counter as f32,
-            };
-            let average_precision = determine_precision(average);
-
-            writeln!(
+            aggregate.merge(&scenario.run_times);
+            write_times_row(
                 fmt,
-                " {:<24} | {:>11.avg_precision$} | {:>10} | {:>11} | {:>10}",
-                util::truncate_string(&format!("  {}: {}", scenario.index + 1, scenario.name), 24),
-                average,
-                format_number(scenario.min_time),
-                format_number(scenario.max_time),
-                format_number(util::median(
-                    &scenario.times,
-                    scenario.counter,
-                    scenario.min_time,
-                    scenario.max_time
-                )),
-                avg_precision = average_precision,
+                &util::truncate_string(&format!("  {}: {}", scenario.index + 1, scenario.name), 24),
+                &scenario.run_times,
             )?;
         }
         if self.scenarios.len() > 1 {
-            let average = match aggregate_scenario_time_counter {
-                0 => 0.00,
-                _ => aggregate_total_scenario_time as f32 / aggregate_scenario_time_counter as f32,
-            };
-            let average_precision = determine_precision(average);
-
             writeln!(
                 fmt,
                 " -------------------------+-------------+------------+-------------+-----------"
             )?;
-            writeln!(
-                fmt,
-                " {:<24} | {:>11.avg_precision$} | {:>10} | {:>11} | {:>10}",
-                "Aggregated",
-                average,
-                format_number(aggregate_min_scenario_time),
-                format_number(aggregate_max_scenario_time),
-                format_number(util::median(
-                    &aggregate_scenario_times,
-                    aggregate_scenario_time_counter,
-                    aggregate_min_scenario_time,
-                    aggregate_max_scenario_time
-                )),
-                avg_precision = average_precision,
-            )?;
+            write_times_row(fmt, "Aggregated", &aggregate)?;
         }
 
         Ok(())
@@ -2408,29 +2603,13 @@ impl GooseMetrics {
                 co_data = true;
             }
 
-            let raw_average = match request.raw_data.counter {
-                0 => 0.0,
-                _ => request.raw_data.total_time as f32 / request.raw_data.counter as f32,
-            };
-            let raw_average_precision = determine_precision(raw_average);
-
             // Merge in all times from this request into an aggregate.
             aggregate_raw.merge(&request.raw_data);
 
-            writeln!(
+            write_times_row(
                 fmt,
-                " {:<24} | {:>11.raw_avg_precision$} | {:>10} | {:>11} | {:>10}",
-                util::truncate_string(request_key, 24),
-                raw_average,
-                format_number(request.raw_data.minimum_time),
-                format_number(request.raw_data.maximum_time),
-                format_number(util::median(
-                    &request.raw_data.times,
-                    request.raw_data.counter,
-                    request.raw_data.minimum_time,
-                    request.raw_data.maximum_time,
-                )),
-                raw_avg_precision = raw_average_precision,
+                &util::truncate_string(request_key, 24),
+                &request.raw_data,
             )?;
 
             // Display per-status-code breakdown when multiple status codes exist.
@@ -2445,19 +2624,15 @@ impl GooseMetrics {
                             b.status_code, b.percentage
                         ),
                         b.average,
-                        format_number(b.min_time),
-                        format_number(b.max_time),
+                        format_micros(b.min_time_us, true),
+                        format_micros(b.max_time_us, true),
                         "-",
                     )?;
                 }
             }
         }
 
-        let raw_average = match aggregate_raw.counter {
-            0 => 0.0,
-            _ => aggregate_raw.total_time as f32 / aggregate_raw.counter as f32,
-        };
-        let raw_average_precision = determine_precision(raw_average);
+        let raw_average = average_ms(&aggregate_raw);
 
         // Display aggregated data if there was more than one request.
         if self.requests.len() > 1 {
@@ -2465,21 +2640,7 @@ impl GooseMetrics {
                 fmt,
                 " -------------------------+-------------+------------+-------------+-----------"
             )?;
-            writeln!(
-                fmt,
-                " {:<24} | {:>11.avg_precision$} | {:>10} | {:>11} | {:>10}",
-                "Aggregated",
-                raw_average,
-                format_number(aggregate_raw.minimum_time),
-                format_number(aggregate_raw.maximum_time),
-                format_number(util::median(
-                    &aggregate_raw.times,
-                    aggregate_raw.counter,
-                    aggregate_raw.minimum_time,
-                    aggregate_raw.maximum_time
-                )),
-                avg_precision = raw_average_precision,
-            )?;
+            write_times_row(fmt, "Aggregated", &aggregate_raw)?;
         }
 
         // Nothing more to display if there was no Coordinated Omission data collected.
@@ -2519,48 +2680,23 @@ impl GooseMetrics {
                     .as_ref()
                     .unwrap_or(&request.raw_data),
             );
-            let co_average;
-            let standard_deviation;
-            let co_minimum;
-            let co_maximum;
-            if let Some(co_data) = request.coordinated_omission_data.as_ref() {
-                let raw_average = match request.raw_data.counter {
-                    0 => 0.0,
-                    _ => request.raw_data.total_time as f32 / request.raw_data.counter as f32,
-                };
-                co_average = match co_data.counter {
-                    0 => 0.0,
-                    _ => co_data.total_time as f32 / co_data.counter as f32,
-                };
-                standard_deviation = util::standard_deviation(raw_average, co_average);
-                co_minimum = co_data.minimum_time;
-                co_maximum = co_data.maximum_time;
-            } else {
-                co_average = 0.0;
-                standard_deviation = 0.0;
-                co_minimum = 0;
-                co_maximum = 0;
-            }
-            let co_average_precision = determine_precision(co_average);
-            let standard_deviation_precision = determine_precision(standard_deviation);
-
             // Coordinated Omission Mitigation was enabled for this request, display the extra data:
             if let Some(co_data) = request.coordinated_omission_data.as_ref() {
+                let co_average = average_ms(co_data);
+                let standard_deviation = util::standard_deviation(
+                    average_ms(&request.raw_data) as f32,
+                    co_average as f32,
+                );
                 writeln!(
                     fmt,
                     " {:<24} | {:>11.co_avg_precision$} | {:>10.sd_precision$} | {:>11} | {:>10}",
                     util::truncate_string(request_key, 24),
                     co_average,
                     standard_deviation,
-                    format_number(co_maximum),
-                    format_number(util::median(
-                        &co_data.times,
-                        co_data.counter,
-                        co_minimum,
-                        co_maximum,
-                    )),
-                    co_avg_precision = co_average_precision,
-                    sd_precision = standard_deviation_precision,
+                    format_micros(co_data.maximum_time_us, true),
+                    format_micros(co_data.percentile_us(0.5), true),
+                    co_avg_precision = determine_precision(co_average as f32),
+                    sd_precision = determine_precision(standard_deviation),
                 )?;
             } else {
                 writeln!(
@@ -2577,13 +2713,9 @@ impl GooseMetrics {
 
         // Display aggregated Coordinate Omission data if there was more than one request.
         if self.requests.len() > 1 {
-            let co_average = match aggregate_co.counter {
-                0 => 0.0,
-                _ => aggregate_co.total_time as f32 / aggregate_co.counter as f32,
-            };
-            let co_average_precision = determine_precision(co_average);
-            let standard_deviation = util::standard_deviation(raw_average, co_average);
-            let standard_deviation_precision = determine_precision(standard_deviation);
+            let co_average = average_ms(&aggregate_co);
+            let standard_deviation =
+                util::standard_deviation(raw_average as f32, co_average as f32);
 
             writeln!(
                 fmt,
@@ -2596,15 +2728,10 @@ impl GooseMetrics {
                 "Aggregated",
                 co_average,
                 standard_deviation,
-                format_number(aggregate_co.maximum_time),
-                format_number(util::median(
-                    &aggregate_co.times,
-                    aggregate_co.counter,
-                    aggregate_co.minimum_time,
-                    aggregate_co.maximum_time
-                )),
-                avg_precision = co_average_precision,
-                sd_precision = standard_deviation_precision,
+                format_micros(aggregate_co.maximum_time_us, true),
+                format_micros(aggregate_co.percentile_us(0.5), true),
+                avg_precision = determine_precision(co_average as f32),
+                sd_precision = determine_precision(standard_deviation),
             )?;
         }
 
@@ -2622,16 +2749,8 @@ impl GooseMetrics {
         }
 
         /// The table's percentiles of these times.
-        fn row(data: &GooseRequestMetricTimingData) -> [usize; 6] {
-            [0.5, 0.75, 0.98, 0.99, 0.999, 0.9999].map(|percent| {
-                calculate_response_time_percentile(
-                    &data.times,
-                    data.counter,
-                    data.minimum_time,
-                    data.maximum_time,
-                    percent,
-                )
-            })
+        fn row(data: &GooseRequestMetricTimingData) -> [u64; 6] {
+            [0.5, 0.75, 0.98, 0.99, 0.999, 0.9999].map(|percent| data.percentile_us(percent))
         }
 
         fn write_row(fmt: &mut fmt::Formatter<'_>, name: &str, cells: [String; 6]) -> fmt::Result {
@@ -2675,7 +2794,7 @@ impl GooseMetrics {
             write_row(
                 fmt,
                 &util::truncate_string(request_key, 24),
-                row(&request.raw_data).map(|value| value.to_string()),
+                row(&request.raw_data).map(|us| format_micros(us, false)),
             )?;
         }
         if self.requests.len() > 1 {
@@ -2686,7 +2805,7 @@ impl GooseMetrics {
             write_row(
                 fmt,
                 "Aggregated",
-                row(&raw_aggregate).map(|value| value.to_string()),
+                row(&raw_aggregate).map(|us| format_micros(us, false)),
             )?;
         }
 
@@ -2730,7 +2849,7 @@ impl GooseMetrics {
                 Some(coordinated_omission_data) => write_row(
                     fmt,
                     &name,
-                    row(coordinated_omission_data).map(|value| value.to_string()),
+                    row(coordinated_omission_data).map(|us| format_micros(us, false)),
                 )?,
                 None => write_row(fmt, &name, ["-"; 6].map(String::from))?,
             }
@@ -2743,7 +2862,7 @@ impl GooseMetrics {
             write_row(
                 fmt,
                 "Aggregated",
-                row(&co_aggregate).map(|value| value.to_string()),
+                row(&co_aggregate).map(|us| format_micros(us, false)),
             )?;
         }
 
@@ -3525,16 +3644,16 @@ impl MetricsProcessor {
         };
 
         if !request_metric.update {
-            merge_request.record_time(
-                request_metric.response_time,
+            merge_request.record_time_us(
+                request_metric.response_time_micros(),
                 request_metric.coordinated_omission_elapsed > 0,
             );
             if !self.configuration.no_status_codes {
                 merge_request.set_status_code(request_metric.status_code);
                 if request_metric.coordinated_omission_elapsed == 0 {
-                    merge_request.record_status_code_time(
+                    merge_request.record_status_code_time_us(
                         request_metric.status_code,
-                        request_metric.response_time,
+                        request_metric.response_time_micros(),
                     );
                 }
             }
@@ -3615,7 +3734,10 @@ impl MetricsProcessor {
 
             loop {
                 if response_time > request_metric.response_time as i64 {
+                    // Synthetic times are whole milliseconds, as the
+                    // cadence they come from.
                     co_metric.response_time = response_time as u64;
+                    co_metric.response_time_fraction_us = 0;
                     self.record_request_metric(&co_metric);
                     if let Some(key) = latency_key.as_deref() {
                         let second = (request_metric
@@ -3661,16 +3783,16 @@ impl MetricsProcessor {
                     // Coordinated omission copies are not new measurements,
                     // so they stay out of the heatmap.
                     let latency = (request_metric.coordinated_omission_elapsed == 0)
-                        .then_some(request_metric.response_time);
-                    self.graph_data.record_request_per_second_and_latency(
+                        .then_some(request_metric.response_time_micros());
+                    self.graph_data.record_request_per_second_and_latency_us(
                         &key,
                         seconds_since_start,
                         latency,
                     );
-                    self.graph_data.record_average_response_time_per_second(
+                    self.graph_data.record_average_response_time_per_second_us(
                         key.clone(),
                         seconds_since_start,
-                        request_metric.response_time,
+                        request_metric.response_time_micros(),
                     );
                 }
 
@@ -3692,7 +3814,7 @@ impl MetricsProcessor {
     fn process_transaction_metric(&mut self, raw_transaction: &TransactionMetric) {
         self.metrics.transactions[raw_transaction.scenario_index]
             [raw_transaction.transaction_index]
-            .set_time(raw_transaction.run_time, raw_transaction.success);
+            .set_time_us(raw_transaction.run_time_micros(), raw_transaction.success);
 
         if self.configuration.records_graph_data() {
             self.graph_data
@@ -3702,7 +3824,8 @@ impl MetricsProcessor {
 
     /// Process a single scenario metric: update aggregate and graph data.
     fn process_scenario_metric(&mut self, raw_scenario: &ScenarioMetric) {
-        self.metrics.scenarios[raw_scenario.index].update(raw_scenario.run_time, raw_scenario.user);
+        self.metrics.scenarios[raw_scenario.index]
+            .update_us(raw_scenario.run_time_micros(), raw_scenario.user);
 
         if self.configuration.records_graph_data() {
             self.graph_data
@@ -3848,7 +3971,7 @@ impl MetricsProcessor {
                         .record_average_response_time_per_second_batch(
                             key,
                             second,
-                            entry.raw_data.total_time as f64,
+                            entry.raw_data.total_time_us as f64 / 1000.0,
                             entry.raw_data.counter as u32,
                         );
                 }
@@ -3869,7 +3992,7 @@ impl MetricsProcessor {
                             .record_average_response_time_per_second_batch(
                                 key,
                                 second + 1,
-                                next.total_time as f64,
+                                next.total_time_us as f64 / 1000.0,
                                 next.counter as u32,
                             );
                     }
@@ -3897,7 +4020,7 @@ impl MetricsProcessor {
                         .record_average_response_time_per_second_batch(
                             key,
                             second,
-                            data.total_time as f64,
+                            data.total_time_us as f64 / 1000.0,
                             data.counter as u32,
                         );
                 }
@@ -3978,19 +4101,9 @@ impl MetricsProcessor {
                 // Invalid transaction index within this scenario.
                 continue;
             };
-            for (time_bucket, count) in &entry.times {
-                *agg.times.entry(*time_bucket).or_insert(0) += count;
-            }
-            agg.counter += entry.counter;
-            agg.total_time += entry.total_time;
+            agg.run_times.merge(&entry.run_times);
             agg.success_count += entry.success_count;
             agg.fail_count += entry.fail_count;
-            if entry.min_time > 0 && (agg.min_time == 0 || entry.min_time < agg.min_time) {
-                agg.min_time = entry.min_time;
-            }
-            if entry.max_time > agg.max_time {
-                agg.max_time = entry.max_time;
-            }
         }
 
         // 5. Merge pre-aggregated scenario timing data.
@@ -4000,17 +4113,7 @@ impl MetricsProcessor {
                 continue;
             };
             agg.users.insert(entry.user);
-            for (time_bucket, count) in &entry.times {
-                *agg.times.entry(*time_bucket).or_insert(0) += count;
-            }
-            agg.counter += entry.counter;
-            agg.total_time += entry.total_time;
-            if entry.min_time > 0 && (agg.min_time == 0 || entry.min_time < agg.min_time) {
-                agg.min_time = entry.min_time;
-            }
-            if entry.max_time > agg.max_time {
-                agg.max_time = entry.max_time;
-            }
+            agg.run_times.merge(&entry.run_times);
         }
     }
 }
@@ -4843,6 +4946,36 @@ pub(crate) fn per_second_calculations(duration: usize, total: usize, fail: usize
     (requests_per_second, fails_per_second)
 }
 
+/// The mean of `data`'s times in milliseconds, to the microsecond; 0
+/// without times.
+fn average_ms(data: &GooseRequestMetricTimingData) -> f64 {
+    match data.counter {
+        0 => 0.0,
+        _ => data.average_ms(),
+    }
+}
+
+/// One row of a console table of times: `name`, then the average, fastest,
+/// slowest and median of `data` in milliseconds, to the hundredth under
+/// 10 ms.
+fn write_times_row(
+    fmt: &mut fmt::Formatter<'_>,
+    name: &str,
+    data: &GooseRequestMetricTimingData,
+) -> fmt::Result {
+    let average = average_ms(data);
+    writeln!(
+        fmt,
+        " {:<24} | {:>11.precision$} | {:>10} | {:>11} | {:>10}",
+        name,
+        average,
+        format_micros(data.minimum_time_us, true),
+        format_micros(data.maximum_time_us, true),
+        format_micros(data.percentile_us(0.5), true),
+        precision = determine_precision(average as f32),
+    )
+}
+
 fn determine_precision(value: f32) -> usize {
     if value < 1000.0 {
         2
@@ -4856,15 +4989,15 @@ pub(crate) fn format_number(number: usize) -> String {
     (number).to_formatted_string(&Locale::en)
 }
 
-/// Format a `Value<usize>` for display with locale-formatted numbers (e.g. `1,234`),
+/// Format a `Value` for display with locale-formatted numbers (e.g. `1,234`),
 /// showing both the value and delta if present.
-pub(crate) fn format_value(value: &Value<usize>) -> String {
+pub(crate) fn format_value<T: FormatValue>(value: &Value<T>) -> String {
     match value {
-        Value::Plain(v) => v.to_formatted_string(&Locale::en),
+        Value::Plain(v) => v.formatted(),
         Value::Delta { value: v, delta } => {
-            let formatted_value = v.to_formatted_string(&Locale::en);
-            let formatted_delta = delta.to_formatted_string(&Locale::en);
-            if *delta >= 0 {
+            let formatted_value = v.formatted();
+            let formatted_delta = T::formatted_delta(*delta);
+            if T::is_delta_non_negative(*delta) {
                 format!("{formatted_value} (+{formatted_delta})")
             } else {
                 format!("{formatted_value} ({formatted_delta})")
@@ -4873,45 +5006,43 @@ pub(crate) fn format_value(value: &Value<usize>) -> String {
     }
 }
 
-/// A helper function that merges together times.
-///
-/// Used in `lib.rs` to merge together per-thread times, and in `metrics.rs` to
-/// aggregate all times. Takes the local map by shared reference so callers
-/// (including ~1 Hz dashboard snapshot builds) do not need to clone.
-pub(crate) fn merge_times(
-    mut global_response_times: BTreeMap<usize, usize>,
-    local_response_times: &BTreeMap<usize, usize>,
-) -> BTreeMap<usize, usize> {
-    // Iterate over user response times, and merge into global response times.
-    for (response_time, count) in local_response_times {
-        let counter = match global_response_times.get(response_time) {
-            // We've seen this response_time before, increment counter.
-            Some(c) => *c + count,
-            // First time we've seen this response time, initialize counter.
-            None => *count,
-        };
-        global_response_times.insert(*response_time, counter);
-    }
-    global_response_times
+/// A value [`format_value`] formats with thousands separators.
+pub(crate) trait FormatValue: delta::DeltaValue {
+    /// The value, with thousands separators.
+    fn formatted(&self) -> String;
+    /// A delta, with thousands separators and a `-` when negative.
+    fn formatted_delta(delta: Self::Delta) -> String;
 }
 
-/// A helper function to update the global minimum time based on local time.
-pub(crate) fn update_min_time(mut global_min: usize, min: usize) -> usize {
-    if global_min == 0 || (min > 0 && min < global_min) {
-        global_min = min;
+impl FormatValue for usize {
+    fn formatted(&self) -> String {
+        self.to_formatted_string(&Locale::en)
     }
-    global_min
+
+    fn formatted_delta(delta: isize) -> String {
+        delta.to_formatted_string(&Locale::en)
+    }
 }
 
-/// A helper function to update the global maximum time based on local time.
-pub(crate) fn update_max_time(mut global_max: usize, max: usize) -> usize {
-    if global_max < max {
-        global_max = max;
+impl FormatValue for Millis {
+    fn formatted(&self) -> String {
+        format_micros(self.0, true)
     }
-    global_max
+
+    fn formatted_delta(delta: millis::MillisDelta) -> String {
+        let text = format_micros(delta.0.unsigned_abs(), true);
+        if delta.0 < 0 {
+            format!("-{text}")
+        } else {
+            text
+        }
+    }
 }
 
-/// Get the response time that a certain number of percent of the requests finished within.
+/// Get the response time that a certain number of percent of the requests
+/// finished within, from whole millisecond buckets: the rule
+/// [`response_time_percentile`] follows, kept for its tests.
+#[cfg(test)]
 pub(crate) fn calculate_response_time_percentile(
     response_times: &BTreeMap<usize, usize>,
     total_requests: usize,
@@ -4930,15 +5061,17 @@ pub(crate) fn calculate_response_time_percentile(
     )
 }
 
-/// [`calculate_response_time_percentile`] over any `(response time, count)`
-/// buckets in ascending order.
-pub(crate) fn response_time_percentile(
-    response_times: impl IntoIterator<Item = (usize, usize)>,
+/// The response time `percent` of the requests finished within, from
+/// `(response time, count)` buckets in ascending order: the time of the
+/// bucket that holds the request at that rank, kept between `min` and `max`.
+/// The dashboard's per second percentiles follow the same rule.
+pub(crate) fn response_time_percentile<T: Copy + Default + PartialOrd>(
+    response_times: impl IntoIterator<Item = (T, usize)>,
     total_requests: usize,
-    min: usize,
-    max: usize,
+    min: T,
+    max: T,
     percent: f32,
-) -> usize {
+) -> T {
     let percentile_request = (total_requests as f32 * percent).round() as usize;
     debug!("percentile: {percent}, request {percentile_request} of total {total_requests}");
 
@@ -4957,7 +5090,7 @@ pub(crate) fn response_time_percentile(
         }
     }
 
-    0
+    T::default()
 }
 
 /// Helper to count and aggregate seen status codes.
@@ -5002,17 +5135,6 @@ mod test {
 
     use super::*;
 
-    #[test]
-    fn max_response_time() {
-        let mut max_response_time = 99;
-        // Update max response time to a higher value.
-        max_response_time = update_max_time(max_response_time, 101);
-        assert_eq!(max_response_time, 101);
-        // Max response time doesn't update when updating with a lower value.
-        max_response_time = update_max_time(max_response_time, 1);
-        assert_eq!(max_response_time, 101);
-    }
-
     /// A response under a millisecond is a time of 0 ms, and the minimum:
     /// the counter, not a minimum of 0, says whether there is a time yet.
     #[test]
@@ -5024,56 +5146,47 @@ mod test {
             }
             data
         };
-        assert_eq!(record(&[5, 0, 3]).minimum_time, 0);
-        assert_eq!(record(&[0, 5]).minimum_time, 0);
-        assert_eq!(record(&[5, 3]).minimum_time, 3);
-        assert_eq!(record(&[]).minimum_time, 0);
+        assert_eq!(record(&[5, 0, 3]).minimum_time_us, 0);
+        assert_eq!(record(&[0, 5]).minimum_time_us, 0);
+        assert_eq!(record(&[5, 3]).minimum_time_us, 3_000);
+        assert_eq!(record(&[]).minimum_time_us, 0);
 
         // Merging: an empty side never sets the minimum; a 0 always does.
         let mut merged = record(&[5]);
         merged.merge(&record(&[]));
-        assert_eq!(merged.minimum_time, 5);
+        assert_eq!(merged.minimum_time_us, 5_000);
         merged.merge(&record(&[0, 9]));
-        assert_eq!(merged.minimum_time, 0);
+        assert_eq!(merged.minimum_time_us, 0);
         merged.merge(&record(&[4]));
-        assert_eq!(merged.minimum_time, 0);
+        assert_eq!(merged.minimum_time_us, 0);
         let mut empty = record(&[]);
         empty.merge(&record(&[7]));
-        assert_eq!(empty.minimum_time, 7);
+        assert_eq!(empty.minimum_time_us, 7_000);
         let mut from_zero = record(&[0]);
         from_zero.merge(&record(&[2]));
-        assert_eq!(from_zero.minimum_time, 0);
+        assert_eq!(from_zero.minimum_time_us, 0);
 
         // Percentiles are no longer clamped up to the fastest nonzero time.
         let data = record(&[0, 0, 0, 5]);
-        assert_eq!(
-            calculate_response_time_percentile(
-                &data.times,
-                data.counter,
-                data.minimum_time,
-                data.maximum_time,
-                0.5
-            ),
-            0
-        );
+        assert_eq!(data.percentile_us(0.5), 0);
 
         // Status code summaries too.
         let mut summary = StatusCodeTimingSummary::default();
-        summary.record(4);
-        summary.record(0);
+        summary.record_us(4_000);
+        summary.record_us(0);
         assert_eq!(
-            (summary.min_time, summary.max_time, summary.count),
-            (0, 4, 2)
+            (summary.min_time_us, summary.max_time_us, summary.count),
+            (0, 4_000, 2)
         );
         let mut other = StatusCodeTimingSummary::default();
         other.merge(&StatusCodeTimingSummary::default());
         assert_eq!(other.count, 0);
         other.merge(&summary);
-        assert_eq!(other.min_time, 0);
+        assert_eq!(other.min_time_us, 0);
         let mut later = StatusCodeTimingSummary::default();
-        later.record(9);
+        later.record_us(9_000);
         later.merge(&summary);
-        assert_eq!(later.min_time, 0);
+        assert_eq!(later.min_time_us, 0);
     }
 
     /// A request with these measured times, counted `counted` times (with
@@ -5205,6 +5318,11 @@ mod test {
         );
     }
 
+    /// Whether `value` is the bucket of `ms` milliseconds: within 1/128.
+    fn near(value: Millis, ms: u64) -> bool {
+        value.0.abs_diff(ms * 1000) * 128 <= ms * 1000
+    }
+
     /// With coordinated omission mitigation every request is counted, the
     /// synthetic ones too, but only measured times have a time: the
     /// report's measured aggregate takes its rank and its average over those.
@@ -5223,7 +5341,7 @@ mod test {
         let aggregated = report.raw_response_metrics.last().unwrap();
         assert_eq!(aggregated.name, "Aggregated");
         // Eleven times: 5, 10, 20, ..., 100.
-        assert_eq!(aggregated.percentile_50.value(), 50);
+        assert!(near(aggregated.percentile_50.value(), 50));
         assert_eq!(aggregated.percentile_99.value(), 100);
         assert_eq!(aggregated.percentile_100.value(), 100);
         let request = report.raw_request_metrics.last().unwrap();
@@ -5258,8 +5376,8 @@ mod test {
         let co = report.co_response_metrics.as_ref().unwrap();
         let aggregated = co.last().unwrap();
         assert_eq!(aggregated.name, "Aggregated");
-        assert_eq!(aggregated.percentile_50.value(), 40);
-        assert_eq!(aggregated.percentile_90.value(), 500);
+        assert!(near(aggregated.percentile_50.value(), 40));
+        assert!(near(aggregated.percentile_90.value(), 500));
         assert_eq!(aggregated.percentile_100.value(), 900);
         let co_requests = report.co_request_metrics.as_ref().unwrap();
         assert_eq!(
@@ -5292,11 +5410,14 @@ mod test {
     fn report_average_prints_exactly() {
         let mut metrics = GooseMetrics::default();
         let mut request = GooseRequestMetricAggregate::new("/a", GooseMethod::Get, 0, "");
-        request.raw_data.total_time = 2_960_937_350;
+        request.raw_data.total_time_us = 2_960_937_350_000;
         request.raw_data.counter = 100_000;
-        request.raw_data.times.insert(30_000, 100_000);
-        request.raw_data.minimum_time = 29_000;
-        request.raw_data.maximum_time = 30_000;
+        request
+            .raw_data
+            .times_us
+            .insert(buckets::bucket_floor(30_000_000), 100_000);
+        request.raw_data.minimum_time_us = 29_000_000;
+        request.raw_data.maximum_time_us = 30_000_000;
         request.success_count = 100_000;
         metrics.requests.insert("GET /a".to_string(), request);
         let report = report_of(&metrics);
@@ -5308,29 +5429,6 @@ mod test {
         }
         // A value still computed as an f32 keeps the digits it prints with.
         assert_eq!(NullableFloat::from(0.1f32).0, 0.1f64);
-    }
-
-    #[test]
-    fn min_response_time() {
-        let mut min_response_time = 11;
-        // Update min response time to a lower value.
-        min_response_time = update_min_time(min_response_time, 9);
-        assert_eq!(min_response_time, 9);
-        // Min response time doesn't update when updating with a lower value.
-        min_response_time = update_min_time(min_response_time, 22);
-        assert_eq!(min_response_time, 9);
-        // Min response time doesn't update when updating with a 0 value.
-        min_response_time = update_min_time(min_response_time, 0);
-        assert_eq!(min_response_time, 9);
-    }
-
-    #[test]
-    fn response_time_merge() {
-        let mut global_response_times: BTreeMap<usize, usize> = BTreeMap::new();
-        let local_response_times: BTreeMap<usize, usize> = BTreeMap::new();
-        global_response_times = merge_times(global_response_times, &local_response_times);
-        // @TODO: how can we do useful testing of private method and objects?
-        assert_eq!(&global_response_times, &local_response_times);
     }
 
     /// The histogram `CROSS_CHECK` in src/dashboard/static/heatmap.test.mjs
@@ -5519,10 +5617,10 @@ mod test {
         let mut request = GooseRequestMetricAggregate::new("/", GooseMethod::Get, 0, "");
         assert_eq!(request.path, "/".to_string());
         assert_eq!(request.method, GooseMethod::Get);
-        assert_eq!(request.raw_data.times.len(), 0);
-        assert_eq!(request.raw_data.minimum_time, 0);
-        assert_eq!(request.raw_data.maximum_time, 0);
-        assert_eq!(request.raw_data.total_time, 0);
+        assert_eq!(request.raw_data.times_us.len(), 0);
+        assert_eq!(request.raw_data.minimum_time_us, 0);
+        assert_eq!(request.raw_data.maximum_time_us, 0);
+        assert_eq!(request.raw_data.total_time_us, 0);
         assert_eq!(request.raw_data.counter, 0);
         assert_eq!(request.status_code_counts.len(), 0);
         assert_eq!(request.success_count, 0);
@@ -5531,15 +5629,15 @@ mod test {
         // Tracking a response time updates several fields.
         request.record_time(1, false);
         // We've seen only one response time so far.
-        assert_eq!(request.raw_data.times.len(), 1);
-        // We've seen one response time of length 1.
-        assert_eq!(request.raw_data.times[&1], 1);
+        assert_eq!(request.raw_data.times_us.len(), 1);
+        // We've seen one response time of length 1 ms, in its bucket.
+        assert_eq!(request.raw_data.times_us[&buckets::bucket_floor(1_000)], 1);
         // The minimum response time seen so far is 1.
-        assert_eq!(request.raw_data.minimum_time, 1);
+        assert_eq!(request.raw_data.minimum_time_us, 1_000);
         // The maximum response time seen so far is 1.
-        assert_eq!(request.raw_data.maximum_time, 1);
+        assert_eq!(request.raw_data.maximum_time_us, 1_000);
         // We've seen a total of 1 ms of response time so far.
-        assert_eq!(request.raw_data.total_time, 1);
+        assert_eq!(request.raw_data.total_time_us, 1_000);
         // We've seen a total of 2 response times so far.
         assert_eq!(request.raw_data.counter, 1);
         // Nothing else changes.
@@ -5552,15 +5650,15 @@ mod test {
         // Tracking another response time updates all related fields.
         request.record_time(10, false);
         // We've added a new unique response time.
-        assert_eq!(request.raw_data.times.len(), 2);
+        assert_eq!(request.raw_data.times_us.len(), 2);
         // We've seen the 10 ms response time 1 time.
-        assert_eq!(request.raw_data.times[&10], 1);
+        assert_eq!(request.raw_data.times_us[&buckets::bucket_floor(10_000)], 1);
         // Minimum doesn't change.
-        assert_eq!(request.raw_data.minimum_time, 1);
+        assert_eq!(request.raw_data.minimum_time_us, 1_000);
         // Maximum is new response time.
-        assert_eq!(request.raw_data.maximum_time, 10);
+        assert_eq!(request.raw_data.maximum_time_us, 10_000);
         // Total combined response times is now 11 ms.
-        assert_eq!(request.raw_data.total_time, 11);
+        assert_eq!(request.raw_data.total_time_us, 11_000);
         // We've seen two response times so far.
         assert_eq!(request.raw_data.counter, 2);
         // Nothing else changes.
@@ -5573,90 +5671,104 @@ mod test {
         // Tracking another response time updates all related fields.
         request.record_time(10, false);
         // We've incremented the counter of an existing response time.
-        assert_eq!(request.raw_data.times.len(), 2);
+        assert_eq!(request.raw_data.times_us.len(), 2);
         // We've seen the 10 ms response time 2 times.
-        assert_eq!(request.raw_data.times[&10], 2);
+        assert_eq!(request.raw_data.times_us[&buckets::bucket_floor(10_000)], 2);
         // Minimum doesn't change.
-        assert_eq!(request.raw_data.minimum_time, 1);
+        assert_eq!(request.raw_data.minimum_time_us, 1_000);
         // Maximum doesn't change.
-        assert_eq!(request.raw_data.maximum_time, 10);
+        assert_eq!(request.raw_data.maximum_time_us, 10_000);
         // Total combined response times is now 21 ms.
-        assert_eq!(request.raw_data.total_time, 21);
+        assert_eq!(request.raw_data.total_time_us, 21_000);
         // We've seen three response times so far.
         assert_eq!(request.raw_data.counter, 3);
 
         // Tracking another response time updates all related fields.
         request.record_time(101, false);
         // We've added a new response time for the first time.
-        assert_eq!(request.raw_data.times.len(), 3);
-        // The response time was internally rounded to 100, which we've seen once.
-        assert_eq!(request.raw_data.times[&100], 1);
+        assert_eq!(request.raw_data.times_us.len(), 3);
+        // The response time is kept in its microsecond bucket, seen once.
+        assert_eq!(
+            request.raw_data.times_us[&buckets::bucket_floor(101_000)],
+            1
+        );
         // Minimum doesn't change.
-        assert_eq!(request.raw_data.minimum_time, 1);
+        assert_eq!(request.raw_data.minimum_time_us, 1_000);
         // Maximum increases to actual maximum, not rounded maximum.
-        assert_eq!(request.raw_data.maximum_time, 101);
+        assert_eq!(request.raw_data.maximum_time_us, 101_000);
         // Total combined response times is now 122 ms.
-        assert_eq!(request.raw_data.total_time, 122);
+        assert_eq!(request.raw_data.total_time_us, 122_000);
         // We've seen four response times so far.
         assert_eq!(request.raw_data.counter, 4);
 
         // Tracking another response time updates all related fields.
         request.record_time(102, false);
-        // Due to rounding, this increments the existing 100 ms response time.
-        assert_eq!(request.raw_data.times.len(), 3);
-        // The response time was internally rounded to 100, which we've now seen twice.
-        assert_eq!(request.raw_data.times[&100], 2);
+        // A bucket is at most 1/64 of its time wide, so 102 ms is not in 101 ms's.
+        assert_eq!(request.raw_data.times_us.len(), 4);
+        assert_eq!(
+            request.raw_data.times_us[&buckets::bucket_floor(102_000)],
+            1
+        );
         // Minimum doesn't change.
-        assert_eq!(request.raw_data.minimum_time, 1);
+        assert_eq!(request.raw_data.minimum_time_us, 1_000);
         // Maximum increases to actual maximum, not rounded maximum.
-        assert_eq!(request.raw_data.maximum_time, 102);
+        assert_eq!(request.raw_data.maximum_time_us, 102_000);
         // Add 102 to the total response time so far.
-        assert_eq!(request.raw_data.total_time, 224);
+        assert_eq!(request.raw_data.total_time_us, 224_000);
         // We've seen five response times so far.
         assert_eq!(request.raw_data.counter, 5);
 
         // Tracking another response time updates all related fields.
         request.record_time(155, false);
         // Adds a new response time.
-        assert_eq!(request.raw_data.times.len(), 4);
-        // The response time was internally rounded to 160, seen for the first time.
-        assert_eq!(request.raw_data.times[&160], 1);
+        assert_eq!(request.raw_data.times_us.len(), 5);
+        // The response time is kept in its microsecond bucket, seen once.
+        assert_eq!(
+            request.raw_data.times_us[&buckets::bucket_floor(155_000)],
+            1
+        );
         // Minimum doesn't change.
-        assert_eq!(request.raw_data.minimum_time, 1);
+        assert_eq!(request.raw_data.minimum_time_us, 1_000);
         // Maximum increases to actual maximum, not rounded maximum.
-        assert_eq!(request.raw_data.maximum_time, 155);
+        assert_eq!(request.raw_data.maximum_time_us, 155_000);
         // Add 155 to the total response time so far.
-        assert_eq!(request.raw_data.total_time, 379);
+        assert_eq!(request.raw_data.total_time_us, 379_000);
         // We've seen six response times so far.
         assert_eq!(request.raw_data.counter, 6);
 
         // Tracking another response time updates all related fields.
         request.record_time(2345, false);
         // Adds a new response time.
-        assert_eq!(request.raw_data.times.len(), 5);
-        // The response time was internally rounded to 2000, seen for the first time.
-        assert_eq!(request.raw_data.times[&2000], 1);
+        assert_eq!(request.raw_data.times_us.len(), 6);
+        // The response time is kept in its microsecond bucket, seen once.
+        assert_eq!(
+            request.raw_data.times_us[&buckets::bucket_floor(2_345_000)],
+            1
+        );
         // Minimum doesn't change.
-        assert_eq!(request.raw_data.minimum_time, 1);
+        assert_eq!(request.raw_data.minimum_time_us, 1_000);
         // Maximum increases to actual maximum, not rounded maximum.
-        assert_eq!(request.raw_data.maximum_time, 2345);
+        assert_eq!(request.raw_data.maximum_time_us, 2_345_000);
         // Add 2345 to the total response time so far.
-        assert_eq!(request.raw_data.total_time, 2724);
+        assert_eq!(request.raw_data.total_time_us, 2_724_000);
         // We've seen seven response times so far.
         assert_eq!(request.raw_data.counter, 7);
 
         // Tracking another response time updates all related fields.
         request.record_time(987654321, false);
         // Adds a new response time.
-        assert_eq!(request.raw_data.times.len(), 6);
-        // The response time was internally rounded to 987654000, seen for the first time.
-        assert_eq!(request.raw_data.times[&987654000], 1);
+        assert_eq!(request.raw_data.times_us.len(), 7);
+        // The response time is kept in its microsecond bucket, seen once.
+        assert_eq!(
+            request.raw_data.times_us[&buckets::bucket_floor(987_654_321_000)],
+            1
+        );
         // Minimum doesn't change.
-        assert_eq!(request.raw_data.minimum_time, 1);
+        assert_eq!(request.raw_data.minimum_time_us, 1_000);
         // Maximum increases to actual maximum, not rounded maximum.
-        assert_eq!(request.raw_data.maximum_time, 987654321);
+        assert_eq!(request.raw_data.maximum_time_us, 987_654_321_000);
         // Add 987654321 to the total response time so far.
-        assert_eq!(request.raw_data.total_time, 987657045);
+        assert_eq!(request.raw_data.total_time_us, 987_657_045_000);
         // We've seen eight response times so far.
         assert_eq!(request.raw_data.counter, 8);
 
@@ -5670,10 +5782,10 @@ mod test {
         assert_eq!(request.success_count, 0);
         assert_eq!(request.fail_count, 0);
         // Nothing else changes.
-        assert_eq!(request.raw_data.times.len(), 6);
-        assert_eq!(request.raw_data.minimum_time, 1);
-        assert_eq!(request.raw_data.maximum_time, 987654321);
-        assert_eq!(request.raw_data.total_time, 987657045);
+        assert_eq!(request.raw_data.times_us.len(), 7);
+        assert_eq!(request.raw_data.minimum_time_us, 1_000);
+        assert_eq!(request.raw_data.maximum_time_us, 987_654_321_000);
+        assert_eq!(request.raw_data.total_time_us, 987_657_045_000);
         assert_eq!(request.raw_data.counter, 8);
 
         // Tracking status code updates all related fields.
@@ -5713,10 +5825,10 @@ mod test {
         // Nothing else changes.
         assert_eq!(request.success_count, 0);
         assert_eq!(request.fail_count, 0);
-        assert_eq!(request.raw_data.times.len(), 6);
-        assert_eq!(request.raw_data.minimum_time, 1);
-        assert_eq!(request.raw_data.maximum_time, 987654321);
-        assert_eq!(request.raw_data.total_time, 987657045);
+        assert_eq!(request.raw_data.times_us.len(), 7);
+        assert_eq!(request.raw_data.minimum_time_us, 1_000);
+        assert_eq!(request.raw_data.maximum_time_us, 987_654_321_000);
+        assert_eq!(request.raw_data.total_time_us, 987_657_045_000);
         assert_eq!(request.raw_data.counter, 8);
     }
 
@@ -5730,34 +5842,34 @@ mod test {
         assert_eq!(request.status_code_timings.len(), 1);
         let s = &request.status_code_timings[&200];
         assert_eq!(s.count, 1);
-        assert_eq!(s.total_time, 50);
-        assert_eq!(s.min_time, 50);
-        assert_eq!(s.max_time, 50);
+        assert_eq!(s.total_time_us, 50_000);
+        assert_eq!(s.min_time_us, 50_000);
+        assert_eq!(s.max_time_us, 50_000);
 
         // Second recording for 200 with a lower time updates min.
         request.record_status_code_time(200, 10);
         let s = &request.status_code_timings[&200];
         assert_eq!(s.count, 2);
-        assert_eq!(s.total_time, 60);
-        assert_eq!(s.min_time, 10);
-        assert_eq!(s.max_time, 50);
+        assert_eq!(s.total_time_us, 60_000);
+        assert_eq!(s.min_time_us, 10_000);
+        assert_eq!(s.max_time_us, 50_000);
 
         // Third recording for 200 with a higher time updates max.
         request.record_status_code_time(200, 100);
         let s = &request.status_code_timings[&200];
         assert_eq!(s.count, 3);
-        assert_eq!(s.total_time, 160);
-        assert_eq!(s.min_time, 10);
-        assert_eq!(s.max_time, 100);
+        assert_eq!(s.total_time_us, 160_000);
+        assert_eq!(s.min_time_us, 10_000);
+        assert_eq!(s.max_time_us, 100_000);
 
         // Recording for a different status code is tracked separately.
         request.record_status_code_time(404, 75);
         assert_eq!(request.status_code_timings.len(), 2);
         let s = &request.status_code_timings[&404];
         assert_eq!(s.count, 1);
-        assert_eq!(s.total_time, 75);
-        assert_eq!(s.min_time, 75);
-        assert_eq!(s.max_time, 75);
+        assert_eq!(s.total_time_us, 75_000);
+        assert_eq!(s.min_time_us, 75_000);
+        assert_eq!(s.max_time_us, 75_000);
         // 200 entry is unchanged.
         assert_eq!(request.status_code_timings[&200].count, 3);
     }
@@ -5805,12 +5917,12 @@ mod test {
         assert!((breakdowns[1].average - 200.0).abs() < 0.1);
 
         // Min/max for 200.
-        assert_eq!(breakdowns[0].min_time, 10);
-        assert_eq!(breakdowns[0].max_time, 30);
+        assert_eq!(breakdowns[0].min_time_us, 10_000);
+        assert_eq!(breakdowns[0].max_time_us, 30_000);
 
         // Min/max for 500.
-        assert_eq!(breakdowns[1].min_time, 200);
-        assert_eq!(breakdowns[1].max_time, 200);
+        assert_eq!(breakdowns[1].min_time_us, 200_000);
+        assert_eq!(breakdowns[1].max_time_us, 200_000);
     }
 
     #[test]
@@ -5886,12 +5998,18 @@ mod test {
     fn goose_metric_all_variant_round_trips() {
         let request = make_test_request_metric();
         let transaction = TransactionMetric::new(0, 0, 0, Arc::from("tx"), 0);
-        let scenario = ScenarioMetric::new(0, Arc::from("TestScenario"), 0, 100, 0);
+        let scenario = ScenarioMetric::new(
+            0,
+            Arc::from("TestScenario"),
+            0,
+            Duration::from_millis(100),
+            0,
+        );
 
         let metric = GooseMetric::All {
             request: Box::new(request.clone()),
             transaction: transaction.clone(),
-            scenario: scenario.clone(),
+            scenario: Box::new(scenario.clone()),
         };
 
         // Pattern-match to extract all three payloads.
@@ -5910,6 +6028,16 @@ mod test {
         }
     }
 
+    /// The microsecond fractions fit in padding, so a request metric is no
+    /// larger than before them, and a channel message stays small.
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn metric_sizes_stay_small() {
+        assert_eq!(std::mem::size_of::<GooseRequestMetric>(), 272);
+        assert_eq!(std::mem::size_of::<TransactionMetric>(), 64);
+        assert!(std::mem::size_of::<GooseMetric>() <= 120);
+    }
+
     #[test]
     fn goose_metric_all_sent_on_channel() {
         // Verify that GooseMetric::All can be sent and received on a flume channel
@@ -5918,13 +6046,19 @@ mod test {
 
         let request = make_test_request_metric();
         let transaction = TransactionMetric::new(0, 0, 0, Arc::from("tx"), 0);
-        let scenario = ScenarioMetric::new(0, Arc::from("TestScenario"), 0, 100, 0);
+        let scenario = ScenarioMetric::new(
+            0,
+            Arc::from("TestScenario"),
+            0,
+            Duration::from_millis(100),
+            0,
+        );
 
         // Send one All message (replaces what would have been 3 individual sends).
         tx.send(GooseMetric::All {
             request: Box::new(request),
             transaction,
-            scenario,
+            scenario: Box::new(scenario),
         })
         .unwrap();
 
@@ -5940,12 +6074,18 @@ mod test {
         // for logging and Gaggle communication).
         let request = make_test_request_metric();
         let transaction = TransactionMetric::new(0, 0, 0, Arc::from("tx"), 0);
-        let scenario = ScenarioMetric::new(0, Arc::from("TestScenario"), 0, 100, 0);
+        let scenario = ScenarioMetric::new(
+            0,
+            Arc::from("TestScenario"),
+            0,
+            Duration::from_millis(100),
+            0,
+        );
 
         let metric = GooseMetric::All {
             request: Box::new(request),
             transaction,
-            scenario,
+            scenario: Box::new(scenario),
         };
 
         let json = serde_json::to_string(&metric).expect("serialize");
@@ -6479,9 +6619,9 @@ mod test {
                     200,
                     StatusCodeTimingSummary {
                         count: 3,
-                        total_time: 30,
-                        min_time: 5,
-                        max_time: 15,
+                        total_time_us: 30_000,
+                        min_time_us: 5_000,
+                        max_time_us: 15_000,
                     },
                 )]),
             },
@@ -6491,14 +6631,14 @@ mod test {
 
         let agg = &processor.metrics.requests["GET /"];
         assert_eq!(agg.raw_data.counter, 3);
-        assert_eq!(agg.raw_data.total_time, 30);
-        assert_eq!(agg.raw_data.minimum_time, 5);
-        assert_eq!(agg.raw_data.maximum_time, 15);
+        assert_eq!(agg.raw_data.total_time_us, 30_000);
+        assert_eq!(agg.raw_data.minimum_time_us, 5_000);
+        assert_eq!(agg.raw_data.maximum_time_us, 15_000);
         assert_eq!(agg.status_code_counts[&200], 3);
         assert_eq!(agg.status_code_timings[&200].count, 3);
-        assert_eq!(agg.status_code_timings[&200].total_time, 30);
-        assert_eq!(agg.status_code_timings[&200].min_time, 5);
-        assert_eq!(agg.status_code_timings[&200].max_time, 15);
+        assert_eq!(agg.status_code_timings[&200].total_time_us, 30_000);
+        assert_eq!(agg.status_code_timings[&200].min_time_us, 5_000);
+        assert_eq!(agg.status_code_timings[&200].max_time_us, 15_000);
     }
 
     #[test]
@@ -6541,17 +6681,11 @@ mod test {
         let co_data = agg.coordinated_omission_data.as_ref().unwrap();
         // Before #739 was fixed the batch never reached the adjusted data: 11.
         assert_eq!(co_data.counter, 111);
-        assert_eq!(co_data.total_time, 110 * 10 + 5000);
-        assert_eq!(co_data.minimum_time, 10);
-        assert_eq!(co_data.maximum_time, 5000);
+        assert_eq!(co_data.total_time_us, (110 * 10 + 5000) * 1000);
+        assert_eq!(co_data.minimum_time_us, 10_000);
+        assert_eq!(co_data.maximum_time_us, 5_000_000);
         // Before the fix the adjusted p99 was the synthetic 5000 ms.
-        let p99 = calculate_response_time_percentile(
-            &co_data.times,
-            co_data.counter,
-            co_data.minimum_time,
-            co_data.maximum_time,
-            0.99,
-        );
+        let p99 = co_data.percentile_us(0.99) / 1000;
         assert_eq!(p99, 10);
     }
 
@@ -6596,9 +6730,9 @@ mod test {
 
         let agg = &processor.metrics.requests["GET /api"];
         assert_eq!(agg.raw_data.counter, 3);
-        assert_eq!(agg.raw_data.total_time, 35);
-        assert_eq!(agg.raw_data.minimum_time, 5);
-        assert_eq!(agg.raw_data.maximum_time, 20);
+        assert_eq!(agg.raw_data.total_time_us, 35_000);
+        assert_eq!(agg.raw_data.minimum_time_us, 5_000);
+        assert_eq!(agg.raw_data.maximum_time_us, 20_000);
         assert_eq!(agg.status_code_counts[&200], 3);
     }
 
@@ -6619,9 +6753,18 @@ mod test {
         assert!(processor.metrics.requests.contains_key("GET /fail"));
         let agg = &processor.metrics.requests["GET /fail"];
         assert_eq!(agg.raw_data.counter, 1);
-        assert_eq!(agg.raw_data.total_time, 100);
+        assert_eq!(agg.raw_data.total_time_us, 100_000);
         // Error should be recorded.
         assert!(!processor.metrics.errors.is_empty());
+    }
+
+    /// Timing data holding these whole millisecond times.
+    fn timing_data(times: &[u64]) -> GooseRequestMetricTimingData {
+        let mut data = GooseRequestMetricTimingData::default();
+        for &time in times {
+            data.record_time(time);
+        }
+        data
     }
 
     #[test]
@@ -6632,11 +6775,7 @@ mod test {
         batch.transactions.insert(
             (0, 0),
             TransactionBatchEntry {
-                times: BTreeMap::from([(10, 2), (20, 1)]),
-                min_time: 10,
-                max_time: 20,
-                total_time: 40,
-                counter: 3,
+                run_times: timing_data(&[10, 10, 20]),
                 success_count: 2,
                 fail_count: 1,
             },
@@ -6645,14 +6784,14 @@ mod test {
         processor.process_batch(batch);
 
         let agg = &processor.metrics.transactions[0][0];
-        assert_eq!(agg.counter, 3);
-        assert_eq!(agg.total_time, 40);
-        assert_eq!(agg.min_time, 10);
-        assert_eq!(agg.max_time, 20);
+        assert_eq!(agg.run_times.counter, 3);
+        assert_eq!(agg.run_times.total_time_us, 40_000);
+        assert_eq!(agg.run_times.minimum_time_us, 10_000);
+        assert_eq!(agg.run_times.maximum_time_us, 20_000);
         assert_eq!(agg.success_count, 2);
         assert_eq!(agg.fail_count, 1);
-        assert_eq!(agg.times[&10], 2);
-        assert_eq!(agg.times[&20], 1);
+        assert_eq!(agg.run_times.times_us[&buckets::bucket_floor(10_000)], 2);
+        assert_eq!(agg.run_times.times_us[&buckets::bucket_floor(20_000)], 1);
     }
 
     #[test]
@@ -6663,11 +6802,7 @@ mod test {
         batch.scenarios.insert(
             0,
             ScenarioBatchEntry {
-                times: BTreeMap::from([(50, 1), (75, 2)]),
-                min_time: 50,
-                max_time: 75,
-                total_time: 200,
-                counter: 3,
+                run_times: timing_data(&[50, 75, 75]),
                 user: 0,
             },
         );
@@ -6675,12 +6810,12 @@ mod test {
         processor.process_batch(batch);
 
         let agg = &processor.metrics.scenarios[0];
-        assert_eq!(agg.counter, 3);
-        assert_eq!(agg.total_time, 200);
-        assert_eq!(agg.min_time, 50);
-        assert_eq!(agg.max_time, 75);
-        assert_eq!(agg.times[&50], 1);
-        assert_eq!(agg.times[&75], 2);
+        assert_eq!(agg.run_times.counter, 3);
+        assert_eq!(agg.run_times.total_time_us, 200_000);
+        assert_eq!(agg.run_times.minimum_time_us, 50_000);
+        assert_eq!(agg.run_times.maximum_time_us, 75_000);
+        assert_eq!(agg.run_times.times_us[&buckets::bucket_floor(50_000)], 1);
+        assert_eq!(agg.run_times.times_us[&buckets::bucket_floor(75_000)], 2);
         assert!(agg.users.contains(&0));
     }
 
@@ -6771,14 +6906,14 @@ mod test {
             let summary = status_code_timings
                 .entry(req.status_code)
                 .or_insert_with(StatusCodeTimingSummary::default);
-            let time = req.response_time as usize;
+            let time = req.response_time_micros();
             summary.count += 1;
-            summary.total_time += time;
-            if time > 0 && (summary.min_time == 0 || time < summary.min_time) {
-                summary.min_time = time;
+            summary.total_time_us += time;
+            if time > 0 && (summary.min_time_us == 0 || time < summary.min_time_us) {
+                summary.min_time_us = time;
             }
-            if time > summary.max_time {
-                summary.max_time = time;
+            if time > summary.max_time_us {
+                summary.max_time_us = time;
             }
         }
         batch.requests.insert(
@@ -6798,26 +6933,26 @@ mod test {
         let ind = &proc_individual.metrics.requests["GET /"];
         let bat = &proc_batch.metrics.requests["GET /"];
         assert_eq!(ind.raw_data.counter, bat.raw_data.counter);
-        assert_eq!(ind.raw_data.total_time, bat.raw_data.total_time);
-        assert_eq!(ind.raw_data.minimum_time, bat.raw_data.minimum_time);
-        assert_eq!(ind.raw_data.maximum_time, bat.raw_data.maximum_time);
-        assert_eq!(ind.raw_data.times, bat.raw_data.times);
+        assert_eq!(ind.raw_data.total_time_us, bat.raw_data.total_time_us);
+        assert_eq!(ind.raw_data.minimum_time_us, bat.raw_data.minimum_time_us);
+        assert_eq!(ind.raw_data.maximum_time_us, bat.raw_data.maximum_time_us);
+        assert_eq!(ind.raw_data.times_us, bat.raw_data.times_us);
         assert_eq!(ind.status_code_counts, bat.status_code_counts);
         assert_eq!(
             ind.status_code_timings[&200].count,
             bat.status_code_timings[&200].count
         );
         assert_eq!(
-            ind.status_code_timings[&200].total_time,
-            bat.status_code_timings[&200].total_time
+            ind.status_code_timings[&200].total_time_us,
+            bat.status_code_timings[&200].total_time_us
         );
         assert_eq!(
-            ind.status_code_timings[&200].min_time,
-            bat.status_code_timings[&200].min_time
+            ind.status_code_timings[&200].min_time_us,
+            bat.status_code_timings[&200].min_time_us
         );
         assert_eq!(
-            ind.status_code_timings[&200].max_time,
-            bat.status_code_timings[&200].max_time
+            ind.status_code_timings[&200].max_time_us,
+            bat.status_code_timings[&200].max_time_us
         );
     }
 
@@ -6909,9 +7044,18 @@ mod test {
         let ind_agg = &proc_individual.metrics.requests["GET /"];
         let bat_agg = &proc_batch.metrics.requests["GET /"];
         assert_eq!(ind_agg.raw_data.counter, bat_agg.raw_data.counter);
-        assert_eq!(ind_agg.raw_data.total_time, bat_agg.raw_data.total_time);
-        assert_eq!(ind_agg.raw_data.minimum_time, bat_agg.raw_data.minimum_time);
-        assert_eq!(ind_agg.raw_data.maximum_time, bat_agg.raw_data.maximum_time);
+        assert_eq!(
+            ind_agg.raw_data.total_time_us,
+            bat_agg.raw_data.total_time_us
+        );
+        assert_eq!(
+            ind_agg.raw_data.minimum_time_us,
+            bat_agg.raw_data.minimum_time_us
+        );
+        assert_eq!(
+            ind_agg.raw_data.maximum_time_us,
+            bat_agg.raw_data.maximum_time_us
+        );
     }
 
     /// Batched requests must feed the dashboard charts like the per-request
@@ -7067,32 +7211,6 @@ mod test {
     }
 
     #[test]
-    fn round_metric_time_buckets() {
-        let cases: [(u64, usize); 13] = [
-            (0, 0),
-            (100, 100),
-            (101, 100),
-            (105, 110),
-            (500, 500),
-            (501, 500),
-            (550, 600),
-            (750, 800),
-            (1000, 1000),
-            (1001, 1000),
-            (1499, 1000),
-            (1500, 2000),
-            (2600, 3000),
-        ];
-        for (time, expected) in cases {
-            assert_eq!(
-                round_metric_time(time),
-                expected,
-                "round_metric_time({time}) should bucket to {expected}"
-            );
-        }
-    }
-
-    #[test]
     fn aggregate_time_buckets_over_500ms() {
         const GUARD: &str = "guards the time bucket bug fixed in pull request 688";
 
@@ -7104,19 +7222,33 @@ mod test {
         );
         transaction.set_time(750, true);
         transaction.set_time(1499, true);
+        let expected = vec![
+            buckets::bucket_floor(750_000),
+            buckets::bucket_floor(1_499_000),
+        ];
         assert_eq!(
-            transaction.times.keys().copied().collect::<Vec<_>>(),
-            vec![800, 1000],
-            "transaction times must bucket 750ms to 800 and 1499ms to 1000, not 80 and 10: {GUARD}"
+            transaction
+                .run_times
+                .times_us
+                .keys()
+                .copied()
+                .collect::<Vec<_>>(),
+            expected,
+            "transaction times must bucket 750ms and 1499ms in their own microsecond buckets, not 80 and 10: {GUARD}"
         );
 
         let mut scenario = ScenarioMetricAggregate::new(0, Arc::from("scenario"));
         scenario.update(750, 0);
         scenario.update(1499, 0);
         assert_eq!(
-            scenario.times.keys().copied().collect::<Vec<_>>(),
-            vec![800, 1000],
-            "scenario times must bucket 750ms to 800 and 1499ms to 1000, not 80 and 10: {GUARD}"
+            scenario
+                .run_times
+                .times_us
+                .keys()
+                .copied()
+                .collect::<Vec<_>>(),
+            expected,
+            "scenario times must bucket 750ms and 1499ms in their own microsecond buckets, not 80 and 10: {GUARD}"
         );
     }
 
@@ -7198,8 +7330,8 @@ mod test {
         processor.process_request_metric(&failed);
         assert_eq!(measured_count(&mut processor, 2), 1);
         let series = request_series(&mut processor, "/fail", false).expect("series");
-        // 250 ms is in the 250 ms bucket, index 115.
-        assert_eq!(measured_buckets(&series.heatmap, 2), [(115, 1)]);
+        // 250 ms is in the 250 to 260 ms row, index 106.
+        assert_eq!(measured_buckets(&series.heatmap, 2), [(106, 1)]);
 
         // An update is not a new measurement.
         let mut update = make_request_metric("/fail", 300, 200, 2_200);
@@ -7411,8 +7543,8 @@ mod test {
         assert_eq!(measured_count(&mut processor, 3), 2);
         assert_eq!(measured_count(&mut processor, 4), 1);
         let series = request_series(&mut processor, "/", false).unwrap();
-        assert_eq!(measured_buckets(&series.heatmap, 3), [(10, 1), (30, 1)]);
-        // 1400 ms rounds to the 1 second bucket, index 145.
+        assert_eq!(measured_buckets(&series.heatmap, 3), [(19, 1), (39, 1)]);
+        // 1400 ms is in the 1.4 to 1.5 second row, index 145.
         assert_eq!(measured_buckets(&series.heatmap, 4), [(145, 1)]);
         let graph = &processor.graph_data;
         assert_eq!(graph.requests_in_second_for_test("GET /", 3), 2);

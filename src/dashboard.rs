@@ -282,6 +282,7 @@ struct HeatmapStore {
     end_second: u64,
     hold_from: u64,
     buckets: Vec<[u64; 3]>,
+    buckets_us: Vec<[u64; 3]>,
     columns: BTreeMap<u64, (u64, HeatmapColumn)>,
 }
 
@@ -294,6 +295,7 @@ impl HeatmapStore {
             end_second: 0,
             hold_from: 0,
             buckets: Vec::new(),
+            buckets_us: Vec::new(),
             columns: BTreeMap::new(),
         };
         store.apply(heatmap);
@@ -313,6 +315,7 @@ impl HeatmapStore {
         self.hold_from = heatmap.hold_from;
         if heatmap.buckets.len() >= self.buckets.len() {
             self.buckets = heatmap.buckets.clone();
+            self.buckets_us = heatmap.buckets_us.clone();
         }
         for column in &heatmap.columns {
             self.columns
@@ -345,6 +348,7 @@ impl HeatmapStore {
             end_second: self.end_second,
             hold_from: self.hold_from,
             buckets: self.buckets.clone(),
+            buckets_us: self.buckets_us.clone(),
             columns: self
                 .columns
                 .values()
@@ -2533,6 +2537,7 @@ mod tests {
                     p95: 1,
                     p99: 1,
                 },
+                response_time_us: None,
                 co_active: false,
                 co_adjusted: None,
             },
@@ -4113,6 +4118,7 @@ mod tests {
             end_second: start_second + 299,
             hold_from: start_second + 298,
             buckets: vec![[0, 0, 0]; buckets],
+            buckets_us: vec![[0, 0, 0]; buckets],
             columns: columns
                 .iter()
                 .map(|&(second, count)| HeatmapColumn {

@@ -11,11 +11,13 @@ pub mod pdf;
 pub(crate) use markdown::write_markdown_report;
 
 use crate::{
-    metrics::{self, format_number, format_value, ApplyBaseline, DeltaTo, NullableFloat, Value},
+    metrics::{
+        self, format_number, format_value, ApplyBaseline, DeltaTo, GooseRequestMetricTimingData,
+        Millis, NullableFloat, Value,
+    },
     report::common::OrEmpty,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 
 /// The following templates are necessary to build an html-formatted summary report.
 #[derive(Debug)]
@@ -43,8 +45,8 @@ pub(crate) struct RequestMetric {
     pub number_of_requests: Value<usize>,
     pub number_of_failures: Value<usize>,
     pub response_time_average: Value<NullableFloat>,
-    pub response_time_minimum: Value<usize>,
-    pub response_time_maximum: Value<usize>,
+    pub response_time_minimum: Value<Millis>,
+    pub response_time_maximum: Value<Millis>,
     pub requests_per_second: Value<NullableFloat>,
     pub failures_per_second: Value<NullableFloat>,
     /// True for per-status-code breakdown rows (added by PR #663), which render
@@ -77,7 +79,7 @@ pub(crate) struct CORequestMetric {
     pub name: String,
     pub response_time_average: Value<NullableFloat>,
     pub response_time_standard_deviation: Value<NullableFloat>,
-    pub response_time_maximum: Value<usize>,
+    pub response_time_maximum: Value<Millis>,
 }
 
 impl DeltaTo for CORequestMetric {
@@ -94,14 +96,14 @@ impl DeltaTo for CORequestMetric {
 pub(crate) struct ResponseMetric {
     pub method: String,
     pub name: String,
-    pub percentile_50: Value<usize>,
-    pub percentile_60: Value<usize>,
-    pub percentile_70: Value<usize>,
-    pub percentile_80: Value<usize>,
-    pub percentile_90: Value<usize>,
-    pub percentile_95: Value<usize>,
-    pub percentile_99: Value<usize>,
-    pub percentile_100: Value<usize>,
+    pub percentile_50: Value<Millis>,
+    pub percentile_60: Value<Millis>,
+    pub percentile_70: Value<Millis>,
+    pub percentile_80: Value<Millis>,
+    pub percentile_90: Value<Millis>,
+    pub percentile_95: Value<Millis>,
+    pub percentile_99: Value<Millis>,
+    pub percentile_100: Value<Millis>,
 }
 
 impl DeltaTo for ResponseMetric {
@@ -126,8 +128,8 @@ pub(crate) struct TransactionMetric {
     pub number_of_requests: Value<usize>,
     pub number_of_failures: Value<usize>,
     pub response_time_average: Option<Value<NullableFloat>>,
-    pub response_time_minimum: Value<usize>,
-    pub response_time_maximum: Value<usize>,
+    pub response_time_minimum: Value<Millis>,
+    pub response_time_maximum: Value<Millis>,
     pub requests_per_second: Option<Value<NullableFloat>>,
     pub failures_per_second: Option<Value<NullableFloat>>,
 }
@@ -151,8 +153,8 @@ pub(crate) struct ScenarioMetric {
     pub users: Value<usize>,
     pub count: Value<usize>,
     pub response_time_average: Value<NullableFloat>,
-    pub response_time_minimum: Value<usize>,
-    pub response_time_maximum: Value<usize>,
+    pub response_time_minimum: Value<Millis>,
+    pub response_time_maximum: Value<Millis>,
     pub count_per_second: Value<NullableFloat>,
     pub iterations: Value<NullableFloat>,
 }
@@ -197,21 +199,12 @@ impl DeltaTo for ErrorMetric {
 pub(crate) fn get_response_metric(
     method: &str,
     name: &str,
-    response_times: &BTreeMap<usize, usize>,
-    total_request_count: usize,
-    response_time_minimum: usize,
-    response_time_maximum: usize,
+    data: &GooseRequestMetricTimingData,
 ) -> ResponseMetric {
-    // Calculate percentiles in a loop.
+    // Calculate percentiles in a loop, in microseconds.
     let mut percentiles = Vec::new();
     for percent in &[0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99, 1.0] {
-        percentiles.push(metrics::calculate_response_time_percentile(
-            response_times,
-            total_request_count,
-            response_time_minimum,
-            response_time_maximum,
-            *percent,
-        ));
+        percentiles.push(Millis(data.percentile_us(*percent)));
     }
 
     // Now take the Strings out of the Vector and build a ResponseMetric object.

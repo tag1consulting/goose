@@ -345,64 +345,32 @@ impl FromStr for GooseLogFormat {
 }
 
 // @TODO this should be automatically derived from the structure.
-fn debug_csv_header() -> String {
-    format_csv_row!("tag", "request", "header", "body")
+fn debug_csv_header() -> &'static str {
+    "tag,request,header,body"
 }
 
 // @TODO this should be automatically derived from the structure.
-fn error_csv_header() -> String {
-    format_csv_row!(
-        "elapsed",
-        "raw",
-        "name",
-        "final_url",
-        "redirected",
-        "response_time",
-        "status_code",
-        "user",
-        "error",
+fn error_csv_header() -> &'static str {
+    "elapsed,raw,name,final_url,redirected,response_time,status_code,user,error"
+}
+
+// @TODO this should be automatically derived from the structure.
+fn requests_csv_header() -> &'static str {
+    concat!(
+        "elapsed,scenario_index,scenario_name,transaction_index,transaction_name,",
+        "raw,name,final_url,redirected,response_time,status_code,success,update,",
+        "user,error,coordinated_omission_elapsed,user_cadence,response_time_us",
     )
 }
 
 // @TODO this should be automatically derived from the structure.
-fn requests_csv_header() -> String {
-    format_csv_row!(
-        "elapsed",
-        "scenario_index",
-        "scenario_name",
-        "transaction_index",
-        "transaction_name",
-        "raw",
-        "name",
-        "final_url",
-        "redirected",
-        "response_time",
-        "status_code",
-        "success",
-        "update",
-        "user",
-        "error",
-        "coordinated_omission_elapsed",
-        "user_cadence",
-    )
+fn transactions_csv_header() -> &'static str {
+    "elapsed,scenario_index,transaction_index,name,run_time,success,user,run_time_us"
 }
 
 // @TODO this should be automatically derived from the structure.
-fn transactions_csv_header() -> String {
-    format_csv_row!(
-        "elapsed",
-        "scenario_index",
-        "transaction_index",
-        "name",
-        "run_time",
-        "success",
-        "user",
-    )
-}
-
-// @TODO this should be automatically derived from the structure.
-fn scenarios_csv_header() -> String {
-    format_csv_row!("elapsed", "name", "index", "run_time", "user",)
+fn scenarios_csv_header() -> &'static str {
+    "elapsed,name,index,run_time,user,run_time_us"
 }
 
 /// Two traits that must be implemented by all loggers provided through this thread.
@@ -505,6 +473,7 @@ impl GooseLogger<GooseRequestMetric> for GooseConfiguration {
                         message.error,
                         message.coordinated_omission_elapsed,
                         message.user_cadence,
+                        message.response_time_micros(),
                     )
                 }
             }
@@ -536,6 +505,7 @@ impl GooseLogger<TransactionMetric> for GooseConfiguration {
                         message.run_time,
                         message.success,
                         message.user,
+                        message.run_time_micros(),
                     )
                 }
             }
@@ -566,6 +536,7 @@ impl GooseLogger<ScenarioMetric> for GooseConfiguration {
                         message.index,
                         message.run_time,
                         message.user,
+                        message.run_time_micros(),
                     )
                 }
             }
@@ -843,7 +814,7 @@ impl GooseConfiguration {
     async fn write_to_log_file(
         &self,
         log_file: &mut tokio::io::BufWriter<tokio::fs::File>,
-        formatted_message: String,
+        formatted_message: &str,
     ) {
         match log_file
             .write(format!("{formatted_message}\n").as_ref())
@@ -975,7 +946,7 @@ impl GooseConfiguration {
                     }
                 } {
                     // This will generate a warning if it fails to write to log file.
-                    self.write_to_log_file(log_file, formatted_message).await;
+                    self.write_to_log_file(log_file, &formatted_message).await;
                 }
             } else {
                 // Empty message means it's time to exit.
@@ -1034,7 +1005,9 @@ impl GooseConfiguration {
 
 /// The microseconds request, transaction and scenario logs carry (#585).
 #[cfg(test)]
-#[cfg(any())] // until implementation
+// Written as for edition 2021: under this crate's 2018 edition a message
+// with inline arguments prints as it is written.
+#[allow(non_fmt_panics, unused_variables, clippy::needless_borrow)]
 mod microsecond_tests {
     use super::*;
     use crate::goose::{GooseMethod, TransactionName};

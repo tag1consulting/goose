@@ -294,7 +294,7 @@ use downcast_rs::{impl_downcast, Downcast};
 use regex::Regex;
 use reqwest::{header, Client, ClientBuilder, Method, RequestBuilder, Response};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::fmt::{self, Debug, Formatter, Write as _};
 use std::hash::{Hash, Hasher};
 use std::str;
@@ -306,8 +306,8 @@ use url::Url;
 
 use crate::logger::GooseLog;
 use crate::metrics::{
-    round_metric_time, GooseCoordinatedOmissionMitigation, GooseMetric, GooseMetricBatch,
-    GooseRawRequest, GooseRequestCounterRegistry, GooseRequestCounters, GooseRequestMetric,
+    GooseCoordinatedOmissionMitigation, GooseMetric, GooseMetricBatch, GooseRawRequest,
+    GooseRequestCounterRegistry, GooseRequestCounters, GooseRequestMetric,
     GooseRequestMetricTimingData, MetricsEpoch, RequestBatchEntry, ScenarioBatchEntry,
     ScenarioMetric, StatusCodeTimingSummary, TransactionBatchEntry, TransactionDetail,
     TransactionMetric, METRICS_BATCH_MAX_AGE, METRICS_BATCH_SIZE,
@@ -1923,7 +1923,7 @@ impl GooseUser {
         let response = self.client.execute(built_request).await;
         // Record Time to First Byte (TTFB): client.execute() returns when response headers
         // are received, not when the complete response body is downloaded.
-        request_metric.set_response_time(started.elapsed().as_millis());
+        request_metric.set_response_duration(started.elapsed());
 
         // Determine if the request suceeded or failed.
         match &response {
@@ -2090,10 +2090,9 @@ impl GooseUser {
                 // Always track the expected cadence.
                 self.request_cadence.user_cadence = cadence;
             }
-        } else {
-            // Coordinated Omission Mitigation defaults to average.
-            unreachable!();
         }
+        // Without a setting, as for a user made outside a load test, there
+        // is no mitigation: a load test always sets one, Average by default.
     }
 
     /// If Coordinated Omission Mitigation is enabled, compares how long has passed since the last
@@ -2151,8 +2150,9 @@ impl GooseUser {
             }
             Ok(self.request_cadence.user_cadence)
         } else {
-            // A setting for coordinated omission mitigation is required, defaults to Average.
-            unreachable!();
+            // Without a setting, as for a user made outside a load test, there
+            // is no mitigation: a load test always sets one, Average by default.
+            Ok(0)
         }
     }
 
@@ -2369,7 +2369,8 @@ impl GooseUser {
         );
 
         // Pre-aggregate timing data using the same bucketing logic.
-        entry.raw_data.record_time(request_metric.response_time);
+        let us = request_metric.response_time_micros();
+        entry.raw_data.record_time_us(us);
 
         if !self.config.no_status_codes {
             // Increment status-code count.
@@ -2379,12 +2380,11 @@ impl GooseUser {
                 .or_insert(0) += 1;
 
             // Record status-code timing summary.
-            let time = request_metric.response_time as usize;
             let summary = entry
                 .status_code_timings
                 .entry(request_metric.status_code)
                 .or_insert_with(StatusCodeTimingSummary::default);
-            summary.record(time);
+            summary.record_us(us);
         }
 
         // Track graph data if a report file is configured or the dashboard is on.
@@ -2395,7 +2395,7 @@ impl GooseUser {
                 .entry((self.counter_key_buf.clone(), second))
                 .or_default();
             graph_entry.count += 1;
-            graph_entry.total_time += request_metric.response_time as f64;
+            graph_entry.total_time += us as f64 / 1000.0;
         }
 
         self.batch_item_count += 1;
@@ -2478,17 +2478,18 @@ impl GooseUser {
         };
 
         // Pre-aggregate timing data using the same bucketing logic.
+        let us = request_metric.response_time_micros();
         if next_second {
             match batch.next_second.get_mut(key) {
-                Some(next) => next.record_time(request_metric.response_time),
+                Some(next) => next.record_time_us(us),
                 None => {
                     let mut next = GooseRequestMetricTimingData::new(None);
-                    next.record_time(request_metric.response_time);
+                    next.record_time_us(us);
                     batch.next_second.insert(key.to_string(), next);
                 }
             }
         } else {
-            entry.raw_data.record_time(request_metric.response_time);
+            entry.raw_data.record_time_us(us);
         }
 
         if !self.config.no_status_codes {
@@ -2499,12 +2500,11 @@ impl GooseUser {
                 .or_insert(0) += 1;
 
             // Record status-code timing summary.
-            let time = request_metric.response_time as usize;
             let summary = entry
                 .status_code_timings
                 .entry(request_metric.status_code)
                 .or_insert_with(StatusCodeTimingSummary::default);
-            summary.record(time);
+            summary.record_us(us);
         }
 
         self.batch_item_count += 1;
@@ -2534,27 +2534,14 @@ impl GooseUser {
             .transactions
             .entry(key)
             .or_insert_with(|| TransactionBatchEntry {
-                times: BTreeMap::new(),
-                min_time: 0,
-                max_time: 0,
-                total_time: 0,
-                counter: 0,
+                run_times: GooseRequestMetricTimingData::default(),
                 success_count: 0,
                 fail_count: 0,
             });
 
-        let time = transaction.run_time as usize;
-        let rounded_time = round_metric_time(transaction.run_time);
-
-        *entry.times.entry(rounded_time).or_insert(0) += 1;
-        entry.counter += 1;
-        entry.total_time += time;
-        if time > 0 && (entry.min_time == 0 || time < entry.min_time) {
-            entry.min_time = time;
-        }
-        if time > entry.max_time {
-            entry.max_time = time;
-        }
+        entry
+            .run_times
+            .record_time_us(transaction.run_time_micros());
         if transaction.success {
             entry.success_count += 1;
         } else {
@@ -2579,26 +2566,11 @@ impl GooseUser {
             .scenarios
             .entry(scenario.index)
             .or_insert_with(|| ScenarioBatchEntry {
-                times: BTreeMap::new(),
-                min_time: 0,
-                max_time: 0,
-                total_time: 0,
-                counter: 0,
+                run_times: GooseRequestMetricTimingData::default(),
                 user: scenario.user,
             });
 
-        let time = scenario.run_time as usize;
-        let rounded_time = round_metric_time(scenario.run_time);
-
-        *entry.times.entry(rounded_time).or_insert(0) += 1;
-        entry.counter += 1;
-        entry.total_time += time;
-        if time > 0 && (entry.min_time == 0 || time < entry.min_time) {
-            entry.min_time = time;
-        }
-        if time > entry.max_time {
-            entry.max_time = time;
-        }
+        entry.run_times.record_time_us(scenario.run_time_micros());
 
         // Track graph data.
         if self.record_graph_data {
@@ -2884,8 +2856,9 @@ impl GooseUser {
     ///   in metrics output, e.g. `"send_file"` or `"tcp_echo"`).
     /// - `response_time`: How long the operation took, **in milliseconds**. Use
     ///   `started.elapsed().as_millis() as u64`. Note that `as_millis()` truncates to whole
-    ///   milliseconds — sub-millisecond operations will be recorded as `0 ms`, matching the
-    ///   resolution of HTTP request timing in Goose.
+    ///   milliseconds: sub-millisecond operations will be recorded as `0 ms`. To keep
+    ///   the microseconds, as Goose does for HTTP requests, call
+    ///   [`record_custom_request_duration`](Self::record_custom_request_duration) instead.
     /// - `success`: Whether the operation succeeded. Unlike HTTP requests where Goose
     ///   infers success from the status code, for custom protocols you control this directly.
     /// - `status_code`: A protocol-specific status or result code. Pass `None` when the
@@ -2938,6 +2911,67 @@ impl GooseUser {
         status_code: Option<u16>,
         error: Option<&str>,
     ) -> TransactionResult {
+        self.record_custom(
+            method,
+            name,
+            response_time.saturating_mul(1000),
+            success,
+            status_code,
+            error,
+        )
+        .await
+    }
+
+    /// [`record_custom_request`](Self::record_custom_request) with the time the
+    /// operation took as a [`Duration`], such as
+    /// `started.elapsed()`, so a sub millisecond operation keeps its microseconds
+    /// as an HTTP request does.
+    ///
+    /// # Example
+    /// ```rust
+    /// use goose::prelude::*;
+    /// use std::time::Instant;
+    ///
+    /// let mut transaction = transaction!(udp_ping);
+    ///
+    /// async fn udp_ping(user: &mut GooseUser) -> TransactionResult {
+    ///     let started = Instant::now();
+    ///     // Send a datagram and wait for the answer here.
+    ///     user.record_custom_request_duration("UDP", "ping", started.elapsed(), true, None, None)
+    ///         .await?;
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn record_custom_request_duration(
+        &mut self,
+        method: &str,
+        name: &str,
+        response_time: Duration,
+        success: bool,
+        status_code: Option<u16>,
+        error: Option<&str>,
+    ) -> TransactionResult {
+        self.record_custom(
+            method,
+            name,
+            crate::metrics::duration_micros(response_time),
+            success,
+            status_code,
+            error,
+        )
+        .await
+    }
+
+    /// Record a custom request that took `response_time_us` microseconds.
+    async fn record_custom(
+        &mut self,
+        method: &str,
+        name: &str,
+        response_time_us: u64,
+        success: bool,
+        status_code: Option<u16>,
+        error: Option<&str>,
+    ) -> TransactionResult {
         // The aggregation key uses "{method} {name}", so both must be non-empty
         // and the method label must not contain whitespace.
         if method.is_empty() || method.contains(char::is_whitespace) {
@@ -2971,7 +3005,7 @@ impl GooseUser {
             self.weighted_users_index,
         );
 
-        request_metric.response_time = response_time;
+        request_metric.set_response_micros(response_time_us);
         // For custom protocol requests there is no redirect URL; reuse `name` so that
         // per-request log entries and report displays have something meaningful to show.
         request_metric.final_url = name.to_string();
@@ -3825,12 +3859,21 @@ impl<'de> Deserialize<'de> for TransactionName {
             TransactionOnly(String),
         }
 
-        let helper = TransactionNameHelper::deserialize(deserializer)?;
-        Ok(match helper {
-            TransactionNameHelper::InheritNameByRequests(s) => {
+        /// Goose 0.18 and earlier wrote a transaction's name as a plain
+        /// string, the name its requests took too.
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum WrittenName {
+            Named(TransactionNameHelper),
+            Plain(String),
+        }
+
+        Ok(match WrittenName::deserialize(deserializer)? {
+            WrittenName::Named(TransactionNameHelper::InheritNameByRequests(s))
+            | WrittenName::Plain(s) => {
                 TransactionName::InheritNameByRequests(Arc::from(s.as_str()))
             }
-            TransactionNameHelper::TransactionOnly(s) => {
+            WrittenName::Named(TransactionNameHelper::TransactionOnly(s)) => {
                 TransactionName::TransactionOnly(Arc::from(s.as_str()))
             }
         })
@@ -5957,26 +6000,28 @@ mod tests {
     /// The audit's reference, written apart from Goose's code: nearest rank
     /// over the rounded times, the rank being `p` of the count rounded half
     /// away from zero (at least 1), the value clamped to the fastest and
-    /// slowest measured time.
+    /// slowest measured time. Times are whole milliseconds, as the datasets
+    /// make them, kept in microseconds, each rounded to the middle of the
+    /// bucket that holds it.
     struct Reference {
-        rounded: Vec<usize>,
-        minimum: usize,
-        maximum: usize,
-        total: usize,
+        rounded: Vec<u64>,
+        minimum: u64,
+        maximum: u64,
+        total: u64,
     }
 
     impl Reference {
         fn new(times: &[u64]) -> Self {
-            let mut rounded: Vec<usize> = times
+            let mut rounded: Vec<u64> = times
                 .iter()
-                .map(|&t| crate::metrics::round_metric_time(t))
+                .map(|&t| crate::metrics::buckets::bucket_value(t * 1000))
                 .collect();
             rounded.sort_unstable();
             Reference {
                 rounded,
-                minimum: times.iter().copied().min().unwrap_or(0) as usize,
-                maximum: times.iter().copied().max().unwrap_or(0) as usize,
-                total: times.iter().map(|&t| t as usize).sum(),
+                minimum: times.iter().copied().min().unwrap_or(0) * 1000,
+                maximum: times.iter().copied().max().unwrap_or(0) * 1000,
+                total: times.iter().sum::<u64>() * 1000,
             }
         }
 
@@ -5984,23 +6029,31 @@ mod tests {
             self.rounded.len()
         }
 
-        /// The `numerator / denominator` percentile, 0 without times.
-        fn percentile(&self, numerator: usize, denominator: usize) -> usize {
+        /// The `numerator / denominator` percentile in microseconds, 0
+        /// without times.
+        fn percentile(&self, numerator: usize, denominator: usize) -> u64 {
             let n = self.rounded.len();
             if n == 0 {
                 return 0;
             }
             // round(n * p), half away from zero, in integers.
             let rank = ((2 * n * numerator + denominator) / (2 * denominator)).max(1);
-            self.rounded[rank.min(n) - 1].clamp(self.minimum, self.maximum)
+            // The fastest and slowest are kept exactly.
+            if rank >= n {
+                return self.maximum;
+            }
+            if rank == 1 {
+                return self.minimum;
+            }
+            self.rounded[rank - 1].clamp(self.minimum, self.maximum)
         }
 
-        /// The mean, 0 without times.
+        /// The mean in milliseconds, 0 without times.
         fn average(&self) -> f64 {
             if self.count() == 0 {
                 return 0.0;
             }
-            self.total as f64 / self.count() as f64
+            self.total as f64 / self.count() as f64 / 1000.0
         }
     }
 
@@ -6043,19 +6096,23 @@ mod tests {
     }
 
     /// The figures for one request name (or all of them) that the audit
-    /// compares, from one place Goose prints or reports them.
+    /// compares, from one place Goose prints or reports them, as that place
+    /// shows them.
     #[derive(Debug, PartialEq)]
     struct Figures {
-        percentiles: Vec<(String, usize)>,
-        minimum: usize,
-        maximum: usize,
+        percentiles: Vec<(String, String)>,
+        minimum: String,
+        maximum: String,
         average: String,
     }
 
+    /// The reference's figures, each time in microseconds shown by `show`
+    /// as the place compared shows it.
     fn figures(
         reference: &Reference,
         percents: &[(usize, usize, f32)],
         average: String,
+        show: impl Fn(u64) -> String,
     ) -> Figures {
         Figures {
             percentiles: percents
@@ -6063,29 +6120,51 @@ mod tests {
                 .map(|&(numerator, denominator, _)| {
                     (
                         format!("{}/{}", numerator, denominator),
-                        reference.percentile(numerator, denominator),
+                        show(reference.percentile(numerator, denominator)),
                     )
                 })
                 .collect(),
-            minimum: reference.minimum,
-            maximum: reference.maximum,
+            minimum: show(reference.minimum),
+            maximum: show(reference.maximum),
             average,
         }
     }
 
+    /// Whole milliseconds, truncated, as the dashboard's `_ms` fields hold
+    /// them.
+    fn whole_ms(us: u64) -> String {
+        (us / 1000).to_string()
+    }
+
+    /// Microseconds, as the reports keep them.
+    fn micros(us: u64) -> String {
+        us.to_string()
+    }
+
+    /// As the console prints a time, without thousands separators: the
+    /// percentile table prints none.
+    fn as_printed(us: u64) -> String {
+        crate::metrics::format_micros(us, false)
+    }
+
+    /// A printed cell without thousands separators.
+    fn unseparated(cell: &str) -> String {
+        cell.replace(',', "")
+    }
+
     fn goose_figures(
-        percentiles: &[usize],
+        percentiles: &[String],
         percents: &[(usize, usize, f32)],
-        minimum: usize,
-        maximum: usize,
+        minimum: String,
+        maximum: String,
         average: String,
     ) -> Figures {
         Figures {
             percentiles: percents
                 .iter()
                 .zip(percentiles)
-                .map(|(&(numerator, denominator, _), &value)| {
-                    (format!("{}/{}", numerator, denominator), value)
+                .map(|(&(numerator, denominator, _), value)| {
+                    (format!("{}/{}", numerator, denominator), value.clone())
                 })
                 .collect(),
             minimum,
@@ -6405,16 +6484,17 @@ mod tests {
                 check(
                     format!("dashboard row {}", row.name),
                     goose_figures(
-                        &[p.p50 as usize, p.p95 as usize, p.p99 as usize],
+                        &[p.p50, p.p95, p.p99].map(|ms| ms.to_string()),
                         &dashboard_percents,
-                        row.response_time_min_ms as usize,
-                        row.response_time_max_ms as usize,
+                        row.response_time_min_ms.to_string(),
+                        row.response_time_max_ms.to_string(),
                         format!("{:.6}", row.response_time_avg_ms),
                     ),
                     figures(
                         &reference,
                         &dashboard_percents,
                         format!("{:.6}", reference.average()),
+                        whole_ms,
                     ),
                     &mut mismatches,
                 );
@@ -6425,16 +6505,17 @@ mod tests {
             check(
                 "dashboard aggregate".to_string(),
                 goose_figures(
-                    &[p.p50 as usize, p.p95 as usize, p.p99 as usize],
+                    &[p.p50, p.p95, p.p99].map(|ms| ms.to_string()),
                     &dashboard_percents,
-                    aggregate.response_time_min_ms as usize,
-                    aggregate.response_time_max_ms as usize,
+                    aggregate.response_time_min_ms.to_string(),
+                    aggregate.response_time_max_ms.to_string(),
                     format!("{:.6}", aggregate.response_time_avg_ms),
                 ),
                 figures(
                     &reference,
                     &dashboard_percents,
                     format!("{:.6}", reference.average()),
+                    whole_ms,
                 ),
                 &mut mismatches,
             );
@@ -6442,20 +6523,21 @@ mod tests {
                 let reference = Reference::new(&adjusted);
                 let p = &co.percentile_ms;
                 let mut goose = goose_figures(
-                    &[p.p50 as usize, p.p95 as usize, p.p99 as usize],
+                    &[p.p50, p.p95, p.p99].map(|ms| ms.to_string()),
                     &dashboard_percents,
-                    0,
-                    co.response_time_max_ms as usize,
+                    String::new(),
+                    co.response_time_max_ms.to_string(),
                     format!("{:.6}", co.response_time_avg_ms),
                 );
                 let mut expected = figures(
                     &reference,
                     &dashboard_percents,
                     format!("{:.6}", reference.average()),
+                    whole_ms,
                 );
                 // The adjusted figures show no minimum.
-                goose.minimum = 0;
-                expected.minimum = 0;
+                goose.minimum = String::new();
+                expected.minimum = String::new();
                 check(
                     "dashboard adjusted aggregate".to_string(),
                     goose,
@@ -6491,7 +6573,7 @@ mod tests {
                 AUDIT_PERCENTS[8],
                 AUDIT_PERCENTS[11],
             ];
-            let report_values = |m: &crate::report::ResponseMetric| -> Vec<usize> {
+            let report_values = |m: &crate::report::ResponseMetric| -> Vec<String> {
                 [
                     &m.percentile_50,
                     &m.percentile_60,
@@ -6503,7 +6585,7 @@ mod tests {
                     &m.percentile_100,
                 ]
                 .iter()
-                .map(|value| value.value())
+                .map(|value| micros(value.value().0))
                 .collect()
             };
             for (response, request) in report.raw_response_metrics.iter().zip(
@@ -6523,8 +6605,8 @@ mod tests {
                     goose_figures(
                         &report_values(response),
                         &report_percents,
-                        request.response_time_minimum.value(),
-                        request.response_time_maximum.value(),
+                        micros(request.response_time_minimum.value().0),
+                        micros(request.response_time_maximum.value().0),
                         // As the reports print it.
                         format!("{:.2}", request.response_time_average.value()),
                     ),
@@ -6532,6 +6614,7 @@ mod tests {
                         &reference,
                         &report_percents,
                         format!("{:.2}", reference.average()),
+                        micros,
                     ),
                     &mut mismatches,
                 );
@@ -6542,14 +6625,14 @@ mod tests {
                 let mut goose = goose_figures(
                     &report_values(aggregated),
                     &report_percents,
-                    0,
-                    0,
+                    String::new(),
+                    String::new(),
                     String::new(),
                 );
-                let mut expected = figures(&reference, &report_percents, String::new());
-                expected.minimum = 0;
-                expected.maximum = 0;
-                goose.minimum = 0;
+                let mut expected = figures(&reference, &report_percents, String::new(), micros);
+                expected.minimum = String::new();
+                expected.maximum = String::new();
+                goose.minimum = String::new();
                 check(
                     "report adjusted aggregate".to_string(),
                     goose,
@@ -6585,12 +6668,9 @@ mod tests {
             if console_names.len() > 1 {
                 console_names.push(("Aggregated".to_string(), Reference::new(&all)));
             }
-            // A cell that is not a number shows as usize::MAX, a mismatch.
-            let number =
-                |cell: &String| cell.replace(',', "").parse::<usize>().unwrap_or(usize::MAX);
-            // The console's average: an f32, two decimals below 1,000.
+            // The console's average: an f64, two decimals below 1,000.
             let console_average = |reference: &Reference| {
-                let average = reference.average() as f32;
+                let average = reference.average();
                 if average < 1000.0 {
                     format!("{:.2}", average)
                 } else {
@@ -6605,9 +6685,9 @@ mod tests {
                     });
                     continue;
                 };
-                let mut values: Vec<usize> = percentile.iter().map(number).collect();
+                let mut values: Vec<String> = percentile.iter().map(|c| unseparated(c)).collect();
                 // The response time table's median is a 50th percentile too.
-                values.push(number(&time[3]));
+                values.push(unseparated(&time[3]));
                 let mut percents = console_percents.to_vec();
                 percents.push(AUDIT_PERCENTS[0]);
                 check(
@@ -6615,11 +6695,11 @@ mod tests {
                     goose_figures(
                         &values,
                         &percents,
-                        number(&time[1]),
-                        number(&time[2]),
+                        unseparated(&time[1]),
+                        unseparated(&time[2]),
                         time[0].clone(),
                     ),
-                    figures(reference, &percents, console_average(reference)),
+                    figures(reference, &percents, console_average(reference), as_printed),
                     &mut mismatches,
                 );
             }
@@ -6630,18 +6710,29 @@ mod tests {
                 let reference = Reference::new(&adjusted);
                 match (times.get("Aggregated"), percentiles.get("Aggregated")) {
                     (Some(time), Some(percentile)) => {
-                        let mut values: Vec<usize> = percentile.iter().map(number).collect();
-                        values.push(number(&time[3]));
+                        let mut values: Vec<String> =
+                            percentile.iter().map(|c| unseparated(c)).collect();
+                        values.push(unseparated(&time[3]));
                         let mut percents = console_percents.to_vec();
                         percents.push(AUDIT_PERCENTS[0]);
                         // The adjusted table shows a standard deviation where
                         // the measured one shows the minimum.
-                        let mut expected =
-                            figures(&reference, &percents, console_average(&reference));
-                        expected.minimum = 0;
+                        let mut expected = figures(
+                            &reference,
+                            &percents,
+                            console_average(&reference),
+                            as_printed,
+                        );
+                        expected.minimum = String::new();
                         check(
                             "console adjusted aggregate".to_string(),
-                            goose_figures(&values, &percents, 0, number(&time[2]), time[0].clone()),
+                            goose_figures(
+                                &values,
+                                &percents,
+                                String::new(),
+                                unseparated(&time[2]),
+                                time[0].clone(),
+                            ),
                             expected,
                             &mut mismatches,
                         );
@@ -6713,6 +6804,8 @@ mod tests {
         let mut metric = recv_request_metric(&rx);
         metric.elapsed = 1234;
         metric.response_time = 5;
+        // The real request's microseconds vary from run to run.
+        metric.response_time_fraction_us = 0;
         metric.raw.url = "http://target/a".to_string();
         metric.final_url = "http://target/a".to_string();
         metric
@@ -6756,9 +6849,9 @@ mod tests {
                 None,
                 "Front Page",
                 [
-                    "{\"coordinated_omission_elapsed\":0,\"elapsed\":1234,\"error\":\"\",\"final_url\":\"http://target/a\",\"name\":\"Front Page\",\"raw\":{\"body\":\"\",\"custom_method\":\"\",\"headers\":[],\"method\":\"Get\",\"url\":\"http://target/a\"},\"redirected\":false,\"response_time\":5,\"scenario_index\":0,\"scenario_name\":\"Scenario One\",\"status_code\":200,\"success\":true,\"transaction_index\":3,\"transaction_name\":{\"InheritNameByRequests\":\"Front Page\"},\"update\":false,\"user\":0,\"user_cadence\":0}",
-                    "GooseRequestMetric { elapsed: 1234, scenario_index: 0, scenario_name: \"Scenario One\", transaction_index: 3, transaction_name: InheritNameByRequests(\"Front Page\"), raw: GooseRawRequest { method: Get, url: \"http://target/a\", headers: [], body: \"\", custom_method: \"\" }, name: \"Front Page\", final_url: \"http://target/a\", redirected: false, response_time: 5, status_code: 200, success: true, update: false, user: 0, error: \"\", coordinated_omission_elapsed: 0, user_cadence: 0 }",
-                    "1234,0,Scenario One,3,Front Page,\"GooseRawRequest { method: Get, url: \"\"http://target/a\"\", headers: [], body: \"\"\"\", custom_method: \"\"\"\" }\",Front Page,http://target/a,false,5,200,true,false,0,,0,0",
+                    "{\"coordinated_omission_elapsed\":0,\"elapsed\":1234,\"error\":\"\",\"final_url\":\"http://target/a\",\"name\":\"Front Page\",\"raw\":{\"body\":\"\",\"custom_method\":\"\",\"headers\":[],\"method\":\"Get\",\"url\":\"http://target/a\"},\"redirected\":false,\"response_time\":5,\"response_time_fraction_us\":0,\"scenario_index\":0,\"scenario_name\":\"Scenario One\",\"status_code\":200,\"success\":true,\"transaction_index\":3,\"transaction_name\":{\"InheritNameByRequests\":\"Front Page\"},\"update\":false,\"user\":0,\"user_cadence\":0}",
+                    "GooseRequestMetric { elapsed: 1234, scenario_index: 0, scenario_name: \"Scenario One\", transaction_index: 3, transaction_name: InheritNameByRequests(\"Front Page\"), raw: GooseRawRequest { method: Get, url: \"http://target/a\", headers: [], body: \"\", custom_method: \"\" }, name: \"Front Page\", final_url: \"http://target/a\", redirected: false, response_time: 5, status_code: 200, success: true, update: false, user: 0, error: \"\", coordinated_omission_elapsed: 0, user_cadence: 0, response_time_fraction_us: 0 }",
+                    "1234,0,Scenario One,3,Front Page,\"GooseRawRequest { method: Get, url: \"\"http://target/a\"\", headers: [], body: \"\"\"\", custom_method: \"\"\"\" }\",Front Page,http://target/a,false,5,200,true,false,0,,0,0,5000",
                 ],
             ),
             (
@@ -6767,9 +6860,9 @@ mod tests {
                 None,
                 "/a",
                 [
-                    "{\"coordinated_omission_elapsed\":0,\"elapsed\":1234,\"error\":\"\",\"final_url\":\"http://target/a\",\"name\":\"/a\",\"raw\":{\"body\":\"\",\"custom_method\":\"\",\"headers\":[],\"method\":\"Get\",\"url\":\"http://target/a\"},\"redirected\":false,\"response_time\":5,\"scenario_index\":0,\"scenario_name\":\"Scenario One\",\"status_code\":200,\"success\":true,\"transaction_index\":3,\"transaction_name\":{\"TransactionOnly\":\"Front Page\"},\"update\":false,\"user\":0,\"user_cadence\":0}",
-                    "GooseRequestMetric { elapsed: 1234, scenario_index: 0, scenario_name: \"Scenario One\", transaction_index: 3, transaction_name: TransactionOnly(\"Front Page\"), raw: GooseRawRequest { method: Get, url: \"http://target/a\", headers: [], body: \"\", custom_method: \"\" }, name: \"/a\", final_url: \"http://target/a\", redirected: false, response_time: 5, status_code: 200, success: true, update: false, user: 0, error: \"\", coordinated_omission_elapsed: 0, user_cadence: 0 }",
-                    "1234,0,Scenario One,3,,\"GooseRawRequest { method: Get, url: \"\"http://target/a\"\", headers: [], body: \"\"\"\", custom_method: \"\"\"\" }\",/a,http://target/a,false,5,200,true,false,0,,0,0",
+                    "{\"coordinated_omission_elapsed\":0,\"elapsed\":1234,\"error\":\"\",\"final_url\":\"http://target/a\",\"name\":\"/a\",\"raw\":{\"body\":\"\",\"custom_method\":\"\",\"headers\":[],\"method\":\"Get\",\"url\":\"http://target/a\"},\"redirected\":false,\"response_time\":5,\"response_time_fraction_us\":0,\"scenario_index\":0,\"scenario_name\":\"Scenario One\",\"status_code\":200,\"success\":true,\"transaction_index\":3,\"transaction_name\":{\"TransactionOnly\":\"Front Page\"},\"update\":false,\"user\":0,\"user_cadence\":0}",
+                    "GooseRequestMetric { elapsed: 1234, scenario_index: 0, scenario_name: \"Scenario One\", transaction_index: 3, transaction_name: TransactionOnly(\"Front Page\"), raw: GooseRawRequest { method: Get, url: \"http://target/a\", headers: [], body: \"\", custom_method: \"\" }, name: \"/a\", final_url: \"http://target/a\", redirected: false, response_time: 5, status_code: 200, success: true, update: false, user: 0, error: \"\", coordinated_omission_elapsed: 0, user_cadence: 0, response_time_fraction_us: 0 }",
+                    "1234,0,Scenario One,3,,\"GooseRawRequest { method: Get, url: \"\"http://target/a\"\", headers: [], body: \"\"\"\", custom_method: \"\"\"\" }\",/a,http://target/a,false,5,200,true,false,0,,0,0,5000",
                 ],
             ),
             (
@@ -6778,9 +6871,9 @@ mod tests {
                 Some("named request"),
                 "named request",
                 [
-                    "{\"coordinated_omission_elapsed\":0,\"elapsed\":1234,\"error\":\"\",\"final_url\":\"http://target/a\",\"name\":\"named request\",\"raw\":{\"body\":\"\",\"custom_method\":\"\",\"headers\":[],\"method\":\"Get\",\"url\":\"http://target/a\"},\"redirected\":false,\"response_time\":5,\"scenario_index\":0,\"scenario_name\":\"Scenario One\",\"status_code\":200,\"success\":true,\"transaction_index\":3,\"transaction_name\":{\"InheritNameByRequests\":\"Front Page\"},\"update\":false,\"user\":0,\"user_cadence\":0}",
-                    "GooseRequestMetric { elapsed: 1234, scenario_index: 0, scenario_name: \"Scenario One\", transaction_index: 3, transaction_name: InheritNameByRequests(\"Front Page\"), raw: GooseRawRequest { method: Get, url: \"http://target/a\", headers: [], body: \"\", custom_method: \"\" }, name: \"named request\", final_url: \"http://target/a\", redirected: false, response_time: 5, status_code: 200, success: true, update: false, user: 0, error: \"\", coordinated_omission_elapsed: 0, user_cadence: 0 }",
-                    "1234,0,Scenario One,3,Front Page,\"GooseRawRequest { method: Get, url: \"\"http://target/a\"\", headers: [], body: \"\"\"\", custom_method: \"\"\"\" }\",named request,http://target/a,false,5,200,true,false,0,,0,0",
+                    "{\"coordinated_omission_elapsed\":0,\"elapsed\":1234,\"error\":\"\",\"final_url\":\"http://target/a\",\"name\":\"named request\",\"raw\":{\"body\":\"\",\"custom_method\":\"\",\"headers\":[],\"method\":\"Get\",\"url\":\"http://target/a\"},\"redirected\":false,\"response_time\":5,\"response_time_fraction_us\":0,\"scenario_index\":0,\"scenario_name\":\"Scenario One\",\"status_code\":200,\"success\":true,\"transaction_index\":3,\"transaction_name\":{\"InheritNameByRequests\":\"Front Page\"},\"update\":false,\"user\":0,\"user_cadence\":0}",
+                    "GooseRequestMetric { elapsed: 1234, scenario_index: 0, scenario_name: \"Scenario One\", transaction_index: 3, transaction_name: InheritNameByRequests(\"Front Page\"), raw: GooseRawRequest { method: Get, url: \"http://target/a\", headers: [], body: \"\", custom_method: \"\" }, name: \"named request\", final_url: \"http://target/a\", redirected: false, response_time: 5, status_code: 200, success: true, update: false, user: 0, error: \"\", coordinated_omission_elapsed: 0, user_cadence: 0, response_time_fraction_us: 0 }",
+                    "1234,0,Scenario One,3,Front Page,\"GooseRawRequest { method: Get, url: \"\"http://target/a\"\", headers: [], body: \"\"\"\", custom_method: \"\"\"\" }\",named request,http://target/a,false,5,200,true,false,0,,0,0,5000",
                 ],
             ),
             (
@@ -6789,9 +6882,9 @@ mod tests {
                 None,
                 "/a",
                 [
-                    "{\"coordinated_omission_elapsed\":0,\"elapsed\":1234,\"error\":\"\",\"final_url\":\"http://target/a\",\"name\":\"/a\",\"raw\":{\"body\":\"\",\"custom_method\":\"\",\"headers\":[],\"method\":\"Get\",\"url\":\"http://target/a\"},\"redirected\":false,\"response_time\":5,\"scenario_index\":0,\"scenario_name\":\"Scenario One\",\"status_code\":200,\"success\":true,\"transaction_index\":3,\"transaction_name\":{\"TransactionOnly\":\"\"},\"update\":false,\"user\":0,\"user_cadence\":0}",
-                    "GooseRequestMetric { elapsed: 1234, scenario_index: 0, scenario_name: \"Scenario One\", transaction_index: 3, transaction_name: TransactionOnly(\"\"), raw: GooseRawRequest { method: Get, url: \"http://target/a\", headers: [], body: \"\", custom_method: \"\" }, name: \"/a\", final_url: \"http://target/a\", redirected: false, response_time: 5, status_code: 200, success: true, update: false, user: 0, error: \"\", coordinated_omission_elapsed: 0, user_cadence: 0 }",
-                    "1234,0,Scenario One,3,,\"GooseRawRequest { method: Get, url: \"\"http://target/a\"\", headers: [], body: \"\"\"\", custom_method: \"\"\"\" }\",/a,http://target/a,false,5,200,true,false,0,,0,0",
+                    "{\"coordinated_omission_elapsed\":0,\"elapsed\":1234,\"error\":\"\",\"final_url\":\"http://target/a\",\"name\":\"/a\",\"raw\":{\"body\":\"\",\"custom_method\":\"\",\"headers\":[],\"method\":\"Get\",\"url\":\"http://target/a\"},\"redirected\":false,\"response_time\":5,\"response_time_fraction_us\":0,\"scenario_index\":0,\"scenario_name\":\"Scenario One\",\"status_code\":200,\"success\":true,\"transaction_index\":3,\"transaction_name\":{\"TransactionOnly\":\"\"},\"update\":false,\"user\":0,\"user_cadence\":0}",
+                    "GooseRequestMetric { elapsed: 1234, scenario_index: 0, scenario_name: \"Scenario One\", transaction_index: 3, transaction_name: TransactionOnly(\"\"), raw: GooseRawRequest { method: Get, url: \"http://target/a\", headers: [], body: \"\", custom_method: \"\" }, name: \"/a\", final_url: \"http://target/a\", redirected: false, response_time: 5, status_code: 200, success: true, update: false, user: 0, error: \"\", coordinated_omission_elapsed: 0, user_cadence: 0, response_time_fraction_us: 0 }",
+                    "1234,0,Scenario One,3,,\"GooseRawRequest { method: Get, url: \"\"http://target/a\"\", headers: [], body: \"\"\"\", custom_method: \"\"\"\" }\",/a,http://target/a,false,5,200,true,false,0,,0,0,5000",
                 ],
             ),
             (
@@ -6800,9 +6893,9 @@ mod tests {
                 None,
                 "/a",
                 [
-                    "{\"coordinated_omission_elapsed\":0,\"elapsed\":1234,\"error\":\"\",\"final_url\":\"http://target/a\",\"name\":\"/a\",\"raw\":{\"body\":\"\",\"custom_method\":\"\",\"headers\":[],\"method\":\"Get\",\"url\":\"http://target/a\"},\"redirected\":false,\"response_time\":5,\"scenario_index\":0,\"scenario_name\":\"Scenario One\",\"status_code\":200,\"success\":true,\"transaction_index\":3,\"transaction_name\":{\"InheritNameByRequests\":\"\"},\"update\":false,\"user\":0,\"user_cadence\":0}",
-                    "GooseRequestMetric { elapsed: 1234, scenario_index: 0, scenario_name: \"Scenario One\", transaction_index: 3, transaction_name: InheritNameByRequests(\"\"), raw: GooseRawRequest { method: Get, url: \"http://target/a\", headers: [], body: \"\", custom_method: \"\" }, name: \"/a\", final_url: \"http://target/a\", redirected: false, response_time: 5, status_code: 200, success: true, update: false, user: 0, error: \"\", coordinated_omission_elapsed: 0, user_cadence: 0 }",
-                    "1234,0,Scenario One,3,,\"GooseRawRequest { method: Get, url: \"\"http://target/a\"\", headers: [], body: \"\"\"\", custom_method: \"\"\"\" }\",/a,http://target/a,false,5,200,true,false,0,,0,0",
+                    "{\"coordinated_omission_elapsed\":0,\"elapsed\":1234,\"error\":\"\",\"final_url\":\"http://target/a\",\"name\":\"/a\",\"raw\":{\"body\":\"\",\"custom_method\":\"\",\"headers\":[],\"method\":\"Get\",\"url\":\"http://target/a\"},\"redirected\":false,\"response_time\":5,\"response_time_fraction_us\":0,\"scenario_index\":0,\"scenario_name\":\"Scenario One\",\"status_code\":200,\"success\":true,\"transaction_index\":3,\"transaction_name\":{\"InheritNameByRequests\":\"\"},\"update\":false,\"user\":0,\"user_cadence\":0}",
+                    "GooseRequestMetric { elapsed: 1234, scenario_index: 0, scenario_name: \"Scenario One\", transaction_index: 3, transaction_name: InheritNameByRequests(\"\"), raw: GooseRawRequest { method: Get, url: \"http://target/a\", headers: [], body: \"\", custom_method: \"\" }, name: \"/a\", final_url: \"http://target/a\", redirected: false, response_time: 5, status_code: 200, success: true, update: false, user: 0, error: \"\", coordinated_omission_elapsed: 0, user_cadence: 0, response_time_fraction_us: 0 }",
+                    "1234,0,Scenario One,3,,\"GooseRawRequest { method: Get, url: \"\"http://target/a\"\", headers: [], body: \"\"\"\", custom_method: \"\"\"\" }\",/a,http://target/a,false,5,200,true,false,0,,0,0,5000",
                 ],
             ),
             (
@@ -6811,9 +6904,9 @@ mod tests {
                 None,
                 "/a",
                 [
-                    "{\"coordinated_omission_elapsed\":0,\"elapsed\":1234,\"error\":\"\",\"final_url\":\"http://target/a\",\"name\":\"/a\",\"raw\":{\"body\":\"\",\"custom_method\":\"\",\"headers\":[],\"method\":\"Get\",\"url\":\"http://target/a\"},\"redirected\":false,\"response_time\":5,\"scenario_index\":0,\"scenario_name\":\"Scenario One\",\"status_code\":200,\"success\":true,\"transaction_index\":18446744073709551615,\"transaction_name\":{\"TransactionOnly\":\"\"},\"update\":false,\"user\":0,\"user_cadence\":0}",
-                    "GooseRequestMetric { elapsed: 1234, scenario_index: 0, scenario_name: \"Scenario One\", transaction_index: 18446744073709551615, transaction_name: TransactionOnly(\"\"), raw: GooseRawRequest { method: Get, url: \"http://target/a\", headers: [], body: \"\", custom_method: \"\" }, name: \"/a\", final_url: \"http://target/a\", redirected: false, response_time: 5, status_code: 200, success: true, update: false, user: 0, error: \"\", coordinated_omission_elapsed: 0, user_cadence: 0 }",
-                    "1234,0,Scenario One,18446744073709551615,,\"GooseRawRequest { method: Get, url: \"\"http://target/a\"\", headers: [], body: \"\"\"\", custom_method: \"\"\"\" }\",/a,http://target/a,false,5,200,true,false,0,,0,0",
+                    "{\"coordinated_omission_elapsed\":0,\"elapsed\":1234,\"error\":\"\",\"final_url\":\"http://target/a\",\"name\":\"/a\",\"raw\":{\"body\":\"\",\"custom_method\":\"\",\"headers\":[],\"method\":\"Get\",\"url\":\"http://target/a\"},\"redirected\":false,\"response_time\":5,\"response_time_fraction_us\":0,\"scenario_index\":0,\"scenario_name\":\"Scenario One\",\"status_code\":200,\"success\":true,\"transaction_index\":18446744073709551615,\"transaction_name\":{\"TransactionOnly\":\"\"},\"update\":false,\"user\":0,\"user_cadence\":0}",
+                    "GooseRequestMetric { elapsed: 1234, scenario_index: 0, scenario_name: \"Scenario One\", transaction_index: 18446744073709551615, transaction_name: TransactionOnly(\"\"), raw: GooseRawRequest { method: Get, url: \"http://target/a\", headers: [], body: \"\", custom_method: \"\" }, name: \"/a\", final_url: \"http://target/a\", redirected: false, response_time: 5, status_code: 200, success: true, update: false, user: 0, error: \"\", coordinated_omission_elapsed: 0, user_cadence: 0, response_time_fraction_us: 0 }",
+                    "1234,0,Scenario One,18446744073709551615,,\"GooseRawRequest { method: Get, url: \"\"http://target/a\"\", headers: [], body: \"\"\"\", custom_method: \"\"\"\" }\",/a,http://target/a,false,5,200,true,false,0,,0,0,5000",
                 ],
             ),
         ];

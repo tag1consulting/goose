@@ -8,7 +8,7 @@
 use crate::metrics::dashboard_snapshot::{
     Heatmap, HeatmapColumn, HeatmapCursor, RequestSeries, SeriesWindow, SERIES_WINDOW_SECS,
 };
-use crate::metrics::{round_metric_time, GooseRequestMetricTimingData};
+use crate::metrics::{buckets, GooseRequestMetricTimingData};
 use crate::test_plan::{TestPlanHistory, TestPlanStepAction};
 use chrono::prelude::*;
 use itertools::Itertools;
@@ -57,10 +57,11 @@ struct PendingLatency {
     /// The seconds held: `second` and `second + 1`, once `held`.
     second: usize,
     held: bool,
-    /// Fastest, slowest, total and count, for each second held.
-    totals: [[usize; 4]; 2],
-    /// Rounded times with no fixed index (past 60 seconds): which second
-    /// held (0 or 1), the rounded time and its count.
+    /// Fastest, slowest and total in microseconds, and count, for each
+    /// second held.
+    totals: [[u64; 4]; 2],
+    /// Rows past the fixed ones (from 61 seconds): which second held (0 or
+    /// 1), the row and its count.
     overflow: Vec<(usize, usize, usize)>,
     /// Counts by fixed bucket index, for each second held.
     counts: [[u32; 2]; FIXED_BUCKETS],
@@ -81,30 +82,32 @@ impl PendingLatency {
     /// Add a batch's timing data for held second `at` (0 or 1).
     fn add(&mut self, at: usize, data: &GooseRequestMetricTimingData) {
         self.add_totals(at, data);
-        for (&rounded, &count) in &data.times {
-            self.add_bucket(at, rounded, count);
+        for (&bucket, &count) in &data.times_us {
+            self.add_bucket(at, bucket, count);
         }
     }
 
     /// Add a batch's fastest, slowest, total and count for held second `at`.
     fn add_totals(&mut self, at: usize, data: &GooseRequestMetricTimingData) {
         let totals = &mut self.totals[at];
-        if data.counter > 0 && (totals[3] == 0 || data.minimum_time < totals[0]) {
-            totals[0] = data.minimum_time;
+        if data.counter > 0 && (totals[3] == 0 || data.minimum_time_us < totals[0]) {
+            totals[0] = data.minimum_time_us;
         }
-        totals[1] = totals[1].max(data.maximum_time);
-        totals[2] += data.total_time;
-        totals[3] += data.counter;
+        totals[1] = totals[1].max(data.maximum_time_us);
+        totals[2] += data.total_time_us;
+        totals[3] += data.counter as u64;
     }
 
-    /// Add `count` responses that round to `rounded` to held second `at`.
-    fn add_bucket(&mut self, at: usize, rounded: usize, count: usize) {
-        match dense_index(rounded) {
-            Some(index) => {
-                let held = &mut self.counts[index][at];
+    /// Add `count` responses in the timing data bucket that starts at
+    /// `bucket` microseconds to held second `at`.
+    fn add_bucket(&mut self, at: usize, bucket: u64, count: usize) {
+        let row = bucket_row(bucket);
+        match self.counts.get_mut(row) {
+            Some(counts) => {
+                let held = &mut counts[at];
                 *held = held.saturating_add(u32::try_from(count).unwrap_or(u32::MAX));
             }
-            None => self.overflow.push((at, rounded, count)),
+            None => self.overflow.push((at, row, count)),
         }
     }
 
@@ -128,12 +131,12 @@ impl PendingLatency {
                         histogram.add_dense(index, counts[at] as usize);
                     }
                 }
-                for &(held, rounded, count) in overflow {
+                for &(held, row, count) in overflow {
                     if held == at {
-                        histogram.add_bucket(rounded, count);
+                        histogram.add_bucket(row, count);
                     }
                 }
-                histogram.add_totals(minimum, maximum, total, counter);
+                histogram.add_totals(minimum, maximum, total, counter as usize);
             });
             for counts in self.counts.iter_mut() {
                 counts[at] = 0;
@@ -251,30 +254,71 @@ impl ItemsPerSecond {
 /// count toward the all requests series.
 pub(crate) const MAX_REQUEST_SERIES: usize = 100;
 
-/// Rounded response times up to the default 60 second timeout each have a
-/// fixed index: every millisecond to 100 ms, then 110 to 500 ms by 10, 600
-/// to 1000 ms by 100 and 2 to 60 seconds by 1000.
-const FIXED_BUCKETS: usize = 205;
+/// The heatmap's fixed rows, from 0 µs up: where each band starts, the
+/// width of its rows and how many it has, all in microseconds. 100 µs rows
+/// under a millisecond, 1 ms rows to 64 ms, 2 ms to 100 ms, 10 ms to
+/// 500 ms, 50 ms to 1 s, 100 ms to 5 s and 2 s to 61 s. No row is narrower
+/// than the timing data buckets it takes, so every row can fill, and there
+/// are about as many rows as whole millisecond buckets once held, so a
+/// heatmap's JSON stays the size it was.
+const ROW_BANDS: [(u64, u64, usize); 7] = [
+    (0, 100, 10),
+    (1_000, 1_000, 63),
+    (64_000, 2_000, 18),
+    (100_000, 10_000, 40),
+    (500_000, 50_000, 10),
+    (1_000_000, 100_000, 40),
+    (5_000_000, 2_000_000, 28),
+];
 
-/// The fixed index of a rounded response time, if it has one.
-fn dense_index(rounded: usize) -> Option<usize> {
-    match rounded {
-        0..=100 => Some(rounded),
-        101..=500 => Some(100 + (rounded - 100) / 10),
-        501..=1000 => Some(140 + (rounded - 500) / 100),
-        1001..=60_000 => Some(145 + (rounded - 1000) / 1000),
-        _ => None,
+/// The fixed rows, every time up to 61 seconds, within the 256 a
+/// [`SecondHistogram`] entry's 8 bit index holds.
+const FIXED_BUCKETS: usize = 209;
+
+/// Where the fixed rows end. Past it, possible with a longer `--timeout`,
+/// each timing data bucket is a row of its own.
+const FIXED_END_US: u64 = 61_000_000;
+
+/// The heatmap row of a time in microseconds: its fixed row, or past 61
+/// seconds the row of its timing data bucket.
+fn display_index(us: u64) -> usize {
+    let mut first = 0;
+    for &(start, width, rows) in &ROW_BANDS {
+        if us < start + width * rows as u64 {
+            return first + ((us - start) / width) as usize;
+        }
+        first += rows;
     }
+    FIXED_BUCKETS + buckets::bucket_index(us) - buckets::bucket_index(FIXED_END_US)
 }
 
-/// The rounded response time a fixed index stands for.
-fn dense_value(index: usize) -> usize {
-    match index {
-        0..=100 => index,
-        101..=140 => 100 + (index - 100) * 10,
-        141..=145 => 500 + (index - 140) * 100,
-        _ => 1000 + (index - 145) * 1000,
+/// The first and the last microsecond of heatmap row `index`.
+fn display_range(index: usize) -> (u64, u64) {
+    let mut first = 0;
+    for &(start, width, rows) in &ROW_BANDS {
+        if index < first + rows {
+            let lowest = start + width * (index - first) as u64;
+            return (lowest, lowest + width - 1);
+        }
+        first += rows;
     }
+    // The first starts at 61 seconds, though its bucket may start before.
+    let bucket = buckets::bucket_at(buckets::bucket_index(FIXED_END_US) + index - FIXED_BUCKETS);
+    (bucket.max(FIXED_END_US), buckets::bucket_end(bucket) - 1)
+}
+
+/// The time, in microseconds, heatmap row `index` stands for: its middle.
+fn display_value(index: usize) -> u64 {
+    let (lowest, highest) = display_range(index);
+    lowest + (highest + 1 - lowest) / 2
+}
+
+/// The heatmap row of a timing data bucket that starts at `bucket`
+/// microseconds: the row of its last microsecond. A bucket is never wider
+/// than a row, so it reaches at most into the next one, and a whole
+/// millisecond time, which starts a row, stays in that row.
+fn bucket_row(bucket: u64) -> usize {
+    display_index(buckets::bucket_end(bucket) - 1)
 }
 
 /// Bits of a [`SecondHistogram`] entry that hold the count; the bucket index
@@ -283,30 +327,35 @@ const COUNT_BITS: u32 = 24;
 /// Most one entry counts. A bucket that fills an entry continues in the next.
 const COUNT_MAX: u32 = (1 << COUNT_BITS) - 1;
 
-/// One second's response times, in the same buckets as
-/// [`GooseRequestMetricTimingData`](crate::metrics::GooseRequestMetricTimingData) but held compactly: a sorted list with 4
-/// bytes for each bucket the second has seen (its index and its count), so a
-/// quiet name costs little and a busy one at most about 1 KB a second.
-/// Rounded times above 60 seconds, possible with a longer `--timeout`, go to
-/// a short sorted overflow list. The metrics processor merges each batch's
-/// response times for a request name (the batch's
-/// [`GooseRequestMetricTimingData`], all from one second) into the rings. A
-/// ring counts its newest seconds in a flat array instead (see
-/// [`LatencyRing`]), so merging a batch is an addition per bucket rather
-/// than a search, and packs each second once it stops filling.
+// Every fixed row's index fits in an entry's top bits.
+const _: () = assert!(FIXED_BUCKETS <= 1 << (32 - COUNT_BITS));
+
+/// One second's response times, counted by heatmap row (see
+/// [`ROW_BANDS`]), held compactly: a sorted list with 4 bytes for each row
+/// the second has seen (its index and its count), so a quiet name costs
+/// little and a busy one at most about 1 KB a second. Rows past 61 seconds,
+/// possible with a longer `--timeout`, go to a short sorted overflow list.
+/// The metrics processor merges each batch's response times for a request
+/// name (the batch's
+/// [`GooseRequestMetricTimingData`](crate::metrics::GooseRequestMetricTimingData),
+/// all from one second) into the rings, each of its buckets into the row
+/// it ends in. A ring counts its newest seconds in a flat array
+/// instead (see [`LatencyRing`]), so merging a batch is an addition per
+/// bucket rather than a search, and packs each second once it stops
+/// filling.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SecondHistogram {
     entries: Vec<u32>,
     overflow: Vec<(usize, u32)>,
     /// While a ring's second is still filling: its count for each fixed
-    /// index, with `entries` empty.
+    /// row, with `entries` empty.
     open: Option<Box<[usize; FIXED_BUCKETS]>>,
-    /// The fastest response, not rounded.
-    pub(crate) minimum_time: usize,
-    /// The slowest response, not rounded.
-    pub(crate) maximum_time: usize,
-    /// Sum of all response times.
-    pub(crate) total_time: usize,
+    /// The fastest response in microseconds, not rounded.
+    pub(crate) minimum_time_us: u64,
+    /// The slowest response in microseconds, not rounded.
+    pub(crate) maximum_time_us: u64,
+    /// Sum of all response times, in microseconds.
+    pub(crate) total_time_us: u64,
     /// Number of responses.
     pub(crate) counter: usize,
 }
@@ -315,9 +364,9 @@ pub(crate) struct SecondHistogram {
 /// each holds them.
 impl PartialEq for SecondHistogram {
     fn eq(&self, other: &Self) -> bool {
-        self.minimum_time == other.minimum_time
-            && self.maximum_time == other.maximum_time
-            && self.total_time == other.total_time
+        self.minimum_time_us == other.minimum_time_us
+            && self.maximum_time_us == other.maximum_time_us
+            && self.total_time_us == other.total_time_us
             && self.counter == other.counter
             && self
                 .buckets()
@@ -326,10 +375,10 @@ impl PartialEq for SecondHistogram {
     }
 }
 
-/// A bucket as `(rounded time, count)`.
+/// A row as `(index, count)`.
 type Bucket = (usize, usize);
 
-/// Join consecutive pieces of one bucket (a bucket past [`COUNT_MAX`]).
+/// Join consecutive pieces of one row (a row past [`COUNT_MAX`]).
 fn merge_bucket(a: Bucket, b: Bucket) -> Result<Bucket, (Bucket, Bucket)> {
     if a.0 == b.0 {
         Ok((a.0, a.1 + b.1))
@@ -354,7 +403,7 @@ impl SecondHistogram {
         }
     }
 
-    /// Add `count` to the bucket with fixed index `index`, searching from
+    /// Add `count` to the row with fixed index `index`, searching from
     /// entry `from` on. Returns where the search for a higher index can
     /// start.
     fn add_indexed(&mut self, from: usize, index: usize, mut count: usize) -> usize {
@@ -378,14 +427,16 @@ impl SecondHistogram {
         at
     }
 
-    fn add_bucket(&mut self, rounded: usize, count: usize) {
-        match dense_index(rounded) {
-            Some(index) => self.add_dense(index, count),
-            None => self.add_overflow(rounded, count),
+    /// Add `count` responses to heatmap row `row`.
+    fn add_bucket(&mut self, row: usize, count: usize) {
+        if row < FIXED_BUCKETS {
+            self.add_dense(row, count);
+        } else {
+            self.add_overflow(row, count);
         }
     }
 
-    /// Add `count` to the bucket with fixed index `index`.
+    /// Add `count` to the row with fixed index `index`.
     fn add_dense(&mut self, index: usize, count: usize) {
         match self.open.as_mut() {
             Some(open) => open[index] += count,
@@ -395,38 +446,39 @@ impl SecondHistogram {
         }
     }
 
-    /// Add `count` to the bucket of a rounded time with no fixed index.
-    fn add_overflow(&mut self, rounded: usize, count: usize) {
+    /// Add `count` to a row past the fixed ones.
+    fn add_overflow(&mut self, row: usize, count: usize) {
         let count = u32::try_from(count).unwrap_or(u32::MAX);
-        match self
-            .overflow
-            .binary_search_by_key(&rounded, |&(bucket, _)| bucket)
-        {
+        match self.overflow.binary_search_by_key(&row, |&(row, _)| row) {
             Ok(at) => self.overflow[at].1 = self.overflow[at].1.saturating_add(count),
-            Err(at) => self.overflow.insert(at, (rounded, count)),
+            Err(at) => self.overflow.insert(at, (row, count)),
         }
     }
 
-    fn add_totals(&mut self, minimum: usize, maximum: usize, total: usize, counter: usize) {
+    fn add_totals(&mut self, minimum: u64, maximum: u64, total: u64, counter: usize) {
         // The counters, not a minimum of 0, say whether there are times yet:
-        // a response under a millisecond is a minimum of 0.
-        if counter > 0 && (self.counter == 0 || minimum < self.minimum_time) {
-            self.minimum_time = minimum;
+        // a time can be 0 µs.
+        if counter > 0 && (self.counter == 0 || minimum < self.minimum_time_us) {
+            self.minimum_time_us = minimum;
         }
-        if maximum > self.maximum_time {
-            self.maximum_time = maximum;
+        if maximum > self.maximum_time_us {
+            self.maximum_time_us = maximum;
         }
-        self.total_time += total;
+        self.total_time_us += total;
         self.counter += counter;
     }
 
-    /// Record one response time, as
-    /// [`GooseRequestMetricTimingData::record_time`](crate::metrics::GooseRequestMetricTimingData::record_time)
-    /// does.
+    /// Record one response time in whole milliseconds (unit tests).
+    #[cfg(test)]
     pub(crate) fn record(&mut self, time: u64) {
-        let time_ms = time as usize;
-        self.add_totals(time_ms, time_ms, time_ms, 1);
-        self.add_bucket(round_metric_time(time), 1);
+        self.record_us(time.saturating_mul(1000));
+    }
+
+    /// Record one response time in microseconds, in the row of its timing
+    /// data bucket, as a batch merge counts it.
+    pub(crate) fn record_us(&mut self, us: u64) {
+        self.add_totals(us, us, us, 1);
+        self.add_bucket(bucket_row(buckets::bucket_floor(us)), 1);
     }
 
     /// Add another second's response times.
@@ -442,29 +494,29 @@ impl SecondHistogram {
                 from = self.add_indexed(from, index, count);
             }
         }
-        for &(bucket, count) in &other.overflow {
-            self.add_bucket(bucket, count as usize);
+        for &(row, count) in &other.overflow {
+            self.add_overflow(row, count as usize);
         }
         self.add_totals(
-            other.minimum_time,
-            other.maximum_time,
-            other.total_time,
+            other.minimum_time_us,
+            other.maximum_time_us,
+            other.total_time_us,
             other.counter,
         );
     }
 
     /// Add a batch's response times for one request name, all from this
-    /// second: buckets of rounded times, and the unrounded minimum, maximum,
-    /// total and count, as
+    /// second: each bucket into its row, and the unrounded minimum,
+    /// maximum, total and count, as
     /// [`GooseRequestMetricTimingData::merge`] adds them.
     pub(crate) fn merge_timing(&mut self, other: &GooseRequestMetricTimingData) {
-        for (&rounded, &count) in &other.times {
-            self.add_bucket(rounded, count);
+        for (&bucket, &count) in &other.times_us {
+            self.add_bucket(bucket_row(bucket), count);
         }
         self.add_totals(
-            other.minimum_time,
-            other.maximum_time,
-            other.total_time,
+            other.minimum_time_us,
+            other.maximum_time_us,
+            other.total_time_us,
             other.counter,
         );
     }
@@ -502,17 +554,13 @@ impl SecondHistogram {
         self.open = Some(counts);
     }
 
-    /// The heatmap's buckets of this second: each non empty bucket as
-    /// `index, count`, flattened, by ascending heatmap index.
+    /// The heatmap's rows of this second: each non empty row as
+    /// `index, count`, flattened, by ascending index.
     fn heat_cells(&self) -> Vec<u64> {
         let mut cells: Vec<u64> = Vec::new();
-        let overflow = self
-            .overflow
-            .iter()
-            .map(|&(rounded, count)| (heat_index(rounded), count as usize));
-        for (index, count) in self.indexed().chain(overflow) {
+        for (index, count) in self.buckets() {
             let (index, count) = (index as u64, count as u64);
-            // A bucket past COUNT_MAX continues in the next entry.
+            // A row past COUNT_MAX continues in the next entry.
             match cells.len().checked_sub(2).map(|at| cells[at]) {
                 Some(last) if last == index => *cells.last_mut().expect("a count") += count,
                 _ => cells.extend([index, count]),
@@ -521,9 +569,9 @@ impl SecondHistogram {
         cells
     }
 
-    /// Non empty buckets with a fixed index as `(index, count)`, fastest
-    /// first. A bucket past [`COUNT_MAX`] appears more than once,
-    /// consecutively, unless the second is open.
+    /// Non empty fixed rows as `(index, count)`, fastest first. A row past
+    /// [`COUNT_MAX`] appears more than once, consecutively, unless the
+    /// second is open.
     fn indexed(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
         let open = self.open.iter().flat_map(|open| {
             open.iter()
@@ -538,80 +586,65 @@ impl SecondHistogram {
         open.chain(packed)
     }
 
-    /// Non empty buckets as `(rounded time, count)`, fastest first. A bucket
-    /// past [`COUNT_MAX`] may appear more than once, consecutively.
+    /// Non empty rows, fixed and past them, as `(index, count)`, fastest
+    /// first. A row past [`COUNT_MAX`] may appear more than once,
+    /// consecutively.
     fn buckets(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
-        self.indexed()
-            .map(|(index, count)| (dense_value(index), count))
-            .chain(
-                self.overflow
-                    .iter()
-                    .map(|&(bucket, count)| (bucket, count as usize)),
-            )
+        self.indexed().chain(
+            self.overflow
+                .iter()
+                .map(|&(row, count)| (row, count as usize)),
+        )
     }
 
-    /// The response time `percent` of these requests finished within,
-    /// computed as for the whole run's percentiles.
+    /// [`Self::percentile_us`] in whole milliseconds, truncated (unit
+    /// tests).
+    #[cfg(test)]
     pub(crate) fn percentile(&self, percent: f32) -> usize {
+        (self.percentile_us(percent) / 1000) as usize
+    }
+
+    /// The response time `percent` of these requests finished within, in
+    /// microseconds: the middle of its row, kept between the fastest and
+    /// slowest, by the rule the whole run's percentiles follow.
+    pub(crate) fn percentile_us(&self, percent: f32) -> u64 {
         crate::metrics::response_time_percentile(
-            self.buckets(),
+            self.buckets()
+                .map(|(index, count)| (display_value(index), count)),
             self.counter,
-            self.minimum_time,
-            self.maximum_time,
+            self.minimum_time_us,
+            self.maximum_time_us,
             percent,
         )
     }
 }
 
-/// The heatmap's index of a rounded response time: its fixed index, or past
-/// 60 seconds one more for each second.
-fn heat_index(rounded: usize) -> usize {
-    dense_index(rounded)
-        .unwrap_or_else(|| FIXED_BUCKETS - 1 + rounded.saturating_sub(60_000) / 1000)
+/// Heatmap row `index` as `[time, lowest, highest]` in microseconds.
+fn row_entry_us(index: usize) -> [u64; 3] {
+    let (lowest, highest) = display_range(index);
+    [display_value(index), lowest, highest]
 }
 
-/// A bucket's rounded time and the lowest and highest measured times that
-/// round to it, in milliseconds.
-fn bucket_entry(value: u64) -> [u64; 3] {
-    // round_metric_time never decreases, so the times that round to `value`
-    // are one range: from the first that rounds to it up to the first that
-    // rounds past it.
-    let first_rounding_to = |target: u64| {
-        let (mut low, mut high) = (0u64, value * 2 + 1000);
-        while low < high {
-            let middle = (low + high) / 2;
-            if (round_metric_time(middle) as u64) < target {
-                low = middle + 1;
-            } else {
-                high = middle;
-            }
-        }
-        low
-    };
-    [
-        value,
-        first_rounding_to(value),
-        first_rounding_to(value + 1) - 1,
-    ]
+/// Heatmap row `index` as `[time, lowest, highest]` in whole milliseconds,
+/// truncated: the rows under a millisecond are all `[0, 0, 0]`.
+fn row_entry_ms(index: usize) -> [u64; 3] {
+    let [time, lowest, highest] = row_entry_us(index);
+    [time / 1000, lowest / 1000, highest / 1000]
 }
 
-/// The heatmap's bucket table, `[time, lowest, highest]` for each index from
-/// 0 to `last`, and always every fixed index.
+/// The heatmap's bucket table, `[time, lowest, highest]` in milliseconds
+/// for each index from 0 to `last`, and always every fixed index.
 fn bucket_table(last: usize) -> Vec<[u64; 3]> {
-    static FIXED: OnceLock<Vec<[u64; 3]>> = OnceLock::new();
-    let mut table = FIXED
-        .get_or_init(|| {
-            (0..FIXED_BUCKETS)
-                .map(|index| bucket_entry(dense_value(index) as u64))
-                .collect()
-        })
-        .clone();
-    for index in FIXED_BUCKETS..=last {
-        table.push(bucket_entry(
-            60_000 + (index + 1 - FIXED_BUCKETS) as u64 * 1000,
-        ));
-    }
-    table
+    (0..=last.max(FIXED_BUCKETS - 1))
+        .map(row_entry_ms)
+        .collect()
+}
+
+/// [`bucket_table`] in microseconds.
+fn bucket_table_us(last: usize) -> Vec<[u64; 3]> {
+    (0..=last.max(FIXED_BUCKETS - 1))
+        .map(row_entry_us)
+        .collect()
 }
 
 /// A new generation for a set of latency histograms: unique in the process
@@ -889,16 +922,21 @@ impl LatencyRing {
         }
     }
 
-    /// Record one response time in `second`, at `rev`, for a ring with no
-    /// columns to feed (unit tests).
+    /// Record one response time in whole milliseconds in `second`, at
+    /// `rev`, for a ring with no columns to feed (unit tests).
     #[cfg(test)]
     pub(crate) fn record(&mut self, second: usize, time: u64, rev: u64) {
-        self.record_to(second, time, rev, &mut ColumnSink::none());
+        self.record_to(
+            second,
+            time.saturating_mul(1000),
+            rev,
+            &mut ColumnSink::none(),
+        );
     }
 
-    /// Record one response time in `second`, at `rev`.
-    fn record_to(&mut self, second: usize, time: u64, rev: u64, sink: &mut ColumnSink<'_>) {
-        self.write(second, rev, sink, |histogram| histogram.record(time));
+    /// Record one response time in microseconds in `second`, at `rev`.
+    fn record_to(&mut self, second: usize, us: u64, rev: u64, sink: &mut ColumnSink<'_>) {
+        self.write(second, rev, sink, |histogram| histogram.record_us(us));
     }
 
     /// Add a batch's response times for one request name to `second`, at
@@ -1196,21 +1234,22 @@ impl LatencyHistograms {
     }
 
     #[cfg(test)]
-    fn record(&mut self, key: &str, second: usize, time: u64) {
+    fn record(&mut self, key: &str, second: usize, us: u64) {
         self.fit_columns(second);
         let rev = self.next_rev();
         let index = self.ring_index(key);
         let (ring, mut sink) = self.ring(index);
-        ring.record_to(second, time, rev, &mut sink);
+        ring.record_to(second, us, rev, &mut sink);
     }
 
-    /// Record one response time for `key`, whose entry is `entry`.
-    fn record_in(&mut self, key: &str, entry: &mut KeySeries, second: usize, time: u64) {
+    /// Record one response time in microseconds for `key`, whose entry is
+    /// `entry`.
+    fn record_in(&mut self, key: &str, entry: &mut KeySeries, second: usize, us: u64) {
         self.fit_columns(second);
         let index = self.pending(key, entry).ring;
         let rev = self.next_rev();
         let (ring, mut sink) = self.ring(index);
-        ring.record_to(second, time, rev, &mut sink);
+        ring.record_to(second, us, rev, &mut sink);
     }
 
     /// Merge a batch's timing data for `key` in `second` into the key's
@@ -1311,9 +1350,9 @@ impl LatencyHistograms {
         Some(all)
     }
 
-    /// Record a synthetic time. A name gets a synthetic ring only if it has a
-    /// measured one.
-    fn record_synthetic(&mut self, key: &str, second: usize, time: u64) {
+    /// Record a synthetic time, in microseconds. A name gets a synthetic
+    /// ring only if it has a measured one.
+    fn record_synthetic(&mut self, key: &str, second: usize, us: u64) {
         self.fit_columns(second);
         let rev = self.next_rev();
         let (origin, columns) = (self.origin, self.all_columns.is_some());
@@ -1322,7 +1361,7 @@ impl LatencyHistograms {
         };
         all.record_to(
             second,
-            time,
+            us,
             rev,
             &mut ColumnSink::own(origin, self.all_width),
         );
@@ -1331,10 +1370,10 @@ impl LatencyHistograms {
         }
         let mut sink = ColumnSink::own(origin, self.request_width);
         if let Some(ring) = by_request.get_mut(key) {
-            ring.record_to(second, time, rev, &mut sink);
+            ring.record_to(second, us, rev, &mut sink);
         } else {
             let mut ring = LatencyRing::with_columns(columns);
-            ring.record_to(second, time, rev, &mut sink);
+            ring.record_to(second, us, rev, &mut sink);
             by_request.insert(key.to_string(), ring);
         }
     }
@@ -1417,6 +1456,7 @@ impl LatencyHistograms {
             end_second: end as u64,
             hold_from: hold_from as u64,
             buckets: bucket_table(last_index),
+            buckets_us: bucket_table_us(last_index),
             columns,
         }
     }
@@ -1491,8 +1531,11 @@ struct ReportHeatmap<S> {
     offset: i64,
     /// The second, from the start, that column 0 begins at.
     origin: usize,
-    /// `[time, lowest, highest]` of each bucket index used.
+    /// `[time, lowest, highest]` of each bucket index used, in
+    /// milliseconds.
     buckets: Vec<[u64; 3]>,
+    /// The same table in microseconds.
+    buckets_us: Vec<[u64; 3]>,
     series: S,
 }
 
@@ -1550,7 +1593,7 @@ struct ReportView {
     min: usize,
     max: usize,
     /// Each column with requests, flattened: its index, its p50, p95 and
-    /// p99 in milliseconds, then each non empty bucket as its index, its
+    /// p99 in microseconds, then each non empty bucket as its index, its
     /// count and the count's place from 0 (`min`) to 1000 (`max`) on a
     /// logarithmic scale.
     columns: Vec<Vec<usize>>,
@@ -1586,9 +1629,9 @@ impl ReportView {
             }
             let mut flat = vec![
                 index,
-                column.percentile(0.5),
-                column.percentile(0.95),
-                column.percentile(0.99),
+                column.percentile_us(0.5) as usize,
+                column.percentile_us(0.95) as usize,
+                column.percentile_us(0.99) as usize,
             ];
             for pair in column.heat_cells().chunks(2) {
                 flat.extend([pair[0] as usize, pair[1] as usize, 0]);
@@ -1673,6 +1716,7 @@ impl LatencyHistograms {
             ) * 1000,
             origin: self.origin,
             buckets: bucket_table(last),
+            buckets_us: bucket_table_us(last),
             series,
         })
     }
@@ -1861,18 +1905,41 @@ impl GraphData {
         }
     }
 
-    /// Record one measured response time for the heatmap, without
-    /// counting a request (unit tests).
+    /// Record one measured response time in whole milliseconds for the
+    /// heatmap, without counting a request (unit tests).
     #[cfg(test)]
     pub(crate) fn record_latency(&mut self, key: &str, second: usize, time: u64) {
+        self.record_latency_us(key, second, time.saturating_mul(1000));
+    }
+
+    /// [`Self::record_latency`] in microseconds (unit tests).
+    #[cfg(test)]
+    pub(crate) fn record_latency_us(&mut self, key: &str, second: usize, us: u64) {
         if let Some(latency) = self.latency.as_mut() {
-            latency.record(key, second, time);
+            latency.record(key, second, us);
         }
     }
 
-    /// Count one request in `second` and, when `latency` is given and the
-    /// histograms are kept, record its response time for the heatmap.
+    /// [`Self::record_request_per_second_and_latency_us`] with the response
+    /// time in whole milliseconds (unit tests).
+    #[cfg(test)]
     pub(crate) fn record_request_per_second_and_latency(
+        &mut self,
+        key: &str,
+        second: usize,
+        latency: Option<u64>,
+    ) {
+        self.record_request_per_second_and_latency_us(
+            key,
+            second,
+            latency.map(|time| time.saturating_mul(1000)),
+        );
+    }
+
+    /// Count one request in `second` and, when `latency` (in microseconds)
+    /// is given and the histograms are kept, record its response time for
+    /// the heatmap.
+    pub(crate) fn record_request_per_second_and_latency_us(
         &mut self,
         key: &str,
         second: usize,
@@ -1929,9 +1996,7 @@ impl GraphData {
         match histograms.pending_at(pending, second) {
             Some(at) => {
                 pending.add_totals(at, data);
-                whole_run.merge_also(data, |rounded, count| {
-                    pending.add_bucket(at, rounded, count)
-                });
+                whole_run.merge_also(data, |bucket, count| pending.add_bucket(at, bucket, count));
             }
             None => {
                 histograms.merge_older(pending, second, data);
@@ -2015,10 +2080,11 @@ impl GraphData {
     }
 
     /// Record one synthetic response time from coordinated omission
-    /// mitigation, when synthetic histograms are kept.
+    /// mitigation, in whole milliseconds as mitigation makes them, when
+    /// synthetic histograms are kept.
     pub(crate) fn record_synthetic_latency(&mut self, key: &str, second: usize, time: u64) {
         if let Some(latency) = self.latency.as_mut() {
-            latency.record_synthetic(key, second, time);
+            latency.record_synthetic(key, second, time.saturating_mul(1000));
         }
     }
 
@@ -2170,18 +2236,34 @@ impl GraphData {
     }
 
     /// Record average response time per second metric.
+    #[cfg(test)]
     pub(crate) fn record_average_response_time_per_second(
         &mut self,
         key: String,
         second: usize,
         response_time: u64,
     ) {
+        self.record_average_response_time_per_second_us(
+            key,
+            second,
+            response_time.saturating_mul(1000),
+        );
+    }
+
+    /// Record one response time, in microseconds, in the average response
+    /// time per second, which is in milliseconds.
+    pub(crate) fn record_average_response_time_per_second_us(
+        &mut self,
+        key: String,
+        second: usize,
+        us: u64,
+    ) {
         let origin = self.users_per_second.origin;
         let data = self
             .average_response_time_per_second
             .entry(key)
             .or_insert_with(|| TimeSeries::with_origin(origin));
-        data.increase_value(second, response_time as f32);
+        data.increase_value(second, (us as f64 / 1000.0) as f32);
 
         debug!(
             "updated second {} for average response time per second: {}",
@@ -4624,20 +4706,20 @@ mod test {
 
     #[test]
     fn second_histogram_matches_timing_data() {
-        // Every rounded time maps to its own counter and back.
-        let mut rounded: Vec<usize> = (0..=100).collect();
-        rounded.extend((110..=500).step_by(10));
-        rounded.extend((600..=1000).step_by(100));
-        rounded.extend((2000..=60_000).step_by(1000));
-        assert_eq!(rounded.len(), FIXED_BUCKETS);
-        for (index, &value) in rounded.iter().enumerate() {
-            assert_eq!(dense_index(value), Some(index));
-            assert_eq!(dense_value(index), value);
+        // Every row maps to its own index and back, and the rows meet end to
+        // end, past the fixed ones too.
+        for index in 0..FIXED_BUCKETS + 50 {
+            let (lowest, highest) = display_range(index);
+            assert_eq!(display_index(lowest), index, "{index}");
+            assert_eq!(display_index(highest), index, "{index}");
+            assert_eq!(display_index(highest + 1), index + 1, "{index}");
+            assert_eq!(display_index(display_value(index)), index, "{index}");
         }
-        assert_eq!(dense_index(61_000), None);
+        assert_eq!(display_index(60_999_999), FIXED_BUCKETS - 1);
 
-        // Same buckets, totals and percentiles as the whole run histogram,
-        // including times past 60 seconds (a longer --timeout).
+        // The same totals as the whole run timing data, each bucket in the
+        // row of its last microsecond, and the same percentiles to within a
+        // row, including times past 61 seconds (a longer --timeout).
         let mut times: Vec<u64> = Vec::new();
         let mut seed: u64 = 7;
         for _ in 0..5000 {
@@ -4654,22 +4736,30 @@ mod test {
         }
         assert!(!histogram.overflow.is_empty());
         let buckets: Vec<(usize, usize)> = histogram.buckets().collect();
-        let expected: Vec<(usize, usize)> = reference.times.iter().map(|(&t, &c)| (t, c)).collect();
+        let mut expected: Vec<(usize, usize)> = Vec::new();
+        for (&bucket, &count) in &reference.times_us {
+            let row = display_index(crate::metrics::buckets::bucket_end(bucket) - 1);
+            match expected.last_mut() {
+                Some(last) if last.0 == row => last.1 += count,
+                _ => expected.push((row, count)),
+            }
+        }
         assert_eq!(buckets, expected);
         assert_eq!(histogram.counter, reference.counter);
-        assert_eq!(histogram.total_time, reference.total_time);
-        assert_eq!(histogram.minimum_time, reference.minimum_time);
-        assert_eq!(histogram.maximum_time, reference.maximum_time);
+        assert_eq!(histogram.total_time_us, reference.total_time_us);
+        assert_eq!(histogram.minimum_time_us, reference.minimum_time_us);
+        assert_eq!(histogram.maximum_time_us, reference.maximum_time_us);
         for percent in [0.0, 0.5, 0.95, 0.99, 1.0] {
-            assert_eq!(
-                histogram.percentile(percent),
-                crate::metrics::calculate_response_time_percentile(
-                    &reference.times,
-                    reference.counter,
-                    reference.minimum_time,
-                    reference.maximum_time,
-                    percent,
-                )
+            let (row, run) = (
+                display_index(histogram.percentile_us(percent)),
+                display_index(reference.percentile_us(percent)),
+            );
+            assert!(
+                row.abs_diff(run) <= 1,
+                "p{}: row {}, run {}",
+                percent,
+                row,
+                run
             );
         }
 
@@ -4871,7 +4961,7 @@ mod test {
         assert!(ring.get(100).is_none());
         let held = ring.get(400).expect("slot keeps second 400");
         assert_eq!(held.counter, 1);
-        assert_eq!(held.maximum_time, 25);
+        assert_eq!(held.maximum_time_us, 25_000);
         // A sample too old to keep does not mark the slot changed.
         assert_eq!(ring.slot(400).unwrap().rev, 1);
         // A newer second replaces the older one.
@@ -4889,38 +4979,60 @@ mod test {
     }
 
     #[test]
-    fn heatmap_bucket_table_follows_round_metric_time() {
-        let table = bucket_table(FIXED_BUCKETS);
+    fn heatmap_bucket_tables_follow_the_rows() {
+        let table = bucket_table_us(FIXED_BUCKETS);
         assert_eq!(table.len(), FIXED_BUCKETS + 1);
         // Every measured time from 0 to past 61 seconds falls in exactly the
-        // bucket whose range holds it, and the ranges meet end to end.
+        // row whose range holds it, the fixed rows meet end to end, and the
+        // whole millisecond table is the same, truncated.
+        let whole_ms = bucket_table(FIXED_BUCKETS);
         for (index, entry) in table.iter().enumerate() {
             let [value, lowest, highest] = *entry;
             assert!(lowest <= value && value <= highest, "{:?}", entry);
-            for time in [lowest, highest] {
-                assert_eq!(round_metric_time(time) as u64, value, "{entry:?}");
-                assert_eq!(heat_index(round_metric_time(time)), index, "{entry:?}");
+            for time in [lowest, value, highest] {
+                assert_eq!(display_index(time), index, "{entry:?}");
             }
-            if index > 0 {
+            if index > 0 && index < FIXED_BUCKETS {
                 assert_eq!(table[index - 1][2] + 1, lowest, "{entry:?}");
             }
+            assert_eq!(whole_ms[index], entry.map(|us| us / 1000), "{entry:?}");
         }
         for (index, entry) in [
-            (0, [0, 0, 0]),
-            (1, [1, 1, 1]),
-            (99, [99, 99, 99]),
-            (100, [100, 100, 104]),
-            (101, [110, 105, 114]),
-            (140, [500, 495, 549]),
-            (141, [600, 550, 649]),
-            (145, [1000, 950, 1499]),
-            (146, [2000, 1500, 2499]),
-            (204, [60_000, 59_500, 60_499]),
-            (205, [61_000, 60_500, 61_499]),
+            (0, [50, 0, 99]),
+            (9, [950, 900, 999]),
+            (10, [1_500, 1_000, 1_999]),
+            (72, [63_500, 63_000, 63_999]),
+            (73, [65_000, 64_000, 65_999]),
+            (91, [105_000, 100_000, 109_999]),
+            (131, [525_000, 500_000, 549_999]),
+            (141, [1_050_000, 1_000_000, 1_099_999]),
+            (145, [1_450_000, 1_400_000, 1_499_999]),
+            (146, [1_550_000, 1_500_000, 1_599_999]),
+            (181, [6_000_000, 5_000_000, 6_999_999]),
+            (208, [60_000_000, 59_000_000, 60_999_999]),
+            (209, [61_170_848, 61_000_000, 61_341_695]),
         ] {
             assert_eq!(table[index], entry, "index {index}");
         }
+        assert_eq!(whole_ms[9], [0, 0, 0]);
         assert_eq!(bucket_table(0).len(), FIXED_BUCKETS);
+        assert_eq!(bucket_table_us(0).len(), FIXED_BUCKETS);
+    }
+
+    /// Every fixed row takes at least one timing data bucket, so none stays
+    /// empty under a spread of times.
+    #[test]
+    fn every_fixed_row_takes_a_bucket() {
+        let mut taken = [false; FIXED_BUCKETS];
+        let mut bucket = 0;
+        while bucket < FIXED_END_US {
+            if let Some(row) = taken.get_mut(bucket_row(bucket)) {
+                *row = true;
+            }
+            bucket = crate::metrics::buckets::bucket_end(bucket);
+        }
+        let empty: Vec<usize> = (0..FIXED_BUCKETS).filter(|&row| !taken[row]).collect();
+        assert!(empty.is_empty(), "rows no bucket lands in: {:?}", empty);
     }
 
     /// A column's cells are kept from one heatmap to the next, and rebuilt
@@ -4934,7 +5046,8 @@ mod test {
             .export_series_window_until(300, Some(4))
             .heatmap
             .unwrap();
-        assert_eq!(measured_pairs(&first, 1), [(5, 1)]);
+        // 5 ms is row 14, past the ten rows under a millisecond.
+        assert_eq!(measured_pairs(&first, 1), [(14, 1)]);
         let again = graph
             .export_series_window_until(300, Some(4))
             .heatmap
@@ -4945,7 +5058,7 @@ mod test {
             .export_series_window_until(300, Some(4))
             .heatmap
             .unwrap();
-        assert_eq!(measured_pairs(&changed, 1), [(5, 1), (6, 1)]);
+        assert_eq!(measured_pairs(&changed, 1), [(14, 1), (15, 1)]);
     }
 
     #[test]
@@ -4965,9 +5078,9 @@ mod test {
             (0, 4, 3)
         );
         assert_eq!(first.columns.len(), 2);
-        assert_eq!(measured_pairs(&first, 1), [(5, 1)]);
-        // 120 ms is in the 120 ms bucket, index 102.
-        assert_eq!(measured_pairs(&first, 2), [(7, 2), (102, 1)]);
+        assert_eq!(measured_pairs(&first, 1), [(14, 1)]);
+        // 7 ms is row 16; 120 ms is in the 120 to 130 ms row, index 93.
+        assert_eq!(measured_pairs(&first, 2), [(16, 2), (93, 1)]);
         assert!(first
             .columns
             .iter()
@@ -5002,12 +5115,12 @@ mod test {
                 .collect::<Vec<_>>(),
             [1, 3]
         );
-        assert_eq!(measured_pairs(&delta, 1), [(5, 1), (6, 1)]);
-        // Past 60 seconds one row per second: 75 s is index 219, and the
-        // table grows to cover it.
-        assert_eq!(measured_pairs(&delta, 3), [(219, 1)]);
-        assert_eq!(delta.buckets.len(), 220);
-        assert_eq!(delta.buckets[219], [75_000, 74_500, 75_499]);
+        assert_eq!(measured_pairs(&delta, 1), [(14, 1), (15, 1)]);
+        // Past 61 seconds a row per timing data bucket: 75 s is index 228,
+        // and the table grows to cover it.
+        assert_eq!(measured_pairs(&delta, 3), [(228, 1)]);
+        assert_eq!(delta.buckets.len(), 229);
+        assert_eq!(delta.buckets[228], [74_973, 74_448, 75_497]);
 
         // A cursor of another generation, or from the future, gets the whole
         // window.
@@ -5145,10 +5258,13 @@ mod test {
         let every_bucket = |count: usize| {
             let mut data = GooseRequestMetricTimingData::default();
             for index in 0..FIXED_BUCKETS {
-                data.times.insert(dense_value(index), count);
+                data.times_us.insert(
+                    crate::metrics::buckets::bucket_floor(display_value(index)),
+                    count,
+                );
             }
             data.counter = FIXED_BUCKETS * count;
-            data.maximum_time = 60_000;
+            data.maximum_time_us = 60_000_000;
             data
         };
         let data = every_bucket(12_345);
@@ -5192,7 +5308,7 @@ mod test {
         };
         for second in 241..=300 {
             for index in 0..FIXED_BUCKETS {
-                graph.record_synthetic_latency("GET /", second, dense_value(index) as u64);
+                graph.record_synthetic_latency("GET /", second, display_value(index) / 1000);
             }
         }
         let backfill = graph
@@ -5244,12 +5360,12 @@ mod test {
         assert_eq!(series.name, "/a");
         let heatmap = &series.heatmap;
         assert_eq!((heatmap.start_second, heatmap.end_second), (0, 5));
-        assert_eq!(measured_pairs(heatmap, 1), [(30, 3)]);
-        assert_eq!(measured_pairs(heatmap, 2), [(30, 3)]);
-        // 4 s is index 148.
+        assert_eq!(measured_pairs(heatmap, 1), [(39, 3)]);
+        assert_eq!(measured_pairs(heatmap, 2), [(39, 3)]);
+        // 4 s is index 171.
         assert_eq!(
             HeatmapColumn::pairs(&heatmap.column(1).unwrap().synthetic),
-            [(148, 1)]
+            [(171, 1)]
         );
         // Not co_active: no synthetic times.
         let series = graph
@@ -6246,8 +6362,8 @@ mod test {
         assert_eq!(counts(synthetic_all), [(0, 1), (305 / 8, 1), (650 / 8, 4)]);
         assert_eq!(counts(synthetic_a), [(0, 1), (305 / 16, 1), (650 / 16, 3)]);
         assert!(!by_request.contains_key("GET /none"));
-        assert_eq!(synthetic_all.columns[0].maximum_time, 2_000);
-        assert_eq!(synthetic_a.columns[650 / 16].maximum_time, 3_000);
+        assert_eq!(synthetic_all.columns[0].maximum_time_us, 2_000_000);
+        assert_eq!(synthetic_a.columns[650 / 16].maximum_time_us, 3_000_000);
 
         let heatmap = latency.report_heatmap(true, Utc::now()).unwrap();
         let all = &heatmap.series[0];
@@ -6450,7 +6566,7 @@ mod test {
             .map(|(index, column)| (index, column.counter))
             .collect();
         assert_eq!(counts, [(0, 1), (1, 1)]);
-        assert_eq!(all.columns[0].maximum_time, 30);
+        assert_eq!(all.columns[0].maximum_time_us, 30_000);
         // The report places column 0 at the reset's second.
         assert_eq!(
             latency.report_heatmap(false, Utc::now()).unwrap().origin,
@@ -6596,9 +6712,9 @@ mod test {
                 assert_eq!(
                     column[1..4],
                     [
-                        direct.percentile(0.5),
-                        direct.percentile(0.95),
-                        direct.percentile(0.99)
+                        direct.percentile_us(0.5) as usize,
+                        direct.percentile_us(0.95) as usize,
+                        direct.percentile_us(0.99) as usize
                     ]
                 );
                 let cells: Vec<u64> = column[4..]
@@ -6687,7 +6803,9 @@ mod test {
 /// The heatmap's rows under a millisecond and its percentile lines in
 /// microseconds (#585).
 #[cfg(test)]
-#[cfg(any())] // until implementation
+// Written as for edition 2021: under this crate's 2018 edition a message
+// with inline arguments prints as it is written.
+#[allow(non_fmt_panics, unused_variables)]
 mod microsecond_tests {
     use super::*;
     use crate::metrics::dashboard_snapshot::HeatmapColumn;

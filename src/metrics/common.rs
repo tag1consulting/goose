@@ -1,6 +1,6 @@
 use super::{
-    delta::*, merge_times, per_second_calculations, prepare_status_codes, update_max_time,
-    update_min_time, CoMetricsSummary, GooseMetrics, GooseRequestMetricTimingData, NullableFloat,
+    delta::*, per_second_calculations, prepare_status_codes, CoMetricsSummary, GooseMetrics,
+    GooseRequestMetricTimingData, Millis, NullableFloat,
 };
 
 use crate::{
@@ -13,7 +13,7 @@ use crate::{
 use itertools::Itertools;
 use serde::{Deserialize, Deserializer};
 use std::borrow::Cow;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::fs::File;
 use std::hash::Hash;
 use std::io::BufReader;
@@ -22,7 +22,15 @@ use std::path::Path;
 /// The mean of these response times, in `f64` so that a large one prints to
 /// the hundredth exactly (NaN without times).
 fn average(data: &GooseRequestMetricTimingData) -> f64 {
-    data.total_time as f64 / data.counter as f64
+    data.average_ms()
+}
+
+/// [`average`], or 0 without times.
+fn average_or_zero(data: &GooseRequestMetricTimingData) -> f64 {
+    match data.counter {
+        0 => 0.0,
+        _ => data.average_ms(),
+    }
 }
 
 /// Custom deserializer for f64 values that converts JSON null to f64::NAN
@@ -154,8 +162,8 @@ impl<'m> Prepare<'m> {
                 number_of_requests: total_request_count.into(),
                 number_of_failures: request.fail_count.into(),
                 response_time_average: average(&request.raw_data).into(),
-                response_time_minimum: request.raw_data.minimum_time.into(),
-                response_time_maximum: request.raw_data.maximum_time.into(),
+                response_time_minimum: Millis(request.raw_data.minimum_time_us).into(),
+                response_time_maximum: Millis(request.raw_data.maximum_time_us).into(),
                 requests_per_second: requests_per_second.into(),
                 failures_per_second: failures_per_second.into(),
                 is_breakdown: false,
@@ -170,8 +178,8 @@ impl<'m> Prepare<'m> {
                         number_of_requests: b.count.into(),
                         number_of_failures: 0usize.into(),
                         response_time_average: b.average.into(),
-                        response_time_minimum: b.min_time.into(),
-                        response_time_maximum: b.max_time.into(),
+                        response_time_minimum: Millis(b.min_time_us).into(),
+                        response_time_maximum: Millis(b.max_time_us).into(),
                         requests_per_second: 0.0f32.into(),
                         failures_per_second: 0.0f32.into(),
                         is_breakdown: true,
@@ -180,14 +188,7 @@ impl<'m> Prepare<'m> {
             }
 
             // Prepare per-response metrics.
-            raw_response_metrics.push(get_response_metric(
-                method,
-                &name,
-                &request.raw_data.times,
-                request.raw_data.counter,
-                request.raw_data.minimum_time,
-                request.raw_data.maximum_time,
-            ));
+            raw_response_metrics.push(get_response_metric(method, &name, &request.raw_data));
 
             // Collect aggregated request and response metrics.
             raw_aggregate_total_count += total_request_count;
@@ -208,22 +209,15 @@ impl<'m> Prepare<'m> {
             number_of_requests: raw_aggregate_total_count.into(),
             number_of_failures: raw_aggregate_fail_count.into(),
             response_time_average: average(&raw_aggregate).into(),
-            response_time_minimum: raw_aggregate.minimum_time.into(),
-            response_time_maximum: raw_aggregate.maximum_time.into(),
+            response_time_minimum: Millis(raw_aggregate.minimum_time_us).into(),
+            response_time_maximum: Millis(raw_aggregate.maximum_time_us).into(),
             requests_per_second: raw_aggregate_requests_per_second.into(),
             failures_per_second: raw_aggregate_failures_per_second.into(),
             is_breakdown: false,
         });
 
         // Prepare aggregate per-response metrics.
-        raw_response_metrics.push(get_response_metric(
-            "",
-            "Aggregated",
-            &raw_aggregate.times,
-            raw_aggregate.counter,
-            raw_aggregate.minimum_time,
-            raw_aggregate.maximum_time,
-        ));
+        raw_response_metrics.push(get_response_metric("", "Aggregated", &raw_aggregate));
 
         (
             raw_request_metrics,
@@ -274,17 +268,14 @@ impl<'m> Prepare<'m> {
                         co_average as f32,
                     )
                     .into(),
-                    response_time_maximum: coordinated_omission_data.maximum_time.into(),
+                    response_time_maximum: Millis(coordinated_omission_data.maximum_time_us).into(),
                 });
 
                 // Prepare per-response metrics.
                 co_response_metrics.push(get_response_metric(
                     method,
                     &name,
-                    &coordinated_omission_data.times,
-                    coordinated_omission_data.counter,
-                    coordinated_omission_data.minimum_time,
-                    coordinated_omission_data.maximum_time,
+                    coordinated_omission_data,
                 ));
             }
         }
@@ -299,18 +290,11 @@ impl<'m> Prepare<'m> {
                 co_average as f32,
             )
             .into(),
-            response_time_maximum: co_aggregate.maximum_time.into(),
+            response_time_maximum: Millis(co_aggregate.maximum_time_us).into(),
         });
 
         // Prepare aggregate per-response metrics.
-        co_response_metrics.push(get_response_metric(
-            "",
-            "Aggregated",
-            &co_aggregate.times,
-            co_aggregate.counter,
-            co_aggregate.minimum_time,
-            co_aggregate.maximum_time,
-        ));
+        co_response_metrics.push(get_response_metric("", "Aggregated", &co_aggregate));
 
         (Some(co_request_metrics), Some(co_response_metrics))
     }
@@ -323,11 +307,8 @@ impl<'m> Prepare<'m> {
         let mut transaction_metrics = Vec::new();
         let mut aggregate_total_count = 0;
         let mut aggregate_fail_count = 0;
-        let mut aggregate_transaction_time_counter: usize = 0;
-        let mut aggregate_transaction_total_time: usize = 0;
-        let mut aggregate_transaction_time_minimum: usize = 0;
-        let mut aggregate_transaction_time_maximum: usize = 0;
-        let mut aggregate_transaction_times: BTreeMap<usize, usize> = BTreeMap::new();
+        // Every transaction's run times together.
+        let mut aggregate_times = GooseRequestMetricTimingData::default();
         for (scenario_counter, scenario) in self.metrics.transactions.iter().enumerate() {
             for (transaction_counter, transaction) in scenario.iter().enumerate() {
                 if transaction_counter == 0 {
@@ -351,10 +332,7 @@ impl<'m> Prepare<'m> {
                     total_run_count,
                     transaction.fail_count,
                 );
-                let average = match transaction.counter {
-                    0 => 0.00,
-                    _ => transaction.total_time as f32 / transaction.counter as f32,
-                };
+                let times = &transaction.run_times;
                 transaction_metrics.push(TransactionMetric {
                     is_scenario: false,
                     transaction: format!("{scenario_counter}.{transaction_counter}"),
@@ -364,23 +342,16 @@ impl<'m> Prepare<'m> {
                         .to_string(),
                     number_of_requests: total_run_count.into(),
                     number_of_failures: transaction.fail_count.into(),
-                    response_time_average: Some(average.into()),
-                    response_time_minimum: transaction.min_time.into(),
-                    response_time_maximum: transaction.max_time.into(),
+                    response_time_average: Some(average_or_zero(times).into()),
+                    response_time_minimum: Millis(times.minimum_time_us).into(),
+                    response_time_maximum: Millis(times.maximum_time_us).into(),
                     requests_per_second: Some(requests_per_second.into()),
                     failures_per_second: Some(failures_per_second.into()),
                 });
 
                 aggregate_total_count += total_run_count;
                 aggregate_fail_count += transaction.fail_count;
-                aggregate_transaction_times =
-                    merge_times(aggregate_transaction_times, &transaction.times);
-                aggregate_transaction_time_counter += &transaction.counter;
-                aggregate_transaction_total_time += &transaction.total_time;
-                aggregate_transaction_time_minimum =
-                    update_min_time(aggregate_transaction_time_minimum, transaction.min_time);
-                aggregate_transaction_time_maximum =
-                    update_max_time(aggregate_transaction_time_maximum, transaction.max_time);
+                aggregate_times.merge(times);
             }
         }
 
@@ -396,18 +367,9 @@ impl<'m> Prepare<'m> {
             name: "Aggregated".to_string(),
             number_of_requests: aggregate_total_count.into(),
             number_of_failures: aggregate_fail_count.into(),
-            response_time_average: Some(
-                match aggregate_transaction_time_counter {
-                    0 => 0.0,
-                    _ => {
-                        aggregate_transaction_total_time as f64
-                            / aggregate_transaction_time_counter as f64
-                    }
-                }
-                .into(),
-            ),
-            response_time_minimum: aggregate_transaction_time_minimum.into(),
-            response_time_maximum: aggregate_transaction_time_maximum.into(),
+            response_time_average: Some(average_or_zero(&aggregate_times).into()),
+            response_time_minimum: Millis(aggregate_times.minimum_time_us).into(),
+            response_time_maximum: Millis(aggregate_times.maximum_time_us).into(),
             requests_per_second: Some(aggregate_requests_per_second.into()),
             failures_per_second: Some(aggregate_failures_per_second.into()),
         });
@@ -422,54 +384,39 @@ impl<'m> Prepare<'m> {
 
         let mut scenario_metrics = Vec::new();
         let mut aggregate_users = 0;
-        let mut aggregate_count = 0;
-        let mut aggregate_scenario_time_counter: usize = 0;
-        let mut aggregate_scenario_time_minimum: usize = 0;
-        let mut aggregate_scenario_time_maximum: usize = 0;
-        let mut aggregate_scenario_times: BTreeMap<usize, usize> = BTreeMap::new();
+        // Every scenario's run times together.
+        let mut aggregate_times = GooseRequestMetricTimingData::default();
         let mut aggregate_iterations = 0.0;
-        let mut aggregate_response_time_counter = 0.0;
         for scenario in &self.metrics.scenarios {
+            let times = &scenario.run_times;
             let (count_per_second, _failures_per_second) =
-                per_second_calculations(self.metrics.duration, scenario.counter, 0);
-            let average = match scenario.counter {
-                0 => 0.00,
-                _ => scenario.total_time as f32 / scenario.counter as f32,
-            };
-            let iterations = scenario.counter as f32 / scenario.users.len() as f32;
+                per_second_calculations(self.metrics.duration, times.counter, 0);
+            let iterations = times.counter as f32 / scenario.users.len() as f32;
             scenario_metrics.push(ScenarioMetric {
                 name: scenario.name.to_string(),
                 users: scenario.users.len().into(),
-                count: scenario.counter.into(),
-                response_time_average: average.into(),
-                response_time_minimum: scenario.min_time.into(),
-                response_time_maximum: scenario.max_time.into(),
+                count: times.counter.into(),
+                response_time_average: average_or_zero(times).into(),
+                response_time_minimum: Millis(times.minimum_time_us).into(),
+                response_time_maximum: Millis(times.maximum_time_us).into(),
                 count_per_second: count_per_second.into(),
                 iterations: iterations.into(),
             });
 
             aggregate_users += scenario.users.len();
-            aggregate_count += scenario.counter;
-            aggregate_scenario_times = merge_times(aggregate_scenario_times, &scenario.times);
-            aggregate_scenario_time_counter += &scenario.counter;
-            aggregate_scenario_time_minimum =
-                update_min_time(aggregate_scenario_time_minimum, scenario.min_time);
-            aggregate_scenario_time_maximum =
-                update_max_time(aggregate_scenario_time_maximum, scenario.max_time);
+            aggregate_times.merge(times);
             aggregate_iterations += iterations;
-            aggregate_response_time_counter += scenario.total_time as f32;
         }
 
         let (aggregate_count_per_second, _aggregate_failures_per_second) =
-            per_second_calculations(self.metrics.duration, aggregate_count, 0);
+            per_second_calculations(self.metrics.duration, aggregate_times.counter, 0);
         scenario_metrics.push(ScenarioMetric {
             name: "Aggregated".to_string(),
             users: aggregate_users.into(),
-            count: aggregate_count.into(),
-            response_time_average: (aggregate_response_time_counter / aggregate_count as f32)
-                .into(),
-            response_time_minimum: aggregate_scenario_time_minimum.into(),
-            response_time_maximum: aggregate_scenario_time_maximum.into(),
+            count: aggregate_times.counter.into(),
+            response_time_average: average(&aggregate_times).into(),
+            response_time_minimum: Millis(aggregate_times.minimum_time_us).into(),
+            response_time_maximum: Millis(aggregate_times.maximum_time_us).into(),
             count_per_second: aggregate_count_per_second.into(),
             iterations: aggregate_iterations.into(),
         });
@@ -803,8 +750,8 @@ impl From<BaselineRequestMetric> for RequestMetric {
             number_of_requests: Value::Plain(baseline.number_of_requests),
             number_of_failures: Value::Plain(baseline.number_of_failures),
             response_time_average: Value::Plain(NullableFloat(baseline.response_time_average)),
-            response_time_minimum: Value::Plain(baseline.response_time_minimum),
-            response_time_maximum: Value::Plain(baseline.response_time_maximum),
+            response_time_minimum: baseline.response_time_minimum.into(),
+            response_time_maximum: baseline.response_time_maximum.into(),
             requests_per_second: Value::Plain(NullableFloat(baseline.requests_per_second)),
             failures_per_second: Value::Plain(NullableFloat(baseline.failures_per_second)),
             is_breakdown: baseline.is_breakdown,
@@ -832,14 +779,14 @@ impl From<BaselineResponseMetric> for ResponseMetric {
         ResponseMetric {
             method: baseline.method,
             name: baseline.name,
-            percentile_50: Value::Plain(baseline.percentile_50),
-            percentile_60: Value::Plain(baseline.percentile_60),
-            percentile_70: Value::Plain(baseline.percentile_70),
-            percentile_80: Value::Plain(baseline.percentile_80),
-            percentile_90: Value::Plain(baseline.percentile_90),
-            percentile_95: Value::Plain(baseline.percentile_95),
-            percentile_99: Value::Plain(baseline.percentile_99),
-            percentile_100: Value::Plain(baseline.percentile_100),
+            percentile_50: baseline.percentile_50.into(),
+            percentile_60: baseline.percentile_60.into(),
+            percentile_70: baseline.percentile_70.into(),
+            percentile_80: baseline.percentile_80.into(),
+            percentile_90: baseline.percentile_90.into(),
+            percentile_95: baseline.percentile_95.into(),
+            percentile_99: baseline.percentile_99.into(),
+            percentile_100: baseline.percentile_100.into(),
         }
     }
 }
@@ -863,7 +810,7 @@ impl From<BaselineCORequestMetric> for CORequestMetric {
             response_time_standard_deviation: Value::Plain(NullableFloat(
                 baseline.response_time_standard_deviation,
             )),
-            response_time_maximum: Value::Plain(baseline.response_time_maximum),
+            response_time_maximum: baseline.response_time_maximum.into(),
         }
     }
 }
@@ -894,8 +841,8 @@ impl From<BaselineTransactionMetric> for TransactionMetric {
             response_time_average: baseline
                 .response_time_average
                 .map(|v| Value::Plain(NullableFloat(v))),
-            response_time_minimum: Value::Plain(baseline.response_time_minimum),
-            response_time_maximum: Value::Plain(baseline.response_time_maximum),
+            response_time_minimum: baseline.response_time_minimum.into(),
+            response_time_maximum: baseline.response_time_maximum.into(),
             requests_per_second: baseline
                 .requests_per_second
                 .map(|v| Value::Plain(NullableFloat(v))),
@@ -928,8 +875,8 @@ impl From<BaselineScenarioMetric> for ScenarioMetric {
             response_time_average: Value::Plain(NullableFloat(
                 baseline.response_time_average.unwrap_or(f64::NAN),
             )),
-            response_time_minimum: Value::Plain(baseline.response_time_minimum),
-            response_time_maximum: Value::Plain(baseline.response_time_maximum),
+            response_time_minimum: baseline.response_time_minimum.into(),
+            response_time_maximum: baseline.response_time_maximum.into(),
             count_per_second: Value::Plain(NullableFloat(baseline.count_per_second)),
             iterations: Value::Plain(NullableFloat(baseline.iterations.unwrap_or(f64::NAN))),
         }
@@ -1018,6 +965,7 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::metrics::millis::MillisDelta;
     use crate::report::RequestMetric;
 
     #[test]
@@ -1329,24 +1277,24 @@ mod test {
         assert!(matches!(
             current.raw_response_metrics[0].percentile_50,
             Value::Delta {
-                value: 50,
-                delta: 10
+                value: Millis(50_000),
+                delta: MillisDelta(10_000)
             }
         ));
         // CO request: 600 - 500 = +100
         assert!(matches!(
             current.co_request_metrics.as_ref().unwrap()[0].response_time_maximum,
             Value::Delta {
-                value: 600,
-                delta: 100
+                value: Millis(600_000),
+                delta: MillisDelta(100_000)
             }
         ));
         // CO response percentile: 55 - 45 = +10
         assert!(matches!(
             current.co_response_metrics.as_ref().unwrap()[0].percentile_50,
             Value::Delta {
-                value: 55,
-                delta: 10
+                value: Millis(55_000),
+                delta: MillisDelta(10_000)
             }
         ));
         // Transaction: 200 - 150 = +50

@@ -7,12 +7,20 @@ type DashboardSnapshotVersion = 1;
 
 type AggregateMetrics = { total_requests: number, total_failures: number, requests_per_second: number, failures_per_second: number, failure_rate: number, response_time_avg_ms: number, response_time_min_ms: number, response_time_max_ms: number, percentile_ms: Percentiles,
 /**
+ * The same times to the microsecond, null without times.
+ */
+response_time_us: MicrosecondTimes | null,
+/**
  * True iff coordinated-omission metrics object is present AND has recorded
  * at least one CO event (or synthetic request).
  */
 co_active: boolean, co_adjusted: CoAdjusted | null, };
 
-type CoAdjusted = { response_time_avg_ms: number, response_time_max_ms: number, percentile_ms: Percentiles, };
+type CoAdjusted = { response_time_avg_ms: number, response_time_max_ms: number, percentile_ms: Percentiles,
+/**
+ * The same times to the microsecond, null without times.
+ */
+response_time_us: MicrosecondTimes | null, };
 
 type DashboardSnapshot = { version: number, generated_at: string, goose_version: string, phase: string,
 /**
@@ -85,12 +93,18 @@ end_second: number,
  */
 hold_from: number,
 /**
- * Each bucket by index, as `[time, lowest, highest]` in milliseconds:
- * the rounded response time Goose stores for the bucket, and the range
- * of measured times that round to it. A longer table replaces a shorter
- * one; entries never change.
+ * Each bucket by index, as `[time, lowest, highest]` in whole
+ * milliseconds, truncated: the time the bucket stands for, and the
+ * range of measured times in it. The buckets under a millisecond all
+ * show as `[0, 0, 0]` here; `buckets_us` tells them apart. A longer
+ * table replaces a shorter one; entries never change.
  */
 buckets: Array<[number, number, number]>,
+/**
+ * The same table in microseconds: buckets of 100 µs under a
+ * millisecond, then the same buckets as `buckets`.
+ */
+buckets_us: Array<[number, number, number]>,
 /**
  * The columns that changed, oldest first.
  */
@@ -111,9 +125,15 @@ measured: Array<number>,
  */
 synthetic: Array<number>, };
 
+type MicrosecondTimes = { min: number, max: number, p50: number, p95: number, p99: number, };
+
 type Percentiles = { p50: number, p95: number, p99: number, };
 
-type RequestRow = { method: string, name: string, request_count: number, failure_count: number, requests_per_second: number, failures_per_second: number, response_time_avg_ms: number, response_time_min_ms: number, response_time_max_ms: number, percentile_ms: Percentiles, status_codes: Array<[number, number]>, co_adjusted: CoAdjusted | null,
+type RequestRow = { method: string, name: string, request_count: number, failure_count: number, requests_per_second: number, failures_per_second: number, response_time_avg_ms: number, response_time_min_ms: number, response_time_max_ms: number, percentile_ms: Percentiles,
+/**
+ * The same times to the microsecond, null without times.
+ */
+response_time_us: MicrosecondTimes | null, status_codes: Array<[number, number]>, co_adjusted: CoAdjusted | null,
 /**
  * True when the response time heatmap can show this request alone:
  * they are kept for the first 100 request names seen since metrics were
@@ -137,7 +157,11 @@ users: number,
 /**
  * Completed passes through the scenario's weighted transactions.
  */
-run_count: number, runs_per_second: number, response_time_avg_ms: number, response_time_min_ms: number, response_time_max_ms: number, percentile_ms: Percentiles, };
+run_count: number, runs_per_second: number, response_time_avg_ms: number, response_time_min_ms: number, response_time_max_ms: number, percentile_ms: Percentiles,
+/**
+ * The same times to the microsecond, all 0 without times.
+ */
+response_time_us: MicrosecondTimes, };
 
 type SeriesWindow = {
 /**
@@ -245,4 +269,8 @@ transaction_name: string,
 /**
  * Successful plus failed runs.
  */
-run_count: number, failure_count: number, runs_per_second: number, failures_per_second: number, response_time_avg_ms: number, response_time_min_ms: number, response_time_max_ms: number, percentile_ms: Percentiles, };
+run_count: number, failure_count: number, runs_per_second: number, failures_per_second: number, response_time_avg_ms: number, response_time_min_ms: number, response_time_max_ms: number, percentile_ms: Percentiles,
+/**
+ * The same times to the microsecond, all 0 without times.
+ */
+response_time_us: MicrosecondTimes, };
