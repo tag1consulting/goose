@@ -30,6 +30,21 @@ export function formatInt(n: number | undefined): string {
   return Math.round(n).toLocaleString();
 }
 
+/**
+ * A response time in milliseconds: to the hundredth, truncated, under 10 ms,
+ * where whole milliseconds hide the difference (0.42), whole above, as the
+ * reports show it.
+ */
+export function formatMs(n: number | undefined): string {
+  if (typeof n !== "number" || !isFinite(n)) return "—";
+  if (n < 10 && !Number.isInteger(n)) {
+    return (Math.floor(n * 100 + 1e-6) / 100).toLocaleString(undefined, {
+      maximumFractionDigits: 2,
+    });
+  }
+  return Math.floor(n).toLocaleString();
+}
+
 export function formatRate(n: number | undefined): string {
   if (typeof n !== "number" || !isFinite(n)) return "—";
   return n.toLocaleString(undefined, {

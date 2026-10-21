@@ -2,6 +2,14 @@
 // one when the snapshot carries it, otherwise the measured one. Imports
 // nothing, so the client tests load it without the bundle.
 
+/**
+ * A response time in milliseconds: `us` microseconds when the snapshot has
+ * them, otherwise the whole milliseconds `ms`.
+ */
+export function inMs(ms: number, us: number | null | undefined): number {
+  return us == null ? ms : us / 1000;
+}
+
 export interface ShownTime {
   value: number;
   /** "Measured: N ms" when `value` is adjusted, or null when it is measured. */

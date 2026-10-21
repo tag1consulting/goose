@@ -31,7 +31,11 @@ export interface HeatmapState {
   startSecond: number;
   endSecond: number;
   holdFrom: number;
-  /** `[time, lowest, highest]` in milliseconds for each bucket index. */
+  /**
+   * `[time, lowest, highest]` in milliseconds for each bucket index, from
+   * `buckets_us` when the server sends it, so the rows under a millisecond
+   * have their own times; `highest + 1` is where the bucket ends.
+   */
   buckets: number[][];
   columns: Map<number, HeatmapColumn>;
 }
@@ -53,17 +57,17 @@ export function applyHeatmap(
 ): HeatmapState | null {
   let columns: Map<number, HeatmapColumn>;
   let buckets: number[][];
+  const table = bucketTable(heatmap);
   if (heatmap.since === 0) {
     columns = new Map();
-    buckets = heatmap.buckets;
+    buckets = table;
   } else if (
     state !== null &&
     state.generation === heatmap.generation &&
     state.rev === heatmap.since
   ) {
     columns = new Map(state.columns);
-    buckets =
-      heatmap.buckets.length >= state.buckets.length ? heatmap.buckets : state.buckets;
+    buckets = table.length >= state.buckets.length ? table : state.buckets;
   } else {
     return null;
   }
@@ -82,6 +86,22 @@ export function applyHeatmap(
     buckets,
     columns,
   };
+}
+
+/**
+ * The bucket table in milliseconds: from `buckets_us`, each microsecond
+ * entry `[time, lowest, highest]` as milliseconds with `highest` one
+ * millisecond short of where the bucket ends, as in `buckets`, or `buckets`
+ * itself from a server without it.
+ */
+export function bucketTable(heatmap: Heatmap): number[][] {
+  const us = heatmap.buckets_us;
+  if (us === undefined || us.length === 0) return heatmap.buckets;
+  return us.map(([time, lowest, highest]) => [
+    time / 1000,
+    lowest / 1000,
+    (highest + 1) / 1000 - 1,
+  ]);
 }
 
 export function heatmapCursor(state: HeatmapState | null): HeatmapCursor | null {
@@ -147,7 +167,7 @@ export interface HeatmapView {
 
 /** Latency axis ticks, in milliseconds. */
 export const TICKS_MS = [
-  1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 60000,
+  0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 60000,
 ];
 
 export function tickLabel(ms: number): string {
@@ -156,13 +176,14 @@ export function tickLabel(ms: number): string {
 
 /**
  * A bucket's span on the latency axis: from its lowest measured time to just
- * past its highest. Bucket 0 holds times under a millisecond, which a log axis
- * cannot reach down to, so it spans from half a millisecond to one.
+ * past its highest. Bucket 0 starts at 0, which a log axis cannot reach down
+ * to, so it spans from half its end: half a millisecond to one from a server
+ * without microseconds, 0.05 to 0.1 ms with them.
  */
 export function bucketSpan(bucket: number[]): [number, number] {
   const lowest = bucket[1];
-  const highest = bucket[2];
-  return [lowest === 0 ? 0.5 : lowest, highest + 1];
+  const end = bucket[2] + 1;
+  return [lowest === 0 ? end / 2 : lowest, end];
 }
 
 /** Adds flattened `index, count` pairs into `into`. */
@@ -242,11 +263,15 @@ export function heatmapView(state: HeatmapState | null, adjusted: boolean): Heat
     });
   }
   const ticks: HeatmapTick[] = [];
-  // Responses under a millisecond have their own row, below the 1 ms tick.
-  if (rows[0].bucket === 0) {
+  // Without microseconds, responses under a millisecond have one row of
+  // their own, below the 1 ms tick.
+  const underOneRow = rows[0].bucket === 0 && rows[0].highest === 0;
+  if (underOneRow) {
     ticks.push({ ms: 0, label: "<1 ms", y: (rows[0].top + rows[0].bottom) / 2 });
   }
   for (const ms of TICKS_MS) {
+    // That row has no times of its own under a millisecond to tick.
+    if (underOneRow && ms < 1) continue;
     const y = fraction(ms);
     if (y >= 0 && y <= 1) ticks.push({ ms, label: tickLabel(ms), y });
   }
@@ -349,7 +374,10 @@ export function secondLabels(startSecond: number, columns: number): number[] {
 function bucketOf(state: HeatmapState, bucket: number): number[] {
   const entry = state.buckets[bucket];
   if (entry !== undefined) return entry;
-  const time = 60000 + (bucket - 204) * 1000;
+  // The table always holds every fixed bucket, and the last ones are 1 s
+  // apart, so a bucket past it is that many seconds past its last entry.
+  const last = state.buckets.length - 1;
+  const time = Math.round(state.buckets[last][0]) + (bucket - last) * 1000;
   return [time, time - 500, time + 499];
 }
 
@@ -390,6 +418,8 @@ export function cellColor(count: number, min: number, max: number, dark: boolean
 export interface Formats {
   int: (n: number) => string;
   pct: (fraction: number) => string;
+  /** A response time in milliseconds, to the hundredth under 10 ms; `int` when absent. */
+  ms?: (n: number) => string;
 }
 
 /** A cell's tooltip. */
@@ -400,11 +430,15 @@ export function tooltipText(
   adjusted: boolean,
   formats: Formats
 ): string {
+  const ms = formats.ms || formats.int;
   let bucket: string;
   if (row.highest === 0) {
     bucket = "under 1 ms";
+  } else if (row.highest < 0) {
+    // A row under a millisecond, from `buckets_us`: it ends at highest + 1.
+    bucket = ms(row.lowest) + " to " + ms(row.highest + 1) + " ms";
   } else if (row.lowest === row.highest) {
-    bucket = formats.int(row.time) + " ms";
+    bucket = formats.int(row.lowest) + " ms";
   } else {
     bucket =
       formats.int(row.time) +
@@ -432,11 +466,11 @@ export function tooltipText(
   if (percentiles !== undefined) {
     text +=
       " p50 / p95 / p99: " +
-      formats.int(percentiles.p50) +
+      ms(percentiles.p50) +
       " / " +
-      formats.int(percentiles.p95) +
+      ms(percentiles.p95) +
       " / " +
-      formats.int(percentiles.p99) +
+      ms(percentiles.p99) +
       " ms";
   }
   return text;

@@ -845,7 +845,7 @@ test("the KPIs, the Whole run card and the tables say they cover the whole run",
   assert.equal(aggregate.querySelector("h2").textContent, "Whole run");
   assert.equal(
     aggregate.querySelector("p.note").textContent,
-    "Since the test started, or since metrics were last reset. Goose measures response times in whole milliseconds."
+    "Since the test started, or since metrics were last reset. Request times under 10 ms are shown to the hundredth of a millisecond."
   );
   const percentiles = [
     ["p50", "Whole run"],
