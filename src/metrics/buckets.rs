@@ -1,16 +1,16 @@
 //! Response time buckets, in microseconds.
 //!
-//! Below 10 ms every bucket is 10 µs wide, as fine as times there are
-//! shown (to the hundredth of a millisecond), and reports its middle, so at
-//! most 5 µs from any time it holds. From 10 ms each power of two is split
-//! into 64 buckets of equal width, so a bucket is never wider than 1/64 of
-//! its lowest time and reports a time at most 1/128 (0.78%) from any it
-//! holds; the first starts at 10 ms. From 1 µs to the default 60 second
-//! `--timeout` there are 1,805 buckets; a timing data keeps only those that
-//! hold a time.
+//! Below 1 ms every bucket is 10 µs wide, as fine as times there are shown
+//! (to the hundredth of a millisecond), and reports its middle, so at most
+//! 5 µs from any time it holds. From 1 ms each power of two is split into
+//! 64 buckets of equal width, so a bucket is never wider than 1/64 of its
+//! lowest time and reports a time at most 1/128 (0.78%) from any it holds;
+//! the first starts at 1 ms. From 1 µs to the default 60 second `--timeout`
+//! there are 1,114 buckets; a timing data keeps only those that hold a
+//! time.
 
 /// Where the 10 µs buckets end and the 1% buckets begin.
-const FINE_END: u64 = 10_000;
+const FINE_END: u64 = 1_000;
 
 /// The width of a bucket below [`FINE_END`].
 const FINE_WIDTH: u64 = 10;
@@ -307,7 +307,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn ten_microseconds_below_ten_milliseconds() {
+    fn ten_microseconds_below_one_millisecond() {
         for us in 0..FINE_END {
             assert_eq!(bucket_floor(us), us / 10 * 10);
             assert_eq!(bucket_end(us), us / 10 * 10 + 10);
@@ -367,7 +367,7 @@ mod test {
 
     #[test]
     fn bucket_count_to_the_default_timeout() {
-        assert_eq!(bucket_index(60_000_000) - bucket_index(1) + 1, 1_805);
+        assert_eq!(bucket_index(60_000_000) - bucket_index(1) + 1, 1_114);
         assert_eq!(bucket_end(u64::MAX), u64::MAX);
     }
 }
