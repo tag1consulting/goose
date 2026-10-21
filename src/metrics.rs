@@ -22,6 +22,7 @@ mod nullable;
 #[allow(non_fmt_panics, unused_variables, clippy::field_reassign_with_default)]
 mod microsecond_tests;
 
+pub use buckets::TimeBuckets;
 #[cfg(feature = "dashboard")]
 pub(crate) use common::compare_reports;
 pub(crate) use common::{load_baseline_file, ReportData};
@@ -193,6 +194,23 @@ pub struct GooseMetricBatch {
 }
 
 impl GooseMetricBatch {
+    /// Put in order the buckets the batch's timing data recorded out of
+    /// order, before it is sent.
+    pub(crate) fn finish(&mut self) {
+        for entry in self.requests.values_mut() {
+            entry.raw_data.finish();
+        }
+        for data in self.next_second.values_mut() {
+            data.finish();
+        }
+        for entry in self.transactions.values_mut() {
+            entry.run_times.finish();
+        }
+        for entry in self.scenarios.values_mut() {
+            entry.run_times.finish();
+        }
+    }
+
     /// Create a new empty batch stamped with the given epoch.
     pub(crate) fn new(epoch: u64) -> Self {
         GooseMetricBatch {
@@ -1184,7 +1202,7 @@ pub struct GooseRequestMetricTimingData {
     /// How many times fell in each bucket, keyed by the bucket's fastest
     /// time in microseconds. Every time under 128 µs has a bucket of its
     /// own; above, each power of two is split into 64 buckets.
-    pub times_us: BTreeMap<u64, usize>,
+    pub times_us: TimeBuckets,
     /// The fastest time, in microseconds, not rounded. 0 before any.
     pub minimum_time_us: u64,
     /// The slowest time, in microseconds, not rounded.
@@ -1209,19 +1227,14 @@ impl GooseRequestMetricTimingData {
         other: &GooseRequestMetricTimingData,
         mut also: impl FnMut(u64, usize),
     ) {
-        for (&bucket, &count) in &other.times_us {
-            *self.times_us.entry(bucket).or_insert(0) += count;
-            also(bucket, count);
-        }
+        self.times_us.merge(&other.times_us, &mut also);
         self.merge_totals(other);
     }
 
     /// Merge another set of timing data into this one: combine the buckets and
     /// update the minimum, maximum, total and counter.
     pub(crate) fn merge(&mut self, other: &GooseRequestMetricTimingData) {
-        for (&bucket, &count) in &other.times_us {
-            *self.times_us.entry(bucket).or_insert(0) += count;
-        }
+        self.times_us.merge(&other.times_us, |_, _| {});
         self.merge_totals(other);
     }
 
@@ -1257,7 +1270,26 @@ impl GooseRequestMetricTimingData {
         }
         self.total_time_us += us;
         self.counter += 1;
-        *self.times_us.entry(buckets::bucket_floor(us)).or_insert(0) += 1;
+        self.times_us.add(buckets::bucket_floor(us), 1);
+    }
+
+    /// [`Self::record_time_us`] for a user's batch: the buckets stay out of
+    /// order until [`Self::finish`].
+    pub(crate) fn record_time_us_unsorted(&mut self, us: u64) {
+        if self.counter == 0 || us < self.minimum_time_us {
+            self.minimum_time_us = us;
+        }
+        if us > self.maximum_time_us {
+            self.maximum_time_us = us;
+        }
+        self.total_time_us += us;
+        self.counter += 1;
+        self.times_us.push(buckets::bucket_floor(us), 1);
+    }
+
+    /// Put in order the buckets [`Self::record_time_us_unsorted`] recorded.
+    pub(crate) fn finish(&mut self) {
+        self.times_us.finish();
     }
 
     /// The time `percent` (0.0 to 1.0) of these times finished within, in
@@ -1299,7 +1331,7 @@ impl GooseRequestMetricTimingData {
 
 /// How many of `times_us` fell in each whole millisecond, by the middle of
 /// each bucket, truncated.
-fn whole_millisecond_times(times_us: &BTreeMap<u64, usize>) -> BTreeMap<usize, usize> {
+fn whole_millisecond_times(times_us: &TimeBuckets) -> BTreeMap<usize, usize> {
     let mut times = BTreeMap::new();
     for (&bucket, &count) in times_us {
         *times
@@ -1311,14 +1343,16 @@ fn whole_millisecond_times(times_us: &BTreeMap<u64, usize>) -> BTreeMap<usize, u
 
 /// The buckets of whole millisecond `times`, as a file without microseconds
 /// holds them: each in the bucket of its time.
-fn microsecond_times(times: &BTreeMap<usize, usize>) -> BTreeMap<u64, usize> {
-    let mut times_us = BTreeMap::new();
-    for (&ms, &count) in times {
-        *times_us
-            .entry(buckets::bucket_floor((ms as u64).saturating_mul(1000)))
-            .or_insert(0) += count;
-    }
-    times_us
+fn microsecond_times(times: &BTreeMap<usize, usize>) -> TimeBuckets {
+    times
+        .iter()
+        .map(|(&ms, &count)| {
+            (
+                buckets::bucket_floor((ms as u64).saturating_mul(1000)),
+                count,
+            )
+        })
+        .collect()
 }
 
 /// Whole milliseconds as microseconds.
@@ -1340,7 +1374,7 @@ struct TimingDataOut<'a> {
     maximum_time: usize,
     total_time: usize,
     counter: usize,
-    times_us: &'a BTreeMap<u64, usize>,
+    times_us: &'a TimeBuckets,
     minimum_time_us: u64,
     maximum_time_us: u64,
     total_time_us: u64,
@@ -1360,7 +1394,7 @@ struct TimingDataIn {
     total_time: usize,
     #[serde(default)]
     counter: usize,
-    times_us: Option<BTreeMap<u64, usize>>,
+    times_us: Option<TimeBuckets>,
     #[serde(default)]
     minimum_time_us: Option<u64>,
     #[serde(default)]
@@ -1621,7 +1655,7 @@ struct TransactionAggregateIn {
     total_time: usize,
     #[serde(default)]
     counter: usize,
-    times_us: Option<BTreeMap<u64, usize>>,
+    times_us: Option<TimeBuckets>,
     #[serde(default)]
     min_time_us: Option<u64>,
     #[serde(default)]
@@ -1677,7 +1711,7 @@ struct RunTimesOut<'a> {
     max_time: usize,
     total_time: usize,
     counter: usize,
-    times_us: &'a BTreeMap<u64, usize>,
+    times_us: &'a TimeBuckets,
     min_time_us: u64,
     max_time_us: u64,
     total_time_us: u64,
@@ -1706,7 +1740,7 @@ fn run_times(
     times: BTreeMap<usize, usize>,
     [min, max, total]: [usize; 3],
     counter: usize,
-    times_us: Option<BTreeMap<u64, usize>>,
+    times_us: Option<TimeBuckets>,
     [min_us, max_us, total_us]: [Option<u64>; 3],
 ) -> GooseRequestMetricTimingData {
     match times_us {
@@ -1800,7 +1834,7 @@ struct ScenarioAggregateIn {
     total_time: usize,
     #[serde(default)]
     counter: usize,
-    times_us: Option<BTreeMap<u64, usize>>,
+    times_us: Option<TimeBuckets>,
     #[serde(default)]
     min_time_us: Option<u64>,
     #[serde(default)]
@@ -3633,15 +3667,16 @@ impl MetricsProcessor {
     fn record_request_metric(&mut self, request_metric: &GooseRequestMetric) {
         let method_label = request_metric.raw.method_label();
         let key = format!("{} {}", method_label, request_metric.name);
-        let mut merge_request = match self.metrics.requests.get(&key) {
-            Some(m) => m.clone(),
-            None => GooseRequestMetricAggregate::new(
+        // Updated in place: a copy of the aggregate, with every microsecond
+        // bucket, for each request recorded here was most of its cost.
+        let merge_request = self.metrics.requests.entry(key).or_insert_with(|| {
+            GooseRequestMetricAggregate::new(
                 &request_metric.name,
                 request_metric.raw.method,
                 0,
                 &request_metric.raw.custom_method,
-            ),
-        };
+            )
+        });
 
         if !request_metric.update {
             merge_request.record_time_us(
@@ -3658,8 +3693,6 @@ impl MetricsProcessor {
                 }
             }
         }
-
-        self.metrics.requests.insert(key, merge_request);
     }
 
     /// [`Self::process_batch`], for unit tests in other modules.

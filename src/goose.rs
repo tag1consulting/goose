@@ -2370,7 +2370,7 @@ impl GooseUser {
 
         // Pre-aggregate timing data using the same bucketing logic.
         let us = request_metric.response_time_micros();
-        entry.raw_data.record_time_us(us);
+        entry.raw_data.record_time_us_unsorted(us);
 
         if !self.config.no_status_codes {
             // Increment status-code count.
@@ -2481,15 +2481,15 @@ impl GooseUser {
         let us = request_metric.response_time_micros();
         if next_second {
             match batch.next_second.get_mut(key) {
-                Some(next) => next.record_time_us(us),
+                Some(next) => next.record_time_us_unsorted(us),
                 None => {
                     let mut next = GooseRequestMetricTimingData::new(None);
-                    next.record_time_us(us);
+                    next.record_time_us_unsorted(us);
                     batch.next_second.insert(key.to_string(), next);
                 }
             }
         } else {
-            entry.raw_data.record_time_us(us);
+            entry.raw_data.record_time_us_unsorted(us);
         }
 
         if !self.config.no_status_codes {
@@ -2541,7 +2541,7 @@ impl GooseUser {
 
         entry
             .run_times
-            .record_time_us(transaction.run_time_micros());
+            .record_time_us_unsorted(transaction.run_time_micros());
         if transaction.success {
             entry.success_count += 1;
         } else {
@@ -2570,7 +2570,9 @@ impl GooseUser {
                 user: scenario.user,
             });
 
-        entry.run_times.record_time_us(scenario.run_time_micros());
+        entry
+            .run_times
+            .record_time_us_unsorted(scenario.run_time_micros());
 
         // Track graph data.
         if self.record_graph_data {
@@ -2667,7 +2669,8 @@ impl GooseUser {
             .metrics_epoch
             .as_ref()
             .map_or(0, |e| e.load(AtomicOrdering::Relaxed));
-        if let Some(batch) = self.metrics_batch.take() {
+        if let Some(mut batch) = self.metrics_batch.take() {
+            batch.finish();
             if let Some(metrics_channel) = self.metrics_channel.as_ref() {
                 if let Err(e) = metrics_channel.send(GooseMetric::Batch(Box::new(batch))) {
                     self.metrics_batch = Some(GooseMetricBatch::new(current_epoch));

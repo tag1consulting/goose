@@ -318,7 +318,21 @@ fn display_value(index: usize) -> u64 {
 /// than a row, so it reaches at most into the next one, and a whole
 /// millisecond time, which starts a row, stays in that row.
 fn bucket_row(bucket: u64) -> usize {
-    display_index(buckets::bucket_end(bucket) - 1)
+    // Looked up for every bucket a batch merges, so the rows of the buckets
+    // up to 61 seconds are worked out once.
+    static ROWS: OnceLock<Vec<u8>> = OnceLock::new();
+    let rows = ROWS.get_or_init(|| {
+        (0..=buckets::bucket_index(FIXED_END_US))
+            .map(|index| {
+                let row = display_index(buckets::bucket_end(buckets::bucket_at(index)) - 1);
+                u8::try_from(row).expect("a row the packed index holds")
+            })
+            .collect()
+    });
+    match rows.get(buckets::bucket_index(bucket)) {
+        Some(&row) => row as usize,
+        None => display_index(buckets::bucket_end(bucket) - 1),
+    }
 }
 
 /// Bits of a [`SecondHistogram`] entry that hold the count; the bucket index
