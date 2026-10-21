@@ -14,6 +14,10 @@ pub(crate) mod dashboard_snapshot;
 mod delta;
 mod nullable;
 
+#[cfg(test)]
+#[cfg(any())] // until implementation
+mod microsecond_tests;
+
 #[cfg(feature = "dashboard")]
 pub(crate) use common::compare_reports;
 pub(crate) use common::{load_baseline_file, ReportData};

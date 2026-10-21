@@ -1,0 +1,641 @@
+//! Response times kept in microseconds: the bucket scheme's error bound,
+//! percentile accuracy, merging, display, old reports as baselines and
+//! minimums under a millisecond (#585, #737, #366).
+
+use super::buckets::{bucket_end, bucket_index, bucket_value};
+use super::common::{load_baseline_file, prepare_data_with_baseline, ReportData, ReportOptions};
+use super::dashboard_snapshot::{
+    build_dashboard_snapshot, DashboardSnapshotInput, SeriesWindow, SnapshotSave, SnapshotSettings,
+};
+use super::millis::{format_micros, Millis};
+use super::*;
+use crate::goose::{GooseMethod, GooseUser, TransactionName};
+use crate::metrics::coordinated_omission::CoordinatedOmissionMetrics;
+use std::collections::HashSet;
+use std::sync::Arc;
+use std::time::Duration;
+
+/// The default `--timeout`, 60 seconds, in microseconds.
+const DEFAULT_TIMEOUT_US: u64 = 60_000_000;
+
+/// A small seeded generator (SplitMix64), so every run draws the same times.
+struct Seeded(u64);
+
+impl Seeded {
+    fn next_u64(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+
+    /// Uniform in `[low, high]`.
+    fn between(&mut self, low: u64, high: u64) -> u64 {
+        low + self.next_u64() % (high - low + 1)
+    }
+
+    /// Uniform in `(0, 1)`.
+    fn unit(&mut self) -> f64 {
+        ((self.next_u64() >> 11) as f64 + 0.5) / (1u64 << 53) as f64
+    }
+
+    /// Standard normal, by Box Muller.
+    fn normal(&mut self) -> f64 {
+        let (u, v) = (self.unit(), self.unit());
+        (-2.0 * u.ln()).sqrt() * (2.0 * std::f64::consts::PI * v).cos()
+    }
+}
+
+/// A time in microseconds kept between 1 µs and the default timeout.
+fn clamp_us(us: f64) -> u64 {
+    (us.round() as u64).clamp(1, DEFAULT_TIMEOUT_US)
+}
+
+fn lognormal(count: usize, seed: u64) -> Vec<u64> {
+    let mut rng = Seeded(seed);
+    // A median of 20 ms, most times from about 2 ms to 200 ms.
+    (0..count)
+        .map(|_| clamp_us((20_000f64.ln() + rng.normal()).exp()))
+        .collect()
+}
+
+fn bimodal(count: usize, seed: u64) -> Vec<u64> {
+    let mut rng = Seeded(seed);
+    (0..count)
+        .map(|i| {
+            if i % 2 == 0 {
+                clamp_us(300.0 + 30.0 * rng.normal())
+            } else {
+                clamp_us(40_000.0 + 4_000.0 * rng.normal())
+            }
+        })
+        .collect()
+}
+
+fn uniform(count: usize, seed: u64) -> Vec<u64> {
+    let mut rng = Seeded(seed);
+    (0..count).map(|_| rng.between(1, 5_000_000)).collect()
+}
+
+/// Timing data holding `times`, in microseconds, recorded one by one.
+fn recorded(times: &[u64]) -> GooseRequestMetricTimingData {
+    let mut data = GooseRequestMetricTimingData::default();
+    for &us in times {
+        data.record_time_us(us);
+    }
+    data
+}
+
+/// The time `percent` of `times` finished within, from the times themselves:
+/// the one at that rank once sorted, as Goose ranks a percentile.
+fn exact_percentile(sorted: &[u64], percent: f32) -> u64 {
+    let rank = ((sorted.len() as f32 * percent).round() as usize).max(1);
+    sorted[rank - 1]
+}
+
+fn within_one_percent(value: u64, expected: u64) -> bool {
+    (value as f64 - expected as f64).abs() <= expected as f64 * 0.01
+}
+
+/// The value a bucket reports for `us` is within 1% of it, a bucket's
+/// value lands back in the same bucket, and so does its value.
+fn assert_bucket_holds(us: u64) {
+    let value = bucket_value(us);
+    assert!(
+        within_one_percent(value, us),
+        "{us} µs is reported as {value} µs, more than 1% off"
+    );
+    assert_eq!(
+        bucket_index(value),
+        bucket_index(us),
+        "the value {value} µs of the bucket of {us} µs is in another bucket"
+    );
+    assert_eq!(bucket_value(value), value, "{us} µs: value is not stable");
+}
+
+#[test]
+fn bucket_error_bound_from_one_microsecond_to_the_default_timeout() {
+    // Every microsecond to 100 ms.
+    let mut previous = bucket_index(0);
+    for us in 1..=100_000 {
+        assert_bucket_holds(us);
+        let index = bucket_index(us);
+        assert!(index >= previous, "bucket index falls at {us} µs");
+        previous = index;
+    }
+
+    // A million times from 100 ms to the default timeout.
+    let mut rng = Seeded(585);
+    let mut drawn: Vec<u64> = (0..1_000_000)
+        .map(|_| rng.between(100_000, DEFAULT_TIMEOUT_US))
+        .collect();
+    for &us in &drawn {
+        assert_bucket_holds(us);
+    }
+    drawn.sort_unstable();
+    for pair in drawn.windows(2) {
+        assert!(
+            bucket_index(pair[0]) <= bucket_index(pair[1]),
+            "bucket index falls between {} and {} µs",
+            pair[0],
+            pair[1]
+        );
+    }
+
+    // Each boundary, and the times either side of it: a bucket ends where
+    // the next index begins.
+    assert_eq!(bucket_value(0), 0);
+    let mut start = 0;
+    while start <= DEFAULT_TIMEOUT_US {
+        let end = bucket_end(start);
+        assert!(end > start, "the bucket from {start} µs is empty");
+        assert_eq!(bucket_index(end), bucket_index(start) + 1);
+        assert_eq!(bucket_index(end - 1), bucket_index(start));
+        for us in [end - 1, end, end + 1] {
+            if us > 0 {
+                assert_bucket_holds(us);
+            }
+        }
+        start = end;
+    }
+}
+
+#[test]
+fn sub_millisecond_request_is_kept_and_shown() {
+    let data = recorded(&[400]);
+    assert_eq!(data.minimum_time_us, 400);
+    assert_eq!(data.maximum_time_us, 400);
+    assert_eq!(data.counter, 1);
+    let p50 = data.percentile_us(0.5);
+    assert!(p50 < 1000 && within_one_percent(p50, 400), "p50 {p50}");
+    assert_eq!(Millis(400).to_string(), "0.4");
+    assert_eq!(format_micros(400, false), "0.4");
+
+    // Through the report: minimum 0.4, not 1, and the JSON row keeps whole
+    // milliseconds.
+    let metrics = request_metrics(&[("GET /", &[400])]);
+    let report = report_of(&metrics, None);
+    let row = &report.raw_request_metrics[0];
+    assert_eq!(row.response_time_minimum.to_string(), "0.4");
+    assert_eq!(row.response_time_maximum.to_string(), "0.4");
+    assert_eq!(format!("{:.2}", row.response_time_average), "0.40");
+    let json = serde_json::to_value(row).unwrap();
+    assert_eq!(json["response_time_minimum"], 0);
+    assert_eq!(json["response_time_maximum"], 0);
+    assert_eq!(
+        report.raw_response_metrics[0].percentile_50.to_string(),
+        "0.4"
+    );
+
+    // The HTML row and the console table show it too.
+    let html = crate::report::raw_request_metrics_row(row.clone());
+    assert!(html.contains("<td>0.4</td>"), "{html}");
+    let cells = console_response_time_cells(&metrics, "GET /");
+    assert_eq!(cells, ["GET /", "0.40", "0.4", "0.4", "0.4"]);
+}
+
+#[test]
+fn two_point_two_and_two_point_five_milliseconds_are_told_apart() {
+    // #366.
+    let a = recorded(&[2_200; 100]);
+    let b = recorded(&[2_500; 100]);
+    let (pa, pb) = (a.percentile_us(0.5), b.percentile_us(0.5));
+    assert_ne!(pa, pb);
+    assert!(within_one_percent(pa, 2_200), "{pa}");
+    assert!(within_one_percent(pb, 2_500), "{pb}");
+    let metrics = request_metrics(&[("GET /a", &[2_200; 100]), ("GET /b", &[2_500; 100])]);
+    let report = report_of(&metrics, None);
+    assert_eq!(
+        report.raw_response_metrics[0].percentile_95.to_string(),
+        "2.2"
+    );
+    assert_eq!(
+        report.raw_response_metrics[1].percentile_95.to_string(),
+        "2.5"
+    );
+}
+
+#[test]
+fn one_point_four_and_one_point_six_seconds_are_told_apart() {
+    // #737: 1.4 s and 1.6 s were stored as 1000 and 2000 ms.
+    let spread = |center: u64| -> Vec<u64> {
+        (0..201)
+            .map(|i| center - 10_000 + i * 100)
+            .collect::<Vec<u64>>()
+    };
+    let (slow, slower) = (spread(1_400_000), spread(1_600_000));
+    let metrics = request_metrics(&[("GET /slow", &slow), ("GET /slower", &slower)]);
+    let report = report_of(&metrics, None);
+    let p50 = |row: usize| {
+        serde_json::to_value(&report.raw_response_metrics[row]).unwrap()["percentile_50"]
+            .as_u64()
+            .unwrap()
+    };
+    let (a, b) = (p50(0), p50(1));
+    assert_ne!(a, b);
+    for value in [a, b] {
+        assert!(value != 1000 && value != 2000, "p50 {value}");
+    }
+    assert!(within_one_percent(a, 1400), "{a}");
+    assert!(within_one_percent(b, 1600), "{b}");
+}
+
+#[test]
+fn thirty_seven_milliseconds_prints_and_serializes_as_37() {
+    let metrics = request_metrics(&[("GET /", &[37_000, 37_999])]);
+    let report = report_of(&metrics, None);
+    let row = &report.raw_request_metrics[0];
+    assert_eq!(row.response_time_minimum.to_string(), "37");
+    assert_eq!(row.response_time_maximum.to_string(), "37");
+    assert_eq!(Millis(37_999).to_string(), "37");
+    let json = serde_json::to_value(row).unwrap();
+    assert_eq!(json["response_time_minimum"], 37);
+    assert_eq!(json["response_time_maximum"], 37);
+    let percentiles = serde_json::to_value(&report.raw_response_metrics[0]).unwrap();
+    assert_eq!(percentiles["percentile_100"], 37);
+}
+
+#[test]
+fn percentiles_from_the_buckets_are_within_one_percent() {
+    for (name, mut times) in [
+        ("lognormal", lognormal(100_000, 1)),
+        ("bimodal", bimodal(100_000, 2)),
+        ("uniform", uniform(100_000, 3)),
+    ] {
+        let data = recorded(&times);
+        times.sort_unstable();
+        for percent in [0.5, 0.9, 0.95, 0.99, 0.999] {
+            let exact = exact_percentile(&times, percent);
+            let got = data.percentile_us(percent);
+            assert!(
+                within_one_percent(got, exact),
+                "{name} p{percent}: {got} µs from the buckets, {exact} µs exactly"
+            );
+        }
+    }
+}
+
+#[test]
+fn merging_batches_equals_recording_once() {
+    let times = lognormal(10_000, 4);
+    let whole = recorded(&times);
+    for per_batch in [1, 4, 64] {
+        let mut merged = GooseRequestMetricTimingData::default();
+        for batch in times.chunks(per_batch) {
+            merged.merge(&recorded(batch));
+        }
+        assert_eq!(merged, whole, "{per_batch} per batch");
+        assert_eq!(merged.times_us, whole.times_us);
+        assert_eq!(merged.minimum_time_us, whole.minimum_time_us);
+        assert_eq!(merged.maximum_time_us, whole.maximum_time_us);
+        assert_eq!(merged.total_time_us, whole.total_time_us);
+        for percent in [0.5, 0.9, 0.99, 1.0] {
+            assert_eq!(merged.percentile_us(percent), whole.percentile_us(percent));
+        }
+    }
+}
+
+/// The request deltas a report shows against `baseline`: `slow` named for
+/// the baseline's 1.4 s request and `fast` for its sub millisecond one.
+fn baseline_deltas(fixture: &str, fast: &str, slow: &str) {
+    let path = format!("{}/tests/fixtures/{fixture}", env!("CARGO_MANIFEST_DIR"));
+    let baseline = load_baseline_file(&path).expect("the old report loads as a baseline");
+    let metrics = request_metrics(&[(fast, &[400; 5]), (slow, &[1_410_000; 10])]);
+    let report = report_of(&metrics, Some(&baseline));
+    let row = |key: &str| {
+        let name = key.strip_prefix("GET ").unwrap();
+        report
+            .raw_request_metrics
+            .iter()
+            .position(|row| row.name == name)
+            .unwrap()
+    };
+    let slow_row = &report.raw_request_metrics[row(slow)];
+    assert_eq!(slow_row.number_of_requests.to_string(), "10 (+2)");
+    assert_eq!(slow_row.response_time_minimum.to_string(), "1410 (+10)");
+    assert_eq!(slow_row.response_time_maximum.to_string(), "1410 (+8)");
+    assert_eq!(
+        report.raw_response_metrics[row(slow)]
+            .percentile_50
+            .to_string(),
+        "1410 (+10)"
+    );
+    let fast_row = &report.raw_request_metrics[row(fast)];
+    assert_eq!(fast_row.response_time_minimum.to_string(), "0.4 (+0.4)");
+}
+
+#[test]
+fn a_0_18_1_report_loads_as_a_baseline() {
+    baseline_deltas("report-0.18.1.json", "GET index", "GET slow");
+}
+
+#[test]
+fn a_report_from_main_before_microseconds_loads_as_a_baseline() {
+    baseline_deltas("report-main.json", "GET /", "GET /delay/1400");
+}
+
+#[test]
+fn a_report_with_microseconds_round_trips_as_a_baseline() {
+    let metrics = request_metrics(&[("GET /", &[400, 2_350, 37_999])]);
+    let report = report_of(&metrics, None);
+    let dir = std::env::temp_dir().join(format!("goose-us-baseline-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("report.json");
+    std::fs::write(&path, serde_json::to_string(&report).unwrap()).unwrap();
+    let baseline = load_baseline_file(&path).unwrap();
+    std::fs::remove_dir_all(&dir).unwrap();
+    // The JSON rows are whole milliseconds; the raw timing data keeps every
+    // microsecond bucket.
+    let raw = &baseline.raw_metrics.requests["GET /"].raw_data;
+    assert_eq!(raw, &metrics.requests["GET /"].raw_data);
+    assert_eq!(
+        baseline.raw_request_metrics[0]
+            .response_time_minimum
+            .to_string(),
+        "0"
+    );
+}
+
+#[test]
+fn transaction_and_scenario_minimums_under_a_millisecond() {
+    let mut metrics = GooseMetrics::default();
+    let mut fast = TransactionMetricAggregate::new(
+        0,
+        Arc::from("Scenario"),
+        0,
+        TransactionName::TransactionOnly(Arc::from("fast")),
+    );
+    for us in [400, 450, 500] {
+        fast.set_time_us(us, true);
+    }
+    assert_eq!(fast.run_times.minimum_time_us, 400);
+    let mut instant = TransactionMetricAggregate::new(
+        0,
+        Arc::from("Scenario"),
+        1,
+        TransactionName::TransactionOnly(Arc::from("instant")),
+    );
+    // A time of 0 is a real minimum, not an unset one.
+    instant.set_time_us(0, true);
+    instant.set_time_us(5_000, true);
+    assert_eq!(instant.run_times.minimum_time_us, 0);
+    metrics.transactions = vec![vec![fast, instant]];
+
+    let mut scenario = ScenarioMetricAggregate::new(0, Arc::from("Scenario"));
+    scenario.update_us(700, 0);
+    scenario.update_us(900, 1);
+    assert_eq!(scenario.run_times.minimum_time_us, 700);
+    let mut zero = ScenarioMetricAggregate::new(1, Arc::from("Zero"));
+    zero.update_us(0, 0);
+    zero.update_us(3_000, 0);
+    assert_eq!(zero.run_times.minimum_time_us, 0);
+    metrics.scenarios = vec![scenario, zero];
+
+    let report = report_of(&metrics, None);
+    let transactions = report.transaction_metrics.unwrap();
+    let minimum = |name: &str| {
+        transactions
+            .iter()
+            .find(|row| row.name == name && !row.is_scenario)
+            .unwrap()
+            .response_time_minimum
+            .to_string()
+    };
+    assert_eq!(minimum("fast"), "0.4");
+    assert_eq!(minimum("instant"), "0");
+    assert_eq!(minimum("Aggregated"), "0");
+    let scenarios = report.scenario_metrics.unwrap();
+    assert_eq!(scenarios[0].response_time_minimum.to_string(), "0.7");
+    assert_eq!(scenarios[1].response_time_minimum.to_string(), "0");
+    assert_eq!(scenarios[2].name, "Aggregated");
+    assert_eq!(scenarios[2].response_time_minimum.to_string(), "0");
+}
+
+#[test]
+fn sub_millisecond_transaction_without_a_zero_reports_its_minimum() {
+    let mut metrics = GooseMetrics::default();
+    let mut only = TransactionMetricAggregate::new(
+        0,
+        Arc::from("Scenario"),
+        0,
+        TransactionName::TransactionOnly(Arc::from("only")),
+    );
+    only.set_time_us(250, true);
+    only.set_time_us(600, true);
+    metrics.transactions = vec![vec![only]];
+    let report = report_of(&metrics, None);
+    let transactions = report.transaction_metrics.unwrap();
+    let aggregated = transactions.last().unwrap();
+    assert_eq!(aggregated.name, "Aggregated");
+    // Not 1, and not 0.
+    assert_eq!(aggregated.response_time_minimum.to_string(), "0.25");
+}
+
+#[test]
+fn request_and_transaction_metrics_carry_their_microseconds() {
+    let mut request = GooseRequestMetric::new(
+        GooseRawRequest::new(GooseMethod::Get, "/", vec![], ""),
+        TransactionDetail {
+            scenario_index: 0,
+            scenario_name: Arc::from("Scenario"),
+            transaction_index: None,
+            transaction_name: TransactionName::TransactionOnly(Arc::from("")),
+        },
+        "/",
+        0,
+        0,
+    );
+    request.set_response_duration(Duration::from_micros(2_345));
+    assert_eq!(request.response_time, 2);
+    assert_eq!(request.response_time_fraction_us, 345);
+    assert_eq!(request.response_time_micros(), 2_345);
+    // An old log line without the fraction reads as whole milliseconds.
+    let mut json = serde_json::to_value(&request).unwrap();
+    json.as_object_mut()
+        .unwrap()
+        .remove("response_time_fraction_us");
+    let old: GooseRequestMetric = serde_json::from_value(json).unwrap();
+    assert_eq!(old.response_time_micros(), 2_000);
+
+    let mut transaction = TransactionMetric::new(0, 0, 0, Arc::from("t"), 0);
+    transaction.set_duration(Duration::from_micros(1_250), true);
+    assert_eq!(transaction.run_time, 1);
+    assert_eq!(transaction.run_time_fraction_us, 250);
+    assert_eq!(transaction.run_time_micros(), 1_250);
+}
+
+/// A user whose request metrics arrive on the returned channel.
+fn user_with_channel() -> (GooseUser, flume::Receiver<GooseMetric>) {
+    let configuration = crate::config::GooseConfiguration::parse_args_default(&[] as &[&str])
+        .expect("default configuration");
+    let mut user =
+        GooseUser::single("http://localhost:8080".parse().unwrap(), &configuration).unwrap();
+    let (tx, rx) = flume::unbounded();
+    user.metrics_channel = Some(tx);
+    (user, rx)
+}
+
+fn received_request(rx: &flume::Receiver<GooseMetric>) -> GooseRequestMetric {
+    match rx.try_recv().expect("a request metric") {
+        GooseMetric::Request(request) => *request,
+        other => panic!("expected a request metric, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn custom_requests_land_with_their_microseconds() {
+    let (mut user, rx) = user_with_channel();
+    user.record_custom_request_duration(
+        "UDP",
+        "ping",
+        Duration::from_micros(400),
+        true,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    user.flush_pending_request().unwrap();
+    let ping = received_request(&rx);
+    assert_eq!(ping.response_time, 0);
+    assert_eq!(ping.response_time_micros(), 400);
+
+    user.record_custom_request("TCP", "send", 3, true, None, None)
+        .await
+        .unwrap();
+    user.flush_pending_request().unwrap();
+    let send = received_request(&rx);
+    assert_eq!(send.response_time, 3);
+    assert_eq!(send.response_time_micros(), 3_000);
+
+    // Both land in their buckets.
+    let mut aggregate = GooseRequestMetricAggregate::new("ping", GooseMethod::Custom, 0, "UDP");
+    aggregate.record_time_us(ping.response_time_micros(), false);
+    aggregate.record_time_us(send.response_time_micros(), false);
+    assert_eq!(aggregate.raw_data.minimum_time_us, 400);
+    assert_eq!(aggregate.raw_data.maximum_time_us, 3_000);
+}
+
+fn snapshot_input(metrics: &GooseMetrics) -> DashboardSnapshotInput<'_> {
+    DashboardSnapshotInput {
+        metrics,
+        series: SeriesWindow::empty(),
+        active_users: 0,
+        maximum_users: 0,
+        target_users: 0,
+        total_users: 0,
+        phase: "maintain".to_string(),
+        stopping: false,
+        series_window_secs: 300,
+        no_status_codes: false,
+        metrics_disabled: false,
+        no_transaction_metrics: false,
+        no_scenario_metrics: false,
+        save: SnapshotSave::off("goose-runs"),
+        settings: SnapshotSettings::idle(),
+        percentiles_over_time: false,
+        series_keys: HashSet::new(),
+    }
+}
+
+#[test]
+fn dashboard_snapshot_carries_microseconds() {
+    let mut metrics = request_metrics(&[("GET /", &[40, 400, 400, 900])]);
+    metrics.duration = 10;
+    let snap = build_dashboard_snapshot(snapshot_input(&metrics));
+    let us = snap
+        .aggregate
+        .response_time_us
+        .as_ref()
+        .expect("microseconds");
+    assert_eq!((us.min, us.max), (40, 900));
+    assert!(within_one_percent(us.p50, 400), "{}", us.p50);
+    assert!(within_one_percent(us.p99, 900), "{}", us.p99);
+    // The whole milliseconds beside them are truncated from them.
+    assert_eq!(snap.aggregate.response_time_min_ms, 0);
+    assert_eq!(snap.aggregate.percentile_ms.p50, 0);
+    assert!((snap.aggregate.response_time_avg_ms - 0.435).abs() < 1e-9);
+    let row = &snap.requests[0];
+    let row_us = row.response_time_us.as_ref().expect("row microseconds");
+    assert_eq!((row_us.min, row_us.max), (40, 900));
+
+    // Coordinated omission adjusted figures too.
+    let mut metrics = GooseMetrics::default();
+    metrics.coordinated_omission_metrics = Some(CoordinatedOmissionMetrics::new(
+        GooseCoordinatedOmissionMitigation::Average,
+    ));
+    metrics
+        .coordinated_omission_metrics
+        .as_mut()
+        .unwrap()
+        .record_co_event(
+            Duration::from_millis(100),
+            Duration::from_millis(1000),
+            5,
+            0,
+            "scenario".to_string(),
+        );
+    let mut a = GooseRequestMetricAggregate::new("/a", GooseMethod::Get, 0, "");
+    a.success_count = 20;
+    for _ in 0..20 {
+        a.record_time_us(400, false);
+    }
+    a.record_time(5, true);
+    metrics.requests.insert("GET /a".to_string(), a);
+    let snap = build_dashboard_snapshot(snapshot_input(&metrics));
+    let co = snap.aggregate.co_adjusted.as_ref().expect("adjusted");
+    let co_us = co.response_time_us.as_ref().expect("adjusted microseconds");
+    assert_eq!((co_us.min, co_us.max), (400, 5_000));
+    let row_co = snap.requests[0].co_adjusted.as_ref().unwrap();
+    assert_eq!(row_co.response_time_us.as_ref().unwrap().max, 5_000);
+}
+
+/// Metrics holding one request aggregate per `(key, times)`, its times in
+/// microseconds, all successful.
+fn request_metrics(requests: &[(&str, &[u64])]) -> GooseMetrics {
+    let mut metrics = GooseMetrics {
+        duration: 60,
+        ..Default::default()
+    };
+    for (key, times) in requests {
+        let (method, path) = key.split_once(' ').unwrap();
+        assert_eq!(method, "GET");
+        let mut aggregate = GooseRequestMetricAggregate::new(path, GooseMethod::Get, 0, "");
+        for &us in times.iter() {
+            aggregate.record_time_us(us, false);
+        }
+        aggregate.success_count = times.len();
+        metrics.requests.insert(key.to_string(), aggregate);
+    }
+    metrics
+}
+
+fn report_of<'m>(metrics: &'m GooseMetrics, baseline: Option<&ReportData>) -> ReportData<'m> {
+    prepare_data_with_baseline(
+        ReportOptions {
+            no_transaction_metrics: false,
+            no_scenario_metrics: false,
+            no_status_codes: false,
+        },
+        metrics,
+        baseline,
+    )
+}
+
+/// The cells of `key`'s row in the console's response time table: name,
+/// average, minimum, maximum and median.
+fn console_response_time_cells(metrics: &GooseMetrics, key: &str) -> Vec<String> {
+    let text = metrics.to_string();
+    let table = text
+        .split("Avg (ms)")
+        .nth(1)
+        .expect("a response time table");
+    let line = table
+        .lines()
+        .find(|line| line.trim_start().starts_with(key))
+        .expect("the request's row");
+    line.split('|')
+        .map(|cell| cell.trim().to_string())
+        .collect()
+}

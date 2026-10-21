@@ -6683,3 +6683,91 @@ mod test {
         assert!(REPORT_HEATMAP_SCRIPT.contains("option.textContent = series.name"));
     }
 }
+
+/// The heatmap's rows under a millisecond and its percentile lines in
+/// microseconds (#585).
+#[cfg(test)]
+#[cfg(any())] // until implementation
+mod microsecond_tests {
+    use super::*;
+    use crate::metrics::dashboard_snapshot::HeatmapColumn;
+
+    /// The default `--timeout`, 60 seconds, in microseconds.
+    const DEFAULT_TIMEOUT_US: u64 = 60_000_000;
+
+    #[test]
+    fn display_rows_are_100_microseconds_under_a_millisecond() {
+        for us in 0..1000 {
+            assert_eq!(display_index(us), (us / 100) as usize, "{us} µs");
+        }
+        assert_eq!(display_index(1000), 10);
+        // Every time to the default timeout has a row the packed index holds.
+        let mut previous = 0;
+        for us in (0..=DEFAULT_TIMEOUT_US).step_by(997) {
+            let index = display_index(us);
+            assert!(index >= previous, "row falls at {us} µs");
+            assert!(index < 256, "{us} µs has row {index}");
+            previous = index;
+        }
+        assert!(display_index(DEFAULT_TIMEOUT_US) < 256);
+    }
+
+    #[test]
+    fn heatmap_rows_under_a_millisecond_are_filled() {
+        let mut graph = GraphData::for_metrics_processor(true, false, false);
+        for us in [50, 400, 400, 950] {
+            graph.record_requests_per_second("GET /", 1);
+            graph.record_latency_us("GET /", 1, us);
+        }
+        let heatmap = graph
+            .export_series_window_until(300, Some(4))
+            .heatmap
+            .unwrap();
+        assert_eq!(heatmap.buckets_us.len(), heatmap.buckets.len());
+        let column = heatmap.column(1).expect("second 1");
+        let pairs = HeatmapColumn::pairs(&column.measured);
+        assert_eq!(pairs.len(), 3, "{pairs:?}");
+        for ((index, count), (us, expected)) in pairs.iter().zip([(50, 1), (400, 2), (950, 1)]) {
+            let [_, lowest, highest] = heatmap.buckets_us[*index as usize];
+            assert!(
+                lowest <= us && us <= highest,
+                "{us} µs in {lowest} to {highest}"
+            );
+            assert_eq!(highest - lowest, 99);
+            assert_eq!(*count, expected);
+            // The whole millisecond table shows these rows as under 1 ms.
+            assert_eq!(heatmap.buckets[*index as usize][2], 0);
+        }
+    }
+
+    #[test]
+    fn heatmap_percentiles_follow_the_whole_run_to_a_row() {
+        let mut histogram = SecondHistogram::default();
+        let mut whole = GooseRequestMetricTimingData::default();
+        let mut seed: u64 = 585;
+        for i in 0..10_000u64 {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let us = if i % 10 < 7 {
+                30 + (seed >> 33) % 66
+            } else {
+                400 + (seed >> 33) % 501
+            };
+            histogram.record_us(us);
+            whole.record_time_us(us);
+        }
+        for percent in [0.5, 0.95, 0.99] {
+            let (row, run) = (
+                histogram.percentile_us(percent),
+                whole.percentile_us(percent),
+            );
+            let (a, b) = (display_index(row), display_index(run));
+            assert!(
+                a.abs_diff(b) <= 1,
+                "p{percent}: heatmap {row} µs, run {run} µs"
+            );
+            assert!(row < 1000);
+        }
+    }
+}
