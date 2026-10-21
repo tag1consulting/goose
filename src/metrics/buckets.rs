@@ -1,66 +1,89 @@
 //! Response time buckets, in microseconds.
 //!
-//! Every time below 128 µs has a bucket of its own. From 128 µs each power
-//! of two is split into 64 buckets of equal width, so a bucket is never
-//! wider than 1/64 of its lowest time. A bucket reports the time at its
-//! middle, at most 1/128 (0.78%) away from any time it holds. From 1 µs to
-//! the default 60 second `--timeout` there are 1,330 buckets; a timing data
-//! keeps only those that hold a time.
+//! Below 10 ms every bucket is 10 µs wide, as fine as times there are
+//! shown (to the hundredth of a millisecond), and reports its middle, so at
+//! most 5 µs from any time it holds. From 10 ms each power of two is split
+//! into 64 buckets of equal width, so a bucket is never wider than 1/64 of
+//! its lowest time and reports a time at most 1/128 (0.78%) from any it
+//! holds; the first starts at 10 ms. From 1 µs to the default 60 second
+//! `--timeout` there are 1,805 buckets; a timing data keeps only those that
+//! hold a time.
 
-/// Each power of two from [`EXACT`] on is split into `1 << SUB_BITS`
+/// Where the 10 µs buckets end and the 1% buckets begin.
+const FINE_END: u64 = 10_000;
+
+/// The width of a bucket below [`FINE_END`].
+const FINE_WIDTH: u64 = 10;
+
+/// How many buckets are below [`FINE_END`].
+const FINE_BUCKETS: usize = (FINE_END / FINE_WIDTH) as usize;
+
+/// From [`FINE_END`] each power of two is split into `1 << SUB_BITS`
 /// buckets.
 const SUB_BITS: u32 = 6;
 
 /// Buckets per power of two.
 const SUB_BUCKETS: u64 = 1 << SUB_BITS;
 
-/// Every time below this has a bucket of its own.
-const EXACT: u64 = SUB_BUCKETS << 1;
-
-/// How many bits of `us` a bucket's width spans: 0 below [`EXACT`].
-fn width_bits(us: u64) -> u32 {
-    if us < EXACT {
-        0
-    } else {
-        63 - us.leading_zeros() - SUB_BITS
-    }
+/// How many bits of `us` (at least [`FINE_END`]) a 1% bucket's width spans.
+const fn width_bits(us: u64) -> u32 {
+    63 - us.leading_zeros() - SUB_BITS
 }
+
+/// The 1% buckets counted over every power of two from 128 µs, so that
+/// [`FINE_END`]'s is a fixed offset.
+const fn log_index(us: u64) -> u64 {
+    let bits = width_bits(us);
+    (bits as u64 - 1) * SUB_BUCKETS + ((us >> bits) - SUB_BUCKETS)
+}
+
+/// [`log_index`] of the 1% bucket that holds [`FINE_END`].
+const FIRST_LOG: u64 = log_index(FINE_END);
 
 /// The lowest time in the bucket that holds `us`, which keys the bucket.
 pub(crate) fn bucket_floor(us: u64) -> u64 {
-    let bits = width_bits(us);
-    (us >> bits) << bits
+    if us < FINE_END {
+        us / FINE_WIDTH * FINE_WIDTH
+    } else {
+        let bits = width_bits(us);
+        ((us >> bits) << bits).max(FINE_END)
+    }
 }
 
 /// The first time past the bucket that holds `us`.
 pub(crate) fn bucket_end(us: u64) -> u64 {
-    bucket_floor(us).saturating_add(1 << width_bits(us))
+    if us < FINE_END {
+        bucket_floor(us) + FINE_WIDTH
+    } else {
+        let bits = width_bits(us);
+        ((us >> bits) << bits).saturating_add(1 << bits)
+    }
 }
 
 /// The time the bucket that holds `us` reports: its middle.
 pub(crate) fn bucket_value(us: u64) -> u64 {
-    bucket_floor(us) + ((1 << width_bits(us)) >> 1)
+    let floor = bucket_floor(us);
+    floor + (bucket_end(us) - floor) / 2
 }
 
 /// The bucket that holds `us`, counted from 0 µs. Never decreases as `us`
 /// grows.
 pub(crate) fn bucket_index(us: u64) -> usize {
-    let bits = width_bits(us);
-    if bits == 0 {
-        us as usize
+    if us < FINE_END {
+        (us / FINE_WIDTH) as usize
     } else {
-        (EXACT + (bits as u64 - 1) * SUB_BUCKETS + ((us >> bits) - SUB_BUCKETS)) as usize
+        FINE_BUCKETS + (log_index(us) - FIRST_LOG) as usize
     }
 }
 
 /// The lowest time in bucket `index`, as [`bucket_index`] counts them.
 pub(crate) fn bucket_at(index: usize) -> u64 {
-    let index = index as u64;
-    if index < EXACT {
-        index
+    if index < FINE_BUCKETS {
+        index as u64 * FINE_WIDTH
     } else {
-        let bits = (index - EXACT) / SUB_BUCKETS + 1;
-        ((index - EXACT) % SUB_BUCKETS + SUB_BUCKETS) << bits
+        let log = (index - FINE_BUCKETS) as u64 + FIRST_LOG;
+        let bits = log / SUB_BUCKETS + 1;
+        ((log % SUB_BUCKETS + SUB_BUCKETS) << bits).max(FINE_END)
     }
 }
 
@@ -86,7 +109,7 @@ pub(crate) fn percentile(
 }
 
 /// How many times fell in each bucket, keyed by the bucket's fastest time in
-/// microseconds ([`bucket_floor`]), fastest first. Held as a sorted list
+/// microseconds, fastest first. Held as a sorted list
 /// rather than a tree: a user's batch fills one with a few dozen buckets a
 /// second and the metrics processor merges it into the whole run's, and a
 /// sorted list does both without allocating a node per few buckets. It
@@ -284,18 +307,15 @@ mod test {
     use super::*;
 
     #[test]
-    fn exact_below_128_microseconds() {
-        for us in 0..EXACT {
-            assert_eq!(bucket_floor(us), us);
-            assert_eq!(bucket_value(us), us);
-            assert_eq!(bucket_index(us), us as usize);
-            assert_eq!(bucket_end(us), us + 1);
+    fn ten_microseconds_below_ten_milliseconds() {
+        for us in 0..FINE_END {
+            assert_eq!(bucket_floor(us), us / 10 * 10);
+            assert_eq!(bucket_end(us), us / 10 * 10 + 10);
+            assert_eq!(bucket_index(us), (us / 10) as usize);
         }
-        assert_eq!(bucket_floor(128), 128);
-        assert_eq!(bucket_end(128), 130);
-        assert_eq!(bucket_value(129), 129);
-        assert_eq!(bucket_index(128), 128);
-        assert_eq!(bucket_index(256), 192);
+        assert_eq!(bucket_floor(FINE_END), FINE_END);
+        assert_eq!(bucket_index(FINE_END), FINE_BUCKETS);
+        assert_eq!(bucket_index(bucket_end(FINE_END)), FINE_BUCKETS + 1);
     }
 
     #[test]
@@ -347,7 +367,7 @@ mod test {
 
     #[test]
     fn bucket_count_to_the_default_timeout() {
-        assert_eq!(bucket_index(60_000_000) - bucket_index(1) + 1, 1_330);
+        assert_eq!(bucket_index(60_000_000) - bucket_index(1) + 1, 1_805);
         assert_eq!(bucket_end(u64::MAX), u64::MAX);
     }
 }

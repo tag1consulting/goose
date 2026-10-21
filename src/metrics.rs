@@ -1182,18 +1182,18 @@ impl PartialOrd for GooseRequestMetricAggregate {
     }
 }
 
-/// Response times, in microseconds, in buckets that report a time at most
-/// 1/128 (0.78%) off any time they hold: how many fell in each, and the
-/// fastest, slowest and total. Every time under 128 µs has a bucket of its
-/// own, and each power of two above is split into 64; from 1 µs to the
-/// default 60 second `--timeout` there are 1,330 buckets, and only those
-/// that hold a time are kept.
+/// Response times, in microseconds, in buckets: how many fell in each, and
+/// the fastest, slowest and total. Below 10 ms the buckets are 10 µs wide,
+/// and each reports a time at most 5 µs off any it holds; from 10 ms each
+/// power of two is split into 64, each at most 1/128 (0.78%) off. From
+/// 1 µs to the default 60 second `--timeout` there are 1,805 buckets, and
+/// only those that hold a time are kept.
 ///
-/// It serializes, in a JSON report or saved run, with both its microsecond
-/// fields and the whole millisecond fields older Goose wrote (`times`,
-/// `minimum_time`, `maximum_time`, `total_time`, computed from these), so
-/// any Goose reads it. A report without the microsecond fields reads as
-/// whole milliseconds.
+/// It serializes, in a JSON report or saved run, with each bucket once, in
+/// `times_us`, beside the fastest, slowest and total in microseconds and in
+/// whole milliseconds; Goose before 0.19 can not read it. A report from
+/// Goose before 0.19, with only whole millisecond `times`, reads as whole
+/// milliseconds.
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub struct GooseRequestMetricTimingData {
     /// How many times fell in each bucket, keyed by the bucket's fastest
@@ -1318,24 +1318,6 @@ impl GooseRequestMetricTimingData {
     pub fn average_ms(&self) -> f64 {
         self.total_time_us as f64 / self.counter as f64 / 1000.0
     }
-
-    /// How many times fell in each whole millisecond, by the middle of each
-    /// bucket, truncated.
-    pub fn times_ms(&self) -> BTreeMap<usize, usize> {
-        whole_millisecond_times(&self.times_us)
-    }
-}
-
-/// How many of `times_us` fell in each whole millisecond, by the middle of
-/// each bucket, truncated.
-fn whole_millisecond_times(times_us: &TimeBuckets) -> BTreeMap<usize, usize> {
-    let mut times = BTreeMap::new();
-    for (&bucket, &count) in times_us {
-        *times
-            .entry((buckets::bucket_value(bucket) / 1000) as usize)
-            .or_insert(0) += count;
-    }
-    times
 }
 
 /// The buckets of whole millisecond `times`, as a file without microseconds
@@ -1362,11 +1344,11 @@ fn us_to_ms(us: u64) -> usize {
     (us / 1000) as usize
 }
 
-/// [`GooseRequestMetricTimingData`] as it is written: the whole millisecond
-/// fields any Goose reads, then the microsecond ones.
+/// [`GooseRequestMetricTimingData`] as it is written: the fastest, slowest
+/// and total in whole milliseconds and the count, then the buckets and the
+/// same times in microseconds.
 #[derive(Serialize)]
 struct TimingDataOut<'a> {
-    times: BTreeMap<usize, usize>,
     minimum_time: usize,
     maximum_time: usize,
     total_time: usize,
@@ -1403,7 +1385,6 @@ struct TimingDataIn {
 impl Serialize for GooseRequestMetricTimingData {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         TimingDataOut {
-            times: self.times_ms(),
             minimum_time: self.minimum_time_ms(),
             maximum_time: self.maximum_time_ms(),
             total_time: us_to_ms(self.total_time_us),
@@ -1562,9 +1543,10 @@ impl TransactionMetric {
 /// threads to the Goose parent process where they are aggregated together into this
 /// structure, and stored in [`GooseMetrics::transactions`].
 ///
-/// It serializes with the whole millisecond fields older Goose wrote
-/// (`times`, `min_time`, `max_time`, `total_time` and `counter`, computed
-/// from [`run_times`](Self::run_times)) and the microsecond ones.
+/// It serializes its [`run_times`](Self::run_times) flat: `min_time`,
+/// `max_time` and `total_time` in whole milliseconds, `counter`, and
+/// `times_us`, `min_time_us`, `max_time_us` and `total_time_us`; Goose
+/// before 0.19 can not read it.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct TransactionMetricAggregate {
     /// An index into [`GooseAttack`](../struct.GooseAttack.html)`.scenarios`,
@@ -1699,11 +1681,11 @@ impl<'de> Deserialize<'de> for TransactionMetricAggregate {
     }
 }
 
-/// Run times as transaction and scenario aggregates write them: the whole
-/// millisecond fields any Goose reads, then the microsecond ones.
+/// Run times as transaction and scenario aggregates write them: the fastest,
+/// slowest and total in whole milliseconds and the count, then the buckets
+/// and the same times in microseconds.
 #[derive(Serialize)]
 struct RunTimesOut<'a> {
-    times: BTreeMap<usize, usize>,
     min_time: usize,
     max_time: usize,
     total_time: usize,
@@ -1717,7 +1699,6 @@ struct RunTimesOut<'a> {
 impl<'a> RunTimesOut<'a> {
     fn of(data: &'a GooseRequestMetricTimingData) -> Self {
         RunTimesOut {
-            times: data.times_ms(),
             min_time: data.minimum_time_ms(),
             max_time: data.maximum_time_ms(),
             total_time: us_to_ms(data.total_time_us),
@@ -1764,9 +1745,10 @@ fn run_times(
 /// threads to the Goose parent process where they are aggregated together into this
 /// structure, and stored in [`GooseMetrics::transactions`].
 ///
-/// It serializes with the whole millisecond fields older Goose wrote
-/// (`times`, `min_time`, `max_time`, `total_time` and `counter`, computed
-/// from [`run_times`](Self::run_times)) and the microsecond ones.
+/// It serializes its [`run_times`](Self::run_times) flat: `min_time`,
+/// `max_time` and `total_time` in whole milliseconds, `counter`, and
+/// `times_us`, `min_time_us`, `max_time_us` and `total_time_us`; Goose
+/// before 0.19 can not read it.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ScenarioMetricAggregate {
     /// An index into [`GooseAttack`](../struct.GooseAttack.html)`.scenarios`,
@@ -5196,9 +5178,10 @@ mod test {
         from_zero.merge(&record(&[2]));
         assert_eq!(from_zero.minimum_time_us, 0);
 
-        // Percentiles are no longer clamped up to the fastest nonzero time.
+        // Percentiles are no longer clamped up to the fastest nonzero time:
+        // the 0 to 10 µs bucket reports its middle.
         let data = record(&[0, 0, 0, 5]);
-        assert_eq!(data.percentile_us(0.5), 0);
+        assert!(data.percentile_us(0.5) <= 5);
 
         // Status code summaries too.
         let mut summary = StatusCodeTimingSummary::default();
