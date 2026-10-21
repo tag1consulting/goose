@@ -1005,9 +1005,6 @@ impl GooseConfiguration {
 
 /// The microseconds request, transaction and scenario logs carry (#585).
 #[cfg(test)]
-// Written as for edition 2021: under this crate's 2018 edition a message
-// with inline arguments prints as it is written.
-#[allow(non_fmt_panics, unused_variables, clippy::needless_borrow)]
 mod microsecond_tests {
     use super::*;
     use crate::goose::{GooseMethod, TransactionName};
@@ -1029,7 +1026,7 @@ mod microsecond_tests {
 
     #[test]
     fn request_log_ends_with_its_microseconds() {
-        assert_eq!(last_csv_cell(&requests_csv_header()), "response_time_us");
+        assert_eq!(last_csv_cell(requests_csv_header()), "response_time_us");
         let mut request = GooseRequestMetric::new(
             GooseRawRequest::new(GooseMethod::Get, "/", vec![], ""),
             TransactionDetail {
@@ -1051,11 +1048,12 @@ mod microsecond_tests {
         let at = header.iter().position(|&h| h == "response_time").unwrap();
         assert_eq!(cells[cells.len() - header.len() + at], "2");
         let raw = configuration(GooseLogFormat::Raw).format_message(request.clone());
-        assert!(raw.ends_with("response_time_fraction_us: 345 }"), "{raw}");
+        assert!(raw.ends_with("response_time_fraction_us: 345 }"), "{}", raw);
         let pretty = configuration(GooseLogFormat::Pretty).format_message(request.clone());
         assert!(
             pretty.ends_with("response_time_fraction_us: 345,\n}"),
-            "{pretty}"
+            "{}",
+            pretty
         );
         let json: serde_json::Value =
             serde_json::from_str(&configuration(GooseLogFormat::Json).format_message(request))
@@ -1066,24 +1064,24 @@ mod microsecond_tests {
 
     #[test]
     fn transaction_and_scenario_logs_end_with_their_microseconds() {
-        assert_eq!(last_csv_cell(&transactions_csv_header()), "run_time_us");
+        assert_eq!(last_csv_cell(transactions_csv_header()), "run_time_us");
         let mut transaction = TransactionMetric::new(0, 0, 0, Arc::from("t"), 0);
         transaction.set_duration(Duration::from_micros(1_250), true);
         let csv = configuration(GooseLogFormat::Csv).format_message(transaction.clone());
         assert_eq!(last_csv_cell(&csv), "1250");
         let raw = configuration(GooseLogFormat::Raw).format_message(transaction.clone());
-        assert!(raw.ends_with("run_time_fraction_us: 250 }"), "{raw}");
+        assert!(raw.ends_with("run_time_fraction_us: 250 }"), "{}", raw);
         let json: serde_json::Value =
             serde_json::from_str(&configuration(GooseLogFormat::Json).format_message(transaction))
                 .unwrap();
         assert_eq!(json["run_time"], 1);
         assert_eq!(json["run_time_fraction_us"], 250);
 
-        assert_eq!(last_csv_cell(&scenarios_csv_header()), "run_time_us");
+        assert_eq!(last_csv_cell(scenarios_csv_header()), "run_time_us");
         let scenario = ScenarioMetric::new(0, Arc::from("s"), 0, Duration::from_micros(750), 0);
         let csv = configuration(GooseLogFormat::Csv).format_message(scenario.clone());
         assert_eq!(last_csv_cell(&csv), "750");
         let raw = configuration(GooseLogFormat::Raw).format_message(scenario);
-        assert!(raw.ends_with("run_time_fraction_us: 750 }"), "{raw}");
+        assert!(raw.ends_with("run_time_fraction_us: 750 }"), "{}", raw);
     }
 }

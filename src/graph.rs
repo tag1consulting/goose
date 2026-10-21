@@ -6817,9 +6817,6 @@ mod test {
 /// The heatmap's rows under a millisecond and its percentile lines in
 /// microseconds (#585).
 #[cfg(test)]
-// Written as for edition 2021: under this crate's 2018 edition a message
-// with inline arguments prints as it is written.
-#[allow(non_fmt_panics, unused_variables)]
 mod microsecond_tests {
     use super::*;
     use crate::metrics::dashboard_snapshot::HeatmapColumn;
@@ -6837,8 +6834,8 @@ mod microsecond_tests {
         let mut previous = 0;
         for us in (0..=DEFAULT_TIMEOUT_US).step_by(997) {
             let index = display_index(us);
-            assert!(index >= previous, "row falls at {us} µs");
-            assert!(index < 256, "{us} µs has row {index}");
+            assert!(index >= previous, "row falls at {} µs", us);
+            assert!(index < 256, "{} µs has row {}", us, index);
             previous = index;
         }
         assert!(display_index(DEFAULT_TIMEOUT_US) < 256);
@@ -6863,7 +6860,10 @@ mod microsecond_tests {
             let [_, lowest, highest] = heatmap.buckets_us[*index as usize];
             assert!(
                 lowest <= us && us <= highest,
-                "{us} µs in {lowest} to {highest}"
+                "{} µs in {} to {}",
+                us,
+                lowest,
+                highest
             );
             assert_eq!(highest - lowest, 99);
             assert_eq!(*count, expected);
@@ -6897,7 +6897,10 @@ mod microsecond_tests {
             let (a, b) = (display_index(row), display_index(run));
             assert!(
                 a.abs_diff(b) <= 1,
-                "p{percent}: heatmap {row} µs, run {run} µs"
+                "p{}: heatmap {} µs, run {} µs",
+                percent,
+                row,
+                run
             );
             assert!(row < 1000);
         }

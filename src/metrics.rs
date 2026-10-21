@@ -17,9 +17,6 @@ pub(crate) mod millis;
 mod nullable;
 
 #[cfg(test)]
-// Written as for edition 2021: under this crate's 2018 edition a message
-// with inline arguments prints as it is written.
-#[allow(non_fmt_panics, unused_variables, clippy::field_reassign_with_default)]
 mod microsecond_tests;
 
 pub use buckets::TimeBuckets;

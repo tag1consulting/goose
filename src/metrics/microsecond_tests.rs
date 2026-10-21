@@ -104,7 +104,9 @@ fn assert_bucket_holds(us: u64) {
     let value = bucket_value(us);
     assert!(
         within_one_percent(value, us),
-        "{us} µs is reported as {value} µs, more than 1% off"
+        "{} µs is reported as {} µs, more than 1% off",
+        us,
+        value
     );
     assert_eq!(
         bucket_index(value),
@@ -121,7 +123,7 @@ fn bucket_error_bound_from_one_microsecond_to_the_default_timeout() {
     for us in 1..=100_000 {
         assert_bucket_holds(us);
         let index = bucket_index(us);
-        assert!(index >= previous, "bucket index falls at {us} µs");
+        assert!(index >= previous, "bucket index falls at {} µs", us);
         previous = index;
     }
 
@@ -149,7 +151,7 @@ fn bucket_error_bound_from_one_microsecond_to_the_default_timeout() {
     let mut start = 0;
     while start <= DEFAULT_TIMEOUT_US {
         let end = bucket_end(start);
-        assert!(end > start, "the bucket from {start} µs is empty");
+        assert!(end > start, "the bucket from {} µs is empty", start);
         assert_eq!(bucket_index(end), bucket_index(start) + 1);
         assert_eq!(bucket_index(end - 1), bucket_index(start));
         for us in [end - 1, end, end + 1] {
@@ -168,7 +170,7 @@ fn sub_millisecond_request_is_kept_and_shown() {
     assert_eq!(data.maximum_time_us, 400);
     assert_eq!(data.counter, 1);
     let p50 = data.percentile_us(0.5);
-    assert!(p50 < 1000 && within_one_percent(p50, 400), "p50 {p50}");
+    assert!(p50 < 1000 && within_one_percent(p50, 400), "p50 {}", p50);
     assert_eq!(Millis(400).to_string(), "0.4");
     assert_eq!(format_micros(400, false), "0.4");
 
@@ -190,7 +192,7 @@ fn sub_millisecond_request_is_kept_and_shown() {
 
     // The HTML row and the console table show it too.
     let html = crate::report::raw_request_metrics_row(row.clone());
-    assert!(html.contains("<td>0.4</td>"), "{html}");
+    assert!(html.contains("<td>0.4</td>"), "{}", html);
     let cells = console_response_time_cells(&metrics, "GET /");
     assert_eq!(cells, ["GET /", "0.40", "0.4", "0.4", "0.4"]);
 }
@@ -202,8 +204,8 @@ fn two_point_two_and_two_point_five_milliseconds_are_told_apart() {
     let b = recorded(&[2_500; 100]);
     let (pa, pb) = (a.percentile_us(0.5), b.percentile_us(0.5));
     assert_ne!(pa, pb);
-    assert!(within_one_percent(pa, 2_200), "{pa}");
-    assert!(within_one_percent(pb, 2_500), "{pb}");
+    assert!(within_one_percent(pa, 2_200), "{}", pa);
+    assert!(within_one_percent(pb, 2_500), "{}", pb);
     let metrics = request_metrics(&[("GET /a", &[2_200; 100]), ("GET /b", &[2_500; 100])]);
     let report = report_of(&metrics, None);
     assert_eq!(
@@ -235,10 +237,10 @@ fn one_point_four_and_one_point_six_seconds_are_told_apart() {
     let (a, b) = (p50(0), p50(1));
     assert_ne!(a, b);
     for value in [a, b] {
-        assert!(value != 1000 && value != 2000, "p50 {value}");
+        assert!(value != 1000 && value != 2000, "p50 {}", value);
     }
-    assert!(within_one_percent(a, 1400), "{a}");
-    assert!(within_one_percent(b, 1600), "{b}");
+    assert!(within_one_percent(a, 1400), "{}", a);
+    assert!(within_one_percent(b, 1600), "{}", b);
 }
 
 #[test]
@@ -270,7 +272,11 @@ fn percentiles_from_the_buckets_are_within_one_percent() {
             let got = data.percentile_us(percent);
             assert!(
                 within_one_percent(got, exact),
-                "{name} p{percent}: {got} µs from the buckets, {exact} µs exactly"
+                "{} p{}: {} µs from the buckets, {} µs exactly",
+                name,
+                percent,
+                got,
+                exact
             );
         }
     }
@@ -479,7 +485,7 @@ fn user_with_channel() -> (GooseUser, flume::Receiver<GooseMetric>) {
 fn received_request(rx: &flume::Receiver<GooseMetric>) -> GooseRequestMetric {
     match rx.try_recv().expect("a request metric") {
         GooseMetric::Request(request) => *request,
-        other => panic!("expected a request metric, got {other:?}"),
+        other => panic!("expected a request metric, got {:?}", other),
     }
 }
 
@@ -561,10 +567,12 @@ fn dashboard_snapshot_carries_microseconds() {
     assert_eq!((row_us.min, row_us.max), (40, 900));
 
     // Coordinated omission adjusted figures too.
-    let mut metrics = GooseMetrics::default();
-    metrics.coordinated_omission_metrics = Some(CoordinatedOmissionMetrics::new(
-        GooseCoordinatedOmissionMitigation::Average,
-    ));
+    let mut metrics = GooseMetrics {
+        coordinated_omission_metrics: Some(CoordinatedOmissionMetrics::new(
+            GooseCoordinatedOmissionMitigation::Average,
+        )),
+        ..Default::default()
+    };
     metrics
         .coordinated_omission_metrics
         .as_mut()
