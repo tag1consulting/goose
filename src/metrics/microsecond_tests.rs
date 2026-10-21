@@ -94,17 +94,27 @@ fn exact_percentile(sorted: &[u64], percent: f32) -> u64 {
     sorted[rank - 1]
 }
 
+/// Within the bucket error: half a 10 µs bucket below 10 ms, 1% from there.
+fn within_bucket(value: u64, expected: u64) -> bool {
+    if expected < 10_000 {
+        value.abs_diff(expected) <= 5
+    } else {
+        within_one_percent(value, expected)
+    }
+}
+
 fn within_one_percent(value: u64, expected: u64) -> bool {
     (value as f64 - expected as f64).abs() <= expected as f64 * 0.01
 }
 
-/// The value a bucket reports for `us` is within 1% of it, a bucket's
-/// value lands back in the same bucket, and so does its value.
+/// The value a bucket reports for `us` is within half a 10 µs bucket of it
+/// below 10 ms and within 1% from 10 ms, a bucket's value lands back in the
+/// same bucket, and so does its value.
 fn assert_bucket_holds(us: u64) {
     let value = bucket_value(us);
     assert!(
-        within_one_percent(value, us),
-        "{} µs is reported as {} µs, more than 1% off",
+        within_bucket(value, us),
+        "{} µs is reported as {} µs, more than 5 µs off below 10 ms or 1% off above",
         us,
         value
     );
@@ -147,7 +157,7 @@ fn bucket_error_bound_from_one_microsecond_to_the_default_timeout() {
 
     // Each boundary, and the times either side of it: a bucket ends where
     // the next index begins.
-    assert_eq!(bucket_value(0), 0);
+    assert!(bucket_value(0) <= 5);
     let mut start = 0;
     while start <= DEFAULT_TIMEOUT_US {
         let end = bucket_end(start);
@@ -161,6 +171,65 @@ fn bucket_error_bound_from_one_microsecond_to_the_default_timeout() {
         }
         start = end;
     }
+}
+
+/// 10 µs buckets below 10 ms, the first of the 1% buckets at 10 ms, and the
+/// buckets around a millisecond.
+#[test]
+fn bucket_boundaries_around_ten_milliseconds_and_under_one() {
+    use super::buckets::{bucket_at, bucket_floor};
+    // Below 10 ms every bucket is 10 µs wide and reports its middle.
+    for (us, floor) in [
+        (1, 0),
+        (9, 0),
+        (10, 10),
+        (990, 990),
+        (999, 990),
+        (1_000, 1_000),
+    ] {
+        assert_eq!(bucket_floor(us), floor, "{} µs", us);
+        assert_eq!(bucket_end(us), floor + 10, "{} µs", us);
+        assert_eq!(bucket_value(us), floor + 5, "{} µs", us);
+    }
+    // The first sub millisecond bucket is index 0 and the last index 99.
+    assert_eq!((bucket_index(0), bucket_index(9)), (0, 0));
+    assert_eq!((bucket_index(990), bucket_index(999)), (99, 99));
+    assert_eq!(bucket_index(1_000), 100);
+    // 9.99 ms is the last 10 µs bucket; 10.00 ms starts the 1% buckets and
+    // 10.01 ms falls in that same first one.
+    assert_eq!(bucket_floor(9_990), 9_990);
+    assert_eq!(bucket_floor(9_999), 9_990);
+    assert_eq!(bucket_end(9_999), 10_000);
+    assert_eq!(bucket_index(9_999), 999);
+    assert_eq!(bucket_floor(10_000), 10_000);
+    assert_eq!(bucket_index(10_000), 1_000);
+    assert_eq!(bucket_floor(10_010), 10_000);
+    assert_eq!(bucket_index(10_010), 1_000);
+    let end = bucket_end(10_000);
+    assert!(end > 10_010 && end - 10_000 <= 10_000 / 64 + 1, "{}", end);
+    assert!(within_one_percent(bucket_value(10_000), 10_000));
+    assert!(within_one_percent(bucket_value(10_010), 10_010));
+    for index in [0, 99, 100, 999, 1_000, 1_001, 1_500] {
+        assert_eq!(bucket_index(bucket_at(index)), index, "index {}", index);
+    }
+    // Shown as hundredths up to 10 ms: 9.99 ms and 10 ms.
+    assert_eq!(Millis(bucket_value(9_990)).to_string(), "9.99");
+    assert_eq!(Millis(10_000).to_string(), "10");
+}
+
+/// A JSON report holds each request's buckets once, in `times_us`, with no
+/// whole millisecond `times` map beside them.
+#[test]
+fn json_report_writes_each_bucket_once() {
+    let metrics = request_metrics(&[("GET /", &[400, 2_350, 37_999])]);
+    let raw = serde_json::to_value(&metrics.requests["GET /"].raw_data).unwrap();
+    assert!(raw.get("times").is_none(), "{}", raw);
+    assert_eq!(raw["times_us"].as_object().unwrap().len(), 3);
+    let mut scenario = ScenarioMetricAggregate::new(0, Arc::from("Scenario"));
+    scenario.update_us(700, 0);
+    let scenario = serde_json::to_value(&scenario).unwrap();
+    assert!(scenario.get("times").is_none(), "{}", scenario);
+    assert_eq!(scenario["times_us"].as_object().unwrap().len(), 1);
 }
 
 #[test]
@@ -271,7 +340,7 @@ fn percentiles_from_the_buckets_are_within_one_percent() {
             let exact = exact_percentile(&times, percent);
             let got = data.percentile_us(percent);
             assert!(
-                within_one_percent(got, exact),
+                within_bucket(got, exact),
                 "{} p{}: {} µs from the buckets, {} µs exactly",
                 name,
                 percent,
@@ -556,8 +625,8 @@ fn dashboard_snapshot_carries_microseconds() {
         .as_ref()
         .expect("microseconds");
     assert_eq!((us.min, us.max), (40, 900));
-    assert!(within_one_percent(us.p50, 400), "{}", us.p50);
-    assert!(within_one_percent(us.p99, 900), "{}", us.p99);
+    assert!(within_bucket(us.p50, 400), "{}", us.p50);
+    assert!(within_bucket(us.p99, 900), "{}", us.p99);
     // The whole milliseconds beside them are truncated from them.
     assert_eq!(snap.aggregate.response_time_min_ms, 0);
     assert_eq!(snap.aggregate.percentile_ms.p50, 0);
