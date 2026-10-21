@@ -31,10 +31,12 @@ Recorded metrics appear in all Goose reports under the method label you provide:
 
 - **`method`** — A short label for the protocol (e.g. `"TCP"`, `"GRPC"`, `"WS"`, `"MQTT"`). Must not contain whitespace. Displayed in the method column of all metrics output.
 - **`name`** — Identifies the specific operation within that protocol. Combined with `method` to form the metrics key (`"TCP tcp_echo"`).
-- **`response_time`** — The measured duration in milliseconds. `as_millis()` truncates to whole milliseconds; sub-millisecond operations are recorded as `0 ms`, matching the resolution of HTTP timing in Goose.
+- **`response_time`**: The measured duration in milliseconds. `as_millis()` truncates to whole milliseconds, so a sub-millisecond operation is recorded as `0 ms`; to keep its microseconds, as Goose does for HTTP requests, call `record_custom_request_duration` (below).
 - **`success`** — Whether the operation succeeded. Unlike HTTP requests where Goose infers success from the status code, for custom protocols you control this directly.
 - **`status_code`** — `None` when the protocol has no concept of status codes (e.g. raw TCP); `Some(code)` to record a protocol-specific code (e.g. a gRPC status code). Internally, `None` is stored as `0`; if status code reporting is enabled, `0` will appear in status code tables for these requests.
 - **`error`** — An optional error description for failed operations.
+
+`record_custom_request_duration` takes the same arguments, with the time as a `Duration` such as `started.elapsed()`, and keeps its microseconds.
 
 Coordinated Omission Mitigation applies to custom requests the same way it does to HTTP requests.
 

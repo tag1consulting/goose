@@ -23,13 +23,15 @@ The `--scenario-format` option can be used to log in `csv`, `json` (default), `r
 
 For example, `csv` output of similar transactions as those logged above would like like:
 ```csv
-elapsed,scenario_index,transaction_index,name,run_time,success,user
-15751,AnonBrowsingUser,0,1287,7
-15756,AnonBrowsingUser,0,1308,4
-15760,AnonBrowsingUser,0,1286,9
-15783,AnonBrowsingUser,0,1301,0
-22802,AuthBrowsingUser,1,13056,8
+elapsed,name,index,run_time,user,run_time_us
+15751,AnonBrowsingUser,0,1287,7,1287305
+15756,AnonBrowsingUser,0,1308,4,1308820
+15760,AnonBrowsingUser,0,1286,9,1286017
+15783,AnonBrowsingUser,0,1301,0,1301532
+22802,AuthBrowsingUser,1,13056,8,13056944
 ```
+
+`run_time` is in whole milliseconds, truncated. The `json`, `raw` and `pretty` formats also carry `run_time_fraction_us`, the microseconds past those milliseconds (0 to 999), and the `csv` format ends with a `run_time_us` column holding the whole time in microseconds.
 
 # Gaggle Mode
 

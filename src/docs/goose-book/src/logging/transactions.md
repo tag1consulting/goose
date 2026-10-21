@@ -23,13 +23,15 @@ The `--transaction-format` option can be used to log in `csv`, `json` (default),
 
 For example, `csv` output of similar transactions as those logged above would like like:
 ```csv
-elapsed,scenario_index,transaction_index,name,run_time,success,user
-21936,0,0,"(Anon) front page",83,true,0
-21990,1,3,"(Auth) user page",34,true,1
-21954,0,0,"(Anon) front page",84,true,5
-22009,0,1,"(Anon) node page",34,true,2
-21952,0,0,"(Anon) front page",95,true,7
+elapsed,scenario_index,transaction_index,name,run_time,success,user,run_time_us
+21936,0,0,"(Anon) front page",83,true,0,83412
+21990,1,3,"(Auth) user page",34,true,1,34077
+21954,0,0,"(Anon) front page",84,true,5,84960
+22009,0,1,"(Anon) node page",34,true,2,34518
+21952,0,0,"(Anon) front page",95,true,7,95203
 ```
+
+`run_time` is in whole milliseconds, truncated. The `json`, `raw` and `pretty` formats also carry `run_time_fraction_us`, the microseconds past those milliseconds (0 to 999), and the `csv` format ends with a `run_time_us` column holding the whole time in microseconds.
 
 # Gaggle Mode
 
