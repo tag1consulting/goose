@@ -1,5 +1,5 @@
 //! Lines logged after `execute()` returns reach a gzipped Goose log, which
-//! stays whole gzip: outside a run each line is a whole gzip member.
+//! stays whole gzip: outside a run each line is one whole gzip member.
 //!
 //! The Goose log is the global logger, set once for the process, so this is
 //! the only test in its file: each integration test file runs in its own
@@ -53,6 +53,12 @@ async fn lines_after_execute_reach_a_gz_goose_log() {
     for line in 0..1000 {
         log::warn!("logged after execute {line}");
     }
+    // One member a line, not one for each piece the logger writes of it.
+    let bytes = std::fs::read(&log).unwrap();
+    let members = bytes
+        .windows(3)
+        .filter(|w| w == &[0x1f, 0x8b, 0x08])
+        .count();
     let mut text = String::new();
     let read = flate2::read::MultiGzDecoder::new(std::fs::File::open(&log).unwrap())
         .read_to_string(&mut text);
@@ -60,4 +66,5 @@ async fn lines_after_execute_reach_a_gz_goose_log() {
     read.expect("the Goose log is whole gzip");
     assert!(text.contains("global host configured"), "{}", text);
     assert!(text.contains("logged after execute 999"), "{}", text);
+    assert!(members < 1100, "{} gzip members for 1000 lines", members);
 }

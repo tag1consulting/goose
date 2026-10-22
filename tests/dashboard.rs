@@ -3051,7 +3051,16 @@ async fn test_delete_report() {
     let _mocks = setup_mock_endpoints(&server);
     let parent = reports_dir("delete");
     write_one_report(&server, &parent.join("old"), "1", "to delete").await;
-    for file in ["goose.log", "requests.csv", "keep.txt"] {
+    for file in [
+        "goose.log",
+        "requests.csv",
+        "transactions.json",
+        "scenarios.log",
+        "errors.csv.gz",
+        "debug.log",
+        ".report.json.tmp",
+        "keep.txt",
+    ] {
         std::fs::write(parent.join("old").join(file), "x").unwrap();
     }
     write_one_report(&server, &parent.join("gone"), "1", "all of it").await;

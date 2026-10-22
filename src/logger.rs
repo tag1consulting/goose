@@ -280,8 +280,8 @@ enum GooseLogTarget {
     /// compresses a buffer at a time rather than each piece of a line.
     Gzip(std::io::BufWriter<flate2::write::GzEncoder<std::fs::File>>),
     /// A Goose log named `.gz` outside `execute()`, between members: each
-    /// line written is a whole member.
-    GzipIdle(std::fs::File),
+    /// line is a whole member, and the pieces of a line not yet ended wait.
+    GzipIdle(std::fs::File, Vec<u8>),
     /// The file failed; lines are dropped.
     Failed,
 }
@@ -329,13 +329,17 @@ impl GooseLogTarget {
             }
             GooseLogTarget::File(file) => std::io::Write::write_all(file, buf),
             GooseLogTarget::Gzip(gzip) => std::io::Write::write_all(gzip, buf),
-            // Outside `execute()` each write is a whole member, so no line
+            // Outside `execute()` each line is a whole member, so no line
             // waits in a buffer nothing will finish.
-            GooseLogTarget::GzipIdle(file) => {
-                let mut gzip =
-                    flate2::write::GzEncoder::new(&*file, flate2::Compression::new(level));
-                std::io::Write::write_all(&mut gzip, buf)?;
-                gzip.finish().map(drop)
+            GooseLogTarget::GzipIdle(file, line) => {
+                line.extend_from_slice(buf);
+                match line.iter().rposition(|&b| b == b'\n') {
+                    Some(end) => {
+                        let lines: Vec<u8> = line.drain(..=end).collect();
+                        Self::whole_member(file, &lines, level)
+                    }
+                    None => Ok(()),
+                }
             }
             GooseLogTarget::Failed => Ok(()),
         }
@@ -345,9 +349,19 @@ impl GooseLogTarget {
     /// during a run compress a buffer at a time.
     fn start(&mut self, level: u32) {
         match std::mem::replace(self, GooseLogTarget::Failed) {
-            GooseLogTarget::GzipIdle(file) => *self = Self::member(file, level),
+            GooseLogTarget::GzipIdle(file, line) => {
+                *self = Self::member(file, level);
+                let _ = self.write_all(&line, level);
+            }
             other => *self = other,
         }
+    }
+
+    /// `bytes` as one whole gzip member at the end of `file`.
+    fn whole_member(file: &std::fs::File, bytes: &[u8], level: u32) -> std::io::Result<()> {
+        let mut gzip = flate2::write::GzEncoder::new(file, flate2::Compression::new(level));
+        std::io::Write::write_all(&mut gzip, bytes)?;
+        gzip.finish().map(drop)
     }
 
     /// Flush the log, ending a gzip member, so the file is whole.
@@ -359,7 +373,7 @@ impl GooseLogTarget {
                     .map_err(|e| e.into_error())
                     .and_then(flate2::write::GzEncoder::finish)
                 {
-                    *self = GooseLogTarget::GzipIdle(file);
+                    *self = GooseLogTarget::GzipIdle(file, Vec::new());
                 }
             }
             GooseLogTarget::File(mut file) => {

@@ -24,8 +24,6 @@ pub use buckets::TimeBuckets;
 pub(crate) use common::compare_reports;
 #[cfg(test)]
 pub(crate) use common::json_report_path;
-#[cfg(feature = "dashboard")]
-pub(crate) use common::open_report;
 #[cfg(any(test, feature = "dashboard"))]
 pub(crate) use common::read_report_text;
 pub(crate) use common::{load_baseline_file, LoadedReport, ReportData};

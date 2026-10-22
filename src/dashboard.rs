@@ -1740,17 +1740,28 @@ async fn report_file_handler(
         if !gzipped || accepts_gzip(&headers) {
             return stored_file_response(&stored, content_type, &filename, gzipped).await;
         }
+        // The file opened is checked to be the one at the path, as when it is
+        // streamed.
         let gunzipped = tokio::task::spawn_blocking(move || {
+            let file = std::fs::File::open(&stored)?;
+            let metadata = file.metadata()?;
+            if !metadata.is_file() || !same_file(&stored, &metadata) {
+                return Err(std::io::Error::other("the report changed"));
+            }
             let mut body = Vec::new();
-            crate::metrics::open_report(&stored)
-                .and_then(|mut report| std::io::Read::read_to_end(&mut report, &mut body))
-                .map(|_| body)
+            std::io::Read::read_to_end(&mut flate2::read::MultiGzDecoder::new(file), &mut body)?;
+            Ok(body)
         })
         .await;
         return match gunzipped {
             Ok(Ok(body)) => {
                 let length = body.len() as u64;
-                download_response(content_type, &filename, Body::from(body), Some(length))
+                let mut response =
+                    download_response(content_type, &filename, Body::from(body), Some(length));
+                response
+                    .headers_mut()
+                    .insert(header::VARY, HeaderValue::from_static("Accept-Encoding"));
+                response
             }
             _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         };
@@ -1845,9 +1856,10 @@ fn accepts_gzip(headers: &HeaderMap) -> bool {
             let mut parts = coding.split(';').map(str::trim);
             let name = parts.next().unwrap_or_default().to_ascii_lowercase();
             let refused = parts.any(|param| {
+                let param = param.to_ascii_lowercase();
                 param
                     .strip_prefix("q=")
-                    .and_then(|q| q.parse::<f32>().ok())
+                    .and_then(|q| q.trim().parse::<f32>().ok())
                     .is_some_and(|q| q == 0.0)
             });
             (name, !refused)
@@ -1886,6 +1898,9 @@ async fn stored_file_response(
         response
             .headers_mut()
             .insert(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"));
+        response
+            .headers_mut()
+            .insert(header::VARY, HeaderValue::from_static("Accept-Encoding"));
     }
     response
 }
@@ -2535,7 +2550,14 @@ async fn delete_report_handler(
     let Some((folder, json)) = runs::report_folder(&state.reports_dir, &name) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    if state.running_folder.get().as_deref() == Some(name.as_str()) {
+    // The same folder by identity too, so a name in another case on a
+    // filesystem that ignores case is still the running folder.
+    let running = state.running_folder.get().is_some_and(|running| {
+        running == name
+            || std::fs::symlink_metadata(state.reports_dir.join(&running))
+                .is_ok_and(|metadata| same_file(&folder, &metadata))
+    });
+    if running {
         return (
             StatusCode::CONFLICT,
             [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
@@ -2544,8 +2566,12 @@ async fn delete_report_handler(
             .into_response();
     }
     // `remove_file` removes a symlink, never what it points to.
+    let name_for_check = name.clone();
+    let reports_dir = state.reports_dir.clone();
     let removed = tokio::task::spawn_blocking(move || {
-        if !runs::is_listed(&json) {
+        // Checked again just before the deletes: still a real folder, and
+        // still a report the panel lists.
+        if runs::report_folder(&reports_dir, &name_for_check).is_none() || !runs::is_listed(&json) {
             return Ok(false);
         }
         for file in runs::deletable_files() {
@@ -2944,6 +2970,7 @@ mod tests {
             "gzip;q=0",
             "gzip; q=0.0",
             "*;q=0",
+            "gzip;Q=0",
         ] {
             assert!(!with(Some(no)), "{}", no);
         }

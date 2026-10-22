@@ -336,6 +336,7 @@ async fn render_report_with_and_without_graph_data() {
         assert!(md.contains("GET"), "{}", md);
         if name == "with" {
             assert!(html.contains("graph-rps"), "the graphs are drawn");
+            assert!(html.contains("class=\"graph heatmap\""), "the heatmap");
             assert!(html.contains("rendered"), "the notes");
             assert!(!html.contains("graphs were not recorded"));
             assert!(read_json(Path::new(&again))["graphs"].is_object());

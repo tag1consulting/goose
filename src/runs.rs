@@ -252,6 +252,8 @@ impl RunFolder {
             }
         }
         let probe = dir.join(format!(".goose-write-check-{}", std::process::id()));
+        // A probe left by an earlier process with the same id goes first.
+        let _ = std::fs::remove_file(&probe);
         std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -349,7 +351,7 @@ impl GooseAttack {
         self.output.last_report = None;
         self.output.error = None;
         self.output.saved_now = false;
-        self.output.started = Some(Utc::now());
+        self.output.started = None;
         if !self.configuration.uses_run_folder() {
             return Ok(());
         }
@@ -742,6 +744,13 @@ pub(crate) fn deletable_files() -> Vec<String> {
     }
     let gzipped: Vec<String> = names.iter().map(|name| format!("{name}.gz")).collect();
     names.extend(gzipped);
+    // The JSON report's temporary file, left by a process that ended while
+    // writing it.
+    let temporary: Vec<String> = [REPORT_JSON.to_string(), format!("{REPORT_JSON}.gz")]
+        .iter()
+        .map(|name| format!(".{name}.tmp"))
+        .collect();
+    names.extend(temporary);
     names
 }
 

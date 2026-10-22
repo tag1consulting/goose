@@ -553,7 +553,7 @@ pub(crate) fn json_report_path(path: &Path) -> PathBuf {
 pub(crate) fn open_report(path: &Path) -> std::io::Result<Box<dyn Read>> {
     let file = BufReader::new(File::open(path)?);
     if crate::runs::without_gz(&path.to_string_lossy()).1 {
-        Ok(Box::new(flate2::read::GzDecoder::new(file)))
+        Ok(Box::new(flate2::read::MultiGzDecoder::new(file)))
     } else {
         Ok(Box::new(file))
     }

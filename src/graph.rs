@@ -3251,20 +3251,18 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
         origin: usize,
         started: DateTime<Utc>,
     ) -> Vec<(String, U)> {
+        // A second no clock can show, from an origin read back from a JSON
+        // report, is left out rather than drawn.
         data.iter()
             .enumerate()
-            .map(|(index, value)| {
-                (
-                    Local
-                        .timestamp_opt((origin + index) as i64 + started.timestamp(), 0)
-                        // @TODO: Error handling
-                        .unwrap()
-                        .format("%Y-%m-%d %H:%M:%S")
-                        .to_string(),
-                    *value,
-                )
+            .filter_map(|(index, value)| {
+                let second = origin
+                    .checked_add(index)
+                    .and_then(|second| i64::try_from(second).ok())
+                    .and_then(|second| second.checked_add(started.timestamp()))?;
+                let time = Local.timestamp_opt(second, 0).single()?;
+                value.map(|data| (time.format("%Y-%m-%d %H:%M:%S").to_string(), data))
             })
-            .filter_map(|(time, data_option)| data_option.map(|data| (time, data)))
             .collect::<Vec<_>>()
     }
 }

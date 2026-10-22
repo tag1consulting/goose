@@ -3123,6 +3123,8 @@ impl GooseAttack {
         let now = time::Instant::now();
         self.started = Some(now);
         self.series_started = Some(now);
+        // The same start, as the reports' record gives it.
+        self.output.started = Some(chrono::Utc::now());
         // Align pre-created weighted users so request.elapsed matches series time.
         for user in &mut self.weighted_users {
             user.started = now;

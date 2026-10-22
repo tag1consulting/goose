@@ -87,7 +87,7 @@ cargo run --features dashboard --example simple -- --host http://localhost:8080 
 
 ## Compression
 
-**14. Any report or log whose name ends in `.gz` is written gzipped, in the format the name before `.gz` names.** Goose reads a `.json.gz` report anywhere it reads a JSON report: `--baseline-file`, `--render-report` and the runs panel.
+**14. Any report or log whose name ends in `.gz` is written gzipped, in the format the name before `.gz` names.** Goose reads a `.json.gz` report anywhere it reads a JSON report: `--baseline-file`, `--render-report` and the runs panel. `--pdf-print-html`, a debugging aid, writes plain HTML whatever its name.
 
 ```bash
 cargo run --example simple -- --host http://localhost:8080 -t 30s --report-file run.json.gz -R requests.csv.gz
