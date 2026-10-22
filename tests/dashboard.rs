@@ -736,8 +736,18 @@ async fn test_control_disabled_returns_404() {
     let base_v4 = format!("http://127.0.0.1:{port}");
 
     // Observe-only (no --dashboard-control).
-    let configuration = build_dashboard_config(&server, "127.0.0.1", port, Some(AUTH_TOKEN));
+    let mut configuration = build_dashboard_config(&server, "127.0.0.1", port, Some(AUTH_TOKEN));
     assert!(!configuration.dashboard_control);
+    // A listed report beside the run's folder, so Delete's 404 comes from the
+    // missing route and not from a missing folder.
+    let parent = reports_dir("control-off");
+    configuration.output_dir = Some(parent.join("run").to_string_lossy().into_owned());
+    std::fs::create_dir(parent.join("nightly")).unwrap();
+    std::fs::write(
+        parent.join("nightly").join("report.json"),
+        r#"{"raw_metrics": {}}"#,
+    )
+    .unwrap();
 
     let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
     let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
@@ -745,6 +755,16 @@ async fn test_control_disabled_returns_404() {
     let (base, health) = wait_for_health(&[&base_v4], 80).await;
     let health_json: serde_json::Value = health.json().await.expect("health json");
     assert_eq!(health_json["control_enabled"], false);
+    let listing: serde_json::Value = reqwest::Client::new()
+        .get(format!("{base}/api/v1/reports"))
+        .header("Authorization", bearer_header())
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(listing["reports"][0]["name"], "nightly");
 
     let client = reqwest::Client::new();
     let resp = post_control(&client, &base, "/api/v1/control/start", Some("{}"), true).await;
@@ -770,8 +790,10 @@ async fn test_control_disabled_returns_404() {
         .await
         .expect("DELETE");
     assert_eq!(resp.status(), 404, "control off must 404 delete");
+    assert!(parent.join("nightly").join("report.json").exists());
 
     let _ = load.join().await.expect("execute");
+    std::fs::remove_dir_all(&parent).ok();
 }
 
 /// Case 2: control always requires token on loopback.
@@ -3035,6 +3057,10 @@ async fn test_delete_report() {
     write_one_report(&server, &parent.join("gone"), "1", "all of it").await;
     std::fs::create_dir(parent.join("no-report")).unwrap();
     std::fs::write(parent.join("no-report").join("report.html"), "x").unwrap();
+    // A report.json that is not a Goose report: the panel does not list it.
+    std::fs::create_dir(parent.join("other")).unwrap();
+    std::fs::write(parent.join("other").join("report.json"), "{}").unwrap();
+    std::fs::write(parent.join("other").join("debug.log"), "x").unwrap();
 
     let (load, base) = start_idle_dashboard(&server, &parent, Vec::new(), None).await;
     let client = reqwest::Client::new();
@@ -3052,7 +3078,7 @@ async fn test_delete_report() {
     assert_eq!(delete("old", false, false).await.unwrap().status(), 401);
     assert_eq!(delete("old", false, true).await.unwrap().status(), 401);
     assert_eq!(delete("old", true, true).await.unwrap().status(), 401);
-    for name in ["missing", "..%2F..%2Fetc", ".hidden", "no-report"] {
+    for name in ["missing", "..%2F..%2Fetc", ".hidden", "no-report", "other"] {
         assert_eq!(
             delete(name, true, false).await.unwrap().status(),
             404,
@@ -3061,6 +3087,8 @@ async fn test_delete_report() {
         );
     }
     assert!(parent.join("no-report").join("report.html").exists());
+    assert!(parent.join("other").join("report.json").exists());
+    assert!(parent.join("other").join("debug.log").exists());
 
     // Only the reports and Goose's logs go: a file Goose did not write stays,
     // and so does its folder.

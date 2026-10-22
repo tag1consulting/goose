@@ -376,6 +376,12 @@ impl GooseAttack {
         Ok(())
     }
 
+    /// The record of a report drawn from `graph_data`, whose first second is
+    /// where its graphs start.
+    pub(crate) fn report_record_for(&self, in_progress: bool, graph_data: &GraphData) -> RunRecord {
+        self.report_record(in_progress, graph_data.first_second())
+    }
+
     /// The record of the run in its reports: written while it continues when
     /// `in_progress`, otherwise at its end. `graphs_from` is the first second
     /// of the run the graph data holds.
@@ -438,7 +444,7 @@ impl GooseAttack {
             },
             None => (None, None),
         };
-        let record = self.report_record(false, self.graph_data.first_second());
+        let record = self.report_record_for(false, &self.graph_data);
         let save = self.output.save_report || self.output.saved_now;
         let folder = match (save, self.output.folder.as_mut()) {
             (true, Some(folder)) => Some(
@@ -658,6 +664,13 @@ pub(crate) fn read_record(json: &Path) -> Option<RunRecord> {
     serde_json::from_str(&text).ok()
 }
 
+/// Whether the runs panel would list the report at `json`: Delete touches
+/// nothing in a folder the panel does not show.
+#[cfg(feature = "dashboard")]
+pub(crate) fn is_listed(json: &Path) -> bool {
+    read_listed(json, "", std::time::UNIX_EPOCH).is_some()
+}
+
 /// What the runs panel shows of the report at `json`, in the folder `name`.
 #[cfg(feature = "dashboard")]
 fn read_listed(json: &Path, name: &str, modified: std::time::SystemTime) -> Option<ListedReport> {
@@ -834,7 +847,7 @@ impl GooseAttack {
             }
         }
         let folder_path = folder.path.clone();
-        let record = self.report_record(true, graph_data.first_second());
+        let record = self.report_record_for(true, &graph_data);
         let configuration = self.configuration.clone();
         let graph_data_in_json = self.output.graph_data;
         let compress = self.configuration.compress;
@@ -983,6 +996,41 @@ mod tests {
         attack.output.save_report = false;
         let start = attack.report_record(false, 300).graphs_start.unwrap();
         assert!(start.reason.starts_with("Save report is off"));
+    }
+
+    /// Rule 5: the report written at the end of a run whose graph data no
+    /// longer reaches back to its start records where its graphs start.
+    #[tokio::test]
+    async fn the_end_of_run_report_says_where_its_graphs_start() {
+        use crate::test_plan::{TestPlanHistory, TestPlanStepAction};
+        let parent = temp_dir("graphs-start");
+        let mut attack =
+            GooseAttack::initialize_with_config(configuration(Some(&parent.join("run")))).unwrap();
+        let started = Utc.with_ymd_and_hms(2026, 10, 22, 10, 0, 0).unwrap();
+        attack.run_in_progress = true;
+        attack.output.started = Some(started);
+        attack.output.save_report = true;
+        attack.output.folder =
+            Some(RunFolder::choose(&attack.configuration, Local::now()).unwrap());
+        for step in [TestPlanStepAction::Increasing, TestPlanStepAction::Finished] {
+            attack.metrics.history.push(TestPlanHistory::step(step, 0));
+        }
+        for second in 0..=900 {
+            attack.graph_data.record_users_per_second(1, second);
+        }
+        attack.graph_data.prune_to_window(600);
+        let origin = attack.graph_data.first_second();
+        assert!(origin > 0);
+        attack.write_end_of_run().await.unwrap();
+        let report: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(parent.join("run").join(REPORT_JSON)).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            report["graphs_start"]["time"],
+            rfc3339(started + chrono::Duration::seconds(origin as i64))
+        );
+        std::fs::remove_dir_all(&parent).ok();
     }
 
     /// Rule 11: a report written while the run continues is marked in

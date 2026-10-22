@@ -2532,7 +2532,7 @@ async fn delete_report_handler(
     let Ok(axum::extract::Path(name)) = path else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let Some((folder, _)) = runs::report_folder(&state.reports_dir, &name) else {
+    let Some((folder, json)) = runs::report_folder(&state.reports_dir, &name) else {
         return StatusCode::NOT_FOUND.into_response();
     };
     if state.running_folder.get().as_deref() == Some(name.as_str()) {
@@ -2545,6 +2545,9 @@ async fn delete_report_handler(
     }
     // `remove_file` removes a symlink, never what it points to.
     let removed = tokio::task::spawn_blocking(move || {
+        if !runs::is_listed(&json) {
+            return Ok(false);
+        }
         for file in runs::deletable_files() {
             let path = folder.join(file);
             if std::fs::symlink_metadata(&path).is_ok_and(|m| !m.is_dir()) {
@@ -2553,11 +2556,12 @@ async fn delete_report_handler(
         }
         // A folder that still holds other files stays.
         let _ = std::fs::remove_dir(&folder);
-        Ok::<_, std::io::Error>(())
+        Ok::<_, std::io::Error>(true)
     })
     .await;
     match removed {
-        Ok(Ok(())) => {
+        Ok(Ok(false)) => StatusCode::NOT_FOUND.into_response(),
+        Ok(Ok(true)) => {
             info!("[dashboard]: deleted the report in {name}");
             StatusCode::NO_CONTENT.into_response()
         }
