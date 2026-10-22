@@ -4974,6 +4974,22 @@ mod test {
             .unwrap_or_default()
     }
 
+    /// Rows from 5 to 61 seconds are 1 second wide, so a 5.1 s time is in
+    /// the 5 to 6 s row, not a 5 to 7 s one.
+    #[test]
+    fn heatmap_rows_from_five_seconds_are_one_second_wide() {
+        assert_eq!(
+            display_range(display_index(5_100_000)),
+            (5_000_000, 5_999_999)
+        );
+        assert_eq!(
+            display_range(display_index(60_999_999)),
+            (60_000_000, 60_999_999)
+        );
+        assert_eq!(display_index(60_999_999), FIXED_BUCKETS - 1);
+        assert_eq!(FIXED_BUCKETS, 237);
+    }
+
     #[test]
     fn heatmap_bucket_tables_follow_the_rows() {
         let table = bucket_table_us(FIXED_BUCKETS);
