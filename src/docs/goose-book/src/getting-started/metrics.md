@@ -5,6 +5,9 @@ Here's sample output generated when running a loadtest, in this case the [Umami 
 In this case, the [Drupal Umami demo](https://www.drupal.org/docs/umami-drupal-demonstration-installation-profile) was installed in a local container. The following command was used to configure Goose and run the load test. The `-u9` tells Goose to spin up 9 users. The `-r3` option tells Goose to launch 3 users per second. The `-t1m` option tells Goose to run the load test for 1 minute, or 60 seconds. The `--no-reset-metrics` flag tells Goose to include all metrics, instead of the default which is to flush all metrics collected during start up. And finally, the `--report-file report.html` tells Goose to generate an HTML-formatted report named `report.html` once the load test finishes.
 
 ## ASCII metrics
+
+This sample is output from an earlier Goose: its tables come from 0.16. Goose 0.19 shows times and averages under 10 ms to the hundredth of a millisecond and from 10 ms in whole milliseconds, rounded half up. It no longer rounds percentiles above 100 ms to 10 ms, 100 ms or whole seconds; they come from buckets never more than 1% off.
+
 ```bash
 % cargo run --release --example umami -- --host http://umami.ddev.site/ -u9 -r3 -t1m --no-reset-metrics --report-file report.html
    Compiling goose v0.18.1 (~/goose)
@@ -346,11 +349,13 @@ The next graph shows the response times measured for each request made. Goose me
 - **Resource efficiency**: Not downloading complete responses allows Goose to generate more load with fewer resources
 - **Real-world relevance**: Many applications stream responses or use chunked encoding where TTFB is the critical performance metric
 
+Goose measures request, transaction and scenario times to the microsecond. The console, HTML, Markdown and PDF reports and the dashboard show times under 10 ms to the hundredth of a millisecond and times from 10 ms in whole milliseconds, rounded half up, so a 0.418 ms response reads `0.42` where whole milliseconds showed `0`. Averages follow the same rule, and a baseline delta is the difference of the two values shown. Percentiles come from buckets that are never more than 1% off the times they hold, so 2.2 ms and 2.5 ms, or 1.4 s and 1.6 s, are told apart. The fastest and slowest times are kept exactly. The JSON report's minimums, maximums and percentiles keep whole milliseconds, truncated, so a 37.999 ms time shown as `38` is `37` there. Its averages are means of the microseconds. Its raw timing data holds each bucket once, in `times_us`, with `minimum_time_us`, `maximum_time_us` and `total_time_us`. A JSON report from Goose 0.18.1 or later loads as a baseline.
+
 If your load test needs to measure total download time including the response body, see [Measuring Complete Download Time](#measuring-complete-download-time) below.
 
 In the following graph, it's apparent that POST requests had the slowest responses, which is logical as they are not cached. As before, it's possible to click on the request names at the top of the graph to hide/show details about specific requests.
 
-Below the graph is a response time heatmap for the whole run, drawn as the [live dashboard](../controller/dashboard.md#the-response-time-heatmap) draws its own: each column holds the requests that started in it, each row is one of Goose's response time buckets on a logarithmic axis, the color shows how many requests took that long on a logarithmic scale with the sparsest and busiest counts on the legend, and three lines show each column's p50, p95 and p99. A column starts as one second wide. The heatmap keeps at most 600 columns for all requests and 60 for each of the first 100 request names; when a series fills them, adjacent pairs merge and the columns double in width, so the chart states how wide each column is ("Each column is 8 seconds") and its memory stops growing however long the test runs. A column's percentiles are worked out from all of its requests, never averaged. A select chooses all requests or one request name, and when coordinated omission mitigation recorded synthetic times, **Adjusted** and **Measured** buttons choose whether they are counted. The heatmap is on for a saved run and for a `--report-file`; `--no-percentiles-over-time` turns it off. The Markdown and JSON reports have no heatmap.
+Below the graph is a response time heatmap for the whole run, drawn as the [live dashboard](../controller/dashboard.md#the-response-time-heatmap) draws its own. Each column holds the requests that started in it. Each row is a range of response times, the same rows the dashboard draws, on a logarithmic axis. A cell's color shows how many requests took that long, on a logarithmic scale, and the legend shows the sparsest and busiest counts. Three lines show each column's p50, p95 and p99. A column starts as one second wide. The heatmap keeps at most 600 columns for all requests and 60 for each of the first 100 request names; when a series fills them, adjacent pairs merge and the columns double in width, so the chart states how wide each column is ("Each column is 8 seconds") and its memory stops growing however long the test runs. A column's percentiles are worked out from all of its requests, never averaged. A select chooses all requests or one request name, and when coordinated omission mitigation recorded synthetic times, **Adjusted** and **Measured** buttons choose whether they are counted. The heatmap is on for a saved run and for a `--report-file`; `--no-percentiles-over-time` turns it off. The Markdown and JSON reports have no heatmap.
 
 Below that is a table that shows per-request details:
 ![Response time metrics](metrics-response-time.jpg)
@@ -362,12 +367,12 @@ When a request returns multiple different HTTP status codes during a load test, 
 ```text
  Name                     |    Avg (ms) |        Min |         Max |     Median
  ------------------------------------------------------------------------------
- GET static asset         |        5.11 |          2 |          38 |          5
-   └─ 200 (94.2%)         |        4.98 |          2 |          35 |          -
-   └─ 404 (5.8%)          |        7.24 |          5 |          38 |          -
+ GET /                    |        4.69 |       2.57 |        8.88 |       4.38
+   └─ 200 (93.9%)         |        4.49 |       2.57 |        5.87 |          -
+   └─ 404 (6.1%)          |        7.73 |       7.02 |        8.88 |          -
 ```
 
-In this example, the `GET static asset` request returned both `200` and `404` responses. The breakdown reveals that 404 responses took longer on average (7.24ms vs 4.98ms), suggesting the server spends more time processing requests for missing assets than serving cached ones.
+This sample comes from the `simple` example run against a test server that answers some requests for `/` with a `404`. The `GET /` request returned both `200` and `404` responses, and the breakdown shows that 404 responses took longer on average (7.73 ms against 4.49 ms).
 
 Each breakdown row shows the status code, the percentage of total requests with that code, and the average, minimum, and maximum response times for that status code. The median column shows `-` because per-status-code breakdowns track aggregate statistics (count, total, min, max) rather than full response time distributions, so percentile calculations are not available at this level. Full percentile data remains available on the aggregate row.
 

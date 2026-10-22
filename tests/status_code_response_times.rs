@@ -100,7 +100,7 @@ async fn test_status_code_response_time_tracking() {
     // Note: min_time can be 0ms on fast localhost responses, so we only
     // verify the ordering invariant, not that min_time is non-zero.
     assert!(
-        timing_200.max_time >= timing_200.min_time,
+        timing_200.max_time_us >= timing_200.min_time_us,
         "200 timing max should be >= min"
     );
 

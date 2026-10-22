@@ -27,6 +27,7 @@ export const IDLE_SNAPSHOT = {
     response_time_min_ms: 0,
     response_time_max_ms: 0,
     percentile_ms: { p50: 0, p95: 0, p99: 0 },
+    response_time_us: null,
     co_active: false,
     co_adjusted: null,
   },

@@ -30,6 +30,22 @@ export function formatInt(n: number | undefined): string {
   return Math.round(n).toLocaleString();
 }
 
+/**
+ * A time in milliseconds as Goose shows every time: rounded to the
+ * microsecond, then half up to the hundredth under 10 ms (0.42) and to whole
+ * milliseconds from there, as the reports show it.
+ */
+export function formatMs(n: number | undefined): string {
+  if (typeof n !== "number" || !isFinite(n)) return "—";
+  const us = Math.round(Math.abs(n) * 1000);
+  const hundredths = Math.floor((us + 5) / 10);
+  const text =
+    hundredths < 1000
+      ? (hundredths / 100).toLocaleString(undefined, { maximumFractionDigits: 2 })
+      : Math.floor((us + 500) / 1000).toLocaleString();
+  return n < 0 && text !== "0" ? "-" + text : text;
+}
+
 export function formatRate(n: number | undefined): string {
   if (typeof n !== "number" || !isFinite(n)) return "—";
   return n.toLocaleString(undefined, {

@@ -31,7 +31,10 @@ export interface HeatmapState {
   startSecond: number;
   endSecond: number;
   holdFrom: number;
-  /** `[time, lowest, highest]` in milliseconds for each bucket index. */
+  /**
+   * `[time, lowest, highest]` in milliseconds for each bucket index, from
+   * `buckets_us`; `highest + 1` is where the bucket ends.
+   */
   buckets: number[][];
   columns: Map<number, HeatmapColumn>;
 }
@@ -53,17 +56,17 @@ export function applyHeatmap(
 ): HeatmapState | null {
   let columns: Map<number, HeatmapColumn>;
   let buckets: number[][];
+  const table = bucketTable(heatmap);
   if (heatmap.since === 0) {
     columns = new Map();
-    buckets = heatmap.buckets;
+    buckets = table;
   } else if (
     state !== null &&
     state.generation === heatmap.generation &&
     state.rev === heatmap.since
   ) {
     columns = new Map(state.columns);
-    buckets =
-      heatmap.buckets.length >= state.buckets.length ? heatmap.buckets : state.buckets;
+    buckets = table.length >= state.buckets.length ? table : state.buckets;
   } else {
     return null;
   }
@@ -82,6 +85,19 @@ export function applyHeatmap(
     buckets,
     columns,
   };
+}
+
+/**
+ * The bucket table in milliseconds: each microsecond entry of `buckets_us`,
+ * `[time, lowest, highest]`, as milliseconds with `highest` one millisecond
+ * short of where the bucket ends.
+ */
+export function bucketTable(heatmap: Heatmap): number[][] {
+  return heatmap.buckets_us.map(([time, lowest, highest]) => [
+    time / 1000,
+    lowest / 1000,
+    (highest + 1) / 1000 - 1,
+  ]);
 }
 
 export function heatmapCursor(state: HeatmapState | null): HeatmapCursor | null {
@@ -104,7 +120,7 @@ export interface HeatmapCell {
 /** One bucket's row, placed on the latency axis. */
 export interface HeatmapRow {
   bucket: number;
-  /** The bucket's rounded time and its range of measured times, in ms. */
+  /** The time the bucket stands for, its middle, and its range of measured times, in ms. */
   time: number;
   lowest: number;
   highest: number;
@@ -147,7 +163,7 @@ export interface HeatmapView {
 
 /** Latency axis ticks, in milliseconds. */
 export const TICKS_MS = [
-  1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 60000,
+  0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 60000,
 ];
 
 export function tickLabel(ms: number): string {
@@ -156,13 +172,13 @@ export function tickLabel(ms: number): string {
 
 /**
  * A bucket's span on the latency axis: from its lowest measured time to just
- * past its highest. Bucket 0 holds times under a millisecond, which a log axis
- * cannot reach down to, so it spans from half a millisecond to one.
+ * past its highest. Bucket 0 starts at 0, which a log axis cannot reach down
+ * to, so it spans from half its end, 0.05 to 0.1 ms.
  */
 export function bucketSpan(bucket: number[]): [number, number] {
   const lowest = bucket[1];
-  const highest = bucket[2];
-  return [lowest === 0 ? 0.5 : lowest, highest + 1];
+  const end = bucket[2] + 1;
+  return [lowest === 0 ? end / 2 : lowest, end];
 }
 
 /** Adds flattened `index, count` pairs into `into`. */
@@ -242,10 +258,6 @@ export function heatmapView(state: HeatmapState | null, adjusted: boolean): Heat
     });
   }
   const ticks: HeatmapTick[] = [];
-  // Responses under a millisecond have their own row, below the 1 ms tick.
-  if (rows[0].bucket === 0) {
-    ticks.push({ ms: 0, label: "<1 ms", y: (rows[0].top + rows[0].bottom) / 2 });
-  }
   for (const ms of TICKS_MS) {
     const y = fraction(ms);
     if (y >= 0 && y <= 1) ticks.push({ ms, label: tickLabel(ms), y });
@@ -267,16 +279,16 @@ export function heatmapView(state: HeatmapState | null, adjusted: boolean): Heat
  * The response time at `percent` (0 to 1) of `total` requests whose counts
  * by bucket are `buckets`, as `[time, count]` in ascending bucket order, by
  * Goose's own rule for its whole run figures (`response_time_percentile` in
- * src/metrics.rs): the rank is `total * percent` rounded, in single
- * precision as Rust's `f32`, and the answer the time of the first bucket
- * whose running count reaches it.
+ * src/metrics.rs): the rank is `total * percent` rounded, in doubles as
+ * Rust's `f64`, and the answer the time of the first bucket whose running
+ * count reaches it.
  */
 export function percentileOf(
   buckets: Array<[number, number]>,
   total: number,
   percent: number
 ): number {
-  const rank = Math.round(Math.fround(Math.fround(total) * Math.fround(percent)));
+  const rank = Math.round(total * percent);
   let running = 0;
   for (const [time, count] of buckets) {
     running += count;
@@ -319,6 +331,20 @@ export function secondPercentiles(
   return result;
 }
 
+/**
+ * A heatmap percentile, the middle of its row, in milliseconds at the rows'
+ * precision: to the tenth under 1 ms and whole from 1 ms, truncated, so it
+ * names the row it is in.
+ */
+export function rowMs(ms: number): string {
+  if (!isFinite(ms)) return "—";
+  const us = Math.round(ms * 1000);
+  if (us < 1000) {
+    return (Math.floor(us / 100) / 10).toLocaleString(undefined, { maximumFractionDigits: 1 });
+  }
+  return Math.floor(us / 1000).toLocaleString();
+}
+
 /** Steps between second labels: the smallest that fits is used. */
 export const SECOND_STEPS = [1, 2, 5, 10, 15, 30, 60, 120, 300];
 
@@ -349,7 +375,10 @@ export function secondLabels(startSecond: number, columns: number): number[] {
 function bucketOf(state: HeatmapState, bucket: number): number[] {
   const entry = state.buckets[bucket];
   if (entry !== undefined) return entry;
-  const time = 60000 + (bucket - 204) * 1000;
+  // The table always holds every fixed bucket, and the last ones are 1 s
+  // apart, so a bucket past it is that many seconds past its last entry.
+  const last = state.buckets.length - 1;
+  const time = Math.round(state.buckets[last][0]) + (bucket - last) * 1000;
   return [time, time - 500, time + 499];
 }
 
@@ -390,6 +419,8 @@ export function cellColor(count: number, min: number, max: number, dark: boolean
 export interface Formats {
   int: (n: number) => string;
   pct: (fraction: number) => string;
+  /** A response time in milliseconds, to the hundredth under 10 ms; `int` when absent. */
+  ms?: (n: number) => string;
 }
 
 /** A cell's tooltip. */
@@ -400,11 +431,13 @@ export function tooltipText(
   adjusted: boolean,
   formats: Formats
 ): string {
+  const ms = formats.ms || formats.int;
   let bucket: string;
-  if (row.highest === 0) {
-    bucket = "under 1 ms";
+  if (row.highest + 1 <= 1) {
+    // A row that ends by 1 ms: its range in milliseconds.
+    bucket = ms(row.lowest) + " to " + ms(row.highest + 1) + " ms";
   } else if (row.lowest === row.highest) {
-    bucket = formats.int(row.time) + " ms";
+    bucket = formats.int(row.lowest) + " ms";
   } else {
     bucket =
       formats.int(row.time) +
@@ -432,11 +465,11 @@ export function tooltipText(
   if (percentiles !== undefined) {
     text +=
       " p50 / p95 / p99: " +
-      formats.int(percentiles.p50) +
+      rowMs(percentiles.p50) +
       " / " +
-      formats.int(percentiles.p95) +
+      rowMs(percentiles.p95) +
       " / " +
-      formats.int(percentiles.p99) +
+      rowMs(percentiles.p99) +
       " ms";
   }
   return text;
@@ -521,7 +554,8 @@ export function percentileLabels(
     text:
       group.keys.sort((a, b) => order.indexOf(a) - order.indexOf(b)).join(", ") +
       ": " +
-      tickLabel(value),
+      rowMs(value) +
+      " ms",
     y: group.y,
   }));
   labels.sort((a, b) => a.y - b.y);
@@ -614,13 +648,10 @@ export function drawHeatmap(
   ctx.textBaseline = "middle";
   for (const tick of view.ticks) {
     const tickY = y(tick.y) + 0.5;
-    // The <1 ms label names a row; it is not a boundary.
-    if (tick.ms > 0) {
-      ctx.beginPath();
-      ctx.moveTo(left, tickY);
-      ctx.lineTo(left + width, tickY);
-      ctx.stroke();
-    }
+    ctx.beginPath();
+    ctx.moveTo(left, tickY);
+    ctx.lineTo(left + width, tickY);
+    ctx.stroke();
     ctx.fillText(tick.label, left - 6, tickY);
   }
 

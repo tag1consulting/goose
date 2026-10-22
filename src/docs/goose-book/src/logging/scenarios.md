@@ -9,27 +9,28 @@ Logs include the entire [`ScenarioMetric`](https://docs.rs/goose/*/goose/metrics
 By default, logs are written in JSON Lines format. For example:
 
 ```json
-{"elapsed":15751,"index":0,"name":"AnonBrowsingUser","run_time":1287,"user":7}
-{"elapsed":15756,"index":0,"name":"AnonBrowsingUser","run_time":1308,"user":4}
-{"elapsed":15760,"index":0,"name":"AnonBrowsingUser","run_time":1286,"user":9}
-{"elapsed":15783,"index":0,"name":"AnonBrowsingUser","run_time":1301,"user":0}
-{"elapsed":22802,"index":1,"name":"AuthBrowsingUser","run_time":13056,"user":8}
+{"elapsed":14503,"index":0,"name":"WebsiteUser","run_time":14502,"run_time_fraction_us":461,"user":0}
+{"elapsed":17395,"index":0,"name":"WebsiteUser","run_time":17060,"run_time_fraction_us":565,"user":2}
+{"elapsed":23377,"index":0,"name":"WebsiteUser","run_time":23208,"run_time_fraction_us":145,"user":1}
+{"elapsed":26472,"index":0,"name":"WebsiteUser","run_time":25968,"run_time_fraction_us":166,"user":3}
+{"elapsed":26754,"index":0,"name":"WebsiteUser","run_time":26082,"run_time_fraction_us":767,"user":4}
 ```
 
-In the first line of the above example, `GooseUser` thread 7 ran the complete `AnonBrowsingUser` scenario in 1,287 milliseconds. In the fifth line `GooseUser` thread 8 succesfully ran the `AuthBrowsingUser` transaction in 13,056 milliseconds.
+These lines are from the [`simple`](../example/simple.md) example. In the first line, `GooseUser` thread 0 ran the complete `WebsiteUser` scenario in 14,502.461 milliseconds, which includes the wait after each transaction. In the fifth line, `GooseUser` thread 4 ran it in 26,082.767 milliseconds.
 
 The `--scenario-format` option can be used to log in `csv`, `json` (default), `raw` or `pretty` format. The `raw` format is Rust's debug output of the entire 
 [`ScenarioMetric`](https://docs.rs/goose/*/goose/metrics/struct.ScenarioMetric.html) object.
 
-For example, `csv` output of similar transactions as those logged above would like like:
+For example, `csv` output of the same example looks like:
 ```csv
-elapsed,scenario_index,transaction_index,name,run_time,success,user
-15751,AnonBrowsingUser,0,1287,7
-15756,AnonBrowsingUser,0,1308,4
-15760,AnonBrowsingUser,0,1286,9
-15783,AnonBrowsingUser,0,1301,0
-22802,AuthBrowsingUser,1,13056,8
+elapsed,name,index,run_time,user,run_time_us
+18645,WebsiteUser,0,18308,2,18308967
+20690,WebsiteUser,0,19851,5,19851836
+20747,WebsiteUser,0,20579,1,20579243
+22749,WebsiteUser,0,22749,0,22749115
 ```
+
+`run_time` is in whole milliseconds, truncated. The `json`, `raw` and `pretty` formats also carry `run_time_fraction_us`, the microseconds past those milliseconds (0 to 999), and the `csv` format ends with a `run_time_us` column holding the whole time in microseconds.
 
 # Gaggle Mode
 

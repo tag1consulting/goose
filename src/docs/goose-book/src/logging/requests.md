@@ -10,15 +10,17 @@ The `headers` field of the `GooseRawRequest` lists the headers set on the indivi
 
 ## Log Format
 
-By default, logs are written in JSON Lines format. For example (in this case with `--request-body` also enabled):
+By default, logs are written in JSON Lines format. For example, from the [`simple`](../example/simple.md) example with `--request-body` also enabled:
 
 ```json
-{"coordinated_omission_elapsed":0,"elapsed":13219,"error":"","final_url":"http://apache/misc/jquery-extend-3.4.0.js?v=1.4.4","name":"static asset","raw":{"body":"","headers":[],"method":"Get","url":"http://apache/misc/jquery-extend-3.4.0.js?v=1.4.4"},"redirected":false,"response_time":7,"status_code":200,"success":true,"update":false,"user":4,"user_cadence":0}
-{"coordinated_omission_elapsed":0,"elapsed":13055,"error":"","final_url":"http://apache/node/1786#comment-114852","name":"(Auth) comment form","raw":{"body":"subject=this+is+a+test+comment+subject&comment_body%5Bund%5D%5B0%5D%5Bvalue%5D=this+is+a+test+comment+body&comment_body%5Bund%5D%5B0%5D%5Bformat%5D=filtered_html&form_build_id=form-U0L3wm2SsIKAhVhaHpxeL1TLUHW64DXKifmQeZsUsss&form_token=VKDel_jiYzjqPrekL1FrP2_4EqHTlsaqLjMUJ6pn-sE&form_id=comment_node_article_form&op=Save","headers":["(\"content-type\", \"application/x-www-form-urlencoded\")"],"method":"Post","url":"http://apache/comment/reply/1786"},"redirected":true,"response_time":172,"status_code":200,"success":true,"update":false,"user":1,"user_cadence":0}
-{"coordinated_omission_elapsed":0,"elapsed":13219,"error":"","final_url":"http://apache/misc/drupal.js?q9apdy","name":"static asset","raw":{"body":"","headers":[],"method":"Get","url":"http://apache/misc/drupal.js?q9apdy"},"redirected":false,"response_time":7,"status_code":200,"success":true,"update":false,"user":0,"user_cadence":0}
+{"coordinated_omission_elapsed":0,"elapsed":0,"error":"","final_url":"http://127.0.0.1:8765/login","name":"/login","raw":{"body":"username=test_user&password=","custom_method":"","headers":["(\"content-type\", \"application/x-www-form-urlencoded\")"],"method":"Post","url":"http://127.0.0.1:8765/login"},"redirected":false,"response_time":0,"response_time_fraction_us":535,"scenario_index":0,"scenario_name":"websiteuser","status_code":200,"success":true,"transaction_index":0,"transaction_name":{"TransactionOnly":""},"update":false,"user":0,"user_cadence":0}
+{"coordinated_omission_elapsed":0,"elapsed":0,"error":"","final_url":"http://127.0.0.1:8765/","name":"/","raw":{"body":"","custom_method":"","headers":[],"method":"Get","url":"http://127.0.0.1:8765/"},"redirected":false,"response_time":0,"response_time_fraction_us":106,"scenario_index":0,"scenario_name":"websiteuser","status_code":200,"success":true,"transaction_index":1,"transaction_name":{"TransactionOnly":""},"update":false,"user":0,"user_cadence":0}
+{"coordinated_omission_elapsed":0,"elapsed":8648,"error":"","final_url":"http://127.0.0.1:8765/about/","name":"/about/","raw":{"body":"","custom_method":"","headers":[],"method":"Get","url":"http://127.0.0.1:8765/about/"},"redirected":false,"response_time":1405,"response_time_fraction_us":306,"scenario_index":0,"scenario_name":"websiteuser","status_code":200,"success":true,"transaction_index":2,"transaction_name":{"TransactionOnly":""},"update":false,"user":0,"user_cadence":0}
 ```
 
 The `--request-format` option can be used to log in `csv`, `json` (default), `raw` or `pretty` format. The `raw` format is Rust's debug output of the entire [`GooseRequestMetric`](https://docs.rs/goose/*/goose/metrics/struct.GooseRequestMetric.html) object.
+
+`response_time` is in whole milliseconds, truncated. The `json`, `raw` and `pretty` formats also carry `response_time_fraction_us`, the microseconds past those milliseconds (0 to 999), and the `csv` format ends with a `response_time_us` column holding the whole time in microseconds. In the first line above the `/login` request took 535 microseconds, and in the third the `/about/` request took 1,405.306 milliseconds.
 
 ## Gaggle Mode
 

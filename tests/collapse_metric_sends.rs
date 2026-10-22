@@ -68,7 +68,10 @@ async fn single_request_per_scenario_metrics_correct() {
     // Scenario metrics: one scenario with iterations.
     assert_eq!(metrics.scenarios.len(), 1, "expected one scenario metric");
     let scn = &metrics.scenarios[0];
-    assert!(scn.counter > 0, "scenario should have counted iterations");
+    assert!(
+        scn.run_times.counter > 0,
+        "scenario should have counted iterations"
+    );
 }
 
 // Verify metrics correctness with multiple transactions per scenario (the
@@ -119,7 +122,7 @@ async fn multi_transaction_scenario_metrics_correct() {
 
     // Scenario metrics.
     assert_eq!(metrics.scenarios.len(), 1);
-    assert!(metrics.scenarios[0].counter > 0);
+    assert!(metrics.scenarios[0].run_times.counter > 0);
 }
 
 // Verify that set_success / set_failure still work correctly with the

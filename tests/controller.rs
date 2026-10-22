@@ -698,6 +698,17 @@ async fn run_standalone_test(test_type: TestType) {
                         _ => {
                             assert!(response.starts_with(r#"{"hash":0,"#));
 
+                            // The reply is longer than the buffer: read the
+                            // rest of it, to the prompt that ends it.
+                            let mut reply = response.trim_end_matches('\0').as_bytes().to_vec();
+                            if let Some(stream) = test_state.telnet_stream.as_mut() {
+                                while !reply.ends_with(b"goose> ") {
+                                    let read = stream.read(&mut test_state.buf).await.unwrap();
+                                    assert!(read > 0, "the controller closed mid reply");
+                                    reply.extend_from_slice(&test_state.buf[..read]);
+                                }
+                            }
+
                             // Move onto the next command.
                             test_state = update_state(Some(test_state), &test_type).await;
                         }

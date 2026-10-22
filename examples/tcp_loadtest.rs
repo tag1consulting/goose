@@ -1,16 +1,18 @@
 //! Example showing how to load test a raw TCP server with Goose.
 //!
 //! Goose is primarily an HTTP load testing framework, but its metrics system can
-//! track any protocol. This example demonstrates using [`GooseUser::record_custom_request`]
-//! to record timing and success/failure information for TCP operations.
+//! track any protocol. This example demonstrates using
+//! [`GooseUser::record_custom_request_duration`] to record timing and
+//! success/failure information for TCP operations.
 //!
 //! # How it works
 //!
 //! 1. The target host and port are read from `--host` (e.g. `tcp://localhost:9000`).
 //! 2. Each simulated user opens a TCP connection, sends a payload, and reads the echo.
 //! 3. Timing is measured manually with [`std::time::Instant`].
-//! 4. [`GooseUser::record_custom_request`] records the result — it will appear
-//!    in the Goose metrics output under the method label you provide (e.g. `TCP`).
+//! 4. [`GooseUser::record_custom_request_duration`] records the result, to the
+//!    microsecond. It appears in the Goose metrics output under the method
+//!    label you provide (e.g. `TCP`).
 //!
 //! # Running the example
 //!
@@ -104,19 +106,19 @@ async fn tcp_echo(user: &mut GooseUser) -> TransactionResult {
     }
     .await;
 
-    // as_millis() truncates to whole milliseconds; sub-millisecond round-trips will
-    // be recorded as 0 ms. This matches the resolution of HTTP timing in Goose.
-    let response_time = started.elapsed().as_millis() as u64;
+    // A Duration keeps the round trip's microseconds, as Goose keeps an HTTP
+    // request's.
+    let response_time = started.elapsed();
 
     match result {
         Ok(_response) => {
             // Pass None for status_code — TCP has no HTTP-style status codes.
-            user.record_custom_request("TCP", "tcp_echo", response_time, true, None, None)
+            user.record_custom_request_duration("TCP", "tcp_echo", response_time, true, None, None)
                 .await?;
         }
         Err(e) => {
             let error_msg = e.to_string();
-            user.record_custom_request(
+            user.record_custom_request_duration(
                 "TCP",
                 "tcp_echo",
                 response_time,

@@ -8,7 +8,7 @@
 
 import { updateChartData } from "./chart-data";
 import { ensureCharts, recolorCharts, updateCharts } from "./charts";
-import { shownTime } from "./coadjust";
+import { inMs, shownTime } from "./coadjust";
 import {
   clearAuthRequired,
   initToken,
@@ -24,7 +24,7 @@ import {
   updateControlFromSnapshot,
 } from "./control";
 import { requireElement } from "./dom";
-import { formatDuration, formatInt, formatPct, formatRate, kv } from "./format";
+import { formatDuration, formatInt, formatMs, formatPct, formatRate, kv } from "./format";
 import {
   initHeatmapCard,
   redrawHeatmapCard,
@@ -55,12 +55,38 @@ const kpiP95Label = requireElement("kpi-p95-label", HTMLElement);
 const kpiAvgLabel = requireElement("kpi-avg-label", HTMLElement);
 const requestsCoNote = requireElement("requests-co-note", HTMLElement);
 
-function percentileText(p: Percentiles): string {
-  return formatInt(p.p50) + " / " + formatInt(p.p95) + " / " + formatInt(p.p99);
+/** p50 / p95 / p99, to the microsecond where the snapshot has them. */
+function percentileText(p: Percentiles, us: MicrosecondTimes | null): string {
+  return [
+    inMs(p.p50, us ? us.p50 : null),
+    inMs(p.p95, us ? us.p95 : null),
+    inMs(p.p99, us ? us.p99 : null),
+  ]
+    .map(formatMs)
+    .join(" / ");
 }
 
 function minMaxText(min: number, max: number): string {
-  return formatInt(min) + " / " + formatInt(max);
+  return formatMs(min) + " / " + formatMs(max);
+}
+
+/** The users KPI: the active count, then the target, smaller. */
+function setUsersKpi(active: number, target: number): void {
+  const small = document.createElement("small");
+  small.textContent = " / " + formatInt(target);
+  kpiUsers.textContent = formatInt(active);
+  kpiUsers.appendChild(small);
+}
+
+/**
+ * The RPS KPI: whole requests from 100 a second, two decimals below, with
+ * the two decimals the tables show in the tile's hover.
+ */
+function setRpsKpi(rps: number): void {
+  // Decided on the value the tile would show, so 99.996 reads 100, not 100.00.
+  kpiRps.textContent = Math.round(rps * 100) >= 10000 ? formatInt(rps) : formatRate(rps);
+  const tile = kpiRps.parentElement;
+  if (tile) tile.title = "RPS " + formatRate(rps);
 }
 
 /** Sets a KPI's text, and its hover only while it shows an adjusted value. */
@@ -110,10 +136,9 @@ function renderSnapshot(
   durationEl.textContent = formatDuration(snap.duration_secs);
 
   // active / target (not peak maximum_users — that stays equal during ramp).
-  kpiUsers.textContent =
-    formatInt(snap.active_users) + " / " + formatInt(snap.target_users);
+  setUsersKpi(snap.active_users, snap.target_users);
   const agg = snap.aggregate;
-  kpiRps.textContent = formatRate(agg.requests_per_second);
+  setRpsKpi(agg.requests_per_second);
   kpiFail.textContent = formatPct(agg.failure_rate);
   const p = agg.percentile_ms;
   // Once coordinated omission mitigation has events, response times are
@@ -121,16 +146,22 @@ function renderSnapshot(
   const co = agg.co_adjusted != null ? agg.co_adjusted : null;
   // Both cover the whole run, unlike the heatmap's seconds.
   const suffix = co ? " (whole run, adjusted)" : " (whole run)";
-  const p95 = shownTime(p.p95, co ? co.percentile_ms.p95 : null, formatInt);
+  const us = agg.response_time_us;
+  const cus = co ? co.response_time_us : null;
+  const p95 = shownTime(
+    inMs(p.p95, us ? us.p95 : null),
+    co ? inMs(co.percentile_ms.p95, cus ? cus.p95 : null) : null,
+    formatMs
+  );
   const avg = shownTime(
     agg.response_time_avg_ms,
     co ? co.response_time_avg_ms : null,
-    formatRate
+    formatMs
   );
   kpiP95Label.textContent = "p95 ms" + suffix;
   kpiAvgLabel.textContent = "Avg ms" + suffix;
-  setKpi(kpiP95, formatInt(p95.value), p95.title);
-  setKpi(kpiAvg, formatRate(avg.value), avg.title);
+  setKpi(kpiP95, formatMs(p95.value), p95.title);
+  setKpi(kpiAvg, formatMs(avg.value), avg.title);
   requestsCoNote.hidden = co === null;
 
   summaryEl.textContent = "";
@@ -164,28 +195,34 @@ function renderSnapshot(
   aggregateEl.appendChild(kv("Fail %", formatPct(agg.failure_rate)));
   // The minimum has no adjusted value: the adjusted line pairs the measured
   // minimum with the adjusted maximum.
-  const measuredMinMax = minMaxText(agg.response_time_min_ms, agg.response_time_max_ms);
+  const measuredMinMax = minMaxText(
+    inMs(agg.response_time_min_ms, us ? us.min : null),
+    inMs(agg.response_time_max_ms, us ? us.max : null)
+  );
   if (co) {
     aggregateEl.appendChild(
-      kv("Avg ms (adjusted)", formatRate(co.response_time_avg_ms))
+      kv("Avg ms (adjusted)", formatMs(co.response_time_avg_ms))
     );
     aggregateEl.appendChild(
-      kv("p50 / p95 / p99 (adjusted)", percentileText(co.percentile_ms))
+      kv("p50 / p95 / p99 (adjusted)", percentileText(co.percentile_ms, cus))
     );
     aggregateEl.appendChild(
       kv(
         "Min / max ms (adjusted)",
-        minMaxText(agg.response_time_min_ms, co.response_time_max_ms)
+        minMaxText(
+          inMs(agg.response_time_min_ms, us ? us.min : null),
+          inMs(co.response_time_max_ms, cus ? cus.max : null)
+        )
       )
     );
     aggregateEl.appendChild(
-      kv("Avg ms (measured)", formatRate(agg.response_time_avg_ms))
+      kv("Avg ms (measured)", formatMs(agg.response_time_avg_ms))
     );
-    aggregateEl.appendChild(kv("p50 / p95 / p99 (measured)", percentileText(p)));
+    aggregateEl.appendChild(kv("p50 / p95 / p99 (measured)", percentileText(p, us)));
     aggregateEl.appendChild(kv("Min / max ms (measured)", measuredMinMax));
   } else {
-    aggregateEl.appendChild(kv("Avg ms", formatRate(agg.response_time_avg_ms)));
-    aggregateEl.appendChild(kv("p50 / p95 / p99", percentileText(p)));
+    aggregateEl.appendChild(kv("Avg ms", formatMs(agg.response_time_avg_ms)));
+    aggregateEl.appendChild(kv("p50 / p95 / p99", percentileText(p, us)));
     aggregateEl.appendChild(kv("Min / max ms", measuredMinMax));
   }
   if (agg.co_active) {

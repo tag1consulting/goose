@@ -2,9 +2,9 @@
 // sortable table (sorting, optional filter, empty states, render) and the
 // column definitions of each.
 
-import { shownTime } from "./coadjust";
+import { inMs, shownTime } from "./coadjust";
 import { optionalElement, requireElement } from "./dom";
-import { formatInt, formatRate } from "./format";
+import { formatInt, formatMs, formatRate } from "./format";
 
 type SortDir = "asc" | "desc";
 type SortType = "num" | "str";
@@ -357,6 +357,8 @@ function statusCodesText(codes: Array<[number, number]>): {
 
 function flattenScenario(r: ScenarioRow): FlatScenarioRow {
   const p = r.percentile_ms;
+  // To the microsecond where the snapshot has them.
+  const us = r.response_time_us;
   return {
     scenario_index: r.scenario_index,
     scenario_name: r.scenario_name,
@@ -365,14 +367,16 @@ function flattenScenario(r: ScenarioRow): FlatScenarioRow {
     runs_per_second: r.runs_per_second,
     runs_per_user: r.users > 0 ? r.run_count / r.users : 0,
     response_time_avg_ms: r.response_time_avg_ms,
-    p50: p.p50,
-    p95: p.p95,
-    p99: p.p99,
+    p50: inMs(p.p50, us ? us.p50 : null),
+    p95: inMs(p.p95, us ? us.p95 : null),
+    p99: inMs(p.p99, us ? us.p99 : null),
   };
 }
 
 function flattenTransaction(r: TransactionRow): FlatTransactionRow {
   const p = r.percentile_ms;
+  // To the microsecond where the snapshot has them.
+  const us = r.response_time_us;
   return {
     order: r.scenario_index * 1000000 + r.transaction_index,
     scenario_index: r.scenario_index,
@@ -384,11 +388,11 @@ function flattenTransaction(r: TransactionRow): FlatTransactionRow {
     runs_per_second: r.runs_per_second,
     failures_per_second: r.failures_per_second,
     response_time_avg_ms: r.response_time_avg_ms,
-    response_time_min_ms: r.response_time_min_ms,
-    p50: p.p50,
-    p95: p.p95,
-    p99: p.p99,
-    response_time_max_ms: r.response_time_max_ms,
+    response_time_min_ms: inMs(r.response_time_min_ms, us ? us.min : null),
+    p50: inMs(p.p50, us ? us.p50 : null),
+    p95: inMs(p.p95, us ? us.p95 : null),
+    p99: inMs(p.p99, us ? us.p99 : null),
+    response_time_max_ms: inMs(r.response_time_max_ms, us ? us.max : null),
   };
 }
 
@@ -399,15 +403,30 @@ function flattenRequest(r: RequestRow): FlatRequestRow {
   const avg = shownTime(
     r.response_time_avg_ms,
     co ? co.response_time_avg_ms : null,
-    formatRate
+    formatMs
   );
-  const p50 = shownTime(p.p50, cp ? cp.p50 : null, formatInt);
-  const p95 = shownTime(p.p95, cp ? cp.p95 : null, formatInt);
-  const p99 = shownTime(p.p99, cp ? cp.p99 : null, formatInt);
+  // To the microsecond where the snapshot has them.
+  const us = r.response_time_us;
+  const cus = co ? co.response_time_us : null;
+  const p50 = shownTime(
+    inMs(p.p50, us ? us.p50 : null),
+    cp ? inMs(cp.p50, cus ? cus.p50 : null) : null,
+    formatMs
+  );
+  const p95 = shownTime(
+    inMs(p.p95, us ? us.p95 : null),
+    cp ? inMs(cp.p95, cus ? cus.p95 : null) : null,
+    formatMs
+  );
+  const p99 = shownTime(
+    inMs(p.p99, us ? us.p99 : null),
+    cp ? inMs(cp.p99, cus ? cus.p99 : null) : null,
+    formatMs
+  );
   const max = shownTime(
-    r.response_time_max_ms,
-    co ? co.response_time_max_ms : null,
-    formatInt
+    inMs(r.response_time_max_ms, us ? us.max : null),
+    co ? inMs(co.response_time_max_ms, cus ? cus.max : null) : null,
+    formatMs
   );
   const codes = statusCodesText(r.status_codes);
   return {
@@ -418,7 +437,7 @@ function flattenRequest(r: RequestRow): FlatRequestRow {
     requests_per_second: r.requests_per_second,
     failures_per_second: r.failures_per_second,
     response_time_avg_ms: avg.value,
-    response_time_min_ms: r.response_time_min_ms,
+    response_time_min_ms: inMs(r.response_time_min_ms, us ? us.min : null),
     p50: p50.value,
     p95: p95.value,
     p99: p99.value,
@@ -461,11 +480,11 @@ const scenariosTable = sortableTable<FlatScenarioRow>({
     {
       key: "response_time_avg_ms",
       type: "num",
-      format: (r) => timing(r.run_count, formatRate(r.response_time_avg_ms)),
+      format: (r) => timing(r.run_count, formatMs(r.response_time_avg_ms)),
     },
-    { key: "p50", type: "num", format: (r) => timing(r.run_count, formatInt(r.p50)) },
-    { key: "p95", type: "num", format: (r) => timing(r.run_count, formatInt(r.p95)) },
-    { key: "p99", type: "num", format: (r) => timing(r.run_count, formatInt(r.p99)) },
+    { key: "p50", type: "num", format: (r) => timing(r.run_count, formatMs(r.p50)) },
+    { key: "p95", type: "num", format: (r) => timing(r.run_count, formatMs(r.p95)) },
+    { key: "p99", type: "num", format: (r) => timing(r.run_count, formatMs(r.p99)) },
   ],
   sort: { key: "scenario_index", type: "num", dir: "asc" },
   rowKey: (r) => String(r.scenario_index),
@@ -505,20 +524,20 @@ const transactionsTable = sortableTable<FlatTransactionRow>({
     {
       key: "response_time_avg_ms",
       type: "num",
-      format: (r) => timing(r.run_count, formatRate(r.response_time_avg_ms)),
+      format: (r) => timing(r.run_count, formatMs(r.response_time_avg_ms)),
     },
     {
       key: "response_time_min_ms",
       type: "num",
-      format: (r) => timing(r.run_count, formatInt(r.response_time_min_ms)),
+      format: (r) => timing(r.run_count, formatMs(r.response_time_min_ms)),
     },
-    { key: "p50", type: "num", format: (r) => timing(r.run_count, formatInt(r.p50)) },
-    { key: "p95", type: "num", format: (r) => timing(r.run_count, formatInt(r.p95)) },
-    { key: "p99", type: "num", format: (r) => timing(r.run_count, formatInt(r.p99)) },
+    { key: "p50", type: "num", format: (r) => timing(r.run_count, formatMs(r.p50)) },
+    { key: "p95", type: "num", format: (r) => timing(r.run_count, formatMs(r.p95)) },
+    { key: "p99", type: "num", format: (r) => timing(r.run_count, formatMs(r.p99)) },
     {
       key: "response_time_max_ms",
       type: "num",
-      format: (r) => timing(r.run_count, formatInt(r.response_time_max_ms)),
+      format: (r) => timing(r.run_count, formatMs(r.response_time_max_ms)),
     },
   ],
   sort: { key: "order", type: "num", dir: "asc" },
@@ -560,36 +579,36 @@ const requestsTable = sortableTable<FlatRequestRow>({
     {
       key: "response_time_avg_ms",
       type: "num",
-      format: (r) => formatRate(r.response_time_avg_ms),
+      format: (r) => formatMs(r.response_time_avg_ms),
       title: (r) => r.measured.response_time_avg_ms,
     },
     {
       key: "response_time_min_ms",
       type: "num",
-      format: (r) => formatInt(r.response_time_min_ms),
+      format: (r) => formatMs(r.response_time_min_ms),
     },
     {
       key: "p50",
       type: "num",
-      format: (r) => formatInt(r.p50),
+      format: (r) => formatMs(r.p50),
       title: (r) => r.measured.p50,
     },
     {
       key: "p95",
       type: "num",
-      format: (r) => formatInt(r.p95),
+      format: (r) => formatMs(r.p95),
       title: (r) => r.measured.p95,
     },
     {
       key: "p99",
       type: "num",
-      format: (r) => formatInt(r.p99),
+      format: (r) => formatMs(r.p99),
       title: (r) => r.measured.p99,
     },
     {
       key: "response_time_max_ms",
       type: "num",
-      format: (r) => formatInt(r.response_time_max_ms),
+      format: (r) => formatMs(r.response_time_max_ms),
       title: (r) => r.measured.response_time_max_ms,
     },
     {

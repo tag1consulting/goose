@@ -390,7 +390,8 @@ test("rows render in # order, counted from 1", async () => {
     int(2000),
     rate(200),
     rate(500),
-    rate(250.5),
+    // The average, a time, shown as times are.
+    "251",
     int(200),
     int(1400),
     int(1500),
@@ -404,7 +405,7 @@ test("rows render in # order, counted from 1", async () => {
     int(1),
     rate(0.4),
     rate(0.1),
-    rate(12.25),
+    "12",
     int(5),
     int(10),
     int(25),
@@ -530,7 +531,7 @@ test("a request row shows failures/s, min, max and its status codes", async () =
     int(47),
     rate(990),
     rate(4.7),
-    rate(12.5),
+    "13",
     int(1),
     int(10),
     int(30),
@@ -742,4 +743,77 @@ test("every table scroll area is a focusable, labelled region", async () => {
     labels.add(label);
   }
   assert.equal(labels.size, 8, "each region has its own label");
+});
+
+test("rows and KPIs show the snapshot's microseconds under a millisecond", async () => {
+  // The whole millisecond fields are all 0; the microseconds beside them are
+  // what the dashboard shows.
+  const us = { min: 40, max: 900, p50: 400, p95: 900, p99: 900 };
+  const zero = {
+    response_time_avg_ms: 0.435,
+    response_time_min_ms: 0,
+    response_time_max_ms: 0,
+    percentile_ms: { p50: 0, p95: 0, p99: 0 },
+    response_time_us: us,
+  };
+  const transaction = { ...transactionRow(0, "Anonymous", 0, "fast", 5), ...zero };
+  const window = await load(
+    snapshotWith(
+      {
+        aggregate: { ...IDLE_SNAPSHOT.aggregate, total_requests: 5, ...zero },
+        requests: [requestRow("GET", "/fast", 5, 0, zero)],
+        scenarios: [scenarioRow(0, "Anonymous", 1, 5)],
+        transactions: [transaction],
+      },
+      { metrics_disabled: false }
+    )
+  );
+  // Average, min, p50, p95, p99 and max.
+  const times = ["0.44", "0.04", "0.4", "0.9", "0.9", "0.9"];
+  assert.deepEqual(rows(window, "requests-body")[0].slice(6, 12), times);
+  assert.deepEqual(rows(window, "transactions-body")[0].slice(7, 13), times);
+  assert.equal(window.document.getElementById("kpi-p95").textContent, "0.9");
+  assert.equal(window.document.getElementById("kpi-avg").textContent, "0.44");
+});
+
+test("the KPI strip: users target in a small, RPS whole from 100, averages as times", async () => {
+  const window = await load(
+    snapshotWith(
+      {
+        active_users: 100000,
+        target_users: 100000,
+        aggregate: {
+          ...IDLE_SNAPSHOT.aggregate,
+          total_requests: 5,
+          requests_per_second: 21834.56,
+          response_time_avg_ms: 12.5,
+        },
+      },
+      { metrics_disabled: false }
+    )
+  );
+  const doc = window.document;
+  const users = doc.getElementById("kpi-users");
+  assert.equal(users.childNodes[0].nodeType, window.Node.TEXT_NODE);
+  assert.equal(users.childNodes[0].textContent, int(100000));
+  const small = users.querySelector("small");
+  assert.ok(small, "the target is in a <small>");
+  assert.equal(small.textContent, " / " + int(100000));
+  assert.equal(doc.getElementById("kpi-rps").textContent, int(21835));
+  assert.equal(doc.getElementById("kpi-rps").parentElement.title, "RPS " + rate(21834.56));
+  assert.equal(doc.getElementById("kpi-avg").textContent, "13");
+  const avg = Array.from(doc.querySelectorAll("#aggregate-body .kv")).find(
+    (kv) => kv.querySelector(".k").textContent === "Avg ms"
+  );
+  assert.equal(avg.querySelector(".v").textContent, "13");
+});
+
+test("the RPS KPI keeps two decimals under 100", async () => {
+  const window = await load(
+    snapshotWith(
+      { aggregate: { ...IDLE_SNAPSHOT.aggregate, total_requests: 5, requests_per_second: 99.5 } },
+      { metrics_disabled: false }
+    )
+  );
+  assert.equal(window.document.getElementById("kpi-rps").textContent, rate(99.5));
 });

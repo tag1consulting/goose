@@ -345,64 +345,32 @@ impl FromStr for GooseLogFormat {
 }
 
 // @TODO this should be automatically derived from the structure.
-fn debug_csv_header() -> String {
-    format_csv_row!("tag", "request", "header", "body")
+fn debug_csv_header() -> &'static str {
+    "tag,request,header,body"
 }
 
 // @TODO this should be automatically derived from the structure.
-fn error_csv_header() -> String {
-    format_csv_row!(
-        "elapsed",
-        "raw",
-        "name",
-        "final_url",
-        "redirected",
-        "response_time",
-        "status_code",
-        "user",
-        "error",
+fn error_csv_header() -> &'static str {
+    "elapsed,raw,name,final_url,redirected,response_time,status_code,user,error"
+}
+
+// @TODO this should be automatically derived from the structure.
+fn requests_csv_header() -> &'static str {
+    concat!(
+        "elapsed,scenario_index,scenario_name,transaction_index,transaction_name,",
+        "raw,name,final_url,redirected,response_time,status_code,success,update,",
+        "user,error,coordinated_omission_elapsed,user_cadence,response_time_us",
     )
 }
 
 // @TODO this should be automatically derived from the structure.
-fn requests_csv_header() -> String {
-    format_csv_row!(
-        "elapsed",
-        "scenario_index",
-        "scenario_name",
-        "transaction_index",
-        "transaction_name",
-        "raw",
-        "name",
-        "final_url",
-        "redirected",
-        "response_time",
-        "status_code",
-        "success",
-        "update",
-        "user",
-        "error",
-        "coordinated_omission_elapsed",
-        "user_cadence",
-    )
+fn transactions_csv_header() -> &'static str {
+    "elapsed,scenario_index,transaction_index,name,run_time,success,user,run_time_us"
 }
 
 // @TODO this should be automatically derived from the structure.
-fn transactions_csv_header() -> String {
-    format_csv_row!(
-        "elapsed",
-        "scenario_index",
-        "transaction_index",
-        "name",
-        "run_time",
-        "success",
-        "user",
-    )
-}
-
-// @TODO this should be automatically derived from the structure.
-fn scenarios_csv_header() -> String {
-    format_csv_row!("elapsed", "name", "index", "run_time", "user",)
+fn scenarios_csv_header() -> &'static str {
+    "elapsed,name,index,run_time,user,run_time_us"
 }
 
 /// Two traits that must be implemented by all loggers provided through this thread.
@@ -505,6 +473,7 @@ impl GooseLogger<GooseRequestMetric> for GooseConfiguration {
                         message.error,
                         message.coordinated_omission_elapsed,
                         message.user_cadence,
+                        message.response_time_micros(),
                     )
                 }
             }
@@ -536,6 +505,7 @@ impl GooseLogger<TransactionMetric> for GooseConfiguration {
                         message.run_time,
                         message.success,
                         message.user,
+                        message.run_time_micros(),
                     )
                 }
             }
@@ -566,6 +536,7 @@ impl GooseLogger<ScenarioMetric> for GooseConfiguration {
                         message.index,
                         message.run_time,
                         message.user,
+                        message.run_time_micros(),
                     )
                 }
             }
@@ -843,7 +814,7 @@ impl GooseConfiguration {
     async fn write_to_log_file(
         &self,
         log_file: &mut tokio::io::BufWriter<tokio::fs::File>,
-        formatted_message: String,
+        formatted_message: &str,
     ) {
         match log_file
             .write(format!("{formatted_message}\n").as_ref())
@@ -975,7 +946,7 @@ impl GooseConfiguration {
                     }
                 } {
                     // This will generate a warning if it fails to write to log file.
-                    self.write_to_log_file(log_file, formatted_message).await;
+                    self.write_to_log_file(log_file, &formatted_message).await;
                 }
             } else {
                 // Empty message means it's time to exit.
@@ -1029,5 +1000,88 @@ impl GooseConfiguration {
         };
 
         Ok(())
+    }
+}
+
+/// The microseconds request, transaction and scenario logs carry (#585).
+#[cfg(test)]
+mod microsecond_tests {
+    use super::*;
+    use crate::goose::{GooseMethod, TransactionName};
+    use crate::metrics::{GooseRawRequest, TransactionDetail};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    fn configuration(format: GooseLogFormat) -> GooseConfiguration {
+        let mut configuration = GooseConfiguration::parse_args_default(&[] as &[&str]).unwrap();
+        configuration.request_format = Some(format.clone());
+        configuration.transaction_format = Some(format.clone());
+        configuration.scenario_format = Some(format);
+        configuration
+    }
+
+    fn last_csv_cell(line: &str) -> &str {
+        line.rsplit(',').next().unwrap()
+    }
+
+    #[test]
+    fn request_log_ends_with_its_microseconds() {
+        assert_eq!(last_csv_cell(requests_csv_header()), "response_time_us");
+        let mut request = GooseRequestMetric::new(
+            GooseRawRequest::new(GooseMethod::Get, "/", vec![], ""),
+            TransactionDetail {
+                scenario_index: 0,
+                scenario_name: Arc::from("Scenario"),
+                transaction_index: None,
+                transaction_name: TransactionName::TransactionOnly(Arc::from("")),
+            },
+            "/",
+            0,
+            0,
+        );
+        request.set_response_duration(Duration::from_micros(2_345));
+        let csv = configuration(GooseLogFormat::Csv).format_message(request.clone());
+        assert_eq!(last_csv_cell(&csv), "2345");
+        // The whole milliseconds keep their column.
+        let header: Vec<&str> = requests_csv_header().split(',').collect();
+        let cells: Vec<&str> = csv.split(',').collect();
+        let at = header.iter().position(|&h| h == "response_time").unwrap();
+        assert_eq!(cells[cells.len() - header.len() + at], "2");
+        let raw = configuration(GooseLogFormat::Raw).format_message(request.clone());
+        assert!(raw.ends_with("response_time_fraction_us: 345 }"), "{}", raw);
+        let pretty = configuration(GooseLogFormat::Pretty).format_message(request.clone());
+        assert!(
+            pretty.ends_with("response_time_fraction_us: 345,\n}"),
+            "{}",
+            pretty
+        );
+        let json: serde_json::Value =
+            serde_json::from_str(&configuration(GooseLogFormat::Json).format_message(request))
+                .unwrap();
+        assert_eq!(json["response_time"], 2);
+        assert_eq!(json["response_time_fraction_us"], 345);
+    }
+
+    #[test]
+    fn transaction_and_scenario_logs_end_with_their_microseconds() {
+        assert_eq!(last_csv_cell(transactions_csv_header()), "run_time_us");
+        let mut transaction = TransactionMetric::new(0, 0, 0, Arc::from("t"), 0);
+        transaction.set_duration(Duration::from_micros(1_250), true);
+        let csv = configuration(GooseLogFormat::Csv).format_message(transaction.clone());
+        assert_eq!(last_csv_cell(&csv), "1250");
+        let raw = configuration(GooseLogFormat::Raw).format_message(transaction.clone());
+        assert!(raw.ends_with("run_time_fraction_us: 250 }"), "{}", raw);
+        let json: serde_json::Value =
+            serde_json::from_str(&configuration(GooseLogFormat::Json).format_message(transaction))
+                .unwrap();
+        assert_eq!(json["run_time"], 1);
+        assert_eq!(json["run_time_fraction_us"], 250);
+
+        assert_eq!(last_csv_cell(scenarios_csv_header()), "run_time_us");
+        let scenario = ScenarioMetric::new(0, Arc::from("s"), 0, Duration::from_micros(750), 0);
+        let csv = configuration(GooseLogFormat::Csv).format_message(scenario.clone());
+        assert_eq!(last_csv_cell(&csv), "750");
+        let raw = configuration(GooseLogFormat::Raw).format_message(scenario);
+        assert!(raw.ends_with("run_time_fraction_us: 750 }"), "{}", raw);
     }
 }

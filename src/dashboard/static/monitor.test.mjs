@@ -756,7 +756,7 @@ test("the users and average latency charts have data tables too", async () => {
   const latencyTable = el(page, "chart-latency-table");
   assert.equal(latencyTable.hidden, false, "the card shows the average chart");
   assert.equal(el(page, "heatmap-table").hidden, true);
-  assert.deepEqual(cells(el(page, "chart-latency-rows").rows[0]), ["100", rate(20)]);
+  assert.deepEqual(cells(el(page, "chart-latency-rows").rows[0]), ["100", "20"]);
 });
 
 // Buckets as `[time, lowest, highest]`: 0, 10, 50 and 100 ms.
@@ -781,7 +781,7 @@ function heatmapOf(start, count, measured = () => STEADY) {
     start_second: start,
     end_second: start + count,
     hold_from: start + count,
-    buckets: BUCKETS,
+    buckets_us: BUCKETS.map(([time, lowest, highest]) => [time * 1000, lowest * 1000, (highest + 1) * 1000 - 1]),
     columns,
   };
 }
@@ -900,6 +900,10 @@ test("each summary follows the data: value, then rising, falling or steady", asy
   assert.equal(users.textContent, "Users " + int(96) + " of " + int(1500) + ", falling.");
   assert.equal(latency.textContent, "Average " + int(20) + " ms, falling.");
 
+  // An average under 10 ms keeps its hundredths, as times do.
+  await send(page, snap(step(100, 120), step(100, 120), step(2.35, 2.35)));
+  assert.equal(latency.textContent, "Average 2.35 ms, steady.");
+
   // No target users (a test plan, or not known yet): no "of 0".
   await send(page, snap(step(100, 120), step(100, 120), step(20, 20), 0));
   assert.equal(users.textContent, "Users " + int(120) + ", rising.");
@@ -960,5 +964,25 @@ test("the heatmap summary gives recent percentiles and the p95 trend", async () 
   assert.equal(
     latency.textContent,
     "p50 " + int(10) + " ms, p95 " + int(50) + " ms, p99 " + int(100) + " ms."
+  );
+});
+
+test("the heatmap's data table and summary give percentiles at their rows' precision", async () => {
+  // Rows of 0.4 to 0.5 ms and 2 to 3 ms, their middles 0.45 and 2.5 ms:
+  // shown as times they would read 0.45 and 2.5, at row precision 0.4 and 2.
+  const rowsUs = [[450, 400, 499], [2500, 2000, 2999]];
+  const heatmap = {
+    ...heatmapOf(100, 3, () => [0, 60, 1, 40]),
+    buckets_us: rowsUs,
+  };
+  const page = await livePage();
+  const details = el(page, "chart-latency-details");
+  details.open = true;
+  await settle(page.window);
+  await send(page, snapshotWith({ series: { ...series25(100), heatmap } }));
+  assert.deepEqual(cells(el(page, "heatmap-rows").rows[0]), ["100", int(100), "0.4", "2", "2"]);
+  assert.equal(
+    el(page, "chart-latency-summary").textContent,
+    "p50 0.4 ms, p95 2 ms, p99 2 ms."
   );
 });

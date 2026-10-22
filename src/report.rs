@@ -11,11 +11,13 @@ pub mod pdf;
 pub(crate) use markdown::write_markdown_report;
 
 use crate::{
-    metrics::{self, format_number, format_value, ApplyBaseline, DeltaTo, NullableFloat, Value},
+    metrics::{
+        self, format_number, format_value, ApplyBaseline, DeltaTo, GooseRequestMetricTimingData,
+        Millis, MillisFloat, NullableFloat, Value,
+    },
     report::common::OrEmpty,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 
 /// The following templates are necessary to build an html-formatted summary report.
 #[derive(Debug)]
@@ -42,9 +44,9 @@ pub(crate) struct RequestMetric {
     pub name: String,
     pub number_of_requests: Value<usize>,
     pub number_of_failures: Value<usize>,
-    pub response_time_average: Value<NullableFloat>,
-    pub response_time_minimum: Value<usize>,
-    pub response_time_maximum: Value<usize>,
+    pub response_time_average: Value<MillisFloat>,
+    pub response_time_minimum: Value<Millis>,
+    pub response_time_maximum: Value<Millis>,
     pub requests_per_second: Value<NullableFloat>,
     pub failures_per_second: Value<NullableFloat>,
     /// True for per-status-code breakdown rows (added by PR #663), which render
@@ -75,9 +77,9 @@ impl DeltaTo for RequestMetric {
 pub(crate) struct CORequestMetric {
     pub method: String,
     pub name: String,
-    pub response_time_average: Value<NullableFloat>,
-    pub response_time_standard_deviation: Value<NullableFloat>,
-    pub response_time_maximum: Value<usize>,
+    pub response_time_average: Value<MillisFloat>,
+    pub response_time_standard_deviation: Value<MillisFloat>,
+    pub response_time_maximum: Value<Millis>,
 }
 
 impl DeltaTo for CORequestMetric {
@@ -94,14 +96,14 @@ impl DeltaTo for CORequestMetric {
 pub(crate) struct ResponseMetric {
     pub method: String,
     pub name: String,
-    pub percentile_50: Value<usize>,
-    pub percentile_60: Value<usize>,
-    pub percentile_70: Value<usize>,
-    pub percentile_80: Value<usize>,
-    pub percentile_90: Value<usize>,
-    pub percentile_95: Value<usize>,
-    pub percentile_99: Value<usize>,
-    pub percentile_100: Value<usize>,
+    pub percentile_50: Value<Millis>,
+    pub percentile_60: Value<Millis>,
+    pub percentile_70: Value<Millis>,
+    pub percentile_80: Value<Millis>,
+    pub percentile_90: Value<Millis>,
+    pub percentile_95: Value<Millis>,
+    pub percentile_99: Value<Millis>,
+    pub percentile_100: Value<Millis>,
 }
 
 impl DeltaTo for ResponseMetric {
@@ -125,9 +127,9 @@ pub(crate) struct TransactionMetric {
     pub name: String,
     pub number_of_requests: Value<usize>,
     pub number_of_failures: Value<usize>,
-    pub response_time_average: Option<Value<NullableFloat>>,
-    pub response_time_minimum: Value<usize>,
-    pub response_time_maximum: Value<usize>,
+    pub response_time_average: Option<Value<MillisFloat>>,
+    pub response_time_minimum: Value<Millis>,
+    pub response_time_maximum: Value<Millis>,
     pub requests_per_second: Option<Value<NullableFloat>>,
     pub failures_per_second: Option<Value<NullableFloat>>,
 }
@@ -150,9 +152,9 @@ pub(crate) struct ScenarioMetric {
     pub name: String,
     pub users: Value<usize>,
     pub count: Value<usize>,
-    pub response_time_average: Value<NullableFloat>,
-    pub response_time_minimum: Value<usize>,
-    pub response_time_maximum: Value<usize>,
+    pub response_time_average: Value<MillisFloat>,
+    pub response_time_minimum: Value<Millis>,
+    pub response_time_maximum: Value<Millis>,
     pub count_per_second: Value<NullableFloat>,
     pub iterations: Value<NullableFloat>,
 }
@@ -197,21 +199,12 @@ impl DeltaTo for ErrorMetric {
 pub(crate) fn get_response_metric(
     method: &str,
     name: &str,
-    response_times: &BTreeMap<usize, usize>,
-    total_request_count: usize,
-    response_time_minimum: usize,
-    response_time_maximum: usize,
+    data: &GooseRequestMetricTimingData,
 ) -> ResponseMetric {
-    // Calculate percentiles in a loop.
+    // Calculate percentiles in a loop, in microseconds.
     let mut percentiles = Vec::new();
     for percent in &[0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99, 1.0] {
-        percentiles.push(metrics::calculate_response_time_percentile(
-            response_times,
-            total_request_count,
-            response_time_minimum,
-            response_time_maximum,
-            *percent,
-        ));
+        percentiles.push(Millis(data.percentile_us(*percent)));
     }
 
     // Now take the Strings out of the Vector and build a ResponseMetric object.
@@ -237,7 +230,7 @@ pub(crate) fn raw_request_metrics_row(metric: RequestMetric) -> String {
         <td colspan="2">&nbsp;&nbsp;└─ {method}</td>
         <td>{number_of_requests}</td>
         <td></td>
-        <td>{response_time_average:.2}</td>
+        <td>{response_time_average}</td>
         <td>{response_time_minimum}</td>
         <td>{response_time_maximum}</td>
         <td></td>
@@ -245,7 +238,7 @@ pub(crate) fn raw_request_metrics_row(metric: RequestMetric) -> String {
     </tr>"#,
             method = metric.method,
             number_of_requests = format_value(&metric.number_of_requests),
-            response_time_average = metric.response_time_average,
+            response_time_average = format_value(&metric.response_time_average),
             response_time_minimum = format_value(&metric.response_time_minimum),
             response_time_maximum = format_value(&metric.response_time_maximum),
         )
@@ -256,7 +249,7 @@ pub(crate) fn raw_request_metrics_row(metric: RequestMetric) -> String {
         <td>{name}</td>
         <td>{number_of_requests}</td>
         <td>{number_of_failures}</td>
-        <td>{response_time_average:.2}</td>
+        <td>{response_time_average}</td>
         <td>{response_time_minimum}</td>
         <td>{response_time_maximum}</td>
         <td>{requests_per_second:.2}</td>
@@ -266,7 +259,7 @@ pub(crate) fn raw_request_metrics_row(metric: RequestMetric) -> String {
             name = metric.name,
             number_of_requests = format_value(&metric.number_of_requests),
             number_of_failures = format_value(&metric.number_of_failures),
-            response_time_average = metric.response_time_average,
+            response_time_average = format_value(&metric.response_time_average),
             response_time_minimum = format_value(&metric.response_time_minimum),
             response_time_maximum = format_value(&metric.response_time_maximum),
             requests_per_second = metric.requests_per_second,
@@ -334,14 +327,14 @@ pub(crate) fn coordinated_omission_request_metrics_row(metric: CORequestMetric) 
         r#"<tr>
             <td>{method}</td>
             <td>{name}</td>
-            <td>{average:.2}</td>
-            <td>{standard_deviation:.2}</td>
+            <td>{average}</td>
+            <td>{standard_deviation}</td>
             <td>{maximum}</td>
         </tr>"#,
         method = metric.method,
         name = metric.name,
-        average = metric.response_time_average,
-        standard_deviation = metric.response_time_standard_deviation,
+        average = format_value(&metric.response_time_average),
+        standard_deviation = format_value(&metric.response_time_standard_deviation),
         maximum = format_value(&metric.response_time_maximum),
     )
 }
@@ -484,7 +477,7 @@ pub(crate) fn transaction_metrics_row(metric: TransactionMetric) -> String {
             <td colspan="2">{transaction} {name}</strong></td>
             <td>{number_of_requests}</td>
             <td>{number_of_failures}</td>
-            <td>{response_time_average:.2}</td>
+            <td>{response_time_average}</td>
             <td>{response_time_minimum}</td>
             <td>{response_time_maximum}</td>
             <td>{requests_per_second:.2}</td>
@@ -494,7 +487,8 @@ pub(crate) fn transaction_metrics_row(metric: TransactionMetric) -> String {
             name = metric.name,
             number_of_requests = format_value(&metric.number_of_requests),
             number_of_failures = format_value(&metric.number_of_failures),
-            response_time_average = OrEmpty(metric.response_time_average),
+            response_time_average =
+                OrEmpty(metric.response_time_average.as_ref().map(format_value)),
             response_time_minimum = format_value(&metric.response_time_minimum),
             response_time_maximum = format_value(&metric.response_time_maximum),
             requests_per_second = OrEmpty(metric.requests_per_second),
@@ -539,7 +533,7 @@ pub(crate) fn scenario_metrics_row(metric: ScenarioMetric) -> String {
             <td colspan="2">{name}</strong></td>
             <td>{users}</td>
             <td>{count}</td>
-            <td>{response_time_average:.2}</td>
+            <td>{response_time_average}</td>
             <td>{response_time_minimum}</td>
             <td>{response_time_maximum}</td>
             <td>{count_per_second:.2}</td>
@@ -548,7 +542,7 @@ pub(crate) fn scenario_metrics_row(metric: ScenarioMetric) -> String {
         name = metric.name,
         users = format_value(&metric.users),
         count = format_value(&metric.count),
-        response_time_average = metric.response_time_average,
+        response_time_average = format_value(&metric.response_time_average),
         response_time_minimum = format_value(&metric.response_time_minimum),
         response_time_maximum = format_value(&metric.response_time_maximum),
         count_per_second = metric.count_per_second,

@@ -10,7 +10,7 @@ import {
   type HeatmapCursor,
 } from "./connection";
 import { requireElement } from "./dom";
-import { formatInt, formatPct } from "./format";
+import { formatInt, formatMs, formatPct } from "./format";
 import {
   ADJUSTED_NOTE,
   ARIA_LABEL,
@@ -21,6 +21,7 @@ import {
   drawHeatmap,
   heatmapCursor,
   heatmapView,
+  rowMs,
   scaleColor,
   tooltipText,
   type HeatmapLayout,
@@ -65,12 +66,12 @@ const showHeatmapData = chartDataTable<{
 }>("chart-latency-details", "heatmap", [
   { key: "second", type: "num", format: (r) => String(r.second) },
   { key: "requests", type: "num", format: (r) => formatInt(r.requests) },
-  { key: "p50", type: "num", format: (r) => formatInt(r.p50) },
-  { key: "p95", type: "num", format: (r) => formatInt(r.p95) },
-  { key: "p99", type: "num", format: (r) => formatInt(r.p99) },
+  { key: "p50", type: "num", format: (r) => rowMs(r.p50) },
+  { key: "p95", type: "num", format: (r) => rowMs(r.p95) },
+  { key: "p99", type: "num", format: (r) => rowMs(r.p99) },
 ]);
 
-const FORMATS = { int: formatInt, pct: formatPct };
+const FORMATS = { int: formatInt, ms: formatMs, pct: formatPct };
 
 /** The all requests heatmap, as applied from snapshots. */
 let allState: HeatmapState | null = null;
@@ -223,8 +224,8 @@ function showData(view: HeatmapView): void {
   const p95 = recentTrend(seconds.map((p) => p.p95));
   const p99 = recentTrend(seconds.map((p) => p.p99));
   const text =
-    "p50 " + formatInt(p50.mean) + " ms, p95 " + formatInt(p95.mean) +
-    " ms, p99 " + formatInt(p99.mean) + " ms";
+    "p50 " + rowMs(p50.mean) + " ms, p95 " + rowMs(p95.mean) +
+    " ms, p99 " + rowMs(p99.mean) + " ms";
   const trend = p95.trend === null ? "" : "; p95 " + p95.trend;
   setLatencySummary(text + trend + ".");
 }

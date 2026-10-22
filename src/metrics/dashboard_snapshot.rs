@@ -4,13 +4,12 @@
 //! and later by the HTTP dashboard server.
 
 use super::{
-    calculate_response_time_percentile, per_second_calculations, GooseErrorMetricAggregate,
-    GooseMetrics, GooseRequestMetricAggregate, GooseRequestMetricTimingData,
-    ScenarioMetricAggregate, TransactionMetricAggregate,
+    per_second_calculations, GooseErrorMetricAggregate, GooseMetrics, GooseRequestMetricAggregate,
+    GooseRequestMetricTimingData, ScenarioMetricAggregate, TransactionMetricAggregate,
 };
 use chrono::prelude::*;
 use serde::Serialize;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 
 /// Maximum per-request rows included in a snapshot table.
 pub(crate) const MAX_REQUEST_ROWS: usize = 100;
@@ -178,6 +177,8 @@ pub(crate) struct AggregateMetrics {
     pub response_time_min_ms: u64,
     pub response_time_max_ms: u64,
     pub percentile_ms: Percentiles,
+    /// The same times to the microsecond, null without times.
+    pub response_time_us: Option<MicrosecondTimes>,
     /// True iff coordinated-omission metrics object is present AND has recorded
     /// at least one CO event (or synthetic request).
     pub co_active: bool,
@@ -197,6 +198,8 @@ pub(crate) struct RequestRow {
     pub response_time_min_ms: u64,
     pub response_time_max_ms: u64,
     pub percentile_ms: Percentiles,
+    /// The same times to the microsecond, null without times.
+    pub response_time_us: Option<MicrosecondTimes>,
     pub status_codes: Vec<(u16, u64)>,
     pub co_adjusted: Option<CoAdjusted>,
     /// True when the response time heatmap can show this request alone:
@@ -223,6 +226,8 @@ pub(crate) struct ScenarioRow {
     pub response_time_min_ms: u64,
     pub response_time_max_ms: u64,
     pub percentile_ms: Percentiles,
+    /// The same times to the microsecond, all 0 without times.
+    pub response_time_us: MicrosecondTimes,
 }
 
 /// Metrics for one registered transaction.
@@ -247,6 +252,8 @@ pub(crate) struct TransactionRow {
     pub response_time_min_ms: u64,
     pub response_time_max_ms: u64,
     pub percentile_ms: Percentiles,
+    /// The same times to the microsecond, all 0 without times.
+    pub response_time_us: MicrosecondTimes,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -307,11 +314,11 @@ pub(crate) struct Heatmap {
     /// Seconds from this one on may still be missing their slowest requests,
     /// so they are not drawn yet.
     pub hold_from: u64,
-    /// Each bucket by index, as `[time, lowest, highest]` in milliseconds:
-    /// the rounded response time Goose stores for the bucket, and the range
-    /// of measured times that round to it. A longer table replaces a shorter
+    /// Each row by index, as `[time, lowest, highest]` in microseconds:
+    /// the time the row stands for, which is its middle, then the first and
+    /// last microsecond the row holds. A longer table replaces a shorter
     /// one; entries never change.
-    pub buckets: Vec<[u64; 3]>,
+    pub buckets_us: Vec<[u64; 3]>,
     /// The columns that changed, oldest first.
     pub columns: Vec<HeatmapColumn>,
 }
@@ -383,20 +390,44 @@ pub(crate) struct CoAdjusted {
     pub response_time_avg_ms: f64,
     pub response_time_max_ms: u64,
     pub percentile_ms: Percentiles,
+    /// The same times to the microsecond, null without times.
+    pub response_time_us: Option<MicrosecondTimes>,
 }
 
 impl CoAdjusted {
     fn from_timing_data(data: &GooseRequestMetricTimingData) -> Self {
+        let response_time_us = MicrosecondTimes::of(data);
         CoAdjusted {
-            response_time_avg_ms: average_ms(data.total_time, data.counter),
-            response_time_max_ms: data.maximum_time as u64,
-            percentile_ms: Percentiles::from_times(
-                &data.times,
-                data.counter,
-                data.minimum_time,
-                data.maximum_time,
-            ),
+            response_time_avg_ms: data.average_ms_or_zero(),
+            response_time_max_ms: data.maximum_time_ms() as u64,
+            percentile_ms: Percentiles::of(response_time_us.as_ref()),
+            response_time_us,
         }
+    }
+}
+
+/// Response times in microseconds, beside the whole milliseconds of the same
+/// row: its fastest, slowest and percentiles.
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub(crate) struct MicrosecondTimes {
+    pub min: u64,
+    pub max: u64,
+    pub p50: u64,
+    pub p95: u64,
+    pub p99: u64,
+}
+
+impl MicrosecondTimes {
+    /// `data`'s times in microseconds, `None` without times.
+    fn of(data: &GooseRequestMetricTimingData) -> Option<Self> {
+        (data.counter > 0).then(|| MicrosecondTimes {
+            min: data.minimum_time_us,
+            max: data.maximum_time_us,
+            p50: data.percentile_us(0.5),
+            p95: data.percentile_us(0.95),
+            p99: data.percentile_us(0.99),
+        })
     }
 }
 
@@ -417,19 +448,16 @@ impl Percentiles {
         }
     }
 
-    fn from_times(
-        times: &BTreeMap<usize, usize>,
-        total_requests: usize,
-        min: usize,
-        max: usize,
-    ) -> Self {
-        if total_requests == 0 {
-            return Self::zero();
-        }
-        Percentiles {
-            p50: calculate_response_time_percentile(times, total_requests, min, max, 0.5) as u64,
-            p95: calculate_response_time_percentile(times, total_requests, min, max, 0.95) as u64,
-            p99: calculate_response_time_percentile(times, total_requests, min, max, 0.99) as u64,
+    /// The percentiles of `times` in whole milliseconds, truncated; 0
+    /// without times.
+    fn of(times: Option<&MicrosecondTimes>) -> Self {
+        match times {
+            Some(times) => Percentiles {
+                p50: times.p50 / 1000,
+                p95: times.p95 / 1000,
+                p99: times.p99 / 1000,
+            },
+            None => Self::zero(),
         }
     }
 }
@@ -512,6 +540,7 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
                 response_time_min_ms: 0,
                 response_time_max_ms: 0,
                 percentile_ms: Percentiles::zero(),
+                response_time_us: None,
                 co_active: false,
                 co_adjusted: None,
             },
@@ -641,11 +670,8 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
     } else {
         0.0
     };
-    let response_time_avg_ms = if aggregate.counter > 0 {
-        aggregate.total_time as f64 / aggregate.counter as f64
-    } else {
-        0.0
-    };
+    let response_time_avg_ms = aggregate.average_ms_or_zero();
+    let response_time_us = MicrosecondTimes::of(&aggregate);
 
     let mut hosts: Vec<String> = input.metrics.hosts.iter().cloned().collect();
     hosts.sort();
@@ -669,14 +695,10 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
             failures_per_second: fps as f64,
             failure_rate,
             response_time_avg_ms,
-            response_time_min_ms: aggregate.minimum_time as u64,
-            response_time_max_ms: aggregate.maximum_time as u64,
-            percentile_ms: Percentiles::from_times(
-                &aggregate.times,
-                aggregate.counter,
-                aggregate.minimum_time,
-                aggregate.maximum_time,
-            ),
+            response_time_min_ms: aggregate.minimum_time_ms() as u64,
+            response_time_max_ms: aggregate.maximum_time_ms() as u64,
+            percentile_ms: Percentiles::of(response_time_us.as_ref()),
+            response_time_us,
             co_active,
             co_adjusted: co_aggregate.as_ref().map(CoAdjusted::from_timing_data),
         },
@@ -709,11 +731,8 @@ fn request_row_from_aggregate(
 ) -> RequestRow {
     let total_count = request.success_count + request.fail_count;
     let (rps, fps) = per_second_calculations(duration, total_count, request.fail_count);
-    let avg = if request.raw_data.counter > 0 {
-        request.raw_data.total_time as f64 / request.raw_data.counter as f64
-    } else {
-        0.0
-    };
+    let avg = request.raw_data.average_ms_or_zero();
+    let response_time_us = MicrosecondTimes::of(&request.raw_data);
     let status_codes = if no_status_codes {
         Vec::new()
     } else {
@@ -734,14 +753,10 @@ fn request_row_from_aggregate(
         requests_per_second: rps as f64,
         failures_per_second: fps as f64,
         response_time_avg_ms: avg,
-        response_time_min_ms: request.raw_data.minimum_time as u64,
-        response_time_max_ms: request.raw_data.maximum_time as u64,
-        percentile_ms: Percentiles::from_times(
-            &request.raw_data.times,
-            request.raw_data.counter,
-            request.raw_data.minimum_time,
-            request.raw_data.maximum_time,
-        ),
+        response_time_min_ms: request.raw_data.minimum_time_ms() as u64,
+        response_time_max_ms: request.raw_data.maximum_time_ms() as u64,
+        percentile_ms: Percentiles::of(response_time_us.as_ref()),
+        response_time_us,
         status_codes,
         co_adjusted: if co_active {
             request
@@ -755,32 +770,21 @@ fn request_row_from_aggregate(
     }
 }
 
-/// Average time in milliseconds, or 0 when nothing has been timed.
-fn average_ms(total_time: usize, counter: usize) -> f64 {
-    if counter > 0 {
-        total_time as f64 / counter as f64
-    } else {
-        0.0
-    }
-}
-
 fn scenario_row_from_aggregate(scenario: &ScenarioMetricAggregate, duration: usize) -> ScenarioRow {
-    let (runs_per_second, _) = per_second_calculations(duration, scenario.counter, 0);
+    let times = &scenario.run_times;
+    let (runs_per_second, _) = per_second_calculations(duration, times.counter, 0);
+    let response_time_us = MicrosecondTimes::of(times);
     ScenarioRow {
         scenario_index: scenario.index as u64,
         scenario_name: scenario.name.to_string(),
         users: scenario.users.len() as u64,
-        run_count: scenario.counter as u64,
+        run_count: times.counter as u64,
         runs_per_second: runs_per_second as f64,
-        response_time_avg_ms: average_ms(scenario.total_time, scenario.counter),
-        response_time_min_ms: scenario.min_time as u64,
-        response_time_max_ms: scenario.max_time as u64,
-        percentile_ms: Percentiles::from_times(
-            &scenario.times,
-            scenario.counter,
-            scenario.min_time,
-            scenario.max_time,
-        ),
+        response_time_avg_ms: times.average_ms_or_zero(),
+        response_time_min_ms: times.minimum_time_ms() as u64,
+        response_time_max_ms: times.maximum_time_ms() as u64,
+        percentile_ms: Percentiles::of(response_time_us.as_ref()),
+        response_time_us: response_time_us.unwrap_or_default(),
     }
 }
 
@@ -791,6 +795,7 @@ fn transaction_row_from_aggregate(
     let run_count = transaction.success_count + transaction.fail_count;
     let (runs_per_second, failures_per_second) =
         per_second_calculations(duration, run_count, transaction.fail_count);
+    let response_time_us = MicrosecondTimes::of(&transaction.run_times);
     TransactionRow {
         scenario_index: transaction.scenario_index as u64,
         scenario_name: transaction.scenario_name.to_string(),
@@ -803,15 +808,11 @@ fn transaction_row_from_aggregate(
         failure_count: transaction.fail_count as u64,
         runs_per_second: runs_per_second as f64,
         failures_per_second: failures_per_second as f64,
-        response_time_avg_ms: average_ms(transaction.total_time, transaction.counter),
-        response_time_min_ms: transaction.min_time as u64,
-        response_time_max_ms: transaction.max_time as u64,
-        percentile_ms: Percentiles::from_times(
-            &transaction.times,
-            transaction.counter,
-            transaction.min_time,
-            transaction.max_time,
-        ),
+        response_time_avg_ms: transaction.run_times.average_ms_or_zero(),
+        response_time_min_ms: transaction.run_times.minimum_time_ms() as u64,
+        response_time_max_ms: transaction.run_times.maximum_time_ms() as u64,
+        percentile_ms: Percentiles::of(response_time_us.as_ref()),
+        response_time_us: response_time_us.unwrap_or_default(),
     }
 }
 
@@ -1341,7 +1342,15 @@ mod tests {
         assert!((alpha.response_time_avg_ms - 250.0).abs() < 1e-9);
         assert_eq!(alpha.response_time_min_ms, 100);
         assert_eq!(alpha.response_time_max_ms, 400);
-        assert_eq!(alpha.percentile_ms.p50, 200);
+        // 200 ms is reported as the middle of its bucket, 199.68 ms, which
+        // is 199 in whole milliseconds.
+        assert_eq!(alpha.percentile_ms.p50, 199);
+        // Shown rounded, as 200.
+        assert_eq!(alpha.response_time_us.p50, 199_680);
+        assert_eq!(
+            crate::metrics::format_micros(alpha.response_time_us.p50, true),
+            "200"
+        );
         assert_eq!(alpha.percentile_ms.p95, 400);
         assert_eq!(alpha.percentile_ms.p99, 400);
         let beta = &snap.scenarios[1];

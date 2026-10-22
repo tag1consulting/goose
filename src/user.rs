@@ -121,7 +121,7 @@ pub(crate) async fn user_main(
             let _ = record_scenario(
                 &thread_scenario,
                 &mut thread_user,
-                scenario_started.elapsed().as_millis(),
+                scenario_started.elapsed(),
             )
             .await;
 
@@ -213,7 +213,7 @@ fn received_exit(thread_receiver: &flume::Receiver<GooseUserCommand>) -> bool {
 async fn record_scenario(
     thread_scenario: &Scenario,
     thread_user: &mut GooseUser,
-    run_time: u128,
+    run_time: Duration,
 ) -> Result<(), Box<flume::SendError<Option<GooseLog>>>> {
     if !thread_user.config.no_scenario_metrics && !thread_user.config.no_metrics {
         let raw_scenario = ScenarioMetric::new(
@@ -241,7 +241,7 @@ async fn record_scenario(
                 let _ = metrics_channel.send(GooseMetric::All {
                     request: Box::new(request),
                     transaction,
-                    scenario: raw_scenario.clone(),
+                    scenario: Box::new(raw_scenario.clone()),
                 });
                 // Increment at actual send time so metrics reset can't zero the counter
                 // before the parent processes this request.
@@ -293,7 +293,7 @@ async fn invoke_transaction_function(
     thread_user.transaction_index = Some(thread_transaction_index);
 
     let success = function(thread_user).await.is_ok();
-    raw_transaction.set_time(started.elapsed().as_millis(), success);
+    raw_transaction.set_duration(started.elapsed(), success);
 
     // Exit if all metrics or transaction metrics are disabled.
     if thread_user.config.no_metrics || thread_user.config.no_transaction_metrics {

@@ -38,11 +38,17 @@
     document.getElementById('graph-latency-heatmap-ramp').style.background =
         'linear-gradient(to right, ' + color(0) + ', ' + color(1000) + ')';
 
-    // A bucket's span on the logarithmic axis: from its lowest time to past
-    // its highest. Times under a millisecond start at 0.5 ms.
+    // Each bucket as [time, lowest, highest] in microseconds: 100
+    // microseconds each under a millisecond.
+    var micros = data.buckets_us;
+
+    // A bucket's span on the logarithmic axis, in milliseconds: from its
+    // lowest time to past its highest. The bucket from 0 starts at half its
+    // end, 0.05 ms.
     function span(bucket) {
-        var row = data.buckets[bucket];
-        return [row[1] === 0 ? 0.5 : row[1], row[2] + 1];
+        var row = micros[bucket];
+        var end = (row[2] + 1) / 1000;
+        return [row[1] === 0 ? end / 2 : row[1] / 1000, end];
     }
 
     function pad(number) {
@@ -57,20 +63,32 @@
             pad(date.getUTCMinutes()) + ':' + pad(date.getUTCSeconds());
     }
 
+    // A percentile, the middle of its row, at the rows' precision: to the
+    // tenth under 1 ms and whole from 1 ms, truncated, so it names the row
+    // it is in.
+    function rowMs(us) {
+        if (us < 1000) {
+            return String(Math.floor(us / 100) / 10);
+        }
+        return Math.floor(us / 1000).toLocaleString();
+    }
+
     function requests(count) {
         return count.toLocaleString() + (count === 1 ? ' request' : ' requests');
     }
 
     function bucketText(bucket) {
-        var row = data.buckets[bucket];
-        if (row[2] === 0) {
-            return 'under 1 ms';
+        var row = micros[bucket];
+        if (row[2] < 1000) {
+            return (row[1] / 1000) + ' to ' + ((row[2] + 1) / 1000) + ' ms';
         }
-        if (row[1] === row[2]) {
-            return row[0].toLocaleString() + ' ms';
+        // A row's bounds are exact; whole milliseconds, truncated, never
+        // name a time above the row.
+        var lowest = Math.floor(row[1] / 1000);
+        if (row[2] - row[1] < 1000) {
+            return lowest.toLocaleString() + ' ms';
         }
-        return row[0].toLocaleString() + ' ms bucket (' + row[1].toLocaleString() +
-            ' to ' + row[2].toLocaleString() + ' ms)';
+        return lowest.toLocaleString() + ' to ' + Math.floor((row[2] + 1) / 1000).toLocaleString() + ' ms';
     }
 
     function tooltip(params) {
@@ -78,10 +96,10 @@
         if (params.seriesType === 'custom') {
             return clock(value[0]) + ' to ' + clock(value[1]) + '<br>' +
                 bucketText(value[6]) + ': ' + requests(value[5]) + '<br>' +
-                'p50 / p95 / p99: ' + value[7] + ' / ' + value[8] + ' / ' + value[9] + ' ms';
+                'p50 / p95 / p99: ' + rowMs(value[7]) + ' / ' + rowMs(value[8]) + ' / ' +
+                rowMs(value[9]) + ' ms';
         }
-        return clock(value[0]) + '<br>' + params.seriesName + ': ' +
-            value[2].toLocaleString() + ' ms';
+        return clock(value[0]) + '<br>' + params.seriesName + ': ' + rowMs(value[2]) + ' ms';
     }
 
     function draw() {
@@ -115,9 +133,10 @@
             }
             previous = column[0];
             for (var p = 0; p < 3; p++) {
-                // The value axis is logarithmic, so a percentile under a
-                // millisecond is drawn at 0.5 ms, as its bucket starts.
-                lines[p].push([(from + to) / 2, Math.max(column[1 + p], 0.5), column[1 + p]]);
+                // The percentiles are in microseconds. The value axis is
+                // logarithmic, so a percentile under 0.05 ms is drawn where
+                // the lowest bucket starts.
+                lines[p].push([(from + to) / 2, Math.max(column[1 + p] / 1000, 0.05), column[1 + p]]);
             }
             for (var i = 4; i + 2 < column.length; i += 3) {
                 var bucketSpan = span(column[i]);
@@ -128,7 +147,7 @@
             }
         });
         if (cells.length === 0) {
-            low = 0.5;
+            low = 0.05;
             high = 1000;
         }
         note.textContent = 'Each column is ' +

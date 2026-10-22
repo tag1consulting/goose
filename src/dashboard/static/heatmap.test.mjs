@@ -18,12 +18,15 @@ import {
   countPosition,
   heatmapCursor,
   heatmapView,
+  percentileLabels,
   percentileOf,
+  rowMs,
   scaleColor,
   secondLabels,
   secondStep,
   tooltipText,
 } from "./test-build/heatmap.mjs";
+import { formatMs } from "./test-build/format.mjs";
 import { IDLE_SNAPSHOT } from "./idle-snapshot.mjs";
 import { FRESH, openPage, openPages, settle } from "./test-harness.mjs";
 
@@ -35,7 +38,7 @@ test.afterEach(() => {
 
 // --- Goose's buckets, as the server's bucket table lists them -------------
 
-// round_metric_time in src/metrics.rs.
+// The whole millisecond rounding Goose used before 0.19.
 function roundMetricTime(t) {
   if (t <= 100) return t;
   if (t <= 500) return Math.round(t / 10) * 10;
@@ -59,6 +62,11 @@ function bucketTable() {
   });
 }
 const BUCKETS = bucketTable();
+// The same table in microseconds, as the server sends it: each bucket ends
+// at highest + 1 ms.
+function inMicroseconds(table) {
+  return table.map(([time, lowest, highest]) => [time * 1000, lowest * 1000, (highest + 1) * 1000 - 1]);
+}
 // Bucket indexes used below.
 const MS_1 = 1;
 const MS_7 = 7;
@@ -74,7 +82,7 @@ function heatmap(fields) {
     start_second: 0,
     end_second: 9,
     hold_from: 8,
-    buckets: BUCKETS,
+    buckets_us: inMicroseconds(BUCKETS),
     columns: [],
     ...fields,
   };
@@ -131,7 +139,7 @@ test("a whole window replaces, a delta applies only on the heatmap it follows", 
   // longer one.
   const moved = applyHeatmap(
     next,
-    heatmap({ rev: 10, since: 9, start_second: 2, end_second: 11, buckets: BUCKETS.slice(0, 10) })
+    heatmap({ rev: 10, since: 9, start_second: 2, end_second: 11, buckets_us: inMicroseconds(BUCKETS.slice(0, 10)) })
   );
   assert.deepEqual(Array.from(moved.columns.keys()).sort(), [2, 3]);
   assert.equal(moved.buckets.length, 205);
@@ -177,18 +185,16 @@ test("rows span their buckets on a log axis, fastest at the bottom", () => {
   assert.equal(view.ticks[0].y, 1);
 });
 
-test("the under 1 ms row spans half a millisecond to one; seconds tick in s", () => {
+test("the bottom row spans half its end to its end; seconds tick in s", () => {
   assert.deepEqual(bucketSpan(BUCKETS[0]), [0.5, 1]);
   const state = applyHeatmap(null, heatmap({ columns: [column(1, [0, 1, S_1 + 30, 1])] }));
   const view = heatmapView(state, false);
   assert.equal(view.rows[0].bucket, 0);
   assert.deepEqual(
     view.ticks.map((t) => t.label),
-    ["<1 ms", "1 ms", "2 ms", "5 ms", "10 ms", "20 ms", "50 ms", "100 ms", "200 ms", "500 ms", "1 s", "2 s", "5 s", "10 s", "20 s"]
+    ["0.5 ms", "1 ms", "2 ms", "5 ms", "10 ms", "20 ms", "50 ms", "100 ms", "200 ms", "500 ms", "1 s", "2 s", "5 s", "10 s", "20 s"]
   );
-  // The <1 ms label sits in the middle of the bucket 0 row.
-  assert.equal(view.ticks[0].y, (view.rows[0].top + view.rows[0].bottom) / 2);
-  assert.equal(view.ticks[0].ms, 0);
+  assert.equal(view.ticks[0].y, 1);
 });
 
 test("held and empty seconds have no cells; adjusted adds synthetic times", () => {
@@ -321,7 +327,8 @@ test("tooltips, in every form", () => {
   );
   assert.equal(
     text(0),
-    "Second 7: under 1 ms, 2 requests (16.67% of the second's 12)" + measured
+    // Bucket 0 of this table ends at 1 ms.
+    "Second 7: 0 to 1 ms, 2 requests (16.67% of the second's 12)" + measured
   );
   assert.ok(cell(S_1));
 
@@ -845,7 +852,7 @@ test("the KPIs, the Whole run card and the tables say they cover the whole run",
   assert.equal(aggregate.querySelector("h2").textContent, "Whole run");
   assert.equal(
     aggregate.querySelector("p.note").textContent,
-    "Since the test started, or since metrics were last reset. Goose measures response times in whole milliseconds."
+    "Since the test started, or since metrics were last reset. Request times under 10 ms are shown to the hundredth of a millisecond."
   );
   const percentiles = [
     ["p50", "Whole run"],
@@ -869,4 +876,83 @@ test("the KPIs, the Whole run card and the tables say they cover the whole run",
     ).map((th) => [th.textContent, th.title]);
     assert.deepEqual(titled, titles, table);
   }
+});
+
+// --- The server's own table, in microseconds ---------------------------------
+
+// ROW_BANDS in src/graph.rs: where each band starts, its rows' width and how
+// many rows it has, in microseconds.
+const ROW_BANDS = [
+  [0, 100, 10],
+  [1000, 1000, 63],
+  [64000, 2000, 18],
+  [100000, 10000, 40],
+  [500000, 50000, 10],
+  [1000000, 100000, 40],
+  [5000000, 1000000, 56],
+];
+// `[time, lowest, highest]` of every fixed row, as `buckets_us` lists them.
+const SERVER_US = ROW_BANDS.flatMap(([start, width, rows]) =>
+  Array.from({ length: rows }, (_, i) => {
+    const lowest = start + width * i;
+    return [lowest + width / 2, lowest, lowest + width - 1];
+  })
+);
+
+test("a heatmap from buckets_us: rows under 1 ms, a 0.1 ms tick, and tooltips for rows 0, 9 and 10", () => {
+  assert.equal(SERVER_US.length, 237);
+  const state = applyHeatmap(null, {
+    generation: 1,
+    rev: 1,
+    since: 0,
+    start_second: 0,
+    end_second: 9,
+    hold_from: 8,
+    buckets_us: SERVER_US,
+    columns: [column(1, [0, 1, 9, 2, 10, 3])],
+  });
+  const view = heatmapView(state, false);
+  assert.deepEqual(
+    view.rows.map((r) => [r.bucket, r.lowest]),
+    [[0, 0], [1, 0.1], [2, 0.2], [3, 0.3], [4, 0.4], [5, 0.5], [6, 0.6], [7, 0.7], [8, 0.8], [9, 0.9], [10, 1]]
+  );
+  // From 0.05 ms, half the bottom row's end, to 2 ms: ticks at 0.1, 0.2,
+  // 0.5 and 1 ms.
+  assert.deepEqual(
+    view.ticks.map((t) => t.label),
+    ["0.1 ms", "0.2 ms", "0.5 ms", "1 ms", "2 ms"]
+  );
+  const rows = new Map(view.rows.map((r) => [r.bucket, r]));
+  const formats = { ...FORMATS, ms: formatMs };
+  const text = (bucket) =>
+    tooltipText(view, view.cells.find((c) => c.bucket === bucket), rows.get(bucket), false, formats);
+  // Six requests: p50 is in the 0.9 ms row, p95 and p99 in the 1 ms row.
+  const percentiles = " p50 / p95 / p99: 0.9 / 1 / 1 ms";
+  assert.equal(text(0), "Second 1: 0 to 0.1 ms, 1 requests (16.67% of the second's 6)" + percentiles);
+  assert.equal(text(9), "Second 1: 0.9 to 1 ms, 2 requests (33.33% of the second's 6)" + percentiles);
+  assert.equal(text(10), "Second 1: 1 ms, 3 requests (50.00% of the second's 6)" + percentiles);
+});
+
+test("a percentile's rank is taken in doubles, as Rust takes it", () => {
+  // 229,451 * 0.99 is 227,156.49: rank 227,156. In single precision it
+  // rounds to rank 227,157.
+  assert.equal(percentileOf([[1, 227156], [2, 1], [3, 2294]], 229451, 0.99), 1);
+});
+
+test("heatmap percentiles show the row they are in", () => {
+  // Under 1 ms to the tenth; from 1 ms whole milliseconds, truncated, as a
+  // row's middle never rounds into the next row.
+  assert.equal(rowMs(0.05), "0");
+  assert.equal(rowMs(0.45), "0.4");
+  assert.equal(rowMs(0.95), "0.9");
+  assert.equal(rowMs(2.5), "2");
+  assert.equal(rowMs(5500), (5500).toLocaleString());
+  assert.deepEqual(
+    percentileLabels([
+      { key: "p50", value: 0.45, y: 100 },
+      { key: "p95", value: 2.5, y: 60 },
+      { key: "p99", value: 5500, y: 20 },
+    ]).map((l) => l.text),
+    ["p99: " + (5500).toLocaleString() + " ms", "p95: 2 ms", "p50: 0.4 ms"]
+  );
 });

@@ -1,0 +1,356 @@
+{
+  "raw_metrics": {
+    "hash": 0,
+    "duration": 11,
+    "maximum_users": 4,
+    "total_users": 4,
+    "requests": {
+      "GET two": {
+        "path": "two",
+        "method": "Get",
+        "raw_data": {
+          "times": {
+            "2": 5,
+            "3": 2
+          },
+          "minimum_time": 2,
+          "maximum_time": 3,
+          "total_time": 16,
+          "counter": 7
+        },
+        "coordinated_omission_data": null,
+        "status_code_counts": {
+          "200": 7
+        },
+        "success_count": 7,
+        "fail_count": 0,
+        "load_test_hash": 0
+      },
+      "GET index": {
+        "path": "index",
+        "method": "Get",
+        "raw_data": {
+          "times": {
+            "0": 922378
+          },
+          "minimum_time": 0,
+          "maximum_time": 0,
+          "total_time": 0,
+          "counter": 922378
+        },
+        "coordinated_omission_data": null,
+        "status_code_counts": {
+          "200": 922378
+        },
+        "success_count": 922378,
+        "fail_count": 0,
+        "load_test_hash": 0
+      },
+      "GET slow": {
+        "path": "slow",
+        "method": "Get",
+        "raw_data": {
+          "times": {
+            "1000": 8
+          },
+          "minimum_time": 1400,
+          "maximum_time": 1402,
+          "total_time": 11207,
+          "counter": 8
+        },
+        "coordinated_omission_data": null,
+        "status_code_counts": {
+          "200": 8
+        },
+        "success_count": 8,
+        "fail_count": 0,
+        "load_test_hash": 0
+      }
+    },
+    "transactions": [
+      [
+        {
+          "scenario_index": 0,
+          "scenario_name": "Fast",
+          "transaction_index": 0,
+          "transaction_name": "index",
+          "times": {
+            "0": 922378
+          },
+          "min_time": 0,
+          "max_time": 0,
+          "total_time": 0,
+          "counter": 922378,
+          "success_count": 922378,
+          "fail_count": 0
+        }
+      ],
+      [
+        {
+          "scenario_index": 1,
+          "scenario_name": "Slow",
+          "transaction_index": 0,
+          "transaction_name": "slow",
+          "times": {
+            "10": 8
+          },
+          "min_time": 1400,
+          "max_time": 1402,
+          "total_time": 11207,
+          "counter": 8,
+          "success_count": 8,
+          "fail_count": 0
+        },
+        {
+          "scenario_index": 1,
+          "scenario_name": "Slow",
+          "transaction_index": 1,
+          "transaction_name": "two",
+          "times": {
+            "2": 5,
+            "3": 2
+          },
+          "min_time": 2,
+          "max_time": 3,
+          "total_time": 16,
+          "counter": 7,
+          "success_count": 7,
+          "fail_count": 0
+        }
+      ]
+    ],
+    "errors": {},
+    "final_metrics": true,
+    "display_status_codes": true,
+    "display_metrics": true,
+    "coordinated_omission_metrics": null
+  },
+  "raw_request_metrics": [
+    {
+      "method": "GET",
+      "name": "index",
+      "number_of_requests": 922378,
+      "number_of_failures": 0,
+      "response_time_average": 0.0,
+      "response_time_minimum": 0,
+      "response_time_maximum": 0,
+      "requests_per_second": 83852.55,
+      "failures_per_second": 0.0
+    },
+    {
+      "method": "GET",
+      "name": "slow",
+      "number_of_requests": 8,
+      "number_of_failures": 0,
+      "response_time_average": 1400.875,
+      "response_time_minimum": 1400,
+      "response_time_maximum": 1402,
+      "requests_per_second": 0.72727275,
+      "failures_per_second": 0.0
+    },
+    {
+      "method": "GET",
+      "name": "two",
+      "number_of_requests": 7,
+      "number_of_failures": 0,
+      "response_time_average": 2.2857144,
+      "response_time_minimum": 2,
+      "response_time_maximum": 3,
+      "requests_per_second": 0.6363636,
+      "failures_per_second": 0.0
+    },
+    {
+      "method": "",
+      "name": "Aggregated",
+      "number_of_requests": 922393,
+      "number_of_failures": 0,
+      "response_time_average": 0.012167265,
+      "response_time_minimum": 2,
+      "response_time_maximum": 1402,
+      "requests_per_second": 83853.91,
+      "failures_per_second": 0.0
+    }
+  ],
+  "raw_response_metrics": [
+    {
+      "method": "GET",
+      "name": "index",
+      "percentile_50": 0,
+      "percentile_60": 0,
+      "percentile_70": 0,
+      "percentile_80": 0,
+      "percentile_90": 0,
+      "percentile_95": 0,
+      "percentile_99": 0,
+      "percentile_100": 0
+    },
+    {
+      "method": "GET",
+      "name": "slow",
+      "percentile_50": 1400,
+      "percentile_60": 1400,
+      "percentile_70": 1400,
+      "percentile_80": 1400,
+      "percentile_90": 1400,
+      "percentile_95": 1400,
+      "percentile_99": 1400,
+      "percentile_100": 1400
+    },
+    {
+      "method": "GET",
+      "name": "two",
+      "percentile_50": 2,
+      "percentile_60": 2,
+      "percentile_70": 2,
+      "percentile_80": 3,
+      "percentile_90": 3,
+      "percentile_95": 3,
+      "percentile_99": 3,
+      "percentile_100": 3
+    },
+    {
+      "method": "",
+      "name": "Aggregated",
+      "percentile_50": 2,
+      "percentile_60": 2,
+      "percentile_70": 2,
+      "percentile_80": 2,
+      "percentile_90": 2,
+      "percentile_95": 2,
+      "percentile_99": 2,
+      "percentile_100": 1000
+    }
+  ],
+  "co_request_metrics": null,
+  "co_response_metrics": null,
+  "scenario_metrics": [
+    {
+      "name": "Fast",
+      "users": 3,
+      "count": 922375,
+      "response_time_average": 0.0,
+      "response_time_minimum": 0,
+      "response_time_maximum": 0,
+      "count_per_second": 83852.27,
+      "iterations": 307458.34
+    },
+    {
+      "name": "Slow",
+      "users": 1,
+      "count": 7,
+      "response_time_average": 1403.7142,
+      "response_time_minimum": 1403,
+      "response_time_maximum": 1404,
+      "count_per_second": 0.6363636,
+      "iterations": 7.0
+    },
+    {
+      "name": "Aggregated",
+      "users": 4,
+      "count": 922382,
+      "response_time_average": 0.010652853,
+      "response_time_minimum": 1403,
+      "response_time_maximum": 1404,
+      "count_per_second": 83852.91,
+      "iterations": 307465.34
+    }
+  ],
+  "transaction_metrics": [
+    {
+      "is_scenario": true,
+      "transaction": "",
+      "name": "Fast",
+      "number_of_requests": 0,
+      "number_of_failures": 0,
+      "response_time_average": null,
+      "response_time_minimum": 0,
+      "response_time_maximum": 0,
+      "requests_per_second": null,
+      "failures_per_second": null
+    },
+    {
+      "is_scenario": false,
+      "transaction": "0.0",
+      "name": "index",
+      "number_of_requests": 922378,
+      "number_of_failures": 0,
+      "response_time_average": 0.0,
+      "response_time_minimum": 0,
+      "response_time_maximum": 0,
+      "requests_per_second": 83852.55,
+      "failures_per_second": 0.0
+    },
+    {
+      "is_scenario": true,
+      "transaction": "",
+      "name": "Slow",
+      "number_of_requests": 0,
+      "number_of_failures": 0,
+      "response_time_average": null,
+      "response_time_minimum": 0,
+      "response_time_maximum": 0,
+      "requests_per_second": null,
+      "failures_per_second": null
+    },
+    {
+      "is_scenario": false,
+      "transaction": "1.0",
+      "name": "slow",
+      "number_of_requests": 8,
+      "number_of_failures": 0,
+      "response_time_average": 1400.875,
+      "response_time_minimum": 1400,
+      "response_time_maximum": 1402,
+      "requests_per_second": 0.72727275,
+      "failures_per_second": 0.0
+    },
+    {
+      "is_scenario": false,
+      "transaction": "1.1",
+      "name": "two",
+      "number_of_requests": 7,
+      "number_of_failures": 0,
+      "response_time_average": 2.2857144,
+      "response_time_minimum": 2,
+      "response_time_maximum": 3,
+      "requests_per_second": 0.6363636,
+      "failures_per_second": 0.0
+    },
+    {
+      "is_scenario": false,
+      "transaction": "",
+      "name": "Aggregated",
+      "number_of_requests": 922393,
+      "number_of_failures": 0,
+      "response_time_average": 0.012167265,
+      "response_time_minimum": 2,
+      "response_time_maximum": 1402,
+      "requests_per_second": 83853.91,
+      "failures_per_second": 0.0
+    }
+  ],
+  "status_code_metrics": [
+    {
+      "method": "GET",
+      "name": "index",
+      "status_codes": "922,378 [200]"
+    },
+    {
+      "method": "GET",
+      "name": "slow",
+      "status_codes": "8 [200]"
+    },
+    {
+      "method": "GET",
+      "name": "two",
+      "status_codes": "7 [200]"
+    },
+    {
+      "method": "",
+      "name": "Aggregated",
+      "status_codes": "922,393 [200]"
+    }
+  ],
+  "errors": null,
+  "coordinated_omission_metrics": null
+}
