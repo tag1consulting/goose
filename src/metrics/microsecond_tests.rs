@@ -702,3 +702,24 @@ fn console_response_time_cells(metrics: &GooseMetrics, key: &str) -> Vec<String>
         .map(|cell| cell.trim().to_string())
         .collect()
 }
+
+/// The slowest time is the 100th percentile, and the fastest the rank 1
+/// percentile, even past the counts an `f32` holds exactly: 29,416,273
+/// times, which an `f32` rounds to 29,416,272, put the 100th percentile one
+/// time short of the slowest.
+#[test]
+fn percentiles_rank_every_time_past_f32_precision() {
+    let total = 29_416_273;
+    let buckets = [(bucket_value(1_680), total - 1), (bucket_value(1_700), 1)];
+    let maximum = super::buckets::percentile(buckets, total, 1_680, 1_700, 1.0);
+    assert_eq!(maximum, 1_700, "the 100th percentile is the slowest time");
+
+    let mut timing = GooseRequestMetricTimingData::new(None);
+    timing.record_time_us(1_680);
+    timing.record_time_us(1_700);
+    timing
+        .times_us
+        .insert(super::buckets::bucket_floor(1_680), total - 1);
+    timing.counter = total;
+    assert_eq!(timing.percentile_us(1.0), 1_700);
+}
