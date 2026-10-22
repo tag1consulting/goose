@@ -159,11 +159,12 @@ Console and Goose log:
 
           Example: -q. Set in code with GooseDefault::Quiet.
 
-  -G, --goose-log <FILE>
+  -G, --goose-log [<FILE>]
           Write the Goose log to FILE
 
           Writes Goose's own log messages to FILE, at the detail --log-level
-          sets. Without it, there is no Goose log.
+          sets. Without FILE, writes goose.log into the run's folder. Without
+          the option, there is no Goose log.
 
           Example: -G goose.log. Set in code with GooseDefault::GooseLog.
 
@@ -202,12 +203,13 @@ Console and Goose log:
           Set in code with GooseDefault::NoErrorSummary.
 
 Reports:
-      --report-file <FILE>
+      --report-file [<FILE>]
           Write a report; repeatable
 
           Writes a report of the load test to FILE when it ends. The extension
           picks the type: .html or .htm, .md, .json, or .pdf with the
-          pdf-reports feature. Repeat the option to write several. Not allowed
+          pdf-reports feature. Without FILE, writes report.json and report.html
+          into the run's folder. Repeat the option to write several. Not allowed
           with --no-metrics.
 
           Example: --report-file report.html --report-file report.json. Set in
@@ -330,11 +332,12 @@ Metrics:
           GooseDefault::CoordinatedOmissionMitigation.
 
 Logs:
-  -R, --request-log <FILE>
+  -R, --request-log [<FILE>]
           Log every request to FILE
 
-          Writes a line for each request, in --request-format. Not allowed with
-          --no-metrics.
+          Writes a line for each request, in --request-format. Without FILE,
+          writes requests into the run's folder, named for the format. Not
+          allowed with --no-metrics.
 
           Example: -R requests.log. Set in code with GooseDefault::RequestLog.
 
@@ -353,11 +356,12 @@ Logs:
 
           Set in code with GooseDefault::RequestBody.
 
-  -T, --transaction-log <FILE>
+  -T, --transaction-log [<FILE>]
           Log every transaction to FILE
 
-          Writes a line for each transaction, in --transaction-format. Not
-          allowed with --no-metrics.
+          Writes a line for each transaction, in --transaction-format. Without
+          FILE, writes transactions into the run's folder, named for the format.
+          Not allowed with --no-metrics.
 
           Example: -T transactions.log. Set in code with
           GooseDefault::TransactionLog.
@@ -370,11 +374,12 @@ Logs:
           Example: --transaction-format csv. Set in code with
           GooseDefault::TransactionFormat.
 
-  -S, --scenario-log <FILE>
+  -S, --scenario-log [<FILE>]
           Log every scenario to FILE
 
-          Writes a line for each run of a scenario, in --scenario-format. Not
-          allowed with --no-metrics.
+          Writes a line for each run of a scenario, in --scenario-format.
+          Without FILE, writes scenarios into the run's folder, named for the
+          format. Not allowed with --no-metrics.
 
           Example: -S scenarios.log. Set in code with GooseDefault::ScenarioLog.
 
@@ -386,11 +391,12 @@ Logs:
           Example: --scenario-format csv. Set in code with
           GooseDefault::ScenarioFormat.
 
-  -E, --error-log <FILE>
+  -E, --error-log [<FILE>]
           Log every error to FILE
 
-          Writes a line for each failed request, in --error-format. Not allowed
-          with --no-metrics.
+          Writes a line for each failed request, in --error-format. Without
+          FILE, writes errors into the run's folder, named for the format. Not
+          allowed with --no-metrics.
 
           Example: -E errors.log. Set in code with GooseDefault::ErrorLog.
 
@@ -402,12 +408,13 @@ Logs:
           Example: --error-format csv. Set in code with
           GooseDefault::ErrorFormat.
 
-  -D, --debug-log <FILE>
+  -D, --debug-log [<FILE>]
           Write the debug log to FILE
 
           Writes what the load test logs with GooseUser::log_debug and
           GooseUser::set_failure, with response bodies unless --no-debug-body,
-          in --debug-format.
+          in --debug-format. Without FILE, writes debug into the run's folder,
+          named for the format.
 
           Example: -D debug.log. Set in code with GooseDefault::DebugLog.
 

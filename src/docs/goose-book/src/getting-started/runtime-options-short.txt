@@ -26,14 +26,14 @@ Information:
 Console and Goose log:
   -v, --verbose...           More console output (-v, -vv)
   -q, --quiet...             Less console output, warnings only
-  -G, --goose-log <FILE>     Write the Goose log to FILE
+  -G, --goose-log [<FILE>]   Write the Goose log to FILE
   -g, --log-level...         More Goose log detail (-g, -gg)
       --running-metrics <N>  Print running metrics every N seconds
       --no-print-metrics     Don't print metrics at the end
       --no-error-summary     Don't collect the error summary
 
 Reports:
-      --report-file <FILE>     Write a report; repeatable
+      --report-file [<FILE>]   Write a report; repeatable
       --no-save                Don't save this run to the runs folder
       --runs-dir <DIR>         Runs folder [default: goose-runs]
       --baseline-file <PATH>   Compare against an earlier run
@@ -51,16 +51,16 @@ Metrics:
       --co-mitigation <MODE>    Coordinated omission mitigation
 
 Logs:
-  -R, --request-log <FILE>        Log every request to FILE
+  -R, --request-log [<FILE>]      Log every request to FILE
       --request-format <FMT>      Request log format
       --request-body              Add request bodies to the request log
-  -T, --transaction-log <FILE>    Log every transaction to FILE
+  -T, --transaction-log [<FILE>]  Log every transaction to FILE
       --transaction-format <FMT>  Transaction log format
-  -S, --scenario-log <FILE>       Log every scenario to FILE
+  -S, --scenario-log [<FILE>]     Log every scenario to FILE
       --scenario-format <FMT>     Scenario log format
-  -E, --error-log <FILE>          Log every error to FILE
+  -E, --error-log [<FILE>]        Log every error to FILE
       --error-format <FMT>        Error log format
-  -D, --debug-log <FILE>          Write the debug log to FILE
+  -D, --debug-log [<FILE>]        Write the debug log to FILE
       --debug-format <FMT>        Debug log format
       --no-debug-body             Leave response bodies out of debug log
 

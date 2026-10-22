@@ -4342,8 +4342,9 @@ impl GooseAttack {
     ///
     /// The Chrome check runs first, so a run it stops leaves no report file behind.
     pub(crate) async fn create_reports(&self) -> Result<(), GooseError> {
+        let reports = self.configuration.report_paths();
         #[cfg(feature = "pdf-reports")]
-        if self.configuration.report_file.iter().any(|report| {
+        if reports.iter().any(|report| {
             std::path::Path::new(report)
                 .extension()
                 .is_some_and(|ext| ext == "pdf")
@@ -4351,14 +4352,8 @@ impl GooseAttack {
             self.preflight_pdf().await?;
         }
 
-        self.process_reports(
-            &self.configuration.report_file,
-            ReportSet::ReportFiles,
-            false,
-            None,
-            &mut None,
-        )
-        .await
+        self.process_reports(&reports, ReportSet::ReportFiles, false, None, &mut None)
+            .await
     }
 
     /// The Chrome binary PDF reports run, found (and if need be downloaded)
@@ -4406,7 +4401,7 @@ impl GooseAttack {
     ) -> Result<(), GooseError> {
         let reports = self
             .process_reports(
-                &self.configuration.report_file,
+                &self.configuration.report_paths(),
                 ReportSet::ReportFiles,
                 true,
                 baseline,
