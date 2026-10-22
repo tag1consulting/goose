@@ -235,7 +235,9 @@ impl TimeBuckets {
         self.list.is_empty()
     }
 
-    /// Each bucket's fastest time and its count, fastest first.
+    /// Each bucket's fastest time and its count: fastest first, each once,
+    /// except in a user's batch, which keeps the order its times came and
+    /// may hold a bucket more than once.
     pub fn iter(&self) -> impl Iterator<Item = (&u64, &usize)> + '_ {
         self.list.iter().map(|(bucket, count)| (bucket, count))
     }
@@ -277,8 +279,15 @@ impl std::iter::FromIterator<(u64, usize)> for TimeBuckets {
 }
 
 impl serde::Serialize for TimeBuckets {
+    /// Each bucket once, fastest first: a batch, which may hold a bucket
+    /// more than once and out of order, is combined and sorted first.
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_map(self.iter())
+        if self.list.windows(2).all(|pair| pair[0].0 < pair[1].0) {
+            serializer.collect_map(self.iter())
+        } else {
+            let combined: TimeBuckets = self.list.iter().copied().collect();
+            serializer.collect_map(combined.iter())
+        }
     }
 }
 
