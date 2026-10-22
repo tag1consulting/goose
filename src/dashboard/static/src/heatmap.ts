@@ -648,13 +648,10 @@ export function drawHeatmap(
   ctx.textBaseline = "middle";
   for (const tick of view.ticks) {
     const tickY = y(tick.y) + 0.5;
-    // The <1 ms label names a row; it is not a boundary.
-    if (tick.ms > 0) {
-      ctx.beginPath();
-      ctx.moveTo(left, tickY);
-      ctx.lineTo(left + width, tickY);
-      ctx.stroke();
-    }
+    ctx.beginPath();
+    ctx.moveTo(left, tickY);
+    ctx.lineTo(left + width, tickY);
+    ctx.stroke();
     ctx.fillText(tick.label, left - 6, tickY);
   }
 
