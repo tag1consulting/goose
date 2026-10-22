@@ -1690,10 +1690,9 @@ impl<'a> RunTimesOut<'a> {
     }
 }
 
-/// A request's, transaction's or scenario's timing data as read from a
-/// file: with
-/// microseconds (`times_us` and the fastest, slowest and total), or only the
-/// whole milliseconds of a file written before them.
+/// A request's, transaction's or scenario's timing data as read from a file:
+/// with microseconds (`times_us` and the fastest, slowest and total), or only
+/// the whole milliseconds of a file from an earlier Goose.
 fn run_times(
     times: BTreeMap<usize, usize>,
     [min, max, total]: [usize; 3],

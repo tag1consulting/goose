@@ -141,8 +141,8 @@ pub(crate) struct MillisFloat(pub f64);
 
 impl MillisFloat {
     /// The value as it is shown, in microseconds: rounded to the
-    /// microsecond, then rounded as a [`Millis`] is; `None` when it is not a
-    /// number.
+    /// microsecond, then rounded as a [`Millis`] is; `None` when it is not
+    /// finite.
     fn shown_us(self) -> Option<i64> {
         if !self.0.is_finite() {
             return None;
@@ -158,7 +158,7 @@ impl MillisFloat {
 }
 
 /// `ms` milliseconds as Goose shows every time: to the hundredth under
-/// 10 ms, whole from there, rounded half up; `NaN` when it is not a number.
+/// 10 ms, whole from there, rounded half up; `NaN` when it is not finite.
 /// `separators` adds thousands separators.
 pub(crate) fn format_ms(ms: f64, separators: bool) -> String {
     match MillisFloat(ms).shown_us() {
@@ -198,7 +198,7 @@ impl From<f64> for Value<MillisFloat> {
 }
 
 impl From<f32> for Value<MillisFloat> {
-    /// With the digits the `f32` prints with, as [`NullableFloat`] takes it.
+    /// With the digits the `f32` prints with, as [`NullableFloat`] takes an `f32`.
     ///
     /// [`NullableFloat`]: super::NullableFloat
     fn from(ms: f32) -> Self {
@@ -207,7 +207,7 @@ impl From<f32> for Value<MillisFloat> {
 }
 
 /// The difference between two [`MillisFloat`] as shown, in microseconds;
-/// `None` when either is not a number.
+/// `None` when either is not finite.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize)]
 pub(crate) struct MillisFloatDelta(pub Option<i64>);
 

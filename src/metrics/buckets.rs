@@ -95,14 +95,14 @@ const PLACED_FROM: usize = 32;
 /// How many times fell in each bucket, keyed by the bucket's fastest time in
 /// microseconds. Every time under 128 µs has a bucket of its own, and each
 /// power of two above is split into 64; a bucket reports the time at its
-/// middle, at most 1/128 (0.78%) off any time it holds. Held as a list rather than a tree: a user's batch fills one
-/// with a few dozen buckets a second and the metrics processor merges it into
-/// the whole run's, and a list does both without allocating a node per few
-/// buckets. A batch's list keeps its times in the order they came, which
-/// every merge takes; every other list is sorted, fastest first, and once it
-/// is long it also keeps where each bucket sits, so a merge finds a bucket
-/// without searching. It serializes as a JSON object of bucket to count, as
-/// a `BTreeMap` would.
+/// middle, at most 1/128 (0.78%) off any time it holds. Held as a list rather
+/// than a tree: a user's batch fills one with a few dozen buckets a second
+/// and the metrics processor merges it into the whole run's, and a list does
+/// both without allocating a node per few buckets. A batch's list keeps its
+/// times in the order they came, which every merge takes; every other list is
+/// sorted, fastest first, and once it is long it also keeps where each bucket
+/// sits, so a merge finds a bucket without searching. It serializes as a JSON
+/// object of bucket to count, as a `BTreeMap` would.
 #[derive(Debug, Clone, Default)]
 pub struct TimeBuckets {
     list: Vec<(u64, usize)>,

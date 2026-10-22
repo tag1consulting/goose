@@ -606,9 +606,9 @@ pub(crate) fn compare_reports(
 }
 
 /// A JSON report as a baseline. A report's JSON minimums, maximums and
-/// percentiles hold whole milliseconds, so when the report has microsecond buckets its rows are
-/// rebuilt from its raw timing data, as a live report's are. A report
-/// without microsecond buckets keeps its rows.
+/// percentiles hold whole milliseconds, so when the report has microsecond
+/// buckets its rows are rebuilt from its raw timing data, as a live report's
+/// are. A report without microsecond buckets keeps its rows.
 fn read_report(mut reader: impl Read) -> Result<ReportData<'static>, serde_json::Error> {
     let mut text = String::new();
     reader

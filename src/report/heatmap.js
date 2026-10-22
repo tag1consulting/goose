@@ -51,16 +51,6 @@
         return [row[1] === 0 ? end / 2 : row[1] / 1000, end];
     }
 
-    // Microseconds as milliseconds, as the report's tables show them: to
-    // the hundredth under 10 ms and whole from there, rounded half up.
-    function ms(us) {
-        var hundredths = Math.floor((us + 5) / 10);
-        if (hundredths < 1000) {
-            return String(hundredths / 100);
-        }
-        return Math.floor((us + 500) / 1000).toLocaleString();
-    }
-
     function pad(number) {
         return (number < 10 ? '0' : '') + number;
     }
