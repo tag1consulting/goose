@@ -28,7 +28,7 @@ cargo run --example simple -- --host http://localhost:8080 -t 30s --report-file 
 
 This writes `report.json`, `report.html` and `requests.csv` into the run's folder.
 
-**4. The run's folder is `--output-dir DIR`, or `goose-runs/<YYYYMMDD-HHMMSS>` from the run's local start time.** Goose creates it when it first writes into it and prints its path. Goose never writes a run into a folder that already exists and is not empty when the run starts. It uses `DIR-2`, `DIR-3`, `DIR-4` and so on instead, always counting on the original name (never `DIR-2-2`), takes the first number whose folder is missing or empty, and prints the name it chose. This also gives each run under `--no-autostart`, and each run started from the dashboard, its own folder.
+**4. The run's folder is `--output-dir DIR`, or `goose-runs/<YYYYMMDD-HHMMSS>` from the run's local start time.** Goose creates it when it first writes into it and prints its path. Goose never writes a run into a folder that already exists and is not empty when the run starts. It uses `DIR-2`, `DIR-3`, `DIR-4` and so on instead, always numbered from the original name (never `DIR-2-2`). It takes the first number whose folder is missing or empty, and prints the name it chose. This also gives each run under `--no-autostart`, and each run started from the dashboard, its own folder.
 
 ```bash
 cargo run --example simple -- --host http://localhost:8080 -t 30s --output-dir goose-runs/nightly --report-file
@@ -40,7 +40,7 @@ The first run writes into `goose-runs/nightly`, the next into `goose-runs/nightl
 
 **5. A report always has the whole run's totals and percentiles.** Its graphs cover the seconds Goose still held when the report was written; when that is not the whole run, the report says when its graphs start and why.
 
-The dashboard keeps only its last 10 minutes of graph data while no report needs more (rule 10). A report written then has every request in its tables, and its HTML says when its graphs start.
+While Save report is off and no `--report-file` path is given, Goose keeps only the dashboard's last 10 minutes of graph data (rule 10). A report written after that, by Save report turned on or by Save report now, still has every request in its tables, and its HTML says when its graphs start.
 
 **6. `--notes "text"` is stored in the JSON report and shown at the top of the HTML and Markdown reports and in the dashboard.**
 
@@ -68,17 +68,17 @@ cargo run --example simple -- --render-report results.json --report-file results
 cargo run --features dashboard --example simple -- --host http://localhost:8080 --dashboard
 ```
 
-**10. Save report can be turned on or off at any time.** While it is on, Goose keeps the run's graph data and heatmap for the whole run; while it is off, only the dashboard's last 10 minutes of graphs and 5 minutes of heatmap. Turning it on during a run keeps graphs from that point on, plus that window before it, and rule 5 labels the report.
+**10. Save report can be turned on or off at any time.** While it is on, Goose keeps the run's graph data and heatmap for the whole run; while it is off and no `--report-file` path is given, only the dashboard's last 10 minutes of graphs and 5 minutes of heatmap. Turning it on during a run keeps graphs from that point on, plus that window before it, and rule 5 labels the report.
 
-Keep Save report off through a long soak test to keep memory flat, and turn it on before the part of the run you want graphed.
+With no `--report-file` path, keep Save report off through a long soak test to keep memory flat, and turn it on before the part of the run you want graphed.
 
 **11. Save report now writes the run's report as it stands into its folder while the run continues, and marks it as in progress.** The report at the end of the run replaces it. A second switch in the bar, **Include graph data**, is rule 7's flag and can also be changed at any time.
 
-**12. The runs panel lists the folders that hold a `report.json` or `report.json.gz` inside the parent of the run's folder:** the folder `--output-dir` names sits in, or `goose-runs` by default. Newest first, with their notes. A report still marked in progress shows as running for this run and as incomplete for any other (a run that ended without its final report). Each run offers HTML, JSON and Markdown, rendering any format the folder lacks from its JSON.
+**12. The runs panel lists the folders beside the run's folder that hold a `report.json` or `report.json.gz`.** It looks in the folder that holds the run's folder: the parent of the `--output-dir` folder, or `goose-runs` by default. Newest first, with their notes. A report still marked in progress shows as running for this run and as incomplete for any other (a run that ended without its final report). Each run offers HTML, JSON and Markdown, rendering any format the folder lacks from its JSON.
 
 With `--output-dir goose-runs/nightly`, the panel lists the folders in `goose-runs`. It lists only folders whose name is a letter or digit followed by letters, digits, `.`, `_` and `-`, so a run written to `goose-runs/my run` is not listed.
 
-**13. Changing either switch, Save report now and Delete need `--dashboard-control` and the control token, like Start and Stop.** Without control the switches are shown read only.
+**13. Changing either switch, Save report now and Delete need `--dashboard-control` and the control token, like Start and Stop.** Without control the switches are shown read only, so Save report stays on and every `--dashboard` run writes `report.json` and `report.html` into its folder.
 
 ```bash
 cargo run --features dashboard --example simple -- --host http://localhost:8080 \
@@ -87,10 +87,10 @@ cargo run --features dashboard --example simple -- --host http://localhost:8080 
 
 ## Compression
 
-**14. Any report or log whose name ends in `.gz` is written gzipped, in the format the name before `.gz` names.** Goose reads a `.json.gz` report anywhere it reads a JSON report: `--baseline-file`, `--render-report` and the runs panel. `--pdf-print-html`, a debugging aid, writes plain HTML whatever its name.
+**14. Any report or log whose name ends in `.gz` is written gzipped.** A report's format is the one the name before `.gz` names. A log keeps the format its `--request-format` or other format option sets. Goose reads a `.json.gz` report anywhere it reads a JSON report: `--baseline-file`, `--render-report` and the runs panel. `--pdf-print-html`, a debugging aid, writes plain HTML whatever its name.
 
 ```bash
-cargo run --example simple -- --host http://localhost:8080 -t 30s --report-file results.json.gz -R requests.csv.gz
+cargo run --example simple -- --host http://localhost:8080 -t 30s --report-file results.json.gz -R requests.csv.gz --request-format csv
 ```
 
 **15. `--compress` gzips every file Goose writes into the run's folder under rules 3 and 9, each named with `.gz` added.** A path given to an output flag keeps exactly that name, compressed or not. `--compress LEVEL` sets the level from 1 (fastest) to 9 (smallest), default 6, for every gzipped file, including rule 14's.
