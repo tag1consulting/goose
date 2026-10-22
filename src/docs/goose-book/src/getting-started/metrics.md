@@ -5,6 +5,9 @@ Here's sample output generated when running a loadtest, in this case the [Umami 
 In this case, the [Drupal Umami demo](https://www.drupal.org/docs/umami-drupal-demonstration-installation-profile) was installed in a local container. The following command was used to configure Goose and run the load test. The `-u9` tells Goose to spin up 9 users. The `-r3` option tells Goose to launch 3 users per second. The `-t1m` option tells Goose to run the load test for 1 minute, or 60 seconds. The `--no-reset-metrics` flag tells Goose to include all metrics, instead of the default which is to flush all metrics collected during start up. And finally, the `--report-file report.html` tells Goose to generate an HTML-formatted report named `report.html` once the load test finishes.
 
 ## ASCII metrics
+
+This sample is Goose 0.18.1 output. Goose 0.19 shows times under 10 ms to the hundredth of a millisecond and averages from 10 ms in whole milliseconds, and no longer rounds percentiles above 100 ms.
+
 ```bash
 % cargo run --release --example umami -- --host http://umami.ddev.site/ -u9 -r3 -t1m --no-reset-metrics --report-file report.html
    Compiling goose v0.18.1 (~/goose)
@@ -346,7 +349,7 @@ The next graph shows the response times measured for each request made. Goose me
 - **Resource efficiency**: Not downloading complete responses allows Goose to generate more load with fewer resources
 - **Real-world relevance**: Many applications stream responses or use chunked encoding where TTFB is the critical performance metric
 
-Goose measures request, transaction and scenario times to the microsecond. The console, HTML, Markdown and PDF reports and the dashboard show times under 10 ms to the hundredth of a millisecond, truncated, so a 0.42 ms response reads `0.42` where whole milliseconds showed `0`, and times of 10 ms and more in whole milliseconds. Percentiles come from buckets that are never more than 1% off the times they hold: every microsecond under 128 µs has a bucket of its own, and each power of two above is split into 64. So 2.2 ms and 2.5 ms, or 1.4 s and 1.6 s, are told apart. The fastest and slowest times are kept exactly. The JSON report's request and response rows keep whole milliseconds; its raw timing data holds each bucket once, in `times_us`, with `minimum_time_us`, `maximum_time_us` and `total_time_us`. A report from an older Goose loads as a baseline, but Goose before 0.19 can not load a 0.19 report as one.
+Goose measures request, transaction and scenario times to the microsecond. The console, HTML, Markdown and PDF reports and the dashboard show times under 10 ms to the hundredth of a millisecond and times from 10 ms in whole milliseconds, rounded half up, so a 0.418 ms response reads `0.42` where whole milliseconds showed `0`. Averages follow the same rule, and a baseline delta is the difference of the two values shown. Percentiles come from buckets that are never more than 1% off the times they hold, so 2.2 ms and 2.5 ms, or 1.4 s and 1.6 s, are told apart. The fastest and slowest times are kept exactly. The JSON report's request and response rows keep whole milliseconds; its raw timing data holds each bucket once, in `times_us`, with `minimum_time_us`, `maximum_time_us` and `total_time_us`. A report from an older Goose loads as a baseline, but Goose before 0.19 can not load a 0.19 report as one.
 
 If your load test needs to measure total download time including the response body, see [Measuring Complete Download Time](#measuring-complete-download-time) below.
 
@@ -364,12 +367,12 @@ When a request returns multiple different HTTP status codes during a load test, 
 ```text
  Name                     |    Avg (ms) |        Min |         Max |     Median
  ------------------------------------------------------------------------------
- GET static asset         |        5.11 |          2 |          38 |          5
-   └─ 200 (94.2%)         |        4.98 |          2 |          35 |          -
-   └─ 404 (5.8%)          |        7.24 |          5 |          38 |          -
+ GET /                    |        4.69 |       2.57 |        8.88 |       4.38
+   └─ 200 (93.9%)         |        4.49 |       2.57 |        5.87 |          -
+   └─ 404 (6.1%)          |        7.73 |       7.02 |        8.88 |          -
 ```
 
-In this example, the `GET static asset` request returned both `200` and `404` responses. The breakdown reveals that 404 responses took longer on average (7.24ms vs 4.98ms), suggesting the server spends more time processing requests for missing assets than serving cached ones.
+In this example, from the `simple` example against a test server that answers some requests for `/` with a `404`, the `GET /` request returned both `200` and `404` responses. The breakdown shows that 404 responses took longer on average (7.73 ms against 4.49 ms), so the server spent more time on the requests it could not serve.
 
 Each breakdown row shows the status code, the percentage of total requests with that code, and the average, minimum, and maximum response times for that status code. The median column shows `-` because per-status-code breakdowns track aggregate statistics (count, total, min, max) rather than full response time distributions, so percentile calculations are not available at this level. Full percentile data remains available on the aggregate row.
 

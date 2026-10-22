@@ -99,8 +99,8 @@ pub enum GooseMetric {
     /// Emitted when a scenario iteration completes with exactly one pending request
     /// metric and one pending transaction metric, avoiding three separate channel sends.
     ///
-    /// The scenario is boxed with the request, so the variant stays as small
-    /// as [`GooseMetric::Transaction`] and every message stays small.
+    /// The request and the scenario are each boxed, so the variant, and with
+    /// it every message, stays small.
     All {
         request: Box<GooseRequestMetric>,
         transaction: TransactionMetric,
@@ -805,7 +805,9 @@ pub struct GooseRequestMetric {
     pub final_url: String,
     /// Whether or not the request was redirected.
     pub redirected: bool,
-    /// How many milliseconds the request took (Time to First Byte).
+    /// How many milliseconds the request took (Time to First Byte),
+    /// truncated. [`response_time_fraction_us`](Self::response_time_fraction_us)
+    /// holds the microseconds past them.
     pub response_time: u64,
     /// The HTTP response code (optional).
     pub status_code: u16,
@@ -1084,9 +1086,9 @@ impl GooseRequestMetricAggregate {
 
 /// Lightweight per-status-code timing summary for response time breakdowns.
 ///
-/// Unlike [`GooseRequestMetricTimingData`] which stores the full response time distribution
-/// (a `BTreeMap` of all observed times) needed for percentile calculations, this only tracks
-/// aggregate statistics to minimize memory overhead. Times are in microseconds.
+/// Unlike [`GooseRequestMetricTimingData`], which counts every time in buckets
+/// for percentiles, this keeps only the count, total, fastest and slowest, to
+/// keep memory low. Times are in microseconds.
 #[derive(Debug, Clone, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct StatusCodeTimingSummary {
     pub count: usize,

@@ -1,6 +1,6 @@
 # TCP Load Test
 
-The [`examples/tcp_loadtest.rs`](https://github.com/tag1consulting/goose/blob/main/examples/tcp_loadtest.rs) example demonstrates how to use Goose to load test a raw TCP server. While Goose is primarily an HTTP load testing framework, its metrics pipeline supports any protocol through [`GooseUser::record_custom_request`].
+The [`examples/tcp_loadtest.rs`](https://github.com/tag1consulting/goose/blob/main/examples/tcp_loadtest.rs) example demonstrates how to use Goose to load test a raw TCP server. While Goose is primarily an HTTP load testing framework, its metrics pipeline supports any protocol through [`GooseUser::record_custom_request`] and `record_custom_request_duration`, which the example uses.
 
 ## Why non-HTTP load testing?
 
@@ -69,15 +69,22 @@ async fn my_custom_operation(user: &mut GooseUser) -> TransactionResult {
     // Perform the actual operation here (TCP, UDP, gRPC, etc.)
     let result: Result<_, _> = do_my_protocol_operation().await;
 
-    let response_time = started.elapsed().as_millis() as u64;
+    let response_time = started.elapsed();
 
     match result {
         Ok(_) => {
-            user.record_custom_request("GRPC", "operation_name", response_time, true, None, None)
-                .await?;
+            user.record_custom_request_duration(
+                "GRPC",
+                "operation_name",
+                response_time,
+                true,
+                None,
+                None,
+            )
+            .await?;
         }
         Err(e) => {
-            user.record_custom_request(
+            user.record_custom_request_duration(
                 "GRPC",
                 "operation_name",
                 response_time,
