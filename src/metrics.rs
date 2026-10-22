@@ -5051,6 +5051,11 @@ pub(crate) fn calculate_response_time_percentile(
     )
 }
 
+/// `percent` as the decimal it was written as, to a millionth, in f64.
+pub(crate) fn percent_as_written(percent: f32) -> f64 {
+    (f64::from(percent) * 1_000_000.0).round() / 1_000_000.0
+}
+
 /// The response time `percent` of the requests finished within, from
 /// `(response time, count)` buckets in ascending order: the time of the
 /// bucket that holds the request at that rank, kept between `min` and `max`.
@@ -5062,7 +5067,10 @@ pub(crate) fn response_time_percentile<T: Copy + Default + PartialOrd>(
     max: T,
     percent: f32,
 ) -> T {
-    let percentile_request = (total_requests as f32 * percent).round() as usize;
+    // In f64, which holds every count exactly (an f32 rounds counts past
+    // 2^24), from the percent as written: 0.95 rather than the f32's
+    // 0.94999999, so 10 times it is 9.5 and rounds up.
+    let percentile_request = (total_requests as f64 * percent_as_written(percent)).round() as usize;
     debug!("percentile: {percent}, request {percentile_request} of total {total_requests}");
 
     let mut total_count: usize = 0;

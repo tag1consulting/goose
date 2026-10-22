@@ -77,7 +77,10 @@ pub(crate) fn percentile(
     maximum: u64,
     percent: f32,
 ) -> u64 {
-    let rank = (total as f32 * percent).round() as usize;
+    // In f64, which holds every count exactly (an f32 rounds counts past
+    // 2^24), from the percent as written: 0.95 rather than the f32's
+    // 0.94999999, so 10 times it is 9.5 and rounds up.
+    let rank = (total as f64 * super::percent_as_written(percent)).round() as usize;
     match total {
         0 => 0,
         _ if rank >= total => maximum,
