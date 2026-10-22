@@ -357,6 +357,21 @@ mod test {
         assert_eq!(json, serde_json::to_string(&reference).unwrap());
     }
 
+    /// A user's batch, pushed out of order with a bucket twice, serializes
+    /// each bucket once with its whole count.
+    #[test]
+    fn a_pushed_batch_serializes_each_bucket_once() {
+        let mut batch = TimeBuckets::new();
+        batch.push(2_048, 1);
+        batch.push(128, 2);
+        batch.push(2_048, 3);
+        let json = serde_json::to_string(&batch).unwrap();
+        assert_eq!(json, r#"{"128":2,"2048":4}"#);
+        let back: TimeBuckets = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.get(&128), Some(&2));
+        assert_eq!(back.get(&2_048), Some(&4));
+    }
+
     #[test]
     fn bucket_count_to_the_default_timeout() {
         assert_eq!(bucket_index(60_000_000) - bucket_index(1) + 1, 1_330);
