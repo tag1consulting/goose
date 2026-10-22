@@ -1,6 +1,6 @@
 # TCP Load Test
 
-The [`examples/tcp_loadtest.rs`](https://github.com/tag1consulting/goose/blob/main/examples/tcp_loadtest.rs) example demonstrates how to use Goose to load test a raw TCP server. While Goose is primarily an HTTP load testing framework, its metrics pipeline supports any protocol through [`GooseUser::record_custom_request`] and `record_custom_request_duration`, which the example uses.
+The [`examples/tcp_loadtest.rs`](https://github.com/tag1consulting/goose/blob/main/examples/tcp_loadtest.rs) example demonstrates how to use Goose to load test a raw TCP server. While Goose is primarily an HTTP load testing framework, its metrics pipeline supports any protocol through [`GooseUser::record_custom_request`] and `record_custom_request_duration`; the example uses `record_custom_request_duration`.
 
 ## Why non-HTTP load testing?
 

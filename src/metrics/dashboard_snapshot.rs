@@ -314,9 +314,8 @@ pub(crate) struct Heatmap {
     /// Seconds from this one on may still be missing their slowest requests,
     /// so they are not drawn yet.
     pub hold_from: u64,
-    /// Each bucket by index, as `[time, lowest, highest]` in microseconds:
-    /// the time the bucket stands for, and the range of measured times in
-    /// it. A longer table replaces a shorter one; entries never change.
+    /// Each row by index, as `[time, lowest, highest]` in microseconds:
+    /// the time the row stands for, and the range of measured times in it. A longer table replaces a shorter one; entries never change.
     pub buckets_us: Vec<[u64; 3]>,
     /// The columns that changed, oldest first.
     pub columns: Vec<HeatmapColumn>,
