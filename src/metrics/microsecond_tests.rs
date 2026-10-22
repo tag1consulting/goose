@@ -163,7 +163,7 @@ fn bucket_error_bound_from_one_microsecond_to_the_default_timeout() {
     }
 }
 
-/// The buckets through 1 ms and 10 ms.
+/// The bucket boundaries around 1 ms and 10 ms.
 #[test]
 fn bucket_boundaries_of_the_log_linear_scheme() {
     use super::buckets::bucket_floor;
@@ -353,9 +353,10 @@ fn merging_batches_equals_recording_once() {
     }
 }
 
-/// The request deltas a report shows against `baseline`: `slow` named for
-/// the baseline's 1.4 s request and `fast` for its sub millisecond one; and
-/// the minimum of its first transaction, `index`, against 400 µs.
+/// The deltas a report of 400 µs and 1,410 ms requests shows against
+/// `baseline`: for `slow`, the name of the baseline's 1.4 s request, for
+/// `fast`, its sub millisecond one, and for the minimum of the transaction
+/// `index`.
 fn baseline_deltas(fixture: &str, fast: &str, slow: &str, index_minimum: &str) {
     let path = format!("{}/tests/fixtures/{fixture}", env!("CARGO_MANIFEST_DIR"));
     let baseline = load_baseline_file(&path).expect("the old report loads as a baseline");
@@ -1028,7 +1029,7 @@ fn a_breakdown_average_on_a_half_microsecond_reads_the_same_everywhere() {
         .unwrap();
     let html = crate::report::raw_request_metrics_row(row.clone());
     assert!(html.contains("<td>0.01</td>"), "{}", html);
-    // The maximum, 5 µs, reads 0.01 too: the average cell itself.
+    // The maximum, 5 µs, also reads 0.01, so check the average cell itself.
     assert_eq!(format_value(&row.response_time_average), "0.01");
 }
 

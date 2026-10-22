@@ -6005,9 +6005,10 @@ mod tests {
 
     /// The audit's reference, written apart from Goose's code: nearest rank
     /// over the times as their buckets report them. The rank is `p` times
-    /// the count, rounded half away from zero and at least 1, and the value
-    /// is clamped to the fastest and slowest measured time. The datasets make every
-    /// time a whole number of milliseconds. Each is stored in microseconds
+    /// the count, rounded half away from zero and at least 1. The first rank
+    /// gives the fastest measured time and the last the slowest; any other
+    /// rank gives its time clamped to them. The datasets make every time a
+    /// whole number of milliseconds. Each is stored in microseconds
     /// and counts as the middle of the bucket that holds it.
     struct Reference {
         rounded: Vec<u64>,
