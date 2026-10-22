@@ -279,7 +279,8 @@ enum GooseLogTarget {
     /// end of each `execute()`. Lines are buffered above the encoder, so it
     /// compresses a buffer at a time rather than each piece of a line.
     Gzip(std::io::BufWriter<flate2::write::GzEncoder<std::fs::File>>),
-    /// A Goose log named `.gz` between members.
+    /// A Goose log named `.gz` outside `execute()`, between members: each
+    /// line written is a whole member.
     GzipIdle(std::fs::File),
     /// The file failed; lines are dropped.
     Failed,
@@ -319,13 +320,6 @@ impl GooseLogTarget {
     }
 
     fn write_all(&mut self, buf: &[u8], level: u32) -> std::io::Result<()> {
-        // A new member starts with the first line after the last ended.
-        if matches!(self, GooseLogTarget::GzipIdle(_)) {
-            if let GooseLogTarget::GzipIdle(file) = std::mem::replace(self, GooseLogTarget::Failed)
-            {
-                *self = Self::member(file, level);
-            }
-        }
         match self {
             GooseLogTarget::Waiting(lines) => {
                 if lines.len() + buf.len() <= WAITING_LOG_LIMIT {
@@ -335,7 +329,24 @@ impl GooseLogTarget {
             }
             GooseLogTarget::File(file) => std::io::Write::write_all(file, buf),
             GooseLogTarget::Gzip(gzip) => std::io::Write::write_all(gzip, buf),
-            GooseLogTarget::GzipIdle(_) | GooseLogTarget::Failed => Ok(()),
+            // Outside `execute()` each write is a whole member, so no line
+            // waits in a buffer nothing will finish.
+            GooseLogTarget::GzipIdle(file) => {
+                let mut gzip =
+                    flate2::write::GzEncoder::new(&*file, flate2::Compression::new(level));
+                std::io::Write::write_all(&mut gzip, buf)?;
+                gzip.finish().map(drop)
+            }
+            GooseLogTarget::Failed => Ok(()),
+        }
+    }
+
+    /// Start a gzip member between members, as `execute()` starts, so lines
+    /// during a run compress a buffer at a time.
+    fn start(&mut self, level: u32) {
+        match std::mem::replace(self, GooseLogTarget::Failed) {
+            GooseLogTarget::GzipIdle(file) => *self = Self::member(file, level),
+            other => *self = other,
         }
     }
 
@@ -429,6 +440,13 @@ pub(crate) fn move_goose_log(path: &std::path::Path) -> std::io::Result<()> {
         _ => Vec::new(),
     };
     target.write_all(&waiting, handle.level)
+}
+
+/// Start the Goose log's gzip member as each `execute()` starts.
+pub(crate) fn start_goose_log() {
+    if let Some(handle) = goose_log_file() {
+        handle.target().start(handle.level);
+    }
 }
 
 /// End the Goose log's gzip member, or flush it, as each `execute()` ends.

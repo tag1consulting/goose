@@ -1239,6 +1239,7 @@ impl GooseAttack {
                 logger::finish_goose_log();
             }
         }
+        logger::start_goose_log();
         let _finish = FinishGooseLog;
         self.execute_load_test().await
     }
@@ -2027,7 +2028,7 @@ impl GooseAttack {
             GraphData::for_metrics_processor(
                 self.configuration.records_latency_series(),
                 self.configuration.records_synthetic_latency(),
-                self.keeps_full_graph() && self.configuration.records_latency_series(),
+                self.records_latency_columns(),
             ),
             self.configuration.clone(),
             self.scenarios.clone(),
@@ -3095,7 +3096,7 @@ impl GooseAttack {
             GraphData::for_metrics_processor(
                 self.configuration.records_latency_series(),
                 self.configuration.records_synthetic_latency(),
-                self.keeps_full_graph() && self.configuration.records_latency_series(),
+                self.records_latency_columns(),
             ),
             self.configuration.clone(),
             self.scenarios.clone(),

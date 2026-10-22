@@ -4730,7 +4730,7 @@ impl ReportSource<'_> {
         &self,
         baseline: Option<&ReportData<'static>>,
     ) -> Result<String, GooseError> {
-        let test_start_time = self.metrics.history.first().unwrap().timestamp;
+        let test_start_time = self.started();
 
         // Prepare report summary variables.
         let users = self.metrics.maximum_users.to_string();

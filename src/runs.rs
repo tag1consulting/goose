@@ -336,6 +336,12 @@ impl GooseAttack {
         !self.configuration.report_paths().is_empty() || self.output.save_report
     }
 
+    /// Whether the per second histograms also fold into whole run columns,
+    /// for the report's response time heatmap.
+    pub(crate) fn records_latency_columns(&self) -> bool {
+        self.keeps_full_graph() && self.configuration.records_latency_series()
+    }
+
     /// When a run starts: choose its folder when it may need one, failing
     /// before any load when it can't be written to.
     pub(crate) fn start_run_folder(&mut self) -> Result<(), GooseError> {

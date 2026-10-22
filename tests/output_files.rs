@@ -382,6 +382,67 @@ async fn render_report_with_and_without_graph_data() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// Rule 8 with a 0.18.1 JSON report, which has no test plan history: its
+/// HTML and Markdown reports render, and say the graphs were not recorded.
+#[tokio::test]
+#[serial]
+async fn render_report_from_a_0_18_report() {
+    let dir = temp_dir("render-0-18");
+    let html = dir.join("old.html");
+    let md = dir.join("old.md");
+    let configuration = GooseConfiguration::parse_args_default(&[
+        "--render-report",
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/report-0.18.1.json"
+        ),
+        "--report-file",
+        &html.to_string_lossy(),
+        "--report-file",
+        &md.to_string_lossy(),
+    ])
+    .unwrap();
+    GooseAttack::initialize_with_config(configuration)
+        .unwrap()
+        .register_scenario(scenario())
+        .execute()
+        .await
+        .unwrap();
+    let html = std::fs::read_to_string(&html).unwrap();
+    assert!(html.contains("graphs were not recorded"), "{}", html);
+    assert!(!std::fs::read_to_string(&md).unwrap().is_empty());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Rules 2 and 10: a run with `--report-file` paths keeps its graph data and
+/// heatmap for the whole run, in the HTML report and, with
+/// `--report-graph-data`, in the JSON report.
+#[tokio::test]
+#[serial]
+async fn a_path_report_has_its_heatmap() {
+    let server = MockServer::start();
+    let _mock = setup_mock_server_endpoints(&server);
+    let dir = temp_dir("path-heatmap");
+    let html = dir.join("results.html");
+    let json = dir.join("results.json");
+    run(
+        &server,
+        vec![
+            "--report-file",
+            &html.to_string_lossy(),
+            "--report-file",
+            &json.to_string_lossy(),
+            "--report-graph-data",
+        ],
+    )
+    .await;
+    assert_eq!(names(&dir), vec!["results.html", "results.json"]);
+    let text = std::fs::read_to_string(&html).unwrap();
+    assert!(text.contains("class=\"graph heatmap\""), "{}", text);
+    assert!(read_json(&json)["graphs"]["heatmap"].is_object());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A baseline that no longer loads when the run ends fails the run, and the
 /// run's folder still gets its report, written without the baseline.
 #[tokio::test]
