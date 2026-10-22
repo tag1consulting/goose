@@ -48,7 +48,7 @@ The following defaults can be configured with a `usize` integer:
  - port to bind WebSocket Controller to: `GooseDefault::WebSocketPort`
  - port to bind Manager to: `GooseDefault::ManagerBindPort`
  - port for Worker to connect to: `GooseDefault::ManagerPort`
- - gzip level for the files in the run's folder, 1 to 9: `GooseDefault::Compress`
+ - gzip every file in the run's folder, at a level from 1 to 9: `GooseDefault::Compress`
 
 The following defaults can be configured with a `bool`:
  - do not reset metrics after all users start: `GooseDefault::NoResetMetrics`
