@@ -1566,7 +1566,7 @@ impl GooseAttack {
     }
 
     /// Shut down from Idle as a Controller `shutdown` does: no run to stop,
-    /// so no metrics to print and nothing to save.
+    /// so no metrics to print and no report to write.
     fn shutdown_from_idle(&mut self, goose_attack_run_state: &mut GooseAttackRunState) {
         self.metrics.display_metrics = false;
         goose_attack_run_state.shutdown_after_stop = true;
@@ -2414,7 +2414,7 @@ impl GooseAttack {
             self.metrics
                 .history
                 .push(TestPlanHistory::step(TestPlanStepAction::Finished, 0));
-            // Write the --report-file reports and save the run, only when a
+            // Write the --report-file reports and Save report's, only when a
             // run happened since the last time (not on a shutdown from Idle).
             let ran = self.run_in_progress;
             let reports = if ran {

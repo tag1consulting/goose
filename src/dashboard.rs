@@ -4,7 +4,7 @@
 //! loop over an axum router that serves a minimal static shell, a one-shot
 //! metrics snapshot API, an SSE stream of coalesced snapshots, and (when
 //! `--dashboard-control` is set) authenticated Start/Stop/Users/Quit control
-//! endpoints and saved run deletion.
+//! endpoints, the report switches, and report deletion.
 //!
 //! The parent GooseAttack main loop answers [`DashboardRequest`]s via oneshot
 //! channels using [`MetricsCommand::GetDashboardSnapshot`] for snapshots.
@@ -1930,19 +1930,23 @@ async fn compare_response(
     let Some(baseline) = baseline else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let (Some((_, run_json)), Some((_, baseline_json))) = (
+    let (Some((_, newer_json)), Some((_, baseline_json))) = (
         runs::report_folder(reports_dir, &name),
         runs::report_folder(reports_dir, &baseline),
     ) else {
         return StatusCode::NOT_FOUND.into_response();
     };
     let (run_name, baseline_name) = (name.clone(), baseline.clone());
-    let test = download_test_name(&run_json);
+    let test = download_test_name(&newer_json);
     let compared = tokio::task::spawn_blocking(move || {
-        let report =
-            crate::metrics::compare_reports(&run_json, &run_name, &baseline_json, &baseline_name)?;
+        let report = crate::metrics::compare_reports(
+            &newer_json,
+            &run_name,
+            &baseline_json,
+            &baseline_name,
+        )?;
         let mut out =
-            compared_runs_line(&run_json, &run_name, &baseline_json, &baseline_name).into_bytes();
+            compared_runs_line(&newer_json, &run_name, &baseline_json, &baseline_name).into_bytes();
         out.extend_from_slice(b"\n\n");
         out.extend(report);
         Ok::<_, String>(out)
@@ -1971,7 +1975,7 @@ async fn compare_response(
 /// The first line of a comparison: which run is compared to which baseline,
 /// with when each started, from their JSON reports.
 fn compared_runs_line(
-    run_json: &Path,
+    newer_json: &Path,
     run_name: &str,
     baseline_json: &Path,
     baseline_name: &str,
@@ -1991,7 +1995,7 @@ fn compared_runs_line(
     };
     format!(
         "Run {run_name} (started {}) compared to baseline {baseline_name} (started {}).",
-        started(run_json),
+        started(newer_json),
         started(baseline_json)
     )
 }

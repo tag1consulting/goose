@@ -1035,11 +1035,11 @@ fn a_breakdown_average_on_a_half_microsecond_reads_the_same_everywhere() {
     assert_eq!(format_value(&row.response_time_average), "0.01");
 }
 
-/// Two saved runs with microseconds compare by their microseconds: each
+/// Two JSON reports with microseconds compare by their microseconds: each
 /// run's rows are rebuilt from its raw timing data, as a baseline's are.
 #[cfg(feature = "dashboard")]
 #[test]
-fn saved_runs_with_microseconds_compare_by_their_microseconds() {
+fn reports_with_microseconds_compare_by_their_microseconds() {
     let metrics = request_metrics(&[("GET /", &[2_350; 5])]);
     let dir = std::env::temp_dir().join(format!("goose-us-compare-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();

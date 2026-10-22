@@ -652,7 +652,7 @@ impl LoadedReport {
     }
 }
 
-/// Compare two saved runs: the run's `report.json` with the baseline run's
+/// Compare two runs: the run's JSON report with the baseline run's
 /// deltas applied, rendered by the Markdown report writer. An error is one
 /// line of plain text for the person who asked.
 #[cfg(feature = "dashboard")]

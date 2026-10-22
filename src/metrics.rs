@@ -1195,7 +1195,7 @@ impl PartialOrd for GooseRequestMetricAggregate {
 /// [`TimeBuckets`], and the fastest, slowest and total. Only the buckets
 /// that hold a time are kept.
 ///
-/// It serializes, in a JSON report or saved run, with each bucket once, in
+/// It serializes, in a JSON report, with each bucket once, in
 /// `times_us`, beside the fastest, slowest and total in microseconds and in
 /// whole milliseconds; an earlier Goose, which reads whole millisecond
 /// `times`, can not read it. A report from an earlier Goose, with only

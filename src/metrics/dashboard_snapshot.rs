@@ -1407,7 +1407,7 @@ mod tests {
         assert_eq!(scenario.percentile_ms.p50, 0);
         assert_eq!(snap.transactions[0].response_time_avg_ms, 0.0);
         // Only the scenario and transaction rows: other parts of the snapshot
-        // hold nulls on purpose (`save`, and `co_adjusted` without events).
+        // hold nulls on purpose (`report`, and `co_adjusted` without events).
         let value = serde_json::to_value(&snap).expect("serialize snapshot");
         for rows in ["scenarios", "transactions"] {
             let json = value[rows].to_string();

@@ -279,8 +279,8 @@ pub struct GooseConfiguration {
     pub running_metrics: Option<usize>,
     /// Don't print metrics at the end
     ///
-    /// Leaves the metrics out of the console when the load test ends. Reports and the saved
-    /// run are still written.
+    /// Leaves the metrics out of the console when the load test ends. Reports are still
+    /// written.
     ///
     /// Set in code with GooseDefault::NoPrintMetrics.
     #[arg(help_heading = "Console and Goose log", long)]
@@ -382,8 +382,8 @@ pub struct GooseConfiguration {
     /// Graph only totals in reports
     ///
     /// Report graphs show a line for the total and, by default, one more for each request,
-    /// transaction or scenario. This leaves out the extra lines. Needs --report-file or a
-    /// saved run.
+    /// transaction or scenario. This leaves out the extra lines. Needs --report-file or
+    /// --dashboard.
     ///
     /// Set in code with GooseDefault::NoGranularData.
     #[arg(help_heading = "Reports", long)]
@@ -426,7 +426,7 @@ pub struct GooseConfiguration {
     pub no_reset_metrics: bool,
     /// Don't collect any metrics
     ///
-    /// Turns off every metric, and with them saving the run. Not allowed with
+    /// Turns off every metric, and with them every report. Not allowed with
     /// --report-file, --request-log, --transaction-log, --scenario-log, --error-log or
     /// --co-mitigation.
     ///

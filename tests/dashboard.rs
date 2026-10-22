@@ -756,8 +756,15 @@ async fn test_control_disabled_returns_404() {
     );
     let resp = post_control(&client, &base, "/api/v1/control/quit", Some("{}"), true).await;
     assert_eq!(resp.status(), 404, "control off must 404 quit");
+    for (path, body) in [
+        ("/api/v1/control/report", r#"{"save": false}"#),
+        ("/api/v1/control/report/now", "{}"),
+    ] {
+        let resp = post_control(&client, &base, path, Some(body), true).await;
+        assert_eq!(resp.status(), 404, "control off must 404 {}", path);
+    }
     let resp = client
-        .delete(format!("{base}/api/v1/runs/2026-10-09-141203"))
+        .delete(format!("{base}/api/v1/reports/nightly"))
         .header("Authorization", bearer_header())
         .send()
         .await
