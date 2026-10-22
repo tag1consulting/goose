@@ -2326,7 +2326,13 @@ impl GooseConfiguration {
             .find_map(|value| {
                 let v = value.value?;
                 if !value.message.is_empty() {
-                    info!("{} = {:?}", value.message, v);
+                    // A bare output flag reads as the run's folder, not as
+                    // the value Goose keeps for it.
+                    let shown = format!("{v:?}").replace(
+                        &format!("{RUN_FOLDER:?}"),
+                        &format!("{:?}", shown_path(RUN_FOLDER)),
+                    );
+                    info!("{} = {}", value.message, shown);
                 }
                 Some(v)
             })
