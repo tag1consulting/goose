@@ -4712,8 +4712,9 @@ mod test {
         assert_eq!(display_index(60_999_999), FIXED_BUCKETS - 1);
 
         // The same totals as the whole run timing data, each bucket in the
-        // row of its last microsecond, and the same percentiles to within a
-        // row, including times past 61 seconds (a longer --timeout).
+        // row of its last microsecond, and each percentile in the row the
+        // whole run's percentile bucket is drawn in, including times past 61
+        // seconds (a longer --timeout).
         let mut times: Vec<u64> = Vec::new();
         let mut seed: u64 = 7;
         for _ in 0..5000 {
@@ -4744,16 +4745,12 @@ mod test {
         assert_eq!(histogram.minimum_time_us, reference.minimum_time_us);
         assert_eq!(histogram.maximum_time_us, reference.maximum_time_us);
         for percent in [0.0, 0.5, 0.95, 0.99, 1.0] {
-            let (row, run) = (
+            assert_eq!(
                 display_index(histogram.percentile_us(percent)),
-                display_index(reference.percentile_us(percent)),
-            );
-            assert!(
-                row.abs_diff(run) <= 1,
-                "p{}: row {}, run {}",
-                percent,
-                row,
-                run
+                bucket_row(crate::metrics::buckets::bucket_floor(
+                    reference.percentile_us(percent)
+                )),
+                "p{percent}"
             );
         }
 
@@ -6880,17 +6877,13 @@ mod microsecond_tests {
             whole.record_time_us(us);
         }
         for percent in [0.5, 0.95, 0.99] {
-            let (row, run) = (
-                histogram.percentile_us(percent),
-                whole.percentile_us(percent),
-            );
-            let (a, b) = (display_index(row), display_index(run));
-            assert!(
-                a.abs_diff(b) <= 1,
-                "p{}: heatmap {} µs, run {} µs",
-                percent,
-                row,
-                run
+            let row = histogram.percentile_us(percent);
+            assert_eq!(
+                display_index(row),
+                bucket_row(crate::metrics::buckets::bucket_floor(
+                    whole.percentile_us(percent)
+                )),
+                "p{percent}"
             );
             assert!(row < 1000);
         }

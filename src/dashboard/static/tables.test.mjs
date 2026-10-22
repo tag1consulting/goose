@@ -744,3 +744,34 @@ test("every table scroll area is a focusable, labelled region", async () => {
   }
   assert.equal(labels.size, 8, "each region has its own label");
 });
+
+test("rows and KPIs show the snapshot's microseconds under a millisecond", async () => {
+  // The whole millisecond fields are all 0; the microseconds beside them are
+  // what the dashboard shows.
+  const us = { min: 40, max: 900, p50: 400, p95: 900, p99: 900 };
+  const zero = {
+    response_time_avg_ms: 0.435,
+    response_time_min_ms: 0,
+    response_time_max_ms: 0,
+    percentile_ms: { p50: 0, p95: 0, p99: 0 },
+    response_time_us: us,
+  };
+  const transaction = { ...transactionRow(0, "Anonymous", 0, "fast", 5), ...zero };
+  const window = await load(
+    snapshotWith(
+      {
+        aggregate: { ...IDLE_SNAPSHOT.aggregate, total_requests: 5, ...zero },
+        requests: [requestRow("GET", "/fast", 5, 0, zero)],
+        scenarios: [scenarioRow(0, "Anonymous", 1, 5)],
+        transactions: [transaction],
+      },
+      { metrics_disabled: false }
+    )
+  );
+  // Average, min, p50, p95, p99 and max.
+  const times = ["0.44", "0.04", "0.4", "0.9", "0.9", "0.9"];
+  assert.deepEqual(rows(window, "requests-body")[0].slice(6, 12), times);
+  assert.deepEqual(rows(window, "transactions-body")[0].slice(7, 13), times);
+  assert.equal(window.document.getElementById("kpi-p95").textContent, "0.9");
+  assert.equal(window.document.getElementById("kpi-avg").textContent, "0.44");
+});

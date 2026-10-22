@@ -98,13 +98,13 @@ fn within_one_percent(value: u64, expected: u64) -> bool {
     (value as f64 - expected as f64).abs() <= expected as f64 * 0.01
 }
 
-/// The value a bucket reports for `us` is within 1% of it, a bucket's
+/// The value a bucket reports for `us` is within 1/128 of it, a bucket's
 /// value lands back in the same bucket, and so does its value.
 fn assert_bucket_holds(us: u64) {
     let value = bucket_value(us);
     assert!(
-        within_one_percent(value, us),
-        "{} µs is reported as {} µs, more than 1% off",
+        value.abs_diff(us) * 128 <= us,
+        "{} µs is reported as {} µs, more than 1/128 off",
         us,
         value
     );
@@ -163,21 +163,12 @@ fn bucket_error_bound_from_one_microsecond_to_the_default_timeout() {
     }
 }
 
-/// One log linear scheme: a bucket for every microsecond below 128 µs,
-/// then 64 buckets of equal width per power of two, through 1 ms and 10 ms.
+/// The buckets through 1 ms and 10 ms.
 #[test]
 fn bucket_boundaries_of_the_log_linear_scheme() {
-    use super::buckets::{bucket_at, bucket_floor};
-    // Exact below 128 µs: the first bucket is 0 µs, the last exact one 127.
-    for us in [0, 1, 63, 64, 127] {
-        assert_eq!(bucket_floor(us), us, "{} µs", us);
-        assert_eq!(bucket_end(us), us + 1, "{} µs", us);
-        assert_eq!(bucket_value(us), us, "{} µs", us);
-        assert_eq!(bucket_index(us), us as usize, "{} µs", us);
-    }
-    // Then 2 µs wide to 256 µs, 8 µs wide just under 1 ms, 16 µs from
-    // 1,024 µs and 128 µs around 10 ms.
-    assert_eq!((bucket_floor(128), bucket_end(128)), (128, 130));
+    use super::buckets::bucket_floor;
+    // 8 µs wide just under 1 ms, 16 µs from 1,024 µs and 128 µs around
+    // 10 ms.
     assert_eq!((bucket_floor(999), bucket_end(999)), (992, 1_000));
     assert_eq!((bucket_floor(1_000), bucket_end(1_000)), (1_000, 1_008));
     assert_eq!((bucket_floor(1_010), bucket_end(1_010)), (1_008, 1_016));
@@ -185,17 +176,9 @@ fn bucket_boundaries_of_the_log_linear_scheme() {
     assert_eq!(bucket_floor(9_990), 9_984);
     assert_eq!(bucket_floor(10_000), 9_984);
     assert_eq!((bucket_floor(10_010), bucket_end(10_010)), (9_984, 10_112));
-    for us in [128, 999, 1_000, 1_010, 2_200, 2_500, 9_990, 10_000, 10_010] {
-        assert!(within_one_percent(bucket_value(us), us), "{} µs", us);
+    for us in [999, 1_000, 1_010, 2_200, 2_500, 9_990, 10_000, 10_010] {
+        assert_bucket_holds(us);
     }
-    for index in [0, 127, 128, 191, 192, 1_000, 1_329] {
-        assert_eq!(bucket_index(bucket_at(index)), index, "index {}", index);
-    }
-    // From 1 µs to the default timeout, 1,330 buckets.
-    assert_eq!(
-        bucket_index(DEFAULT_TIMEOUT_US) - bucket_index(1) + 1,
-        1_330
-    );
     // Shown as hundredths up to 10 ms, from buckets at most 1% off: 9.99 ms
     // is in the 9.984 to 10.112 ms bucket and reads 10.
     let shown: f64 = Millis(bucket_value(9_990)).to_string().parse().unwrap();
@@ -340,12 +323,21 @@ fn percentiles_from_the_buckets_are_within_one_percent() {
 
 #[test]
 fn merging_batches_equals_recording_once() {
-    let times = lognormal(10_000, 4);
+    // With times of 0 µs, which have a bucket of their own.
+    let mut times = lognormal(10_000, 4);
+    for at in (0..times.len()).step_by(97) {
+        times[at] = 0;
+    }
     let whole = recorded(&times);
     for per_batch in [1, 4, 64] {
         let mut merged = GooseRequestMetricTimingData::default();
         for batch in times.chunks(per_batch) {
-            merged.merge(&recorded(batch));
+            // As a user's batch records them: in the order they came.
+            let mut pushed = GooseRequestMetricTimingData::default();
+            for &us in batch {
+                pushed.record_time_us_unsorted(us);
+            }
+            merged.merge(&pushed);
         }
         assert_eq!(merged, whole, "{per_batch} per batch");
         assert_eq!(merged.times_us, whole.times_us);
@@ -359,11 +351,20 @@ fn merging_batches_equals_recording_once() {
 }
 
 /// The request deltas a report shows against `baseline`: `slow` named for
-/// the baseline's 1.4 s request and `fast` for its sub millisecond one.
-fn baseline_deltas(fixture: &str, fast: &str, slow: &str) {
+/// the baseline's 1.4 s request and `fast` for its sub millisecond one; and
+/// the minimum of its first transaction, `index`, against 400 µs.
+fn baseline_deltas(fixture: &str, fast: &str, slow: &str, index_minimum: &str) {
     let path = format!("{}/tests/fixtures/{fixture}", env!("CARGO_MANIFEST_DIR"));
     let baseline = load_baseline_file(&path).expect("the old report loads as a baseline");
-    let metrics = request_metrics(&[(fast, &[400; 5]), (slow, &[1_410_000; 10])]);
+    let mut metrics = request_metrics(&[(fast, &[400; 5]), (slow, &[1_410_000; 10])]);
+    let mut index = TransactionMetricAggregate::new(
+        0,
+        Arc::from("Fast"),
+        0,
+        TransactionName::TransactionOnly(Arc::from("index")),
+    );
+    index.set_time_us(400, true);
+    metrics.transactions = vec![vec![index]];
     let report = report_of(&metrics, Some(&baseline));
     let row = |key: &str| {
         let name = key.strip_prefix("GET ").unwrap();
@@ -385,16 +386,20 @@ fn baseline_deltas(fixture: &str, fast: &str, slow: &str) {
     );
     let fast_row = &report.raw_request_metrics[row(fast)];
     assert_eq!(fast_row.response_time_minimum.to_string(), "0.4 (+0.4)");
+    let transactions = report.transaction_metrics.unwrap();
+    let index = transactions.iter().find(|row| row.name == "index").unwrap();
+    assert_eq!(index.response_time_minimum.to_string(), index_minimum);
 }
 
 #[test]
 fn a_0_18_1_report_loads_as_a_baseline() {
-    baseline_deltas("report-0.18.1.json", "GET index", "GET slow");
+    // The 0.18.1 report names its transactions with plain strings.
+    baseline_deltas("report-0.18.1.json", "GET index", "GET slow", "0.4 (+0.4)");
 }
 
 #[test]
 fn a_report_from_main_before_microseconds_loads_as_a_baseline() {
-    baseline_deltas("report-main.json", "GET /", "GET /delay/1400");
+    baseline_deltas("report-main.json", "GET /", "GET /delay/1400", "0.4 (-0.6)");
 }
 
 #[test]
@@ -668,6 +673,29 @@ fn dashboard_snapshot_carries_microseconds() {
     let row = &snap.requests[0];
     let row_us = row.response_time_us.as_ref().expect("row microseconds");
     assert_eq!((row_us.min, row_us.max), (40, 900));
+
+    // A transaction and a scenario row of 400 µs.
+    let mut transaction = TransactionMetricAggregate::new(
+        0,
+        Arc::from("Scenario"),
+        0,
+        TransactionName::TransactionOnly(Arc::from("t")),
+    );
+    transaction.set_time_us(400, true);
+    let mut scenario = ScenarioMetricAggregate::new(0, Arc::from("Scenario"));
+    scenario.update_us(400, 0);
+    metrics.transactions = vec![vec![transaction]];
+    metrics.scenarios = vec![scenario];
+    let snap = build_dashboard_snapshot(snapshot_input(&metrics));
+    for us in [
+        &snap.transactions[0].response_time_us,
+        &snap.scenarios[0].response_time_us,
+    ] {
+        assert_eq!(
+            (us.min, us.max, us.p50, us.p95, us.p99),
+            (400, 400, 400, 400, 400)
+        );
+    }
 
     // Coordinated omission adjusted figures too.
     let mut metrics = GooseMetrics {
