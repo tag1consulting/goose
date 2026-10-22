@@ -174,13 +174,9 @@ impl std::ops::Deref for MillisFloat {
 }
 
 impl Display for MillisFloat {
-    /// As Goose shows a time; with a precision, such as `{:.2}`, the `f64`
-    /// to that many places.
+    /// As Goose shows a time.
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match f.precision() {
-            Some(_) => Display::fmt(&self.0, f),
-            None => f.pad(&format_ms(self.0, false)),
-        }
+        f.pad(&format_ms(self.0, false))
     }
 }
 
@@ -277,7 +273,6 @@ mod test {
         assert_eq!(MillisFloat(2.345).to_string(), "2.35");
         assert_eq!(MillisFloat(9.994).to_string(), "9.99");
         assert_eq!(MillisFloat(9.995).to_string(), "10");
-        assert_eq!(format!("{:.2}", MillisFloat(1_436.69)), "1436.69");
         assert_eq!(MillisFloat(1_436.69).to_string(), "1437");
         assert_eq!(MillisFloat(1_436.69).formatted(), "1,437");
         assert_eq!(MillisFloat(f64::NAN).to_string(), "NaN");

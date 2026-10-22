@@ -123,6 +123,13 @@ test("a snapshot with adjusted times labels them and shows the table note", asyn
   ]) {
     assert.ok(labels.includes(label), label);
   }
+  // Averages are times, shown as times are: 325 and 13.33 ms read 325 and 13.
+  const kvValue = (label) =>
+    Array.from(doc.querySelectorAll("#aggregate-body .kv"))
+      .find((kv) => kv.querySelector(".k").textContent === label)
+      .querySelector(".v").textContent;
+  assert.equal(kvValue("Avg ms (adjusted)"), "325");
+  assert.equal(kvValue("Avg ms (measured)"), "13");
 
   // "/a" shows its adjusted p99 with the measured one on hover; "/b" has no
   // adjusted times and shows its measured ones with no hover.

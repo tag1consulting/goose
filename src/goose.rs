@@ -6614,7 +6614,7 @@ mod tests {
                         micros(request.response_time_minimum.value().0),
                         micros(request.response_time_maximum.value().0),
                         // The mean, to the hundredth.
-                        format!("{:.2}", request.response_time_average.value()),
+                        format!("{:.2}", request.response_time_average.value().0),
                     ),
                     figures(
                         &reference,

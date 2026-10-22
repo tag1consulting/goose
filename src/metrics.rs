@@ -5312,7 +5312,7 @@ mod test {
         let request = report.raw_request_metrics.last().unwrap();
         assert_eq!(request.number_of_requests.value(), 41);
         assert_eq!(
-            format!("{:.2}", request.response_time_average.value()),
+            format!("{:.2}", request.response_time_average.value().0),
             "50.45"
         );
     }
@@ -5352,7 +5352,7 @@ mod test {
         assert_eq!(
             format!(
                 "{:.2}",
-                co_requests.last().unwrap().response_time_average.value()
+                co_requests.last().unwrap().response_time_average.value().0
             ),
             "201.25"
         );
@@ -5388,7 +5388,7 @@ mod test {
         let report = report_of(&metrics);
         for row in &report.raw_request_metrics {
             assert_eq!(
-                format!("{:.2}", row.response_time_average.value()),
+                format!("{:.2}", row.response_time_average.value().0),
                 "29609.37"
             );
         }

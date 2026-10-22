@@ -219,7 +219,10 @@ fn sub_millisecond_request_is_kept_and_shown() {
     let row = &report.raw_request_metrics[0];
     assert_eq!(row.response_time_minimum.to_string(), "0.4");
     assert_eq!(row.response_time_maximum.to_string(), "0.4");
-    assert_eq!(format!("{:.2}", row.response_time_average), "0.40");
+    assert_eq!(
+        format!("{:.2}", row.response_time_average.value().0),
+        "0.40"
+    );
     let json = serde_json::to_value(row).unwrap();
     assert_eq!(json["response_time_minimum"], 0);
     assert_eq!(json["response_time_maximum"], 0);
@@ -521,7 +524,12 @@ fn a_report_with_microseconds_and_a_key_without_its_method_is_refused() {
     std::fs::write(&path, json.to_string()).unwrap();
     let loaded = load_baseline_file(&path);
     std::fs::remove_dir_all(&dir).unwrap();
-    assert!(loaded.is_err());
+    let error = format!("{:?}", loaded.expect_err("refused"));
+    assert!(
+        error.contains("does not start with its method"),
+        "{}",
+        error
+    );
 }
 
 #[test]
@@ -851,4 +859,57 @@ fn percentiles_rank_every_time_past_f32_precision() {
         .insert(super::buckets::bucket_floor(1_680), total - 1);
     timing.counter = total;
     assert_eq!(timing.percentile_us(1.0), 1_700);
+}
+
+/// An average and a standard deviation are times, shown as times are, in
+/// the HTML and Markdown reports: a mean of 1.5 ms reads 1.5, not 1.50.
+#[test]
+fn html_and_markdown_reports_show_averages_as_times() {
+    let mut metrics = request_metrics(&[("GET /", &[1_000, 2_000])]);
+    let mut adjusted = GooseRequestMetricTimingData::default();
+    adjusted.record_time_us(1_000);
+    adjusted.record_time_us(2_000);
+    metrics
+        .requests
+        .get_mut("GET /")
+        .unwrap()
+        .coordinated_omission_data = Some(adjusted);
+    let mut transaction = TransactionMetricAggregate::new(
+        0,
+        Arc::from("Scenario"),
+        0,
+        TransactionName::TransactionOnly(Arc::from("t")),
+    );
+    let mut scenario = ScenarioMetricAggregate::new(0, Arc::from("Scenario"));
+    for us in [1_000, 2_000] {
+        transaction.set_time_us(us, true);
+        scenario.update_us(us, 0);
+    }
+    metrics.transactions = vec![vec![transaction]];
+    metrics.scenarios = vec![scenario];
+    let report = report_of(&metrics, None);
+
+    let html = crate::report::raw_request_metrics_row(report.raw_request_metrics[0].clone());
+    assert!(html.contains("<td>1.5</td>"), "{}", html);
+    let transactions = report.transaction_metrics.clone().unwrap();
+    let row = transactions.iter().find(|row| row.name == "t").unwrap();
+    let html = crate::report::transaction_metrics_row(row.clone());
+    assert!(html.contains("<td>1.5</td>"), "{}", html);
+    let html =
+        crate::report::scenario_metrics_row(report.scenario_metrics.clone().unwrap()[0].clone());
+    assert!(html.contains("<td>1.5</td>"), "{}", html);
+    let html = crate::report::coordinated_omission_request_metrics_row(
+        report.co_request_metrics.clone().unwrap()[0].clone(),
+    );
+    assert!(html.contains("<td>1.5</td>"), "{}", html);
+
+    let mut markdown = Vec::new();
+    crate::report::write_markdown_report(&mut markdown, report).unwrap();
+    let markdown = String::from_utf8(markdown).unwrap();
+    assert!(
+        markdown.contains("| GET | / | 2 | 0 | 1.5 | 1 | 2 |"),
+        "{}",
+        markdown
+    );
+    assert!(!markdown.contains("1.50"), "{}", markdown);
 }

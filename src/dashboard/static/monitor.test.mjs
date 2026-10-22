@@ -966,3 +966,23 @@ test("the heatmap summary gives recent percentiles and the p95 trend", async () 
     "p50 " + int(10) + " ms, p95 " + int(50) + " ms, p99 " + int(100) + " ms."
   );
 });
+
+test("the heatmap's data table and summary give percentiles at their rows' precision", async () => {
+  // Rows of 0.4 to 0.5 ms and 2 to 3 ms, their middles 0.45 and 2.5 ms:
+  // shown as times they would read 0.45 and 2.5, at row precision 0.4 and 2.
+  const rowsUs = [[450, 400, 499], [2500, 2000, 2999]];
+  const heatmap = {
+    ...heatmapOf(100, 3, () => [0, 60, 1, 40]),
+    buckets_us: rowsUs,
+  };
+  const page = await livePage();
+  const details = el(page, "chart-latency-details");
+  details.open = true;
+  await settle(page.window);
+  await send(page, snapshotWith({ series: { ...series25(100), heatmap } }));
+  assert.deepEqual(cells(el(page, "heatmap-rows").rows[0]), ["100", int(100), "0.4", "2", "2"]);
+  assert.equal(
+    el(page, "chart-latency-summary").textContent,
+    "p50 0.4 ms, p95 2 ms, p99 2 ms."
+  );
+});
