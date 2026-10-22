@@ -395,11 +395,12 @@ pub(crate) struct CoAdjusted {
 
 impl CoAdjusted {
     fn from_timing_data(data: &GooseRequestMetricTimingData) -> Self {
+        let response_time_us = MicrosecondTimes::of(data);
         CoAdjusted {
-            response_time_avg_ms: average_ms(data),
+            response_time_avg_ms: data.average_ms_or_zero(),
             response_time_max_ms: data.maximum_time_ms() as u64,
-            percentile_ms: Percentiles::of(data),
-            response_time_us: MicrosecondTimes::of(data),
+            percentile_ms: Percentiles::of(response_time_us.as_ref()),
+            response_time_us,
         }
     }
 }
@@ -446,16 +447,16 @@ impl Percentiles {
         }
     }
 
-    /// `data`'s percentiles in whole milliseconds, truncated from its
-    /// microseconds.
-    fn of(data: &GooseRequestMetricTimingData) -> Self {
-        if data.counter == 0 {
-            return Self::zero();
-        }
-        Percentiles {
-            p50: data.percentile_us(0.5) / 1000,
-            p95: data.percentile_us(0.95) / 1000,
-            p99: data.percentile_us(0.99) / 1000,
+    /// The percentiles of `times` in whole milliseconds, truncated; 0
+    /// without times.
+    fn of(times: Option<&MicrosecondTimes>) -> Self {
+        match times {
+            Some(times) => Percentiles {
+                p50: times.p50 / 1000,
+                p95: times.p95 / 1000,
+                p99: times.p99 / 1000,
+            },
+            None => Self::zero(),
         }
     }
 }
@@ -668,7 +669,8 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
     } else {
         0.0
     };
-    let response_time_avg_ms = average_ms(&aggregate);
+    let response_time_avg_ms = aggregate.average_ms_or_zero();
+    let response_time_us = MicrosecondTimes::of(&aggregate);
 
     let mut hosts: Vec<String> = input.metrics.hosts.iter().cloned().collect();
     hosts.sort();
@@ -694,8 +696,8 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
             response_time_avg_ms,
             response_time_min_ms: aggregate.minimum_time_ms() as u64,
             response_time_max_ms: aggregate.maximum_time_ms() as u64,
-            percentile_ms: Percentiles::of(&aggregate),
-            response_time_us: MicrosecondTimes::of(&aggregate),
+            percentile_ms: Percentiles::of(response_time_us.as_ref()),
+            response_time_us,
             co_active,
             co_adjusted: co_aggregate.as_ref().map(CoAdjusted::from_timing_data),
         },
@@ -728,7 +730,8 @@ fn request_row_from_aggregate(
 ) -> RequestRow {
     let total_count = request.success_count + request.fail_count;
     let (rps, fps) = per_second_calculations(duration, total_count, request.fail_count);
-    let avg = average_ms(&request.raw_data);
+    let avg = request.raw_data.average_ms_or_zero();
+    let response_time_us = MicrosecondTimes::of(&request.raw_data);
     let status_codes = if no_status_codes {
         Vec::new()
     } else {
@@ -751,8 +754,8 @@ fn request_row_from_aggregate(
         response_time_avg_ms: avg,
         response_time_min_ms: request.raw_data.minimum_time_ms() as u64,
         response_time_max_ms: request.raw_data.maximum_time_ms() as u64,
-        percentile_ms: Percentiles::of(&request.raw_data),
-        response_time_us: MicrosecondTimes::of(&request.raw_data),
+        percentile_ms: Percentiles::of(response_time_us.as_ref()),
+        response_time_us,
         status_codes,
         co_adjusted: if co_active {
             request
@@ -766,30 +769,21 @@ fn request_row_from_aggregate(
     }
 }
 
-/// Average time in milliseconds, to the microsecond, or 0 when nothing has
-/// been timed.
-fn average_ms(data: &GooseRequestMetricTimingData) -> f64 {
-    if data.counter > 0 {
-        data.average_ms()
-    } else {
-        0.0
-    }
-}
-
 fn scenario_row_from_aggregate(scenario: &ScenarioMetricAggregate, duration: usize) -> ScenarioRow {
     let times = &scenario.run_times;
     let (runs_per_second, _) = per_second_calculations(duration, times.counter, 0);
+    let response_time_us = MicrosecondTimes::of(times);
     ScenarioRow {
         scenario_index: scenario.index as u64,
         scenario_name: scenario.name.to_string(),
         users: scenario.users.len() as u64,
         run_count: times.counter as u64,
         runs_per_second: runs_per_second as f64,
-        response_time_avg_ms: average_ms(times),
+        response_time_avg_ms: times.average_ms_or_zero(),
         response_time_min_ms: times.minimum_time_ms() as u64,
         response_time_max_ms: times.maximum_time_ms() as u64,
-        percentile_ms: Percentiles::of(times),
-        response_time_us: MicrosecondTimes::of(times).unwrap_or_default(),
+        percentile_ms: Percentiles::of(response_time_us.as_ref()),
+        response_time_us: response_time_us.unwrap_or_default(),
     }
 }
 
@@ -800,6 +794,7 @@ fn transaction_row_from_aggregate(
     let run_count = transaction.success_count + transaction.fail_count;
     let (runs_per_second, failures_per_second) =
         per_second_calculations(duration, run_count, transaction.fail_count);
+    let response_time_us = MicrosecondTimes::of(&transaction.run_times);
     TransactionRow {
         scenario_index: transaction.scenario_index as u64,
         scenario_name: transaction.scenario_name.to_string(),
@@ -812,11 +807,11 @@ fn transaction_row_from_aggregate(
         failure_count: transaction.fail_count as u64,
         runs_per_second: runs_per_second as f64,
         failures_per_second: failures_per_second as f64,
-        response_time_avg_ms: average_ms(&transaction.run_times),
+        response_time_avg_ms: transaction.run_times.average_ms_or_zero(),
         response_time_min_ms: transaction.run_times.minimum_time_ms() as u64,
         response_time_max_ms: transaction.run_times.maximum_time_ms() as u64,
-        percentile_ms: Percentiles::of(&transaction.run_times),
-        response_time_us: MicrosecondTimes::of(&transaction.run_times).unwrap_or_default(),
+        percentile_ms: Percentiles::of(response_time_us.as_ref()),
+        response_time_us: response_time_us.unwrap_or_default(),
     }
 }
 

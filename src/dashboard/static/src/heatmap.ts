@@ -120,7 +120,7 @@ export interface HeatmapCell {
 /** One bucket's row, placed on the latency axis. */
 export interface HeatmapRow {
   bucket: number;
-  /** The bucket's rounded time and its range of measured times, in ms. */
+  /** The time the bucket stands for, its middle, and its range of measured times, in ms. */
   time: number;
   lowest: number;
   highest: number;

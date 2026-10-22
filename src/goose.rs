@@ -6004,11 +6004,11 @@ mod tests {
     ];
 
     /// The audit's reference, written apart from Goose's code: nearest rank
-    /// over the rounded times, the rank being `p` of the count rounded half
-    /// away from zero (at least 1), the value clamped to the fastest and
-    /// slowest measured time. Times are whole milliseconds, as the datasets
-    /// make them, kept in microseconds, each rounded to the middle of the
-    /// bucket that holds it.
+    /// over the times as their buckets report them, the rank being `p` of
+    /// the count rounded half away from zero (at least 1), the value clamped
+    /// to the fastest and slowest measured time. Times are whole
+    /// milliseconds, as the datasets make them, kept in microseconds, each
+    /// reported as the middle of the bucket that holds it.
     struct Reference {
         rounded: Vec<u64>,
         minimum: u64,

@@ -241,11 +241,6 @@ impl TimeBuckets {
     pub fn iter(&self) -> impl Iterator<Item = (&u64, &usize)> + '_ {
         self.list.iter().map(|(bucket, count)| (bucket, count))
     }
-
-    /// Each bucket's fastest time, fastest first.
-    pub fn keys(&self) -> impl Iterator<Item = &u64> + '_ {
-        self.list.iter().map(|(bucket, _)| bucket)
-    }
 }
 
 impl<'a> IntoIterator for &'a TimeBuckets {

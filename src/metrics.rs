@@ -1165,11 +1165,8 @@ impl PartialOrd for GooseRequestMetricAggregate {
     }
 }
 
-/// Response times, in microseconds, in buckets that report a time at most
-/// 1/128 (0.78%) off any time they hold: how many fell in each, and the
-/// fastest, slowest and total. Every time under 128 µs has a bucket of its
-/// own, and each power of two above is split into 64; from 1 µs to the
-/// default 60 second `--timeout` there are 1,330 buckets, and only those
+/// Response times, in microseconds: how many fell in each bucket of a
+/// [`TimeBuckets`], and the fastest, slowest and total. Only the buckets
 /// that hold a time are kept.
 ///
 /// It serializes, in a JSON report or saved run, with each bucket once, in
@@ -1180,8 +1177,7 @@ impl PartialOrd for GooseRequestMetricAggregate {
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub struct GooseRequestMetricTimingData {
     /// How many times fell in each bucket, keyed by the bucket's fastest
-    /// time in microseconds. Every time under 128 µs has a bucket of its
-    /// own; above, each power of two is split into 64 buckets.
+    /// time in microseconds.
     pub times_us: TimeBuckets,
     /// The fastest time, in microseconds, not rounded. 0 before any.
     pub minimum_time_us: u64,
@@ -1296,6 +1292,14 @@ impl GooseRequestMetricTimingData {
     pub fn average_ms(&self) -> f64 {
         self.total_time_us as f64 / self.counter as f64 / 1000.0
     }
+
+    /// [`Self::average_ms`], or 0 without times.
+    pub(crate) fn average_ms_or_zero(&self) -> f64 {
+        match self.counter {
+            0 => 0.0,
+            _ => self.average_ms(),
+        }
+    }
 }
 
 /// The buckets of whole millisecond `times`, as a file without microseconds
@@ -1379,22 +1383,17 @@ impl Serialize for GooseRequestMetricTimingData {
 impl<'de> Deserialize<'de> for GooseRequestMetricTimingData {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let data = TimingDataIn::deserialize(deserializer)?;
-        Ok(match data.times_us {
-            Some(times_us) => GooseRequestMetricTimingData {
-                times_us,
-                minimum_time_us: data.minimum_time_us.unwrap_or(0),
-                maximum_time_us: data.maximum_time_us.unwrap_or(0),
-                total_time_us: data.total_time_us.unwrap_or(0),
-                counter: data.counter,
-            },
-            None => GooseRequestMetricTimingData {
-                times_us: microsecond_times(&data.times),
-                minimum_time_us: ms_to_us(data.minimum_time),
-                maximum_time_us: ms_to_us(data.maximum_time),
-                total_time_us: ms_to_us(data.total_time),
-                counter: data.counter,
-            },
-        })
+        Ok(run_times(
+            data.times,
+            [data.minimum_time, data.maximum_time, data.total_time],
+            data.counter,
+            data.times_us,
+            [
+                data.minimum_time_us,
+                data.maximum_time_us,
+                data.total_time_us,
+            ],
+        ))
     }
 }
 /// The per-scenario metrics collected each time a scenario is run.
@@ -2622,7 +2621,7 @@ impl GooseMetrics {
             }
         }
 
-        let raw_average = average_ms(&aggregate_raw);
+        let raw_average = aggregate_raw.average_ms_or_zero();
 
         // Display aggregated data if there was more than one request.
         if self.requests.len() > 1 {
@@ -2672,9 +2671,9 @@ impl GooseMetrics {
             );
             // Coordinated Omission Mitigation was enabled for this request, display the extra data:
             if let Some(co_data) = request.coordinated_omission_data.as_ref() {
-                let co_average = average_ms(co_data);
+                let co_average = co_data.average_ms_or_zero();
                 let standard_deviation = util::standard_deviation(
-                    average_ms(&request.raw_data) as f32,
+                    request.raw_data.average_ms_or_zero() as f32,
                     co_average as f32,
                 );
                 writeln!(
@@ -2701,7 +2700,7 @@ impl GooseMetrics {
 
         // Display aggregated Coordinate Omission data if there was more than one request.
         if self.requests.len() > 1 {
-            let co_average = average_ms(&aggregate_co);
+            let co_average = aggregate_co.average_ms_or_zero();
             let standard_deviation =
                 util::standard_deviation(raw_average as f32, co_average as f32);
 
@@ -4931,15 +4930,6 @@ pub(crate) fn per_second_calculations(duration: usize, total: usize, fail: usize
     (requests_per_second, fails_per_second)
 }
 
-/// The mean of `data`'s times in milliseconds, to the microsecond; 0
-/// without times.
-fn average_ms(data: &GooseRequestMetricTimingData) -> f64 {
-    match data.counter {
-        0 => 0.0,
-        _ => data.average_ms(),
-    }
-}
-
 /// One row of a console table of times: `name`, then the average, fastest,
 /// slowest and median of `data` in milliseconds, to the hundredth under
 /// 10 ms.
@@ -4952,7 +4942,7 @@ fn write_times_row(
         fmt,
         " {:<24} | {:>11} | {:>10} | {:>11} | {:>10}",
         name,
-        format_ms(average_ms(data), true),
+        format_ms(data.average_ms_or_zero(), true),
         format_micros(data.minimum_time_us, true),
         format_micros(data.maximum_time_us, true),
         format_micros(data.percentile_us(0.5), true),
@@ -5025,28 +5015,6 @@ impl FormatValue for Millis {
     fn formatted_delta(delta: millis::MillisDelta) -> String {
         delta.formatted()
     }
-}
-
-/// Get the response time that a certain number of percent of the requests
-/// finished within, from whole millisecond buckets: the rule
-/// [`response_time_percentile`] follows, kept for its tests.
-#[cfg(test)]
-pub(crate) fn calculate_response_time_percentile(
-    response_times: &BTreeMap<usize, usize>,
-    total_requests: usize,
-    min: usize,
-    max: usize,
-    percent: f32,
-) -> usize {
-    response_time_percentile(
-        response_times
-            .iter()
-            .map(|(value, counter)| (*value, *counter)),
-        total_requests,
-        min,
-        max,
-        percent,
-    )
 }
 
 /// `percent` as the decimal it was written as, to a millionth, in f64.
@@ -5468,47 +5436,35 @@ mod test {
 
     #[test]
     fn max_response_time_percentile() {
+        let percentile = |times: &BTreeMap<usize, usize>, total, min, max, percent| {
+            response_time_percentile(
+                times.iter().map(|(&time, &count)| (time, count)),
+                total,
+                min,
+                max,
+                percent,
+            )
+        };
         let mut response_times: BTreeMap<usize, usize> = BTreeMap::new();
         response_times.insert(1, 1);
         response_times.insert(2, 1);
         response_times.insert(3, 1);
         // 3 * .5 = 1.5, rounds to 2.
-        assert_eq!(
-            calculate_response_time_percentile(&response_times, 3, 1, 3, 0.5),
-            2
-        );
+        assert_eq!(percentile(&response_times, 3, 1, 3, 0.5), 2);
         response_times.insert(3, 2);
         // 4 * .5 = 2
-        assert_eq!(
-            calculate_response_time_percentile(&response_times, 4, 1, 3, 0.5),
-            2
-        );
+        assert_eq!(percentile(&response_times, 4, 1, 3, 0.5), 2);
         // 4 * .25 = 1
-        assert_eq!(
-            calculate_response_time_percentile(&response_times, 4, 1, 3, 0.25),
-            1
-        );
+        assert_eq!(percentile(&response_times, 4, 1, 3, 0.25), 1);
         // 4 * .75 = 3
-        assert_eq!(
-            calculate_response_time_percentile(&response_times, 4, 1, 3, 0.75),
-            3
-        );
+        assert_eq!(percentile(&response_times, 4, 1, 3, 0.75), 3);
         // 4 * 1 = 4 (and the 4th response time is also 3)
-        assert_eq!(
-            calculate_response_time_percentile(&response_times, 4, 1, 3, 1.0),
-            3
-        );
+        assert_eq!(percentile(&response_times, 4, 1, 3, 1.0), 3);
 
         // 4 * .5 = 2, but uses specified minimum of 2
-        assert_eq!(
-            calculate_response_time_percentile(&response_times, 4, 2, 3, 0.25),
-            2
-        );
+        assert_eq!(percentile(&response_times, 4, 2, 3, 0.25), 2);
         // 4 * .75 = 3, but uses specified maximum of 2
-        assert_eq!(
-            calculate_response_time_percentile(&response_times, 4, 1, 2, 0.75),
-            2
-        );
+        assert_eq!(percentile(&response_times, 4, 1, 2, 0.75), 2);
 
         response_times.insert(10, 25);
         response_times.insert(20, 25);
@@ -5516,18 +5472,9 @@ mod test {
         response_times.insert(50, 25);
         response_times.insert(100, 10);
         response_times.insert(200, 1);
-        assert_eq!(
-            calculate_response_time_percentile(&response_times, 115, 1, 200, 0.9),
-            50
-        );
-        assert_eq!(
-            calculate_response_time_percentile(&response_times, 115, 1, 200, 0.99),
-            100
-        );
-        assert_eq!(
-            calculate_response_time_percentile(&response_times, 115, 1, 200, 0.999),
-            200
-        );
+        assert_eq!(percentile(&response_times, 115, 1, 200, 0.9), 50);
+        assert_eq!(percentile(&response_times, 115, 1, 200, 0.99), 100);
+        assert_eq!(percentile(&response_times, 115, 1, 200, 0.999), 200);
     }
 
     #[test]
@@ -7225,8 +7172,8 @@ mod test {
             transaction
                 .run_times
                 .times_us
-                .keys()
-                .copied()
+                .iter()
+                .map(|(&bucket, _)| bucket)
                 .collect::<Vec<_>>(),
             expected,
             "transaction times must bucket 750ms and 1499ms in their own microsecond buckets, not 80 and 10: {GUARD}"
@@ -7239,8 +7186,8 @@ mod test {
             scenario
                 .run_times
                 .times_us
-                .keys()
-                .copied()
+                .iter()
+                .map(|(&bucket, _)| bucket)
                 .collect::<Vec<_>>(),
             expected,
             "scenario times must bucket 750ms and 1499ms in their own microsecond buckets, not 80 and 10: {GUARD}"

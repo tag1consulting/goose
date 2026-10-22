@@ -19,20 +19,6 @@ use std::hash::Hash;
 use std::io::{BufReader, Read};
 use std::path::Path;
 
-/// The mean of these response times, in `f64` so that a large one prints to
-/// the hundredth exactly (NaN without times).
-fn average(data: &GooseRequestMetricTimingData) -> f64 {
-    data.average_ms()
-}
-
-/// [`average`], or 0 without times.
-fn average_or_zero(data: &GooseRequestMetricTimingData) -> f64 {
-    match data.counter {
-        0 => 0.0,
-        _ => data.average_ms(),
-    }
-}
-
 /// Custom deserializer for f64 values that converts JSON null to f64::NAN
 fn deserialize_nullable_f64<'de, D>(deserializer: D) -> Result<f64, D::Error>
 where
@@ -161,7 +147,7 @@ impl<'m> Prepare<'m> {
                 name: name.to_string(),
                 number_of_requests: total_request_count.into(),
                 number_of_failures: request.fail_count.into(),
-                response_time_average: average(&request.raw_data).into(),
+                response_time_average: request.raw_data.average_ms().into(),
                 response_time_minimum: Millis(request.raw_data.minimum_time_us).into(),
                 response_time_maximum: Millis(request.raw_data.maximum_time_us).into(),
                 requests_per_second: requests_per_second.into(),
@@ -208,7 +194,7 @@ impl<'m> Prepare<'m> {
             name: "Aggregated".to_string(),
             number_of_requests: raw_aggregate_total_count.into(),
             number_of_failures: raw_aggregate_fail_count.into(),
-            response_time_average: average(&raw_aggregate).into(),
+            response_time_average: raw_aggregate.average_ms().into(),
             response_time_minimum: Millis(raw_aggregate.minimum_time_us).into(),
             response_time_maximum: Millis(raw_aggregate.maximum_time_us).into(),
             requests_per_second: raw_aggregate_requests_per_second.into(),
@@ -256,8 +242,8 @@ impl<'m> Prepare<'m> {
                     .strip_prefix(&format!("{} ", method))
                     .unwrap()
                     .to_string();
-                let raw_average = average(&request.raw_data);
-                let co_average = average(coordinated_omission_data);
+                let raw_average = request.raw_data.average_ms();
+                let co_average = coordinated_omission_data.average_ms();
                 // Prepare per-request metrics.
                 co_request_metrics.push(CORequestMetric {
                     method: method.to_string(),
@@ -279,8 +265,8 @@ impl<'m> Prepare<'m> {
                 ));
             }
         }
-        let co_average = average(&co_aggregate);
-        let raw_average = average(&intermediate.raw_aggregate);
+        let co_average = co_aggregate.average_ms();
+        let raw_average = intermediate.raw_aggregate.average_ms();
         co_request_metrics.push(CORequestMetric {
             method: "".to_string(),
             name: "Aggregated".to_string(),
@@ -342,7 +328,7 @@ impl<'m> Prepare<'m> {
                         .to_string(),
                     number_of_requests: total_run_count.into(),
                     number_of_failures: transaction.fail_count.into(),
-                    response_time_average: Some(average_or_zero(times).into()),
+                    response_time_average: Some(times.average_ms_or_zero().into()),
                     response_time_minimum: Millis(times.minimum_time_us).into(),
                     response_time_maximum: Millis(times.maximum_time_us).into(),
                     requests_per_second: Some(requests_per_second.into()),
@@ -367,7 +353,7 @@ impl<'m> Prepare<'m> {
             name: "Aggregated".to_string(),
             number_of_requests: aggregate_total_count.into(),
             number_of_failures: aggregate_fail_count.into(),
-            response_time_average: Some(average_or_zero(&aggregate_times).into()),
+            response_time_average: Some(aggregate_times.average_ms_or_zero().into()),
             response_time_minimum: Millis(aggregate_times.minimum_time_us).into(),
             response_time_maximum: Millis(aggregate_times.maximum_time_us).into(),
             requests_per_second: Some(aggregate_requests_per_second.into()),
@@ -396,7 +382,7 @@ impl<'m> Prepare<'m> {
                 name: scenario.name.to_string(),
                 users: scenario.users.len().into(),
                 count: times.counter.into(),
-                response_time_average: average_or_zero(times).into(),
+                response_time_average: times.average_ms_or_zero().into(),
                 response_time_minimum: Millis(times.minimum_time_us).into(),
                 response_time_maximum: Millis(times.maximum_time_us).into(),
                 count_per_second: count_per_second.into(),
@@ -414,7 +400,7 @@ impl<'m> Prepare<'m> {
             name: "Aggregated".to_string(),
             users: aggregate_users.into(),
             count: aggregate_times.counter.into(),
-            response_time_average: average(&aggregate_times).into(),
+            response_time_average: aggregate_times.average_ms().into(),
             response_time_minimum: Millis(aggregate_times.minimum_time_us).into(),
             response_time_maximum: Millis(aggregate_times.maximum_time_us).into(),
             count_per_second: aggregate_count_per_second.into(),
