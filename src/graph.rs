@@ -6937,6 +6937,48 @@ mod test {
         assert_eq!(columns("GET /b").columns[20].counter, 1);
     }
 
+    /// A report whose graphs start after the run did, as after Save report
+    /// is turned on during a run, draws them from their first second, also
+    /// when it is rendered again from its JSON report.
+    #[test]
+    fn graphs_that_start_late_keep_their_first_second() {
+        let mut graph = GraphData::new();
+        for second in 0..=900 {
+            graph.record_users_per_second(10, second);
+            graph.record_requests_per_second("GET /a", second);
+            graph.record_requests_per_second("GET /b", second);
+        }
+        graph.prune_to_window(600);
+        let origin = graph.first_second();
+        assert!(origin > 0);
+        let started = Utc.with_ymd_and_hms(2026, 10, 22, 10, 0, 0).unwrap();
+        let at = |second: usize| {
+            Local
+                .timestamp_opt(started.timestamp() + second as i64, 0)
+                .unwrap()
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string()
+        };
+        let check = |graph: &GraphData| {
+            for markup in [
+                graph.get_active_users_graph(false).get_markup(&[], started),
+                graph
+                    .get_requests_per_second_graph(true)
+                    .get_markup(&[], started),
+            ] {
+                assert!(markup.contains(&at(origin)), "{}", markup);
+                assert!(!markup.contains(&at(origin - 1)), "{}", markup);
+            }
+        };
+        check(&graph);
+        let json = serde_json::to_string(&graph.report_graphs(false, started, None)).unwrap();
+        let (again, _) = serde_json::from_str::<RecordedGraphs>(&json)
+            .unwrap()
+            .into_parts();
+        assert_eq!(again.first_second(), origin);
+        check(&again);
+    }
+
     /// Without whole run columns, as for the dashboard with Save report off,
     /// the rings work as before and the report has no heatmap.
     #[test]

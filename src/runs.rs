@@ -776,6 +776,14 @@ impl GooseAttack {
         let refuse = |attack: &Self, state: &GooseAttackRunState, error, message: &str| {
             Ok(attack.control_outcome(state, false, Some(error), message.to_string(), None))
         };
+        if self.configuration.no_metrics {
+            return refuse(
+                self,
+                goose_attack_run_state,
+                "invalid_report",
+                "--no-metrics keeps no report to save",
+            );
+        }
         let Some(folder) = self.output.folder.clone().filter(|_| self.run_in_progress) else {
             return refuse(
                 self,

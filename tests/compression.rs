@@ -81,6 +81,15 @@ fn xfl(path: &Path) -> u8 {
     bytes[8]
 }
 
+/// `bytes` gzipped at `level` as Goose gzips a report: the same encoder, so
+/// the same bytes, which pins the level beyond what XFL tells.
+fn gzip_at(bytes: &[u8], level: u32) -> Vec<u8> {
+    use std::io::Write;
+    let mut gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::new(level));
+    gzip.write_all(bytes).unwrap();
+    gzip.finish().unwrap()
+}
+
 fn scenario(transaction: Transaction) -> Scenario {
     scenario!("LoadTest").register_transaction(transaction)
 }
@@ -130,6 +139,12 @@ async fn a_gz_report_is_the_same_report_gzipped() {
         let gzipped = dir.join(format!("{name}.gz"));
         assert_eq!(gunzip(&gzipped).unwrap(), plain, "{}", name);
         assert_eq!(xfl(&gzipped), 0, "level 6 by default");
+        assert_eq!(
+            std::fs::read(&gzipped).unwrap(),
+            gzip_at(&plain, 6),
+            "{} at level 6 by default",
+            name
+        );
     }
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -272,7 +287,17 @@ async fn compress_gzips_the_run_folder() {
         ];
         args.extend(level);
         run(&server, args).await;
-        assert_eq!(xfl(&folder.join("report.json.gz")), expected);
+        let gz = folder.join("report.json.gz");
+        assert_eq!(xfl(&gz), expected);
+        assert_eq!(
+            std::fs::read(&gz).unwrap(),
+            gzip_at(
+                &gunzip(&gz).unwrap(),
+                level.map_or(6, |l| l.parse().unwrap())
+            ),
+            "{:?}",
+            level
+        );
     }
 
     std::fs::remove_dir_all(&dir).ok();

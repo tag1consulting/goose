@@ -438,3 +438,46 @@ test("the list reloads whenever a run starts or a report is written, with no pha
   await settle(page.window);
   assert.equal(listed(), 2);
 });
+
+test("without control the switches stay read only as snapshots arrive", async () => {
+  const page = await openPage("/?token=" + TOKEN, FRESH, TOKEN, { eventStream: true });
+  const doc = page.window.document;
+  for (const save of [true, false]) {
+    page.events.emit("snapshot", JSON.stringify(withReport({ save }, "maintain")));
+    await settle(page.window);
+    assert.equal(doc.getElementById("save-report").checked, save);
+    assert.equal(doc.getElementById("save-report").disabled, true);
+    assert.equal(doc.getElementById("graph-data").disabled, true);
+    assert.equal(doc.getElementById("save-now").hidden, true);
+  }
+});
+
+test("Save report now lists the reports again once its report is written", async () => {
+  const page = await openPage("/?token=" + TOKEN, FRESH, TOKEN, {
+    controlEnabled: true,
+    snapshot: withReport({ folder: "goose-runs/20261022-101500" }, "maintain"),
+  });
+  const listed = () => page.requests.filter((r) => r.path === "/api/v1/reports").length;
+  const before = listed();
+  page.window.document.getElementById("save-now").click();
+  await settle(page.window);
+  await new Promise((resolve) => page.window.setTimeout(resolve, 1100));
+  await settle(page.window);
+  assert.equal(listed(), before + 1);
+});
+
+test("each run's HTML, JSON and Markdown buttons fetch that format", async () => {
+  const page = await openPage("/?token=" + TOKEN, FRESH, TOKEN, { reports: LISTING });
+  const buttons = Array.from(runRows(page.window)[0].querySelectorAll("button.run-download"));
+  const before = page.requests.length;
+  for (const button of buttons) button.click();
+  await settle(page.window);
+  assert.deepEqual(
+    page.requests.slice(before).map((r) => r.path),
+    [
+      "/api/v1/reports/nightly-2/report.html",
+      "/api/v1/reports/nightly-2/report.json",
+      "/api/v1/reports/nightly-2/report.md",
+    ]
+  );
+});

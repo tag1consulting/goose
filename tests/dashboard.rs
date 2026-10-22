@@ -2740,6 +2740,18 @@ async fn test_save_report_switches() {
         .await
         .unwrap();
     assert_eq!(resp.status(), 409);
+    // Save report turned off after Save report now: the run's last report
+    // still replaces the one marked in progress.
+    let resp = post_control(
+        &client,
+        &base,
+        "/api/v1/control/report",
+        Some(r#"{"save": false}"#),
+        true,
+    )
+    .await;
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["ok"], true);
     let stop = post_control(&client, &base, "/api/v1/control/stop", Some("{}"), true).await;
     assert_eq!(stop.status(), 200);
     let snap = wait_for_phase(
@@ -2762,17 +2774,7 @@ async fn test_save_report_switches() {
         folder.to_string_lossy().as_ref()
     );
 
-    // Run 2, with Save report off: only the path is written.
-    let resp = post_control(
-        &client,
-        &base,
-        "/api/v1/control/report",
-        Some(r#"{"save": false}"#),
-        true,
-    )
-    .await;
-    let body: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(body["ok"], true);
+    // Run 2, with Save report still off: only the path is written.
     std::fs::remove_file(&path).unwrap();
     let start = post_control(&client, &base, "/api/v1/control/start", Some("{}"), true).await;
     assert_eq!(start.status(), 200);
@@ -3288,8 +3290,9 @@ async fn test_report_switches_refuse_what_they_cannot_do() {
         build_control_config(&server, "127.0.0.1", port, ControlTestOpts::default());
     configuration.no_metrics = true;
     configuration.co_mitigation = None;
-    // With nothing to write, an --output-dir would be refused.
-    configuration.output_dir = None;
+    // A bare --debug-log, which --no-metrics allows, gives the run a folder.
+    configuration.output_dir = Some(parent.join("none").to_string_lossy().into_owned());
+    configuration.debug_log = Some("\0".to_string());
     let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
     let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
     let (base, _) = wait_for_health(&[&base_v4], 80).await;
@@ -3313,6 +3316,96 @@ async fn test_report_switches_refuse_what_they_cannot_do() {
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["ok"], false, "{}", body);
     assert_eq!(body["error"], "invalid_report");
+    // Nor can Save report now write one, even with a folder for a bare log.
+    let start = post_control(&client, &base, "/api/v1/control/start", Some("{}"), true).await;
+    assert_eq!(start.status(), 200);
+    wait_for_active_users(&client, &base, Some(AUTH_TOKEN), 2, Duration::from_secs(30)).await;
+    let resp = post_control(
+        &client,
+        &base,
+        "/api/v1/control/report/now",
+        Some("{}"),
+        true,
+    )
+    .await;
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["ok"], false, "{}", body);
+    assert_eq!(body["error"], "invalid_report");
+    let stop = post_control(&client, &base, "/api/v1/control/stop", Some("{}"), true).await;
+    assert_eq!(stop.status(), 200);
+    wait_for_phase(
+        &client,
+        &base,
+        Some(AUTH_TOKEN),
+        &["idle"],
+        Duration::from_secs(30),
+    )
+    .await;
+    assert!(!parent.join("none").join("report.json").exists());
+    load.abort().await;
+    std::fs::remove_dir_all(&parent).ok();
+}
+
+/// Rule 15: under --compress, Save report now writes the run's folder report
+/// gzipped: a report.json.gz marked in progress, and no plain report.json.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn test_save_report_now_gzips_under_compress() {
+    use std::io::Read;
+    let server = MockServer::start();
+    let _mocks = setup_mock_endpoints(&server);
+    let parent = reports_dir("now-gzipped");
+    let port = reserve_port();
+    let base_v4 = format!("http://127.0.0.1:{port}");
+    let mut configuration =
+        build_control_config(&server, "127.0.0.1", port, ControlTestOpts::default());
+    configuration.output_dir = Some(parent.join("dash").to_string_lossy().into_owned());
+    configuration.compress = Some(6);
+    let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
+    let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
+    let (base, _) = wait_for_health(&[&base_v4], 80).await;
+    let client = reqwest::Client::new();
+    let start = post_control(&client, &base, "/api/v1/control/start", Some("{}"), true).await;
+    assert_eq!(start.status(), 200);
+    wait_for_active_users(&client, &base, Some(AUTH_TOKEN), 2, Duration::from_secs(30)).await;
+    let now = post_control(
+        &client,
+        &base,
+        "/api/v1/control/report/now",
+        Some("{}"),
+        true,
+    )
+    .await;
+    let body: serde_json::Value = now.json().await.unwrap();
+    assert_eq!(body["ok"], true, "{}", body);
+    let folder = parent.join("dash");
+    let gz = folder.join("report.json.gz");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !gz.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "Save report now wrote no report.json.gz"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(!folder.join("report.json").exists());
+    assert!(!folder.join("report.html").exists());
+    let mut text = String::new();
+    flate2::read::GzDecoder::new(std::fs::File::open(&gz).unwrap())
+        .read_to_string(&mut text)
+        .unwrap();
+    let report: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(report["in_progress"], true);
+    let stop = post_control(&client, &base, "/api/v1/control/stop", Some("{}"), true).await;
+    assert_eq!(stop.status(), 200);
+    wait_for_phase(
+        &client,
+        &base,
+        Some(AUTH_TOKEN),
+        &["idle"],
+        Duration::from_secs(30),
+    )
+    .await;
     load.abort().await;
     std::fs::remove_dir_all(&parent).ok();
 }
