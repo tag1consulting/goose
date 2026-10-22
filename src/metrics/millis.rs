@@ -143,5 +143,12 @@ mod test {
         assert_eq!(Millis(11_700).delta(Millis(8_000)).to_string(), "3");
         assert_eq!(Millis(8_000).delta(Millis(11_700)).to_string(), "-3");
         assert!(Millis::is_delta_non_negative(MillisDelta(0)));
+        // The difference of the values shown: 10,000 and 9,999 µs both show
+        // 10, 2,351 and 2,349 µs both 2.35, and 2,341 and 2,344 µs both 2.34.
+        let mut shown = Value::Plain(Millis(10_000));
+        shown.diff(Millis(9_999));
+        assert_eq!(shown.to_string(), "10 (+0)");
+        assert_eq!(Millis(2_351).delta(Millis(2_349)).to_string(), "0");
+        assert_eq!(Millis(2_341).delta(Millis(2_344)).to_string(), "0");
     }
 }
