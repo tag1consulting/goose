@@ -208,7 +208,7 @@ In CI, upload `goose-runs/` as a build artifact to keep every run's reports.
 
 ### Graph data and memory
 
-A report written at the end of the run, to a `--report-file` path or by the dashboard's Save report, graphs every second of the run, so Goose keeps per second graph data for the whole run in memory. It costs about 12 bytes per request name per second at steady state, and up to 4 times that while the report is written:
+A report written at the end of the run, by any `--report-file` or by the dashboard's Save report, graphs every second of the run, so Goose keeps per second graph data for the whole run in memory. It costs about 12 bytes per request name per second at steady state, and up to 4 times that while the report is written:
 
 | run length | 20 request names | 100 request names |
 |-|-|-|

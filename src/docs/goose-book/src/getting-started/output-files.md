@@ -72,9 +72,9 @@ cargo run --features dashboard --example simple -- --host http://localhost:8080 
 
 On a long soak test with `--dashboard-control` and no `--report-file` path, turn Save report off to keep memory flat, and turn it on before the part of the run you want graphed.
 
-**11. Save report now writes the run's report as it stands into its folder while the run continues, and marks it as in progress.** The report at the end of the run replaces it. A second switch in the bar, **Include graph data**, is rule 7's flag and can also be changed at any time.
+**11. Save report now writes the run's report as it stands into its folder while the run continues, and marks it as in progress.** The report at the end of the run replaces it, also when Save report is off. A second switch in the bar, **Include graph data**, is rule 7's flag and can also be changed at any time.
 
-**12. The runs panel lists the folders beside the run's folder that hold a `report.json` or `report.json.gz`.** It looks in the folder that holds the run's folder: the parent of the `--output-dir` folder, or `goose-runs` by default. Newest first, with their notes. A report still marked in progress shows as running for this run and as incomplete for any other (a run that ended without its final report). Each run offers HTML, JSON and Markdown, rendering any format the folder lacks from its JSON.
+**12. The runs panel lists the folders beside the run's folder that hold a `report.json` or `report.json.gz`.** It looks in the folder that holds the run's folder: the parent of the `--output-dir` folder, or `goose-runs` by default. Newest first, with their notes. A report still marked in progress shows as running for this run and as incomplete for any other (a run that ended without its final report). Each run offers HTML, JSON and Markdown, rendering any format the folder lacks from its JSON. With control, each run also has a Delete button. It removes the folder's reports and the logs Goose names there, then the folder if that leaves it empty. The folder of the run in progress can't be deleted.
 
 With `--output-dir goose-runs/nightly`, the panel lists the folders in `goose-runs`. It lists only folders whose name is a letter or digit followed by letters, digits, `.`, `_` and `-`, so a run written to `goose-runs/my run` is not listed.
 
@@ -93,7 +93,7 @@ cargo run --features dashboard --example simple -- --host http://localhost:8080 
 cargo run --example simple -- --host http://localhost:8080 -t 30s --report-file results.json.gz -R requests.csv.gz --request-format csv
 ```
 
-**15. `--compress` gzips every file Goose writes into the run's folder under rules 3 and 9, each named with `.gz` added.** A path given to an output flag keeps exactly that name, compressed or not. `--compress LEVEL` sets the level from 1 (fastest) to 9 (smallest), default 6, for every gzipped file, including rule 14's.
+**15. `--compress` gzips every file Goose writes into the run's folder under rules 3 and 9, each named with `.gz` added.** A path given to an output flag keeps exactly that name, and is gzipped only when that name ends in `.gz` (rule 14). `--compress LEVEL` sets the level from 1 (fastest) to 9 (smallest), default 6, for every gzipped file, including rule 14's.
 
 ```bash
 cargo run --example simple -- --host http://localhost:8080 -t 30s --report-file -R --compress 9
@@ -138,9 +138,9 @@ cargo run --release --example simple -- --host http://localhost:8080 -t 10m \
 `summary.html` stays plain: a path keeps its name. To read the gzipped files:
 
 ```bash
-zcat goose-runs/*/report.json.gz | jq .
+gzip -dc goose-runs/*/report.json.gz | jq .
 gunzip -k goose-runs/*/report.html.gz    # then open report.html in a browser
-zcat goose-runs/*/requests.json.gz | head
+gzip -dc goose-runs/*/requests.json.gz | head
 ```
 
-The dashboard's runs panel also opens a gzipped report. A run killed with SIGKILL leaves a gzipped log with no trailer; `zcat` reads it up to the cut, then reports an unexpected end of file.
+The dashboard's runs panel also opens a gzipped report. A run killed with SIGKILL leaves a gzipped log with no trailer; `gzip -dc` reads it up to the cut, then reports an unexpected end of file.
