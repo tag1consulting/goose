@@ -418,6 +418,53 @@ fn a_report_with_microseconds_round_trips_as_a_baseline() {
     );
 }
 
+/// A report with microseconds, loaded as a baseline, gives no delta to the
+/// same times: its rows are rebuilt from its microsecond buckets, not read
+/// from its whole millisecond rows.
+#[test]
+fn a_report_with_microseconds_gives_no_delta_to_the_same_times() {
+    let mut metrics = request_metrics(&[("GET /", &[2_350; 5])]);
+    let mut transaction = TransactionMetricAggregate::new(
+        0,
+        Arc::from("Scenario"),
+        0,
+        TransactionName::TransactionOnly(Arc::from("t")),
+    );
+    let mut scenario = ScenarioMetricAggregate::new(0, Arc::from("Scenario"));
+    for _ in 0..5 {
+        transaction.set_time_us(2_350, true);
+        scenario.update_us(2_350, 0);
+    }
+    metrics.transactions = vec![vec![transaction]];
+    metrics.scenarios = vec![scenario];
+    let dir = std::env::temp_dir().join(format!("goose-us-no-delta-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("report.json");
+    std::fs::write(
+        &path,
+        serde_json::to_string(&report_of(&metrics, None)).unwrap(),
+    )
+    .unwrap();
+    let baseline = load_baseline_file(&path).unwrap();
+    std::fs::remove_dir_all(&dir).unwrap();
+
+    let report = report_of(&metrics, Some(&baseline));
+    let request = &report.raw_request_metrics[0];
+    assert_eq!(request.response_time_minimum.to_string(), "2.35 (+0)");
+    assert_eq!(request.response_time_maximum.to_string(), "2.35 (+0)");
+    assert_eq!(
+        report.raw_response_metrics[0].percentile_50.to_string(),
+        "2.35 (+0)"
+    );
+    let transactions = report.transaction_metrics.unwrap();
+    let transaction = transactions.iter().find(|row| row.name == "t").unwrap();
+    assert_eq!(transaction.response_time_minimum.to_string(), "2.35 (+0)");
+    assert_eq!(transaction.response_time_maximum.to_string(), "2.35 (+0)");
+    let scenario = &report.scenario_metrics.unwrap()[0];
+    assert_eq!(scenario.response_time_minimum.to_string(), "2.35 (+0)");
+    assert_eq!(scenario.response_time_maximum.to_string(), "2.35 (+0)");
+}
+
 #[test]
 fn transaction_and_scenario_minimums_under_a_millisecond() {
     let mut metrics = GooseMetrics::default();
