@@ -86,154 +86,160 @@ pub(crate) fn percentile(
     }
 }
 
+/// A list this long finds a bucket by its index rather than by searching.
+const PLACED_FROM: usize = 32;
+
 /// How many times fell in each bucket, keyed by the bucket's fastest time in
-/// microseconds, fastest first. Held as a sorted list
-/// rather than a tree: a user's batch fills one with a few dozen buckets a
-/// second and the metrics processor merges it into the whole run's, and a
-/// sorted list does both without allocating a node per few buckets. It
-/// serializes as a JSON object of bucket to count, as a `BTreeMap` would.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct TimeBuckets(Vec<(u64, usize)>);
+/// microseconds. Held as a list rather than a tree: a user's batch fills one
+/// with a few dozen buckets a second and the metrics processor merges it into
+/// the whole run's, and a list does both without allocating a node per few
+/// buckets. A batch's list keeps its times in the order they came, which
+/// every merge takes; every other list is sorted, fastest first, and once it
+/// is long it also keeps where each bucket sits, so a merge finds a bucket
+/// without searching. It serializes as a JSON object of bucket to count, as
+/// a `BTreeMap` would.
+#[derive(Debug, Clone, Default)]
+pub struct TimeBuckets {
+    list: Vec<(u64, usize)>,
+    /// Once the list has [`PLACED_FROM`] buckets: for each bucket index, as
+    /// [`bucket_index`] counts them, its place in the list plus one, or 0
+    /// when the list does not hold it.
+    places: Vec<u32>,
+}
+
+impl PartialEq for TimeBuckets {
+    fn eq(&self, other: &Self) -> bool {
+        self.list == other.list
+    }
+}
+
+impl Eq for TimeBuckets {}
 
 impl TimeBuckets {
     /// No buckets.
     pub fn new() -> Self {
-        TimeBuckets(Vec::new())
+        TimeBuckets::default()
     }
 
     /// Add `count` to the bucket that starts at `bucket` microseconds.
     pub(crate) fn add(&mut self, bucket: u64, count: usize) {
+        if !self.places.is_empty() {
+            return self.add_placed(bucket, count);
+        }
         // Times usually arrive near the slowest bucket so far.
-        if let Some(last) = self.0.last_mut() {
+        if let Some(last) = self.list.last_mut() {
             if last.0 == bucket {
                 last.1 += count;
                 return;
             }
             if last.0 < bucket {
-                self.0.push((bucket, count));
-                return;
+                self.list.push((bucket, count));
+                return self.place_if_long();
             }
         }
-        match self.0.binary_search_by_key(&bucket, |&(key, _)| key) {
-            Ok(at) => self.0[at].1 += count,
-            Err(at) => self.0.insert(at, (bucket, count)),
+        match self.list.binary_search_by_key(&bucket, |&(key, _)| key) {
+            Ok(at) => self.list[at].1 += count,
+            Err(at) => {
+                self.list.insert(at, (bucket, count));
+                self.place_if_long();
+            }
+        }
+    }
+
+    /// Add `count` to the bucket that starts at `bucket` microseconds, by
+    /// its place.
+    fn add_placed(&mut self, bucket: u64, count: usize) {
+        let index = bucket_index(bucket);
+        if index >= self.places.len() {
+            self.places.resize(index + 1, 0);
+        }
+        match self.places[index] {
+            0 => {
+                let at = self
+                    .list
+                    .binary_search_by_key(&bucket, |&(key, _)| key)
+                    .unwrap_err();
+                self.list.insert(at, (bucket, count));
+                self.place_from(at);
+            }
+            place => self.list[place as usize - 1].1 += count,
+        }
+    }
+
+    /// Start keeping each bucket's place once the list is long.
+    fn place_if_long(&mut self) {
+        if self.list.len() >= PLACED_FROM {
+            self.place_from(0);
+        }
+    }
+
+    /// Note the place of every bucket from `at` in the list on.
+    fn place_from(&mut self, at: usize) {
+        if let Some(&(last, _)) = self.list.last() {
+            let size = bucket_index(last) + 1;
+            if self.places.len() < size {
+                self.places.resize(size, 0);
+            }
+        }
+        for (place, &(bucket, _)) in self.list.iter().enumerate().skip(at) {
+            self.places[bucket_index(bucket)] = place as u32 + 1;
         }
     }
 
     /// Add `count` to the bucket that starts at `bucket` microseconds,
-    /// leaving the list out of order until [`Self::finish`]: a user's batch
-    /// records times this way and is finished once, before it is sent.
+    /// leaving the list in the order its times came: a user's batch records
+    /// times this way, and a merge takes them in any order.
     pub(crate) fn push(&mut self, bucket: u64, count: usize) {
-        if self.0.capacity() == 0 {
-            // Room for a batch's buckets without growing a few times over.
-            self.0.reserve(32);
+        if self.list.capacity() == 0 {
+            // Room for a batch's times without growing a few times over.
+            self.list.reserve(32);
         }
-        self.0.push((bucket, count));
+        self.list.push((bucket, count));
     }
 
-    /// Sort what [`Self::push`] added and join the pieces of each bucket.
-    pub(crate) fn finish(&mut self) {
-        if self.0.windows(2).all(|pair| pair[0].0 < pair[1].0) {
-            return;
-        }
-        self.0.sort_unstable_by_key(|&(bucket, _)| bucket);
-        let mut joined: usize = 0;
-        for at in 1..self.0.len() {
-            if self.0[at].0 == self.0[joined].0 {
-                self.0[joined].1 += self.0[at].1;
-            } else {
-                joined += 1;
-                self.0[joined] = self.0[at];
-            }
-        }
-        self.0.truncate(joined + 1);
-    }
-
-    /// Add every bucket of `other`, handing each, as its fastest time and
-    /// count, to `also`.
+    /// Add every bucket of `other`, in whatever order it holds them, handing
+    /// each, as its fastest time and count, to `also`.
     pub(crate) fn merge(&mut self, other: &TimeBuckets, mut also: impl FnMut(u64, usize)) {
-        for &(bucket, count) in &other.0 {
+        for &(bucket, count) in &other.list {
             also(bucket, count);
-        }
-        if self.0.is_empty() {
-            self.0.extend_from_slice(&other.0);
-        } else if other.0.len() > self.0.len() {
-            // More buckets than held: one pass over both.
-            let mut merged = Vec::with_capacity(self.0.len() + other.0.len());
-            let (mut a, mut b) = (self.0.iter().peekable(), other.0.iter().peekable());
-            while let (Some(&&x), Some(&&y)) = (a.peek(), b.peek()) {
-                match x.0.cmp(&y.0) {
-                    std::cmp::Ordering::Less => {
-                        merged.push(x);
-                        a.next();
-                    }
-                    std::cmp::Ordering::Greater => {
-                        merged.push(y);
-                        b.next();
-                    }
-                    std::cmp::Ordering::Equal => {
-                        merged.push((x.0, x.1 + y.1));
-                        a.next();
-                        b.next();
-                    }
-                }
-            }
-            merged.extend(a);
-            merged.extend(b);
-            self.0 = merged;
-        } else {
-            // Fewer: each is found from where the last one was, and once a
-            // run's buckets are all seen, none is inserted.
-            let mut from = 0;
-            for &(bucket, count) in &other.0 {
-                match self.0[from..].binary_search_by_key(&bucket, |&(key, _)| key) {
-                    Ok(at) => {
-                        self.0[from + at].1 += count;
-                        from += at + 1;
-                    }
-                    Err(at) => {
-                        self.0.insert(from + at, (bucket, count));
-                        from += at + 1;
-                    }
-                }
-            }
+            self.add(bucket, count);
         }
     }
 
     /// Set the count of the bucket that starts at `bucket` microseconds.
     pub fn insert(&mut self, bucket: u64, count: usize) {
-        match self.0.binary_search_by_key(&bucket, |&(key, _)| key) {
-            Ok(at) => self.0[at].1 = count,
-            Err(at) => self.0.insert(at, (bucket, count)),
+        match self.list.binary_search_by_key(&bucket, |&(key, _)| key) {
+            Ok(at) => self.list[at].1 = count,
+            Err(_) => self.add(bucket, count),
         }
     }
 
     /// The count of the bucket that starts at `bucket` microseconds.
     pub fn get(&self, bucket: &u64) -> Option<&usize> {
-        self.0
+        self.list
             .binary_search_by_key(bucket, |&(key, _)| key)
             .ok()
-            .map(|at| &self.0[at].1)
+            .map(|at| &self.list[at].1)
     }
 
     /// How many buckets hold a time.
     pub fn len(&self) -> usize {
-        self.0.len()
+        self.list.len()
     }
 
     /// Whether no bucket holds a time.
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.list.is_empty()
     }
 
     /// Each bucket's fastest time and its count, fastest first.
     pub fn iter(&self) -> impl Iterator<Item = (&u64, &usize)> + '_ {
-        self.0.iter().map(|(bucket, count)| (bucket, count))
+        self.list.iter().map(|(bucket, count)| (bucket, count))
     }
 
     /// Each bucket's fastest time, fastest first.
     pub fn keys(&self) -> impl Iterator<Item = &u64> + '_ {
-        self.0.iter().map(|(bucket, _)| bucket)
+        self.list.iter().map(|(bucket, _)| bucket)
     }
 }
 
@@ -245,7 +251,7 @@ impl<'a> IntoIterator for &'a TimeBuckets {
     >;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.0.iter().map(|(bucket, count)| (bucket, count))
+        self.list.iter().map(|(bucket, count)| (bucket, count))
     }
 }
 
@@ -276,7 +282,7 @@ impl serde::Serialize for TimeBuckets {
 impl<'de> serde::Deserialize<'de> for TimeBuckets {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let map = std::collections::BTreeMap::<u64, usize>::deserialize(deserializer)?;
-        Ok(TimeBuckets(map.into_iter().collect()))
+        Ok(map.into_iter().collect())
     }
 }
 
@@ -333,14 +339,16 @@ mod test {
             let expected: Vec<(u64, usize)> = reference.iter().map(|(&b, &c)| (b, c)).collect();
             assert_eq!(flat, expected);
         }
-        // Pushed out of order and finished: the same buckets.
+        // Pushed out of order, each bucket in two pieces, and merged: the
+        // same buckets.
         let mut pushed = TimeBuckets::new();
-        for &(bucket, count) in merged.0.iter().rev() {
+        for &(bucket, count) in merged.list.iter().rev() {
             pushed.push(bucket, count / 2);
             pushed.push(bucket, count - count / 2);
         }
-        pushed.finish();
-        assert_eq!(pushed, merged);
+        let mut from_pushed = TimeBuckets::new();
+        from_pushed.merge(&pushed, |_, _| {});
+        assert_eq!(from_pushed, merged);
         let json = serde_json::to_string(&merged).unwrap();
         assert_eq!(serde_json::from_str::<TimeBuckets>(&json).unwrap(), merged);
         assert_eq!(json, serde_json::to_string(&reference).unwrap());

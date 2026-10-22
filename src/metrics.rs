@@ -191,23 +191,6 @@ pub struct GooseMetricBatch {
 }
 
 impl GooseMetricBatch {
-    /// Put in order the buckets the batch's timing data recorded out of
-    /// order, before it is sent.
-    pub(crate) fn finish(&mut self) {
-        for entry in self.requests.values_mut() {
-            entry.raw_data.finish();
-        }
-        for data in self.next_second.values_mut() {
-            data.finish();
-        }
-        for entry in self.transactions.values_mut() {
-            entry.run_times.finish();
-        }
-        for entry in self.scenarios.values_mut() {
-            entry.run_times.finish();
-        }
-    }
-
     /// Create a new empty batch stamped with the given epoch.
     pub(crate) fn new(epoch: u64) -> Self {
         GooseMetricBatch {
@@ -1270,8 +1253,8 @@ impl GooseRequestMetricTimingData {
         self.times_us.add(buckets::bucket_floor(us), 1);
     }
 
-    /// [`Self::record_time_us`] for a user's batch: the buckets stay out of
-    /// order until [`Self::finish`].
+    /// [`Self::record_time_us`] for a user's batch: the buckets stay in the
+    /// order the times came, which a merge takes.
     pub(crate) fn record_time_us_unsorted(&mut self, us: u64) {
         if self.counter == 0 || us < self.minimum_time_us {
             self.minimum_time_us = us;
@@ -1282,11 +1265,6 @@ impl GooseRequestMetricTimingData {
         self.total_time_us += us;
         self.counter += 1;
         self.times_us.push(buckets::bucket_floor(us), 1);
-    }
-
-    /// Put in order the buckets [`Self::record_time_us_unsorted`] recorded.
-    pub(crate) fn finish(&mut self) {
-        self.times_us.finish();
     }
 
     /// The time `percent` (0.0 to 1.0) of these times finished within, in

@@ -2669,8 +2669,7 @@ impl GooseUser {
             .metrics_epoch
             .as_ref()
             .map_or(0, |e| e.load(AtomicOrdering::Relaxed));
-        if let Some(mut batch) = self.metrics_batch.take() {
-            batch.finish();
+        if let Some(batch) = self.metrics_batch.take() {
             if let Some(metrics_channel) = self.metrics_channel.as_ref() {
                 if let Err(e) = metrics_channel.send(GooseMetric::Batch(Box::new(batch))) {
                     self.metrics_batch = Some(GooseMetricBatch::new(current_epoch));
@@ -5549,7 +5548,11 @@ mod tests {
             }
             assert_eq!(batch.requests.len(), times.len());
             for (key, entry) in &batch.requests {
-                assert_eq!(entry.raw_data, times[key], "{key}");
+                // A batch keeps its buckets in the order the times came;
+                // merged, they are the same timing data.
+                let mut merged = GooseRequestMetricTimingData::new(None);
+                merged.merge(&entry.raw_data);
+                assert_eq!(merged, times[key], "{key}");
                 assert_eq!(
                     entry.status_code_counts,
                     HashMap::from([(200, times[key].counter)])
