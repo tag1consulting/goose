@@ -775,3 +775,45 @@ test("rows and KPIs show the snapshot's microseconds under a millisecond", async
   assert.equal(window.document.getElementById("kpi-p95").textContent, "0.9");
   assert.equal(window.document.getElementById("kpi-avg").textContent, "0.44");
 });
+
+test("the KPI strip: users target in a small, RPS whole from 100, averages as times", async () => {
+  const window = await load(
+    snapshotWith(
+      {
+        active_users: 100000,
+        target_users: 100000,
+        aggregate: {
+          ...IDLE_SNAPSHOT.aggregate,
+          total_requests: 5,
+          requests_per_second: 21834.56,
+          response_time_avg_ms: 12.5,
+        },
+      },
+      { metrics_disabled: false }
+    )
+  );
+  const doc = window.document;
+  const users = doc.getElementById("kpi-users");
+  assert.equal(users.childNodes[0].nodeType, window.Node.TEXT_NODE);
+  assert.equal(users.childNodes[0].textContent, int(100000));
+  const small = users.querySelector("small");
+  assert.ok(small, "the target is in a <small>");
+  assert.equal(small.textContent, " / " + int(100000));
+  assert.equal(doc.getElementById("kpi-rps").textContent, int(21835));
+  assert.equal(doc.getElementById("kpi-rps").parentElement.title, "RPS " + rate(21834.56));
+  assert.equal(doc.getElementById("kpi-avg").textContent, "13");
+  const avg = Array.from(doc.querySelectorAll("#aggregate-body .kv")).find(
+    (kv) => kv.querySelector(".k").textContent === "Avg ms"
+  );
+  assert.equal(avg.querySelector(".v").textContent, "13");
+});
+
+test("the RPS KPI keeps two decimals under 100", async () => {
+  const window = await load(
+    snapshotWith(
+      { aggregate: { ...IDLE_SNAPSHOT.aggregate, total_requests: 5, requests_per_second: 99.5 } },
+      { metrics_disabled: false }
+    )
+  );
+  assert.equal(window.document.getElementById("kpi-rps").textContent, rate(99.5));
+});

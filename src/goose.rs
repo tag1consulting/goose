@@ -6613,7 +6613,7 @@ mod tests {
                         &report_percents,
                         micros(request.response_time_minimum.value().0),
                         micros(request.response_time_maximum.value().0),
-                        // As the reports print it.
+                        // The mean, to the hundredth.
                         format!("{:.2}", request.response_time_average.value()),
                     ),
                     figures(

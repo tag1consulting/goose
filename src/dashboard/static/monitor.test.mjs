@@ -900,6 +900,10 @@ test("each summary follows the data: value, then rising, falling or steady", asy
   assert.equal(users.textContent, "Users " + int(96) + " of " + int(1500) + ", falling.");
   assert.equal(latency.textContent, "Average " + int(20) + " ms, falling.");
 
+  // An average under 10 ms keeps its hundredths, as times do.
+  await send(page, snap(step(100, 120), step(100, 120), step(2.35, 2.35)));
+  assert.equal(latency.textContent, "Average 2.35 ms, steady.");
+
   // No target users (a test plan, or not known yet): no "of 0".
   await send(page, snap(step(100, 120), step(100, 120), step(20, 20), 0));
   assert.equal(users.textContent, "Users " + int(120) + ", rising.");

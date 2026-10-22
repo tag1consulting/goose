@@ -1690,7 +1690,7 @@ impl<'a> RunTimesOut<'a> {
     }
 }
 
-/// Run times as a transaction or scenario aggregate was read: with
+/// Timing data as a request, transaction or scenario was read: with
 /// microseconds (`times_us` and the fastest, slowest and total), or only the
 /// whole milliseconds of a file written before them.
 fn run_times(

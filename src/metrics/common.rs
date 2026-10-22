@@ -609,14 +609,27 @@ pub(crate) fn compare_reports(
 /// buckets are rebuilt from its raw timing data, as a live report's rows
 /// are, since its JSON rows hold whole milliseconds; a report without them
 /// keeps its rows.
-fn read_report(reader: impl Read) -> Result<ReportData<'static>, serde_json::Error> {
+fn read_report(mut reader: impl Read) -> Result<ReportData<'static>, serde_json::Error> {
     let mut text = String::new();
-    let mut reader = reader;
     reader
         .read_to_string(&mut text)
         .map_err(serde_json::Error::io)?;
     let mut report = serde_json::from_str::<BaselineReportData>(&text)?.into_report_data();
     if serde_json::from_str::<MicrosecondsProbe>(&text)?.has_microseconds() {
+        // The rows are rebuilt as a live report's are, which takes each
+        // request's name from its key, "{method} {name}".
+        if let Some(key) = report
+            .raw_metrics
+            .requests
+            .iter()
+            .find_map(|(key, request)| {
+                (!key.starts_with(&format!("{} ", request.method_label()))).then_some(key)
+            })
+        {
+            return Err(serde::de::Error::custom(format!(
+                "request {key:?} does not start with its method"
+            )));
+        }
         rebuild_timed_rows(&mut report);
     }
     Ok(report)

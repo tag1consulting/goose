@@ -471,6 +471,59 @@ fn a_report_with_microseconds_gives_no_delta_to_the_same_times() {
     assert_eq!(scenario.response_time_maximum.to_string(), "2.35 (+0)");
 }
 
+/// A report with microseconds and coordinated omission adjusted rows, loaded
+/// as a baseline, gives no delta to the same adjusted times: those rows are
+/// rebuilt from the microsecond buckets too.
+#[test]
+fn a_report_with_microseconds_gives_no_coordinated_omission_delta_to_the_same_times() {
+    let mut metrics = request_metrics(&[("GET /", &[2_350; 5])]);
+    let mut adjusted = GooseRequestMetricTimingData::default();
+    for _ in 0..5 {
+        adjusted.record_time_us(2_350);
+    }
+    metrics
+        .requests
+        .get_mut("GET /")
+        .unwrap()
+        .coordinated_omission_data = Some(adjusted);
+    let dir = std::env::temp_dir().join(format!("goose-us-co-no-delta-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("report.json");
+    std::fs::write(
+        &path,
+        serde_json::to_string(&report_of(&metrics, None)).unwrap(),
+    )
+    .unwrap();
+    let baseline = load_baseline_file(&path).unwrap();
+    std::fs::remove_dir_all(&dir).unwrap();
+
+    let report = report_of(&metrics, Some(&baseline));
+    let co_request = &report.co_request_metrics.as_ref().unwrap()[0];
+    assert_eq!(co_request.name, "/");
+    assert_eq!(co_request.response_time_maximum.to_string(), "2.35 (+0)");
+    let co_response = &report.co_response_metrics.as_ref().unwrap()[0];
+    assert_eq!(co_response.name, "/");
+    assert_eq!(co_response.percentile_50.to_string(), "2.35 (+0)");
+}
+
+/// A report with microseconds whose request key does not start with its
+/// method is refused, not rebuilt.
+#[test]
+fn a_report_with_microseconds_and_a_key_without_its_method_is_refused() {
+    let metrics = request_metrics(&[("GET /", &[2_350; 5])]);
+    let mut json = serde_json::to_value(report_of(&metrics, None)).unwrap();
+    let requests = json["raw_metrics"]["requests"].as_object_mut().unwrap();
+    let request = requests.remove("GET /").unwrap();
+    requests.insert("/".to_string(), request);
+    let dir = std::env::temp_dir().join(format!("goose-us-bad-key-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("report.json");
+    std::fs::write(&path, json.to_string()).unwrap();
+    let loaded = load_baseline_file(&path);
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert!(loaded.is_err());
+}
+
 #[test]
 fn transaction_and_scenario_minimums_under_a_millisecond() {
     let mut metrics = GooseMetrics::default();

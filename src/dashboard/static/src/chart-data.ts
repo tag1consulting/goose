@@ -113,7 +113,7 @@ export function updateChartData(series: SeriesWindow, averageLatency: boolean, t
     setLatencySummary(
       series.avg_latency_ms.length === 0
         ? "No data yet."
-        : withTrend("Average " + formatInt(lat.mean) + " ms", lat.trend) + "."
+        : withTrend("Average " + formatMs(lat.mean) + " ms", lat.trend) + "."
     );
     showLatencyData(series.avg_latency_ms.map((avg, i) => ({ second: start + i, avg })));
   }
