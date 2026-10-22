@@ -1028,4 +1028,31 @@ fn a_breakdown_average_on_a_half_microsecond_reads_the_same_everywhere() {
         .unwrap();
     let html = crate::report::raw_request_metrics_row(row.clone());
     assert!(html.contains("<td>0.01</td>"), "{}", html);
+    // The maximum, 5 µs, reads 0.01 too: the average cell itself.
+    assert_eq!(format_value(&row.response_time_average), "0.01");
+}
+
+/// Two saved runs with microseconds compare by their microseconds: each
+/// run's rows are rebuilt from its raw timing data, as a baseline's are.
+#[cfg(feature = "dashboard")]
+#[test]
+fn saved_runs_with_microseconds_compare_by_their_microseconds() {
+    let metrics = request_metrics(&[("GET /", &[2_350; 5])]);
+    let dir = std::env::temp_dir().join(format!("goose-us-compare-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("report.json");
+    std::fs::write(
+        &path,
+        serde_json::to_string(&report_of(&metrics, None)).unwrap(),
+    )
+    .unwrap();
+    let markdown = super::common::compare_reports(&path, "run", &path, "baseline").unwrap();
+    std::fs::remove_dir_all(&dir).unwrap();
+    let markdown = String::from_utf8(markdown).unwrap();
+    // Average, minimum and maximum.
+    assert!(
+        markdown.contains("| 2.35 (+0) | 2.35 (+0) | 2.35 (+0) |"),
+        "{}",
+        markdown
+    );
 }
