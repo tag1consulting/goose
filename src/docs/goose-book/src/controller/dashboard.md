@@ -566,7 +566,7 @@ Save report can be turned on or off at any time. While it is on, Goose keeps the
 
 **Save report now** writes the run's report as it stands into its folder while the run continues, marked `in_progress`. The report at the end of the run replaces it, also when Save report is off. The second switch, **Include graph data**, adds the per second graph data to the JSON report, as `--report-graph-data` does, and can also be changed at any time.
 
-Changing either switch, Save report now and Delete need `--dashboard-control` and the control token, as Start and Stop do. Without control the switches are shown read only, so Save report stays on and every `--dashboard` run writes `report.json` and `report.html` into its folder. `--no-metrics` keeps no report, so Save report stays off.
+Save report now, Delete, and changing either switch need `--dashboard-control` and the control token, as Start and Stop do. Without control the switches are shown read only, so Save report stays on and every `--dashboard` run writes `report.json` and `report.html` into its folder. `--no-metrics` keeps no report, so Save report stays off.
 
 When a run ends, a banner reads `Report saved in goose-runs/<folder>. Download HTML, JSON or Markdown.` with a button for each report, or says why the report couldn't be saved.
 
@@ -738,7 +738,7 @@ The tests load the bundled `app.js` into a jsdom page with a stubbed `fetch`, so
 
 ## GraphData memory cost
 
-Enabling `--dashboard` turns on the same per-second **GraphData** series collection used for HTML report graphs (also enabled by `--report-file`). While a report will be written at the end of the run, to a `--report-file` path or by [Save report](#saving-the-report), on by default with `--dashboard`, Goose keeps every second of the whole run for it. With Save report off and no `--report-file` path, the dashboard keeps only twice its chart window (10 minutes). Without `--dashboard` or `--report-file` nothing is recorded. That cost applies even when no browser is connected:
+Enabling `--dashboard` turns on the same per-second **GraphData** series collection used for HTML report graphs (also enabled by `--report-file`). Goose keeps every second of the whole run while a report will be written at the end of it: to a `--report-file` path, or by [Save report](#saving-the-report), which is on by default with `--dashboard`. With Save report off and no `--report-file` path, the dashboard keeps only twice its chart window (10 minutes). Without `--dashboard` or `--report-file` nothing is recorded. That cost applies even when no browser is connected:
 
 - Per-second counters for requests, errors, users, and average latency are retained for the duration of the test.
 - Memory scales with unique request names × run length (same class of cost as generating HTML graphs).

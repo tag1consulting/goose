@@ -34,7 +34,7 @@ This writes `report.json`, `report.html` and `requests.csv` into the run's folde
 cargo run --example simple -- --host http://localhost:8080 -t 30s --output-dir goose-runs/nightly --report-file
 ```
 
-The first run writes into `goose-runs/nightly`, the next into `goose-runs/nightly-2`. A folder Goose can't write to stops the run before any load, with an error naming the folder.
+The first run writes into `goose-runs/nightly`, the next into `goose-runs/nightly-2`. `--output-dir` needs an output flag given without a path, or `--dashboard`; on its own it is an error, as the folder would hold nothing. A folder Goose can't write to stops the run before any load, with an error naming the folder.
 
 ## What a report holds
 
@@ -78,7 +78,7 @@ On a long soak test with `--dashboard-control` and no `--report-file` path, turn
 
 With `--output-dir goose-runs/nightly`, the panel lists the folders in `goose-runs`. It lists only folders whose name is a letter or digit followed by letters, digits, `.`, `_` and `-`, so a run written to `goose-runs/my run` is not listed.
 
-**13. Changing either switch, Save report now and Delete need `--dashboard-control` and the control token, like Start and Stop.** Without control the switches are shown read only, so Save report stays on and every `--dashboard` run writes `report.json` and `report.html` into its folder.
+**13. Save report now, Delete, and changing either switch need `--dashboard-control` and the control token, like Start and Stop.** Without control the switches are shown read only, so Save report stays on and every `--dashboard` run writes `report.json` and `report.html` into its folder.
 
 ```bash
 cargo run --features dashboard --example simple -- --host http://localhost:8080 \
@@ -120,10 +120,10 @@ cargo run --release --example simple -- --host http://localhost:8080 -t 5m \
   --output-dir goose-runs/nightly --report-file
 ```
 
-Later, start the dashboard from the same working directory. Its runs panel lists `nightly` beside the dashboard's own runs:
+Later, start the dashboard from the same working directory. With `--no-autostart` it waits for Start instead of running a new load test, and its runs panel lists `nightly`:
 
 ```bash
-cargo run --release --features dashboard --example simple -- --host http://localhost:8080 --dashboard
+cargo run --release --features dashboard --example simple -- --host http://localhost:8080 --dashboard --no-autostart
 ```
 
 ### Keep files small

@@ -70,7 +70,7 @@ The following defaults can be configured with a `bool`:
  - graph only totals in reports: `GooseDefault::NoGranularData`
  - add graph data to the JSON report: `GooseDefault::ReportGraphData`
 
-A default names a path, never the run's folder: `GooseDefault::OutputDir` takes effect with `GooseDefault::Dashboard`, or with an output flag given without a path on the command line.
+A default names a path, never the run's folder. `GooseDefault::OutputDir` needs the dashboard, or an output flag given without a path on the command line. Without either, Goose refuses it with an error before the load test starts.
 
 The following defaults can be configured with a `GooseLogFormat`:
  - request log file format: `GooseDefault::RequestFormat`
