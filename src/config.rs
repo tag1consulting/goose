@@ -357,8 +357,8 @@ pub struct GooseConfiguration {
     pub notes: Option<String>,
     /// Add graph data to the JSON report
     ///
-    /// Adds the per second data the HTML report graphs to the JSON report, so a report
-    /// rendered from it with --render-report has its graphs. Needs a report.
+    /// Adds the per second data behind the HTML report's graphs to the JSON report, so
+    /// a report rendered from it with --render-report has its graphs. Needs a report.
     ///
     /// Set in code with GooseDefault::ReportGraphData.
     #[arg(help_heading = "Reports", long)]

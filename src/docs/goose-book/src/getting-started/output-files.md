@@ -62,21 +62,21 @@ cargo run --example simple -- --render-report results.json --report-file results
 
 ## The dashboard
 
-**9. The dashboard header shows a Save report switch: whether this run's `report.json` and `report.html` are written to its folder.** It starts on with `--dashboard`, also when `--report-file` paths are given (turn it off to get only those), and a bare `--report-file` is the same switch for runs without the dashboard. The header also lists any `--report-file` paths from the command line, which are always written.
+**9. The dashboard's report bar, at the top of the page, shows a Save report switch: whether this run's `report.json` and `report.html` are written to its folder.** It starts on with `--dashboard`, also when `--report-file` paths are given (turn it off to get only those), and a bare `--report-file` is the same switch for runs without the dashboard. The bar also lists any `--report-file` paths from the command line, which are always written.
 
 ```bash
 cargo run --features dashboard --example simple -- --host http://localhost:8080 --dashboard
 ```
 
-**10. Save report can be turned on or off at any time.** While it is on, Goose keeps the run's graph data and heatmap for the whole run; while it is off, only the dashboard's last 10 minutes. Turning it on during a run keeps graphs from that point on, plus the last 10 minutes before it, and rule 5 labels the report.
+**10. Save report can be turned on or off at any time.** While it is on, Goose keeps the run's graph data and heatmap for the whole run; while it is off, only the dashboard's last 10 minutes of graphs and 5 minutes of heatmap. Turning it on during a run keeps graphs from that point on, plus that window before it, and rule 5 labels the report.
 
 Keep Save report off through a long soak test to keep memory flat, and turn it on before the part of the run you want graphed.
 
-**11. Save report now writes the run's report as it stands into its folder while the run continues, and marks it as in progress.** The report at the end of the run replaces it. A second header switch, **Include graph data**, is rule 7's flag and can also be changed at any time.
+**11. Save report now writes the run's report as it stands into its folder while the run continues, and marks it as in progress.** The report at the end of the run replaces it. A second switch in the bar, **Include graph data**, is rule 7's flag and can also be changed at any time.
 
 **12. The runs panel lists the folders that hold a `report.json` or `report.json.gz` inside the parent of the run's folder:** the folder `--output-dir` names sits in, or `goose-runs` by default. Newest first, with their notes. A report still marked in progress shows as running for this run and as incomplete for any other (a run that ended without its final report). Each run offers HTML, JSON and Markdown, rendering any format the folder lacks from its JSON.
 
-With `--output-dir goose-runs/nightly`, the panel lists the folders in `goose-runs`.
+With `--output-dir goose-runs/nightly`, the panel lists the folders in `goose-runs`. It lists only folders whose name is a letter or digit followed by letters, digits, `.`, `_` and `-`, so a run written to `goose-runs/my run` is not listed.
 
 **13. Changing either switch, Save report now and Delete need `--dashboard-control` and the control token, like Start and Stop.** Without control the switches are shown read only.
 

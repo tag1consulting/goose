@@ -572,7 +572,7 @@ When a run ends, a banner reads `Report saved in goose-runs/<folder>. Download H
 
 ### The runs panel
 
-The **Runs** panel lists the folders that hold a `report.json` or `report.json.gz` in the folder run folders go in: the folder `--output-dir` sits in, or `goose-runs`. It lists them also while Goose is Idle, before any run has a folder, and it lists folders written by runs without the dashboard. Newest first, by start time, each row shows the folder's name, when the run started (in the viewer's local time), its notes, how long it ran, its users, requests and failures, how it ended (`Finished`, `Stopped`, `Ctrl-C`, `Canceled: <reason>`, `Users exited`), and the test. A report still marked in progress shows as `Running` for the run in progress and as `Incomplete` for any other: a run that ended without its final report. The first 50 rows are shown; `Show all` lists the rest. The list is read when the page opens, when a run starts, and when a report is written, never on a timer.
+The **Runs** panel lists the folders that hold a `report.json` or `report.json.gz` in the folder run folders go in: the folder `--output-dir` sits in, or `goose-runs`. It lists only folders with a name the report routes take; see [Report endpoints](#report-endpoints). It lists them also while Goose is Idle, before any run has a folder, and it lists folders written by runs without the dashboard. Newest first, by start time, each row shows the folder's name, when the run started (in the viewer's local time), its notes, how long it ran, its users, requests and failures, how it ended (`Finished`, `Stopped`, `Ctrl-C`, `Canceled: <reason>`, `Users exited`), and the test. A report still marked in progress shows as `Running` for the run in progress and as `Incomplete` for any other: a run that ended without its final report. The first 50 rows are shown; `Show all` lists the rest. The list is read when the page opens, when a run starts, and when a report is written, never on a timer.
 
 Each row offers HTML, JSON and Markdown. A format the folder lacks is rendered from its JSON report; without graph data in it, the rendered HTML report says the graphs were not recorded.
 
@@ -593,7 +593,7 @@ The `GET` routes need the token when one is configured, as `GET /api/v1/snapshot
 | `GET /api/v1/reports/{name}/compare.md?baseline={name}` | Report `{name}` compared to the baseline, as Markdown, named `goose-<test>-<name>-vs-<baseline>.md`, starting with a line naming both and when each started. `422` with a one line reason when a run has no requests, or its JSON report can't be read or is inconsistent |
 | `DELETE /api/v1/reports/{name}` | `204` once the folder's `report.json`, `report.html`, `report.md`, `goose.log` and the request, transaction, scenario, error and debug logs Goose names there, each plain or gzipped, are deleted, then the folder if that leaves it empty; `409` for the folder of the run in progress; `404` for a folder the panel does not list |
 
-A name is a letter or digit, then letters, digits, `.`, `_` and `-`. A name that is not one, a folder that is not one level down, a symlink, and a folder without a regular JSON report is a plain `404`. A report still being written is not listed, as its JSON report is written last, through a temporary file and a rename. Reports and comparisons are sent with `Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, `Cache-Control: no-store` and `Content-Security-Policy: sandbox`, so a report opened anyway runs no script with the dashboard's origin.
+A name is a letter or digit, then letters, digits, `.`, `_` and `-`. A folder with any other name is not listed. A name that is not one, a folder that is not one level down, a symlink, and a folder without a regular JSON report is a plain `404`. A report still being written is not listed, as its JSON report is written last, through a temporary file and a rename. Reports and comparisons are sent with `Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, `Cache-Control: no-store` and `Content-Security-Policy: sandbox`, so a report opened anyway runs no script with the dashboard's origin.
 
 ```bash
 curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:5118/api/v1/reports
@@ -609,7 +609,7 @@ With no token, which only a loopback bind allows, every user on this machine can
 
 ### Waiting after an autostarted run
 
-When an autostarted `--dashboard` run (one without `--no-autostart`) ends, Save report wrote its report, and any client is connected to the event stream, Goose stays up instead of exiting, so the report can still be downloaded. With `--dashboard-control` it prints:
+When an autostarted `--dashboard` run (one without `--no-autostart`) ends, Goose stays up instead of exiting if Save report wrote its report and any client is connected to the event stream, so the report can still be downloaded. With `--dashboard-control` it prints:
 
 ```
 Run finished. Download it from the dashboard at http://127.0.0.1:5118. Press Quit in the dashboard or Ctrl-C to exit.
