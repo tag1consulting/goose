@@ -151,6 +151,8 @@ cargo run --release -- --report-file report.html --baseline-file baseline.json
 
 When a baseline file is provided, all numeric metrics in every report format (HTML, JSON, Markdown) will include a delta showing the difference from the baseline. For example, instead of just showing `1,234` requests, the report will show `1,234 (+200)` if the current run had 200 more requests than the baseline, or `1,234 (-50)` if it had 50 fewer.
 
+A time's delta is the difference of the two values shown. A 0.19 baseline's times come from its microsecond buckets. A report from an older Goose holds whole milliseconds, truncated, so from 10 ms an unchanged time can read one millisecond more against it, such as `38 (+1)`.
+
 Deltas are calculated for:
 
 - **Requests**: number of requests, failures, average/min/max response time, requests/failures per second

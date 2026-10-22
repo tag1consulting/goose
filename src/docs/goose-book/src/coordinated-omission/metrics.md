@@ -4,7 +4,7 @@ When Coordinated Omission Mitigation kicks in, Goose tracks both the "raw" metri
 
 The following example was "contrived". The [`drupal_memcache`](../example/drupal-memcache.md) example was run for 15 seconds, and after 10 seconds the upstream Apache server was manually "paused" for 3 seconds, forcing some abnormally slow queries. (More specifically, the apache web server was started by running `. /etc/apache2/envvars && /usr/sbin/apache2 -DFOREGROUND`, it was "paused" by pressing `ctrl-z`, and it was resumed three seconds later by typing `fg`.) In the "PER REQUEST METRICS" Goose shows first the "raw" metrics", followed by the "adjusted" metrics:
 
-These samples are Goose 0.18 output. Goose 0.19 shows times under 10 ms to the hundredth of a millisecond, averages from 10 ms in whole milliseconds, and no longer rounds percentiles above 1 second to whole seconds.
+These samples are output from an older Goose (0.12). Goose 0.19 shows times and averages under 10 ms to the hundredth of a millisecond and from 10 ms in whole milliseconds, rounded half up. It no longer rounds percentiles above 100 ms.
 
 ```bash
  ------------------------------------------------------------------------------

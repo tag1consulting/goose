@@ -38,7 +38,7 @@ test.afterEach(() => {
 
 // --- Goose's buckets, as the server's bucket table lists them -------------
 
-// round_metric_time in src/metrics.rs.
+// The whole millisecond rounding Goose used before 0.19.
 function roundMetricTime(t) {
   if (t <= 100) return t;
   if (t <= 500) return Math.round(t / 10) * 10;

@@ -6,7 +6,7 @@ In this case, the [Drupal Umami demo](https://www.drupal.org/docs/umami-drupal-d
 
 ## ASCII metrics
 
-This sample is Goose 0.18.1 output. Goose 0.19 shows times under 10 ms to the hundredth of a millisecond and averages from 10 ms in whole milliseconds, and no longer rounds percentiles above 100 ms.
+This sample is Goose 0.18.1 output. Goose 0.19 shows times and averages under 10 ms to the hundredth of a millisecond and from 10 ms in whole milliseconds, rounded half up. It no longer rounds percentiles above 100 ms.
 
 ```bash
 % cargo run --release --example umami -- --host http://umami.ddev.site/ -u9 -r3 -t1m --no-reset-metrics --report-file report.html
@@ -372,7 +372,7 @@ When a request returns multiple different HTTP status codes during a load test, 
    └─ 404 (6.1%)          |        7.73 |       7.02 |        8.88 |          -
 ```
 
-In this example, from the `simple` example against a test server that answers some requests for `/` with a `404`, the `GET /` request returned both `200` and `404` responses. The breakdown shows that 404 responses took longer on average (7.73 ms against 4.49 ms), so the server spent more time on the requests it could not serve.
+In this example, from the `simple` example against a test server that answers some requests for `/` with a `404`, the `GET /` request returned both `200` and `404` responses. The breakdown shows that 404 responses took longer on average (7.73 ms against 4.49 ms).
 
 Each breakdown row shows the status code, the percentage of total requests with that code, and the average, minimum, and maximum response times for that status code. The median column shows `-` because per-status-code breakdowns track aggregate statistics (count, total, min, max) rather than full response time distributions, so percentile calculations are not available at this level. Full percentile data remains available on the aggregate row.
 

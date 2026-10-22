@@ -605,10 +605,10 @@ pub(crate) fn compare_reports(
     Ok(out)
 }
 
-/// A JSON report as a baseline. The rows of a report with microsecond
-/// buckets are rebuilt from its raw timing data, as a live report's rows
-/// are, since its JSON rows hold whole milliseconds; a report without them
-/// keeps its rows.
+/// A JSON report as a baseline. A report's JSON rows hold whole
+/// milliseconds, so when the report has microsecond buckets its rows are
+/// rebuilt from its raw timing data, as a live report's are. A report
+/// without microsecond buckets keeps its rows.
 fn read_report(mut reader: impl Read) -> Result<ReportData<'static>, serde_json::Error> {
     let mut text = String::new();
     reader
