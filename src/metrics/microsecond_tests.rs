@@ -509,6 +509,45 @@ fn a_report_with_microseconds_gives_no_coordinated_omission_delta_to_the_same_ti
     assert_eq!(co_response.percentile_50.to_string(), "2.35 (+0)");
 }
 
+/// A report with microseconds from a run with transactions but no requests,
+/// loaded as a baseline, gives no delta to the same transaction and scenario
+/// times: its rows are rebuilt too.
+#[test]
+fn a_report_with_microseconds_and_no_requests_gives_no_delta_to_the_same_times() {
+    let mut metrics = GooseMetrics {
+        duration: 60,
+        ..Default::default()
+    };
+    let mut transaction = TransactionMetricAggregate::new(
+        0,
+        Arc::from("Scenario"),
+        0,
+        TransactionName::TransactionOnly(Arc::from("t")),
+    );
+    transaction.set_time_us(140, true);
+    let mut scenario = ScenarioMetricAggregate::new(0, Arc::from("Scenario"));
+    scenario.update_us(140, 0);
+    metrics.transactions = vec![vec![transaction]];
+    metrics.scenarios = vec![scenario];
+    let dir = std::env::temp_dir().join(format!("goose-us-no-requests-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("report.json");
+    std::fs::write(
+        &path,
+        serde_json::to_string(&report_of(&metrics, None)).unwrap(),
+    )
+    .unwrap();
+    let baseline = load_baseline_file(&path).unwrap();
+    std::fs::remove_dir_all(&dir).unwrap();
+
+    let report = report_of(&metrics, Some(&baseline));
+    let transactions = report.transaction_metrics.unwrap();
+    let transaction = transactions.iter().find(|row| row.name == "t").unwrap();
+    assert_eq!(transaction.response_time_minimum.to_string(), "0.14 (+0)");
+    let scenario = &report.scenario_metrics.unwrap()[0];
+    assert_eq!(scenario.response_time_maximum.to_string(), "0.14 (+0)");
+}
+
 /// A report with microseconds whose request key does not start with its
 /// method is refused, not rebuilt.
 #[test]
@@ -902,6 +941,8 @@ fn html_and_markdown_reports_show_averages_as_times() {
         report.co_request_metrics.clone().unwrap()[0].clone(),
     );
     assert!(html.contains("<td>1.5</td>"), "{}", html);
+    // The standard deviation of the measured and adjusted averages, 0.
+    assert!(html.contains("<td>0</td>"), "{}", html);
 
     let mut markdown = Vec::new();
     crate::report::write_markdown_report(&mut markdown, report).unwrap();
@@ -911,5 +952,54 @@ fn html_and_markdown_reports_show_averages_as_times() {
         "{}",
         markdown
     );
+    assert!(
+        markdown.contains("| 0.0 t | 2 | 0 | 1.5 | 1 | 2 |"),
+        "{}",
+        markdown
+    );
+    assert!(
+        markdown.contains("| Scenario | 1 | 2 | 1.5 | 1  | 2 |"),
+        "{}",
+        markdown
+    );
     assert!(!markdown.contains("1.50"), "{}", markdown);
+}
+
+/// A status code breakdown's average is a time, shown as times are, in the
+/// console and the HTML and Markdown reports: a mean of 1.5 ms reads 1.5.
+#[test]
+fn status_code_breakdown_averages_show_as_times() {
+    let mut metrics = request_metrics(&[("GET /", &[1_000, 2_000, 1_000, 2_000])]);
+    let request = metrics.requests.get_mut("GET /").unwrap();
+    for (status, us) in [(200, 1_000), (200, 2_000), (500, 1_000), (500, 2_000)] {
+        request.record_status_code_time_us(status, us);
+    }
+    let console = metrics.to_string();
+    let breakdowns: Vec<Vec<&str>> = console
+        .lines()
+        .filter(|line| line.contains("\u{2514}\u{2500}"))
+        .map(|line| line.split('|').map(str::trim).collect())
+        .collect();
+    assert_eq!(breakdowns.len(), 2, "{}", console);
+    for cells in &breakdowns {
+        assert_eq!(cells[1..4], ["1.5", "1", "2"], "{}", console);
+    }
+    let report = report_of(&metrics, None);
+    let rows: Vec<_> = report
+        .raw_request_metrics
+        .iter()
+        .filter(|row| row.is_breakdown)
+        .collect();
+    assert_eq!(rows.len(), 2);
+    for row in rows {
+        let html = crate::report::raw_request_metrics_row(row.clone());
+        assert!(html.contains("<td>1.5</td>"), "{}", html);
+    }
+    let mut markdown = Vec::new();
+    crate::report::write_markdown_report(&mut markdown, report).unwrap();
+    let markdown = String::from_utf8(markdown).unwrap();
+    for status in [200, 500] {
+        let line = format!("| | \u{2514}\u{2500} {status} (50.0%) | 2 | | 1.5 | 1 | 2 | | |");
+        assert!(markdown.contains(&line), "{}", markdown);
+    }
 }

@@ -635,8 +635,8 @@ fn read_report(mut reader: impl Read) -> Result<ReportData<'static>, serde_json:
     Ok(report)
 }
 
-/// Whether a JSON report's requests carry `times_us`, as reports from Goose
-/// 0.19 on do.
+/// Whether a JSON report's requests, transactions or scenarios carry
+/// `times_us`, as reports from Goose 0.19 on do.
 #[derive(Deserialize)]
 struct MicrosecondsProbe {
     raw_metrics: ProbeMetrics,
@@ -645,6 +645,10 @@ struct MicrosecondsProbe {
 #[derive(Deserialize)]
 struct ProbeMetrics {
     requests: HashMap<String, ProbeRequest>,
+    #[serde(default)]
+    transactions: Vec<Vec<ProbeTimingData>>,
+    #[serde(default)]
+    scenarios: Vec<ProbeTimingData>,
 }
 
 #[derive(Deserialize)]
@@ -659,10 +663,20 @@ struct ProbeTimingData {
 
 impl MicrosecondsProbe {
     fn has_microseconds(&self) -> bool {
-        self.raw_metrics
+        let metrics = &self.raw_metrics;
+        metrics
             .requests
             .values()
             .any(|request| request.raw_data.times_us.is_some())
+            || metrics
+                .transactions
+                .iter()
+                .flatten()
+                .any(|transaction| transaction.times_us.is_some())
+            || metrics
+                .scenarios
+                .iter()
+                .any(|scenario| scenario.times_us.is_some())
     }
 }
 

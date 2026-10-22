@@ -5361,6 +5361,11 @@ mod test {
         let rows = printed_rows(&printed, "Aggregated");
         // Response times: measured, then adjusted (Avg, Std Dev, Max, Median).
         assert_eq!(rows[1][0], "201");
+        // The standard deviation of the measured and adjusted averages, 35
+        // and 201.25 ms.
+        assert_eq!(rows[1][1], "118");
+        // And /a's, of 15 and 310 ms.
+        assert_eq!(printed_rows(&printed, "GET /a")[1][1], "209");
         assert_eq!(rows[1][2], "900");
         assert_eq!(rows[1][3], "40");
         // Percentiles: measured, then adjusted (50%, 75%, 98%, ...).
