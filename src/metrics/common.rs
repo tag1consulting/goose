@@ -566,8 +566,8 @@ pub(crate) fn read_report_text(path: &Path) -> std::io::Result<String> {
     Ok(text)
 }
 
-/// Load baseline data from a JSON report, or from the `report.json` in a
-/// folder when `path` is a folder.
+/// Load baseline data from a JSON report, plain or gzipped, or from the
+/// `report.json`, else `report.json.gz`, in a folder when `path` is a folder.
 pub fn load_baseline_file<P: AsRef<Path>>(path: P) -> Result<ReportData<'static>, GooseError> {
     let path_str = path.as_ref().to_string_lossy();
     let file_path = json_report_path(path.as_ref());

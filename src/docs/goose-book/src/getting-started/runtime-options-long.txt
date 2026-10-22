@@ -216,18 +216,18 @@ Reports:
           code with GooseDefault::ReportFile.
 
       --output-dir <DIR>
-          Run folder [default: goose-runs/<time>]
+          Run folder [default: goose-runs/<start time>]
 
-          Sets the run's folder for output flags given without a path (default:
-          goose-runs/<start time>). Goose creates it when it first writes into
-          it. When the folder already holds files, the run uses DIR-2, DIR-3 and
-          so on. Needs an output flag given without a path, or --dashboard.
+          Sets the run's folder for output flags given without a path. Goose
+          creates it when it first writes into it. When the folder already holds
+          files, the run uses DIR-2, DIR-3 and so on. Needs an output flag given
+          without a path, or --dashboard.
 
           Example: --output-dir goose-runs/nightly --report-file. Set in code
           with GooseDefault::OutputDir.
 
       --compress [<LEVEL>]
-          Gzip the run's folder, level 1 to 9
+          Gzip the run's folder files, 1 to 9
 
           Gzips every file Goose writes into the run's folder, each named with
           .gz added. A path given to an output flag keeps exactly that name; a
@@ -267,8 +267,9 @@ Reports:
       --baseline-file <PATH>
           Compare against an earlier run
 
-          PATH is a JSON report, or a folder that holds report.json. Every
-          report then shows how each metric changed from that run.
+          PATH is a JSON report, plain or gzipped, or a folder that holds
+          report.json or report.json.gz. Every report then shows how each metric
+          changed from that run.
 
           Example: --baseline-file baseline.json. Set in code with
           GooseDefault::BaselineFile.

@@ -320,16 +320,15 @@ pub struct GooseConfiguration {
         long,
         value_name = "DIR",
         help = "Run folder [default: goose-runs/<time>]",
-        long_help = "Run folder [default: goose-runs/<time>]\n\n\
-            Sets the run's folder for output flags given without a path (default: \
-            goose-runs/<start time>). Goose creates it when it first writes into it. When \
+        long_help = "Run folder [default: goose-runs/<start time>]\n\n\
+            Sets the run's folder for output flags given without a path. Goose creates it when it first writes into it. When \
             the folder already holds files, the run uses DIR-2, DIR-3 and so on. Needs an \
             output flag given without a path, or --dashboard.\n\n\
             Example: --output-dir goose-runs/nightly --report-file. Set in code with \
             GooseDefault::OutputDir."
     )]
     pub output_dir: Option<String>,
-    /// Gzip the run's folder, level 1 to 9
+    /// Gzip the run's folder files, 1 to 9
     ///
     /// Gzips every file Goose writes into the run's folder, each named with .gz added. A
     /// path given to an output flag keeps exactly that name; a name that ends in .gz is
@@ -374,7 +373,8 @@ pub struct GooseConfiguration {
     pub render_report: Option<String>,
     /// Compare against an earlier run
     ///
-    /// PATH is a JSON report, or a folder that holds report.json. Every report then
+    /// PATH is a JSON report, plain or gzipped, or a folder that holds report.json or
+    /// report.json.gz. Every report then
     /// shows how each metric changed from that run.
     ///
     /// Example: --baseline-file baseline.json. Set in code with GooseDefault::BaselineFile.
@@ -1188,7 +1188,7 @@ pub(crate) struct GooseDefaults {
     pub output_dir: Option<String>,
     /// An optional default for the notes stored with the run's reports.
     pub notes: Option<String>,
-    /// An optional default for gzipping the run's folder, and the gzip level.
+    /// An optional default for gzipping each file in the run's folder, and the gzip level.
     pub compress: Option<u32>,
     /// An optional default for adding graph data to the JSON report.
     pub report_graph_data: Option<bool>,
@@ -1324,7 +1324,7 @@ pub enum GooseDefault {
     OutputDir,
     /// An optional default for the notes stored with the run's reports.
     Notes,
-    /// An optional default for gzipping the run's folder, and the gzip level, 1 to 9.
+    /// An optional default for gzipping each file in the run's folder, and the gzip level, 1 to 9.
     Compress,
     /// An optional default for adding graph data to the JSON report.
     ReportGraphData,

@@ -3605,8 +3605,8 @@ impl MetricsProcessor {
 
     /// Prune GraphData to a trailing window when only the live dashboard needs series.
     ///
-    /// HTML/markdown reports need full-run history; while a report will be
-    /// written at the end of the run we never prune. Dashboard export uses at most [`dashboard_snapshot::SERIES_WINDOW_SECS`];
+    /// The HTML and Markdown reports graph the whole run, so nothing is pruned while a
+    /// report will be written at the end of it. Dashboard export uses at most [`dashboard_snapshot::SERIES_WINDOW_SECS`];
     /// we keep 2× that as a small buffer against edge flicker at the window boundary.
     ///
     /// Call only from low-frequency paths (`RecordUsers`, `GetDashboardSnapshot`),
@@ -4266,8 +4266,8 @@ impl GooseAttack {
 
     /// Process the `--report-file` reports.
     ///
-    /// With a `source`, write each report from it. Without one, just create the files to
-    /// ensure we have access. `html` caches the HTML report so it is generated once
+    /// With a `source`, write each report from it. Without one, create the files, so a
+    /// path Goose can't write to fails before the load test. `html` caches the HTML report so it is generated once
     /// however many reports name an HTML file.
     ///
     /// Creating stops at the first error. Writing tries every report, logs each
@@ -4303,7 +4303,7 @@ impl GooseAttack {
     }
 
     /// Create one report file, and with a `source`, write it. A name that ends in
-    /// `.gz` is the format the name before it names, gzipped.
+    /// `.gz` is written gzipped, in the format the rest of the name gives.
     async fn process_report(
         &self,
         report: &str,

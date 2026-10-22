@@ -42,13 +42,13 @@ The first run writes into `goose-runs/nightly`, the next into `goose-runs/nightl
 
 While Save report is off and no `--report-file` path is given, Goose keeps only the dashboard's last 10 minutes of graph data (rule 10). A report written after that, by Save report turned on or by Save report now, still has every request in its tables, and its HTML says when its graphs start.
 
-**6. `--notes "text"` is stored in the JSON report and shown at the top of the HTML and Markdown reports and in the dashboard.**
+**6. `--notes "text"` is stored in the JSON report and shown at the top of the HTML and Markdown reports and in the dashboard.** It needs `--report-file` or `--dashboard`.
 
 ```bash
 cargo run --example simple -- --host http://localhost:8080 -t 30s --report-file --notes "baseline before cache change"
 ```
 
-**7. `--report-graph-data` adds the per second graph data to the JSON report.** Off by default. With it, a report rendered from the JSON has its graphs; without it, the rendered report says the graphs were not recorded.
+**7. `--report-graph-data` adds the per second graph data to the JSON report.** Off by default, and it needs `--report-file` or `--dashboard`. With it, a report rendered from the JSON has its graphs; without it, the rendered report says the graphs were not recorded.
 
 ```bash
 cargo run --example simple -- --host http://localhost:8080 -t 30s --report-file results.json --report-graph-data
@@ -62,6 +62,8 @@ cargo run --example simple -- --render-report results.json --report-file results
 
 ## The dashboard
 
+[The live dashboard](../controller/dashboard.md) describes the report bar, the runs panel and the routes behind them.
+
 **9. The dashboard's report bar, at the top of the page, shows a Save report switch: whether this run's `report.json` and `report.html` are written to its folder.** It starts on with `--dashboard`, also when `--report-file` paths are given (turn it off to get only those), and a bare `--report-file` is the same switch for runs without the dashboard. The bar also lists any `--report-file` paths from the command line, which are always written.
 
 ```bash
@@ -72,11 +74,11 @@ cargo run --features dashboard --example simple -- --host http://localhost:8080 
 
 On a long soak test with `--dashboard-control` and no `--report-file` path, turn Save report off to keep memory flat, and turn it on before the part of the run you want graphed.
 
-**11. Save report now writes the run's report as it stands into its folder while the run continues, and marks it as in progress.** The report at the end of the run replaces it, also when Save report is off. A second switch in the bar, **Include graph data**, is rule 7's flag and can also be changed at any time.
+**11. Save report now writes the run's report as it stands into its folder while the run continues, and marks it as in progress.** It needs a run in progress. The report at the end of the run replaces it, also when Save report is off. A second switch in the bar, **Include graph data**, is rule 7's flag and can also be changed at any time.
 
-**12. The runs panel lists the folders beside the run's folder that hold a `report.json` or `report.json.gz`.** It looks in the folder that holds the run's folder: the parent of the `--output-dir` folder, or `goose-runs` by default. Newest first, with their notes. A report still marked in progress shows as running for this run and as incomplete for any other (a run that ended without its final report). Each run offers HTML, JSON and Markdown, rendering any format the folder lacks from its JSON. With control, each run also has a Delete button. It removes the folder's reports and the logs Goose names there, then the folder if that leaves it empty. The folder of the run in progress can't be deleted.
+**12. The runs panel lists the folders beside the run's folder that hold a `report.json` or `report.json.gz`.** It looks in the folder that holds the run's folder: the parent of the `--output-dir` folder, or `goose-runs` by default. Rows are newest first and show each run's notes. A report still marked in progress shows as running for the run in progress and as incomplete for any other (a run that ended without its final report). Each run offers HTML, JSON and Markdown, rendering any format the folder lacks from its JSON. With control, each run also has a Delete button. It removes the folder's reports and the logs Goose names there, then the folder if that leaves it empty. The folder of the run in progress can't be deleted.
 
-With `--output-dir goose-runs/nightly`, the panel lists the folders in `goose-runs`. It lists only folders whose name is a letter or digit followed by letters, digits, `.`, `_` and `-`, so a run written to `goose-runs/my run` is not listed.
+With `--output-dir goose-runs/nightly`, the panel lists the folders in `goose-runs`. It lists only folders whose name is a letter or digit followed by any mix of letters, digits, `.`, `_` and `-`, so a run written to `goose-runs/my run` is not listed.
 
 **13. Save report now, Delete, and changing either switch need `--dashboard-control` and the control token, like Start and Stop.** Without control the switches are shown read only, so Save report stays on and every `--dashboard` run writes `report.json` and `report.html` into its folder.
 

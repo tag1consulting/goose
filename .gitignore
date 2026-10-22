@@ -14,5 +14,5 @@ src/dashboard/static/node_modules/
 src/dashboard/static/test-build/
 
 
-# Saved runs (`goose-runs/` is the default runs directory)
+# Run folders (`goose-runs/` holds them by default)
 goose-runs/

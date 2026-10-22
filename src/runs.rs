@@ -135,7 +135,7 @@ pub(crate) const IN_PROGRESS: &str =
     "This report was saved while the run was in progress. The report written when the run ends replaces it.";
 
 /// `name` without a trailing `.gz`, and whether it had one: a report or log
-/// named `.gz` is the format the name before it names, gzipped.
+/// named `.gz` is written gzipped, in the format the rest of the name gives.
 pub(crate) fn without_gz(name: &str) -> (&str, bool) {
     match name.strip_suffix(".gz") {
         Some(inner) => (inner, true),

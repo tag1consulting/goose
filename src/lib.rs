@@ -1535,7 +1535,7 @@ impl GooseAttack {
 
     /// After an autostarted run, whether to stay up for the dashboard: Save
     /// report wrote the run's report, the run was not stopped or canceled on
-    /// purpose, and a dashboard tab is connected to the event stream.
+    /// purpose, and any client is connected to the event stream.
     #[cfg(feature = "dashboard")]
     fn should_wait_for_dashboard(&self, goose_attack_run_state: &GooseAttackRunState) -> bool {
         let saved = self.output.last_report.is_some();

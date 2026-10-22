@@ -35,7 +35,7 @@ Console and Goose log:
 Reports:
       --report-file [<FILE>]   Write a report; repeatable
       --output-dir <DIR>       Run folder [default: goose-runs/<time>]
-      --compress [<LEVEL>]     Gzip the run's folder, level 1 to 9
+      --compress [<LEVEL>]     Gzip the run's folder files, 1 to 9
       --notes <TEXT>           Label the run in its reports
       --report-graph-data      Add graph data to the JSON report
       --render-report <FILE>   Write reports from a JSON report, exit

@@ -568,11 +568,11 @@ Save report can be turned on or off at any time. While it is on, Goose keeps the
 
 Save report now, Delete, and changing either switch need `--dashboard-control` and the control token, as Start and Stop do. Without control the switches are shown read only, so Save report stays on and every `--dashboard` run writes `report.json` and `report.html` into its folder. `--no-metrics` keeps no report, so Save report stays off.
 
-When a run ends, a banner reads `Report saved in goose-runs/<folder>. Download HTML, JSON or Markdown.` with a button for each report, or says why the report couldn't be saved.
+When a run ends, a banner reads `Report saved in <folder>. Download HTML, JSON or Markdown.`, naming the run's folder, with a button for each report, or says why the report couldn't be saved.
 
 ### The runs panel
 
-The **Runs** panel lists the folders that hold a `report.json` or `report.json.gz` in the folder that holds the run folders: the parent of the `--output-dir` folder, or `goose-runs` by default. It lists only folders with a name the report routes take; see [Report endpoints](#report-endpoints). It lists them also while Goose is Idle, before any run has a folder, and it lists folders written by runs without the dashboard. Rows are sorted newest first, by start time. Each row shows the folder's name, when the run started (in the viewer's local time), its notes, how long it ran, its users, requests and failures, how it ended (`Finished`, `Stopped`, `Ctrl-C`, `Canceled: <reason>` or `Users exited`), and the test. A report still marked in progress shows as `Running` for the run in progress and as `Incomplete` for any other: a run that ended without its final report. The first 50 rows are shown; `Show all` lists the rest. The list is read when the page opens, when a run starts, and when a report is written, never on a timer.
+The **Runs** panel looks in the folder that holds the run folders: the parent of the `--output-dir` folder, or `goose-runs` by default. It lists each folder there that holds a `report.json` or `report.json.gz`. It lists only folders with a name the report routes take; see [Report endpoints](#report-endpoints). It lists them also while Goose is Idle, before any run has a folder, and it lists folders written by runs without the dashboard. Rows are sorted newest first, by start time. Each row shows the folder's name, when the run started (in the viewer's local time), its notes, how long it ran, its users, requests and failures, how it ended (`Finished`, `Stopped`, `Ctrl-C`, `Canceled: <reason>` or `Users exited`), and the test. A report still marked in progress shows as `Running` for the run in progress and as `Incomplete` for any other: a run that ended without its final report. The first 50 rows are shown; `Show all` lists the rest. The list is read when the page opens, when a run starts, when a run's report is written at its end, and a second after Save report now in the tab that pressed it.
 
 Each row offers HTML, JSON and Markdown. A format the folder lacks is rendered from its JSON report; without graph data in it, the rendered HTML report says the graphs were not recorded.
 
@@ -584,16 +584,16 @@ Downloads are fetched with the token in an `Authorization` header and saved from
 
 ### Report endpoints
 
-The `GET` routes need the token when one is configured, as `GET /api/v1/snapshot` does. `DELETE` is registered only with `--dashboard-control` and always needs the control token as `Authorization: Bearer`, as the control POSTs do. Each reads the disk on request only, and Goose keeps what it parsed of each `report.json` in memory, by path, size and modification time; it writes no index.
+The `GET` routes need the token when one is configured, as `GET /api/v1/snapshot` does. `DELETE` is registered only with `--dashboard-control` and always needs the control token as `Authorization: Bearer`, as the control POSTs do. Each reads the disk only on request. Goose keeps what it parsed of each JSON report in memory, keyed by path, size and modification time, and writes no index.
 
 | Endpoint | Returns |
 |----------|---------|
-| `GET /api/v1/reports` | `{ "dir": "goose-runs", "reports": [ ... ] }`: for each folder holding a regular `report.json` or `report.json.gz`, its `name`, the run's record from its JSON report (`notes`, `goose_version`, `test`, `started`, `ended`, `ended_by`, `canceled_reason`, `in_progress`), `running`, `duration_secs`, `max_users`, `requests` and `failed_requests`, newest first |
+| `GET /api/v1/reports` | `{ "dir": "goose-runs", "reports": [ ... ] }`: for each folder holding a regular `report.json` or `report.json.gz`, its `name`, the run's record from its JSON report (`notes`, `goose_version`, `test`, `started`, `ended`, `ended_by`, `canceled_reason`, `in_progress`, and `graphs_start` when set), `running`, `duration_secs`, `max_users`, `requests` and `failed_requests`, newest first |
 | `GET /api/v1/reports/{name}/{file}` | `report.html`, `report.json` or `report.md` of folder `{name}`, as an attachment named `goose-<test>-<name>.<ext>`; a format the folder lacks is rendered from its JSON report |
 | `GET /api/v1/reports/{name}/compare.md?baseline={name}` | Report `{name}` compared to the baseline, as Markdown, named `goose-<test>-<name>-vs-<baseline>.md`, starting with a line naming both and when each started. `422` with a one line reason when a run has no requests, or its JSON report can't be read or is inconsistent |
 | `DELETE /api/v1/reports/{name}` | `204` once the folder's `report.json`, `report.html`, `report.md`, `goose.log` and the request, transaction, scenario, error and debug logs Goose names there, each plain or gzipped, are deleted, then the folder if that leaves it empty; `409` for the folder of the run in progress; `404` for a folder the panel does not list |
 
-A name is a letter or digit, then letters, digits, `.`, `_` and `-`. A folder with any other name is not listed. A name of any other form, a folder that is not one level down, a symlink, or a folder without a regular JSON report gets a plain `404`. A report still being written is not listed, as its JSON report is written last, through a temporary file and a rename. Reports and comparisons are sent with `Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, `Cache-Control: no-store` and `Content-Security-Policy: sandbox`, so a report opened anyway runs no script with the dashboard's origin.
+A name is a letter or digit, then any mix of letters, digits, `.`, `_` and `-`. A folder with any other name is not listed. A name of any other form, a folder that is not one level down, a symlink, or a folder without a regular JSON report gets a plain `404`. A folder whose JSON report is not yet on disk is not listed: Goose writes the JSON report last, through a temporary file and a rename. Reports and comparisons are sent with `Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, `Cache-Control: no-store` and `Content-Security-Policy: sandbox`, so a report opened anyway runs no script with the dashboard's origin.
 
 ```bash
 curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:5118/api/v1/reports
@@ -605,7 +605,7 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/
   -d '{"save": false}' http://127.0.0.1:5118/api/v1/control/report
 ```
 
-With no token, which only a loopback bind allows, every user on this machine can list and download every report in that folder while the dashboard is up, even if the files themselves are readable only by their owner. On a shared machine, set --dashboard-auth-token.
+With no token, which only a loopback bind allows, every user on this machine can list and download every report in that folder while the dashboard is up, even if the files themselves are readable only by their owner. On a shared machine, set `--dashboard-auth-token`.
 
 ### Waiting after an autostarted run
 
@@ -738,7 +738,7 @@ The tests load the bundled `app.js` into a jsdom page with a stubbed `fetch`, so
 
 ## GraphData memory cost
 
-Enabling `--dashboard` turns on the same per-second **GraphData** series collection used for HTML report graphs (also enabled by `--report-file`). Goose keeps every second of the whole run while a report will be written at the end of it: to a `--report-file` path, or by [Save report](#saving-the-report), which is on by default with `--dashboard`. With Save report off and no `--report-file` path, the dashboard keeps only twice its chart window (10 minutes). Without `--dashboard` or `--report-file` nothing is recorded. The recording costs memory even when no browser is connected:
+Enabling `--dashboard` turns on the same per second **GraphData** series collection used for HTML report graphs (also enabled by `--report-file`). Goose keeps every second of the whole run while a report will be written at the end of it: to a `--report-file` path, or by [Save report](#saving-the-report), which is on by default with `--dashboard`. With Save report off and no `--report-file` path, the dashboard keeps only twice its chart window (10 minutes). Without `--dashboard` or `--report-file` nothing is recorded. The recording costs memory even when no browser is connected:
 
 - Per-second counters for requests, errors, users, and average latency are kept for the whole run while a report will be written, and for the last 10 minutes otherwise.
 - While a report will be written, memory grows with unique request names × run length, the same cost as generating HTML graphs; otherwise it stays flat.
