@@ -98,8 +98,8 @@ fn within_one_percent(value: u64, expected: u64) -> bool {
     (value as f64 - expected as f64).abs() <= expected as f64 * 0.01
 }
 
-/// The value a bucket reports for `us` is within 1/128 of `us` and falls in
-/// the same bucket, and that bucket reports the same value for it.
+/// The bucket for `us` reports a value within 1/128 of `us`; that value
+/// falls in the same bucket, so the bucket reports it unchanged.
 fn assert_bucket_holds(us: u64) {
     let value = bucket_value(us);
     assert!(
@@ -353,10 +353,11 @@ fn merging_batches_equals_recording_once() {
     }
 }
 
-/// Checks the deltas against `baseline` of a report with 400 µs `fast` and
-/// 1,410 ms `slow` requests and a 400 µs `index` transaction. `fast` and
-/// `slow` name the baseline's sub millisecond and 1.4 s requests;
-/// `index_minimum` is how the `index` transaction's minimum should read.
+/// Loads the report `fixture` as a baseline and checks the deltas against
+/// it of a report with 400 µs `fast` requests, 1,410 ms `slow` requests and
+/// a 400 µs `index` transaction. `fast` and `slow` name the baseline's sub
+/// millisecond and 1.4 s requests; `index_minimum` is how the `index`
+/// transaction's minimum should read.
 fn baseline_deltas(fixture: &str, fast: &str, slow: &str, index_minimum: &str) {
     let path = format!("{}/tests/fixtures/{fixture}", env!("CARGO_MANIFEST_DIR"));
     let baseline = load_baseline_file(&path).expect("the old report loads as a baseline");

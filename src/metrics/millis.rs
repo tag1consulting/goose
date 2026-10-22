@@ -20,8 +20,9 @@ impl Millis {
     }
 }
 
-/// The microseconds `us` shows as: rounded half up to the hundredth of a
-/// millisecond under 10 ms, and to whole milliseconds from there.
+/// `us` as it is shown, still in microseconds: rounded half up to the
+/// hundredth of a millisecond under 10 ms, and to whole milliseconds from
+/// there.
 fn shown_us(us: u64) -> u64 {
     let hundredths = us.saturating_add(5) / 10;
     if hundredths < 1_000 {
@@ -140,8 +141,9 @@ impl DeltaValue for Millis {
 pub(crate) struct MillisFloat(pub f64);
 
 impl MillisFloat {
-    /// The microseconds it shows as: rounded to the microsecond, then as a
-    /// [`Millis`] shows; `None` when it is not a number.
+    /// The value as it is shown, in microseconds: rounded to the
+    /// microsecond, then rounded as a [`Millis`] is; `None` when it is not a
+    /// number.
     fn shown_us(self) -> Option<i64> {
         if !self.0.is_finite() {
             return None;

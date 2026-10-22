@@ -94,7 +94,9 @@ end_second: number,
 hold_from: number,
 /**
  * Each row by index, as `[time, lowest, highest]` in microseconds:
- * the time the row stands for, and the range of measured times in it. A longer table replaces a shorter one; entries never change.
+ * the time the row stands for, which is its middle, then the first and
+ * last microsecond the row holds. A longer table replaces a shorter
+ * one; entries never change.
  */
 buckets_us: Array<[number, number, number]>,
 /**
