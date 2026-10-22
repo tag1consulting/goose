@@ -16,7 +16,7 @@ By default, logs are written in JSON Lines format. For example:
 {"elapsed":7178,"name":"","run_time":1400,"run_time_fraction_us":259,"scenario_index":0,"success":true,"transaction_index":2,"user":1}
 ```
 
-These lines are from the [`simple`](../example/simple.md) example, whose transactions have no names. In the first line, `GooseUser` thread 5 successfully ran transaction 0, which logs in, in 921 microseconds. In the third line, `GooseUser` thread 2 successfully ran transaction 2, which loads `/about/`, in 1,441.862 milliseconds.
+These lines are from the [`simple`](../example/simple.md) example, whose transactions have no names. In the first line, `GooseUser` thread 5 successfully ran transaction 0, the login, in 921 microseconds. In the third line, `GooseUser` thread 2 successfully ran transaction 2, the `/about/` page, in 1,441.862 milliseconds.
 
 The `--transaction-format` option can be used to log in `csv`, `json` (default), `raw` or `pretty` format. The `raw` format is Rust's debug output of the entire 
 [`TransactionMetric`](https://docs.rs/goose/*/goose/metrics/struct.TransactionMetric.html) object.

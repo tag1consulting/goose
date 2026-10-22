@@ -98,8 +98,8 @@ fn within_one_percent(value: u64, expected: u64) -> bool {
     (value as f64 - expected as f64).abs() <= expected as f64 * 0.01
 }
 
-/// The value a bucket reports for `us` is within 1/128 of `us`, falls in
-/// the same bucket as `us`, and reports itself.
+/// The value a bucket reports for `us` is within 1/128 of `us` and falls in
+/// the same bucket, and that bucket reports the same value for it.
 fn assert_bucket_holds(us: u64) {
     let value = bucket_value(us);
     assert!(

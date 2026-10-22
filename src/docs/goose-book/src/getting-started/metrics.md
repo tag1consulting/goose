@@ -372,7 +372,7 @@ When a request returns multiple different HTTP status codes during a load test, 
    └─ 404 (6.1%)          |        7.73 |       7.02 |        8.88 |          -
 ```
 
-In this example, from the `simple` example against a test server that answers some requests for `/` with a `404`, the `GET /` request returned both `200` and `404` responses. The breakdown shows that 404 responses took longer on average (7.73 ms against 4.49 ms).
+This sample comes from the `simple` example run against a test server that answers some requests for `/` with a `404`. The `GET /` request returned both `200` and `404` responses, and the breakdown shows that 404 responses took longer on average (7.73 ms against 4.49 ms).
 
 Each breakdown row shows the status code, the percentage of total requests with that code, and the average, minimum, and maximum response times for that status code. The median column shows `-` because per-status-code breakdowns track aggregate statistics (count, total, min, max) rather than full response time distributions, so percentile calculations are not available at this level. Full percentile data remains available on the aggregate row.
 

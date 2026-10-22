@@ -5251,11 +5251,11 @@ mod test {
         assert!(graph.latency_series_keys().contains("GET /100"));
     }
 
-    /// The heatmap's JSON in the worst case, every bucket in every second of
+    /// The heatmap's JSON in the worst case, every row in every second of
     /// the window: what changes in a second stays within 200 KB and a 60
-    /// second synthetic backfill within 220 KB; a whole window, sent once to
-    /// a client with no heatmap, does not, which is why only changes are
-    /// sent.
+    /// second synthetic backfill within 220 KB. A whole window, sent once to
+    /// a client with no heatmap, can exceed both, which is why only changes
+    /// are sent.
     #[test]
     fn heatmap_worst_case_sizes() {
         let mut graph = latency_graph(true);

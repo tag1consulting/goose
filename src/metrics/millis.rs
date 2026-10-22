@@ -8,8 +8,8 @@ use std::fmt::{Display, Formatter};
 /// difference, and whole from there.
 ///
 /// It serializes as whole milliseconds, truncated as Goose always took them,
-/// so a JSON report reads as it did and loads as a baseline in any Goose;
-/// it deserializes from whole milliseconds.
+/// so a JSON report's rows read as they did; it deserializes from whole
+/// milliseconds.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct Millis(pub u64);
 
@@ -56,7 +56,8 @@ pub(crate) fn format_micros(us: u64, separators: bool) -> String {
 }
 
 /// Microseconds already at shown precision, a value or a difference of
-/// values, as milliseconds: `-` when negative, never `-0`.
+/// values, as milliseconds, with a leading `-` when negative and never
+/// `-0`.
 fn signed_text(us: i64, separators: bool) -> String {
     let text = hundredths_text(us.unsigned_abs(), separators);
     if us < 0 {
@@ -131,8 +132,8 @@ impl DeltaValue for Millis {
     }
 }
 
-/// A time in milliseconds worked out from measured times, a mean or a
-/// standard deviation, as an `f64`; NaN without times. It shows as a
+/// A time in milliseconds worked out from measured times, such as a mean or
+/// a standard deviation, held as an `f64`; NaN without times. It shows as a
 /// [`Millis`] does and serializes as the `f64`.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Serialize)]
 #[serde(transparent)]
