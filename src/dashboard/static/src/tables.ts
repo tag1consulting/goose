@@ -403,7 +403,7 @@ function flattenRequest(r: RequestRow): FlatRequestRow {
   const avg = shownTime(
     r.response_time_avg_ms,
     co ? co.response_time_avg_ms : null,
-    formatRate
+    formatMs
   );
   // To the microsecond where the snapshot has them.
   const us = r.response_time_us;
@@ -480,7 +480,7 @@ const scenariosTable = sortableTable<FlatScenarioRow>({
     {
       key: "response_time_avg_ms",
       type: "num",
-      format: (r) => timing(r.run_count, formatRate(r.response_time_avg_ms)),
+      format: (r) => timing(r.run_count, formatMs(r.response_time_avg_ms)),
     },
     { key: "p50", type: "num", format: (r) => timing(r.run_count, formatMs(r.p50)) },
     { key: "p95", type: "num", format: (r) => timing(r.run_count, formatMs(r.p95)) },
@@ -524,7 +524,7 @@ const transactionsTable = sortableTable<FlatTransactionRow>({
     {
       key: "response_time_avg_ms",
       type: "num",
-      format: (r) => timing(r.run_count, formatRate(r.response_time_avg_ms)),
+      format: (r) => timing(r.run_count, formatMs(r.response_time_avg_ms)),
     },
     {
       key: "response_time_min_ms",
@@ -579,7 +579,7 @@ const requestsTable = sortableTable<FlatRequestRow>({
     {
       key: "response_time_avg_ms",
       type: "num",
-      format: (r) => formatRate(r.response_time_avg_ms),
+      format: (r) => formatMs(r.response_time_avg_ms),
       title: (r) => r.measured.response_time_avg_ms,
     },
     {

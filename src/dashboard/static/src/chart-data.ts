@@ -3,7 +3,7 @@
 // look their elements up when the module loads.
 
 import { requireElement } from "./dom";
-import { formatInt, formatRate } from "./format";
+import { formatInt, formatMs, formatRate } from "./format";
 import { chartDataTable } from "./tables";
 
 /** Seconds a summary averages, and compares with as many before them. */
@@ -35,7 +35,7 @@ const showLatencyData = chartDataTable<{ second: number; avg: number }>(
   "chart-latency",
   [
     { key: "second", type: "num", format: (r) => String(r.second) },
-    { key: "avg", type: "num", format: (r) => formatRate(r.avg) },
+    { key: "avg", type: "num", format: (r) => formatMs(r.avg) },
   ]
 );
 

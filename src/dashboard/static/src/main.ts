@@ -138,12 +138,12 @@ function renderSnapshot(
   const avg = shownTime(
     agg.response_time_avg_ms,
     co ? co.response_time_avg_ms : null,
-    formatRate
+    formatMs
   );
   kpiP95Label.textContent = "p95 ms" + suffix;
   kpiAvgLabel.textContent = "Avg ms" + suffix;
   setKpi(kpiP95, formatMs(p95.value), p95.title);
-  setKpi(kpiAvg, formatRate(avg.value), avg.title);
+  setKpi(kpiAvg, formatMs(avg.value), avg.title);
   requestsCoNote.hidden = co === null;
 
   summaryEl.textContent = "";
@@ -183,7 +183,7 @@ function renderSnapshot(
   );
   if (co) {
     aggregateEl.appendChild(
-      kv("Avg ms (adjusted)", formatRate(co.response_time_avg_ms))
+      kv("Avg ms (adjusted)", formatMs(co.response_time_avg_ms))
     );
     aggregateEl.appendChild(
       kv("p50 / p95 / p99 (adjusted)", percentileText(co.percentile_ms, cus))
@@ -198,12 +198,12 @@ function renderSnapshot(
       )
     );
     aggregateEl.appendChild(
-      kv("Avg ms (measured)", formatRate(agg.response_time_avg_ms))
+      kv("Avg ms (measured)", formatMs(agg.response_time_avg_ms))
     );
     aggregateEl.appendChild(kv("p50 / p95 / p99 (measured)", percentileText(p, us)));
     aggregateEl.appendChild(kv("Min / max ms (measured)", measuredMinMax));
   } else {
-    aggregateEl.appendChild(kv("Avg ms", formatRate(agg.response_time_avg_ms)));
+    aggregateEl.appendChild(kv("Avg ms", formatMs(agg.response_time_avg_ms)));
     aggregateEl.appendChild(kv("p50 / p95 / p99", percentileText(p, us)));
     aggregateEl.appendChild(kv("Min / max ms", measuredMinMax));
   }

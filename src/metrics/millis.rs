@@ -139,18 +139,14 @@ impl DeltaValue for Millis {
 pub(crate) struct MillisFloat(pub f64);
 
 impl MillisFloat {
-    /// The microseconds it shows as; `None` when it is not a number.
+    /// The microseconds it shows as: rounded to the microsecond, then as a
+    /// [`Millis`] shows; `None` when it is not a number.
     fn shown_us(self) -> Option<i64> {
         if !self.0.is_finite() {
             return None;
         }
-        let hundredths = (self.0.abs() * 100.0).round();
-        let shown = if hundredths < 1_000.0 {
-            hundredths * 10.0
-        } else {
-            self.0.abs().round() * 1000.0
-        };
-        Some(shown.copysign(self.0) as i64)
+        let shown = shown_us((self.0.abs() * 1000.0).round() as u64) as i64;
+        Some(if self.0 < 0.0 { -shown } else { shown })
     }
 
     /// With thousands separators.
@@ -280,7 +276,7 @@ mod test {
         assert_eq!(MillisFloat(0.4).to_string(), "0.4");
         assert_eq!(MillisFloat(2.345).to_string(), "2.35");
         assert_eq!(MillisFloat(9.994).to_string(), "9.99");
-        assert_eq!(MillisFloat(9.996).to_string(), "10");
+        assert_eq!(MillisFloat(9.995).to_string(), "10");
         assert_eq!(format!("{:.2}", MillisFloat(1_436.69)), "1436.69");
         assert_eq!(MillisFloat(1_436.69).to_string(), "1437");
         assert_eq!(MillisFloat(1_436.69).formatted(), "1,437");

@@ -756,7 +756,7 @@ test("the users and average latency charts have data tables too", async () => {
   const latencyTable = el(page, "chart-latency-table");
   assert.equal(latencyTable.hidden, false, "the card shows the average chart");
   assert.equal(el(page, "heatmap-table").hidden, true);
-  assert.deepEqual(cells(el(page, "chart-latency-rows").rows[0]), ["100", rate(20)]);
+  assert.deepEqual(cells(el(page, "chart-latency-rows").rows[0]), ["100", "20"]);
 });
 
 // Buckets as `[time, lowest, highest]`: 0, 10, 50 and 100 ms.

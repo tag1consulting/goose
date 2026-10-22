@@ -1,5 +1,5 @@
 // Response times under 10 ms are shown to the hundredth of a millisecond,
-// truncated, and whole milliseconds from 10 ms (#585). Run with `npm test`;
+// and whole milliseconds from 10 ms, rounded half up (#585). Run with `npm test`;
 // `pretest` builds src/format.ts into test-build/.
 
 import { test } from "node:test";
@@ -14,15 +14,19 @@ test("formatMs shows hundredths under 10 ms and whole milliseconds above", () =>
     [2350, "2.35"],
     [9990, "9.99"],
     [10000, "10"],
-    [37999, "37"],
+    [9994, "9.99"],
+    [9995, "10"],
+    [37999, "38"],
   ];
   for (const [us, shown] of cases) {
     assert.equal(formatMs(us / 1000), shown, us + " µs");
   }
 });
 
-test("formatMs truncates, never rounds up, and shows whole milliseconds plainly", () => {
-  assert.equal(formatMs(429 / 1000), "0.42");
+test("formatMs rounds half up and shows whole milliseconds plainly", () => {
+  assert.equal(formatMs(429 / 1000), "0.43");
+  assert.equal(formatMs(2345 / 1000), "2.35");
+  assert.equal(formatMs(37499 / 1000), "37");
   assert.equal(formatMs(3), "3");
   assert.equal(formatMs(0), "0");
   assert.equal(formatMs(1400), "1,400");

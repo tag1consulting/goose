@@ -52,12 +52,13 @@
     }
 
     // Microseconds as milliseconds, as the report's tables show them: to
-    // the hundredth, truncated, under 10 ms, and whole above.
+    // the hundredth under 10 ms and whole from there, rounded half up.
     function ms(us) {
-        if (us < 10000 && us % 1000 !== 0) {
-            return String(Math.floor(us / 10) / 100);
+        var hundredths = Math.floor((us + 5) / 10);
+        if (hundredths < 1000) {
+            return String(hundredths / 100);
         }
-        return Math.floor(us / 1000).toLocaleString();
+        return Math.floor((us + 500) / 1000).toLocaleString();
     }
 
     function pad(number) {

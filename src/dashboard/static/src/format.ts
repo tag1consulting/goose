@@ -31,18 +31,19 @@ export function formatInt(n: number | undefined): string {
 }
 
 /**
- * A response time in milliseconds: to the hundredth, truncated, under 10 ms,
- * where whole milliseconds hide the difference (0.42), whole above, as the
- * reports show it.
+ * A time in milliseconds as Goose shows every time: rounded to the
+ * microsecond, then half up to the hundredth under 10 ms (0.42) and to whole
+ * milliseconds from there, as the reports show it.
  */
 export function formatMs(n: number | undefined): string {
   if (typeof n !== "number" || !isFinite(n)) return "—";
-  if (n < 10 && !Number.isInteger(n)) {
-    return (Math.floor(n * 100 + 1e-6) / 100).toLocaleString(undefined, {
-      maximumFractionDigits: 2,
-    });
-  }
-  return Math.floor(n).toLocaleString();
+  const us = Math.round(Math.abs(n) * 1000);
+  const hundredths = Math.floor((us + 5) / 10);
+  const text =
+    hundredths < 1000
+      ? (hundredths / 100).toLocaleString(undefined, { maximumFractionDigits: 2 })
+      : Math.floor((us + 500) / 1000).toLocaleString();
+  return n < 0 && text !== "0" ? "-" + text : text;
 }
 
 export function formatRate(n: number | undefined): string {
