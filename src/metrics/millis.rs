@@ -3,9 +3,9 @@ use num_format::{Locale, ToFormattedString};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt::{Display, Formatter};
 
-/// A response time kept in microseconds and shown in milliseconds: to the
-/// hundredth under 10 ms, where whole milliseconds hide the difference, and
-/// whole above, as Goose always showed them.
+/// A response time kept in microseconds and shown in milliseconds, rounded
+/// half up: to the hundredth under 10 ms, where whole milliseconds hide the
+/// difference, and whole from there.
 ///
 /// It serializes as whole milliseconds, truncated as Goose always took them,
 /// so a JSON report reads as it did and loads as a baseline in any Goose;
@@ -55,9 +55,9 @@ pub(crate) fn format_micros(us: u64, separators: bool) -> String {
     hundredths_text(shown_us(us), separators)
 }
 
-/// A difference of shown values, in microseconds, as milliseconds: `-`
-/// when negative, never `-0`.
-fn delta_text(us: i64, separators: bool) -> String {
+/// Microseconds already at shown precision, a value or a difference of
+/// values, as milliseconds: `-` when negative, never `-0`.
+fn signed_text(us: i64, separators: bool) -> String {
     let text = hundredths_text(us.unsigned_abs(), separators);
     if us < 0 {
         format!("-{text}")
@@ -106,13 +106,13 @@ pub(crate) struct MillisDelta(pub i64);
 impl MillisDelta {
     /// With thousands separators.
     pub(crate) fn formatted(self) -> String {
-        delta_text(self.0, true)
+        signed_text(self.0, true)
     }
 }
 
 impl Display for MillisDelta {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.pad(&delta_text(self.0, false))
+        f.pad(&signed_text(self.0, false))
     }
 }
 
@@ -145,7 +145,7 @@ impl MillisFloat {
         if !self.0.is_finite() {
             return None;
         }
-        let shown = shown_us((self.0.abs() * 1000.0).round() as u64) as i64;
+        let shown = shown_us((self.0.abs() * 1000.0).round() as u64).min(i64::MAX as u64) as i64;
         Some(if self.0 < 0.0 { -shown } else { shown })
     }
 
@@ -160,7 +160,7 @@ impl MillisFloat {
 /// `separators` adds thousands separators.
 pub(crate) fn format_ms(ms: f64, separators: bool) -> String {
     match MillisFloat(ms).shown_us() {
-        Some(us) => delta_text(us, separators),
+        Some(us) => signed_text(us, separators),
         None => "NaN".to_string(),
     }
 }
@@ -210,21 +210,23 @@ impl From<f32> for Value<MillisFloat> {
 pub(crate) struct MillisFloatDelta(pub Option<i64>);
 
 impl MillisFloatDelta {
-    /// With thousands separators.
-    pub(crate) fn formatted(self) -> String {
+    /// As milliseconds, or `NaN`.
+    fn text(self, separators: bool) -> String {
         match self.0 {
-            Some(us) => delta_text(us, true),
+            Some(us) => signed_text(us, separators),
             None => "NaN".to_string(),
         }
+    }
+
+    /// With thousands separators.
+    pub(crate) fn formatted(self) -> String {
+        self.text(true)
     }
 }
 
 impl Display for MillisFloatDelta {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self.0 {
-            Some(us) => f.pad(&delta_text(us, false)),
-            None => f.pad("NaN"),
-        }
+        f.pad(&self.text(false))
     }
 }
 

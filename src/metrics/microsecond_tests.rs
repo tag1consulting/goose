@@ -179,7 +179,7 @@ fn bucket_boundaries_of_the_log_linear_scheme() {
     for us in [999, 1_000, 1_010, 2_200, 2_500, 9_990, 10_000, 10_010] {
         assert_bucket_holds(us);
     }
-    // Shown as hundredths up to 10 ms, from buckets at most 1% off: 9.99 ms
+    // Shown as hundredths up to 10 ms, from buckets at most 1/128 off: 9.99 ms
     // is in the 9.984 to 10.112 ms bucket and reads 10.
     let shown: f64 = Millis(bucket_value(9_990)).to_string().parse().unwrap();
     assert!((shown - 9.99).abs() <= 9.99 * 0.01, "{}", shown);

@@ -92,10 +92,13 @@
         if (row[2] < 1000) {
             return (row[1] / 1000) + ' to ' + ((row[2] + 1) / 1000) + ' ms';
         }
+        // A row's bounds are exact; whole milliseconds, truncated, never
+        // name a time above the row.
+        var lowest = Math.floor(row[1] / 1000);
         if (row[2] - row[1] < 1000) {
-            return ms(row[1]) + ' ms';
+            return lowest.toLocaleString() + ' ms';
         }
-        return ms(row[1]) + ' to ' + ms(row[2] + 1) + ' ms';
+        return lowest.toLocaleString() + ' to ' + Math.floor((row[2] + 1) / 1000).toLocaleString() + ' ms';
     }
 
     function tooltip(params) {

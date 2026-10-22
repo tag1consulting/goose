@@ -6674,9 +6674,21 @@ mod tests {
             if console_names.len() > 1 {
                 console_names.push(("Aggregated".to_string(), Reference::new(&all)));
             }
-            // The console's average, shown as every time is.
-            let console_average =
-                |reference: &Reference| crate::metrics::format_ms(reference.average(), true);
+            // The console's average, shown as every time is: to the
+            // microsecond, then half up to the hundredth under 10 ms and to
+            // whole milliseconds from there, with separators.
+            let console_average = |reference: &Reference| {
+                let us = (reference.average() * 1000.0).round() as u64;
+                if (us + 5) / 10 < 1000 {
+                    let text = format!("{:.2}", ((us + 5) / 10) as f64 / 100.0);
+                    text.trim_end_matches('0').trim_end_matches('.').to_string()
+                } else {
+                    num_format::ToFormattedString::to_formatted_string(
+                        &((us + 500) / 1000),
+                        &num_format::Locale::en,
+                    )
+                }
+            };
             for (name, reference) in &console_names {
                 let (Some(time), Some(percentile)) = (times.get(name), percentiles.get(name))
                 else {

@@ -4934,7 +4934,7 @@ pub(crate) fn per_second_calculations(duration: usize, total: usize, fail: usize
 
 /// One row of a console table of times: `name`, then the average, fastest,
 /// slowest and median of `data` in milliseconds, to the hundredth under
-/// 10 ms.
+/// 10 ms and whole from there, rounded half up.
 fn write_times_row(
     fmt: &mut fmt::Formatter<'_>,
     name: &str,

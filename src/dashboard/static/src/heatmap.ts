@@ -434,7 +434,7 @@ export function tooltipText(
   const ms = formats.ms || formats.int;
   let bucket: string;
   if (row.highest + 1 <= 1) {
-    // A row that ends by 1 ms: its range, in tenths of a millisecond.
+    // A row that ends by 1 ms: its range in milliseconds.
     bucket = ms(row.lowest) + " to " + ms(row.highest + 1) + " ms";
   } else if (row.lowest === row.highest) {
     bucket = formats.int(row.lowest) + " ms";

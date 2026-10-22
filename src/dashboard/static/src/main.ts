@@ -83,7 +83,8 @@ function setUsersKpi(active: number, target: number): void {
  * the two decimals the tables show in the tile's hover.
  */
 function setRpsKpi(rps: number): void {
-  kpiRps.textContent = rps >= 100 ? formatInt(rps) : formatRate(rps);
+  // Decided on the value the tile would show, so 99.996 reads 100, not 100.00.
+  kpiRps.textContent = Math.round(rps * 100) >= 10000 ? formatInt(rps) : formatRate(rps);
   const tile = kpiRps.parentElement;
   if (tile) tile.title = "RPS " + formatRate(rps);
 }
