@@ -211,6 +211,7 @@ async fn compress_gzips_the_run_folder() {
     let folder = dir.join("run").to_string_lossy().into_owned();
     let plain = dir.join("plain.html").to_string_lossy().into_owned();
     let named = dir.join("named.json.gz").to_string_lossy().into_owned();
+    let named_log = dir.join("errors.csv").to_string_lossy().into_owned();
     let metrics = run(
         &server,
         vec![
@@ -225,6 +226,10 @@ async fn compress_gzips_the_run_folder() {
             "--request-format",
             "csv",
             "-T",
+            "-E",
+            &named_log,
+            "--error-format",
+            "csv",
             "--compress",
             "9",
             "--no-reset-metrics",
@@ -248,6 +253,10 @@ async fn compress_gzips_the_run_folder() {
     assert_eq!(xfl(Path::new(&named)), 2);
     let html = std::fs::read_to_string(&plain).unwrap();
     assert!(html.starts_with("<!DOCTYPE html>"), "a path keeps its name");
+    // A log path keeps its name too, and is written plain.
+    let errors = std::fs::read(&named_log).unwrap();
+    assert!(errors.starts_with(b"elapsed"), "plain CSV");
+    assert!(!dir.join("errors.csv.gz").exists());
     let requests_csv = String::from_utf8(gunzip(&folder.join("requests.csv.gz")).unwrap()).unwrap();
     assert_eq!(requests_csv.lines().count(), requests(&metrics) + 1);
 
@@ -266,10 +275,6 @@ async fn compress_gzips_the_run_folder() {
         assert_eq!(xfl(&folder.join("report.json.gz")), expected);
     }
 
-    // A level with nothing to compress does nothing.
-    let before = names(&dir);
-    run(&server, vec!["--compress", "9"]).await;
-    assert_eq!(names(&dir), before);
     std::fs::remove_dir_all(&dir).ok();
 }
 

@@ -1725,7 +1725,13 @@ async fn report_file_handler(
     let Some((folder, json)) = runs::report_folder(&state.reports_dir, &name) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let test = download_test_name(&json);
+    // The report is read and parsed off the runtime the load test runs on.
+    let test = {
+        let json = json.clone();
+        tokio::task::spawn_blocking(move || download_test_name(&json))
+            .await
+            .unwrap_or_else(|_| "run".to_string())
+    };
     let filename = format!("goose-{test}-{name}.{ext}");
     if let Some(stored) = runs::regular_file(&folder, &file) {
         // A report stored gzipped is sent as it is to a client that accepts
@@ -1785,9 +1791,7 @@ fn render_report_file(json: &Path, ext: &str) -> Result<Vec<u8>, String> {
 /// `test` from the record in a `report.json`, reduced to `[A-Za-z0-9_-]` for
 /// a file name.
 fn download_test_name(json: &Path) -> String {
-    crate::metrics::read_report_text(json)
-        .ok()
-        .and_then(|text| serde_json::from_str::<runs::RunRecord>(&text).ok())
+    runs::read_record(json)
         .map(|record| {
             record
                 .test
@@ -1829,24 +1833,28 @@ fn download_response(
     response
 }
 
-/// Whether a request's `Accept-Encoding` takes gzip.
+/// Whether a request's `Accept-Encoding` takes gzip: by name, else by `*`,
+/// and not with `q=0`.
 fn accepts_gzip(headers: &HeaderMap) -> bool {
-    headers
+    let codings: Vec<(String, bool)> = headers
         .get_all(header::ACCEPT_ENCODING)
         .iter()
         .filter_map(|value| value.to_str().ok())
         .flat_map(|value| value.split(','))
-        .any(|coding| {
+        .map(|coding| {
             let mut parts = coding.split(';').map(str::trim);
-            let name = parts.next().unwrap_or_default();
+            let name = parts.next().unwrap_or_default().to_ascii_lowercase();
             let refused = parts.any(|param| {
                 param
                     .strip_prefix("q=")
                     .and_then(|q| q.parse::<f32>().ok())
                     .is_some_and(|q| q == 0.0)
             });
-            (name.eq_ignore_ascii_case("gzip") || name == "*") && !refused
+            (name, !refused)
         })
+        .collect();
+    let taken = |name: &str| codings.iter().find(|(n, _)| n == name).map(|(_, ok)| *ok);
+    taken("gzip").or_else(|| taken("*")).unwrap_or(false)
 }
 
 /// Stream a report stored in a folder; one stored gzipped is sent with
@@ -1937,7 +1945,6 @@ async fn compare_response(
         return StatusCode::NOT_FOUND.into_response();
     };
     let (run_name, baseline_name) = (name.clone(), baseline.clone());
-    let test = download_test_name(&newer_json);
     let compared = tokio::task::spawn_blocking(move || {
         let report = crate::metrics::compare_reports(
             &newer_json,
@@ -1949,11 +1956,11 @@ async fn compare_response(
             compared_runs_line(&newer_json, &run_name, &baseline_json, &baseline_name).into_bytes();
         out.extend_from_slice(b"\n\n");
         out.extend(report);
-        Ok::<_, String>(out)
+        Ok::<_, String>((download_test_name(&newer_json), out))
     })
     .await;
     match compared {
-        Ok(Ok(markdown)) => {
+        Ok(Ok((test, markdown))) => {
             let length = markdown.len() as u64;
             download_response(
                 "text/markdown; charset=utf-8",
@@ -1981,9 +1988,7 @@ fn compared_runs_line(
     baseline_name: &str,
 ) -> String {
     let started = |json: &Path| {
-        crate::metrics::read_report_text(json)
-            .ok()
-            .and_then(|text| serde_json::from_str::<runs::RunRecord>(&text).ok())
+        runs::read_record(json)
             .and_then(|record| record.started)
             .and_then(|started| chrono::DateTime::parse_from_rfc3339(&started).ok())
             .map(|time| {

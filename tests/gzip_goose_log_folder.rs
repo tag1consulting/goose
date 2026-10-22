@@ -1,5 +1,5 @@
-//! `--compress` gzips a bare `--goose-log` too: `goose.log.gz` in the run's
-//! folder, beside the reports.
+//! `--compress 9` gzips a bare `--goose-log` too, at level 9: `goose.log.gz`
+//! in the run's folder, beside the reports.
 //!
 //! The Goose log is the global logger, set once for the process, so this is
 //! the only test in its file: each integration test file runs in its own
@@ -46,6 +46,7 @@ async fn compress_gzips_a_bare_goose_log() {
         "-G",
         "-g",
         "--compress",
+        "9",
     ])
     .unwrap();
     GooseAttack::initialize_with_config(configuration)
@@ -63,6 +64,7 @@ async fn compress_gzips_a_bare_goose_log() {
     flate2::read::MultiGzDecoder::new(std::fs::File::open(folder.join("goose.log.gz")).unwrap())
         .read_to_string(&mut text)
         .unwrap();
+    let gz = std::fs::read(folder.join("goose.log.gz")).unwrap();
     std::fs::remove_dir_all(&dir).ok();
     assert_eq!(
         names,
@@ -70,4 +72,12 @@ async fn compress_gzips_a_bare_goose_log() {
     );
     // The lines logged before the run's folder was known are there too.
     assert!(text.contains("global host configured"), "{}", text);
+    // Rule 4: Goose prints the folder it writes into.
+    assert!(
+        text.contains(&format!("writing this run's files to {folder_str}")),
+        "{}",
+        text
+    );
+    // Rule 15: the level reaches the Goose log: XFL is 2 at level 9.
+    assert_eq!(gz[8], 2, "level 9");
 }

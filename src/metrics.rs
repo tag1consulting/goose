@@ -4378,8 +4378,10 @@ impl GooseAttack {
                     None => match self.pdf_report(source, baseline).await {
                         Ok(bytes) => pdf.insert(bytes),
                         Err(e) => {
+                            // Dropping a gzip writer writes an empty member,
+                            // so the file goes by name: Goose created it above.
                             drop(out);
-                            remove_if_empty(&path).await;
+                            let _ = tokio::fs::remove_file(&path).await;
                             return Err(e);
                         }
                     },
@@ -4954,20 +4956,21 @@ pub(crate) const GRAPHS_NOT_RECORDED: &str =
 /// format goes through it, so a report is gzipped in this one place.
 pub(crate) enum ReportOut {
     Plain(BufWriter<std::fs::File>),
-    Gzip(flate2::write::GzEncoder<BufWriter<std::fs::File>>),
+    /// Buffered above the encoder, so it compresses a buffer at a time
+    /// rather than each small write the serializers make.
+    Gzip(BufWriter<flate2::write::GzEncoder<std::fs::File>>),
 }
 
 impl ReportOut {
     /// Write to `file`, gzipped at `level` when `gzip`.
     pub(crate) fn new(file: std::fs::File, gzip: bool, level: u32) -> Self {
-        let file = BufWriter::new(file);
         if gzip {
-            ReportOut::Gzip(flate2::write::GzEncoder::new(
+            ReportOut::Gzip(BufWriter::new(flate2::write::GzEncoder::new(
                 file,
                 flate2::Compression::new(level),
-            ))
+            )))
         } else {
-            ReportOut::Plain(file)
+            ReportOut::Plain(BufWriter::new(file))
         }
     }
 
@@ -4975,7 +4978,11 @@ impl ReportOut {
     pub(crate) fn finish(self) -> std::io::Result<()> {
         match self {
             ReportOut::Plain(mut file) => file.flush(),
-            ReportOut::Gzip(gzip) => gzip.finish()?.flush(),
+            ReportOut::Gzip(gzip) => gzip
+                .into_inner()
+                .map_err(|e| e.into_error())?
+                .finish()?
+                .flush(),
         }
     }
 }
@@ -5076,16 +5083,6 @@ fn first_error(
             Err(first)
         }
         (first, second) => first.and(second),
-    }
-}
-
-/// Removes a report file that is still empty, the state `create_reports`
-/// leaves it in, after the report could not be written.
-async fn remove_if_empty(path: &std::path::Path) {
-    if let Ok(metadata) = tokio::fs::metadata(path).await {
-        if metadata.is_file() && metadata.len() == 0 {
-            let _ = tokio::fs::remove_file(path).await;
-        }
     }
 }
 

@@ -79,8 +79,10 @@ async fn runs_write_only_what_they_are_asked_for() {
     let previous = std::env::current_dir().unwrap();
     std::env::set_current_dir(&work).unwrap();
 
-    // Rule 1: no flags write nothing and create no folder.
+    // Rule 1: no flags write nothing and create no folder, and nor does a
+    // gzip level with nothing to gzip.
     run(&host, &[]).await;
+    run(&host, &["--compress", "9"]).await;
     let none = tree(Path::new("."));
 
     // Rule 2: every 0.18 form of the report and log options writes the file

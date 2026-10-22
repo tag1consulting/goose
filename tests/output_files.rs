@@ -275,7 +275,7 @@ async fn notes_are_in_every_report() {
 #[serial]
 async fn render_report_with_and_without_graph_data() {
     let server = MockServer::start();
-    let _mock = setup_mock_server_endpoints(&server);
+    let mock = setup_mock_server_endpoints(&server);
     let dir = temp_dir("render");
     let with = dir.join("with.json").to_string_lossy().into_owned();
     let without = dir.join("without.json").to_string_lossy().into_owned();
@@ -294,6 +294,7 @@ async fn render_report_with_and_without_graph_data() {
     )
     .await;
     run(&server, vec!["--report-file", &without]).await;
+    let calls = mock.calls();
     let graphs = &read_json(Path::new(&with))["graphs"];
     assert!(graphs["requests_per_second"]["GET /"]["data"].is_array());
     assert!(graphs["users_per_second"]["data"].is_array());
@@ -343,9 +344,92 @@ async fn render_report_with_and_without_graph_data() {
             assert!(html.contains("graphs were not recorded"));
         }
     }
-    // Rendering ran no load test: one run each, and no more requests.
+    // Rule 5: a report whose graphs start after the run did says when and why.
+    let mut cut = read_json(Path::new(&with));
+    cut["graphs_start"] = serde_json::json!({
+        "time": "2026-10-22T10:05:00Z",
+        "reason": "Save report was off for part of the run."
+    });
+    let cut_json = dir.join("cut.json");
+    std::fs::write(&cut_json, cut.to_string()).unwrap();
+    let cut_html = dir.join("cut.html");
+    let configuration = GooseConfiguration::parse_args_default(&[
+        "--render-report",
+        &cut_json.to_string_lossy(),
+        "--report-file",
+        &cut_html.to_string_lossy(),
+    ])
+    .unwrap();
+    GooseAttack::initialize_with_config(configuration)
+        .unwrap()
+        .register_scenario(scenario())
+        .execute()
+        .await
+        .unwrap();
+    let html = std::fs::read_to_string(&cut_html).unwrap();
+    assert!(
+        html.contains("not at the start of the run: Save report was off for part of the run."),
+        "{}",
+        html
+    );
+    std::fs::remove_file(&cut_json).unwrap();
+    std::fs::remove_file(&cut_html).unwrap();
+
+    // Rendering ran no load test: no more requests, and only the files asked
+    // for.
+    assert_eq!(mock.calls(), calls);
     assert_eq!(names(&dir).len(), 9);
     std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A baseline that no longer loads when the run ends fails the run, and the
+/// run's folder still gets its report, written without the baseline.
+#[tokio::test]
+#[serial]
+async fn a_baseline_lost_during_the_run_keeps_the_folder_report() {
+    let server = MockServer::start();
+    let _mock = setup_mock_server_endpoints(&server);
+    let dir = temp_dir("lost-baseline");
+    let baseline = dir.join("baseline.json");
+    let baseline_str = baseline.to_string_lossy().into_owned();
+    run(&server, vec!["--report-file", &baseline_str]).await;
+    BASELINE_TO_LOSE.lock().unwrap().replace(baseline.clone());
+    let folder = dir.join("run").to_string_lossy().into_owned();
+    let configuration = common::build_configuration(
+        &server,
+        vec![
+            "--baseline-file",
+            &baseline_str,
+            "--output-dir",
+            &folder,
+            "--report-file",
+        ],
+    );
+    let result = common::build_load_test(
+        configuration,
+        vec![scenario()],
+        Some(&transaction!(lose_the_baseline)),
+        None,
+    )
+    .execute()
+    .await;
+    match result {
+        Err(GooseError::InvalidOption { option, .. }) => assert_eq!(option, "--baseline-file"),
+        other => panic!("{:?}", other.map(|_| ())),
+    }
+    let report = read_json(&dir.join("run").join("report.json"));
+    assert_eq!(report["ended_by"], "completed");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The baseline `lose_the_baseline` deletes once the run has started.
+static BASELINE_TO_LOSE: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
+async fn lose_the_baseline(_user: &mut GooseUser) -> TransactionResult {
+    if let Some(baseline) = BASELINE_TO_LOSE.lock().unwrap().take() {
+        std::fs::remove_file(baseline).unwrap();
+    }
+    Ok(())
 }
 
 /// `--render-report` needs a `--report-file` path and a Goose JSON report.
@@ -391,10 +475,8 @@ async fn render_report_errors() {
 async fn flags_that_would_write_nowhere_are_refused() {
     let server = MockServer::start();
     let mock = setup_mock_server_endpoints(&server);
-    let dir = temp_dir("refused")
-        .join("run")
-        .to_string_lossy()
-        .into_owned();
+    let base = temp_dir("refused");
+    let dir = base.join("run").to_string_lossy().into_owned();
     for (args, option, fix) in [
         (
             vec!["--notes", "lost"],
@@ -422,4 +504,5 @@ async fn flags_that_would_write_nowhere_are_refused() {
         assert!(detail.contains(fix), "{:?}: {}", args, detail);
     }
     assert_eq!(mock.calls(), 0);
+    std::fs::remove_dir_all(&base).ok();
 }

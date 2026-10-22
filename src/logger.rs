@@ -276,8 +276,9 @@ enum GooseLogTarget {
     Waiting(Vec<u8>),
     File(std::fs::File),
     /// A Goose log named `.gz`: the gzip member being written, ended at the
-    /// end of each `execute()`.
-    Gzip(flate2::write::GzEncoder<std::fs::File>),
+    /// end of each `execute()`. Lines are buffered above the encoder, so it
+    /// compresses a buffer at a time rather than each piece of a line.
+    Gzip(std::io::BufWriter<flate2::write::GzEncoder<std::fs::File>>),
     /// A Goose log named `.gz` between members.
     GzipIdle(std::fs::File),
     /// The file failed; lines are dropped.
@@ -298,25 +299,31 @@ pub(crate) struct GooseLogFile {
 static GOOSE_LOG_FILE: Mutex<Option<GooseLogFile>> = Mutex::new(None);
 
 impl GooseLogTarget {
-    /// The log at `path`: gzipped when its name ends in `.gz`.
-    fn create(path: &std::path::Path) -> std::io::Result<Self> {
+    /// The log at `path`: gzipped at `level` when its name ends in `.gz`, its
+    /// first member started at once, so a log with no lines is still gzip.
+    fn create(path: &std::path::Path, level: u32) -> std::io::Result<Self> {
         let file = std::fs::File::create(path)?;
         Ok(if without_gz(&path.to_string_lossy()).1 {
-            GooseLogTarget::GzipIdle(file)
+            Self::member(file, level)
         } else {
             GooseLogTarget::File(file)
         })
     }
 
+    /// A new gzip member in `file`.
+    fn member(file: std::fs::File, level: u32) -> Self {
+        GooseLogTarget::Gzip(std::io::BufWriter::new(flate2::write::GzEncoder::new(
+            file,
+            flate2::Compression::new(level),
+        )))
+    }
+
     fn write_all(&mut self, buf: &[u8], level: u32) -> std::io::Result<()> {
-        if let GooseLogTarget::GzipIdle(_) = self {
-            // A new member starts with the first line after the last ended.
+        // A new member starts with the first line after the last ended.
+        if matches!(self, GooseLogTarget::GzipIdle(_)) {
             if let GooseLogTarget::GzipIdle(file) = std::mem::replace(self, GooseLogTarget::Failed)
             {
-                *self = GooseLogTarget::Gzip(flate2::write::GzEncoder::new(
-                    file,
-                    flate2::Compression::new(level),
-                ));
+                *self = Self::member(file, level);
             }
         }
         match self {
@@ -336,7 +343,11 @@ impl GooseLogTarget {
     fn finish(&mut self) {
         match std::mem::replace(self, GooseLogTarget::Failed) {
             GooseLogTarget::Gzip(gzip) => {
-                if let Ok(file) = gzip.finish() {
+                if let Ok(file) = gzip
+                    .into_inner()
+                    .map_err(|e| e.into_error())
+                    .and_then(flate2::write::GzEncoder::finish)
+                {
                     *self = GooseLogTarget::GzipIdle(file);
                 }
             }
@@ -354,7 +365,7 @@ impl GooseLogFile {
     /// `.gz`, or with no path, waiting for a run's folder.
     pub(crate) fn open(path: Option<&std::path::Path>, level: u32) -> std::io::Result<Self> {
         let target = match path {
-            Some(path) => GooseLogTarget::create(path)?,
+            Some(path) => GooseLogTarget::create(path, level)?,
             None => GooseLogTarget::Waiting(Vec::new()),
         };
         Ok(GooseLogFile {
@@ -412,7 +423,8 @@ pub(crate) fn move_goose_log(path: &std::path::Path) -> std::io::Result<()> {
     };
     let mut target = handle.target();
     target.finish();
-    let waiting = match std::mem::replace(&mut *target, GooseLogTarget::create(path)?) {
+    let waiting = match std::mem::replace(&mut *target, GooseLogTarget::create(path, handle.level)?)
+    {
         GooseLogTarget::Waiting(lines) => lines,
         _ => Vec::new(),
     };

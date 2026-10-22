@@ -2477,6 +2477,22 @@ impl GooseConfiguration {
             },
         ]);
 
+        // Configure `compress` before the Goose logger, which gzips at its level.
+        self.compress = self.get_value(vec![
+            // Use --compress if set.
+            GooseValue {
+                value: self.compress,
+                filter: self.compress.is_none(),
+                message: "compress",
+            },
+            // Otherwise use GooseDefault if set.
+            GooseValue {
+                value: defaults.compress,
+                filter: defaults.compress.is_none(),
+                message: "compress",
+            },
+        ]);
+
         // Initialize the Goose logger.
         self.initialize_goose_logger();
 
@@ -2833,22 +2849,6 @@ impl GooseConfiguration {
                 value: defaults.notes.clone(),
                 filter: defaults.notes.is_none(),
                 message: "notes",
-            },
-        ]);
-
-        // Configure `compress`.
-        self.compress = self.get_value(vec![
-            // Use --compress if set.
-            GooseValue {
-                value: self.compress,
-                filter: self.compress.is_none(),
-                message: "compress",
-            },
-            // Otherwise use GooseDefault if set.
-            GooseValue {
-                value: defaults.compress,
-                filter: defaults.compress.is_none(),
-                message: "compress",
             },
         ]);
 

@@ -426,10 +426,15 @@ impl GooseAttack {
         if let Some(saving) = self.output.saving_now.take() {
             let _ = saving.await;
         }
-        // Load the baseline once for all report writers.
-        let baseline = match &self.configuration.baseline_file {
-            Some(file) => Some(load_baseline_file(file)?),
-            None => None,
+        // Load the baseline once for all report writers. A baseline that no
+        // longer loads fails the --report-file reports, as it does at
+        // startup, and the folder's report is written without it.
+        let (baseline, baseline_error) = match &self.configuration.baseline_file {
+            Some(file) => match load_baseline_file(file) {
+                Ok(baseline) => (Some(baseline), None),
+                Err(e) => (None, Some(e)),
+            },
+            None => (None, None),
         };
         let record = self.report_record(false, self.graph_data.first_second());
         let save = self.output.save_report || self.output.saved_now;
@@ -445,9 +450,13 @@ impl GooseAttack {
         // The HTML report is generated once for --report-file and the folder.
         let mut html = None;
         let source = self.report_source(&record);
-        let report_files = self
-            .write_report_files(&source, baseline.as_ref(), &mut html)
-            .await;
+        let report_files = match baseline_error {
+            Some(e) => Err(e),
+            None => {
+                self.write_report_files(&source, baseline.as_ref(), &mut html)
+                    .await
+            }
+        };
         let written = match folder {
             None => return report_files,
             Some(folder) => folder.and_then(|folder| {
@@ -640,6 +649,13 @@ pub(crate) fn list_reports(
     Ok(listed)
 }
 
+/// The record of the run in the JSON report at `json`, plain or gzipped.
+#[cfg(feature = "dashboard")]
+pub(crate) fn read_record(json: &Path) -> Option<RunRecord> {
+    let text = crate::metrics::read_report_text(json).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
 /// What the runs panel shows of the report at `json`, in the folder `name`.
 #[cfg(feature = "dashboard")]
 fn read_listed(json: &Path, name: &str, modified: std::time::SystemTime) -> Option<ListedReport> {
@@ -801,7 +817,11 @@ impl GooseAttack {
             );
         };
         if let Some(own) = self.output.folder.as_mut() {
-            own.create().map_err(|e| own.error(e))?;
+            if let Err(e) = own.create() {
+                let message = own.error(e).to_string();
+                self.output.error = Some(message.clone());
+                return refuse(self, goose_attack_run_state, "unavailable", &message);
+            }
         }
         let folder_path = folder.path.clone();
         let record = self.report_record(true, graph_data.first_second());

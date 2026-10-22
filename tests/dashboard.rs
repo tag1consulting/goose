@@ -2878,6 +2878,16 @@ async fn test_dashboard_waits_after_autostarted_run() {
     assert_eq!(download.status(), 200);
     assert!(!download.bytes().await.unwrap().is_empty());
 
+    // The run has ended, so its folder is no longer the running one.
+    let resp = client
+        .delete(format!("{base}/api/v1/reports/run"))
+        .header("Authorization", bearer_header())
+        .send()
+        .await
+        .expect("delete after the run");
+    assert_eq!(resp.status(), 204);
+    assert!(!folder.exists());
+
     // No exit timer: still up with no tab connected.
     drop(sse);
     tokio::time::sleep(Duration::from_secs(3)).await;
@@ -3153,6 +3163,156 @@ async fn test_gzipped_reports_in_the_panel() {
     assert_eq!(resp.status(), 204);
     assert!(!folder.exists());
 
+    load.abort().await;
+    std::fs::remove_dir_all(&parent).ok();
+}
+
+/// Rule 10: Save report turned on during a run keeps the graph data from
+/// then on, so the report has a heatmap; with it off at the start, Goose kept
+/// only the dashboard's window and no heatmap.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn test_save_report_turned_on_during_a_run() {
+    let server = MockServer::start();
+    let _mocks = setup_mock_endpoints(&server);
+    let parent = reports_dir("on-mid-run");
+    let (load, base) = start_idle_dashboard(&server, &parent, Vec::new(), None).await;
+    let client = reqwest::Client::new();
+    let resp = post_control(
+        &client,
+        &base,
+        "/api/v1/control/report",
+        Some(r#"{"save": false, "graph_data": true}"#),
+        true,
+    )
+    .await;
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["ok"], true, "{}", body);
+    let start = post_control(&client, &base, "/api/v1/control/start", Some("{}"), true).await;
+    assert_eq!(start.status(), 200);
+    wait_for_active_users(&client, &base, Some(AUTH_TOKEN), 2, Duration::from_secs(30)).await;
+    let resp = post_control(
+        &client,
+        &base,
+        "/api/v1/control/report",
+        Some(r#"{"save": true}"#),
+        true,
+    )
+    .await;
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["ok"], true, "{}", body);
+    // Requests after the switch, for the heatmap to hold.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let stop = post_control(&client, &base, "/api/v1/control/stop", Some("{}"), true).await;
+    assert_eq!(stop.status(), 200);
+    wait_for_phase(
+        &client,
+        &base,
+        Some(AUTH_TOKEN),
+        &["idle"],
+        Duration::from_secs(30),
+    )
+    .await;
+    let report: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(parent.join("dash").join("report.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        report["graphs"]["heatmap"].is_object(),
+        "Save report turned on during the run keeps the heatmap: {}",
+        report["graphs"]
+    );
+    load.abort().await;
+    std::fs::remove_dir_all(&parent).ok();
+}
+
+/// Save report now answers a folder it can't create with a refusal and the
+/// run goes on; with `--no-metrics`, Save report can't be turned on.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn test_report_switches_refuse_what_they_cannot_do() {
+    let server = MockServer::start();
+    let _mocks = setup_mock_endpoints(&server);
+    let parent = reports_dir("refusals");
+    let (load, base) = start_idle_dashboard(&server, &parent, Vec::new(), None).await;
+    let client = reqwest::Client::new();
+    let start = post_control(&client, &base, "/api/v1/control/start", Some("{}"), true).await;
+    assert_eq!(start.status(), 200);
+    wait_for_active_users(&client, &base, Some(AUTH_TOKEN), 2, Duration::from_secs(30)).await;
+    // A file where the run's folder would go.
+    std::fs::write(parent.join("dash"), "in the way").unwrap();
+    let resp = post_control(
+        &client,
+        &base,
+        "/api/v1/control/report/now",
+        Some("{}"),
+        true,
+    )
+    .await;
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["ok"], false, "{}", body);
+    assert_eq!(body["error"], "unavailable");
+    // The run goes on, and the dashboard says why the report wasn't saved.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let snap = get_snapshot_json(&client, &base, Some(AUTH_TOKEN))
+            .await
+            .unwrap();
+        assert!(
+            ["increase", "maintain"].contains(&snap["phase"].as_str().unwrap()),
+            "{}",
+            snap["phase"]
+        );
+        if snap["report"]["error"].is_string() {
+            break;
+        }
+        assert!(Instant::now() < deadline, "{}", snap["report"]);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    std::fs::remove_file(parent.join("dash")).unwrap();
+    let stop = post_control(&client, &base, "/api/v1/control/stop", Some("{}"), true).await;
+    assert_eq!(stop.status(), 200);
+    wait_for_phase(
+        &client,
+        &base,
+        Some(AUTH_TOKEN),
+        &["idle"],
+        Duration::from_secs(30),
+    )
+    .await;
+    load.abort().await;
+
+    let port = reserve_port();
+    let base_v4 = format!("http://127.0.0.1:{port}");
+    let mut configuration =
+        build_control_config(&server, "127.0.0.1", port, ControlTestOpts::default());
+    configuration.no_metrics = true;
+    configuration.co_mitigation = None;
+    // With nothing to write, an --output-dir would be refused.
+    configuration.output_dir = None;
+    let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
+    let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
+    let (base, _) = wait_for_health(&[&base_v4], 80).await;
+    let snap = wait_for_phase(
+        &client,
+        &base,
+        Some(AUTH_TOKEN),
+        &["idle"],
+        Duration::from_secs(10),
+    )
+    .await;
+    assert_eq!(snap["report"]["save"], false);
+    let resp = post_control(
+        &client,
+        &base,
+        "/api/v1/control/report",
+        Some(r#"{"save": true}"#),
+        true,
+    )
+    .await;
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["ok"], false, "{}", body);
+    assert_eq!(body["error"], "invalid_report");
     load.abort().await;
     std::fs::remove_dir_all(&parent).ok();
 }
