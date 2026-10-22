@@ -279,16 +279,16 @@ export function heatmapView(state: HeatmapState | null, adjusted: boolean): Heat
  * The response time at `percent` (0 to 1) of `total` requests whose counts
  * by bucket are `buckets`, as `[time, count]` in ascending bucket order, by
  * Goose's own rule for its whole run figures (`response_time_percentile` in
- * src/metrics.rs): the rank is `total * percent` rounded, in single
- * precision as Rust's `f32`, and the answer the time of the first bucket
- * whose running count reaches it.
+ * src/metrics.rs): the rank is `total * percent` rounded, in doubles as
+ * Rust's `f64`, and the answer the time of the first bucket whose running
+ * count reaches it.
  */
 export function percentileOf(
   buckets: Array<[number, number]>,
   total: number,
   percent: number
 ): number {
-  const rank = Math.round(Math.fround(Math.fround(total) * Math.fround(percent)));
+  const rank = Math.round(total * percent);
   let running = 0;
   for (const [time, count] of buckets) {
     running += count;
@@ -329,6 +329,20 @@ export function secondPercentiles(
     });
   }
   return result;
+}
+
+/**
+ * A heatmap percentile, the middle of its row, in milliseconds at the rows'
+ * precision: to the tenth under 1 ms and whole from 1 ms, truncated, so it
+ * names the row it is in.
+ */
+export function rowMs(ms: number): string {
+  if (!isFinite(ms)) return "—";
+  const us = Math.round(ms * 1000);
+  if (us < 1000) {
+    return (Math.floor(us / 100) / 10).toLocaleString(undefined, { maximumFractionDigits: 1 });
+  }
+  return Math.floor(us / 1000).toLocaleString();
 }
 
 /** Steps between second labels: the smallest that fits is used. */
@@ -419,10 +433,8 @@ export function tooltipText(
 ): string {
   const ms = formats.ms || formats.int;
   let bucket: string;
-  if (row.highest === 0) {
-    bucket = "under 1 ms";
-  } else if (row.highest < 0) {
-    // A row under a millisecond, from `buckets_us`: it ends at highest + 1.
+  if (row.highest + 1 <= 1) {
+    // A row that ends by 1 ms: its range, in tenths of a millisecond.
     bucket = ms(row.lowest) + " to " + ms(row.highest + 1) + " ms";
   } else if (row.lowest === row.highest) {
     bucket = formats.int(row.lowest) + " ms";
@@ -453,11 +465,11 @@ export function tooltipText(
   if (percentiles !== undefined) {
     text +=
       " p50 / p95 / p99: " +
-      ms(percentiles.p50) +
+      rowMs(percentiles.p50) +
       " / " +
-      ms(percentiles.p95) +
+      rowMs(percentiles.p95) +
       " / " +
-      ms(percentiles.p99) +
+      rowMs(percentiles.p99) +
       " ms";
   }
   return text;
@@ -542,7 +554,8 @@ export function percentileLabels(
     text:
       group.keys.sort((a, b) => order.indexOf(a) - order.indexOf(b)).join(", ") +
       ": " +
-      tickLabel(value),
+      rowMs(value) +
+      " ms",
     y: group.y,
   }));
   labels.sort((a, b) => a.y - b.y);

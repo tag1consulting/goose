@@ -73,6 +73,16 @@
             pad(date.getUTCMinutes()) + ':' + pad(date.getUTCSeconds());
     }
 
+    // A percentile, the middle of its row, at the rows' precision: to the
+    // tenth under 1 ms and whole from 1 ms, truncated, so it names the row
+    // it is in.
+    function rowMs(us) {
+        if (us < 1000) {
+            return String(Math.floor(us / 100) / 10);
+        }
+        return Math.floor(us / 1000).toLocaleString();
+    }
+
     function requests(count) {
         return count.toLocaleString() + (count === 1 ? ' request' : ' requests');
     }
@@ -93,10 +103,10 @@
         if (params.seriesType === 'custom') {
             return clock(value[0]) + ' to ' + clock(value[1]) + '<br>' +
                 bucketText(value[6]) + ': ' + requests(value[5]) + '<br>' +
-                'p50 / p95 / p99: ' + ms(value[7]) + ' / ' + ms(value[8]) + ' / ' +
-                ms(value[9]) + ' ms';
+                'p50 / p95 / p99: ' + rowMs(value[7]) + ' / ' + rowMs(value[8]) + ' / ' +
+                rowMs(value[9]) + ' ms';
         }
-        return clock(value[0]) + '<br>' + params.seriesName + ': ' + ms(value[2]) + ' ms';
+        return clock(value[0]) + '<br>' + params.seriesName + ': ' + rowMs(value[2]) + ' ms';
     }
 
     function draw() {

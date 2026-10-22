@@ -257,10 +257,8 @@ pub(crate) const MAX_REQUEST_SERIES: usize = 100;
 /// The heatmap's fixed rows, from 0 µs up: where each band starts, the
 /// width of its rows and how many it has, all in microseconds. 100 µs rows
 /// under a millisecond, 1 ms rows to 64 ms, 2 ms to 100 ms, 10 ms to
-/// 500 ms, 50 ms to 1 s, 100 ms to 5 s and 2 s to 61 s. No row is narrower
-/// than the timing data buckets it takes, so every row can fill, and there
-/// are about as many rows as whole millisecond buckets once held, so a
-/// heatmap's JSON stays the size it was.
+/// 500 ms, 50 ms to 1 s, 100 ms to 5 s and 1 s to 61 s. No row is narrower
+/// than the timing data buckets it takes, so every row can fill.
 const ROW_BANDS: [(u64, u64, usize); 7] = [
     (0, 100, 10),
     (1_000, 1_000, 63),
@@ -268,12 +266,12 @@ const ROW_BANDS: [(u64, u64, usize); 7] = [
     (100_000, 10_000, 40),
     (500_000, 50_000, 10),
     (1_000_000, 100_000, 40),
-    (5_000_000, 2_000_000, 28),
+    (5_000_000, 1_000_000, 56),
 ];
 
 /// The fixed rows, every time up to 61 seconds, within the 256 a
 /// [`SecondHistogram`] entry's 8 bit index holds.
-const FIXED_BUCKETS: usize = 209;
+const FIXED_BUCKETS: usize = 237;
 
 /// Where the fixed rows end. Past it, possible with a longer `--timeout`,
 /// each timing data bucket is a row of its own.
@@ -5017,9 +5015,10 @@ mod test {
             (141, [1_050_000, 1_000_000, 1_099_999]),
             (145, [1_450_000, 1_400_000, 1_499_999]),
             (146, [1_550_000, 1_500_000, 1_599_999]),
-            (181, [6_000_000, 5_000_000, 6_999_999]),
-            (208, [60_000_000, 59_000_000, 60_999_999]),
-            (209, [61_170_848, 61_000_000, 61_341_695]),
+            (181, [5_500_000, 5_000_000, 5_999_999]),
+            (182, [6_500_000, 6_000_000, 6_999_999]),
+            (236, [60_500_000, 60_000_000, 60_999_999]),
+            (237, [61_170_848, 61_000_000, 61_341_695]),
         ] {
             assert_eq!(table[index], entry, "index {index}");
         }
@@ -5123,11 +5122,11 @@ mod test {
             [1, 3]
         );
         assert_eq!(measured_pairs(&delta, 1), [(14, 1), (15, 1)]);
-        // Past 61 seconds a row per timing data bucket: 75 s is index 228,
+        // Past 61 seconds a row per timing data bucket: 75 s is index 256,
         // and the table grows to cover it.
-        assert_eq!(measured_pairs(&delta, 3), [(228, 1)]);
-        assert_eq!(delta.buckets_us.len(), 229);
-        assert_eq!(delta.buckets_us[228], [74_973_184, 74_448_896, 75_497_471]);
+        assert_eq!(measured_pairs(&delta, 3), [(256, 1)]);
+        assert_eq!(delta.buckets_us.len(), 257);
+        assert_eq!(delta.buckets_us[256], [74_973_184, 74_448_896, 75_497_471]);
 
         // A cursor of another generation, or from the future, gets the whole
         // window.
@@ -5256,9 +5255,10 @@ mod test {
     }
 
     /// The heatmap's JSON in the worst case, every bucket in every second of
-    /// the window: what changes in a second, and a 60 second synthetic
-    /// backfill, stay within 200 KB; a whole window, sent once to a client
-    /// with no heatmap, does not, which is why only changes are sent.
+    /// the window: what changes in a second stays within 200 KB and a 60
+    /// second synthetic backfill within 220 KB; a whole window, sent once to
+    /// a client with no heatmap, does not, which is why only changes are
+    /// sent.
     #[test]
     fn heatmap_worst_case_sizes() {
         let mut graph = latency_graph(true);
@@ -5330,7 +5330,7 @@ mod test {
             size(&backfill)
         );
         assert!(size(&next) <= 200 * 1024);
-        assert!(size(&backfill) <= 200 * 1024);
+        assert!(size(&backfill) <= 220 * 1024);
         assert!(size(&whole) > 200 * 1024);
     }
 

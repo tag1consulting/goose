@@ -1845,7 +1845,7 @@ async fn test_dashboard_latency_by_second() {
         heatmap["start_second"].as_u64().unwrap() + rps_len - 1
     );
     assert!(heatmap.get("buckets").is_none());
-    assert!(heatmap["buckets_us"].as_array().expect("buckets_us").len() >= 209);
+    assert!(heatmap["buckets_us"].as_array().expect("buckets_us").len() >= 237);
     // The 100 to 110 ms row, past the rows under a millisecond.
     assert_eq!(
         heatmap["buckets_us"][91],

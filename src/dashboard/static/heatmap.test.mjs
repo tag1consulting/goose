@@ -327,7 +327,8 @@ test("tooltips, in every form", () => {
   );
   assert.equal(
     text(0),
-    "Second 7: under 1 ms, 2 requests (16.67% of the second's 12)" + measured
+    // Bucket 0 of this table ends at 1 ms.
+    "Second 7: 0 to 1 ms, 2 requests (16.67% of the second's 12)" + measured
   );
   assert.ok(cell(S_1));
 
