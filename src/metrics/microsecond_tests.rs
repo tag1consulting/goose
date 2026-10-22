@@ -353,10 +353,10 @@ fn merging_batches_equals_recording_once() {
     }
 }
 
-/// The deltas a report of 400 µs and 1,410 ms requests shows against
-/// `baseline`: for `slow`, the name of the baseline's 1.4 s request, for
-/// `fast`, its sub millisecond one, and for the minimum of the transaction
-/// `index`.
+/// Checks the deltas against `baseline` of a report with 400 µs `fast` and
+/// 1,410 ms `slow` requests and a 400 µs `index` transaction. `fast` and
+/// `slow` name the baseline's sub millisecond and 1.4 s requests;
+/// `index_minimum` is how the `index` transaction's minimum should read.
 fn baseline_deltas(fixture: &str, fast: &str, slow: &str, index_minimum: &str) {
     let path = format!("{}/tests/fixtures/{fixture}", env!("CARGO_MANIFEST_DIR"));
     let baseline = load_baseline_file(&path).expect("the old report loads as a baseline");

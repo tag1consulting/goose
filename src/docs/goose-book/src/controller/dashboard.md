@@ -526,7 +526,7 @@ The snapshot's `series.heatmap` carries the heatmap, or `null` when percentiles 
 | `since` | The `rev` these columns follow on from, or `0` for every column of the window. |
 | `start_second`, `end_second` | The window, in seconds from the start of the test. Columns before `start_second` are dropped. |
 | `hold_from` | Seconds from this one on are still filling and not drawn. |
-| `buckets_us` | `[time, lowest, highest]` in microseconds for each row index: the time the row stands for, which is its middle, then the fastest and slowest measured times it holds. A longer table replaces a shorter one; entries never change. |
+| `buckets_us` | `[time, lowest, highest]` in microseconds for each row index: the time the row stands for, which is its middle, then the lowest and highest time the row holds. A longer table replaces a shorter one; entries never change. |
 | `columns` | The columns that changed: `{ "second", "measured": [index, count, ...], "synthetic": [index, count, ...] }`, each non empty bucket as an index and a count, `synthetic` empty unless mitigation has recorded an event. |
 
 Only the columns that changed are sent. Every SSE client gets the same snapshot, whose heatmap holds the columns changed since the previous one; a client holding another `rev`, for example after it reconnects, asks `GET /api/v1/snapshot?heatmap_generation=<generation>&heatmap_since=<rev>` for the columns it lacks. Without those parameters `GET /api/v1/snapshot` returns every column of the window. The dashboard does all of this itself.
