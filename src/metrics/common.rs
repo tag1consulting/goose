@@ -16,7 +16,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs::File;
 use std::hash::Hash;
-use std::io::BufReader;
+use std::io::{BufReader, Read};
 use std::path::Path;
 
 /// The mean of these response times, in `f64` so that a large one prints to
@@ -566,18 +566,12 @@ pub fn load_baseline_file<P: AsRef<Path>>(path: P) -> Result<ReportData<'static>
         detail: format!("Failed to open baseline file: {err}"),
     })?;
 
-    let reader = BufReader::new(file);
-
-    // First, deserialize as a BaselineReportData that can handle plain values
-    let baseline_data: BaselineReportData =
-        serde_json::from_reader(reader).map_err(|err| GooseError::InvalidOption {
+    let mut baseline =
+        read_report(BufReader::new(file)).map_err(|err| GooseError::InvalidOption {
             option: "--baseline-file".to_string(),
             value: path_str.to_string(),
             detail: format!("Failed to parse baseline file as JSON: {err}"),
         })?;
-
-    // Convert BaselineReportData to ReportData with proper Value<T> wrapping
-    let mut baseline = baseline_data.into_report_data();
 
     // Validate the loaded baseline data
     validate_baseline_data(&baseline, &path_str)?;
@@ -601,9 +595,8 @@ pub(crate) fn compare_reports(
     let load = |path: &Path, id: &str| -> Result<ReportData<'static>, String> {
         let reader =
             BufReader::new(File::open(path).map_err(|e| format!("Can't read run {id}: {e}"))?);
-        let data: BaselineReportData = serde_json::from_reader(reader)
-            .map_err(|e| format!("Can't read the report of run {id}: {e}"))?;
-        let data = data.into_report_data();
+        let data =
+            read_report(reader).map_err(|e| format!("Can't read the report of run {id}: {e}"))?;
         let requests = data
             .raw_request_metrics
             .iter()
@@ -624,6 +617,111 @@ pub(crate) fn compare_reports(
     crate::report::write_markdown_report(&mut out, current)
         .map_err(|e| format!("Can't compare run {run_id} with run {baseline_id}: {e}"))?;
     Ok(out)
+}
+
+/// A JSON report as a baseline. The rows of a report with microsecond
+/// buckets are rebuilt from its raw timing data, as a live report's rows
+/// are, since its JSON rows hold whole milliseconds; a report without them
+/// keeps its rows.
+fn read_report(reader: impl Read) -> Result<ReportData<'static>, serde_json::Error> {
+    let mut text = String::new();
+    let mut reader = reader;
+    reader
+        .read_to_string(&mut text)
+        .map_err(serde_json::Error::io)?;
+    let mut report = serde_json::from_str::<BaselineReportData>(&text)?.into_report_data();
+    if serde_json::from_str::<MicrosecondsProbe>(&text)?.has_microseconds() {
+        rebuild_timed_rows(&mut report);
+    }
+    Ok(report)
+}
+
+/// Whether a JSON report's requests carry `times_us`, as reports from Goose
+/// 0.19 on do.
+#[derive(Deserialize)]
+struct MicrosecondsProbe {
+    raw_metrics: ProbeMetrics,
+}
+
+#[derive(Deserialize)]
+struct ProbeMetrics {
+    requests: HashMap<String, ProbeRequest>,
+}
+
+#[derive(Deserialize)]
+struct ProbeRequest {
+    raw_data: ProbeTimingData,
+}
+
+#[derive(Deserialize)]
+struct ProbeTimingData {
+    times_us: Option<serde::de::IgnoredAny>,
+}
+
+impl MicrosecondsProbe {
+    fn has_microseconds(&self) -> bool {
+        self.raw_metrics
+            .requests
+            .values()
+            .any(|request| request.raw_data.times_us.is_some())
+    }
+}
+
+/// Replace the request, coordinated omission, transaction and scenario rows
+/// of `report` with the rows its raw timing data gives. Status code
+/// breakdown rows, whose times the raw data does not keep, stay.
+fn rebuild_timed_rows(report: &mut ReportData<'static>) {
+    let ReportData {
+        raw_request_metrics,
+        raw_response_metrics,
+        co_request_metrics,
+        co_response_metrics,
+        transaction_metrics,
+        scenario_metrics,
+        ..
+    } = Prepare::new(
+        ReportOptions {
+            no_transaction_metrics: report.transaction_metrics.is_none(),
+            no_scenario_metrics: report.scenario_metrics.is_none(),
+            no_status_codes: true,
+        },
+        &report.raw_metrics,
+    )
+    .build();
+    let request_key = |r: &RequestMetric| (r.method.clone(), r.name.clone());
+    let response_key = |r: &ResponseMetric| (r.method.clone(), r.name.clone());
+    replace_rows(
+        &mut report.raw_request_metrics,
+        raw_request_metrics,
+        request_key,
+    );
+    replace_rows(
+        &mut report.raw_response_metrics,
+        raw_response_metrics,
+        response_key,
+    );
+    if let (Some(stored), Some(rebuilt)) = (&mut report.co_request_metrics, co_request_metrics) {
+        replace_rows(stored, rebuilt, |r| (r.method.clone(), r.name.clone()));
+    }
+    if let (Some(stored), Some(rebuilt)) = (&mut report.co_response_metrics, co_response_metrics) {
+        replace_rows(stored, rebuilt, response_key);
+    }
+    if let (Some(stored), Some(rebuilt)) = (&mut report.transaction_metrics, transaction_metrics) {
+        replace_rows(stored, rebuilt, |t| (t.transaction.clone(), t.name.clone()));
+    }
+    if let (Some(stored), Some(rebuilt)) = (&mut report.scenario_metrics, scenario_metrics) {
+        replace_rows(stored, rebuilt, |s| s.name.clone());
+    }
+}
+
+/// Replace each row of `stored` with the row of `rebuilt` that has its key.
+fn replace_rows<T, K: Eq + Hash>(stored: &mut [T], rebuilt: Vec<T>, key: impl Fn(&T) -> K) {
+    let mut rebuilt: HashMap<K, T> = rebuilt.into_iter().map(|row| (key(&row), row)).collect();
+    for row in stored {
+        if let Some(new) = rebuilt.remove(&key(row)) {
+            *row = new;
+        }
+    }
 }
 
 /// Intermediate structure for deserializing baseline data with plain values

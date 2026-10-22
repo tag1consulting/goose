@@ -407,14 +407,14 @@ fn a_report_with_microseconds_round_trips_as_a_baseline() {
     let baseline = load_baseline_file(&path).unwrap();
     std::fs::remove_dir_all(&dir).unwrap();
     // The JSON rows are whole milliseconds; the raw timing data keeps every
-    // microsecond bucket.
+    // microsecond bucket, and the rows are rebuilt from it.
     let raw = &baseline.raw_metrics.requests["GET /"].raw_data;
     assert_eq!(raw, &metrics.requests["GET /"].raw_data);
     assert_eq!(
         baseline.raw_request_metrics[0]
             .response_time_minimum
             .to_string(),
-        "0"
+        "0.4"
     );
 }
 

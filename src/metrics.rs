@@ -5076,7 +5076,9 @@ pub(crate) fn response_time_percentile<T: Copy + Default + PartialOrd>(
     let mut total_count: usize = 0;
 
     for (value, counter) in response_times {
-        total_count += counter;
+        // A baseline file's counts are not checked, so they may sum past
+        // `usize::MAX`.
+        total_count = total_count.saturating_add(counter);
         if total_count >= percentile_request {
             if value < min {
                 return min;
