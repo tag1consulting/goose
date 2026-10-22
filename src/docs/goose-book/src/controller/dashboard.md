@@ -531,7 +531,7 @@ The snapshot's `series.heatmap` carries the heatmap, or `null` when percentiles 
 
 Only the columns that changed are sent. Every SSE client gets the same snapshot, whose heatmap holds the columns changed since the previous one; a client holding another `rev`, for example after it reconnects, asks `GET /api/v1/snapshot?heatmap_generation=<generation>&heatmap_since=<rev>` for the columns it lacks. Without those parameters `GET /api/v1/snapshot` returns every column of the window. The dashboard does all of this itself.
 
-How big this is depends on how widely response times spread. In a test of 1,000 users at about 21,700 requests a second over 25 request names, each SSE snapshot's heatmap held two or three columns and took about 5.2 KB (5.9 KB at most), about 3 KB of it the bucket table, and a whole window of 91 seconds took 75 KB. Times spread over every bucket are the worst case: then a second's changes take about 9 KB, 60 seconds of them about 190 KB, and a whole window of 300 seconds about 600 KB.
+How big this is depends on how widely response times spread. In a test of 300 users at about 26 requests a second over 3 request names, each SSE snapshot's heatmap took about 6.7 KB (7.1 KB at most), 5.4 KB of it the bucket table, and a whole window of 92 seconds took 12.7 KB. Times spread over every bucket are the worst case: then a second's changes take about 12 KB, 60 seconds of them about 212 KB, and a whole window of 300 seconds about 669 KB.
 
 #### Request heatmap endpoint
 
