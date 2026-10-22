@@ -349,7 +349,7 @@ pub struct GooseConfiguration {
     /// Label the run in its reports
     ///
     /// Stores TEXT in the JSON report and shows it at the top of the HTML and Markdown
-    /// reports and in the dashboard. Needs a report or --dashboard.
+    /// reports and in the dashboard. Needs --report-file or --dashboard.
     ///
     /// Example: --notes "baseline before cache change". Set in code with
     /// GooseDefault::Notes.
@@ -358,7 +358,8 @@ pub struct GooseConfiguration {
     /// Add graph data to the JSON report
     ///
     /// Adds the per second data behind the HTML report's graphs to the JSON report, so
-    /// a report rendered from it with --render-report has its graphs. Needs a report.
+    /// a report rendered from it with --render-report has its graphs. Needs --report-file or
+    /// --dashboard.
     ///
     /// Set in code with GooseDefault::ReportGraphData.
     #[arg(help_heading = "Reports", long)]
@@ -477,8 +478,9 @@ pub struct GooseConfiguration {
 
     /// Log every request to FILE
     ///
-    /// Writes a line for each request, in --request-format. Without FILE, writes requests
-    /// into the run's folder, named for the format. Not allowed with --no-metrics.
+    /// Writes a line for each request, in --request-format. Without FILE, writes
+    /// requests.json, .csv or .log, as --request-format sets, into the run's folder. Not
+    /// allowed with --no-metrics.
     ///
     /// Example: -R requests.log. Set in code with GooseDefault::RequestLog.
     #[arg(
@@ -514,8 +516,8 @@ pub struct GooseConfiguration {
     /// Log every transaction to FILE
     ///
     /// Writes a line for each transaction, in --transaction-format. Without FILE, writes
-    /// transactions into the run's folder, named for the format. Not allowed with
-    /// --no-metrics.
+    /// transactions.json, .csv or .log, as --transaction-format sets, into the run's
+    /// folder. Not allowed with --no-metrics.
     ///
     /// Example: -T transactions.log. Set in code with GooseDefault::TransactionLog.
     #[arg(
@@ -544,8 +546,8 @@ pub struct GooseConfiguration {
     /// Log every scenario to FILE
     ///
     /// Writes a line for each run of a scenario, in --scenario-format. Without FILE, writes
-    /// scenarios into the run's folder, named for the format. Not allowed with
-    /// --no-metrics.
+    /// scenarios.json, .csv or .log, as --scenario-format sets, into the run's folder. Not
+    /// allowed with --no-metrics.
     ///
     /// Example: -S scenarios.log. Set in code with GooseDefault::ScenarioLog.
     #[arg(
@@ -574,7 +576,8 @@ pub struct GooseConfiguration {
     /// Log every error to FILE
     ///
     /// Writes a line for each failed request, in --error-format. Without FILE, writes
-    /// errors into the run's folder, named for the format. Not allowed with --no-metrics.
+    /// errors.json, .csv or .log, as --error-format sets, into the run's folder. Not allowed
+    /// with --no-metrics.
     ///
     /// Example: -E errors.log. Set in code with GooseDefault::ErrorLog.
     #[arg(
@@ -604,7 +607,7 @@ pub struct GooseConfiguration {
     ///
     /// Writes what the load test logs with GooseUser::log_debug and GooseUser::set_failure,
     /// with response bodies unless --no-debug-body, in --debug-format. Without FILE, writes
-    /// debug into the run's folder, named for the format.
+    /// debug.json, .csv or .log, as --debug-format sets, into the run's folder.
     ///
     /// Example: -D debug.log. Set in code with GooseDefault::DebugLog.
     #[arg(
