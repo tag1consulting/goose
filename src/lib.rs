@@ -1231,11 +1231,16 @@ impl GooseAttack {
     /// }
     /// ```
     pub async fn execute(self) -> Result<GooseMetrics, GooseError> {
-        let result = self.execute_load_test().await;
-        // The Goose log is whole on every way out: a gzipped one ends its
-        // member here.
-        logger::finish_goose_log();
-        result
+        /// Ends a gzipped Goose log's member on every way out of `execute()`:
+        /// a return, a panic unwinding through it, or its future dropped.
+        struct FinishGooseLog;
+        impl Drop for FinishGooseLog {
+            fn drop(&mut self) {
+                logger::finish_goose_log();
+            }
+        }
+        let _finish = FinishGooseLog;
+        self.execute_load_test().await
     }
 
     /// [`Self::execute`], before the Goose log is finished.

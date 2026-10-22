@@ -365,9 +365,11 @@ impl GooseAttack {
                 Some(_) => format!("{GOOSE_LOG}.gz"),
                 None => GOOSE_LOG.to_string(),
             };
-            folder
-                .create()
+            // Move the log first, so the line naming this run's folder lands
+            // in that folder's log.
+            std::fs::create_dir_all(&folder.path)
                 .and_then(|()| move_goose_log(&folder.file(&name)))
+                .and_then(|()| folder.create())
                 .map_err(|e| folder.error(e))?;
         }
         self.output.folder = Some(folder);
@@ -1065,6 +1067,40 @@ mod tests {
             assert!(names.iter().any(|n| n == name), "{}", name);
         }
         assert!(!names.iter().any(|n| n.contains('/')));
+    }
+
+    /// Rule 12: a listing parses a report again when it changes, so the
+    /// report that replaces one saved now lists as ended, never as running
+    /// or incomplete; a report marked in progress is running only for the
+    /// run in progress.
+    #[cfg(feature = "dashboard")]
+    #[test]
+    fn a_changed_report_is_listed_again() {
+        let parent = temp_dir("listing");
+        let folder = parent.join("run");
+        std::fs::create_dir(&folder).unwrap();
+        let json = folder.join(REPORT_JSON);
+        let report = |in_progress: bool, requests: u64| {
+            serde_json::json!({
+                "in_progress": in_progress,
+                "started": "2026-10-22T10:00:00Z",
+                "raw_metrics": {"requests": {"GET /": {"success_count": requests, "fail_count": 0}}},
+            })
+            .to_string()
+        };
+        let mut cache = ListingCache::new();
+        std::fs::write(&json, report(true, 5)).unwrap();
+        let listed = list_reports(&parent, Some(&folder), &mut cache).unwrap();
+        assert!(listed[0].record.in_progress && listed[0].running);
+        assert_eq!(listed[0].requests, 5);
+        let listed = list_reports(&parent, None, &mut cache).unwrap();
+        assert!(listed[0].record.in_progress && !listed[0].running);
+
+        std::fs::write(&json, report(false, 12345)).unwrap();
+        let listed = list_reports(&parent, Some(&folder), &mut cache).unwrap();
+        assert!(!listed[0].record.in_progress && !listed[0].running);
+        assert_eq!(listed[0].requests, 12345);
+        std::fs::remove_dir_all(&parent).ok();
     }
 
     #[test]

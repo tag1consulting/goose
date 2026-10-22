@@ -433,10 +433,18 @@ test("the list reloads whenever a run starts or a report is written, with no pha
   await settle(page.window);
   assert.equal(listed(), 1, "the same report lists nothing");
 
-  // A short run started and ended between two snapshots: both idle.
+  // A run starts: its folder changes, the last report does not.
+  page.events.emit("snapshot", snapshot("goose-runs/b", "goose-runs/a"));
+  await settle(page.window);
+  assert.equal(listed(), 2, "a run started");
+  // Its report is written: the last report changes, the folder does not.
   page.events.emit("snapshot", snapshot("goose-runs/b", "goose-runs/b"));
   await settle(page.window);
-  assert.equal(listed(), 2);
+  assert.equal(listed(), 3, "a report was written");
+  // A short run started and ended between two snapshots: both change.
+  page.events.emit("snapshot", snapshot("goose-runs/c", "goose-runs/c"));
+  await settle(page.window);
+  assert.equal(listed(), 4);
 });
 
 test("without control the switches stay read only as snapshots arrive", async () => {

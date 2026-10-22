@@ -1,6 +1,6 @@
 //! A Goose log named `.gz` ends a gzip member at the end of each
-//! `execute()`, so a process that runs two load tests leaves one whole gzip
-//! file holding both runs' lines.
+//! `execute()`, so a process that runs several load tests, one of them
+//! failing, leaves one whole gzip file holding every run's lines.
 //!
 //! The Goose log is the global logger, set once for the process, so this is
 //! the only test in its file: each integration test file runs in its own
@@ -57,15 +57,33 @@ async fn a_gz_goose_log_holds_every_run() {
             .read_to_string(&mut text)
             .expect("the Goose log is whole gzip");
     }
+    // A run that fails after it has logged leaves the file whole too.
+    let configuration = GooseConfiguration::parse_args_default(&[
+        "--host",
+        &host,
+        "--quiet",
+        "-G",
+        &log_str,
+        "-g",
+        "--report-file",
+        "report.txt",
+    ])
+    .unwrap();
+    GooseAttack::initialize_with_config(configuration)
+        .unwrap()
+        .register_scenario(scenario!("LoadTest").register_transaction(transaction!(get_index)))
+        .execute()
+        .await
+        .expect_err("a report named .txt is refused");
     let mut text = String::new();
     flate2::read::MultiGzDecoder::new(std::fs::File::open(&log).unwrap())
         .read_to_string(&mut text)
-        .unwrap();
+        .expect("the Goose log is whole gzip after a failed run");
     std::fs::remove_dir_all(&dir).ok();
     assert_eq!(
         text.matches("global host configured").count(),
-        2,
-        "both runs' lines: {}",
+        3,
+        "every run's lines: {}",
         text
     );
 }

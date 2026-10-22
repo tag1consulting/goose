@@ -2773,6 +2773,19 @@ async fn test_save_report_switches() {
         snap["report"]["last_report"],
         folder.to_string_lossy().as_ref()
     );
+    // The panel lists the final report, not the one Save report now wrote.
+    let listing: serde_json::Value = client
+        .get(format!("{base}/api/v1/reports"))
+        .header("Authorization", bearer_header())
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(listing["reports"][0]["name"], "dash");
+    assert_eq!(listing["reports"][0]["in_progress"], false);
+    assert_eq!(listing["reports"][0]["ended_by"], "stopped");
 
     // Run 2, with Save report still off: only the path is written.
     std::fs::remove_file(&path).unwrap();
