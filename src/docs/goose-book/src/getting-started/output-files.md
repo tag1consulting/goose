@@ -70,7 +70,7 @@ cargo run --features dashboard --example simple -- --host http://localhost:8080 
 
 **10. Save report can be turned on or off at any time.** While it is on, Goose keeps the run's graph data and heatmap for the whole run; while it is off and no `--report-file` path is given, only the dashboard's last 10 minutes of graphs and 5 minutes of heatmap. Turning it on during a run keeps graphs from that point on, plus that window before it, and rule 5 labels the report.
 
-With no `--report-file` path, keep Save report off through a long soak test to keep memory flat, and turn it on before the part of the run you want graphed.
+On a long soak test with `--dashboard-control` and no `--report-file` path, turn Save report off to keep memory flat, and turn it on before the part of the run you want graphed.
 
 **11. Save report now writes the run's report as it stands into its folder while the run continues, and marks it as in progress.** The report at the end of the run replaces it. A second switch in the bar, **Include graph data**, is rule 7's flag and can also be changed at any time.
 

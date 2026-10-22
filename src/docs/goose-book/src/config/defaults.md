@@ -22,6 +22,8 @@ The following defaults can be configured with a `&str`:
  - report file names: `GooseDefault::ReportFile`
  - goose log file name: `GooseDefault::GooseLog`
  - request log file name: `GooseDefault::RequestLog`
+ - the run's folder: `GooseDefault::OutputDir`
+ - notes stored with the run's reports: `GooseDefault::Notes`
  - transaction log file name: `GooseDefault::TransactionLog`
  - error log file name: `GooseDefault::ErrorLog`
  - debug log file name: `GooseDefault::DebugLog`
@@ -46,6 +48,7 @@ The following defaults can be configured with a `usize` integer:
  - port to bind WebSocket Controller to: `GooseDefault::WebSocketPort`
  - port to bind Manager to: `GooseDefault::ManagerBindPort`
  - port for Worker to connect to: `GooseDefault::ManagerPort`
+ - gzip level for the files in the run's folder, 1 to 9: `GooseDefault::Compress`
 
 The following defaults can be configured with a `bool`:
  - do not reset metrics after all users start: `GooseDefault::NoResetMetrics`
@@ -65,6 +68,9 @@ The following defaults can be configured with a `bool`:
  - enable Worker mode: `GooseDefault::Worker`
  - ignore load test checksum: `GooseDefault::NoHashCheck`
  - graph only totals in reports: `GooseDefault::NoGranularData`
+ - add graph data to the JSON report: `GooseDefault::ReportGraphData`
+
+A default names a path, never the run's folder: `GooseDefault::OutputDir` takes effect with `GooseDefault::Dashboard`, or with an output flag given without a path on the command line.
 
 The following defaults can be configured with a `GooseLogFormat`:
  - request log file format: `GooseDefault::RequestFormat`

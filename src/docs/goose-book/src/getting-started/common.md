@@ -217,4 +217,4 @@ A report written at the end of the run, to a `--report-file` path or by the dash
 | 24 hours | 21 MB | 100 MB |
 | 7 days | 145 MB | 730 MB |
 
-Without a report, Goose records per second graph data only for the dashboard, which keeps its last 10 minutes. On a long soak test with the dashboard and no `--report-file` path, turn Save report off to keep memory flat, and turn it on before the part of the run you want graphed.
+Without a report, Goose records per second graph data only for the dashboard, which keeps its last 10 minutes. On a long soak test with `--dashboard-control` and no `--report-file` path, turn Save report off to keep memory flat, and turn it on before the part of the run you want graphed.
