@@ -502,15 +502,19 @@ body {
 }
 
 /* KPIs */
+/* The tiles share the row, every tile the same width, so a value's size
+   follows its tile's width and every value is the same size. */
 .kpi-row {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
   gap: 0.65rem;
   margin-top: 0.85rem;
 }
 
 .kpi {
   padding: 0.75rem 0.9rem;
+  container-type: inline-size;
+  min-width: 0;
 }
 
 .kpi .k {
@@ -522,9 +526,17 @@ body {
 
 .kpi .v {
   display: block;
-  font-size: 1.25rem;
+  white-space: nowrap;
+  font-size: clamp(1rem, 13cqi, 1.6rem);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+}
+
+/* The users tile's target, after the active count. */
+.kpi .v small {
+  font-size: 0.6em;
+  font-weight: 600;
+  color: var(--muted);
 }
 
 /* Cards */

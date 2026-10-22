@@ -70,6 +70,24 @@ function minMaxText(min: number, max: number): string {
   return formatMs(min) + " / " + formatMs(max);
 }
 
+/** The users KPI: the active count, then the target, smaller. */
+function setUsersKpi(active: number, target: number): void {
+  const small = document.createElement("small");
+  small.textContent = " / " + formatInt(target);
+  kpiUsers.textContent = formatInt(active);
+  kpiUsers.appendChild(small);
+}
+
+/**
+ * The RPS KPI: whole requests from 100 a second, two decimals below, with
+ * the two decimals the tables show in the tile's hover.
+ */
+function setRpsKpi(rps: number): void {
+  kpiRps.textContent = rps >= 100 ? formatInt(rps) : formatRate(rps);
+  const tile = kpiRps.parentElement;
+  if (tile) tile.title = "RPS " + formatRate(rps);
+}
+
 /** Sets a KPI's text, and its hover only while it shows an adjusted value. */
 function setKpi(el: HTMLElement, text: string, title: string | null): void {
   el.textContent = text;
@@ -117,10 +135,9 @@ function renderSnapshot(
   durationEl.textContent = formatDuration(snap.duration_secs);
 
   // active / target (not peak maximum_users — that stays equal during ramp).
-  kpiUsers.textContent =
-    formatInt(snap.active_users) + " / " + formatInt(snap.target_users);
+  setUsersKpi(snap.active_users, snap.target_users);
   const agg = snap.aggregate;
-  kpiRps.textContent = formatRate(agg.requests_per_second);
+  setRpsKpi(agg.requests_per_second);
   kpiFail.textContent = formatPct(agg.failure_rate);
   const p = agg.percentile_ms;
   // Once coordinated omission mitigation has events, response times are
