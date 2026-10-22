@@ -121,8 +121,7 @@ impl Display for MillisDelta {
 impl DeltaValue for Millis {
     type Delta = MillisDelta;
 
-    /// The difference of the values shown, so the delta reads as the
-    /// difference of what is printed.
+    /// The difference of the values shown.
     fn delta(self, value: Self) -> Self::Delta {
         let difference = shown_us(self.0) as i128 - shown_us(value.0) as i128;
         MillisDelta(difference.clamp(i64::MIN as i128, i64::MAX as i128) as i64)

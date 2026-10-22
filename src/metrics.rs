@@ -1173,9 +1173,9 @@ impl PartialOrd for GooseRequestMetricAggregate {
 ///
 /// It serializes, in a JSON report or saved run, with each bucket once, in
 /// `times_us`, beside the fastest, slowest and total in microseconds and in
-/// whole milliseconds; Goose before 0.19 can not read it. A report from
-/// Goose before 0.19, with only whole millisecond `times`, reads as whole
-/// milliseconds.
+/// whole milliseconds; an earlier Goose, which reads whole millisecond
+/// `times`, can not read it. A report from an earlier Goose, with only
+/// whole millisecond `times`, reads as whole milliseconds.
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub struct GooseRequestMetricTimingData {
     /// How many times fell in each bucket, keyed by the bucket's fastest
@@ -1524,8 +1524,8 @@ impl TransactionMetric {
 ///
 /// It serializes its [`run_times`](Self::run_times) flat: `min_time`,
 /// `max_time` and `total_time` in whole milliseconds, `counter`, and
-/// `times_us`, `min_time_us`, `max_time_us` and `total_time_us`; Goose
-/// before 0.19 can not read it.
+/// `times_us`, `min_time_us`, `max_time_us` and `total_time_us`; an
+/// earlier Goose, which reads whole millisecond `times`, can not read it.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct TransactionMetricAggregate {
     /// An index into [`GooseAttack`](../struct.GooseAttack.html)`.scenarios`,
@@ -1727,8 +1727,8 @@ fn run_times(
 ///
 /// It serializes its [`run_times`](Self::run_times) flat: `min_time`,
 /// `max_time` and `total_time` in whole milliseconds, `counter`, and
-/// `times_us`, `min_time_us`, `max_time_us` and `total_time_us`; Goose
-/// before 0.19 can not read it.
+/// `times_us`, `min_time_us`, `max_time_us` and `total_time_us`; an
+/// earlier Goose, which reads whole millisecond `times`, can not read it.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ScenarioMetricAggregate {
     /// An index into [`GooseAttack`](../struct.GooseAttack.html)`.scenarios`,

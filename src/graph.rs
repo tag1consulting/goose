@@ -637,7 +637,7 @@ fn row_entry_us(index: usize) -> [u64; 3] {
     [display_value(index), lowest, highest]
 }
 
-/// The heatmap's bucket table, `[time, lowest, highest]` in microseconds
+/// The heatmap's row table, `[time, lowest, highest]` in microseconds
 /// for each index from 0 to `last`, and always every fixed index.
 fn bucket_table_us(last: usize) -> Vec<[u64; 3]> {
     (0..=last.max(FIXED_BUCKETS - 1))
