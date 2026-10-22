@@ -118,7 +118,7 @@ impl<W: Write> Markdown<'_, '_, W> {
             if metric.is_breakdown {
                 writeln!(
                     self.w,
-                    r#"| | └─ {method} | {count} | | {avg:.2} | {min} | {max} | | |"#,
+                    r#"| | └─ {method} | {count} | | {avg} | {min} | {max} | | |"#,
                     method = metric.method,
                     count = metric.number_of_requests,
                     avg = metric.response_time_average,
@@ -128,7 +128,7 @@ impl<W: Write> Markdown<'_, '_, W> {
             } else {
                 writeln!(
                     self.w,
-                    r#"| {method} | {name} | {number_of_requests} | {number_of_failures} | {response_time_average:.2} | {response_time_minimum} | {response_time_maximum} | {requests_per_second:.2} | {failures_per_second:.2} |"#,
+                    r#"| {method} | {name} | {number_of_requests} | {number_of_failures} | {response_time_average} | {response_time_minimum} | {response_time_maximum} | {requests_per_second:.2} | {failures_per_second:.2} |"#,
                     method = metric.method,
                     name = metric.name,
                     number_of_requests = metric.number_of_requests,
@@ -245,7 +245,7 @@ impl<W: Write> Markdown<'_, '_, W> {
                 true => writeln!(self.w, r#"| **{name}** |"#)?,
                 false => writeln!(
                     self.w,
-                    r#"| {transaction} {name} | {number_of_requests} | {number_of_failures} | {response_time_average:.2} | {response_time_minimum} | {response_time_maximum} | {requests_per_second:.2} | {failures_per_second:.2} |"#,
+                    r#"| {transaction} {name} | {number_of_requests} | {number_of_failures} | {response_time_average} | {response_time_minimum} | {response_time_maximum} | {requests_per_second:.2} | {failures_per_second:.2} |"#,
                     response_time_average = OrEmpty(*response_time_average),
                     requests_per_second = OrEmpty(*requests_per_second),
                     failures_per_second = OrEmpty(*failures_per_second),
@@ -284,7 +284,7 @@ impl<W: Write> Markdown<'_, '_, W> {
         {
             writeln!(
                 self.w,
-                r#"| {name} | {users} | {count} | {response_time_average:.2} | {response_time_minimum}  | {response_time_maximum} | {count_per_second:.2} | {iterations:.2} |"#
+                r#"| {name} | {users} | {count} | {response_time_average} | {response_time_minimum}  | {response_time_maximum} | {count_per_second:.2} | {iterations:.2} |"#
             )?;
         }
 

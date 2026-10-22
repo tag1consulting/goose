@@ -26,7 +26,7 @@ pub(crate) use common::{load_baseline_file, ReportData};
 pub use coordinated_omission::{CadenceCalculator, CoMetricsSummary, CoordinatedOmissionMetrics};
 pub(crate) use dashboard_snapshot::DashboardSnapshot;
 pub(crate) use delta::{ApplyBaseline, DeltaTo, Value};
-pub(crate) use millis::{format_micros, Millis};
+pub(crate) use millis::{format_micros, format_ms, Millis, MillisFloat};
 pub(crate) use nullable::NullableFloat;
 
 use crate::config::GooseDefaults;
@@ -2606,15 +2606,14 @@ impl GooseMetrics {
             // Display per-status-code breakdown when multiple status codes exist.
             if let Some(breakdowns) = request.status_code_breakdowns() {
                 for b in breakdowns {
-                    let precision = determine_precision(b.average);
                     writeln!(
                         fmt,
-                        " {:<24} | {:>11.precision$} | {:>10} | {:>11} | {:>10}",
+                        " {:<24} | {:>11} | {:>10} | {:>11} | {:>10}",
                         format!(
                             "  \u{2514}\u{2500} {} ({:.1}%)",
                             b.status_code, b.percentage
                         ),
-                        b.average,
+                        format_ms(f64::from(b.average), true),
                         format_micros(b.min_time_us, true),
                         format_micros(b.max_time_us, true),
                         "-",
@@ -2680,14 +2679,12 @@ impl GooseMetrics {
                 );
                 writeln!(
                     fmt,
-                    " {:<24} | {:>11.co_avg_precision$} | {:>10.sd_precision$} | {:>11} | {:>10}",
+                    " {:<24} | {:>11} | {:>10} | {:>11} | {:>10}",
                     util::truncate_string(request_key, 24),
-                    co_average,
-                    standard_deviation,
+                    format_ms(co_average, true),
+                    format_ms(f64::from(standard_deviation), true),
                     format_micros(co_data.maximum_time_us, true),
                     format_micros(co_data.percentile_us(0.5), true),
-                    co_avg_precision = determine_precision(co_average as f32),
-                    sd_precision = determine_precision(standard_deviation),
                 )?;
             } else {
                 writeln!(
@@ -2715,14 +2712,12 @@ impl GooseMetrics {
 
             writeln!(
                 fmt,
-                " {:<24} | {:>11.avg_precision$} | {:>10.sd_precision$} | {:>11} | {:>10}",
+                " {:<24} | {:>11} | {:>10} | {:>11} | {:>10}",
                 "Aggregated",
-                co_average,
-                standard_deviation,
+                format_ms(co_average, true),
+                format_ms(f64::from(standard_deviation), true),
                 format_micros(aggregate_co.maximum_time_us, true),
                 format_micros(aggregate_co.percentile_us(0.5), true),
-                avg_precision = determine_precision(co_average as f32),
-                sd_precision = determine_precision(standard_deviation),
             )?;
         }
 
@@ -4953,16 +4948,14 @@ fn write_times_row(
     name: &str,
     data: &GooseRequestMetricTimingData,
 ) -> fmt::Result {
-    let average = average_ms(data);
     writeln!(
         fmt,
-        " {:<24} | {:>11.precision$} | {:>10} | {:>11} | {:>10}",
+        " {:<24} | {:>11} | {:>10} | {:>11} | {:>10}",
         name,
-        average,
+        format_ms(average_ms(data), true),
         format_micros(data.minimum_time_us, true),
         format_micros(data.maximum_time_us, true),
         format_micros(data.percentile_us(0.5), true),
-        precision = determine_precision(average as f32),
     )
 }
 
@@ -5011,6 +5004,16 @@ impl FormatValue for usize {
 
     fn formatted_delta(delta: isize) -> String {
         delta.to_formatted_string(&Locale::en)
+    }
+}
+
+impl FormatValue for MillisFloat {
+    fn formatted(&self) -> String {
+        MillisFloat::formatted(*self)
+    }
+
+    fn formatted_delta(delta: millis::MillisFloatDelta) -> String {
+        delta.formatted()
     }
 }
 
@@ -5307,10 +5310,7 @@ mod test {
         let average = *aggregated.response_time_average.as_ref().unwrap().value();
         assert_eq!(average, 18.0);
         let printed = ConsoleTransactionTimes(&metrics).to_string();
-        assert_eq!(
-            printed_rows(&printed, "Aggregated")[0][0],
-            format!("{:.2}", average)
-        );
+        assert_eq!(printed_rows(&printed, "Aggregated")[0][0], "18");
     }
 
     /// Whether `value` is the bucket of `ms` milliseconds: within 1/128.
@@ -5390,7 +5390,7 @@ mod test {
         let printed = ConsoleTables(&metrics).to_string();
         let rows = printed_rows(&printed, "Aggregated");
         // Response times: measured, then adjusted (Avg, Std Dev, Max, Median).
-        assert_eq!(rows[1][0], "201.25");
+        assert_eq!(rows[1][0], "201");
         assert_eq!(rows[1][2], "900");
         assert_eq!(rows[1][3], "40");
         // Percentiles: measured, then adjusted (50%, 75%, 98%, ...).

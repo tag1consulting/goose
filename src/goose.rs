@@ -6674,15 +6674,9 @@ mod tests {
             if console_names.len() > 1 {
                 console_names.push(("Aggregated".to_string(), Reference::new(&all)));
             }
-            // The console's average: an f64, two decimals below 1,000.
-            let console_average = |reference: &Reference| {
-                let average = reference.average();
-                if average < 1000.0 {
-                    format!("{:.2}", average)
-                } else {
-                    format!("{:.0}", average)
-                }
-            };
+            // The console's average, shown as every time is.
+            let console_average =
+                |reference: &Reference| crate::metrics::format_ms(reference.average(), true);
             for (name, reference) in &console_names {
                 let (Some(time), Some(percentile)) = (times.get(name), percentiles.get(name))
                 else {

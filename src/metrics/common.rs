@@ -1,6 +1,6 @@
 use super::{
     delta::*, per_second_calculations, prepare_status_codes, CoMetricsSummary, GooseMetrics,
-    GooseRequestMetricTimingData, Millis, NullableFloat,
+    GooseRequestMetricTimingData, Millis, MillisFloat, NullableFloat,
 };
 
 use crate::{
@@ -847,7 +847,7 @@ impl From<BaselineRequestMetric> for RequestMetric {
             name: baseline.name,
             number_of_requests: Value::Plain(baseline.number_of_requests),
             number_of_failures: Value::Plain(baseline.number_of_failures),
-            response_time_average: Value::Plain(NullableFloat(baseline.response_time_average)),
+            response_time_average: Value::Plain(MillisFloat(baseline.response_time_average)),
             response_time_minimum: baseline.response_time_minimum.into(),
             response_time_maximum: baseline.response_time_maximum.into(),
             requests_per_second: Value::Plain(NullableFloat(baseline.requests_per_second)),
@@ -904,8 +904,8 @@ impl From<BaselineCORequestMetric> for CORequestMetric {
         CORequestMetric {
             method: baseline.method,
             name: baseline.name,
-            response_time_average: Value::Plain(NullableFloat(baseline.response_time_average)),
-            response_time_standard_deviation: Value::Plain(NullableFloat(
+            response_time_average: Value::Plain(MillisFloat(baseline.response_time_average)),
+            response_time_standard_deviation: Value::Plain(MillisFloat(
                 baseline.response_time_standard_deviation,
             )),
             response_time_maximum: baseline.response_time_maximum.into(),
@@ -938,7 +938,7 @@ impl From<BaselineTransactionMetric> for TransactionMetric {
             number_of_failures: Value::Plain(baseline.number_of_failures),
             response_time_average: baseline
                 .response_time_average
-                .map(|v| Value::Plain(NullableFloat(v))),
+                .map(|v| Value::Plain(MillisFloat(v))),
             response_time_minimum: baseline.response_time_minimum.into(),
             response_time_maximum: baseline.response_time_maximum.into(),
             requests_per_second: baseline
@@ -970,7 +970,7 @@ impl From<BaselineScenarioMetric> for ScenarioMetric {
             name: baseline.name,
             users: Value::Plain(baseline.users),
             count: Value::Plain(baseline.count),
-            response_time_average: Value::Plain(NullableFloat(
+            response_time_average: Value::Plain(MillisFloat(
                 baseline.response_time_average.unwrap_or(f64::NAN),
             )),
             response_time_minimum: baseline.response_time_minimum.into(),

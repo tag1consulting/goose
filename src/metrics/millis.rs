@@ -131,6 +131,128 @@ impl DeltaValue for Millis {
     }
 }
 
+/// A time in milliseconds worked out from measured times, a mean or a
+/// standard deviation, as an `f64`; NaN without times. It shows as a
+/// [`Millis`] does and serializes as the `f64`.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Serialize)]
+#[serde(transparent)]
+pub(crate) struct MillisFloat(pub f64);
+
+impl MillisFloat {
+    /// The microseconds it shows as; `None` when it is not a number.
+    fn shown_us(self) -> Option<i64> {
+        if !self.0.is_finite() {
+            return None;
+        }
+        let hundredths = (self.0.abs() * 100.0).round();
+        let shown = if hundredths < 1_000.0 {
+            hundredths * 10.0
+        } else {
+            self.0.abs().round() * 1000.0
+        };
+        Some(shown.copysign(self.0) as i64)
+    }
+
+    /// With thousands separators.
+    pub(crate) fn formatted(self) -> String {
+        format_ms(self.0, true)
+    }
+}
+
+/// `ms` milliseconds as Goose shows every time: to the hundredth under
+/// 10 ms, whole from there, rounded half up; `NaN` when it is not a number.
+/// `separators` adds thousands separators.
+pub(crate) fn format_ms(ms: f64, separators: bool) -> String {
+    match MillisFloat(ms).shown_us() {
+        Some(us) => delta_text(us, separators),
+        None => "NaN".to_string(),
+    }
+}
+
+impl std::ops::Deref for MillisFloat {
+    type Target = f64;
+
+    fn deref(&self) -> &f64 {
+        &self.0
+    }
+}
+
+impl Display for MillisFloat {
+    /// As Goose shows a time; with a precision, such as `{:.2}`, the `f64`
+    /// to that many places.
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match f.precision() {
+            Some(_) => Display::fmt(&self.0, f),
+            None => f.pad(&format_ms(self.0, false)),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for MillisFloat {
+    /// From a number, or `null` as NaN.
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(MillisFloat(
+            Option::<f64>::deserialize(deserializer)?.unwrap_or(f64::NAN),
+        ))
+    }
+}
+
+impl From<f64> for Value<MillisFloat> {
+    fn from(ms: f64) -> Self {
+        Value::Plain(MillisFloat(ms))
+    }
+}
+
+impl From<f32> for Value<MillisFloat> {
+    /// With the digits the `f32` prints with, as [`NullableFloat`] takes it.
+    ///
+    /// [`NullableFloat`]: super::NullableFloat
+    fn from(ms: f32) -> Self {
+        Value::Plain(MillisFloat(super::NullableFloat::from(ms).0))
+    }
+}
+
+/// The difference between two [`MillisFloat`] as shown, in microseconds;
+/// `None` when either is not a number.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize)]
+pub(crate) struct MillisFloatDelta(pub Option<i64>);
+
+impl MillisFloatDelta {
+    /// With thousands separators.
+    pub(crate) fn formatted(self) -> String {
+        match self.0 {
+            Some(us) => delta_text(us, true),
+            None => "NaN".to_string(),
+        }
+    }
+}
+
+impl Display for MillisFloatDelta {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self.0 {
+            Some(us) => f.pad(&delta_text(us, false)),
+            None => f.pad("NaN"),
+        }
+    }
+}
+
+impl DeltaValue for MillisFloat {
+    type Delta = MillisFloatDelta;
+
+    /// The difference of the values shown.
+    fn delta(self, value: Self) -> Self::Delta {
+        MillisFloatDelta(
+            self.shown_us()
+                .zip(value.shown_us())
+                .map(|(a, b)| a.saturating_sub(b)),
+        )
+    }
+
+    fn is_delta_non_negative(value: Self::Delta) -> bool {
+        value.0.is_some_and(|us| us >= 0)
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -151,6 +273,31 @@ mod test {
         assert_eq!(Millis(37_999).to_string(), "38");
         assert_eq!(format_micros(1_234_000, true), "1,234");
         assert_eq!(format!("{:>6}", Millis(420)), "  0.42");
+    }
+
+    #[test]
+    fn a_mean_shows_as_a_time_does() {
+        assert_eq!(MillisFloat(0.4).to_string(), "0.4");
+        assert_eq!(MillisFloat(2.345).to_string(), "2.35");
+        assert_eq!(MillisFloat(9.994).to_string(), "9.99");
+        assert_eq!(MillisFloat(9.996).to_string(), "10");
+        assert_eq!(format!("{:.2}", MillisFloat(1_436.69)), "1436.69");
+        assert_eq!(MillisFloat(1_436.69).to_string(), "1437");
+        assert_eq!(MillisFloat(1_436.69).formatted(), "1,437");
+        assert_eq!(MillisFloat(f64::NAN).to_string(), "NaN");
+        assert_eq!(
+            serde_json::to_string(&MillisFloat(1_436.69)).unwrap(),
+            "1436.69"
+        );
+        let mut mean = Value::Plain(MillisFloat(1_436.69));
+        mean.diff(MillisFloat(1_436.2));
+        assert_eq!(mean.to_string(), "1437 (+1)");
+        let mut mean = Value::Plain(MillisFloat(2.341));
+        mean.diff(MillisFloat(2.344));
+        assert_eq!(mean.to_string(), "2.34 (+0)");
+        let mut mean = Value::Plain(MillisFloat(2.3));
+        mean.diff(MillisFloat(f64::NAN));
+        assert_eq!(mean.to_string(), "2.3 (NaN)");
     }
 
     #[test]

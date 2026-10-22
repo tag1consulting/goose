@@ -249,7 +249,7 @@ fn sub_millisecond_request_is_kept_and_shown() {
     let html = crate::report::raw_request_metrics_row(row.clone());
     assert!(html.contains("<td>0.4</td>"), "{}", html);
     let cells = console_response_time_cells(&metrics, "GET /");
-    assert_eq!(cells, ["GET /", "0.40", "0.4", "0.4", "0.4"]);
+    assert_eq!(cells, ["GET /", "0.4", "0.4", "0.4", "0.4"]);
 }
 
 #[test]
