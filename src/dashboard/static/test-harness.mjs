@@ -160,7 +160,7 @@ export function stubServer(token, options = {}) {
         start_second: 0,
         end_second: 0,
         hold_from: 0,
-        buckets: [],
+        buckets_us: [],
         columns: [],
       };
       const body =

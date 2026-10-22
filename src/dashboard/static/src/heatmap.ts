@@ -33,8 +33,7 @@ export interface HeatmapState {
   holdFrom: number;
   /**
    * `[time, lowest, highest]` in milliseconds for each bucket index, from
-   * `buckets_us` when the server sends it, so the rows under a millisecond
-   * have their own times; `highest + 1` is where the bucket ends.
+   * `buckets_us`; `highest + 1` is where the bucket ends.
    */
   buckets: number[][];
   columns: Map<number, HeatmapColumn>;
@@ -89,15 +88,12 @@ export function applyHeatmap(
 }
 
 /**
- * The bucket table in milliseconds: from `buckets_us`, each microsecond
- * entry `[time, lowest, highest]` as milliseconds with `highest` one
- * millisecond short of where the bucket ends, as in `buckets`, or `buckets`
- * itself from a server without it.
+ * The bucket table in milliseconds: each microsecond entry of `buckets_us`,
+ * `[time, lowest, highest]`, as milliseconds with `highest` one millisecond
+ * short of where the bucket ends.
  */
 export function bucketTable(heatmap: Heatmap): number[][] {
-  const us = heatmap.buckets_us;
-  if (us === undefined || us.length === 0) return heatmap.buckets;
-  return us.map(([time, lowest, highest]) => [
+  return heatmap.buckets_us.map(([time, lowest, highest]) => [
     time / 1000,
     lowest / 1000,
     (highest + 1) / 1000 - 1,
@@ -177,8 +173,7 @@ export function tickLabel(ms: number): string {
 /**
  * A bucket's span on the latency axis: from its lowest measured time to just
  * past its highest. Bucket 0 starts at 0, which a log axis cannot reach down
- * to, so it spans from half its end: half a millisecond to one from a server
- * without microseconds, 0.05 to 0.1 ms with them.
+ * to, so it spans from half its end, 0.05 to 0.1 ms.
  */
 export function bucketSpan(bucket: number[]): [number, number] {
   const lowest = bucket[1];
@@ -263,15 +258,7 @@ export function heatmapView(state: HeatmapState | null, adjusted: boolean): Heat
     });
   }
   const ticks: HeatmapTick[] = [];
-  // Without microseconds, responses under a millisecond have one row of
-  // their own, below the 1 ms tick.
-  const underOneRow = rows[0].bucket === 0 && rows[0].highest === 0;
-  if (underOneRow) {
-    ticks.push({ ms: 0, label: "<1 ms", y: (rows[0].top + rows[0].bottom) / 2 });
-  }
   for (const ms of TICKS_MS) {
-    // That row has no times of its own under a millisecond to tick.
-    if (underOneRow && ms < 1) continue;
     const y = fraction(ms);
     if (y >= 0 && y <= 1) ticks.push({ ms, label: tickLabel(ms), y });
   }

@@ -639,22 +639,8 @@ fn row_entry_us(index: usize) -> [u64; 3] {
     [display_value(index), lowest, highest]
 }
 
-/// Heatmap row `index` as `[time, lowest, highest]` in whole milliseconds,
-/// truncated: the rows under a millisecond are all `[0, 0, 0]`.
-fn row_entry_ms(index: usize) -> [u64; 3] {
-    let [time, lowest, highest] = row_entry_us(index);
-    [time / 1000, lowest / 1000, highest / 1000]
-}
-
-/// The heatmap's bucket table, `[time, lowest, highest]` in milliseconds
+/// The heatmap's bucket table, `[time, lowest, highest]` in microseconds
 /// for each index from 0 to `last`, and always every fixed index.
-fn bucket_table(last: usize) -> Vec<[u64; 3]> {
-    (0..=last.max(FIXED_BUCKETS - 1))
-        .map(row_entry_ms)
-        .collect()
-}
-
-/// [`bucket_table`] in microseconds.
 fn bucket_table_us(last: usize) -> Vec<[u64; 3]> {
     (0..=last.max(FIXED_BUCKETS - 1))
         .map(row_entry_us)
@@ -1469,7 +1455,6 @@ impl LatencyHistograms {
             start_second: start as u64,
             end_second: end as u64,
             hold_from: hold_from as u64,
-            buckets: bucket_table(last_index),
             buckets_us: bucket_table_us(last_index),
             columns,
         }
@@ -1546,9 +1531,7 @@ struct ReportHeatmap<S> {
     /// The second, from the start, that column 0 begins at.
     origin: usize,
     /// `[time, lowest, highest]` of each bucket index used, in
-    /// milliseconds.
-    buckets: Vec<[u64; 3]>,
-    /// The same table in microseconds.
+    /// microseconds.
     buckets_us: Vec<[u64; 3]>,
     series: S,
 }
@@ -1729,7 +1712,6 @@ impl LatencyHistograms {
                     .local_minus_utc(),
             ) * 1000,
             origin: self.origin,
-            buckets: bucket_table(last),
             buckets_us: bucket_table_us(last),
             series,
         })
@@ -4997,9 +4979,7 @@ mod test {
         let table = bucket_table_us(FIXED_BUCKETS);
         assert_eq!(table.len(), FIXED_BUCKETS + 1);
         // Every measured time from 0 to past 61 seconds falls in exactly the
-        // row whose range holds it, the fixed rows meet end to end, and the
-        // whole millisecond table is the same, truncated.
-        let whole_ms = bucket_table(FIXED_BUCKETS);
+        // row whose range holds it, and the fixed rows meet end to end.
         for (index, entry) in table.iter().enumerate() {
             let [value, lowest, highest] = *entry;
             assert!(lowest <= value && value <= highest, "{:?}", entry);
@@ -5009,7 +4989,6 @@ mod test {
             if index > 0 && index < FIXED_BUCKETS {
                 assert_eq!(table[index - 1][2] + 1, lowest, "{entry:?}");
             }
-            assert_eq!(whole_ms[index], entry.map(|us| us / 1000), "{entry:?}");
         }
         for (index, entry) in [
             (0, [50, 0, 99]),
@@ -5028,8 +5007,6 @@ mod test {
         ] {
             assert_eq!(table[index], entry, "index {index}");
         }
-        assert_eq!(whole_ms[9], [0, 0, 0]);
-        assert_eq!(bucket_table(0).len(), FIXED_BUCKETS);
         assert_eq!(bucket_table_us(0).len(), FIXED_BUCKETS);
     }
 
@@ -5099,7 +5076,7 @@ mod test {
             .columns
             .iter()
             .all(|column| column.synthetic.is_empty()));
-        assert_eq!(first.buckets.len(), FIXED_BUCKETS);
+        assert_eq!(first.buckets_us.len(), FIXED_BUCKETS);
 
         // Nothing changed: no columns.
         let cursor = HeatmapCursor {
@@ -5133,8 +5110,8 @@ mod test {
         // Past 61 seconds a row per timing data bucket: 75 s is index 228,
         // and the table grows to cover it.
         assert_eq!(measured_pairs(&delta, 3), [(228, 1)]);
-        assert_eq!(delta.buckets.len(), 229);
-        assert_eq!(delta.buckets[228], [74_973, 74_448, 75_497]);
+        assert_eq!(delta.buckets_us.len(), 229);
+        assert_eq!(delta.buckets_us[228], [74_973_184, 74_448_896, 75_497_471]);
 
         // A cursor of another generation, or from the future, gets the whole
         // window.
@@ -6852,7 +6829,6 @@ mod microsecond_tests {
             .export_series_window_until(300, Some(4))
             .heatmap
             .unwrap();
-        assert_eq!(heatmap.buckets_us.len(), heatmap.buckets.len());
         let column = heatmap.column(1).expect("second 1");
         let pairs = HeatmapColumn::pairs(&column.measured);
         assert_eq!(pairs.len(), 3, "{pairs:?}");
@@ -6867,8 +6843,6 @@ mod microsecond_tests {
             );
             assert_eq!(highest - lowest, 99);
             assert_eq!(*count, expected);
-            // The whole millisecond table shows these rows as under 1 ms.
-            assert_eq!(heatmap.buckets[*index as usize][2], 0);
         }
     }
 

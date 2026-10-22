@@ -781,7 +781,7 @@ function heatmapOf(start, count, measured = () => STEADY) {
     start_second: start,
     end_second: start + count,
     hold_from: start + count,
-    buckets: BUCKETS,
+    buckets_us: BUCKETS.map(([time, lowest, highest]) => [time * 1000, lowest * 1000, (highest + 1) * 1000 - 1]),
     columns,
   };
 }

@@ -281,7 +281,6 @@ struct HeatmapStore {
     start_second: u64,
     end_second: u64,
     hold_from: u64,
-    buckets: Vec<[u64; 3]>,
     buckets_us: Vec<[u64; 3]>,
     columns: BTreeMap<u64, (u64, HeatmapColumn)>,
 }
@@ -294,7 +293,6 @@ impl HeatmapStore {
             start_second: 0,
             end_second: 0,
             hold_from: 0,
-            buckets: Vec::new(),
             buckets_us: Vec::new(),
             columns: BTreeMap::new(),
         };
@@ -313,8 +311,7 @@ impl HeatmapStore {
         self.start_second = heatmap.start_second;
         self.end_second = heatmap.end_second;
         self.hold_from = heatmap.hold_from;
-        if heatmap.buckets.len() >= self.buckets.len() {
-            self.buckets = heatmap.buckets.clone();
+        if heatmap.buckets_us.len() >= self.buckets_us.len() {
             self.buckets_us = heatmap.buckets_us.clone();
         }
         for column in &heatmap.columns {
@@ -347,7 +344,6 @@ impl HeatmapStore {
             start_second: self.start_second,
             end_second: self.end_second,
             hold_from: self.hold_from,
-            buckets: self.buckets.clone(),
             buckets_us: self.buckets_us.clone(),
             columns: self
                 .columns
@@ -4117,7 +4113,6 @@ mod tests {
             start_second,
             end_second: start_second + 299,
             hold_from: start_second + 298,
-            buckets: vec![[0, 0, 0]; buckets],
             buckets_us: vec![[0, 0, 0]; buckets],
             columns: columns
                 .iter()
@@ -4176,7 +4171,7 @@ mod tests {
         store.apply(&heatmap_export(7, 13, 12, 2, &[], 205));
         let whole = store.since(None);
         assert_eq!(column_counts(&whole), [(2, 6), (3, 1), (301, 2)]);
-        assert_eq!(whole.buckets.len(), 206);
+        assert_eq!(whole.buckets_us.len(), 206);
         assert_eq!((whole.start_second, whole.end_second), (2, 301));
 
         // A new generation (metrics reset, new test) replaces everything.

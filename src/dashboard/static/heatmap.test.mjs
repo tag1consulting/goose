@@ -59,6 +59,11 @@ function bucketTable() {
   });
 }
 const BUCKETS = bucketTable();
+// The same table in microseconds, as the server sends it: each bucket ends
+// at highest + 1 ms.
+function inMicroseconds(table) {
+  return table.map(([time, lowest, highest]) => [time * 1000, lowest * 1000, (highest + 1) * 1000 - 1]);
+}
 // Bucket indexes used below.
 const MS_1 = 1;
 const MS_7 = 7;
@@ -74,7 +79,7 @@ function heatmap(fields) {
     start_second: 0,
     end_second: 9,
     hold_from: 8,
-    buckets: BUCKETS,
+    buckets_us: inMicroseconds(BUCKETS),
     columns: [],
     ...fields,
   };
@@ -131,7 +136,7 @@ test("a whole window replaces, a delta applies only on the heatmap it follows", 
   // longer one.
   const moved = applyHeatmap(
     next,
-    heatmap({ rev: 10, since: 9, start_second: 2, end_second: 11, buckets: BUCKETS.slice(0, 10) })
+    heatmap({ rev: 10, since: 9, start_second: 2, end_second: 11, buckets_us: inMicroseconds(BUCKETS.slice(0, 10)) })
   );
   assert.deepEqual(Array.from(moved.columns.keys()).sort(), [2, 3]);
   assert.equal(moved.buckets.length, 205);
@@ -177,18 +182,16 @@ test("rows span their buckets on a log axis, fastest at the bottom", () => {
   assert.equal(view.ticks[0].y, 1);
 });
 
-test("the under 1 ms row spans half a millisecond to one; seconds tick in s", () => {
+test("the bottom row spans half its end to its end; seconds tick in s", () => {
   assert.deepEqual(bucketSpan(BUCKETS[0]), [0.5, 1]);
   const state = applyHeatmap(null, heatmap({ columns: [column(1, [0, 1, S_1 + 30, 1])] }));
   const view = heatmapView(state, false);
   assert.equal(view.rows[0].bucket, 0);
   assert.deepEqual(
     view.ticks.map((t) => t.label),
-    ["<1 ms", "1 ms", "2 ms", "5 ms", "10 ms", "20 ms", "50 ms", "100 ms", "200 ms", "500 ms", "1 s", "2 s", "5 s", "10 s", "20 s"]
+    ["0.5 ms", "1 ms", "2 ms", "5 ms", "10 ms", "20 ms", "50 ms", "100 ms", "200 ms", "500 ms", "1 s", "2 s", "5 s", "10 s", "20 s"]
   );
-  // The <1 ms label sits in the middle of the bucket 0 row.
-  assert.equal(view.ticks[0].y, (view.rows[0].top + view.rows[0].bottom) / 2);
-  assert.equal(view.ticks[0].ms, 0);
+  assert.equal(view.ticks[0].y, 1);
 });
 
 test("held and empty seconds have no cells; adjusted adds synthetic times", () => {

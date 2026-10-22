@@ -93,16 +93,9 @@ end_second: number,
  */
 hold_from: number,
 /**
- * Each bucket by index, as `[time, lowest, highest]` in whole
- * milliseconds, truncated: the time the bucket stands for, and the
- * range of measured times in it. The buckets under a millisecond all
- * show as `[0, 0, 0]` here; `buckets_us` tells them apart. A longer
- * table replaces a shorter one; entries never change.
- */
-buckets: Array<[number, number, number]>,
-/**
- * The same table in microseconds: buckets of 100 µs under a
- * millisecond, then the same buckets as `buckets`.
+ * Each bucket by index, as `[time, lowest, highest]` in microseconds:
+ * the time the bucket stands for, and the range of measured times in
+ * it. A longer table replaces a shorter one; entries never change.
  */
 buckets_us: Array<[number, number, number]>,
 /**
