@@ -1003,3 +1003,29 @@ fn status_code_breakdown_averages_show_as_times() {
         assert!(markdown.contains(&line), "{}", markdown);
     }
 }
+
+/// A status code breakdown's average on a half microsecond, 4.5 µs, reads
+/// the same in the console and the HTML report.
+#[test]
+fn a_breakdown_average_on_a_half_microsecond_reads_the_same_everywhere() {
+    let mut metrics = request_metrics(&[("GET /", &[4, 5, 1_000])]);
+    let request = metrics.requests.get_mut("GET /").unwrap();
+    for (status, us) in [(200, 4), (200, 5), (500, 1_000)] {
+        request.record_status_code_time_us(status, us);
+    }
+    let console = metrics.to_string();
+    let line = console
+        .lines()
+        .find(|line| line.contains("\u{2514}\u{2500} 200"))
+        .expect("the 200 breakdown");
+    let cells: Vec<&str> = line.split('|').map(str::trim).collect();
+    assert_eq!(cells[1], "0.01", "{}", console);
+    let report = report_of(&metrics, None);
+    let row = report
+        .raw_request_metrics
+        .iter()
+        .find(|row| row.is_breakdown && row.method.starts_with("200"))
+        .unwrap();
+    let html = crate::report::raw_request_metrics_row(row.clone());
+    assert!(html.contains("<td>0.01</td>"), "{}", html);
+}

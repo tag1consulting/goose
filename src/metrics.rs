@@ -2614,7 +2614,7 @@ impl GooseMetrics {
                             "  \u{2514}\u{2500} {} ({:.1}%)",
                             b.status_code, b.percentage
                         ),
-                        format_ms(f64::from(b.average), true),
+                        format_ms(NullableFloat::from(b.average).0, true),
                         format_micros(b.min_time_us, true),
                         format_micros(b.max_time_us, true),
                         "-",
@@ -2683,7 +2683,7 @@ impl GooseMetrics {
                     " {:<24} | {:>11} | {:>10} | {:>11} | {:>10}",
                     util::truncate_string(request_key, 24),
                     format_ms(co_average, true),
-                    format_ms(f64::from(standard_deviation), true),
+                    format_ms(NullableFloat::from(standard_deviation).0, true),
                     format_micros(co_data.maximum_time_us, true),
                     format_micros(co_data.percentile_us(0.5), true),
                 )?;
@@ -2716,7 +2716,7 @@ impl GooseMetrics {
                 " {:<24} | {:>11} | {:>10} | {:>11} | {:>10}",
                 "Aggregated",
                 format_ms(co_average, true),
-                format_ms(f64::from(standard_deviation), true),
+                format_ms(NullableFloat::from(standard_deviation).0, true),
                 format_micros(aggregate_co.maximum_time_us, true),
                 format_micros(aggregate_co.percentile_us(0.5), true),
             )?;
@@ -5366,6 +5366,8 @@ mod test {
         assert_eq!(rows[1][1], "118");
         // And /a's, of 15 and 310 ms.
         assert_eq!(printed_rows(&printed, "GET /a")[1][1], "209");
+        // /a's adjusted average, 310 ms, as a time.
+        assert_eq!(printed_rows(&printed, "GET /a")[1][0], "310");
         assert_eq!(rows[1][2], "900");
         assert_eq!(rows[1][3], "40");
         // Percentiles: measured, then adjusted (50%, 75%, 98%, ...).
@@ -5924,6 +5926,15 @@ mod test {
             }),
             "500 (+0)"
         );
+
+        // Times and means, as the HTML report shows them against a
+        // baseline: the difference of the values shown, with separators.
+        let mut mean = Value::Plain(MillisFloat(1_436.69));
+        mean.diff(MillisFloat(436.2));
+        assert_eq!(format_value(&mean), "1,437 (+1,001)");
+        let mut time = Value::Plain(Millis(2_341));
+        time.diff(Millis(12_000));
+        assert_eq!(format_value(&time), "2.34 (-9.66)");
     }
 
     /// Build a minimal GooseRequestMetric for testing.

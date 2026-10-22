@@ -130,6 +130,9 @@ test("a snapshot with adjusted times labels them and shows the table note", asyn
       .querySelector(".v").textContent;
   assert.equal(kvValue("Avg ms (adjusted)"), "325");
   assert.equal(kvValue("Avg ms (measured)"), "13");
+  // And so are the measured averages on hover: 13.33 and 10 ms read 13 and 10.
+  assert.equal(doc.getElementById("kpi-avg").title, "Measured: 13 ms");
+  assert.equal(requestCells(doc, "/a")[6].title, "Measured: 10 ms");
 
   // "/a" shows its adjusted p99 with the measured one on hover; "/b" has no
   // adjusted times and shows its measured ones with no hover.
