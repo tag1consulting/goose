@@ -36,7 +36,7 @@ import {
   closedBannerText,
   initRunsPanel,
   setRunsControl,
-  updateSaveFromSnapshot,
+  updateReportFromSnapshot,
 } from "./runs";
 import { setBanner, setConnection, type ConnectionMode } from "./status";
 import { initTables, setTableData } from "./tables";
@@ -229,7 +229,7 @@ function renderSnapshot(
     aggregateEl.appendChild(kv("Coordinated omission", "active"));
   }
 
-  updateSaveFromSnapshot(snap);
+  updateReportFromSnapshot(snap);
   setTableData(snap);
   // The response time card shows the heatmap, or with percentiles over time
   // off the average latency chart, which updateCharts then draws.
@@ -278,4 +278,4 @@ if (window.matchMedia) {
 }
 initRunsPanel();
 void initControlPanel().then(setRunsControl);
-startSse(renderSnapshot, (data) => setBanner(closedBannerText(data), "info"));
+startSse(renderSnapshot, () => setBanner(closedBannerText(), "info"));

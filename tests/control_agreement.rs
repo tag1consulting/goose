@@ -240,6 +240,11 @@ async fn test_control_agreement() {
     let telnet_port = TELNET_PORT.to_string();
     let websocket_port = WEBSOCKET_PORT.to_string();
     let dashboard_port = DASHBOARD_PORT.to_string();
+    let output_dir = std::env::temp_dir()
+        .join(format!("goose-control-agreement-{}", std::process::id()))
+        .join("run")
+        .to_string_lossy()
+        .into_owned();
     let configuration = GooseConfiguration::parse_args_default(&[
         "--users",
         "2",
@@ -267,7 +272,10 @@ async fn test_control_agreement() {
         "--co-mitigation",
         "disabled",
         "--quiet",
-        "--no-save",
+        // Save report is on with the dashboard: keep its reports out of the
+        // checkout.
+        "--output-dir",
+        &output_dir,
     ])
     .unwrap();
     let goose_attack = GooseAttack::initialize_with_config(configuration)

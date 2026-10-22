@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::hash::Hash;
 use std::io::{BufReader, Read};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Custom deserializer for f64 values that converts JSON null to f64::NAN
 fn deserialize_nullable_f64<'de, D>(deserializer: D) -> Result<f64, D::Error>
@@ -475,7 +475,7 @@ impl<'m> Prepare<'m> {
 }
 
 /// Apply baseline deltas to the current report data
-fn apply_baseline_deltas(current: &mut ReportData, baseline: &ReportData) {
+pub(crate) fn apply_baseline_deltas(current: &mut ReportData, baseline: &ReportData) {
     // Apply deltas to raw request metrics
     correlate_deltas(
         &mut current.raw_request_metrics,
@@ -535,15 +535,20 @@ fn apply_baseline_deltas(current: &mut ReportData, baseline: &ReportData) {
     }
 }
 
-/// Load baseline data from a JSON report, or from the `report.json` of a
-/// saved run when `path` is a directory.
+/// The JSON report at `path`, or in the folder `path` names.
+pub(crate) fn json_report_path(path: &Path) -> PathBuf {
+    if path.is_dir() {
+        path.join(crate::runs::REPORT_JSON)
+    } else {
+        path.to_path_buf()
+    }
+}
+
+/// Load baseline data from a JSON report, or from the `report.json` in a
+/// folder when `path` is a folder.
 pub fn load_baseline_file<P: AsRef<Path>>(path: P) -> Result<ReportData<'static>, GooseError> {
     let path_str = path.as_ref().to_string_lossy();
-    let file_path = if path.as_ref().is_dir() {
-        path.as_ref().join(crate::runs::REPORT_JSON)
-    } else {
-        path.as_ref().to_path_buf()
-    };
+    let file_path = json_report_path(path.as_ref());
 
     // Open and read the baseline file
     let file = File::open(&file_path).map_err(|err| GooseError::InvalidOption {
@@ -566,6 +571,66 @@ pub fn load_baseline_file<P: AsRef<Path>>(path: P) -> Result<ReportData<'static>
     baseline.raw_metrics = Cow::Owned(baseline.raw_metrics.into_owned());
 
     Ok(baseline)
+}
+
+/// A JSON report read back: its tables, the record of its run, and its graph
+/// data when it holds any.
+pub(crate) struct LoadedReport {
+    pub data: ReportData<'static>,
+    pub record: crate::runs::RunRecord,
+    pub graphs: Option<(crate::graph::GraphData, Option<serde_json::Value>)>,
+}
+
+impl LoadedReport {
+    /// Read the JSON report at `path`. An error is one line for the person who
+    /// asked.
+    pub(crate) fn read(path: &Path) -> Result<LoadedReport, String> {
+        let mut text = String::new();
+        File::open(path)
+            .and_then(|mut file| file.read_to_string(&mut text))
+            .map_err(|e| format!("Can't read {}: {e}", path.display()))?;
+        Self::parse(&text)
+            .map_err(|e| format!("{} is not a Goose JSON report: {e}", path.display()))
+    }
+
+    /// A JSON report's text read back.
+    pub(crate) fn parse(text: &str) -> Result<LoadedReport, serde_json::Error> {
+        #[derive(Deserialize)]
+        struct Graphs {
+            graphs: Option<crate::graph::RecordedGraphs>,
+        }
+        let mut data = read_report(text.as_bytes())?;
+        data.raw_metrics = Cow::Owned(data.raw_metrics.into_owned());
+        Ok(LoadedReport {
+            data,
+            record: serde_json::from_str(text)?,
+            graphs: serde_json::from_str::<Graphs>(text)?
+                .graphs
+                .map(crate::graph::RecordedGraphs::into_parts),
+        })
+    }
+
+    /// The reports written from this one, by `configuration`'s options.
+    pub(crate) fn source<'a>(
+        &'a self,
+        configuration: &'a crate::GooseConfiguration,
+        empty: &'a crate::graph::GraphData,
+    ) -> super::ReportSource<'a> {
+        let (graph_data, heatmap) = match &self.graphs {
+            Some((graph_data, heatmap)) => (graph_data, heatmap.as_ref()),
+            None => (empty, None),
+        };
+        super::ReportSource {
+            configuration,
+            metrics: &self.data.raw_metrics,
+            graph_data,
+            graphs: self.graphs.is_some(),
+            heatmap,
+            loaded: Some(&self.data),
+            record: &self.record,
+            graph_data_in_json: self.graphs.is_some(),
+        }
+    }
 }
 
 /// Compare two saved runs: the run's `report.json` with the baseline run's
@@ -600,7 +665,7 @@ pub(crate) fn compare_reports(
     let previous = load(baseline, baseline_id)?;
     apply_baseline_deltas(&mut current, &previous);
     let mut out = Vec::new();
-    crate::report::write_markdown_report(&mut out, current)
+    crate::report::write_markdown_report(&mut out, current, &[])
         .map_err(|e| format!("Can't compare run {run_id} with run {baseline_id}: {e}"))?;
     Ok(out)
 }

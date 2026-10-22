@@ -21,7 +21,6 @@ fn default_configuration() -> GooseConfiguration {
         "--run-time",
         "1",
         "--quiet",
-        "--no-save",
     ])
     .unwrap()
 }

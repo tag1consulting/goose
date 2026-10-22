@@ -3350,7 +3350,6 @@ impl GooseUser {
     ///         )
     ///         // Set a default run time so this test runs to completion.
     ///         .set_default(GooseDefault::RunTime, 1)?
-    ///         .set_default(GooseDefault::NoSave, true)?
     ///         .execute()
     ///         .await?;
     ///
@@ -5012,7 +5011,7 @@ mod tests {
             vec!["--dashboard"],
             vec!["--dashboard", "--no-percentiles-over-time"],
             vec!["--report-file", "report.html"],
-            vec!["--no-percentiles-over-time"],
+            vec!["--report-file", "--no-percentiles-over-time"],
         ] {
             let configuration = GooseConfiguration::parse_args_default(&args).unwrap();
             let mut user =
@@ -5099,6 +5098,7 @@ mod tests {
             Arc::new(std::sync::Mutex::new(HashMap::new())),
             None,
             Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            false,
         );
         processor.process_request_metric_for_test(&request);
         processor.process_request_metric_for_test(&copy);
@@ -5330,6 +5330,7 @@ mod tests {
             Arc::new(std::sync::Mutex::new(HashMap::new())),
             None,
             Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            false,
         )
     }
 
@@ -5576,18 +5577,18 @@ mod tests {
     /// With per second graphs off, batches are main's.
     #[test]
     fn batches_follow_the_count_and_age_rule_without_graphs() {
-        let configuration = GooseConfiguration::parse_args_default(&["--no-save"]).unwrap();
+        let configuration = GooseConfiguration::parse_args_default::<&str>(&[]).unwrap();
         assert!(!configuration.records_graph_data());
         assert_batches_follow_the_count_and_age_rule(&configuration);
     }
 
-    /// With a saved run, where per second graphs are kept, or the dashboard,
+    /// With a report, where per second graphs are kept, or the dashboard,
     /// but no heatmap, batches are main's too: the heatmaps alone split
     /// them by second (#713, #746).
     #[test]
     fn batches_follow_the_count_and_age_rule_without_the_heatmap() {
         for args in [
-            vec!["--no-percentiles-over-time"],
+            vec!["--report-file", "report.html", "--no-percentiles-over-time"],
             vec!["--dashboard", "--no-percentiles-over-time"],
         ] {
             let configuration = GooseConfiguration::parse_args_default(&args).unwrap();
@@ -5619,7 +5620,7 @@ mod tests {
     /// would not (#713, #746).
     #[test]
     fn last_request_in_a_quiet_second_leaves_with_mains_flush() {
-        for args in [vec!["--dashboard"], vec![]] {
+        for args in [vec!["--dashboard"], vec!["--report-file"]] {
             let configuration = GooseConfiguration::parse_args_default(&args).unwrap();
             last_request_in_a_quiet_second_leaves_with_mains_flush_for(&configuration);
         }
@@ -5680,7 +5681,7 @@ mod tests {
     /// a slow request whose response came seconds after it started.
     #[test]
     fn no_batch_spans_more_than_two_seconds() {
-        for args in [vec!["--dashboard"], vec![]] {
+        for args in [vec!["--dashboard"], vec!["--report-file"]] {
             let configuration = GooseConfiguration::parse_args_default(&args).unwrap();
             assert!(configuration.records_latency_series());
             no_batch_spans_more_than_two_seconds_for(&configuration);
@@ -5787,13 +5788,8 @@ mod tests {
     fn per_second_graphs_come_from_the_batch() {
         // With the recorder on, and with it off.
         for args in [
-            vec!["--report-file", "audit.html", "--no-save"],
-            vec![
-                "--report-file",
-                "audit.html",
-                "--no-save",
-                "--no-percentiles-over-time",
-            ],
+            vec!["--report-file", "audit.html"],
+            vec!["--report-file", "audit.html", "--no-percentiles-over-time"],
         ] {
             let configuration = GooseConfiguration::parse_args_default(&args).unwrap();
             per_second_graphs_come_from_the_batch_for(&configuration);
@@ -5848,7 +5844,7 @@ mod tests {
     /// column of the second it started (#746).
     #[test]
     fn batches_keep_the_columns_within_their_budgets() {
-        let configuration = GooseConfiguration::parse_args_default::<&str>(&[]).unwrap();
+        let configuration = GooseConfiguration::parse_args_default(&["--report-file"]).unwrap();
         assert!(configuration.records_latency_columns());
         // Only successes, so every time goes through the batches.
         let mut requests = seeded_requests(746, 8, 40);
@@ -5899,7 +5895,7 @@ mod tests {
     /// columns for that second before it writes it (#746).
     #[test]
     fn a_batch_fits_its_next_second_in_the_columns() {
-        let configuration = GooseConfiguration::parse_args_default::<&str>(&[]).unwrap();
+        let configuration = GooseConfiguration::parse_args_default(&["--report-file"]).unwrap();
         let requests = [(3_900, 20), (4_100, 20)].map(|(elapsed, response_time)| SeededRequest {
             user: 0,
             name: "/a".to_string(),
@@ -5943,17 +5939,12 @@ mod tests {
         let on = batched(&["--dashboard"]);
         let others = [
             batched(&["--dashboard", "--no-percentiles-over-time"]),
-            batched(&[
-                "--report-file",
-                "audit.html",
-                "--no-save",
-                "--no-percentiles-over-time",
-            ]),
-            // A saved run: the report's recorder and columns, no dashboard.
+            batched(&["--report-file", "audit.html", "--no-percentiles-over-time"]),
+            // A report: the report's recorder and columns, no dashboard.
+            batched(&["--report-file"]),
             batched(&[]),
-            batched(&["--no-save"]),
             {
-                let plain = GooseConfiguration::parse_args_default(&["--no-save"]).unwrap();
+                let plain = GooseConfiguration::parse_args_default::<&str>(&[]).unwrap();
                 let mut processor = test_processor(&plain);
                 for request in &requests {
                     processor.process_request_metric_for_test(&seeded_metric(request));
@@ -6251,11 +6242,7 @@ mod tests {
         rng: &mut AuditRng,
         collect: bool,
     ) -> (crate::metrics::MetricsProcessor, Vec<Vec<u64>>) {
-        let args: &[&str] = if collect {
-            &["--dashboard", "--no-save"]
-        } else {
-            &["--no-save"]
-        };
+        let args: &[&str] = if collect { &["--dashboard"] } else { &[] };
         let mut configuration = GooseConfiguration::parse_args_default(args).unwrap();
         let co = !stalls.is_empty();
         if co {
@@ -6287,6 +6274,7 @@ mod tests {
             registry.clone(),
             None,
             Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            false,
         );
         let (mut batching, rx) = batching_users(&configuration, users);
         for user in batching.iter_mut() {
@@ -6472,12 +6460,7 @@ mod tests {
                     metrics_disabled: false,
                     no_transaction_metrics: false,
                     no_scenario_metrics: false,
-                    save: crate::metrics::dashboard_snapshot::SnapshotSave {
-                        state: "off".to_string(),
-                        reason: None,
-                        dir: "goose-runs".to_string(),
-                        last_run: None,
-                    },
+                    report: crate::metrics::dashboard_snapshot::SnapshotReport::default(),
                     settings: crate::metrics::dashboard_snapshot::SnapshotSettings::idle(),
                     percentiles_over_time: false,
                     series_keys: std::collections::HashSet::new(),

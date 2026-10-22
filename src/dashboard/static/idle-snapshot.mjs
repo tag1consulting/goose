@@ -52,7 +52,16 @@ export const IDLE_SNAPSHOT = {
     series_seconds: 0,
     percentiles_over_time: true,
   },
-  save: { state: "on", reason: null, dir: "goose-runs", last_run: null },
+  report: {
+    save: true,
+    graph_data: false,
+    folder: null,
+    parent: "goose-runs",
+    paths: [],
+    notes: null,
+    last_report: null,
+    error: null,
+  },
   settings: {
     host: null,
     hosts: [],

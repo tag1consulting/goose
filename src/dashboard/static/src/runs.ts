@@ -1,39 +1,37 @@
-// Saved runs: the header line saying whether this run is saved, the banner
-// when a run ends, the closed banner, and the saved runs panel with its
-// downloads, comparisons and, with control on, deletes.
+// The report: the header's Save report and Include graph data switches, Save
+// report now, the banner when a run's report is written, and the runs panel
+// with its downloads, comparisons and, with control on, deletes.
 //
 // Downloads go through fetch with the token in an Authorization header, then
 // a blob and a temporary object URL, so the token never goes into a URL.
-// Deletes send the token the same way.
+// Deletes and the switches send the token the same way.
 
 import { getToken } from "./connection";
 import { optionalElement } from "./dom";
 import { formatDuration, formatInt, textCell } from "./format";
 
-/** One saved run, as `run.json` holds it. */
-export interface SavedRun {
-  format: number;
-  id: string;
+/** One report the runs panel lists, from its folder's `report.json`. */
+export interface ListedReport {
+  name: string;
+  notes?: string | null;
   goose_version: string;
   test: string;
-  started: string;
-  ended: string;
+  started: string | null;
+  ended: string | null;
+  ended_by: "completed" | "stopped" | "canceled" | "users_exited" | string | null;
+  canceled_reason?: string | null;
+  in_progress: boolean;
+  running: boolean;
   duration_secs: number;
   max_users: number;
-  hosts: string[];
   requests: number;
   failed_requests: number;
-  ended_by: "completed" | "stopped" | "canceled" | "users_exited" | string;
-  canceled_reason: string | null;
-  baseline: string | null;
-  files: { name: string; bytes: number }[];
 }
 
-/** `GET /api/v1/runs`. */
-export interface RunsListing {
+/** `GET /api/v1/reports`. */
+export interface ReportsListing {
   dir: string;
-  total_bytes: number;
-  runs: SavedRun[];
+  reports: ListedReport[];
 }
 
 /** Rows shown before `Show all`. */
@@ -45,7 +43,11 @@ const FORMATS: { label: string; file: string }[] = [
   { label: "Markdown", file: "report.md" },
 ];
 
-const saveStatusEl = optionalElement("save-status", HTMLElement);
+const saveReportBox = optionalElement("save-report", HTMLInputElement);
+const graphDataBox = optionalElement("graph-data", HTMLInputElement);
+const saveNowButton = optionalElement("save-now", HTMLButtonElement);
+const reportPathsEl = optionalElement("report-paths", HTMLElement);
+const notesEl = optionalElement("run-notes", HTMLElement);
 const runBannerEl = optionalElement("run-banner", HTMLElement);
 const runsPanel = optionalElement("runs-panel", HTMLElement);
 const runsBody = optionalElement("runs-body", HTMLElement);
@@ -57,27 +59,39 @@ const runsCompareNote = optionalElement("runs-compare-note", HTMLElement);
 const runsError = optionalElement("runs-error", HTMLElement);
 const runsDeleteCol = optionalElement("runs-delete-col", HTMLElement);
 
-let listing: RunsListing | null = null;
+let listing: ReportsListing | null = null;
 let showAll = false;
 const checked = new Set<string>();
-// The last `save.last_run` seen; undefined until the first snapshot.
-let lastRunSeen: string | null | undefined = undefined;
+// The report state last seen, so the list reloads when it changes; undefined
+// until the first snapshot.
+let reportSeen: string | undefined = undefined;
 let loading = false;
 // A reload was asked for while a load was in flight.
 let reloadAgain = false;
-// Control is on: each run gets a Delete button.
+// Control is on: the switches can change and each run gets a Delete button.
 let controlEnabled = false;
 // The error of the last delete, shown once the list it reloads has loaded.
 let deleteError: string | null = null;
-
-// ---------------------------------------------------------------------------
-// Downloads
-// ---------------------------------------------------------------------------
+// A switch change in flight: snapshots leave the switches alone until it
+// is answered.
+let switchPending = false;
+// The phase of the last snapshot.
+let lastPhase = "idle";
 
 function authHeaders(): Record<string, string> {
   const token = getToken();
   return token ? { Authorization: "Bearer " + token } : {};
 }
+
+/** The last part of a folder's path, the name the report routes take. */
+function folderName(folder: string): string {
+  const parts = folder.split(/[\\/]/).filter((part) => part !== "");
+  return parts.length ? parts[parts.length - 1] : folder;
+}
+
+// ---------------------------------------------------------------------------
+// Downloads
+// ---------------------------------------------------------------------------
 
 /** The file name from `Content-Disposition`, or `fallback`. */
 function dispositionName(res: Response, fallback: string): string {
@@ -118,12 +132,12 @@ export function download(path: string, fallbackName: string): Promise<string | n
     .catch((err: unknown) => String(err));
 }
 
-function reportPath(id: string, file: string): string {
-  return "/api/v1/runs/" + encodeURIComponent(id) + "/" + file;
+function reportPath(name: string, file: string): string {
+  return "/api/v1/reports/" + encodeURIComponent(name) + "/" + file;
 }
 
-function downloadReport(id: string, file: string): void {
-  void download(reportPath(id, file), "goose-" + id + "-" + file).then(showError);
+function downloadReport(name: string, file: string): void {
+  void download(reportPath(name, file), "goose-" + name + "-" + file).then(showError);
 }
 
 function showError(message: string | null): void {
@@ -136,38 +150,48 @@ function showRunsError(text: string | null): void {
   runsError.hidden = !text;
 }
 
-/** Ask, then delete a saved run from disk and list the runs again. */
-function deleteRun(id: string): void {
-  if (!window.confirm("Delete run " + id + "? This removes its reports from disk.")) return;
-  fetch("/api/v1/runs/" + encodeURIComponent(id), {
+/** Ask, then delete a folder's report from disk and list the reports again. */
+function deleteReport(name: string): void {
+  if (
+    !window.confirm(
+      "Delete the report in " + name + "? This removes its reports and logs from disk."
+    )
+  ) {
+    return;
+  }
+  fetch("/api/v1/reports/" + encodeURIComponent(name), {
     method: "DELETE",
     headers: authHeaders(),
   })
     .then(
       (res) => {
         if (res.status === 204) return null;
-        return "HTTP " + res.status;
+        return res.text().then(
+          (text) => text.trim() || "HTTP " + res.status,
+          () => "HTTP " + res.status
+        );
       },
       (err: unknown) => String(err)
     )
     .then((message) => {
       deleteError = message ? "Delete failed: " + message : null;
-      checked.delete(id);
+      checked.delete(name);
       loadRuns();
     });
 }
 
-function deleteButton(id: string): HTMLElement {
+function deleteButton(report: ListedReport): HTMLElement {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "ctrl-btn run-delete";
   button.textContent = "Delete";
-  button.setAttribute("aria-label", "Delete run " + id);
-  button.addEventListener("click", () => deleteRun(id));
+  button.setAttribute("aria-label", "Delete the report in " + report.name);
+  button.disabled = report.running;
+  button.addEventListener("click", () => deleteReport(report.name));
   return button;
 }
 
-function downloadButtons(id: string): HTMLElement {
+function downloadButtons(name: string): HTMLElement {
   const wrap = document.createElement("span");
   wrap.className = "run-downloads";
   for (const format of FORMATS) {
@@ -175,125 +199,140 @@ function downloadButtons(id: string): HTMLElement {
     button.type = "button";
     button.className = "ctrl-btn run-download";
     button.textContent = format.label;
-    button.setAttribute("aria-label", "Download " + format.label + " report of run " + id);
-    button.addEventListener("click", () => downloadReport(id, format.file));
+    button.setAttribute("aria-label", "Download " + format.label + " report of " + name);
+    button.addEventListener("click", () => downloadReport(name, format.file));
     wrap.appendChild(button);
   }
   return wrap;
 }
 
 // ---------------------------------------------------------------------------
-// Header and banners
+// Header: the switches, Save report now, the paths and the notes
 // ---------------------------------------------------------------------------
 
-/** The header line for the save state. */
-export function saveStatusText(save: SnapshotSave): string {
-  if (save.state === "on") return "Saving to " + save.dir;
-  if (save.state === "failed") {
-    return "Not saving: can't create " + save.dir + " (" + (save.reason || "unknown error") + ")";
-  }
-  return "Not saving (turned off)";
+/** Post a report control command; resolves to whether it was applied. */
+function postReport(path: string, body: string): Promise<{ ok: boolean; message: string }> {
+  return fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body,
+  })
+    .then((res) =>
+      res.json().then(
+        (data: { ok?: boolean; message?: string }) => ({
+          ok: res.ok && !!data.ok,
+          message: data.message || "HTTP " + res.status,
+        }),
+        () => ({ ok: false, message: "HTTP " + res.status })
+      )
+    )
+    .catch((err: unknown) => ({ ok: false, message: String(err) }));
 }
 
-let bannerRun: string | null = null;
-
-/** True when the last run's directory couldn't be created: it has no id. */
-function unsavedRun(save: Partial<SnapshotSave>): boolean {
-  return save.state === "failed" && !save.last_run && !!save.reason;
-}
-
-function setRunBanner(save: SnapshotSave | null, phase: string): void {
-  if (!runBannerEl) return;
-  const show =
-    save !== null && phase === "idle" && (save.last_run !== null || unsavedRun(save));
-  if (!show || save === null) {
-    if (bannerRun !== null) {
-      runBannerEl.textContent = "";
-      runBannerEl.className = "run-banner";
-      bannerRun = null;
+function onSwitch(field: "save" | "graph_data", box: HTMLInputElement): void {
+  switchPending = true;
+  box.disabled = true;
+  void postReport("/api/v1/control/report", JSON.stringify({ [field]: box.checked })).then(
+    (answer) => {
+      switchPending = false;
+      box.disabled = !controlEnabled;
+      if (!answer.ok) {
+        box.checked = !box.checked;
+        showRunsError("Couldn't change the switch: " + answer.message);
+      }
     }
-    return;
-  }
-  const key = (save.last_run || "") + "|" + (save.reason || "");
-  if (bannerRun === key) return;
-  bannerRun = key;
+  );
+}
+
+function onSaveNow(): void {
+  if (!saveNowButton) return;
+  const button = saveNowButton;
+  button.disabled = true;
+  void postReport("/api/v1/control/report/now", "{}").then((answer) => {
+    button.disabled = !controlEnabled || lastPhase === "idle";
+    if (!answer.ok) {
+      showRunsError("Couldn't save the report now: " + answer.message);
+      return;
+    }
+    showRunsError(null);
+    // The report is written in the background; list it once it is there.
+    setTimeout(loadRuns, 1000);
+  });
+}
+
+function setSwitch(box: HTMLInputElement | null, on: boolean): void {
+  if (!box) return;
+  if (!switchPending) box.checked = on;
+  box.disabled = !controlEnabled || switchPending;
+}
+
+let bannerKey: string | null = null;
+
+/** The banner once a run's report is written, with its downloads. */
+function setRunBanner(report: SnapshotReport, phase: string): void {
+  if (!runBannerEl) return;
+  const key = phase === "idle" ? (report.last_report || "") + "|" + (report.error || "") : "";
+  if (key === bannerKey) return;
+  bannerKey = key;
   // The element stays in the page, empty when there is nothing to say, so
   // screen readers announce what is written into it (aria-live).
   runBannerEl.textContent = "";
-  const id = save.last_run;
-  if (id === null) {
+  runBannerEl.className = "run-banner";
+  if (phase !== "idle") return;
+  if (report.error) {
     runBannerEl.className = "run-banner error";
-    runBannerEl.textContent = "Couldn't save this run: " + save.reason + ".";
+    runBannerEl.textContent = "Couldn't save the report: " + report.error;
     return;
   }
-  if (save.reason) {
-    runBannerEl.className = "run-banner error";
-    runBannerEl.textContent = "Couldn't save run " + id + ": " + save.reason + ".";
-    return;
-  }
+  if (!report.last_report) return;
   runBannerEl.className = "run-banner info";
   const text = document.createElement("span");
-  text.textContent = "Run " + id + " saved. Download HTML, JSON or Markdown.";
+  text.textContent = "Report saved in " + report.last_report + ". Download HTML, JSON or Markdown.";
   runBannerEl.appendChild(text);
-  runBannerEl.appendChild(downloadButtons(id));
+  runBannerEl.appendChild(downloadButtons(folderName(report.last_report)));
 }
 
-/** Render the save state from a snapshot. */
-export function updateSaveFromSnapshot(snap: DashboardSnapshot): void {
-  const save = snap.save;
-  if (saveStatusEl) {
-    saveStatusEl.textContent = saveStatusText(save);
-    saveStatusEl.className = "meta-item save-status save-" + save.state;
+/** Render the report state from a snapshot. */
+export function updateReportFromSnapshot(snap: DashboardSnapshot): void {
+  const report = snap.report;
+  lastPhase = snap.phase;
+  setSwitch(saveReportBox, report.save);
+  setSwitch(graphDataBox, report.graph_data);
+  if (saveNowButton) {
+    saveNowButton.hidden = !controlEnabled;
+    saveNowButton.disabled = snap.phase === "idle";
   }
-  setRunBanner(save, snap.phase);
-  // List the runs on the first snapshot, and again whenever another run has
-  // ended, however short it was: a poll every 2 s can miss its phases.
-  if (save.last_run !== lastRunSeen) {
-    lastRunSeen = save.last_run;
+  if (reportPathsEl) {
+    reportPathsEl.textContent = report.paths.length ? "Also writes " + report.paths.join(", ") : "";
+    reportPathsEl.hidden = report.paths.length === 0;
+  }
+  if (notesEl) {
+    notesEl.textContent = report.notes || "";
+    notesEl.hidden = !report.notes;
+  }
+  setRunBanner(report, snap.phase);
+  // List the reports on the first snapshot, and again whenever a run starts
+  // or a report is written, however short the run was: a poll every 2 s can
+  // miss its phases.
+  const seen = (report.folder || "") + "|" + (report.last_report || "");
+  if (seen !== reportSeen) {
+    reportSeen = seen;
     loadRuns();
   }
 }
 
-/**
- * The text of the banner shown when Goose exits, from the `closed` event's
- * data: the save state, or `1` from an older Goose.
- */
-export function closedBannerText(data: unknown): string {
-  let save: Partial<SnapshotSave> | null = null;
-  if (typeof data === "string") {
-    try {
-      const parsed: unknown = JSON.parse(data);
-      if (typeof parsed === "object" && parsed !== null) {
-        save = parsed as Partial<SnapshotSave>;
-      }
-    } catch {
-      save = null;
-    }
-  }
-  if (save && unsavedRun(save)) {
-    return "Goose has exited. Couldn't save this run: " + save.reason + ".";
-  }
-  if (!save || typeof save.last_run !== "string" || !save.last_run) {
-    return "Goose has exited.";
-  }
-  if (save.reason) {
-    return "Goose has exited. Couldn't save run " + save.last_run + ": " + save.reason + ".";
-  }
-  return (
-    "Goose has exited. This run was saved in " +
-    (save.dir || "") +
-    "/" +
-    save.last_run +
-    " on the machine running Goose."
-  );
+/** The text of the banner shown when Goose exits. */
+export function closedBannerText(): string {
+  return "Goose has exited.";
 }
 
 // ---------------------------------------------------------------------------
-// Saved runs panel
+// Runs panel
 // ---------------------------------------------------------------------------
 
-function endedText(run: SavedRun): string {
-  switch (run.ended_by) {
+function endedText(report: ListedReport): string {
+  if (report.in_progress) return report.running ? "Running" : "Incomplete";
+  switch (report.ended_by) {
     case "completed":
       return "Finished";
     case "stopped":
@@ -301,93 +340,82 @@ function endedText(run: SavedRun): string {
     case "users_exited":
       return "Users exited";
     case "canceled":
-      return run.canceled_reason === "SIGINT received"
+      return report.canceled_reason === "SIGINT received"
         ? "Ctrl-C"
-        : "Canceled: " + (run.canceled_reason || "");
+        : "Canceled: " + (report.canceled_reason || "");
     default:
-      return run.ended_by;
+      return report.ended_by || "";
   }
 }
 
-function startedText(started: string): string {
+function startedText(started: string | null): string {
+  if (!started) return "";
   const date = new Date(started);
   return isNaN(date.getTime()) ? started : date.toLocaleString();
 }
 
-/** Bytes as B, KB, MB or GB. */
-export function formatBytes(bytes: number): string {
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  return (unit === 0 ? String(value) : value.toFixed(1)) + " " + units[unit];
-}
-
 function renderRuns(): void {
   if (!runsBody || !listing) return;
-  const runs = listing.runs;
+  const reports = listing.reports;
   runsBody.textContent = "";
-  // Forget checks for runs no longer listed.
-  for (const id of Array.from(checked)) {
-    if (!runs.some((run) => run.id === id && run.requests > 0)) checked.delete(id);
+  // Forget checks for reports no longer listed.
+  for (const name of Array.from(checked)) {
+    if (!reports.some((report) => report.name === name && report.requests > 0)) {
+      checked.delete(name);
+    }
   }
-  const shown = showAll ? runs : runs.slice(0, PAGE_ROWS);
-  for (const run of shown) {
+  const shown = showAll ? reports : reports.slice(0, PAGE_ROWS);
+  for (const report of shown) {
     const tr = document.createElement("tr");
-    const idCell = textCell(run.id);
-    idCell.className = "run-id";
-    tr.appendChild(idCell);
-    tr.appendChild(textCell(startedText(run.started)));
-    tr.appendChild(textCell(formatDuration(run.duration_secs)));
-    tr.appendChild(textCell(formatInt(run.max_users)));
-    tr.appendChild(textCell(formatInt(run.requests)));
-    tr.appendChild(textCell(formatInt(run.failed_requests)));
-    tr.appendChild(textCell(endedText(run)));
-    tr.appendChild(textCell(run.test));
+    const nameCell = textCell(report.name);
+    nameCell.className = "run-id";
+    tr.appendChild(nameCell);
+    tr.appendChild(textCell(startedText(report.started)));
+    const notes = textCell(report.notes || "");
+    notes.className = "run-notes";
+    tr.appendChild(notes);
+    tr.appendChild(textCell(formatDuration(report.duration_secs)));
+    tr.appendChild(textCell(formatInt(report.max_users)));
+    tr.appendChild(textCell(formatInt(report.requests)));
+    tr.appendChild(textCell(formatInt(report.failed_requests)));
+    tr.appendChild(textCell(endedText(report)));
+    tr.appendChild(textCell(report.test));
     const downloads = document.createElement("td");
-    downloads.appendChild(downloadButtons(run.id));
+    downloads.appendChild(downloadButtons(report.name));
     tr.appendChild(downloads);
     const compare = document.createElement("td");
     const box = document.createElement("input");
     box.type = "checkbox";
     box.className = "run-compare";
-    box.setAttribute("aria-label", "Compare run " + run.id);
-    box.disabled = run.requests === 0;
-    box.checked = checked.has(run.id);
+    box.setAttribute("aria-label", "Compare " + report.name);
+    box.disabled = report.requests === 0;
+    box.checked = checked.has(report.name);
     box.addEventListener("change", () => {
-      if (box.checked) checked.add(run.id);
-      else checked.delete(run.id);
+      if (box.checked) checked.add(report.name);
+      else checked.delete(report.name);
       updateCompare();
     });
     compare.appendChild(box);
     tr.appendChild(compare);
     if (controlEnabled) {
       const remove = document.createElement("td");
-      remove.appendChild(deleteButton(run.id));
+      remove.appendChild(deleteButton(report));
       tr.appendChild(remove);
     }
     runsBody.appendChild(tr);
   }
-  if (runsEmpty) runsEmpty.hidden = runs.length > 0;
-  if (runsShowAll) runsShowAll.hidden = showAll || runs.length <= PAGE_ROWS;
+  if (runsEmpty) runsEmpty.hidden = reports.length > 0;
+  if (runsShowAll) runsShowAll.hidden = showAll || reports.length <= PAGE_ROWS;
   if (runsFooter) {
-    runsFooter.textContent =
-      formatInt(runs.length) +
-      " saved runs, " +
-      formatBytes(listing.total_bytes) +
-      " in " +
-      listing.dir;
+    runsFooter.textContent = formatInt(reports.length) + " reports in " + listing.dir;
   }
   updateCompare();
 }
 
-/** The two checked runs as [newer, older], or null. */
-function comparePair(): [SavedRun, SavedRun] | null {
+/** The two checked reports as [newer, older], or null. */
+function comparePair(): [ListedReport, ListedReport] | null {
   if (!listing || checked.size !== 2) return null;
-  const pair = listing.runs.filter((run) => checked.has(run.id));
+  const pair = listing.reports.filter((report) => checked.has(report.name));
   if (pair.length !== 2) return null;
   // The listing is newest first.
   return [pair[0], pair[1]];
@@ -409,12 +437,11 @@ function onCompareClick(): void {
   const pair = comparePair();
   if (!pair) return;
   const [newer, older] = pair;
-  const path =
-    reportPath(newer.id, "compare.md") + "?baseline=" + encodeURIComponent(older.id);
-  void download(path, "goose-" + newer.id + "-vs-" + older.id + ".md").then(showError);
+  const path = reportPath(newer.name, "compare.md") + "?baseline=" + encodeURIComponent(older.name);
+  void download(path, "goose-" + newer.name + "-vs-" + older.name + ".md").then(showError);
 }
 
-/** Fetch the saved runs and render them. Never on a timer. */
+/** Fetch the reports and render them. Never on a timer. */
 export function loadRuns(): void {
   if (!runsPanel) return;
   if (loading) {
@@ -422,10 +449,10 @@ export function loadRuns(): void {
     return;
   }
   loading = true;
-  fetch("/api/v1/runs", { headers: authHeaders() })
+  fetch("/api/v1/reports", { headers: authHeaders() })
     .then((res) => {
       if (!res.ok) throw new Error("HTTP " + res.status);
-      return res.json() as Promise<RunsListing>;
+      return res.json() as Promise<ReportsListing>;
     })
     .then((data) => {
       listing = data;
@@ -434,7 +461,7 @@ export function loadRuns(): void {
     })
     .catch((err: unknown) => {
       if (runsError) {
-        runsError.textContent = "Couldn't list saved runs: " + String(err);
+        runsError.textContent = "Couldn't list the reports: " + String(err);
         runsError.hidden = false;
       }
     })
@@ -449,10 +476,14 @@ export function loadRuns(): void {
     });
 }
 
-/** Show Delete buttons when control is on. */
+/** With control on, the switches can change and each report gets Delete. */
 export function setRunsControl(enabled: boolean): void {
   controlEnabled = enabled;
   if (runsDeleteCol) runsDeleteCol.hidden = !enabled;
+  for (const box of [saveReportBox, graphDataBox]) {
+    if (box) box.disabled = !enabled;
+  }
+  if (saveNowButton) saveNowButton.hidden = !enabled;
   renderRuns();
 }
 
@@ -464,4 +495,13 @@ export function initRunsPanel(): void {
     });
   }
   if (runsCompare) runsCompare.addEventListener("click", onCompareClick);
+  if (saveReportBox) {
+    const box = saveReportBox;
+    box.addEventListener("change", () => onSwitch("save", box));
+  }
+  if (graphDataBox) {
+    const box = graphDataBox;
+    box.addEventListener("change", () => onSwitch("graph_data", box));
+  }
+  if (saveNowButton) saveNowButton.addEventListener("click", onSaveNow);
 }

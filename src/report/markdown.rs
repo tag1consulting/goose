@@ -13,13 +13,16 @@ use std::io::Write;
 struct Markdown<'m, 'w, W: Write> {
     w: &'w mut W,
     data: ReportData<'m>,
+    /// Paragraphs under the title, such as the run's notes.
+    intro: &'w [String],
 }
 
 pub(crate) fn write_markdown_report<W: Write>(
     w: &mut W,
     data: ReportData,
+    intro: &[String],
 ) -> Result<(), GooseError> {
-    Markdown { w, data }.write()
+    Markdown { w, data, intro }.write()
 }
 
 impl<W: Write> Markdown<'_, '_, W> {
@@ -44,6 +47,9 @@ impl<W: Write> Markdown<'_, '_, W> {
 # Goose Attack Report
 "#
         )?;
+        for paragraph in self.intro {
+            writeln!(self.w, "{}\n", markdown_paragraph(paragraph))?;
+        }
 
         Ok(())
     }
@@ -394,4 +400,12 @@ impl<W: Write> Markdown<'_, '_, W> {
 
         Ok(())
     }
+}
+
+/// `text` as one Markdown paragraph, its own line breaks kept as hard breaks.
+fn markdown_paragraph(text: &str) -> String {
+    text.lines()
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("  \n")
 }

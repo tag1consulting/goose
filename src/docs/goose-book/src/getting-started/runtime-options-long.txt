@@ -215,31 +215,48 @@ Reports:
           Example: --report-file report.html --report-file report.json. Set in
           code with GooseDefault::ReportFile.
 
-      --no-save
-          Don't save this run to the runs folder
+      --output-dir <DIR>
+          Run folder [default: goose-runs/<time>]
 
-          By default, Goose saves each run's reports to its own folder under
-          --runs-dir, where --baseline-file can find it later. --report-file
-          still writes its reports. --no-metrics also turns saving off.
+          Sets the run's folder for output flags given without a path (default:
+          goose-runs/<start time>). Goose creates it when it first writes into
+          it. When the folder already holds files, the run uses DIR-2, DIR-3 and
+          so on. Needs an output flag given without a path, or --dashboard.
 
-          Set in code with GooseDefault::NoSave.
+          Example: --output-dir goose-runs/nightly --report-file. Set in code
+          with GooseDefault::OutputDir.
 
-      --runs-dir <DIR>
-          Runs folder [default: goose-runs]
+      --notes <TEXT>
+          Label the run in its reports
 
-          The folder saved runs are written to. If a folder given here cannot be
-          created, the load test does not start; if the default cannot, Goose
-          only warns.
+          Stores TEXT in the JSON report and shows it at the top of the HTML and
+          Markdown reports and in the dashboard. Needs a report or --dashboard.
 
-          Example: --runs-dir /var/tmp/goose-runs. Set in code with
-          GooseDefault::RunsDir.
+          Example: --notes "baseline before cache change". Set in code with
+          GooseDefault::Notes.
+
+      --report-graph-data
+          Add graph data to the JSON report
+
+          Adds the per second data the HTML report graphs to the JSON report, so
+          a report rendered from it with --render-report has its graphs. Needs a
+          report.
+
+          Set in code with GooseDefault::ReportGraphData.
+
+      --render-report <FILE>
+          Write reports from a JSON report, exit
+
+          Writes the reports named by --report-file paths from FILE, a JSON
+          report, then exits without running a load test.
+
+          Example: --render-report report.json --report-file report.html.
 
       --baseline-file <PATH>
           Compare against an earlier run
 
-          PATH is a JSON report written with --report-file, or the folder of a
-          saved run. Every report then shows how each metric changed from that
-          run.
+          PATH is a JSON report, or a folder that holds report.json. Every
+          report then shows how each metric changed from that run.
 
           Example: --baseline-file baseline.json. Set in code with
           GooseDefault::BaselineFile.

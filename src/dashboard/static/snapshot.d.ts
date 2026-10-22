@@ -52,9 +52,9 @@ scenarios: Array<ScenarioRow>,
  */
 transactions: Array<TransactionRow>, series: SeriesWindow, flags: SnapshotFlags,
 /**
- * Whether runs are saved, and the last run Goose saved or tried to save.
+ * The report the run writes: Save report, its folder and paths.
  */
-save: SnapshotSave,
+report: SnapshotReport,
 /**
  * The run settings: what the next Start runs, and where the running
  * test is.
@@ -186,24 +186,41 @@ scenario_metrics_disabled: boolean, requests_truncated: boolean, errors_truncate
  */
 percentiles_over_time: boolean, };
 
-type SnapshotSave = {
+type SnapshotReport = {
 /**
- * `on`, `off` (`--no-save` or `--no-metrics`), or `failed` (the runs
- * directory or the run's directory couldn't be created).
+ * Save report: write the run's `report.json` and `report.html` into its
+ * folder.
  */
-state: "on" | "off" | "failed",
+save: boolean,
 /**
- * Why the last run couldn't be saved, or why this run isn't saved.
+ * Include graph data: the JSON report holds the per second graph data.
  */
-reason: string | null,
+graph_data: boolean,
 /**
- * The runs directory as given, never resolved to an absolute path.
+ * The current or last run's folder, as given, never made absolute;
+ * `null` before the first run.
  */
-dir: string,
+folder: string | null,
 /**
- * The id of the last run Goose saved or tried to save.
+ * The folder the runs panel lists: the one run folders go in.
  */
-last_run: string | null, };
+parent: string,
+/**
+ * The `--report-file` paths, which are always written.
+ */
+paths: Array<string>,
+/**
+ * The run's `--notes`.
+ */
+notes: string | null,
+/**
+ * The folder of the last report Save report wrote.
+ */
+last_report: string | null,
+/**
+ * Why the last report Save report tried to write failed.
+ */
+error: string | null, };
 
 type SnapshotSettings = {
 /**

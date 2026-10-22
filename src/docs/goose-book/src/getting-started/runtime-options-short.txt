@@ -34,8 +34,10 @@ Console and Goose log:
 
 Reports:
       --report-file [<FILE>]   Write a report; repeatable
-      --no-save                Don't save this run to the runs folder
-      --runs-dir <DIR>         Runs folder [default: goose-runs]
+      --output-dir <DIR>       Run folder [default: goose-runs/<time>]
+      --notes <TEXT>           Label the run in its reports
+      --report-graph-data      Add graph data to the JSON report
+      --render-report <FILE>   Write reports from a JSON report, exit
       --baseline-file <PATH>   Compare against an earlier run
       --no-granular-report     Graph only totals in reports
       --pdf-print-html <FILE>  Write print-ready HTML for PDF

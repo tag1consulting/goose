@@ -60,8 +60,8 @@ pub(crate) struct DashboardSnapshot {
     pub series: SeriesWindow,
 
     pub flags: SnapshotFlags,
-    /// Whether runs are saved, and the last run Goose saved or tried to save.
-    pub save: SnapshotSave,
+    /// The report the run writes: Save report, its folder and paths.
+    pub report: SnapshotReport,
     /// The run settings: what the next Start runs, and where the running
     /// test is.
     pub settings: SnapshotSettings,
@@ -72,34 +72,28 @@ pub(crate) struct DashboardSnapshot {
     pub build_time: std::time::Duration,
 }
 
-/// Saving runs, as the dashboard shows it. Also the data of the SSE `closed`
-/// event, so a page learns where the last run was saved when Goose exits.
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+/// The report the run writes, as the dashboard header shows it.
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-pub(crate) struct SnapshotSave {
-    /// `on`, `off` (`--no-save` or `--no-metrics`), or `failed` (the runs
-    /// directory or the run's directory couldn't be created).
-    #[cfg_attr(test, ts(type = "\"on\" | \"off\" | \"failed\""))]
-    pub state: String,
-    /// Why the last run couldn't be saved, or why this run isn't saved.
-    pub reason: Option<String>,
-    /// The runs directory as given, never resolved to an absolute path.
-    pub dir: String,
-    /// The id of the last run Goose saved or tried to save.
-    pub last_run: Option<String>,
-}
-
-impl SnapshotSave {
-    /// Not saving, for a snapshot built where the save state is not known.
-    #[cfg(test)]
-    pub(crate) fn off(dir: &str) -> Self {
-        SnapshotSave {
-            state: "off".to_string(),
-            reason: None,
-            dir: dir.to_string(),
-            last_run: None,
-        }
-    }
+pub(crate) struct SnapshotReport {
+    /// Save report: write the run's `report.json` and `report.html` into its
+    /// folder.
+    pub save: bool,
+    /// Include graph data: the JSON report holds the per second graph data.
+    pub graph_data: bool,
+    /// The current or last run's folder, as given, never made absolute;
+    /// `null` before the first run.
+    pub folder: Option<String>,
+    /// The folder the runs panel lists: the one run folders go in.
+    pub parent: String,
+    /// The `--report-file` paths, which are always written.
+    pub paths: Vec<String>,
+    /// The run's `--notes`.
+    pub notes: Option<String>,
+    /// The folder of the last report Save report wrote.
+    pub last_report: Option<String>,
+    /// Why the last report Save report tried to write failed.
+    pub error: Option<String>,
 }
 
 /// The run settings, as the dashboard shows them: what the next Start runs,
@@ -500,8 +494,8 @@ pub(crate) struct DashboardSnapshotInput<'a> {
     pub no_transaction_metrics: bool,
     /// `--no-scenario-metrics`.
     pub no_scenario_metrics: bool,
-    /// See [`DashboardSnapshot::save`].
-    pub save: SnapshotSave,
+    /// See [`DashboardSnapshot::report`].
+    pub report: SnapshotReport,
     /// See [`DashboardSnapshot::settings`].
     pub settings: SnapshotSettings,
     /// See [`SnapshotFlags::percentiles_over_time`].
@@ -558,7 +552,7 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
                 series_seconds: input.series_window_secs,
                 percentiles_over_time: false,
             },
-            save: input.save,
+            report: input.report,
             settings: input.settings,
             build_time: std::time::Duration::ZERO,
         };
@@ -716,7 +710,7 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
             series_seconds: input.series_window_secs,
             percentiles_over_time: input.percentiles_over_time,
         },
-        save: input.save,
+        report: input.report,
         settings: input.settings,
         build_time: std::time::Duration::ZERO,
     }
@@ -873,7 +867,7 @@ mod tests {
             metrics_disabled: false,
             no_transaction_metrics: false,
             no_scenario_metrics: false,
-            save: SnapshotSave::off("goose-runs"),
+            report: SnapshotReport::default(),
             settings: SnapshotSettings::idle(),
             percentiles_over_time: false,
             series_keys: HashSet::new(),
@@ -930,7 +924,7 @@ mod tests {
             metrics_disabled: false,
             no_transaction_metrics: false,
             no_scenario_metrics: false,
-            save: SnapshotSave::off("goose-runs"),
+            report: SnapshotReport::default(),
             settings: SnapshotSettings::idle(),
             percentiles_over_time: false,
             series_keys: HashSet::new(),
@@ -971,7 +965,7 @@ mod tests {
             metrics_disabled: false,
             no_transaction_metrics: false,
             no_scenario_metrics: false,
-            save: SnapshotSave::off("goose-runs"),
+            report: SnapshotReport::default(),
             settings: SnapshotSettings::idle(),
             percentiles_over_time: false,
             series_keys: HashSet::new(),
@@ -1004,7 +998,7 @@ mod tests {
             metrics_disabled: false,
             no_transaction_metrics: false,
             no_scenario_metrics: false,
-            save: SnapshotSave::off("goose-runs"),
+            report: SnapshotReport::default(),
             settings: SnapshotSettings::idle(),
             percentiles_over_time: false,
             series_keys: HashSet::new(),
@@ -1027,7 +1021,7 @@ mod tests {
             metrics_disabled: false,
             no_transaction_metrics: false,
             no_scenario_metrics: false,
-            save: SnapshotSave::off("goose-runs"),
+            report: SnapshotReport::default(),
             settings: SnapshotSettings::idle(),
             percentiles_over_time: false,
             series_keys: HashSet::new(),
@@ -1149,7 +1143,7 @@ mod tests {
             metrics_disabled: false,
             no_transaction_metrics: false,
             no_scenario_metrics: false,
-            save: SnapshotSave::off("goose-runs"),
+            report: SnapshotReport::default(),
             settings: SnapshotSettings::idle(),
             percentiles_over_time: false,
             series_keys: HashSet::new(),
@@ -1209,7 +1203,7 @@ mod tests {
             metrics_disabled: true,
             no_transaction_metrics: false,
             no_scenario_metrics: false,
-            save: SnapshotSave::off("goose-runs"),
+            report: SnapshotReport::default(),
             settings: SnapshotSettings::idle(),
             percentiles_over_time: false,
             series_keys: HashSet::new(),
@@ -1311,7 +1305,7 @@ mod tests {
             metrics_disabled: false,
             no_transaction_metrics: false,
             no_scenario_metrics: false,
-            save: SnapshotSave::off("goose-runs"),
+            report: SnapshotReport::default(),
             settings: SnapshotSettings::idle(),
             percentiles_over_time: false,
             series_keys: HashSet::new(),

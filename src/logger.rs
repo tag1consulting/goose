@@ -205,9 +205,10 @@ use std::sync::Mutex;
 use tokio::fs::File;
 use tokio::io::{AsyncWriteExt, BufWriter};
 
-use crate::config::GooseValue;
+use crate::config::{GooseValue, RUN_FOLDER};
 use crate::goose::GooseDebug;
 use crate::metrics::{GooseErrorMetric, GooseRequestMetric, ScenarioMetric, TransactionMetric};
+use crate::runs::{log_file_name, RunFolder, LOG_NAMES};
 use crate::{GooseConfiguration, GooseDefaults, GooseError};
 
 /// A thread-safe scoped log level guard that changes the global log level for its lifetime
@@ -257,6 +258,95 @@ impl Drop for ScopedLogLevel {
     fn drop(&mut self) {
         log::set_max_level(self.previous_level);
         // The mutex guard (_guard) is automatically dropped here, releasing the lock
+    }
+}
+
+/// The most bytes of Goose log a bare `--goose-log` holds before a run's folder
+/// is known; later lines are dropped until it is.
+const WAITING_LOG_LIMIT: usize = 1024 * 1024;
+
+/// Where the Goose log goes.
+enum GooseLogTarget {
+    /// A bare `--goose-log`, before the first run's folder is known: the
+    /// lines so far.
+    Waiting(Vec<u8>),
+    File(std::fs::File),
+}
+
+/// The Goose log's file, behind a handle Goose keeps, as the global logger
+/// owns its writer for the whole process: so a bare `--goose-log` can move to
+/// each run's folder.
+#[derive(Clone)]
+pub(crate) struct GooseLogFile(std::sync::Arc<Mutex<GooseLogTarget>>);
+
+/// The Goose log's handle, once the global logger writes to it.
+static GOOSE_LOG_FILE: Mutex<Option<GooseLogFile>> = Mutex::new(None);
+
+impl GooseLogFile {
+    /// The Goose log at `path`, or with no path, waiting for a run's folder.
+    pub(crate) fn open(path: Option<&std::path::Path>) -> std::io::Result<Self> {
+        let target = match path {
+            Some(path) => GooseLogTarget::File(std::fs::File::create(path)?),
+            None => GooseLogTarget::Waiting(Vec::new()),
+        };
+        Ok(GooseLogFile(std::sync::Arc::new(Mutex::new(target))))
+    }
+
+    /// Keep this handle as the one the global logger writes to.
+    pub(crate) fn install(&self) {
+        if let Ok(mut file) = GOOSE_LOG_FILE.lock() {
+            *file = Some(self.clone());
+        }
+    }
+
+    fn target(&self) -> std::sync::MutexGuard<'_, GooseLogTarget> {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+impl std::io::Write for GooseLogFile {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        match &mut *self.target() {
+            GooseLogTarget::Waiting(lines) => {
+                if lines.len() + buf.len() <= WAITING_LOG_LIMIT {
+                    lines.extend_from_slice(buf);
+                }
+                Ok(buf.len())
+            }
+            GooseLogTarget::File(file) => file.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        match &mut *self.target() {
+            GooseLogTarget::Waiting(_) => Ok(()),
+            GooseLogTarget::File(file) => file.flush(),
+        }
+    }
+}
+
+/// Move a bare `--goose-log` to `path` in a run's folder, writing any lines
+/// logged before the first run there first. Does nothing when the global
+/// logger writes no Goose log.
+pub(crate) fn move_goose_log(path: &std::path::Path) -> std::io::Result<()> {
+    let Some(handle) = GOOSE_LOG_FILE.lock().ok().and_then(|file| file.clone()) else {
+        return Ok(());
+    };
+    let mut file = std::fs::File::create(path)?;
+    let mut target = handle.target();
+    if let GooseLogTarget::Waiting(lines) = &*target {
+        std::io::Write::write_all(&mut file, lines)?;
+    }
+    *target = GooseLogTarget::File(file);
+    Ok(())
+}
+
+/// Flush the Goose log, as each `execute()` ends.
+pub(crate) fn flush_goose_log() {
+    if let Some(mut handle) = GOOSE_LOG_FILE.lock().ok().and_then(|file| file.clone()) {
+        let _ = std::io::Write::flush(&mut handle);
     }
 }
 
@@ -765,6 +855,7 @@ impl GooseConfiguration {
     pub(crate) async fn setup_loggers(
         &mut self,
         defaults: &GooseDefaults,
+        folder: Option<&mut RunFolder>,
     ) -> Result<(GooseLoggerJoinHandle, GooseLoggerTx), GooseError> {
         // Update the logger configuration, loading defaults if necessasry.
         self.configure_loggers(defaults);
@@ -784,8 +875,44 @@ impl GooseConfiguration {
             flume::Sender<Option<GooseLog>>,
             flume::Receiver<Option<GooseLog>>,
         ) = flume::unbounded();
-        // Launch a new thread for logging.
-        let configuration = self.clone();
+        // Launch a new thread for logging, with each log given without a path
+        // named in the run's folder.
+        let mut configuration = self.clone();
+        if let Some(folder) = folder {
+            for (log, name, format) in [
+                (
+                    &mut configuration.request_log,
+                    LOG_NAMES[0],
+                    &self.request_format,
+                ),
+                (
+                    &mut configuration.transaction_log,
+                    LOG_NAMES[1],
+                    &self.transaction_format,
+                ),
+                (
+                    &mut configuration.scenario_log,
+                    LOG_NAMES[2],
+                    &self.scenario_format,
+                ),
+                (
+                    &mut configuration.error_log,
+                    LOG_NAMES[3],
+                    &self.error_format,
+                ),
+                (
+                    &mut configuration.debug_log,
+                    LOG_NAMES[4],
+                    &self.debug_format,
+                ),
+            ] {
+                if log.as_deref() == Some(RUN_FOLDER) {
+                    folder.create().map_err(|e| folder.error(e))?;
+                    let path = folder.file(&log_file_name(name, format.as_ref()));
+                    *log = Some(path.to_string_lossy().into_owned());
+                }
+            }
+        }
         let logger_handle = tokio::spawn(async move { configuration.logger_main(logger_rx).await });
         Ok((Some(logger_handle), Some(all_threads_logger_tx)))
     }

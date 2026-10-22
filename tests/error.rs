@@ -296,8 +296,7 @@ async fn test_custom_error() {
     );
 
     // Test 4: Test in a transaction context
-    let mut configuration = GooseConfiguration::default();
-    configuration.no_save = true;
+    let configuration = GooseConfiguration::default();
     let base_url = "http://example.com".parse().unwrap();
     let mut user = GooseUser::single(base_url, &configuration).unwrap();
 

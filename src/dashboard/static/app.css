@@ -890,9 +890,41 @@ footer {
   font-size: 0.85rem;
 }
 
-/* Saved runs */
-.save-status.save-failed {
-  color: var(--err);
+/* The report: the header's switches, and the runs panel */
+.report-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 1rem;
+  padding: 0.5rem 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.report-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  white-space: nowrap;
+}
+
+.report-switch:has(input:disabled) {
+  color: var(--muted);
+}
+
+#save-now {
+  padding: 0.2rem 0.55rem;
+  font-size: 0.8rem;
+}
+
+.report-paths,
+.run-notes {
+  overflow-wrap: anywhere;
+}
+
+td.run-notes {
+  white-space: normal;
+  min-width: 10rem;
 }
 
 .run-banner {
@@ -966,6 +998,8 @@ footer {
 
 #runs-panel button:focus-visible,
 #runs-panel input:focus-visible,
+.report-bar button:focus-visible,
+.report-bar input:focus-visible,
 .run-banner button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
