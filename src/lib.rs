@@ -1230,7 +1230,16 @@ impl GooseAttack {
     ///     Ok(())
     /// }
     /// ```
-    pub async fn execute(mut self) -> Result<GooseMetrics, GooseError> {
+    pub async fn execute(self) -> Result<GooseMetrics, GooseError> {
+        let result = self.execute_load_test().await;
+        // The Goose log is whole on every way out: a gzipped one ends its
+        // member here.
+        logger::finish_goose_log();
+        result
+    }
+
+    /// [`Self::execute`], before the Goose log is finished.
+    async fn execute_load_test(mut self) -> Result<GooseMetrics, GooseError> {
         // If version flag is set, display package name and version and exit.
         if self.configuration.version {
             println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
@@ -1276,6 +1285,7 @@ impl GooseAttack {
         // Display scenarios, then exit.
         if self.configuration.scenarios_list {
             self.print_scenarios();
+            logger::finish_goose_log();
             std::process::exit(0);
         }
 
@@ -1325,9 +1335,7 @@ impl GooseAttack {
         self.metrics.hash = s.finish();
         debug!("hash: {}", self.metrics.hash);
 
-        let attack = self.start_attack().await;
-        logger::flush_goose_log();
-        self = attack?;
+        self = self.start_attack().await?;
 
         if self.metrics.display_metrics {
             info!(

@@ -134,6 +134,15 @@ impl RunRecord {
 pub(crate) const IN_PROGRESS: &str =
     "This report was saved while the run was in progress. The report written when the run ends replaces it.";
 
+/// `name` without a trailing `.gz`, and whether it had one: a report or log
+/// named `.gz` is the format the name before it names, gzipped.
+pub(crate) fn without_gz(name: &str) -> (&str, bool) {
+    match name.strip_suffix(".gz") {
+        Some(inner) => (inner, true),
+        None => (name, false),
+    }
+}
+
 /// The file name of a log in a run's folder: `name` with its format's
 /// extension.
 pub(crate) fn log_file_name(name: &str, format: Option<&GooseLogFormat>) -> String {
@@ -352,9 +361,13 @@ impl GooseAttack {
         folder.check_writable()?;
         // A bare --goose-log moves to each run's folder as the run starts.
         if self.configuration.goose_log() == Some(RUN_FOLDER) {
+            let name = match self.configuration.compress {
+                Some(_) => format!("{GOOSE_LOG}.gz"),
+                None => GOOSE_LOG.to_string(),
+            };
             folder
                 .create()
-                .and_then(|()| move_goose_log(&folder.file(GOOSE_LOG)))
+                .and_then(|()| move_goose_log(&folder.file(&name)))
                 .map_err(|e| folder.error(e))?;
         }
         self.output.folder = Some(folder);
@@ -438,8 +451,14 @@ impl GooseAttack {
         let written = match folder {
             None => return report_files,
             Some(folder) => folder.and_then(|folder| {
-                write_folder_report(&folder, &source, baseline.as_ref(), &mut html)
-                    .map(|files| (folder, files))
+                write_folder_report(
+                    &folder,
+                    &source,
+                    baseline.as_ref(),
+                    &mut html,
+                    self.configuration.compress,
+                )
+                .map(|files| (folder, files))
             }),
         };
         match written {
@@ -539,18 +558,29 @@ pub(crate) fn is_report_name(name: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
 }
 
-/// The real folder `name` in `parent` and the regular `report.json` in it,
-/// never following a symlink.
+/// The real folder `name` in `parent` and the regular `report.json`, else
+/// `report.json.gz`, in it, never following a symlink.
 #[cfg(feature = "dashboard")]
 pub(crate) fn report_folder(parent: &Path, name: &str) -> Option<(PathBuf, PathBuf)> {
     if !is_report_name(name) {
         return None;
     }
     let folder = parent.join(name);
-    let json = folder.join(REPORT_JSON);
-    let real_dir = std::fs::symlink_metadata(&folder).is_ok_and(|m| m.file_type().is_dir());
-    let regular = std::fs::symlink_metadata(&json).is_ok_and(|m| m.file_type().is_file());
-    (real_dir && regular).then_some((folder, json))
+    if !std::fs::symlink_metadata(&folder).is_ok_and(|m| m.file_type().is_dir()) {
+        return None;
+    }
+    let json = regular_file(&folder, REPORT_JSON)?;
+    Some((folder, json))
+}
+
+/// The regular file `name`, else `name.gz`, in `folder`, never following a
+/// symlink.
+#[cfg(feature = "dashboard")]
+pub(crate) fn regular_file(folder: &Path, name: &str) -> Option<PathBuf> {
+    [name.to_string(), format!("{name}.gz")]
+        .iter()
+        .map(|name| folder.join(name))
+        .find(|path| std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_file()))
 }
 
 /// The reports in the folders of `parent`, one level down, newest first.
@@ -633,7 +663,7 @@ fn read_listed(json: &Path, name: &str, modified: std::time::SystemTime) -> Opti
         #[serde(default)]
         fail_count: u64,
     }
-    let text = std::fs::read_to_string(json).ok()?;
+    let text = crate::metrics::read_report_text(json).ok()?;
     let record: RunRecord = serde_json::from_str(&text).ok()?;
     let metrics = serde_json::from_str::<Listed>(&text).ok()?.raw_metrics;
     let written = DateTime::<Utc>::from(modified).timestamp();
@@ -659,7 +689,7 @@ fn read_listed(json: &Path, name: &str, modified: std::time::SystemTime) -> Opti
 }
 
 /// The files `DELETE /api/v1/reports/{name}` removes from a run's folder:
-/// its reports and the logs Goose names there.
+/// its reports and the logs Goose names there, plain and gzipped.
 #[cfg(feature = "dashboard")]
 pub(crate) fn deletable_files() -> Vec<String> {
     let mut names = vec![
@@ -673,6 +703,8 @@ pub(crate) fn deletable_files() -> Vec<String> {
             names.push(format!("{name}.{extension}"));
         }
     }
+    let gzipped: Vec<String> = names.iter().map(|name| format!("{name}.gz")).collect();
+    names.extend(gzipped);
     names
 }
 
@@ -775,6 +807,7 @@ impl GooseAttack {
         let record = self.report_record(true, graph_data.first_second());
         let configuration = self.configuration.clone();
         let graph_data_in_json = self.output.graph_data;
+        let compress = self.configuration.compress;
         self.output.saved_now = true;
         self.output.saving_now = Some(tokio::task::spawn_blocking(move || {
             let baseline = configuration
@@ -791,7 +824,13 @@ impl GooseAttack {
                 record: &record,
                 graph_data_in_json,
             };
-            match write_folder_report(&folder_path, &source, baseline.as_ref(), &mut None) {
+            match write_folder_report(
+                &folder_path,
+                &source,
+                baseline.as_ref(),
+                &mut None,
+                compress,
+            ) {
                 Ok(files) => {
                     for file in files {
                         info!("in progress report written to: {}", file.display());
@@ -947,6 +986,57 @@ mod tests {
         assert_eq!(parent_folder(&nested), Path::new("goose-runs"));
         let bare = configuration(Some(Path::new("nightly")));
         assert_eq!(parent_folder(&bare), Path::new("."));
+    }
+
+    #[test]
+    fn a_gz_name_is_its_inner_format() {
+        assert_eq!(without_gz("report.json.gz"), ("report.json", true));
+        assert_eq!(without_gz("report.pdf.gz"), ("report.pdf", true));
+        assert_eq!(without_gz("report.json"), ("report.json", false));
+        // Only one .gz is taken off.
+        assert_eq!(without_gz("x.gz.gz"), ("x.gz", true));
+    }
+
+    /// A folder's JSON report is its report.json, else its report.json.gz,
+    /// and a gzipped report that is cut short is an error, never a panic.
+    #[test]
+    fn gzipped_reports_are_read_whole_or_not_at_all() {
+        use std::io::Write;
+        let dir = temp_dir("gz-read");
+        let json = dir.join("report.json.gz");
+        let mut gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        gzip.write_all(br#"{"notes": "zipped"}"#).unwrap();
+        let bytes = gzip.finish().unwrap();
+        std::fs::write(&json, &bytes).unwrap();
+        assert_eq!(crate::metrics::json_report_path(&dir), json);
+        let text = crate::metrics::read_report_text(&json).unwrap();
+        assert_eq!(text, r#"{"notes": "zipped"}"#);
+        std::fs::write(dir.join("report.json"), "{}").unwrap();
+        assert_eq!(
+            crate::metrics::json_report_path(&dir),
+            dir.join("report.json")
+        );
+
+        std::fs::write(&json, &bytes[..bytes.len() - 6]).unwrap();
+        assert!(crate::metrics::read_report_text(&json).is_err());
+        std::fs::write(&json, b"plain text").unwrap();
+        assert!(crate::metrics::read_report_text(&json).is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(feature = "dashboard")]
+    #[test]
+    fn delete_takes_plain_and_gzipped_names() {
+        let names = deletable_files();
+        for name in [
+            "report.json",
+            "report.json.gz",
+            "goose.log.gz",
+            "requests.csv.gz",
+        ] {
+            assert!(names.iter().any(|n| n == name), "{}", name);
+        }
+        assert!(!names.iter().any(|n| n.contains('/')));
     }
 
     #[test]

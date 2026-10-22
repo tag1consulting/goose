@@ -196,19 +196,23 @@
 //! The current implementation fails fast when this occurs to expose potential threading
 //! issues rather than masking them.
 
+use async_compression::tokio::write::GzipEncoder;
+use async_compression::Level;
 use log::LevelFilter;
 use regex::RegexSet;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Mutex;
+use std::task::{Context, Poll};
 use tokio::fs::File;
-use tokio::io::{AsyncWriteExt, BufWriter};
+use tokio::io::{AsyncWrite, AsyncWriteExt, BufWriter};
 
 use crate::config::{GooseValue, RUN_FOLDER};
 use crate::goose::GooseDebug;
 use crate::metrics::{GooseErrorMetric, GooseRequestMetric, ScenarioMetric, TransactionMetric};
-use crate::runs::{log_file_name, RunFolder, LOG_NAMES};
+use crate::runs::{log_file_name, without_gz, RunFolder, LOG_NAMES};
 use crate::{GooseConfiguration, GooseDefaults, GooseError};
 
 /// A thread-safe scoped log level guard that changes the global log level for its lifetime
@@ -271,25 +275,92 @@ enum GooseLogTarget {
     /// lines so far.
     Waiting(Vec<u8>),
     File(std::fs::File),
+    /// A Goose log named `.gz`: the gzip member being written, ended at the
+    /// end of each `execute()`.
+    Gzip(flate2::write::GzEncoder<std::fs::File>),
+    /// A Goose log named `.gz` between members.
+    GzipIdle(std::fs::File),
+    /// The file failed; lines are dropped.
+    Failed,
 }
 
 /// The Goose log's file, behind a handle Goose keeps, as the global logger
 /// owns its writer for the whole process: so a bare `--goose-log` can move to
-/// each run's folder.
+/// each run's folder, and a gzipped one can end a gzip member when each
+/// `execute()` ends. Members one after another are one valid gzip file.
 #[derive(Clone)]
-pub(crate) struct GooseLogFile(std::sync::Arc<Mutex<GooseLogTarget>>);
+pub(crate) struct GooseLogFile {
+    target: std::sync::Arc<Mutex<GooseLogTarget>>,
+    level: u32,
+}
 
 /// The Goose log's handle, once the global logger writes to it.
 static GOOSE_LOG_FILE: Mutex<Option<GooseLogFile>> = Mutex::new(None);
 
+impl GooseLogTarget {
+    /// The log at `path`: gzipped when its name ends in `.gz`.
+    fn create(path: &std::path::Path) -> std::io::Result<Self> {
+        let file = std::fs::File::create(path)?;
+        Ok(if without_gz(&path.to_string_lossy()).1 {
+            GooseLogTarget::GzipIdle(file)
+        } else {
+            GooseLogTarget::File(file)
+        })
+    }
+
+    fn write_all(&mut self, buf: &[u8], level: u32) -> std::io::Result<()> {
+        if let GooseLogTarget::GzipIdle(_) = self {
+            // A new member starts with the first line after the last ended.
+            if let GooseLogTarget::GzipIdle(file) = std::mem::replace(self, GooseLogTarget::Failed)
+            {
+                *self = GooseLogTarget::Gzip(flate2::write::GzEncoder::new(
+                    file,
+                    flate2::Compression::new(level),
+                ));
+            }
+        }
+        match self {
+            GooseLogTarget::Waiting(lines) => {
+                if lines.len() + buf.len() <= WAITING_LOG_LIMIT {
+                    lines.extend_from_slice(buf);
+                }
+                Ok(())
+            }
+            GooseLogTarget::File(file) => std::io::Write::write_all(file, buf),
+            GooseLogTarget::Gzip(gzip) => std::io::Write::write_all(gzip, buf),
+            GooseLogTarget::GzipIdle(_) | GooseLogTarget::Failed => Ok(()),
+        }
+    }
+
+    /// Flush the log, ending a gzip member, so the file is whole.
+    fn finish(&mut self) {
+        match std::mem::replace(self, GooseLogTarget::Failed) {
+            GooseLogTarget::Gzip(gzip) => {
+                if let Ok(file) = gzip.finish() {
+                    *self = GooseLogTarget::GzipIdle(file);
+                }
+            }
+            GooseLogTarget::File(mut file) => {
+                let _ = std::io::Write::flush(&mut file);
+                *self = GooseLogTarget::File(file);
+            }
+            other => *self = other,
+        }
+    }
+}
+
 impl GooseLogFile {
-    /// The Goose log at `path`, or with no path, waiting for a run's folder.
-    pub(crate) fn open(path: Option<&std::path::Path>) -> std::io::Result<Self> {
+    /// The Goose log at `path`, gzipped at `level` when its name ends in
+    /// `.gz`, or with no path, waiting for a run's folder.
+    pub(crate) fn open(path: Option<&std::path::Path>, level: u32) -> std::io::Result<Self> {
         let target = match path {
-            Some(path) => GooseLogTarget::File(std::fs::File::create(path)?),
+            Some(path) => GooseLogTarget::create(path)?,
             None => GooseLogTarget::Waiting(Vec::new()),
         };
-        Ok(GooseLogFile(std::sync::Arc::new(Mutex::new(target))))
+        Ok(GooseLogFile {
+            target: std::sync::Arc::new(Mutex::new(target)),
+            level,
+        })
     }
 
     /// Keep this handle as the one the global logger writes to.
@@ -300,7 +371,7 @@ impl GooseLogFile {
     }
 
     fn target(&self) -> std::sync::MutexGuard<'_, GooseLogTarget> {
-        self.0
+        self.target
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
@@ -308,45 +379,84 @@ impl GooseLogFile {
 
 impl std::io::Write for GooseLogFile {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        match &mut *self.target() {
-            GooseLogTarget::Waiting(lines) => {
-                if lines.len() + buf.len() <= WAITING_LOG_LIMIT {
-                    lines.extend_from_slice(buf);
-                }
-                Ok(buf.len())
-            }
-            GooseLogTarget::File(file) => file.write(buf),
-        }
+        let level = self.level;
+        self.target().write_all(buf, level)?;
+        Ok(buf.len())
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
         match &mut *self.target() {
-            GooseLogTarget::Waiting(_) => Ok(()),
             GooseLogTarget::File(file) => file.flush(),
+            GooseLogTarget::Gzip(gzip) => gzip.flush(),
+            _ => Ok(()),
         }
     }
 }
 
-/// Move a bare `--goose-log` to `path` in a run's folder, writing any lines
-/// logged before the first run there first. Does nothing when the global
-/// logger writes no Goose log.
-pub(crate) fn move_goose_log(path: &std::path::Path) -> std::io::Result<()> {
-    let Some(handle) = GOOSE_LOG_FILE.lock().ok().and_then(|file| file.clone()) else {
-        return Ok(());
-    };
-    let mut file = std::fs::File::create(path)?;
-    let mut target = handle.target();
-    if let GooseLogTarget::Waiting(lines) = &*target {
-        std::io::Write::write_all(&mut file, lines)?;
-    }
-    *target = GooseLogTarget::File(file);
-    Ok(())
+/// Whether the global logger already writes a Goose log.
+pub(crate) fn goose_log_installed() -> bool {
+    goose_log_file().is_some()
 }
 
-/// Flush the Goose log, as each `execute()` ends.
-pub(crate) fn flush_goose_log() {
-    if let Some(mut handle) = GOOSE_LOG_FILE.lock().ok().and_then(|file| file.clone()) {
-        let _ = std::io::Write::flush(&mut handle);
+/// The Goose log's handle, when the global logger writes one.
+fn goose_log_file() -> Option<GooseLogFile> {
+    GOOSE_LOG_FILE.lock().ok().and_then(|file| file.clone())
+}
+
+/// Move a bare `--goose-log` to `path` in a run's folder, gzipped when its
+/// name ends in `.gz`, writing any lines logged before the first run there
+/// first. Does nothing when the global logger writes no Goose log.
+pub(crate) fn move_goose_log(path: &std::path::Path) -> std::io::Result<()> {
+    let Some(handle) = goose_log_file() else {
+        return Ok(());
+    };
+    let mut target = handle.target();
+    target.finish();
+    let waiting = match std::mem::replace(&mut *target, GooseLogTarget::create(path)?) {
+        GooseLogTarget::Waiting(lines) => lines,
+        _ => Vec::new(),
+    };
+    target.write_all(&waiting, handle.level)
+}
+
+/// End the Goose log's gzip member, or flush it, as each `execute()` ends.
+pub(crate) fn finish_goose_log() {
+    if let Some(handle) = goose_log_file() {
+        handle.target().finish();
+    }
+}
+
+/// A log file: plain, or gzipped when its name ends in `.gz`. It sits under the
+/// log's `BufWriter`, so a line costs no more than it does in a plain log.
+pub(crate) enum LogSink {
+    Plain(File),
+    Gzip(GzipEncoder<File>),
+}
+
+impl AsyncWrite for LogSink {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        match self.get_mut() {
+            LogSink::Plain(file) => Pin::new(file).poll_write(cx, buf),
+            LogSink::Gzip(gzip) => Pin::new(gzip).poll_write(cx, buf),
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            LogSink::Plain(file) => Pin::new(file).poll_flush(cx),
+            LogSink::Gzip(gzip) => Pin::new(gzip).poll_flush(cx),
+        }
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            LogSink::Plain(file) => Pin::new(file).poll_shutdown(cx),
+            LogSink::Gzip(gzip) => Pin::new(gzip).poll_shutdown(cx),
+        }
     }
 }
 
@@ -908,7 +1018,11 @@ impl GooseConfiguration {
             ] {
                 if log.as_deref() == Some(RUN_FOLDER) {
                     folder.create().map_err(|e| folder.error(e))?;
-                    let path = folder.file(&log_file_name(name, format.as_ref()));
+                    let mut file = log_file_name(name, format.as_ref());
+                    if self.compress.is_some() {
+                        file.push_str(".gz");
+                    }
+                    let path = folder.file(&file);
                     *log = Some(path.to_string_lossy().into_owned());
                 }
             }
@@ -918,17 +1032,26 @@ impl GooseConfiguration {
     }
 
     /// A helper used to open any/all log files, deleting any file that already exists.
+    /// A name that ends in `.gz` is written gzipped.
     async fn open_log_file(
         &self,
         log_file_path: Option<&str>,
         log_file_type: &str,
         buffer_capacity: usize,
-    ) -> std::option::Option<tokio::io::BufWriter<tokio::fs::File>> {
+    ) -> std::option::Option<BufWriter<LogSink>> {
         let log_file_path = log_file_path?;
         match File::create(log_file_path).await {
             Ok(f) => {
                 info!("[logger]: writing {log_file_type} to: {log_file_path}");
-                Some(BufWriter::with_capacity(buffer_capacity, f))
+                let sink = if without_gz(log_file_path).1 {
+                    LogSink::Gzip(GzipEncoder::with_quality(
+                        f,
+                        Level::Precise(self.compression_level() as i32),
+                    ))
+                } else {
+                    LogSink::Plain(f)
+                };
+                Some(BufWriter::with_capacity(buffer_capacity, sink))
             }
             Err(e) => {
                 error!("[logger]: failed to create {log_file_type} ({log_file_path}): {e}");
@@ -938,13 +1061,9 @@ impl GooseConfiguration {
     }
 
     /// Helper to write a line to the log file.
-    async fn write_to_log_file(
-        &self,
-        log_file: &mut tokio::io::BufWriter<tokio::fs::File>,
-        formatted_message: &str,
-    ) {
+    async fn write_to_log_file(&self, log_file: &mut BufWriter<LogSink>, formatted_message: &str) {
         match log_file
-            .write(format!("{formatted_message}\n").as_ref())
+            .write_all(format!("{formatted_message}\n").as_ref())
             .await
         {
             Ok(_) => (),
@@ -1087,7 +1206,8 @@ impl GooseConfiguration {
                 "[logger]: flushing debug_log: {}",
                 self.debug_log().unwrap_or_default()
             );
-            let _ = debug_log_file.flush().await;
+            // Shut down, not only flush, so a gzipped log gets its trailer.
+            let _ = debug_log_file.shutdown().await;
         };
 
         // Flush requests log to disk if enabled.
@@ -1096,7 +1216,8 @@ impl GooseConfiguration {
                 "[logger]: flushing request_log: {}",
                 self.request_log().unwrap_or_default()
             );
-            let _ = requests_log_file.flush().await;
+            // Shut down, not only flush, so a gzipped log gets its trailer.
+            let _ = requests_log_file.shutdown().await;
         }
 
         // Flush transaction log to disk if enabled.
@@ -1105,7 +1226,8 @@ impl GooseConfiguration {
                 "[logger]: flushing transaction_log: {}",
                 self.transaction_log().unwrap_or_default()
             );
-            let _ = transactions_log_file.flush().await;
+            // Shut down, not only flush, so a gzipped log gets its trailer.
+            let _ = transactions_log_file.shutdown().await;
         }
 
         // Flush scenario log to disk if enabled.
@@ -1114,7 +1236,8 @@ impl GooseConfiguration {
                 "[logger]: flushing scenario: {}",
                 self.scenario_log().unwrap_or_default()
             );
-            let _ = scenarios_log_file.flush().await;
+            // Shut down, not only flush, so a gzipped log gets its trailer.
+            let _ = scenarios_log_file.shutdown().await;
         }
 
         // Flush error logs to disk if enabled.
@@ -1123,7 +1246,8 @@ impl GooseConfiguration {
                 "[logger]: flushing error_log: {}",
                 self.error_log().unwrap_or_default()
             );
-            let _ = error_log_file.flush().await;
+            // Shut down, not only flush, so a gzipped log gets its trailer.
+            let _ = error_log_file.shutdown().await;
         };
 
         Ok(())

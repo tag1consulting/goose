@@ -226,6 +226,17 @@ Reports:
           Example: --output-dir goose-runs/nightly --report-file. Set in code
           with GooseDefault::OutputDir.
 
+      --compress [<LEVEL>]
+          Gzip the run's folder, level 1 to 9
+
+          Gzips every file Goose writes into the run's folder, each named with
+          .gz added. A path given to an output flag keeps exactly that name; a
+          name that ends in .gz is gzipped without this option. LEVEL is 1
+          (fastest) to 9 (smallest), default 6, for every gzipped file.
+
+          Example: --report-file -R --compress 9. Set in code with
+          GooseDefault::Compress.
+
       --notes <TEXT>
           Label the run in its reports
 

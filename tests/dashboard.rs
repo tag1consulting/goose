@@ -3048,3 +3048,104 @@ async fn test_delete_report() {
     load.abort().await;
     std::fs::remove_dir_all(&parent).ok();
 }
+
+/// Rules 12 and 14: a folder holding only gzipped reports is listed; a
+/// gzipped report is sent as it is to a client that accepts gzip, and
+/// decompressed for one that does not; a format the folder lacks is rendered
+/// from `report.json.gz`; and Delete removes the gzipped files.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn test_gzipped_reports_in_the_panel() {
+    use std::io::Read;
+    let server = MockServer::start();
+    let _mocks = setup_mock_endpoints(&server);
+    let parent = reports_dir("gzipped");
+    let folder = parent.join("small");
+    let folder_str = folder.to_string_lossy().into_owned();
+    let configuration = common::build_configuration(
+        &server,
+        vec![
+            "--output-dir",
+            &folder_str,
+            "--report-file",
+            "--notes",
+            "gzipped",
+            "--compress",
+        ],
+    );
+    common::run_load_test(
+        common::build_load_test(configuration, vec![get_transactions()], None, None),
+        None,
+    )
+    .await;
+    let gunzip = |bytes: &[u8]| {
+        let mut out = Vec::new();
+        flate2::read::GzDecoder::new(bytes)
+            .read_to_end(&mut out)
+            .unwrap();
+        out
+    };
+    let stored = std::fs::read(folder.join("report.html.gz")).unwrap();
+
+    let (load, base) = start_idle_dashboard(&server, &parent, Vec::new(), None).await;
+    let client = reqwest::Client::builder().no_gzip().build().unwrap();
+    assert_eq!(listed_names(&client, &base).await, vec!["small"]);
+
+    // Accepts gzip: the stored file, as it is.
+    let resp = client
+        .get(format!("{base}/api/v1/reports/small/report.html"))
+        .header("Authorization", bearer_header())
+        .header("Accept-Encoding", "gzip, deflate")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(header(&resp, "content-encoding"), "gzip");
+    assert!(header(&resp, "content-type").starts_with("text/html"));
+    assert!(header(&resp, "content-disposition").ends_with("-small.html\""));
+    assert_eq!(resp.bytes().await.unwrap().as_ref(), stored.as_slice());
+
+    // Does not accept gzip: decompressed.
+    for accept in [None, Some("identity"), Some("gzip;q=0")] {
+        let mut req = client
+            .get(format!("{base}/api/v1/reports/small/report.html"))
+            .header("Authorization", bearer_header());
+        if let Some(accept) = accept {
+            req = req.header("Accept-Encoding", accept);
+        }
+        let resp = req.send().await.unwrap();
+        assert_eq!(resp.status(), 200, "{:?}", accept);
+        assert!(
+            resp.headers().get("content-encoding").is_none(),
+            "{:?}",
+            accept
+        );
+        assert_eq!(
+            resp.bytes().await.unwrap().as_ref(),
+            gunzip(&stored).as_slice()
+        );
+    }
+
+    // Markdown, which the folder lacks, rendered from report.json.gz.
+    let resp = client
+        .get(format!("{base}/api/v1/reports/small/report.md"))
+        .header("Authorization", bearer_header())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert!(resp.text().await.unwrap().contains("gzipped"));
+
+    // Delete removes the gzipped reports, and the folder they leave empty.
+    let resp = client
+        .delete(format!("{base}/api/v1/reports/small"))
+        .header("Authorization", bearer_header())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 204);
+    assert!(!folder.exists());
+
+    load.abort().await;
+    std::fs::remove_dir_all(&parent).ok();
+}

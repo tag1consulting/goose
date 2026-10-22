@@ -25,6 +25,9 @@ use crate::{GooseAttack, GooseError};
 /// taken for it, and `""` keeps its meaning of no file.
 pub(crate) const RUN_FOLDER: &str = "\0";
 
+/// The gzip level when neither `--compress` nor [`GooseDefault::Compress`] sets one.
+const DEFAULT_COMPRESSION_LEVEL: u32 = 6;
+
 /// The address the dashboard listens on when neither `--dashboard-host` nor
 /// [`GooseDefault::DashboardHost`] sets one.
 pub(crate) const DEFAULT_DASHBOARD_HOST: &str = "127.0.0.1";
@@ -326,6 +329,23 @@ pub struct GooseConfiguration {
             GooseDefault::OutputDir."
     )]
     pub output_dir: Option<String>,
+    /// Gzip the run's folder, level 1 to 9
+    ///
+    /// Gzips every file Goose writes into the run's folder, each named with .gz added. A
+    /// path given to an output flag keeps exactly that name; a name that ends in .gz is
+    /// gzipped without this option. LEVEL is 1 (fastest) to 9 (smallest), default 6, for
+    /// every gzipped file.
+    ///
+    /// Example: --report-file -R --compress 9. Set in code with GooseDefault::Compress.
+    #[arg(
+        help_heading = "Reports",
+        long,
+        value_name = "LEVEL",
+        num_args = 0..=1,
+        default_missing_value = "6",
+        value_parser = clap::value_parser!(u32).range(1..=9)
+    )]
+    pub compress: Option<u32>,
     /// Label the run in its reports
     ///
     /// Stores TEXT in the JSON report and shows it at the top of the HTML and Markdown
@@ -1165,6 +1185,8 @@ pub(crate) struct GooseDefaults {
     pub output_dir: Option<String>,
     /// An optional default for the notes stored with the run's reports.
     pub notes: Option<String>,
+    /// An optional default for gzipping the run's folder, and the gzip level.
+    pub compress: Option<u32>,
     /// An optional default for adding graph data to the JSON report.
     pub report_graph_data: Option<bool>,
     /// An optional default for the requests log file name.
@@ -1299,6 +1321,8 @@ pub enum GooseDefault {
     OutputDir,
     /// An optional default for the notes stored with the run's reports.
     Notes,
+    /// An optional default for gzipping the run's folder, and the gzip level, 1 to 9.
+    Compress,
     /// An optional default for adding graph data to the JSON report.
     ReportGraphData,
     /// An optional default for the request log file name.
@@ -1429,6 +1453,7 @@ pub enum GooseDefault {
 /// The following run-time options can be configured with a custom default using a
 /// [`usize`] integer:
 ///  - [`GooseDefault::Users`]
+///  - [`GooseDefault::Compress`]
 ///  - [`GooseDefault::IncreaseTime`]
 ///  - [`GooseDefault::DecreaseTime`]
 ///  - [`GooseDefault::RunTime`]
@@ -1577,6 +1602,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::StickyFollow
             | GooseDefault::NoGranularData
             | GooseDefault::ReportGraphData
+            | GooseDefault::Compress
             | GooseDefault::Dashboard
             | GooseDefault::DashboardControl
             | GooseDefault::NoPercentilesOverTime
@@ -1640,6 +1666,9 @@ impl GooseDefaultType<usize> for GooseAttack {
     fn set_default(mut self, key: GooseDefault, value: usize) -> Result<Box<Self>, GooseError> {
         match key {
             GooseDefault::Users => self.defaults.users = Some(value),
+            GooseDefault::Compress => {
+                self.defaults.compress = Some(std::convert::TryFrom::try_from(value).unwrap_or(u32::MAX))
+            }
             GooseDefault::IncreaseTime => self.defaults.increase_time = Some(value),
             GooseDefault::DecreaseTime => self.defaults.decrease_time = Some(value),
             GooseDefault::RunTime => self.defaults.run_time = Some(value),
@@ -1791,6 +1820,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             | GooseDefault::ReportFile
             | GooseDefault::OutputDir
             | GooseDefault::Notes
+            | GooseDefault::Compress
             | GooseDefault::BaselineFile
             | GooseDefault::RequestLog
             | GooseDefault::ScenarioLog
@@ -1928,6 +1958,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::ReportFile
             | GooseDefault::OutputDir
             | GooseDefault::Notes
+            | GooseDefault::Compress
             | GooseDefault::BaselineFile
             | GooseDefault::RequestLog
             | GooseDefault::ScenarioLog
@@ -2060,6 +2091,7 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::ReportFile
             | GooseDefault::OutputDir
             | GooseDefault::Notes
+            | GooseDefault::Compress
             | GooseDefault::BaselineFile
             | GooseDefault::RequestLog
             | GooseDefault::ScenarioLog
@@ -2151,6 +2183,7 @@ impl GooseDefaultType<f64> for GooseAttack {
             | GooseDefault::ReportFile
             | GooseDefault::OutputDir
             | GooseDefault::Notes
+            | GooseDefault::Compress
             | GooseDefault::BaselineFile
             | GooseDefault::RequestLog
             | GooseDefault::ScenarioLog
@@ -2803,6 +2836,22 @@ impl GooseConfiguration {
             },
         ]);
 
+        // Configure `compress`.
+        self.compress = self.get_value(vec![
+            // Use --compress if set.
+            GooseValue {
+                value: self.compress,
+                filter: self.compress.is_none(),
+                message: "compress",
+            },
+            // Otherwise use GooseDefault if set.
+            GooseValue {
+                value: defaults.compress,
+                filter: defaults.compress.is_none(),
+                message: "compress",
+            },
+        ]);
+
         // Configure `report_graph_data`.
         self.report_graph_data = self
             .get_value(vec![
@@ -3441,6 +3490,11 @@ impl GooseConfiguration {
         non_empty(&self.notes)
     }
 
+    /// The gzip level for every gzipped file: `--compress`, or 6.
+    pub(crate) fn compression_level(&self) -> u32 {
+        self.compress.unwrap_or(DEFAULT_COMPRESSION_LEVEL)
+    }
+
     /// Whether a bare `--report-file` asks for report.json and report.html in the run's
     /// folder.
     pub(crate) fn report_in_folder(&self) -> bool {
@@ -3872,6 +3926,16 @@ impl GooseConfiguration {
             });
         }
 
+        // The gzip level, as GooseDefault::Compress can set any number.
+        if let Some(level) = self.compress.filter(|level| !(1..=9).contains(level)) {
+            return Err(GooseError::InvalidOption {
+                option: "`configuration.compress`".to_string(),
+                value: level.to_string(),
+                detail: "`configuration.compress` (--compress) is a gzip level from 1 to 9."
+                    .to_string(),
+            });
+        }
+
         // --output-dir sets the folder that output flags given without a path write to.
         if let Some(output_dir) = self.output_dir() {
             if !self.uses_run_folder() {
@@ -4059,17 +4123,19 @@ impl GooseConfiguration {
     /// This ensures proper error handling when PDF functionality is requested but not available.
     /// Note: --pdf-print-html is always available as it only generates HTML+CSS without requiring Chromium.
     fn validate_pdf_configuration(&self) -> Result<(), GooseError> {
-        let has_pdf_reports = self
-            .report_file
-            .iter()
-            .any(|path| path.to_lowercase().ends_with(".pdf"));
+        let is_pdf = |path: &&String| {
+            crate::runs::without_gz(&path.to_lowercase())
+                .0
+                .ends_with(".pdf")
+        };
+        let has_pdf_reports = self.report_file.iter().any(|path| is_pdf(&path));
 
         // Check if PDF report generation is requested but feature not compiled
         if !cfg!(feature = "pdf-reports") && has_pdf_reports {
             let pdf_file = self
                 .report_file
                 .iter()
-                .find(|path| path.to_lowercase().ends_with(".pdf"))
+                .find(is_pdf)
                 .cloned()
                 .unwrap_or_else(|| "*.pdf".to_string());
 
@@ -4144,10 +4210,14 @@ impl GooseConfiguration {
         };
 
         // Open the log file if configured, otherwise disable the log. A bare
-        // --goose-log waits for the run's folder.
-        if let Some(goose_log) = self.goose_log() {
+        // --goose-log waits for the run's folder. The global logger is set once
+        // for the process: a later `execute()` keeps writing the Goose log the
+        // first one opened, and does not create the file again under it.
+        if crate::logger::goose_log_installed() {
+            debug!("the Goose log is already open");
+        } else if let Some(goose_log) = self.goose_log() {
             let path = (goose_log != RUN_FOLDER).then(|| PathBuf::from(goose_log));
-            let file = GooseLogFile::open(path.as_deref()).unwrap();
+            let file = GooseLogFile::open(path.as_deref(), self.compression_level()).unwrap();
             match CombinedLogger::init(vec![
                 SimpleLogger::new(debug_level, Config::default()),
                 WriteLogger::new(log_level, Config::default(), file.clone()),

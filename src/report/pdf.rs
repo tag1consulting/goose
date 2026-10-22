@@ -13,8 +13,6 @@ use headless_chrome::{protocol::cdp::Page, Browser, LaunchOptions};
 use log::{debug, LevelFilter};
 use std::{
     ffi::OsStr,
-    fs,
-    path::Path,
     time::{Duration, Instant},
 };
 
@@ -57,15 +55,6 @@ mod pdf_errors {
             option: "--pdf-timeout".to_string(),
             value: "timeout".to_string(),
             detail: format!("Chrome operation timed out after {duration:?}. This may indicate Chrome is unresponsive or the system is under heavy load."),
-        }
-    }
-
-    /// Creates a consistent error for file write failures
-    pub fn file_write_error(inner_error: String, output_path: &std::path::Path) -> GooseError {
-        GooseError::InvalidOption {
-            option: "--report-file".to_string(),
-            value: format!("Failed to write PDF file: {inner_error}"),
-            detail: format!("Unable to write PDF to {}", output_path.display()),
         }
     }
 
@@ -262,15 +251,12 @@ fn get_chrome_launch_args(verbose: bool) -> Vec<&'static OsStr> {
 /// hanging operations.
 pub(crate) fn generate_pdf_from_html(
     html_content: &str,
-    output_path: &Path,
     scale: f64,
     verbose: bool,
     timeout_seconds: u64,
     chrome: &ResolvedChrome,
-) -> Result<(), GooseError> {
-    let rendered = render_pdf(html_content, scale, verbose, timeout_seconds, chrome)?;
-    fs::write(output_path, rendered.pdf)
-        .map_err(|e| pdf_errors::file_write_error(e.to_string(), output_path))
+) -> Result<Vec<u8>, GooseError> {
+    render_pdf(html_content, scale, verbose, timeout_seconds, chrome).map(|rendered| rendered.pdf)
 }
 
 /// Confirms `chrome` can render a PDF, the way [`generate_pdf_from_html`]

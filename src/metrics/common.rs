@@ -535,13 +535,35 @@ pub(crate) fn apply_baseline_deltas(current: &mut ReportData, baseline: &ReportD
     }
 }
 
-/// The JSON report at `path`, or in the folder `path` names.
+/// The JSON report at `path`, or in the folder `path` names: its
+/// `report.json`, else its `report.json.gz`.
 pub(crate) fn json_report_path(path: &Path) -> PathBuf {
-    if path.is_dir() {
-        path.join(crate::runs::REPORT_JSON)
-    } else {
-        path.to_path_buf()
+    if !path.is_dir() {
+        return path.to_path_buf();
     }
+    let json = path.join(crate::runs::REPORT_JSON);
+    if json.is_file() {
+        json
+    } else {
+        path.join(format!("{}.gz", crate::runs::REPORT_JSON))
+    }
+}
+
+/// Read a report, gunzipping one whose name ends in `.gz`.
+pub(crate) fn open_report(path: &Path) -> std::io::Result<Box<dyn Read>> {
+    let file = BufReader::new(File::open(path)?);
+    if crate::runs::without_gz(&path.to_string_lossy()).1 {
+        Ok(Box::new(flate2::read::GzDecoder::new(file)))
+    } else {
+        Ok(Box::new(file))
+    }
+}
+
+/// The text of a report, gunzipped when its name ends in `.gz`.
+pub(crate) fn read_report_text(path: &Path) -> std::io::Result<String> {
+    let mut text = String::new();
+    open_report(path)?.read_to_string(&mut text)?;
+    Ok(text)
 }
 
 /// Load baseline data from a JSON report, or from the `report.json` in a
@@ -551,18 +573,17 @@ pub fn load_baseline_file<P: AsRef<Path>>(path: P) -> Result<ReportData<'static>
     let file_path = json_report_path(path.as_ref());
 
     // Open and read the baseline file
-    let file = File::open(&file_path).map_err(|err| GooseError::InvalidOption {
+    let file = open_report(&file_path).map_err(|err| GooseError::InvalidOption {
         option: "--baseline-file".to_string(),
         value: path_str.to_string(),
         detail: format!("Failed to open baseline file: {err}"),
     })?;
 
-    let mut baseline =
-        read_report(BufReader::new(file)).map_err(|err| GooseError::InvalidOption {
-            option: "--baseline-file".to_string(),
-            value: path_str.to_string(),
-            detail: format!("Failed to parse baseline file as JSON: {err}"),
-        })?;
+    let mut baseline = read_report(file).map_err(|err| GooseError::InvalidOption {
+        option: "--baseline-file".to_string(),
+        value: path_str.to_string(),
+        detail: format!("Failed to parse baseline file as JSON: {err}"),
+    })?;
 
     // Validate the loaded baseline data
     validate_baseline_data(&baseline, &path_str)?;
@@ -585,10 +606,8 @@ impl LoadedReport {
     /// Read the JSON report at `path`. An error is one line for the person who
     /// asked.
     pub(crate) fn read(path: &Path) -> Result<LoadedReport, String> {
-        let mut text = String::new();
-        File::open(path)
-            .and_then(|mut file| file.read_to_string(&mut text))
-            .map_err(|e| format!("Can't read {}: {e}", path.display()))?;
+        let text =
+            read_report_text(path).map_err(|e| format!("Can't read {}: {e}", path.display()))?;
         Self::parse(&text)
             .map_err(|e| format!("{} is not a Goose JSON report: {e}", path.display()))
     }
@@ -644,8 +663,7 @@ pub(crate) fn compare_reports(
     baseline_id: &str,
 ) -> Result<Vec<u8>, String> {
     let load = |path: &Path, id: &str| -> Result<ReportData<'static>, String> {
-        let reader =
-            BufReader::new(File::open(path).map_err(|e| format!("Can't read run {id}: {e}"))?);
+        let reader = open_report(path).map_err(|e| format!("Can't read run {id}: {e}"))?;
         let data =
             read_report(reader).map_err(|e| format!("Can't read the report of run {id}: {e}"))?;
         let requests = data

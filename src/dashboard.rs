@@ -1725,13 +1725,31 @@ async fn report_file_handler(
     let Some((folder, json)) = runs::report_folder(&state.reports_dir, &name) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let stored = folder.join(&file);
     let test = download_test_name(&json);
     let filename = format!("goose-{test}-{name}.{ext}");
-    if std::fs::symlink_metadata(&stored).is_ok_and(|m| m.file_type().is_file()) {
-        return stored_file_response(&stored, content_type, &filename).await;
+    if let Some(stored) = runs::regular_file(&folder, &file) {
+        // A report stored gzipped is sent as it is to a client that accepts
+        // gzip, and decompressed for any other.
+        let gzipped = runs::without_gz(&stored.to_string_lossy()).1;
+        if !gzipped || accepts_gzip(&headers) {
+            return stored_file_response(&stored, content_type, &filename, gzipped).await;
+        }
+        let gunzipped = tokio::task::spawn_blocking(move || {
+            let mut body = Vec::new();
+            crate::metrics::open_report(&stored)
+                .and_then(|mut report| std::io::Read::read_to_end(&mut report, &mut body))
+                .map(|_| body)
+        })
+        .await;
+        return match gunzipped {
+            Ok(Ok(body)) => {
+                let length = body.len() as u64;
+                download_response(content_type, &filename, Body::from(body), Some(length))
+            }
+            _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        };
     }
-    // A format the folder lacks is rendered from its report.json.
+    // A format the folder lacks is rendered from its JSON report.
     let rendered = tokio::task::spawn_blocking(move || render_report_file(&json, ext)).await;
     match rendered {
         Ok(Ok(body)) => {
@@ -1767,7 +1785,7 @@ fn render_report_file(json: &Path, ext: &str) -> Result<Vec<u8>, String> {
 /// `test` from the record in a `report.json`, reduced to `[A-Za-z0-9_-]` for
 /// a file name.
 fn download_test_name(json: &Path) -> String {
-    std::fs::read_to_string(json)
+    crate::metrics::read_report_text(json)
         .ok()
         .and_then(|text| serde_json::from_str::<runs::RunRecord>(&text).ok())
         .map(|record| {
@@ -1811,11 +1829,33 @@ fn download_response(
     response
 }
 
-/// Stream a report stored in a folder.
+/// Whether a request's `Accept-Encoding` takes gzip.
+fn accepts_gzip(headers: &HeaderMap) -> bool {
+    headers
+        .get_all(header::ACCEPT_ENCODING)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .any(|coding| {
+            let mut parts = coding.split(';').map(str::trim);
+            let name = parts.next().unwrap_or_default();
+            let refused = parts.any(|param| {
+                param
+                    .strip_prefix("q=")
+                    .and_then(|q| q.parse::<f32>().ok())
+                    .is_some_and(|q| q == 0.0)
+            });
+            (name.eq_ignore_ascii_case("gzip") || name == "*") && !refused
+        })
+}
+
+/// Stream a report stored in a folder; one stored gzipped is sent with
+/// `Content-Encoding: gzip`.
 async fn stored_file_response(
     path: &Path,
     content_type: &'static str,
     filename: &str,
+    gzipped: bool,
 ) -> Response<Body> {
     let Ok(file) = tokio::fs::File::open(path).await else {
         return StatusCode::NOT_FOUND.into_response();
@@ -1828,12 +1868,18 @@ async fn stored_file_response(
     if !metadata.is_file() || !same_file(path, &metadata) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    download_response(
+    let mut response = download_response(
         content_type,
         filename,
         Body::from_stream(file_stream(file)),
         Some(metadata.len()),
-    )
+    );
+    if gzipped {
+        response
+            .headers_mut()
+            .insert(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"));
+    }
+    response
 }
 
 /// True when the open file's metadata is that of the file at `path` now, by
@@ -1931,7 +1977,7 @@ fn compared_runs_line(
     baseline_name: &str,
 ) -> String {
     let started = |json: &Path| {
-        std::fs::read_to_string(json)
+        crate::metrics::read_report_text(json)
             .ok()
             .and_then(|text| serde_json::from_str::<runs::RunRecord>(&text).ok())
             .and_then(|record| record.started)
@@ -2862,6 +2908,33 @@ mod tests {
             }
         }
         buf
+    }
+
+    #[test]
+    fn accepts_gzip_reads_accept_encoding() {
+        let with = |value: Option<&str>| {
+            let mut headers = HeaderMap::new();
+            if let Some(value) = value {
+                headers.insert(
+                    header::ACCEPT_ENCODING,
+                    HeaderValue::from_str(value).unwrap(),
+                );
+            }
+            accepts_gzip(&headers)
+        };
+        for yes in ["gzip", "gzip, deflate, br", "br;q=1.0, GZIP;q=0.5", "*"] {
+            assert!(with(Some(yes)), "{}", yes);
+        }
+        for no in [
+            "identity",
+            "deflate, br",
+            "gzip;q=0",
+            "gzip; q=0.0",
+            "*;q=0",
+        ] {
+            assert!(!with(Some(no)), "{}", no);
+        }
+        assert!(!with(None));
     }
 
     #[test]

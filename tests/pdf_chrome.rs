@@ -186,3 +186,28 @@ async fn failed_pdf_keeps_other_reports() {
     assert!(!pdf.exists(), "the empty PDF report was left behind");
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// A PDF report named `.pdf.gz` is the run's PDF report, gzipped: Chrome
+/// renders the PDF once for every name.
+#[tokio::test]
+#[serial]
+#[ignore = "needs an installed Chrome or Chromium; CI runs it with --include-ignored"]
+async fn a_gz_pdf_is_the_same_pdf_gzipped() {
+    use std::io::Read;
+    let dir = temp_dir("pdf-chrome-gz");
+    let pdf = dir.join("report.pdf");
+    let gz = dir.join("report.pdf.gz");
+    let server = MockServer::start();
+    let _index = index_mock(&server);
+    run(&server, &[&pdf, &gz], &[])
+        .await
+        .expect("the run writes both");
+    let plain = std::fs::read(&pdf).unwrap();
+    assert!(plain.starts_with(b"%PDF"));
+    let mut gunzipped = Vec::new();
+    flate2::read::GzDecoder::new(std::fs::File::open(&gz).unwrap())
+        .read_to_end(&mut gunzipped)
+        .unwrap();
+    assert_eq!(gunzipped, plain);
+    std::fs::remove_dir_all(&dir).unwrap();
+}

@@ -22,6 +22,12 @@ mod microsecond_tests;
 pub use buckets::TimeBuckets;
 #[cfg(feature = "dashboard")]
 pub(crate) use common::compare_reports;
+#[cfg(test)]
+pub(crate) use common::json_report_path;
+#[cfg(feature = "dashboard")]
+pub(crate) use common::open_report;
+#[cfg(any(test, feature = "dashboard"))]
+pub(crate) use common::read_report_text;
 pub(crate) use common::{load_baseline_file, LoadedReport, ReportData};
 pub use coordinated_omission::{CadenceCalculator, CoMetricsSummary, CoordinatedOmissionMetrics};
 pub(crate) use dashboard_snapshot::DashboardSnapshot;
@@ -75,7 +81,6 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::fs::File;
-use tokio::io::AsyncWriteExt;
 
 /// Used to send metrics from [`GooseUser`](../goose/struct.GooseUser.html) threads
 /// to the parent Goose process.
@@ -4277,8 +4282,13 @@ impl GooseAttack {
         html: &mut Option<String>,
     ) -> Result<(), GooseError> {
         let mut first_error = None;
+        // Like the HTML report, a PDF report is rendered once for every name.
+        let mut pdf = None;
         for report in reports {
-            if let Err(e) = self.process_report(report, source, baseline, html).await {
+            if let Err(e) = self
+                .process_report(report, source, baseline, html, &mut pdf)
+                .await
+            {
                 if source.is_none() {
                     return Err(e);
                 }
@@ -4294,54 +4304,27 @@ impl GooseAttack {
         first_error.map_or(Ok(()), Err)
     }
 
-    /// Create one report file, and with a `source`, write it.
+    /// Create one report file, and with a `source`, write it. A name that ends in
+    /// `.gz` is the format the name before it names, gzipped.
     async fn process_report(
         &self,
         report: &str,
         source: Option<&ReportSource<'_>>,
         baseline: Option<&ReportData<'static>>,
         html: &mut Option<String>,
+        pdf: &mut Option<Vec<u8>>,
     ) -> Result<(), GooseError> {
-        let create = |path: PathBuf| async move {
-            File::create(&path)
-                .await
-                .map_err(|err| report_io_error(&path.to_string_lossy(), err))
-        };
-
-        let path = PathBuf::from(report);
-        match path.extension().map(OsStr::to_string_lossy).as_deref() {
-            Some("html" | "htm") => {
-                let file = create(path).await?;
-                if let Some(source) = source {
-                    let content = match html {
-                        Some(content) => content,
-                        None => html.insert(source.html(baseline)?),
-                    };
-                    write_html_report(file, report, content).await?;
-                }
-            }
-            Some("json") => {
-                let file = create(path).await?;
-                if let Some(source) = source {
-                    write_json_report(file, report, source, baseline).await?;
-                }
-            }
-            Some("md") => {
-                let file = create(path).await?;
-                if let Some(source) = source {
-                    write_markdown_report(file, report, source, baseline).await?;
-                }
-            }
+        let (inner, gzip) = crate::runs::without_gz(report);
+        let kind = match std::path::Path::new(inner)
+            .extension()
+            .map(OsStr::to_string_lossy)
+            .as_deref()
+        {
+            Some("html" | "htm") => "html",
+            Some("json") => "json",
+            Some("md") => "markdown",
             #[cfg(feature = "pdf-reports")]
-            Some("pdf") => {
-                create(path.clone()).await?;
-                if let Some(source) = source {
-                    if let Err(e) = self.write_pdf_report(report, source, baseline).await {
-                        remove_if_empty(&path).await;
-                        return Err(e);
-                    }
-                }
-            }
+            Some("pdf") => "pdf",
             #[cfg(not(feature = "pdf-reports"))]
             Some("pdf") => {
                 return Err(GooseError::InvalidOption {
@@ -4365,8 +4348,50 @@ impl GooseAttack {
                     detail: format!("Unknown report file type: {ext}"),
                 })
             }
-        }
-
+        };
+        let path = PathBuf::from(report);
+        let file = File::create(&path)
+            .await
+            .map_err(|err| report_io_error(report, err))?;
+        let Some(source) = source else {
+            return Ok(());
+        };
+        let mut out = ReportOut::new(
+            file.into_std().await,
+            gzip,
+            self.configuration.compression_level(),
+        );
+        let written = match kind {
+            "html" => {
+                let content = match html {
+                    Some(content) => content,
+                    None => html.insert(source.html(baseline)?),
+                };
+                out.write_all(content.as_bytes())
+                    .map_err(|err| report_io_error(report, err))
+            }
+            "json" => source.write_json(&mut out, baseline),
+            "markdown" => source.write_markdown(&mut out, baseline),
+            _ => {
+                let bytes = match pdf {
+                    Some(bytes) => bytes,
+                    None => match self.pdf_report(source, baseline).await {
+                        Ok(bytes) => pdf.insert(bytes),
+                        Err(e) => {
+                            drop(out);
+                            remove_if_empty(&path).await;
+                            return Err(e);
+                        }
+                    },
+                };
+                out.write_all(bytes)
+                    .map_err(|err| report_io_error(report, err))
+            }
+        };
+        // Finish the file, gzip trailer and all, here: an error on drop would be
+        // lost.
+        written.and_then(|()| out.finish().map_err(|err| report_io_error(report, err)))?;
+        info!("{kind} report file written to: {report}");
         Ok(())
     }
 
@@ -4379,7 +4404,7 @@ impl GooseAttack {
         let reports = self.configuration.report_paths();
         #[cfg(feature = "pdf-reports")]
         if reports.iter().any(|report| {
-            std::path::Path::new(report)
+            std::path::Path::new(crate::runs::without_gz(report).0)
                 .extension()
                 .is_some_and(|ext| ext == "pdf")
         }) {
@@ -4495,14 +4520,13 @@ impl GooseAttack {
         }
     }
 
-    /// Write a PDF report.
+    /// A PDF report, rendered by Chrome from the print ready HTML report.
     #[cfg(feature = "pdf-reports")]
-    pub(crate) async fn write_pdf_report(
+    async fn pdf_report(
         &self,
-        path: &str,
         source: &ReportSource<'_>,
         baseline: Option<&ReportData<'static>>,
-    ) -> Result<(), GooseError> {
+    ) -> Result<Vec<u8>, GooseError> {
         use crate::report::pdf::generate_pdf_from_html;
         use crate::report::print::generate_print_optimized_html_content;
         use tokio::fs as async_fs;
@@ -4542,45 +4566,26 @@ impl GooseAttack {
 
         // Generate PDF from HTML using the configurable timeout and scale.
         // Launching Chrome and rendering block, so they run off the runtime.
-        let output = PathBuf::from(path);
         let scale = self.configuration.pdf_scale_or_default();
         let verbose = self.configuration.verbose > 0;
         let timeout = self.configuration.pdf_timeout_or_default();
         let chrome = chrome.clone();
         tokio::task::spawn_blocking(move || {
-            generate_pdf_from_html(
-                &print_optimized_html,
-                &output,
-                scale,
-                verbose,
-                timeout,
-                &chrome,
-            )
+            generate_pdf_from_html(&print_optimized_html, scale, verbose, timeout, &chrome)
         })
         .await
-        .map_err(|e| chrome_task_error("writing the PDF report", e))??;
-
-        info!("pdf report file written to: {path}");
-
-        Ok(())
+        .map_err(|e| chrome_task_error("writing the PDF report", e))?
     }
 
-    /// Write a PDF report (feature not enabled).
+    /// A PDF report needs the pdf-reports feature, which `process_report`
+    /// checks first.
     #[cfg(not(feature = "pdf-reports"))]
-    #[allow(dead_code)]
-    pub(crate) async fn write_pdf_report(
+    async fn pdf_report(
         &self,
-        path: &str,
         _source: &ReportSource<'_>,
         _baseline: Option<&ReportData<'static>>,
-    ) -> Result<(), GooseError> {
-        // This should never be called when pdf_reports_enabled is true, as the validation
-        // in process_reports should have already handled that case
-        Err(GooseError::InvalidOption {
-            option: "--report-file".to_string(),
-            value: path.to_string(),
-            detail: "PDF reports require compiling with the 'pdf-reports' feature flag".to_string(),
-        })
+    ) -> Result<Vec<u8>, GooseError> {
+        unreachable!("process_report refuses a PDF report without the pdf-reports feature")
     }
 }
 
@@ -4945,78 +4950,92 @@ impl ReportSource<'_> {
 pub(crate) const GRAPHS_NOT_RECORDED: &str =
     "The graphs were not recorded: the JSON report this was rendered from has no graph data (--report-graph-data).";
 
-/// Write an HTML report.
-async fn write_html_report(mut file: File, path: &str, report: &str) -> Result<(), GooseError> {
-    file.write_all(report.as_ref())
-        .await
-        .map_err(|err| report_io_error(path, err))?;
-    // Be sure the file flushes to disk.
-    file.flush()
-        .await
-        .map_err(|err| report_io_error(path, err))?;
-    info!("html report file written to: {path}");
-    Ok(())
+/// A report file being written, gzipped when its name ends in `.gz`. Every
+/// format goes through it, so a report is gzipped in this one place.
+pub(crate) enum ReportOut {
+    Plain(BufWriter<std::fs::File>),
+    Gzip(flate2::write::GzEncoder<BufWriter<std::fs::File>>),
 }
 
-/// Write a JSON report.
-async fn write_json_report(
-    file: File,
-    path: &str,
-    source: &ReportSource<'_>,
-    baseline: Option<&ReportData<'static>>,
-) -> Result<(), GooseError> {
-    let mut writer = BufWriter::new(file.into_std().await);
-    source.write_json(&mut writer, baseline)?;
-    // Flush here: an error on drop would be lost.
-    writer.flush().map_err(|err| report_io_error(path, err))?;
-    info!("json report file written to: {path}");
-    Ok(())
+impl ReportOut {
+    /// Write to `file`, gzipped at `level` when `gzip`.
+    pub(crate) fn new(file: std::fs::File, gzip: bool, level: u32) -> Self {
+        let file = BufWriter::new(file);
+        if gzip {
+            ReportOut::Gzip(flate2::write::GzEncoder::new(
+                file,
+                flate2::Compression::new(level),
+            ))
+        } else {
+            ReportOut::Plain(file)
+        }
+    }
+
+    /// Write the gzip trailer, if any, and flush, returning any error.
+    pub(crate) fn finish(self) -> std::io::Result<()> {
+        match self {
+            ReportOut::Plain(mut file) => file.flush(),
+            ReportOut::Gzip(gzip) => gzip.finish()?.flush(),
+        }
+    }
 }
 
-/// Write a Markdown report.
-async fn write_markdown_report(
-    file: File,
-    path: &str,
-    source: &ReportSource<'_>,
-    baseline: Option<&ReportData<'static>>,
-) -> Result<(), GooseError> {
-    let mut writer = BufWriter::new(file.into_std().await);
-    source.write_markdown(&mut writer, baseline)?;
-    // Flush here: an error on drop would be lost.
-    writer.flush().map_err(|err| report_io_error(path, err))?;
-    info!("markdown report file written to: {path}");
-    Ok(())
+impl std::io::Write for ReportOut {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        match self {
+            ReportOut::Plain(file) => file.write(buf),
+            ReportOut::Gzip(gzip) => gzip.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self {
+            ReportOut::Plain(file) => file.flush(),
+            ReportOut::Gzip(gzip) => gzip.flush(),
+        }
+    }
 }
 
 /// Write a run's folder report from `source`: `report.html`, then
 /// `report.json` last, through a temporary file and a rename, so a folder
-/// that holds a `report.json` always holds a whole one. Returns the files
+/// that holds a `report.json` always holds a whole one. With `compress`, the
+/// level, each is gzipped and named with `.gz` added. Returns the files
 /// written.
 pub(crate) fn write_folder_report(
     folder: &std::path::Path,
     source: &ReportSource<'_>,
     baseline: Option<&ReportData<'static>>,
     html: &mut Option<String>,
+    compress: Option<u32>,
 ) -> Result<Vec<PathBuf>, GooseError> {
     use std::fs;
-    let html_path = folder.join(crate::runs::REPORT_HTML);
-    let json_path = folder.join(crate::runs::REPORT_JSON);
+    let gz = if compress.is_some() { ".gz" } else { "" };
+    let level = compress.unwrap_or_default();
+    let html_path = folder.join(format!("{}{gz}", crate::runs::REPORT_HTML));
+    let json_name = format!("{}{gz}", crate::runs::REPORT_JSON);
+    let json_path = folder.join(&json_name);
     let io_error = |path: &std::path::Path, err| report_io_error(&path.to_string_lossy(), err);
 
     let content = match html {
         Some(content) => content,
         None => html.insert(source.html(baseline)?),
     };
-    fs::write(&html_path, content.as_bytes()).map_err(|err| io_error(&html_path, err))?;
+    fs::File::create(&html_path)
+        .and_then(|file| {
+            let mut out = ReportOut::new(file, compress.is_some(), level);
+            out.write_all(content.as_bytes())?;
+            out.finish()
+        })
+        .map_err(|err| io_error(&html_path, err))?;
 
-    let tmp = folder.join(format!(".{}.tmp", crate::runs::REPORT_JSON));
+    let tmp = folder.join(format!(".{json_name}.tmp"));
     let written = fs::File::create(&tmp).and_then(|file| {
-        let mut writer = BufWriter::new(file);
+        let mut out = ReportOut::new(file.try_clone()?, compress.is_some(), level);
         source
-            .write_json(&mut writer, baseline)
+            .write_json(&mut out, baseline)
             .map_err(|e| std::io::Error::other(e.to_string()))?;
-        writer.flush()?;
-        writer.into_inner().map_err(|e| e.into_error())?.sync_all()
+        out.finish()?;
+        file.sync_all()
     });
     if let Err(err) = written.and_then(|()| fs::rename(&tmp, &json_path)) {
         let _ = fs::remove_file(&tmp);
@@ -5062,7 +5081,6 @@ fn first_error(
 
 /// Removes a report file that is still empty, the state `create_reports`
 /// leaves it in, after the report could not be written.
-#[cfg(feature = "pdf-reports")]
 async fn remove_if_empty(path: &std::path::Path) {
     if let Ok(metadata) = tokio::fs::metadata(path).await {
         if metadata.is_file() && metadata.len() == 0 {
