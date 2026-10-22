@@ -51,13 +51,13 @@ cargo run --example simple -- --host http://localhost:8080 -t 30s --report-file 
 **7. `--report-graph-data` adds the per second graph data to the JSON report.** Off by default. With it, a report rendered from the JSON has its graphs; without it, the rendered report says the graphs were not recorded.
 
 ```bash
-cargo run --example simple -- --host http://localhost:8080 -t 30s --report-file run.json --report-graph-data
+cargo run --example simple -- --host http://localhost:8080 -t 30s --report-file results.json --report-graph-data
 ```
 
 **8. `--render-report FILE.json` writes the reports named by `--report-file` paths from an existing JSON report, then exits without running a load test.**
 
 ```bash
-cargo run --example simple -- --render-report run.json --report-file run.html --report-file run.md
+cargo run --example simple -- --render-report results.json --report-file results.html --report-file results.md
 ```
 
 ## The dashboard
@@ -90,7 +90,7 @@ cargo run --features dashboard --example simple -- --host http://localhost:8080 
 **14. Any report or log whose name ends in `.gz` is written gzipped, in the format the name before `.gz` names.** Goose reads a `.json.gz` report anywhere it reads a JSON report: `--baseline-file`, `--render-report` and the runs panel. `--pdf-print-html`, a debugging aid, writes plain HTML whatever its name.
 
 ```bash
-cargo run --example simple -- --host http://localhost:8080 -t 30s --report-file run.json.gz -R requests.csv.gz
+cargo run --example simple -- --host http://localhost:8080 -t 30s --report-file results.json.gz -R requests.csv.gz
 ```
 
 **15. `--compress` gzips every file Goose writes into the run's folder under rules 3 and 9, each named with `.gz` added.** A path given to an output flag keeps exactly that name, compressed or not. `--compress LEVEL` sets the level from 1 (fastest) to 9 (smallest), default 6, for every gzipped file, including rule 14's.
