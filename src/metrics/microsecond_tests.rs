@@ -298,14 +298,15 @@ fn one_point_four_and_one_point_six_seconds_are_told_apart() {
     assert!(within_one_percent(b, 1600), "{}", b);
 }
 
+/// 37,999 µs prints rounded, as 38, and serializes truncated, as 37.
 #[test]
-fn thirty_seven_milliseconds_prints_and_serializes_as_37() {
+fn thirty_seven_point_999_milliseconds_prints_38_and_serializes_as_37() {
     let metrics = request_metrics(&[("GET /", &[37_000, 37_999])]);
     let report = report_of(&metrics, None);
     let row = &report.raw_request_metrics[0];
     assert_eq!(row.response_time_minimum.to_string(), "37");
-    assert_eq!(row.response_time_maximum.to_string(), "37");
-    assert_eq!(Millis(37_999).to_string(), "37");
+    assert_eq!(row.response_time_maximum.to_string(), "38");
+    assert_eq!(Millis(37_999).to_string(), "38");
     let json = serde_json::to_value(row).unwrap();
     assert_eq!(json["response_time_minimum"], 37);
     assert_eq!(json["response_time_maximum"], 37);

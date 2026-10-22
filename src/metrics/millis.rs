@@ -20,18 +20,49 @@ impl Millis {
     }
 }
 
-/// `us` microseconds as milliseconds: to the hundredth, truncated and with
-/// trailing zeros dropped, under 10 ms (`0.4`, `2.35`), whole above (`37`).
-/// `separators` adds thousands separators to whole milliseconds.
-pub(crate) fn format_micros(us: u64, separators: bool) -> String {
-    if us < 10_000 && !us.is_multiple_of(1000) {
-        let hundredths = us / 10;
-        let text = format!("{}.{:02}", hundredths / 100, hundredths % 100);
-        text.trim_end_matches('0').trim_end_matches('.').to_string()
-    } else if separators {
-        (us / 1000).to_formatted_string(&Locale::en)
+/// The microseconds `us` shows as: rounded half up to the hundredth of a
+/// millisecond under 10 ms, and to whole milliseconds from there.
+fn shown_us(us: u64) -> u64 {
+    let hundredths = us.saturating_add(5) / 10;
+    if hundredths < 1_000 {
+        hundredths * 10
     } else {
-        (us / 1000).to_string()
+        us.saturating_add(500) / 1000 * 1000
+    }
+}
+
+/// A multiple of 10 µs as milliseconds, with trailing zeros dropped (`0.4`,
+/// `2.35`, `37`). `separators` adds thousands separators.
+fn hundredths_text(us: u64, separators: bool) -> String {
+    let whole = us / 1000;
+    let whole = if separators {
+        whole.to_formatted_string(&Locale::en)
+    } else {
+        whole.to_string()
+    };
+    match us % 1000 / 10 {
+        0 => whole,
+        hundredths => format!("{whole}.{hundredths:02}")
+            .trim_end_matches('0')
+            .to_string(),
+    }
+}
+
+/// `us` microseconds as milliseconds, as Goose shows every time: to the
+/// hundredth under 10 ms (`0.4`, `2.35`), whole from there (`38`), rounded
+/// half up. `separators` adds thousands separators.
+pub(crate) fn format_micros(us: u64, separators: bool) -> String {
+    hundredths_text(shown_us(us), separators)
+}
+
+/// A difference of shown values, in microseconds, as milliseconds: `-`
+/// when negative, never `-0`.
+fn delta_text(us: i64, separators: bool) -> String {
+    let text = hundredths_text(us.unsigned_abs(), separators);
+    if us < 0 {
+        format!("-{text}")
+    } else {
+        text
     }
 }
 
@@ -68,37 +99,31 @@ impl From<usize> for Value<Millis> {
     }
 }
 
-/// The difference between two [`Millis`], in microseconds, shown like them.
+/// The difference between two [`Millis`] as shown, in microseconds.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize)]
 pub(crate) struct MillisDelta(pub i64);
 
+impl MillisDelta {
+    /// With thousands separators.
+    pub(crate) fn formatted(self) -> String {
+        delta_text(self.0, true)
+    }
+}
+
 impl Display for MillisDelta {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let text = format_micros(self.0.unsigned_abs(), false);
-        if self.0 < 0 {
-            f.pad(&format!("-{text}"))
-        } else {
-            f.pad(&text)
-        }
+        f.pad(&delta_text(self.0, false))
     }
 }
 
 impl DeltaValue for Millis {
     type Delta = MillisDelta;
 
-    /// To the microsecond when both are shown to the hundredth, otherwise
-    /// between the whole milliseconds shown, so the delta reads as the
+    /// The difference of the values shown, so the delta reads as the
     /// difference of what is printed.
     fn delta(self, value: Self) -> Self::Delta {
-        let (a, b) = if self.0 < 10_000 && value.0 < 10_000 {
-            (self.0 as i128, value.0 as i128)
-        } else {
-            (
-                (self.0 / 1000 * 1000) as i128,
-                (value.0 / 1000 * 1000) as i128,
-            )
-        };
-        MillisDelta((a - b).clamp(i64::MIN as i128, i64::MAX as i128) as i64)
+        let difference = shown_us(self.0) as i128 - shown_us(value.0) as i128;
+        MillisDelta(difference.clamp(i64::MIN as i128, i64::MAX as i128) as i64)
     }
 
     fn is_delta_non_negative(value: Self::Delta) -> bool {
@@ -114,13 +139,16 @@ mod test {
     fn formats_to_the_hundredth_under_ten_milliseconds() {
         assert_eq!(Millis(400).to_string(), "0.4");
         assert_eq!(Millis(420).to_string(), "0.42");
-        assert_eq!(Millis(429).to_string(), "0.42");
-        assert_eq!(Millis(5).to_string(), "0");
+        assert_eq!(Millis(429).to_string(), "0.43");
+        assert_eq!(Millis(4).to_string(), "0");
+        assert_eq!(Millis(5).to_string(), "0.01");
         assert_eq!(Millis(2_350).to_string(), "2.35");
         assert_eq!(Millis(3_000).to_string(), "3");
-        assert_eq!(Millis(9_999).to_string(), "9.99");
+        assert_eq!(Millis(9_994).to_string(), "9.99");
+        assert_eq!(Millis(9_995).to_string(), "10");
         assert_eq!(Millis(37_000).to_string(), "37");
-        assert_eq!(Millis(37_999).to_string(), "37");
+        assert_eq!(Millis(37_499).to_string(), "37");
+        assert_eq!(Millis(37_999).to_string(), "38");
         assert_eq!(format_micros(1_234_000, true), "1,234");
         assert_eq!(format!("{:>6}", Millis(420)), "  0.42");
     }
@@ -139,9 +167,9 @@ mod test {
         assert_eq!(Millis(420).delta(Millis(400)).to_string(), "0.02");
         assert_eq!(Millis(400).delta(Millis(420)).to_string(), "-0.02");
         assert_eq!(Millis(50_000).delta(Millis(40_000)).to_string(), "10");
-        // 11.7 ms prints as 11, so its delta to 8 ms is 3, not 3.7.
-        assert_eq!(Millis(11_700).delta(Millis(8_000)).to_string(), "3");
-        assert_eq!(Millis(8_000).delta(Millis(11_700)).to_string(), "-3");
+        // 11.7 ms prints as 12, so its delta to 8 ms is 4, not 3.7.
+        assert_eq!(Millis(11_700).delta(Millis(8_000)).to_string(), "4");
+        assert_eq!(Millis(8_000).delta(Millis(11_700)).to_string(), "-4");
         assert!(Millis::is_delta_non_negative(MillisDelta(0)));
         // The difference of the values shown: 10,000 and 9,999 µs both show
         // 10, 2,351 and 2,349 µs both 2.35, and 2,341 and 2,344 µs both 2.34.

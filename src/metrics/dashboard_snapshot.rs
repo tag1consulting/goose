@@ -1354,6 +1354,12 @@ mod tests {
         // 200 ms is reported as the middle of its bucket, 199.68 ms, which
         // is 199 in whole milliseconds.
         assert_eq!(alpha.percentile_ms.p50, 199);
+        // Shown rounded, as 200.
+        assert_eq!(alpha.response_time_us.p50, 199_680);
+        assert_eq!(
+            crate::metrics::format_micros(alpha.response_time_us.p50, true),
+            "200"
+        );
         assert_eq!(alpha.percentile_ms.p95, 400);
         assert_eq!(alpha.percentile_ms.p99, 400);
         let beta = &snap.scenarios[1];

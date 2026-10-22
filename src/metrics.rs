@@ -5020,12 +5020,7 @@ impl FormatValue for Millis {
     }
 
     fn formatted_delta(delta: millis::MillisDelta) -> String {
-        let text = format_micros(delta.0.unsigned_abs(), true);
-        if delta.0 < 0 {
-            format!("-{text}")
-        } else {
-            text
-        }
+        delta.formatted()
     }
 }
 
