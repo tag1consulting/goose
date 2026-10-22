@@ -6463,6 +6463,11 @@ mod test {
             now: keep + 300,
         });
         assert!(processor.graph_data.has_latency_columns_for_test());
+        // The heatmap takes the seconds the rings held before the switch.
+        assert!(!processor
+            .graph_data
+            .get_latency_heatmap_markup(false, chrono::Utc::now())
+            .is_empty());
         record(&mut processor, keep + 300, 2 * keep + 300);
         assert_eq!(processor.graph_data.first_second(), pruned_to);
 
