@@ -294,8 +294,9 @@ enum GooseLogTarget {
 
 /// The Goose log's file, behind a handle Goose keeps, as the global logger
 /// owns its writer for the whole process: so a bare `--goose-log` can move to
-/// each run's folder, and a gzipped one can end a gzip member when each
-/// `execute()` ends. Members one after another are one valid gzip file.
+/// each run's folder, and a gzipped one can end a gzip member when each run
+/// and each `execute()` ends. Members one after another are one valid gzip
+/// file.
 #[derive(Clone)]
 pub(crate) struct GooseLogFile {
     target: std::sync::Arc<Mutex<GooseLogTarget>>,
@@ -335,8 +336,8 @@ impl GooseLogTarget {
             }
             GooseLogTarget::File(file) => std::io::Write::write_all(file, buf),
             GooseLogTarget::Gzip(gzip) => std::io::Write::write_all(gzip, buf),
-            // Outside `execute()` each line is a whole member, so no line
-            // waits in a buffer nothing will finish.
+            // Between runs each line is a whole member, so no line waits in a
+            // buffer nothing will finish.
             GooseLogTarget::GzipIdle(file, line) => {
                 line.extend_from_slice(buf);
                 match line.iter().rposition(|&b| b == b'\n') {
@@ -351,8 +352,8 @@ impl GooseLogTarget {
         }
     }
 
-    /// Start a gzip member between members, as `execute()` starts, so lines
-    /// during a run compress a buffer at a time.
+    /// Start a gzip member between members, as each run and each `execute()`
+    /// starts, so lines during a run compress a buffer at a time.
     fn start(&mut self, level: u32) {
         match std::mem::replace(self, GooseLogTarget::Failed) {
             GooseLogTarget::GzipIdle(file, line) => {

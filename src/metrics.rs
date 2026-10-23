@@ -5003,8 +5003,9 @@ impl std::io::Write for ReportOut {
 
 /// Write a run's folder report from `source`: `report.html`, then
 /// `report.json` last, each through a temporary file and a rename, so a
-/// folder never holds half a report. With `compress`, the level, each is
-/// gzipped and named with `.gz` added. Returns the files written.
+/// folder never holds half a report. When `compress` holds a level, each is
+/// gzipped at that level and named with `.gz` added. Returns the files
+/// written.
 pub(crate) fn write_folder_report(
     folder: &std::path::Path,
     source: &ReportSource<'_>,

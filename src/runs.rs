@@ -348,8 +348,8 @@ pub(crate) struct Output {
     /// The run's folder, chosen when the run starts, when it may need one.
     pub folder: Option<RunFolder>,
     /// The folder this process reserves with [`RESERVED`]. It stays reserved
-    /// until its run ends, or until the next run starts while a bare
-    /// `--goose-log` is open there.
+    /// until its run ends. While a bare `--goose-log` is open there, it stays
+    /// reserved until the next run starts.
     reserved: Option<PathBuf>,
     /// Save report: write `report.json` and `report.html` into the folder.
     pub save_report: bool,
@@ -1290,7 +1290,7 @@ mod tests {
     }
 
     /// The graph data is kept whole when a `--report-file` path or Save report
-    /// needs it, as Save report starts and after it is turned the other way.
+    /// needs it, when the run starts and after Save report is turned on or off.
     #[test]
     fn keeps_full_graph_table() {
         for path in [false, true] {

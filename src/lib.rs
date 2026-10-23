@@ -365,9 +365,10 @@ const NO_USERS_OPTION: &str = "`configuration.users`";
 #[derive(Debug, Clone)]
 pub(crate) struct ControlOutcome {
     pub ok: bool,
-    /// Stable code when !ok, soft failures only, such as `invalid_phase`,
-    /// `prepare_failed`, `conflicting_settings`, and for the report control routes
-    /// `invalid_report`, `report_busy` and `report_failed`.
+    /// Stable code when !ok, for soft failures only: `invalid_phase`,
+    /// `prepare_failed` or `conflicting_settings`, for example, and
+    /// `invalid_report`, `report_busy` or `report_failed` from the report
+    /// control routes.
     pub error: Option<&'static str>,
     /// Human message, the reply every front end shows.
     pub message: String,
@@ -3115,7 +3116,8 @@ impl GooseAttack {
         goose_attack_run_state.parent_to_throttle_tx = parent_to_throttle_tx;
 
         // Re-create the metrics channel and spawn a fresh processor. It reads
-        // Save report as start_run_folder left it, so that comes first.
+        // Save report as start_run_folder left it, so start_run_folder runs
+        // first.
         // The old processor exits when its command channel closes.
         let (all_threads_metrics_tx, metrics_rx): (
             flume::Sender<GooseMetric>,

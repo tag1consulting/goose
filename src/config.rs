@@ -4874,8 +4874,9 @@ mod test {
         assert!(!configuration.folder_only_for_dashboard());
     }
 
-    /// Under `--no-metrics` the dashboard saves nothing, so `--output-dir`
-    /// alone is refused, and the error never says to add `--dashboard`.
+    /// Under `--no-metrics` the dashboard saves nothing, so `--output-dir` with
+    /// only `--dashboard` is refused, and the error never says to add
+    /// `--dashboard`.
     #[test]
     fn output_dir_under_no_metrics_never_suggests_the_dashboard() {
         let configuration = GooseConfiguration {

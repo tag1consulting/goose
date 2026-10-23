@@ -76,7 +76,7 @@ cargo run --features dashboard --example simple -- --host http://localhost:8080 
 
 **10. Save report can be turned on or off at any time.** While it is on, Goose keeps the run's graph data and heatmap for the whole run; while it is off and no `--report-file` path is given, only the dashboard's last 10 minutes of graphs and 5 minutes of heatmap. Turning it on during a run keeps graphs from that point on, plus that window before it, and rule 5 labels the report.
 
-On a long soak test with `--dashboard-control` and no `--report-file` path, turn Save report off to keep memory flat, and turn it on before the part of the run you want graphed. Without `--dashboard-control`, Save report stays on: in a 60 minute run of `examples/simple` with 300 users, about 28 requests a second over 2 request names, the process grew by about 0.8 MiB an hour, from 37.9 MiB at 5 minutes to 38.7 MiB at 60. Add `--dashboard-control` to be able to turn Save report off.
+On a long soak test with `--dashboard-control` and no `--report-file` path, turn Save report off to keep memory flat, and turn it on before the part of the run you want graphed. Without `--dashboard-control`, Save report stays on: in a 60 minute run of `examples/simple` with 300 users, about 28 requests a second over 2 request names, the process grew by about 0.8 MiB an hour, from 37.9 MiB at 5 minutes to 38.7 MiB at 60.
 
 **11. Save report now writes the run's report as it stands into its folder while the run continues, and marks it as in progress.** It needs a run in progress. The runs panel lists the report once it is written. If it can't be written, the runs panel says why. The report at the end of the run replaces it, also when Save report is off. A second switch in the bar, **Include graph data**, is rule 7's flag and can also be changed at any time.
 
@@ -93,7 +93,7 @@ cargo run --features dashboard --example simple -- --host http://localhost:8080 
 
 ## Compression
 
-**14. Any report or log whose name ends in `.gz` is written gzipped.** A report's format is the one the name before `.gz` names. A log keeps the format its `--request-format` or other format option sets. Goose reads a `.json.gz` report anywhere it reads a JSON report: `--baseline-file`, `--render-report` and the runs panel. `--pdf-print-html`, a debugging aid, writes plain HTML whatever its name.
+**14. Any report or log whose name ends in `.gz` is written gzipped.** A report's format comes from the name before `.gz`. A log keeps the format its `--request-format` or other format option sets. Goose reads a `.json.gz` report anywhere it reads a JSON report: `--baseline-file`, `--render-report` and the runs panel. `--pdf-print-html`, a debugging aid, writes plain HTML whatever its name.
 
 ```bash
 cargo run --example simple -- --host http://localhost:8080 -t 30s --report-file results.json.gz -R requests.csv.gz --request-format csv
@@ -149,4 +149,4 @@ gunzip -k goose-runs/*/report.html.gz    # then open report.html in a browser
 gzip -dc goose-runs/*/requests.json.gz | head
 ```
 
-The dashboard's runs panel also opens a gzipped report. A gzipped log is whole once its run ends. A gzipped Goose log is also whole between runs, so `gzip -dc` reads it while the dashboard waits for the next run. During a run, and after a run killed with SIGKILL, `gzip -dc` reads a gzipped log up to the last part written, then reports an unexpected end of file. To follow a run as it goes, use a plain log.
+The dashboard's runs panel also opens a gzipped report. A gzipped log is whole once its run ends. A gzipped Goose log is also whole between runs, so `gzip -dc` reads it while the dashboard waits for the next run. During a run, and after a process killed with SIGKILL, `gzip -dc` reads a gzipped log up to the last part written, then reports an unexpected end of file. To follow a run as it goes, use a plain log.
