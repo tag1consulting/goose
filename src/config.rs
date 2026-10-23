@@ -20,10 +20,11 @@ use crate::test_plan::TestPlan;
 use crate::util;
 use crate::{GooseAttack, GooseError};
 
-/// The value an output flag holds when it is given without a path, so that it writes
-/// into the run's folder. A command line can't hold a NUL, so no path a user types is
-/// taken for it, and `""` keeps its meaning of no file.
-pub(crate) const RUN_FOLDER: &str = "\0";
+/// The value an output field of [`GooseConfiguration`] holds when its flag is given
+/// without a path, such as a bare `--report-file`: Goose then writes that file into the
+/// run's folder. A command line can't hold a NUL, so no path a user types is taken for
+/// it, and `""` keeps its meaning of no file. Set it in code to ask for the same.
+pub const RUN_FOLDER: &str = "\0";
 
 /// The gzip level when neither `--compress` nor [`GooseDefault::Compress`] sets one.
 const DEFAULT_COMPRESSION_LEVEL: u32 = 6;
@@ -240,20 +241,21 @@ pub struct GooseConfiguration {
         action = clap::ArgAction::Count
     )]
     pub quiet: u8,
-    /// Write the Goose log to FILE
-    ///
-    /// Writes Goose's own log messages to FILE, at the detail --log-level sets. Without
-    /// FILE, writes goose.log into the run's folder. Without the option, there is no Goose
-    /// log.
-    ///
-    /// Example: -G goose.log. Set in code with GooseDefault::GooseLog.
+    /// The Goose log file `--goose-log` names. Holds [`RUN_FOLDER`] when the flag is given
+    /// without a path.
     #[arg(
         help_heading = "Console and Goose log",
         short = 'G',
         long,
         value_name = "FILE",
         num_args = 0..=1,
-        default_missing_value = RUN_FOLDER
+        default_missing_value = RUN_FOLDER,
+        help = "Write the Goose log to FILE",
+        long_help = "Write the Goose log to FILE\n\n\
+            Writes Goose's own log messages to FILE, at the detail --log-level sets. \
+            Without FILE, writes goose.log into the run's folder. Without the option, \
+            there is no Goose log.\n\n\
+            Example: -G goose.log. Set in code with GooseDefault::GooseLog."
     )]
     pub goose_log: Option<String>,
     /// More Goose log detail (-g, -gg)
@@ -294,21 +296,22 @@ pub struct GooseConfiguration {
     #[arg(help_heading = "Console and Goose log", long)]
     pub no_error_summary: bool,
 
-    /// Write a report; repeatable
-    ///
-    /// Writes a report of the load test to FILE when it ends. The extension picks the type:
-    /// .html or .htm, .md, .json, or .pdf with the pdf-reports feature. Without FILE, writes
-    /// report.json and report.html into the run's folder. Repeat the option to write
-    /// several. Not allowed with --no-metrics.
-    ///
-    /// Example: --report-file report.html --report-file report.json. Set in code with
-    /// GooseDefault::ReportFile.
+    /// The reports `--report-file` names, in the order given. An entry is [`RUN_FOLDER`]
+    /// for each `--report-file` given without a path.
     #[arg(
         help_heading = "Reports",
         long,
         value_name = "FILE",
         num_args = 0..=1,
-        default_missing_value = RUN_FOLDER
+        default_missing_value = RUN_FOLDER,
+        help = "Write a report; repeatable",
+        long_help = "Write a report; repeatable\n\n\
+            Writes a report of the load test to FILE when it ends. The extension picks \
+            the type: .html or .htm, .md, .json, or .pdf with the pdf-reports feature. \
+            Without FILE, writes report.json and report.html into the run's folder. \
+            Repeat the option to write several. Not allowed with --no-metrics.\n\n\
+            Example: --report-file report.html --report-file report.json. Set in code \
+            with GooseDefault::ReportFile."
     )]
     pub report_file: Vec<String>,
     /// Run folder, `goose-runs/<start time>` unless set
@@ -476,20 +479,21 @@ pub struct GooseConfiguration {
     )]
     pub co_mitigation: Option<GooseCoordinatedOmissionMitigation>,
 
-    /// Log every request to FILE
-    ///
-    /// Writes a line for each request, in --request-format. Without FILE, writes
-    /// requests.json, .csv or .log, as --request-format sets, into the run's folder. Not
-    /// allowed with --no-metrics.
-    ///
-    /// Example: -R requests.log. Set in code with GooseDefault::RequestLog.
+    /// The request log file `--request-log` names. Holds [`RUN_FOLDER`] when the flag is
+    /// given without a path.
     #[arg(
         help_heading = "Logs",
         short = 'R',
         long,
         value_name = "FILE",
         num_args = 0..=1,
-        default_missing_value = RUN_FOLDER
+        default_missing_value = RUN_FOLDER,
+        help = "Log every request to FILE",
+        long_help = "Log every request to FILE\n\n\
+            Writes a line for each request, in --request-format. Without FILE, writes \
+            requests.json, .csv or .log, as --request-format sets, into the run's \
+            folder. Not allowed with --no-metrics.\n\n\
+            Example: -R requests.log. Set in code with GooseDefault::RequestLog."
     )]
     pub request_log: Option<String>,
     /// Request log format
@@ -513,20 +517,21 @@ pub struct GooseConfiguration {
     /// Set in code with GooseDefault::RequestBody.
     #[arg(help_heading = "Logs", long)]
     pub request_body: bool,
-    /// Log every transaction to FILE
-    ///
-    /// Writes a line for each transaction, in --transaction-format. Without FILE, writes
-    /// transactions.json, .csv or .log, as --transaction-format sets, into the run's
-    /// folder. Not allowed with --no-metrics.
-    ///
-    /// Example: -T transactions.log. Set in code with GooseDefault::TransactionLog.
+    /// The transaction log file `--transaction-log` names. Holds [`RUN_FOLDER`] when the
+    /// flag is given without a path.
     #[arg(
         help_heading = "Logs",
         short = 'T',
         long,
         value_name = "FILE",
         num_args = 0..=1,
-        default_missing_value = RUN_FOLDER
+        default_missing_value = RUN_FOLDER,
+        help = "Log every transaction to FILE",
+        long_help = "Log every transaction to FILE\n\n\
+            Writes a line for each transaction, in --transaction-format. Without FILE, \
+            writes transactions.json, .csv or .log, as --transaction-format sets, into \
+            the run's folder. Not allowed with --no-metrics.\n\n\
+            Example: -T transactions.log. Set in code with GooseDefault::TransactionLog."
     )]
     pub transaction_log: Option<String>,
     /// Transaction log format
@@ -543,20 +548,21 @@ pub struct GooseConfiguration {
         hide_possible_values = true
     )]
     pub transaction_format: Option<GooseLogFormat>,
-    /// Log every scenario to FILE
-    ///
-    /// Writes a line for each run of a scenario, in --scenario-format. Without FILE, writes
-    /// scenarios.json, .csv or .log, as --scenario-format sets, into the run's folder. Not
-    /// allowed with --no-metrics.
-    ///
-    /// Example: -S scenarios.log. Set in code with GooseDefault::ScenarioLog.
+    /// The scenario log file `--scenario-log` names. Holds [`RUN_FOLDER`] when the flag is
+    /// given without a path.
     #[arg(
         help_heading = "Logs",
         short = 'S',
         long,
         value_name = "FILE",
         num_args = 0..=1,
-        default_missing_value = RUN_FOLDER
+        default_missing_value = RUN_FOLDER,
+        help = "Log every scenario to FILE",
+        long_help = "Log every scenario to FILE\n\n\
+            Writes a line for each run of a scenario, in --scenario-format. Without \
+            FILE, writes scenarios.json, .csv or .log, as --scenario-format sets, into \
+            the run's folder. Not allowed with --no-metrics.\n\n\
+            Example: -S scenarios.log. Set in code with GooseDefault::ScenarioLog."
     )]
     pub scenario_log: Option<String>,
     /// Scenario log format
@@ -573,20 +579,21 @@ pub struct GooseConfiguration {
         hide_possible_values = true
     )]
     pub scenario_format: Option<GooseLogFormat>,
-    /// Log every error to FILE
-    ///
-    /// Writes a line for each failed request, in --error-format. Without FILE, writes
-    /// errors.json, .csv or .log, as --error-format sets, into the run's folder. Not allowed
-    /// with --no-metrics.
-    ///
-    /// Example: -E errors.log. Set in code with GooseDefault::ErrorLog.
+    /// The error log file `--error-log` names. Holds [`RUN_FOLDER`] when the flag is given
+    /// without a path.
     #[arg(
         help_heading = "Logs",
         short = 'E',
         long,
         value_name = "FILE",
         num_args = 0..=1,
-        default_missing_value = RUN_FOLDER
+        default_missing_value = RUN_FOLDER,
+        help = "Log every error to FILE",
+        long_help = "Log every error to FILE\n\n\
+            Writes a line for each failed request, in --error-format. Without FILE, \
+            writes errors.json, .csv or .log, as --error-format sets, into the run's \
+            folder. Not allowed with --no-metrics.\n\n\
+            Example: -E errors.log. Set in code with GooseDefault::ErrorLog."
     )]
     pub error_log: Option<String>,
     /// Error log format
@@ -603,20 +610,22 @@ pub struct GooseConfiguration {
         hide_possible_values = true
     )]
     pub error_format: Option<GooseLogFormat>,
-    /// Write the debug log to FILE
-    ///
-    /// Writes what the load test logs with GooseUser::log_debug and GooseUser::set_failure,
-    /// with response bodies unless --no-debug-body, in --debug-format. Without FILE, writes
-    /// debug.json, .csv or .log, as --debug-format sets, into the run's folder.
-    ///
-    /// Example: -D debug.log. Set in code with GooseDefault::DebugLog.
+    /// The debug log file `--debug-log` names. Holds [`RUN_FOLDER`] when the flag is given
+    /// without a path.
     #[arg(
         help_heading = "Logs",
         short = 'D',
         long,
         value_name = "FILE",
         num_args = 0..=1,
-        default_missing_value = RUN_FOLDER
+        default_missing_value = RUN_FOLDER,
+        help = "Write the debug log to FILE",
+        long_help = "Write the debug log to FILE\n\n\
+            Writes what the load test logs with GooseUser::log_debug and \
+            GooseUser::set_failure, with response bodies unless --no-debug-body, in \
+            --debug-format. Without FILE, writes debug.json, .csv or .log, as \
+            --debug-format sets, into the run's folder.\n\n\
+            Example: -D debug.log. Set in code with GooseDefault::DebugLog."
     )]
     pub debug_log: Option<String>,
     /// Debug log format
@@ -3534,6 +3543,29 @@ impl GooseConfiguration {
     /// dashboard, whose Save report can be turned on at any time.
     pub(crate) fn uses_run_folder(&self) -> bool {
         self.report_in_folder() || self.logs_in_folder() || (self.dashboard && !self.no_metrics)
+    }
+
+    /// This configuration as a Controller's `config` and `config-json` show it:
+    /// an output flag given without a path reads `(the run's folder)`, not
+    /// [`RUN_FOLDER`].
+    pub(crate) fn shown(&self) -> GooseConfiguration {
+        let mut shown = self.clone();
+        for log in [
+            &mut shown.goose_log,
+            &mut shown.request_log,
+            &mut shown.transaction_log,
+            &mut shown.scenario_log,
+            &mut shown.error_log,
+            &mut shown.debug_log,
+        ] {
+            if let Some(path) = log.as_mut() {
+                *path = shown_path(path);
+            }
+        }
+        for report in &mut shown.report_file {
+            *report = shown_path(report);
+        }
+        shown
     }
 
     /// Whether only the dashboard asks for a run's folder: no output flag given

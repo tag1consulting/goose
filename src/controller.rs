@@ -833,7 +833,7 @@ impl GooseAttack {
             }
             ControlCommand::Command(command) => match command {
                 ControllerCommand::Config | ControllerCommand::ConfigJson => {
-                    let config = Box::new(self.configuration.clone());
+                    let config = Box::new(self.configuration.shown());
                     let _ = respond.send(ControlReply::Config(config));
                     return Ok(());
                 }
@@ -2381,6 +2381,39 @@ pub(crate) mod tests {
             assert!(run_state.shutdown_after_stop);
             assert_eq!(goose_attack.test_plan.steps, vec![(0, 0)]);
             assert_eq!(goose_attack.test_plan.current, 0);
+        });
+    }
+
+    /// `config` and `config-json` show an output flag given without a path
+    /// as the run's folder, never as the NUL Goose keeps for it.
+    #[test]
+    #[serial_test::serial]
+    fn test_control_config_shows_the_run_folder() {
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) =
+                idle_attack(&["--no-autostart", "--report-file", "-G"]).await;
+            for (line, json) in [("config-json", true), ("config", false)] {
+                let (controller_tx, controller_rx) = flume::unbounded();
+                run_state.controller_channel_rx = Some(controller_rx);
+                let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+                let command = line.parse::<ControllerCommand>().unwrap();
+                controller_tx.send((command.into(), response_tx)).unwrap();
+                goose_attack
+                    .handle_control_requests(&mut run_state)
+                    .await
+                    .unwrap();
+                let text = match response_rx.await.unwrap() {
+                    ControlReply::Config(config) if json => to_json(&config),
+                    ControlReply::Config(config) => format!("{config:#?}"),
+                    _ => panic!("{} answered no configuration", line),
+                };
+                assert!(text.contains("(the run's folder)"), "{}", text);
+                assert!(
+                    !text.contains("\\u0000") && !text.contains("\\0"),
+                    "{}",
+                    text
+                );
+            }
         });
     }
 
