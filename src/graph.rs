@@ -217,6 +217,7 @@ impl ItemsPerSecond {
             html_id,
             y_axis_label,
             granular_data,
+            left_out: None,
             data: self
                 .series
                 .iter()
@@ -2939,6 +2940,7 @@ impl GraphData {
             html_id,
             y_axis_label,
             granular_data,
+            left_out: None,
             data: vec![("Total", data)],
         }
     }
@@ -2956,6 +2958,8 @@ pub(crate) struct Graph<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Cop
     /// Graph data, borrowed from [`GraphData`] in the iteration order of its
     /// map, so rendering a report does not copy every series.
     data: Vec<(&'a str, &'a TimeSeries<T, U>)>,
+    /// A second, from the start of the run, that every line leaves out.
+    left_out: Option<usize>,
 }
 
 impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + PartialOrd>
@@ -2973,11 +2977,21 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
             html_id,
             y_axis_label,
             granular_data,
+            left_out: None,
             data: data
                 .iter()
                 .map(|(label, series)| (label.as_str(), series))
                 .collect(),
         }
+    }
+
+    /// Leaves out the run's final second, `partial`, when the run stopped
+    /// partway through it: a count there holds only part of a second, so the
+    /// line would end in a drop. Every line leaves out the same second, so a
+    /// request whose last one came earlier keeps its last full second.
+    pub(crate) fn without_partial_second(mut self, partial: Option<usize>) -> Self {
+        self.left_out = partial;
+        self
     }
 
     /// The series with this label, for tests.
@@ -3258,6 +3272,7 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
             .filter_map(|(index, value)| {
                 let second = origin
                     .checked_add(index)
+                    .filter(|&second| Some(second) != self.left_out)
                     .and_then(|second| i64::try_from(second).ok())
                     .and_then(|second| second.checked_add(started.timestamp()))?;
                 let time = Local.timestamp_opt(second, 0).single()?;

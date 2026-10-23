@@ -22,6 +22,38 @@ async fn get_error_then_set_success(user: &mut GooseUser) -> TransactionResult {
     user.set_success(&mut goose.request)
 }
 
+/// The run's final second when it ended partway through it, which the HTML
+/// report's per second count graphs leave out, from the JSON report's
+/// history: its first step to its last.
+fn partial_final_second(json: &serde_json::Value) -> Option<usize> {
+    let history = json["raw_metrics"]["history"].as_array().unwrap();
+    let at = |step: &serde_json::Value| {
+        chrono::DateTime::parse_from_rfc3339(step["timestamp"].as_str().unwrap()).unwrap()
+    };
+    let ran = (at(history.last().unwrap()) - at(&history[0]))
+        .num_microseconds()
+        .unwrap();
+    (ran % 1_000_000 != 0).then_some((ran / 1_000_000) as usize)
+}
+
+/// The JSON report's count of `label` in graph `graph`, every second summed,
+/// and in second `second` alone.
+fn json_counts(
+    json: &serde_json::Value,
+    graph: &str,
+    label: &str,
+    second: Option<usize>,
+) -> (u64, u64) {
+    let series = &json["graphs"][graph][label];
+    let origin = series["origin"].as_u64().unwrap() as usize;
+    let data: Vec<u64> = serde_json::from_value(series["data"].clone()).unwrap();
+    let at = second
+        .and_then(|second| second.checked_sub(origin))
+        .and_then(|index| data.get(index).copied())
+        .unwrap_or(0);
+    (data.iter().sum(), at)
+}
+
 /// The values of `label`'s line in the HTML report's graph `html_id`, summed.
 /// Reads the markup `Graph::get_markup` writes: a line's `name: 'label',`,
 /// then its `data: [[time, value], ...],` on one line.
@@ -54,7 +86,8 @@ async fn updated_requests_count_once_in_report_graphs() {
     });
 
     let report = "update-graphs.html";
-    common::cleanup_files(vec![report]);
+    let json_report = "update-graphs.json";
+    common::cleanup_files(vec![report, json_report]);
     let configuration = common::build_configuration(
         &server,
         vec![
@@ -67,6 +100,9 @@ async fn updated_requests_count_once_in_report_graphs() {
             "--no-reset-metrics",
             "--report-file",
             report,
+            "--report-file",
+            json_report,
+            "--report-graph-data",
         ],
     );
     let metrics = common::run_load_test(
@@ -82,7 +118,9 @@ async fn updated_requests_count_once_in_report_graphs() {
     )
     .await;
     let html = std::fs::read_to_string(report).unwrap();
-    common::cleanup_files(vec![report]);
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(json_report).unwrap()).unwrap();
+    common::cleanup_files(vec![report, json_report]);
 
     let ok_metric = metrics.requests.get("GET /ok").unwrap();
     let error_metric = metrics.requests.get("GET /error").unwrap();
@@ -93,11 +131,26 @@ async fn updated_requests_count_once_in_report_graphs() {
     assert_eq!(error_metric.fail_count, 0);
     assert!(ok.calls() > 0 && error.calls() > 0);
 
-    assert_eq!(graph_sum(&html, "graph-rps", "GET /ok"), ok.calls() as u64);
-    assert_eq!(graph_sum(&html, "graph-eps", "GET /ok"), ok.calls() as u64);
-    assert_eq!(
-        graph_sum(&html, "graph-rps", "GET /error"),
-        error.calls() as u64
-    );
+    // The per second data counts each request once, and the HTML graphs
+    // draw all of it but the run's final, partial second.
+    let partial = partial_final_second(&json);
+    for (graph, html_id, label, sent) in [
+        ("requests_per_second", "graph-rps", "GET /ok", ok.calls()),
+        ("errors_per_second", "graph-eps", "GET /ok", ok.calls()),
+        (
+            "requests_per_second",
+            "graph-rps",
+            "GET /error",
+            error.calls(),
+        ),
+    ] {
+        let (all, final_second) = json_counts(&json, graph, label, partial);
+        assert_eq!(all, sent as u64, "{graph} {label}");
+        assert_eq!(
+            graph_sum(&html, html_id, label),
+            all - final_second,
+            "{html_id} {label}"
+        );
+    }
     assert_eq!(graph_sum(&html, "graph-eps", "GET /error"), 0);
 }
