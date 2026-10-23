@@ -365,8 +365,9 @@ const NO_USERS_OPTION: &str = "`configuration.users`";
 #[derive(Debug, Clone)]
 pub(crate) struct ControlOutcome {
     pub ok: bool,
-    /// Stable code when !ok, soft failures only (`invalid_phase`, `invalid_users`,
-    /// `prepare_failed`).
+    /// Stable code when !ok, soft failures only, such as `invalid_phase`,
+    /// `prepare_failed`, `conflicting_settings`, and for the report routes
+    /// `invalid_report`, `report_busy` and `report_failed`.
     pub error: Option<&'static str>,
     /// Human message, the reply every front end shows.
     pub message: String,

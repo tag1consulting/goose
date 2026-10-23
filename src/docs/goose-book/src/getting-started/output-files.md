@@ -28,13 +28,13 @@ cargo run --example simple -- --host http://localhost:8080 -t 30s --report-file 
 
 This writes `report.json`, `report.html` and `requests.csv` into the run's folder.
 
-**4. The run's folder is `--output-dir DIR`, or `goose-runs/<YYYYMMDD-HHMMSS>` from the run's local start time.** Goose creates it when it first writes into it and prints its path. Goose never writes a run into a folder that already exists and is not empty when the run starts. It uses `DIR-2`, `DIR-3`, `DIR-4` and so on instead, always numbered from the original name (never `DIR-2-2`). It takes the first number whose folder is missing or empty, and prints the name it chose. This also gives each run under `--no-autostart`, and each run started from the dashboard, its own folder.
+**4. The run's folder is `--output-dir DIR`, or `goose-runs/<YYYYMMDD-HHMMSS>` from the run's local start time.** Goose creates it as the run starts and prints its path. If the run writes nothing into it, Goose removes it when the run ends. Goose never writes a run into a folder that already exists and is not empty when the run starts. It uses `DIR-2`, `DIR-3`, `DIR-4` and so on instead, always numbered from the original name (never `DIR-2-2`). It takes the first number whose folder is missing or empty, and prints the name it chose. Two processes that start at the same moment still get a folder each. This also gives each run under `--no-autostart`, and each run started from the dashboard, its own folder.
 
 ```bash
 cargo run --example simple -- --host http://localhost:8080 -t 30s --output-dir goose-runs/nightly --report-file
 ```
 
-The first run writes into `goose-runs/nightly`, the next into `goose-runs/nightly-2`. `--output-dir` needs an output flag given without a path, or `--dashboard`; on its own it is an error, as the folder would hold nothing. A folder Goose can't write to stops the run before any load, with an error naming the folder.
+The first run writes into `goose-runs/nightly`, the next into `goose-runs/nightly-2`. `--output-dir` needs an output flag given without a path, or `--dashboard`; on its own it is an error, as the folder would hold nothing. A folder Goose can't write to stops the run before any load, with an error naming the folder. The one exception is in rule 9.
 
 ## What a report holds
 
@@ -64,7 +64,9 @@ cargo run --example simple -- --render-report results.json --report-file results
 
 [The live dashboard](../controller/dashboard.md) describes the report bar, the runs panel and the routes behind them.
 
-**9. The dashboard's report bar, at the top of the page, shows a Save report switch: whether this run's `report.json` and `report.html` are written to its folder.** It starts on with `--dashboard`, also when `--report-file` paths are given (turn it off to get only those), and a bare `--report-file` is the same switch for runs without the dashboard. The bar also lists any `--report-file` paths from the command line, which are always written.
+**9. The dashboard's report bar, at the top of the page, shows a Save report switch: whether this run's `report.json` and `report.html` are written to its folder.** It starts on with `--dashboard`, except under `--no-metrics`, also when `--report-file` paths are given (turn it off to get only those), and a bare `--report-file` is the same switch for runs without the dashboard. The bar also lists any `--report-file` paths from the command line, which are always written.
+
+When only `--dashboard` asks for the run's folder, with no output flag given without a path and no `--output-dir`, a folder Goose can't write to does not stop the run. Goose prints a warning naming the folder and the reason before any load, and runs with Save report off. A banner at the top of the dashboard says why for the whole run.
 
 ```bash
 cargo run --features dashboard --example simple -- --host http://localhost:8080 --dashboard
@@ -74,13 +76,13 @@ cargo run --features dashboard --example simple -- --host http://localhost:8080 
 
 On a long soak test with `--dashboard-control` and no `--report-file` path, turn Save report off to keep memory flat, and turn it on before the part of the run you want graphed.
 
-**11. Save report now writes the run's report as it stands into its folder while the run continues, and marks it as in progress.** It needs a run in progress. The report at the end of the run replaces it, also when Save report is off. A second switch in the bar, **Include graph data**, is rule 7's flag and can also be changed at any time.
+**11. Save report now writes the run's report as it stands into its folder while the run continues, and marks it as in progress.** It needs a run in progress. The runs panel lists the report once it is written. If it can't be written, the runs panel says why. The report at the end of the run replaces it, also when Save report is off. A second switch in the bar, **Include graph data**, is rule 7's flag and can also be changed at any time.
 
-**12. The runs panel lists the folders beside the run's folder that hold a `report.json` or `report.json.gz`.** It looks in the folder that holds the run's folder: the parent of the `--output-dir` folder, or `goose-runs` by default. Rows are newest first and show each run's notes. A report still marked in progress shows as running for the run in progress and as incomplete for any other (a run that ended without its final report). Each run offers HTML, JSON and Markdown, rendering any format the folder lacks from its JSON. With control, each run also has a Delete button. It removes the folder's reports and the logs Goose names there, then the folder if that leaves it empty. The folder of the run in progress can't be deleted.
+**12. The runs panel lists the folders beside the run's folder that hold a `report.json` or `report.json.gz`.** It looks in the folder that holds the run's folder: the parent of the `--output-dir` folder, or `goose-runs` by default. Rows are newest first and show each run's notes. A report still marked in progress shows as running for the run in progress and as incomplete for any other (a run that ended without its final report). Each run offers HTML, JSON and Markdown, rendering any format the folder lacks from its JSON. With control, each run also has a Delete button. It removes the folder's reports and the logs Goose names there, then the folder if that leaves it empty. The folder of the run in progress can't be deleted. Nor can the folder a bare `--goose-log` writes to: Goose keeps that log open in the last run's folder until the next run starts.
 
-With `--output-dir goose-runs/nightly`, the panel lists the folders in `goose-runs`. It lists only folders whose name is a letter or digit followed by any mix of letters, digits, `.`, `_` and `-`, so a run written to `goose-runs/my run` is not listed.
+With `--output-dir goose-runs/nightly`, the panel lists the folders in `goose-runs`. It lists only folders whose name is a letter or digit followed by any mix of letters, digits, `.`, `_` and `-`, so a run written to `goose-runs/my run` is not listed. For such a folder, the banner at the end of the run says where the report was saved and offers no downloads.
 
-**13. Save report now, Delete, and changing either switch need `--dashboard-control` and the control token, like Start and Stop.** Without control the switches are shown read only, so Save report stays on and every `--dashboard` run writes `report.json` and `report.html` into its folder.
+**13. Save report now, Delete, and changing either switch need `--dashboard-control` and the control token, like Start and Stop.** Without control the switches are shown read only, so Save report stays on and every `--dashboard` run writes `report.json` and `report.html` into its folder, except under `--no-metrics`.
 
 ```bash
 cargo run --features dashboard --example simple -- --host http://localhost:8080 \
