@@ -27,10 +27,11 @@
   </header>
 
   <main>
+  <div id="folder-banner" class="run-banner error" aria-live="polite" hidden></div>
   <section id="report-bar" class="report-bar" aria-label="Report">
-    <label class="report-switch"><input type="checkbox" id="save-report" disabled> Save report</label>
-    <label class="report-switch"><input type="checkbox" id="graph-data" disabled> Include graph data</label>
-    <button type="button" id="save-now" class="ctrl-btn" disabled hidden>Save report now</button>
+    <label class="report-switch"><input type="checkbox" id="save-report" aria-disabled="true"> Save report</label>
+    <label class="report-switch"><input type="checkbox" id="graph-data" aria-disabled="true"> Include graph data</label>
+    <button type="button" id="save-now" class="ctrl-btn" aria-disabled="true" hidden>Save report now</button>
     <span id="report-paths" class="report-paths" hidden></span>
   </section>
   <section id="banner" class="banner hidden" role="status"></section>

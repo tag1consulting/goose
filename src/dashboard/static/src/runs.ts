@@ -1,6 +1,7 @@
-// The report: the header's Save report and Include graph data switches, Save
-// report now, the banner when a run's report is written, and the runs panel
-// with its downloads, comparisons and, with control on, deletes.
+// The report: the report bar's Save report and Include graph data switches,
+// Save report now, the banner when a run's report is written or a run has no
+// folder, and the runs panel with its downloads, comparisons and, with
+// control on, deletes.
 //
 // Downloads go through fetch with the token in an Authorization header, then
 // a blob and a temporary object URL, so the token never goes into a URL.
@@ -49,6 +50,7 @@ const saveNowButton = optionalElement("save-now", HTMLButtonElement);
 const reportPathsEl = optionalElement("report-paths", HTMLElement);
 const notesEl = optionalElement("run-notes", HTMLElement);
 const runBannerEl = optionalElement("run-banner", HTMLElement);
+const folderBannerEl = optionalElement("folder-banner", HTMLElement);
 const runsPanel = optionalElement("runs-panel", HTMLElement);
 const runsBody = optionalElement("runs-body", HTMLElement);
 const runsEmpty = optionalElement("runs-empty", HTMLElement);
@@ -75,18 +77,29 @@ let deleteError: string | null = null;
 // A switch change in flight: snapshots leave the switches alone until it
 // is answered.
 let switchPending = false;
+// A Save report now in flight: snapshots leave its button unavailable until
+// it is answered.
+let saveNowPending = false;
 // The phase of the last snapshot.
 let lastPhase = "idle";
+// Why the run in progress has no folder, so Save report is off for it.
+let noFolderReason: string | null = null;
+// The error a snapshot put in the runs panel's error line while a run is in
+// progress.
+let runningError: string | null = null;
 
 function authHeaders(): Record<string, string> {
   const token = getToken();
   return token ? { Authorization: "Bearer " + token } : {};
 }
 
-/** The last part of a folder's path, the name the report routes take. */
-function folderName(folder: string): string {
-  const parts = folder.split(/[\\/]/).filter((part) => part !== "");
-  return parts.length ? parts[parts.length - 1] : folder;
+// aria-disabled, not disabled: a disabled control drops keyboard focus.
+function setAvailable(el: HTMLElement | null, on: boolean): void {
+  if (el) el.setAttribute("aria-disabled", on ? "false" : "true");
+}
+
+function unavailable(el: HTMLElement | null): boolean {
+  return !el || el.getAttribute("aria-disabled") === "true";
 }
 
 // ---------------------------------------------------------------------------
@@ -154,7 +167,7 @@ function showRunsError(text: string | null): void {
 function deleteReport(name: string): void {
   if (
     !window.confirm(
-      "Delete the report in " + name + "? This removes its reports and logs from disk."
+      "Delete the reports and logs in " + name + "?"
     )
   ) {
     return;
@@ -186,8 +199,10 @@ function deleteButton(report: ListedReport): HTMLElement {
   button.className = "ctrl-btn run-delete";
   button.textContent = "Delete";
   button.setAttribute("aria-label", "Delete the report in " + report.name);
-  button.disabled = report.running;
-  button.addEventListener("click", () => deleteReport(report.name));
+  setAvailable(button, !report.running);
+  button.addEventListener("click", () => {
+    if (!unavailable(button)) deleteReport(report.name);
+  });
   return button;
 }
 
@@ -207,7 +222,7 @@ function downloadButtons(name: string): HTMLElement {
 }
 
 // ---------------------------------------------------------------------------
-// Header: the switches, Save report now, the paths and the notes
+// Report bar: the switches, Save report now, the paths and the notes
 // ---------------------------------------------------------------------------
 
 /** Post a report control command; resolves to whether it was applied. */
@@ -229,13 +244,25 @@ function postReport(path: string, body: string): Promise<{ ok: boolean; message:
     .catch((err: unknown) => ({ ok: false, message: String(err) }));
 }
 
+/** Whether `box` can be changed now. */
+function switchAvailable(box: HTMLInputElement): boolean {
+  return controlEnabled && !switchPending && !(box === saveReportBox && noFolderReason);
+}
+
 function onSwitch(field: "save" | "graph_data", box: HTMLInputElement): void {
+  if (unavailable(box)) {
+    // The click already changed it; put it back.
+    box.checked = !box.checked;
+    return;
+  }
   switchPending = true;
-  box.disabled = true;
+  for (const other of [saveReportBox, graphDataBox]) setAvailable(other, false);
   void postReport("/api/v1/control/report", JSON.stringify({ [field]: box.checked })).then(
     (answer) => {
       switchPending = false;
-      box.disabled = !controlEnabled;
+      for (const other of [saveReportBox, graphDataBox]) {
+        if (other) setAvailable(other, switchAvailable(other));
+      }
       if (!answer.ok) {
         box.checked = !box.checked;
         showRunsError("Couldn't change the switch: " + answer.message);
@@ -244,26 +271,47 @@ function onSwitch(field: "save" | "graph_data", box: HTMLInputElement): void {
   );
 }
 
+function saveNowAvailable(): boolean {
+  return controlEnabled && lastPhase !== "idle" && !saveNowPending && !noFolderReason;
+}
+
 function onSaveNow(): void {
-  if (!saveNowButton) return;
+  if (!saveNowButton || unavailable(saveNowButton)) return;
   const button = saveNowButton;
-  button.disabled = true;
+  saveNowPending = true;
+  setAvailable(button, false);
+  // The report is written in the background; the snapshot's `writes` lists
+  // it once it is there.
   void postReport("/api/v1/control/report/now", "{}").then((answer) => {
-    button.disabled = !controlEnabled || lastPhase === "idle";
-    if (!answer.ok) {
-      showRunsError("Couldn't save the report now: " + answer.message);
-      return;
-    }
-    showRunsError(null);
-    // The report is written in the background; list it once it is there.
-    setTimeout(loadRuns, 1000);
+    saveNowPending = false;
+    setAvailable(button, saveNowAvailable());
+    showRunsError(answer.ok ? null : "Couldn't save the report now: " + answer.message);
   });
 }
 
 function setSwitch(box: HTMLInputElement | null, on: boolean): void {
   if (!box) return;
   if (!switchPending) box.checked = on;
-  box.disabled = !controlEnabled || switchPending;
+  setAvailable(box, switchAvailable(box));
+}
+
+/** The runs panel's error line for a report that failed while a run is in
+ * progress; the idle banner says it once the run ends. */
+function setRunningError(text: string | null): void {
+  if (text === runningError) return;
+  const shown = !!runsError && !runsError.hidden && runsError.textContent === runningError;
+  runningError = text;
+  if (text) showRunsError(text);
+  else if (shown) showRunsError(null);
+}
+
+/** The banner for a run with no folder, shown for the whole run. */
+function setFolderBanner(): void {
+  if (!folderBannerEl) return;
+  folderBannerEl.textContent = noFolderReason
+    ? "Save report is off for this run. " + noFolderReason
+    : "";
+  folderBannerEl.hidden = !noFolderReason;
 }
 
 let bannerKey: string | null = null;
@@ -271,7 +319,10 @@ let bannerKey: string | null = null;
 /** The banner once a run's report is written, with its downloads. */
 function setRunBanner(report: SnapshotReport, phase: string): void {
   if (!runBannerEl) return;
-  const key = phase === "idle" ? (report.last_report || "") + "|" + (report.error || "") : "";
+  const key =
+    phase === "idle"
+      ? (report.last_report || "") + "|" + (report.last_report_name || "") + "|" + (report.error || "")
+      : "";
   if (key === bannerKey) return;
   bannerKey = key;
   // The element stays in the page, empty when there is nothing to say, so
@@ -287,21 +338,36 @@ function setRunBanner(report: SnapshotReport, phase: string): void {
   if (!report.last_report) return;
   runBannerEl.className = "run-banner info";
   const text = document.createElement("span");
-  text.textContent = "Report saved in " + report.last_report + ". Download HTML, JSON or Markdown.";
   runBannerEl.appendChild(text);
-  runBannerEl.appendChild(downloadButtons(folderName(report.last_report)));
+  // The routes take only some folder names; for any other, say where it is.
+  if (!report.last_report_name) {
+    text.textContent = "Report saved in " + report.last_report + ".";
+    return;
+  }
+  text.textContent = "Report saved in " + report.last_report + ". Download HTML, JSON or Markdown.";
+  runBannerEl.appendChild(downloadButtons(report.last_report_name));
 }
 
 /** Render the report state from a snapshot. */
 export function updateReportFromSnapshot(snap: DashboardSnapshot): void {
   const report = snap.report;
   lastPhase = snap.phase;
+  const running = snap.phase !== "idle";
+  noFolderReason = running && !report.folder && report.error ? report.error : null;
+  setFolderBanner();
   setSwitch(saveReportBox, report.save);
   setSwitch(graphDataBox, report.graph_data);
+  const saveLabel = saveReportBox ? saveReportBox.closest("label") : null;
+  if (saveLabel) {
+    saveLabel.title = noFolderReason ? "Off for this run: " + noFolderReason : "";
+  }
   if (saveNowButton) {
     saveNowButton.hidden = !controlEnabled;
-    saveNowButton.disabled = snap.phase === "idle";
+    setAvailable(saveNowButton, saveNowAvailable());
   }
+  setRunningError(
+    running && report.folder && report.error ? "Couldn't save the report: " + report.error : null
+  );
   if (reportPathsEl) {
     reportPathsEl.textContent = report.paths.length ? "Also writes " + report.paths.join(", ") : "";
     reportPathsEl.hidden = report.paths.length === 0;
@@ -314,7 +380,7 @@ export function updateReportFromSnapshot(snap: DashboardSnapshot): void {
   // List the reports on the first snapshot, and again whenever a run starts
   // or a report is written, however short the run was: a poll every 2 s can
   // miss its phases.
-  const seen = (report.folder || "") + "|" + (report.last_report || "");
+  const seen = (report.folder || "") + "|" + (report.last_report || "") + "|" + report.writes;
   if (seen !== reportSeen) {
     reportSeen = seen;
     loadRuns();
@@ -373,6 +439,8 @@ function renderRuns(): void {
     tr.appendChild(textCell(startedText(report.started)));
     const notes = textCell(report.notes || "");
     notes.className = "run-notes";
+    // One line, cut short; the whole note on hover.
+    if (report.notes) notes.title = report.notes;
     tr.appendChild(notes);
     tr.appendChild(textCell(formatDuration(report.duration_secs)));
     tr.appendChild(textCell(formatInt(report.max_users)));
@@ -407,7 +475,8 @@ function renderRuns(): void {
   if (runsEmpty) runsEmpty.hidden = reports.length > 0;
   if (runsShowAll) runsShowAll.hidden = showAll || reports.length <= PAGE_ROWS;
   if (runsFooter) {
-    runsFooter.textContent = formatInt(reports.length) + " reports in " + listing.dir;
+    runsFooter.textContent =
+      formatInt(reports.length) + (reports.length === 1 ? " report in " : " reports in ") + listing.dir;
   }
   updateCompare();
 }
@@ -457,7 +526,7 @@ export function loadRuns(): void {
     .then((data) => {
       listing = data;
       renderRuns();
-      showRunsError(deleteError);
+      showRunsError(deleteError || runningError);
     })
     .catch((err: unknown) => {
       if (runsError) {
@@ -481,9 +550,12 @@ export function setRunsControl(enabled: boolean): void {
   controlEnabled = enabled;
   if (runsDeleteCol) runsDeleteCol.hidden = !enabled;
   for (const box of [saveReportBox, graphDataBox]) {
-    if (box) box.disabled = !enabled;
+    if (box) setAvailable(box, switchAvailable(box));
   }
-  if (saveNowButton) saveNowButton.hidden = !enabled;
+  if (saveNowButton) {
+    saveNowButton.hidden = !enabled;
+    setAvailable(saveNowButton, saveNowAvailable());
+  }
   renderRuns();
 }
 

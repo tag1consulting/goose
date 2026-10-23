@@ -908,8 +908,15 @@ footer {
   white-space: nowrap;
 }
 
-.report-switch:has(input:disabled) {
+/* An unavailable switch keeps focus, so it says so by colour and cursor. */
+.report-switch:has(input[aria-disabled="true"]) {
   color: var(--muted);
+  cursor: not-allowed;
+}
+
+.report-switch input[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 #save-now {
@@ -922,9 +929,13 @@ footer {
   overflow-wrap: anywhere;
 }
 
+/* One line, cut short with an ellipsis, so every column fits; the whole
+   note is in the cell's title. */
 td.run-notes {
-  white-space: normal;
-  min-width: 10rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 14rem;
 }
 
 .run-banner {
@@ -946,6 +957,10 @@ td.run-notes {
   padding: 0;
   border: 0;
   background: none;
+}
+
+.run-banner[hidden] {
+  display: none;
 }
 
 .run-banner.error {

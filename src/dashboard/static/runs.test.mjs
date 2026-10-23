@@ -196,8 +196,8 @@ test("the header shows the switches, the paths and the notes, read only without 
   const graphs = doc.getElementById("graph-data");
   assert.equal(save.checked, true);
   assert.equal(graphs.checked, false);
-  assert.equal(save.disabled, true);
-  assert.equal(graphs.disabled, true);
+  assert.equal(save.getAttribute("aria-disabled"), "true");
+  assert.equal(graphs.getAttribute("aria-disabled"), "true");
   assert.equal(doc.getElementById("save-now").hidden, true);
   assert.equal(doc.getElementById("report-paths").textContent, "Also writes results.html");
   const notes = doc.getElementById("run-notes");
@@ -219,7 +219,7 @@ test("with control, a switch sends its value with the Bearer header", async () =
   });
   const doc = page.window.document;
   const save = doc.getElementById("save-report");
-  assert.equal(save.disabled, false);
+  assert.equal(save.getAttribute("aria-disabled"), "false");
   save.click();
   await settle(page.window);
   const posts = page.requests.filter((r) => r.method === "POST");
@@ -261,14 +261,14 @@ test("Save report now shows with control, works only while a run is in progress"
   const idle = await openPage("/?token=" + TOKEN, FRESH, TOKEN, { controlEnabled: true });
   const idleButton = idle.window.document.getElementById("save-now");
   assert.equal(idleButton.hidden, false);
-  assert.equal(idleButton.disabled, true);
+  assert.equal(idleButton.getAttribute("aria-disabled"), "true");
 
   const page = await openPage("/?token=" + TOKEN, FRESH, TOKEN, {
     controlEnabled: true,
     snapshot: withReport({ folder: "goose-runs/20261022-101500" }, "maintain"),
   });
   const button = page.window.document.getElementById("save-now");
-  assert.equal(button.disabled, false);
+  assert.equal(button.getAttribute("aria-disabled"), "false");
   assert.equal(button.textContent, "Save report now");
   button.click();
   await settle(page.window);
@@ -280,7 +280,7 @@ test("Save report now shows with control, works only while a run is in progress"
 });
 
 test("the banner after a run offers the report's downloads, or says why it failed", async () => {
-  const saved = withReport({ last_report: "goose-runs/nightly" });
+  const saved = withReport({ last_report: "goose-runs/nightly", last_report_name: "nightly" });
   const page = await openPage("/?token=" + TOKEN, FRESH, TOKEN, { snapshot: saved });
   const banner = page.window.document.getElementById("run-banner");
   assert.equal(banner.getAttribute("aria-live"), "polite");
@@ -364,7 +364,7 @@ test("Delete shows only with control on, confirms, and sends DELETE with the Bea
   assert.equal(buttons.length, LISTING.reports.length);
   // The running run's folder can't be deleted.
   assert.deepEqual(
-    buttons.map((b) => b.disabled),
+    buttons.map((b) => b.getAttribute("aria-disabled") === "true"),
     [false, false, false, false, false, true]
   );
   const asked = [];
@@ -380,7 +380,7 @@ test("Delete shows only with control on, confirms, and sends DELETE with the Bea
   buttons[1].click();
   await settle(page.window);
   assert.deepEqual(asked, [
-    "Delete the report in nightly? This removes its reports and logs from disk.",
+    "Delete the reports and logs in nightly?",
   ]);
   assert.equal(page.requests.filter((r) => r.method === "DELETE").length, 0);
 
@@ -454,24 +454,130 @@ test("without control the switches stay read only as snapshots arrive", async ()
     page.events.emit("snapshot", JSON.stringify(withReport({ save }, "maintain")));
     await settle(page.window);
     assert.equal(doc.getElementById("save-report").checked, save);
-    assert.equal(doc.getElementById("save-report").disabled, true);
-    assert.equal(doc.getElementById("graph-data").disabled, true);
+    assert.equal(doc.getElementById("save-report").getAttribute("aria-disabled"), "true");
+    assert.equal(doc.getElementById("graph-data").getAttribute("aria-disabled"), "true");
     assert.equal(doc.getElementById("save-now").hidden, true);
   }
 });
 
 test("Save report now lists the reports again once its report is written", async () => {
+  const folder = "goose-runs/20261022-101500";
   const page = await openPage("/?token=" + TOKEN, FRESH, TOKEN, {
     controlEnabled: true,
-    snapshot: withReport({ folder: "goose-runs/20261022-101500" }, "maintain"),
+    eventStream: true,
   });
+  page.events.emit("snapshot", JSON.stringify(withReport({ folder }, "maintain")));
+  await settle(page.window);
   const listed = () => page.requests.filter((r) => r.path === "/api/v1/reports").length;
   const before = listed();
   page.window.document.getElementById("save-now").click();
   await settle(page.window);
-  await new Promise((resolve) => page.window.setTimeout(resolve, 1100));
+  // No timer: the list waits for the snapshot that counts the write.
+  assert.equal(listed(), before);
+  page.events.emit("snapshot", JSON.stringify(withReport({ folder, writes: 1 }, "maintain")));
   await settle(page.window);
   assert.equal(listed(), before + 1);
+});
+
+test("a switch keeps focus while its change is sent, and Save report now sends once", async () => {
+  let answer = null;
+  const page = await openPage("/?token=" + TOKEN, FRESH, TOKEN, {
+    controlEnabled: true,
+    eventStream: true,
+    controlAnswer: () =>
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+  });
+  const doc = page.window.document;
+  const folder = "goose-runs/20261022-101500";
+  page.events.emit("snapshot", JSON.stringify(withReport({ folder }, "maintain")));
+  await settle(page.window);
+  const posts = () => page.requests.filter((r) => r.method === "POST").length;
+
+  const save = doc.getElementById("save-report");
+  save.focus();
+  save.click();
+  await settle(page.window);
+  assert.equal(doc.activeElement, save);
+  assert.equal(save.getAttribute("aria-disabled"), "true");
+  // A click while it is unavailable changes nothing and sends nothing.
+  const checked = save.checked;
+  save.click();
+  await settle(page.window);
+  assert.equal(save.checked, checked);
+  assert.equal(posts(), 1);
+  answer({ status: 200, body: { ok: true, message: "save report off" } });
+  await settle(page.window);
+  assert.equal(save.getAttribute("aria-disabled"), "false");
+
+  const now = doc.getElementById("save-now");
+  now.click();
+  await settle(page.window);
+  assert.equal(posts(), 2);
+  // A snapshot while it is pending leaves it unavailable.
+  page.events.emit("snapshot", JSON.stringify(withReport({ folder }, "maintain")));
+  await settle(page.window);
+  assert.equal(now.getAttribute("aria-disabled"), "true");
+  now.click();
+  await settle(page.window);
+  assert.equal(posts(), 2);
+  answer({ status: 200, body: { ok: true, message: "saving" } });
+  await settle(page.window);
+  assert.equal(now.getAttribute("aria-disabled"), "false");
+});
+
+test("a report that fails while the run goes on shows in the runs panel", async () => {
+  const page = await openPage("/?token=" + TOKEN, FRESH, TOKEN, { eventStream: true });
+  const error = page.window.document.getElementById("runs-error");
+  const folder = "goose-runs/20261022-101500";
+  const reason = "Can't write to " + folder + "/report.html: Permission denied (os error 13)";
+  page.events.emit("snapshot", JSON.stringify(withReport({ folder, error: reason }, "maintain")));
+  await settle(page.window);
+  assert.equal(error.hidden, false);
+  assert.equal(error.textContent, "Couldn't save the report: " + reason);
+  page.events.emit("snapshot", JSON.stringify(withReport({ folder }, "maintain")));
+  await settle(page.window);
+  assert.equal(error.hidden, true);
+});
+
+test("a run with no folder shows why for the whole run, with Save report off", async () => {
+  const page = await openPage("/?token=" + TOKEN, FRESH, TOKEN, {
+    controlEnabled: true,
+    eventStream: true,
+  });
+  const doc = page.window.document;
+  const reason = "Can't write to goose-runs/20261022-101500: Permission denied (os error 13)";
+  page.events.emit(
+    "snapshot",
+    JSON.stringify(withReport({ save: false, folder: null, error: reason }, "maintain"))
+  );
+  await settle(page.window);
+  const banner = doc.getElementById("folder-banner");
+  assert.equal(banner.hidden, false);
+  assert.equal(banner.textContent, "Save report is off for this run. " + reason);
+  const save = doc.getElementById("save-report");
+  assert.equal(save.checked, false);
+  assert.equal(save.getAttribute("aria-disabled"), "true");
+  assert.equal(save.closest("label").title, "Off for this run: " + reason);
+  assert.equal(doc.getElementById("save-now").getAttribute("aria-disabled"), "true");
+  page.events.emit("snapshot", JSON.stringify(withReport({ save: true }, "idle")));
+  await settle(page.window);
+  assert.equal(banner.hidden, true);
+  assert.equal(save.getAttribute("aria-disabled"), "false");
+});
+
+test("the banner offers downloads only for a folder the routes take", async () => {
+  const page = await openPage("/?token=" + TOKEN, FRESH, TOKEN, {
+    snapshot: withReport({ last_report: "goose-runs/nightly run", last_report_name: null }),
+  });
+  const banner = page.window.document.getElementById("run-banner");
+  assert.equal(banner.textContent, "Report saved in goose-runs/nightly run.");
+  assert.equal(banner.querySelectorAll("button").length, 0);
+  const named = await openPage("/?token=" + TOKEN, FRESH, TOKEN, {
+    snapshot: withReport({ last_report: "goose-runs/nightly", last_report_name: "nightly" }),
+  });
+  assert.equal(named.window.document.querySelectorAll("#run-banner button").length, 3);
 });
 
 test("each run's HTML, JSON and Markdown buttons fetch that format", async () => {

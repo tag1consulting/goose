@@ -53,8 +53,9 @@ function fileResponse(status, body, filename) {
 // `controlDelayMs` (default 0) holds each control answer that long, so a test
 // can act while a request is in flight. `controlAnswer(command, body)`, given
 // the command (the last path segment) and the parsed body, may return
-// `{ status, body }` to answer an authorized control request with, or
-// undefined for the default answer.
+// `{ status, body }` to answer an authorized control request with, a promise
+// of it, to answer when the test resolves it, or undefined for the default
+// answer.
 //
 // Request heatmaps: `GET /api/v1/series` answers `seriesStatus` (default 200)
 // with the `series` body (default: an empty heatmap for the requested name),
@@ -130,6 +131,9 @@ export function stubServer(token, options = {}) {
       const custom = controlAnswer
         ? controlAnswer(command, body === undefined ? undefined : JSON.parse(body))
         : undefined;
+      if (custom && typeof custom.then === "function") {
+        return custom.then((later) => jsonResponse(later.status, later.body));
+      }
       const answer = custom
         ? jsonResponse(custom.status, custom.body)
         : controlStatus === 200
