@@ -5002,8 +5002,8 @@ impl std::io::Write for ReportOut {
 }
 
 /// Write a run's folder report from `source`: `report.html`, then
-/// `report.json` last, through a temporary file and a rename, so a folder
-/// that holds a `report.json` always holds a whole one. With `compress`, the
+/// `report.json` last, each through a temporary file and a rename, so a
+/// folder never holds half a report. With `compress`, the
 /// level, each is gzipped and named with `.gz` added. Returns the files
 /// written.
 pub(crate) fn write_folder_report(
@@ -5016,36 +5016,38 @@ pub(crate) fn write_folder_report(
     use std::fs;
     let gz = if compress.is_some() { ".gz" } else { "" };
     let level = compress.unwrap_or_default();
-    let html_path = folder.join(format!("{}{gz}", crate::runs::REPORT_HTML));
-    let json_name = format!("{}{gz}", crate::runs::REPORT_JSON);
-    let json_path = folder.join(&json_name);
-    let io_error = |path: &std::path::Path, err| folder_io_error(path, err);
-
     let content = match html {
         Some(content) => content,
         None => html.insert(source.html(baseline)?),
     };
-    fs::File::create(&html_path)
-        .and_then(|file| {
-            let mut out = ReportOut::new(file, compress.is_some(), level);
-            out.write_all(content.as_bytes())?;
-            out.finish()
-        })
-        .map_err(|err| io_error(&html_path, err))?;
-
-    let tmp = folder.join(format!(".{json_name}.tmp"));
-    let written = fs::File::create(&tmp).and_then(|file| {
-        let mut out = ReportOut::new(file.try_clone()?, compress.is_some(), level);
+    // Each report is written to a temporary file and renamed into place, so
+    // a reader never sees one half written.
+    let write = |name: &str, body: &dyn Fn(&mut ReportOut) -> std::io::Result<()>| {
+        let name = format!("{name}{gz}");
+        let path = folder.join(&name);
+        let tmp = folder.join(format!(".{name}.tmp"));
+        let written = fs::File::create(&tmp).and_then(|file| {
+            let mut out = ReportOut::new(file.try_clone()?, compress.is_some(), level);
+            body(&mut out)?;
+            out.finish()?;
+            file.sync_all()
+        });
+        match written.and_then(|()| fs::rename(&tmp, &path)) {
+            Ok(()) => Ok(path),
+            Err(err) => {
+                let _ = fs::remove_file(&tmp);
+                Err(folder_io_error(&path, err))
+            }
+        }
+    };
+    let html_path = write(crate::runs::REPORT_HTML, &|out| {
+        out.write_all(content.as_bytes())
+    })?;
+    let json_path = write(crate::runs::REPORT_JSON, &|out| {
         source
-            .write_json(&mut out, baseline)
-            .map_err(|e| std::io::Error::other(e.to_string()))?;
-        out.finish()?;
-        file.sync_all()
-    });
-    if let Err(err) = written.and_then(|()| fs::rename(&tmp, &json_path)) {
-        let _ = fs::remove_file(&tmp);
-        return Err(io_error(&json_path, err));
-    }
+            .write_json(out, baseline)
+            .map_err(|e| std::io::Error::other(e.to_string()))
+    })?;
     Ok(vec![html_path, json_path])
 }
 

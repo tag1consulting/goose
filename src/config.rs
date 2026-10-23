@@ -29,6 +29,20 @@ pub const RUN_FOLDER: &str = "\0";
 /// The gzip level when neither `--compress` nor [`GooseDefault::Compress`] sets one.
 const DEFAULT_COMPRESSION_LEVEL: u32 = 6;
 
+/// [`DEFAULT_COMPRESSION_LEVEL`] as `--compress` given without a level reads it.
+const DEFAULT_COMPRESSION_ARG: &str = match DEFAULT_COMPRESSION_LEVEL {
+    1 => "1",
+    2 => "2",
+    3 => "3",
+    4 => "4",
+    5 => "5",
+    6 => "6",
+    7 => "7",
+    8 => "8",
+    9 => "9",
+    _ => panic!("the default gzip level is 1 to 9"),
+};
+
 /// The address the dashboard listens on when neither `--dashboard-host` nor
 /// [`GooseDefault::DashboardHost`] sets one.
 pub(crate) const DEFAULT_DASHBOARD_HOST: &str = "127.0.0.1";
@@ -314,24 +328,25 @@ pub struct GooseConfiguration {
             with GooseDefault::ReportFile."
     )]
     pub report_file: Vec<String>,
-    /// Run folder, `goose-runs/<start time>` unless set
-    ///
-    /// Sets the run's folder for output flags given without a path. Its `-h` and
-    /// `--help` text is set below, as it names `<start time>`.
+    /// The run's folder `--output-dir` names, where output flags given without a
+    /// path and the dashboard's Save report write; `None` names
+    /// `goose-runs/<start time>`.
     #[arg(
         help_heading = "Reports",
         long,
         value_name = "DIR",
-        help = "Run folder [default: goose-runs/<time>]",
-        long_help = "Run folder [default: goose-runs/<start time>]\n\n\
-            Sets the run's folder for output flags given without a path. Goose creates it when it first writes into it. When \
-            the folder already holds files, the run uses DIR-2, DIR-3 and so on. Needs an \
-            output flag given without a path, or --dashboard.\n\n\
+        help = "Run folder, or goose-runs/<start time>",
+        long_help = "Run folder, or goose-runs/<start time>\n\n\
+            Sets the run's folder for output flags given without a path. Goose creates it \
+            as the run starts, and removes it at the end of a run that wrote nothing into \
+            it. When the folder already holds files, the run uses DIR-2, DIR-3 and so on. \
+            Needs an output flag given without a path, or --dashboard, which saves its \
+            report there except under --no-metrics.\n\n\
             Example: --output-dir goose-runs/nightly --report-file. Set in code with \
             GooseDefault::OutputDir."
     )]
     pub output_dir: Option<String>,
-    /// Gzip the run's folder files, 1 to 9
+    /// Gzip files in the run's folder, 1 to 9
     ///
     /// Gzips every file Goose writes into the run's folder, each named with .gz added. A
     /// path given to an output flag keeps exactly that name; a name that ends in .gz is
@@ -344,7 +359,7 @@ pub struct GooseConfiguration {
         long,
         value_name = "LEVEL",
         num_args = 0..=1,
-        default_missing_value = "6",
+        default_missing_value = DEFAULT_COMPRESSION_ARG,
         value_parser = clap::value_parser!(u32).range(1..=9)
     )]
     pub compress: Option<u32>,
@@ -3503,6 +3518,11 @@ impl GooseConfiguration {
         non_empty(&self.output_dir)
     }
 
+    /// The JSON report `--render-report` names, `None` when it is not set or is empty.
+    pub(crate) fn render_report(&self) -> Option<&str> {
+        non_empty(&self.render_report)
+    }
+
     /// The notes `--notes` gives, `None` when it is not set or is empty.
     pub(crate) fn notes(&self) -> Option<&str> {
         non_empty(&self.notes)
@@ -3993,11 +4013,15 @@ impl GooseConfiguration {
         // --output-dir sets the folder that output flags given without a path write to.
         if let Some(output_dir) = self.output_dir() {
             if !self.uses_run_folder() {
+                let detail = if self.no_metrics {
+                    "`configuration.output_dir` (--output-dir) would hold nothing: --dashboard and a bare --report-file write into it except under --no-metrics, so give a log option without a path, such as a bare --debug-log."
+                } else {
+                    "`configuration.output_dir` (--output-dir) would hold nothing: give an output flag without a path, such as a bare --report-file, or add --dashboard."
+                };
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.output_dir`".to_string(),
                     value: output_dir.to_string(),
-                    detail: "`configuration.output_dir` (--output-dir) would hold nothing: give an output flag without a path, such as a bare --report-file, or add --dashboard."
-                        .to_string(),
+                    detail: detail.to_string(),
                 });
             }
         }
@@ -4024,8 +4048,25 @@ impl GooseConfiguration {
             }
         }
 
-        // --render-report writes the reports --report-file paths name.
-        if let Some(render_report) = non_empty(&self.render_report) {
+        // --render-report writes the reports --report-file paths name, with the
+        // notes and graph data of the JSON report it reads.
+        if let Some(render_report) = self.render_report() {
+            if self.notes().is_some() {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.notes`".to_string(),
+                    value: self.notes().unwrap_or_default().to_string(),
+                    detail: "`configuration.notes` (--notes) is not allowed with --render-report, which keeps the notes of the JSON report it reads."
+                        .to_string(),
+                });
+            }
+            if self.report_graph_data {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.report_graph_data`".to_string(),
+                    value: true.to_string(),
+                    detail: "`configuration.report_graph_data` (--report-graph-data) is not allowed with --render-report, which keeps the graph data of the JSON report it reads."
+                        .to_string(),
+                });
+            }
             if self.report_paths().is_empty() {
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.render_report`".to_string(),
@@ -4724,6 +4765,42 @@ mod test {
                 expected,
                 "no_metrics={no_metrics} path={path} bare={bare} dashboard={dashboard}"
             );
+        }
+    }
+
+    /// A rendered report keeps the notes and graph data of the JSON report it
+    /// is rendered from, so `--notes` and `--report-graph-data` are refused.
+    #[test]
+    fn render_report_refuses_notes_and_graph_data() {
+        let render = || GooseConfiguration {
+            render_report: Some("report.json".to_string()),
+            report_file: vec!["report.html".to_string()],
+            ..Default::default()
+        };
+        assert!(render().validate().is_ok());
+        for (configuration, field) in [
+            (
+                GooseConfiguration {
+                    notes: Some("new notes".to_string()),
+                    ..render()
+                },
+                "`configuration.notes`",
+            ),
+            (
+                GooseConfiguration {
+                    report_graph_data: true,
+                    ..render()
+                },
+                "`configuration.report_graph_data`",
+            ),
+        ] {
+            match configuration.validate() {
+                Err(GooseError::InvalidOption { option, detail, .. }) => {
+                    assert_eq!(option, field);
+                    assert!(detail.contains("--render-report"), "{}", detail);
+                }
+                other => panic!("{}: {:?}", field, other),
+            }
         }
     }
 

@@ -1682,8 +1682,9 @@ struct ReportsListing {
 }
 
 /// `GET /api/v1/reports`: the folders in the folder run folders go in that
-/// hold a `report.json`, newest first. Read from disk on each request, never
-/// on the snapshot path; each report is parsed again only when it changes.
+/// hold a `report.json` or `report.json.gz`, newest first. Read from disk on
+/// each request, never on the snapshot path; each report is parsed again only
+/// when it changes.
 async fn reports_handler(
     State(state): State<Arc<DashboardState>>,
     headers: HeaderMap,
@@ -1717,10 +1718,10 @@ async fn reports_handler(
 }
 
 /// `GET /api/v1/reports/{name}/{file}`: one of a folder's reports, rendered
-/// from its `report.json` when the folder lacks it; or with `file`
-/// `compare.md` and `?baseline={name}`, the report compared to the baseline
-/// as Markdown. Anything that is not a valid name, a known file, a real
-/// folder and a regular `report.json` is a plain 404.
+/// from its `report.json` or `report.json.gz` when the folder lacks it; or
+/// with `file` `compare.md` and `?baseline={name}`, the report compared to the
+/// baseline as Markdown. Anything that is not a valid name, a known file, a real
+/// folder and a regular `report.json` or `report.json.gz` is a plain 404.
 async fn report_file_handler(
     State(state): State<Arc<DashboardState>>,
     headers: HeaderMap,

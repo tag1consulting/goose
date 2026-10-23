@@ -72,7 +72,7 @@ pub(crate) struct DashboardSnapshot {
     pub build_time: std::time::Duration,
 }
 
-/// The report the run writes, as the dashboard header shows it.
+/// The report the run writes, as the dashboard's report bar shows it.
 #[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub(crate) struct SnapshotReport {

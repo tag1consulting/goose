@@ -1253,6 +1253,7 @@ impl GooseAttack {
         // If version flag is set, display package name and version and exit.
         if self.configuration.version {
             println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+            logger::finish_goose_log();
             std::process::exit(0);
         }
 
@@ -1276,6 +1277,7 @@ impl GooseAttack {
                     );
                 }
             }
+            logger::finish_goose_log();
             std::process::exit(0);
         }
 
@@ -1288,7 +1290,7 @@ impl GooseAttack {
         self.output.graph_data = self.configuration.report_graph_data;
 
         // Write reports from a JSON report, then exit.
-        if let Some(path) = self.configuration.render_report.clone() {
+        if let Some(path) = self.configuration.render_report().map(str::to_string) {
             return self.render_report(&path).await;
         }
 

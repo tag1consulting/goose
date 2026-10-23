@@ -3,10 +3,7 @@
 
 import { setBanner, setConnection, showPolling, type ConnectionMode } from "./status";
 
-/**
- * Called once when Goose exits, with the `closed` event's data: the save
- * state as JSON, or `1` from an older Goose.
- */
+/** Called once when Goose exits, with the `closed` event's data, `1`. */
 export type ClosedHandler = (data: string) => void;
 
 /** Renders one snapshot; the mode says which transport delivered it. */

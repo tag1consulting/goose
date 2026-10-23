@@ -836,11 +836,11 @@ pub(crate) fn deletable_files() -> Vec<String> {
     }
     let gzipped: Vec<String> = names.iter().map(|name| format!("{name}.gz")).collect();
     names.extend(gzipped);
-    // The JSON report's temporary file, left by a process that ended while
-    // writing it.
-    let temporary: Vec<String> = [REPORT_JSON.to_string(), format!("{REPORT_JSON}.gz")]
+    // The reports' temporary files, left by a process that ended while
+    // writing one.
+    let temporary: Vec<String> = [REPORT_JSON, REPORT_HTML]
         .iter()
-        .map(|name| format!(".{name}.tmp"))
+        .flat_map(|name| [format!(".{name}.tmp"), format!(".{name}.gz.tmp")])
         .collect();
     names.extend(temporary);
     // Left by a process that ended without giving up the folder.
