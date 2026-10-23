@@ -767,6 +767,16 @@ async fn test_control_disabled_returns_404() {
     assert_eq!(listing["reports"][0]["name"], "nightly");
 
     let client = reqwest::Client::new();
+    // Rule 13: Save report is on during the run, and can't be changed.
+    let snap = wait_for_phase(
+        &client,
+        &base,
+        Some(AUTH_TOKEN),
+        &["increase", "maintain"],
+        Duration::from_secs(10),
+    )
+    .await;
+    assert_eq!(snap["report"]["save"], true, "{}", snap["report"]);
     let resp = post_control(&client, &base, "/api/v1/control/start", Some("{}"), true).await;
     assert_eq!(
         resp.status(),
@@ -793,6 +803,9 @@ async fn test_control_disabled_returns_404() {
     assert!(parent.join("nightly").join("report.json").exists());
 
     let _ = load.join().await.expect("execute");
+    // Rule 13: the run wrote its report into its folder without control.
+    assert!(parent.join("run").join("report.json").exists());
+    assert!(parent.join("run").join("report.html").exists());
     std::fs::remove_dir_all(&parent).ok();
 }
 
