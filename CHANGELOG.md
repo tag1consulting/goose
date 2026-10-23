@@ -1,7 +1,7 @@
 # Changelog
 
 ## 0.19.0-dev
- - [#770](https://github.com/tag1consulting/goose/pull/770) the dashboard's RPS chart and its data table end at the last complete second, so under steady load the line no longer drops to near zero at its newest point; when users wait seconds between requests, the newest seconds can still read low until each user sends its metrics (#769)
+ - [#770](https://github.com/tag1consulting/goose/pull/770) the dashboard and the HTML report draw a second only once its metrics are in: users send their metrics before waiting, the dashboard's RPS and average latency charts and their data tables end at the last complete second, and the report's per second count graphs leave out the run's final, partial second (#769)
  - [#767](https://github.com/tag1consulting/goose/pull/767) keep request, transaction and scenario times in microseconds, in buckets never more than 1% off, and show times under 10 ms to the hundredth of a millisecond (#585, #737, #366)
     o every time is taken from a `Duration` once and kept to the microsecond: a 0.4 ms request reads `0.4` where it read `0`, its minimum is 0.4 rather than 0, and the average is the mean of the real times rather than of whole milliseconds
     o percentiles come from one set of buckets in microseconds, never more than 1% off any time they hold, and a report holds only the buckets with a time. They replace the whole millisecond buckets, which rounded times from 101 to 500 ms to 10 ms, times from 501 ms to 1 s to 100 ms, and slower times to whole seconds. Now 1.4 s and 1.6 s no longer read as 1000 and 2000 ms (#737), and 2.2 ms and 2.5 ms are told apart (#366). The fastest, slowest and total times are kept exactly, so minimums, maximums and averages are exact
