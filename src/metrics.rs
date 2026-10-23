@@ -4678,6 +4678,19 @@ impl ReportSource<'_> {
             .map_or_else(Utc::now, |step| step.timestamp)
     }
 
+    /// The run's final second, counted as the graphs count seconds, when the
+    /// run ended partway through it: the per second count graphs leave it
+    /// out. `None` for a run still in progress, which has no end yet.
+    fn partial_final_second(&self) -> Option<usize> {
+        let first = self.metrics.history.first()?;
+        let last = self.metrics.history.last()?;
+        if !matches!(last.action, TestPlanStepAction::Finished) {
+            return None;
+        }
+        let ran = (last.timestamp - first.timestamp).num_microseconds()?;
+        (ran > 0 && ran % 1_000_000 != 0).then_some((ran / 1_000_000) as usize)
+    }
+
     /// Whether coordinated omission mitigation recorded synthetic times.
     fn co_active(&self) -> bool {
         self.metrics
@@ -4729,6 +4742,7 @@ impl ReportSource<'_> {
         baseline: Option<&ReportData<'static>>,
     ) -> Result<String, GooseError> {
         let test_start_time = self.started();
+        let partial_second = self.partial_final_second();
 
         // Prepare report summary variables.
         let users = self.metrics.maximum_users.to_string();
@@ -4865,6 +4879,7 @@ impl ReportSource<'_> {
                     &scenarios_rows,
                     self.graph_data
                         .get_scenarios_per_second_graph(!self.configuration.no_granular_report)
+                        .without_partial_second(partial_second)
                         .get_markup(&self.metrics.history, test_start_time),
                 )
             })
@@ -4881,6 +4896,7 @@ impl ReportSource<'_> {
                     &transactions_rows,
                     self.graph_data
                         .get_transactions_per_second_graph(!self.configuration.no_granular_report)
+                        .without_partial_second(partial_second)
                         .get_markup(&self.metrics.history, test_start_time),
                 )
             })
@@ -4894,6 +4910,7 @@ impl ReportSource<'_> {
                     &error_rows,
                     self.graph_data
                         .get_errors_per_second_graph(!self.configuration.no_granular_report)
+                        .without_partial_second(partial_second)
                         .get_markup(&self.metrics.history, test_start_time),
                 )
             })
@@ -4930,6 +4947,7 @@ impl ReportSource<'_> {
                 graph_rps_template: &self
                     .graph_data
                     .get_requests_per_second_graph(!self.configuration.no_granular_report)
+                    .without_partial_second(partial_second)
                     .get_markup(&self.metrics.history, test_start_time),
                 graph_average_response_time_template: &self
                     .graph_data
@@ -7924,5 +7942,108 @@ mod test {
                 .graph_data
                 .export_series_window_with_heatmap(300, Some(5), true, None);
         assert_eq!(window.heatmap.expect("heatmap").counts(3), (1, 0));
+    }
+
+    /// The points each line of the HTML report's graph `id` draws, by name.
+    fn report_graph_points(html: &str, id: &str) -> Vec<(String, usize)> {
+        let start = html
+            .find(&format!("getElementById('{id}')"))
+            .unwrap_or_else(|| panic!("no graph {}", id));
+        let script = &html[start..start + html[start..].find("</script>").unwrap()];
+        let line =
+            regex::Regex::new(r#"(?s)name: '([^']*)',\s*type: 'line',.*?data: (\[\[".*?\]\]),"#)
+                .unwrap();
+        line.captures_iter(script)
+            .map(|line| {
+                let points: Vec<(String, f64)> = serde_json::from_str(&line[2]).unwrap();
+                (line[1].to_string(), points.len())
+            })
+            .collect()
+    }
+
+    /// A run that ends 2.5 s in: the per second count graphs leave out its
+    /// final, partial second, every line the same one, while the active users
+    /// and average response time graphs keep it.
+    #[test]
+    fn report_count_graphs_leave_out_the_final_partial_second() {
+        let processor = make_test_processor(0);
+        let mut metrics = processor.metrics.clone();
+        let started = Utc.with_ymd_and_hms(2026, 10, 22, 10, 0, 0).unwrap();
+        metrics.history = vec![
+            TestPlanHistory {
+                action: TestPlanStepAction::Increasing,
+                timestamp: started,
+                users: 0,
+            },
+            TestPlanHistory {
+                action: TestPlanStepAction::Finished,
+                timestamp: started + chrono::Duration::milliseconds(2_500),
+                users: 0,
+            },
+        ];
+        metrics.errors.insert(
+            "GET /".to_string(),
+            GooseErrorMetricAggregate::new(
+                GooseMethod::Get,
+                "/".to_string(),
+                "500".to_string(),
+                "",
+            ),
+        );
+        let mut graph_data = GraphData::new();
+        // Seconds 0 and 1 are whole; second 2 holds half a second's.
+        for (second, count) in [(0, 10), (1, 10), (2, 5)] {
+            for _ in 0..count {
+                graph_data.record_requests_per_second("GET /", second);
+                graph_data.record_errors_per_second("GET /", second);
+                graph_data.record_transactions_per_second(second);
+                graph_data.record_scenarios_per_second(second);
+            }
+            graph_data.record_users_per_second(3, second);
+            graph_data.record_average_response_time_per_second("GET /".to_string(), second, 20);
+        }
+        // A request whose last one came in second 1 keeps it.
+        graph_data.record_requests_per_second("GET /early", 0);
+        graph_data.record_requests_per_second("GET /early", 1);
+        let configuration = GooseConfiguration::default();
+        let record = RunRecord::default();
+        let source = ReportSource {
+            configuration: &configuration,
+            metrics: &metrics,
+            graph_data: &graph_data,
+            graphs: true,
+            heatmap: None,
+            loaded: None,
+            record: &record,
+            graph_data_in_json: false,
+        };
+        let html = source.html(None).unwrap();
+
+        let mut rps = report_graph_points(&html, "graph-rps");
+        rps.sort();
+        assert_eq!(
+            rps,
+            [
+                ("GET /".to_string(), 2),
+                ("GET /early".to_string(), 2),
+                ("Total".to_string(), 2)
+            ]
+        );
+        for id in ["graph-eps", "graph-tps", "graph-sps"] {
+            let lines = report_graph_points(&html, id);
+            assert!(!lines.is_empty(), "{} draws a line", id);
+            for (line, points) in lines {
+                assert_eq!(points, 2, "{id} {line} ends at second 1");
+            }
+        }
+        assert_eq!(
+            report_graph_points(&html, "graph-active-users"),
+            [("Total".to_string(), 3)]
+        );
+        let lines = report_graph_points(&html, "graph-avg-response-time");
+        assert!(!lines.is_empty(), "graph-avg-response-time draws a line");
+        for (line, points) in lines {
+            assert_eq!(points, 3, "graph-avg-response-time {line} ends at second 2");
+        }
     }
 }

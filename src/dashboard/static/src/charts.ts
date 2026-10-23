@@ -152,6 +152,17 @@ export function baseChartOpts(colors: ChartColors): ChartOptions<"line"> {
 }
 
 /**
+ * A per second series without its newest second, which is still filling. A
+ * rate there holds a fraction of a second's requests or failures, so the line
+ * would end in a drop to near zero on every snapshot. An average there reads
+ * low: requests are recorded when they finish, under the second they started
+ * in, so that second is still short of its slowest ones.
+ */
+export function completeSeconds(values: number[]): number[] {
+  return values.slice(0, -1);
+}
+
+/**
  * The RPS chart's two lines. Failures/s is dashed so the lines differ by more
  * than colour.
  */
@@ -272,9 +283,11 @@ export function updateCharts(series: SeriesWindow, averageLatency: boolean): voi
   }
 
   if (drawable(chartRps)) {
-    chartRps.data.labels = labels;
-    chartRps.data.datasets[0].data = rps;
-    chartRps.data.datasets[1].data = fps;
+    const rpsComplete = completeSeconds(rps);
+    const fpsComplete = completeSeconds(fps);
+    chartRps.data.labels = labels.slice(0, Math.max(rpsComplete.length, fpsComplete.length));
+    chartRps.data.datasets[0].data = rpsComplete;
+    chartRps.data.datasets[1].data = fpsComplete;
     chartRps.update("none");
   }
   if (drawable(chartUsers)) {
@@ -283,8 +296,9 @@ export function updateCharts(series: SeriesWindow, averageLatency: boolean): voi
     chartUsers.update("none");
   }
   if (averageLatency && drawable(chartLatency)) {
-    chartLatency.data.labels = labels;
-    chartLatency.data.datasets[0].data = lat;
+    const latComplete = completeSeconds(lat);
+    chartLatency.data.labels = labels.slice(0, latComplete.length);
+    chartLatency.data.datasets[0].data = latComplete;
     chartLatency.update("none");
   }
 }

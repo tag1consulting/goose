@@ -2650,20 +2650,34 @@ impl GooseUser {
         Ok(())
     }
 
+    /// Whether the batch holds any request, transaction or scenario.
+    fn batch_has_data(&self) -> bool {
+        self.batch_item_count > 0
+            || self
+                .metrics_batch
+                .as_ref()
+                .is_some_and(|b| !b.transactions.is_empty() || !b.scenarios.is_empty())
+    }
+
+    /// Before a wait of at least [`METRICS_BATCH_MAX_AGE`], add the pending
+    /// request and transaction to the batch and send it. A batch's age is
+    /// checked only when something is added to it, so it would otherwise be
+    /// held through the wait.
+    pub(crate) fn flush_batch_before_wait(&mut self) -> TransactionResult {
+        if self.metrics_batch.is_none() {
+            return Ok(());
+        }
+        self.flush_pending_metrics()?;
+        self.flush_batch()
+    }
+
     /// Flush the current batch to the metrics channel.
     ///
     /// Sends the accumulated batch as a single [`GooseMetric::Batch`] message
     /// and resets the accumulator for the next batch.
     pub(crate) fn flush_batch(&mut self) -> TransactionResult {
-        if self.batch_item_count == 0 {
-            // Also check if there are transactions/scenarios without requests.
-            let has_data = self
-                .metrics_batch
-                .as_ref()
-                .is_some_and(|b| !b.transactions.is_empty() || !b.scenarios.is_empty());
-            if !has_data {
-                return Ok(());
-            }
+        if !self.batch_has_data() {
+            return Ok(());
         }
         let current_epoch = self
             .metrics_epoch

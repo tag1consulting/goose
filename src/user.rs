@@ -3,7 +3,7 @@ use std::time::{self, Duration};
 
 use crate::goose::{GooseUser, GooseUserCommand, Scenario, TransactionFunction, TransactionName};
 use crate::logger::GooseLog;
-use crate::metrics::{GooseMetric, ScenarioMetric, TransactionMetric};
+use crate::metrics::{GooseMetric, ScenarioMetric, TransactionMetric, METRICS_BATCH_MAX_AGE};
 
 pub(crate) async fn user_main(
     thread_number: usize,
@@ -80,6 +80,11 @@ pub(crate) async fn user_main(
                 if let Some((min, max)) = thread_scenario.transaction_wait {
                     // Total time left to wait before running the next transaction.
                     let mut wait_time = rand::rng().random_range(min..=max).as_millis();
+                    // Send the batch before a wait it would outlast: it is held
+                    // until something is added, so its seconds would read short.
+                    if wait_time >= METRICS_BATCH_MAX_AGE.as_millis() {
+                        let _ = thread_user.flush_batch_before_wait();
+                    }
                     // Track the time slept for Coordinated Omission Mitigation.
                     let sleep_timer = time::Instant::now();
                     // Never sleep more than 500 milliseconds, allowing a sleeping transaction to shut
@@ -315,4 +320,66 @@ async fn invoke_transaction_function(
     thread_user.pending_transaction = Some(raw_transaction);
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::GooseConfiguration;
+    use crate::goose::{GooseMethod, Transaction, TransactionResult};
+    use crate::metrics::{
+        GooseMetricBatch, GooseRawRequest, GooseRequestMetric, TransactionDetail,
+        METRICS_BATCH_MAX_AGE,
+    };
+    use crate::transaction;
+    use std::sync::Arc;
+
+    /// What a transaction that makes one request leaves behind: the request's
+    /// metric, pending until the transaction ends.
+    async fn one_request(user: &mut GooseUser) -> TransactionResult {
+        let raw = GooseRawRequest::new(GooseMethod::Get, "http://localhost/", vec![], "");
+        let detail = TransactionDetail {
+            scenario_index: 0,
+            scenario_name: Arc::from("waits"),
+            transaction_index: Some(0),
+            transaction_name: TransactionName::InheritNameByRequests(Arc::from("one")),
+        };
+        user.pending_request = Some(GooseRequestMetric::new(raw, detail, "/", 0, 0));
+        Ok(())
+    }
+
+    /// A user that waits 2 s after its transaction sends the transaction's
+    /// request before the wait, not after it.
+    #[tokio::test(start_paused = true)]
+    async fn batch_is_sent_before_a_wait() {
+        let configuration = GooseConfiguration::parse_args_default(&Vec::<&str>::new()).unwrap();
+        let mut user =
+            GooseUser::single("http://localhost:8080".parse().unwrap(), &configuration).unwrap();
+        let (tx, rx) = flume::unbounded();
+        user.metrics_channel = Some(tx);
+        user.metrics_batch = Some(GooseMetricBatch::new(0));
+        let mut scenario = Scenario::new("waits")
+            .register_transaction(transaction!(one_request))
+            .set_wait_time(Duration::from_secs(2), Duration::from_secs(2))
+            .unwrap();
+        scenario.weighted_transactions = vec![(0, scenario.transactions[0].name.clone())];
+        let (exit_tx, exit_rx) = flume::unbounded();
+
+        let started = tokio::time::Instant::now();
+        let user = tokio::spawn(user_main(0, scenario, user, exit_rx));
+        let batch = match rx.recv_async().await.unwrap() {
+            GooseMetric::Batch(batch) => batch,
+            other => panic!("expected a batch, got {:?}", other),
+        };
+        // The wait sleeps in chunks of at most 500 ms.
+        let limit = METRICS_BATCH_MAX_AGE + Duration::from_millis(500);
+        assert!(
+            started.elapsed() <= limit,
+            "the request was sent {:?} after the transaction, more than {limit:?}",
+            started.elapsed()
+        );
+        assert!(batch.requests.contains_key("GET /"));
+        exit_tx.send(GooseUserCommand::Exit).unwrap();
+        user.await.unwrap();
+    }
 }

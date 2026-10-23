@@ -130,17 +130,18 @@ test("an OS theme change redraws the line charts in the new theme's colours", as
     colorScheme: "dark",
     canvas: true,
     // A few seconds of series, so both axes draw ticks and the legend shows.
+    // The RPS chart leaves out the last, still counting second.
     snapshot: {
       ...IDLE_SNAPSHOT,
       series: {
         ...IDLE_SNAPSHOT.series,
         start_second: 10,
-        rps: [1, 2, 3],
-        fps: [0, 1, 0],
-        users: [1, 1, 2],
-        avg_latency_ms: [5, 6, 7],
+        rps: [1, 2, 3, 1],
+        fps: [0, 1, 0, 0],
+        users: [1, 1, 2, 2],
+        avg_latency_ms: [5, 6, 7, 7],
       },
-      flags: { ...IDLE_SNAPSHOT.flags, series_seconds: 3 },
+      flags: { ...IDLE_SNAPSHOT.flags, series_seconds: 4 },
     },
   });
   try {
@@ -188,6 +189,36 @@ test("an OS theme change redraws the line charts in the new theme's colours", as
       if (!fills.includes(call.value)) fills.push(call.value);
     }
     assert.deepEqual(fills, [LIGHT.rps, LIGHT.fps], "legend boxes");
+  } finally {
+    page.window.close();
+  }
+});
+
+test("the average latency chart ends at the last complete second", async () => {
+  const page = await openPage("/?token=" + TOKEN, FRESH, TOKEN, {
+    canvas: true,
+    // Second 13 is still filling, short of its slowest requests.
+    snapshot: {
+      ...IDLE_SNAPSHOT,
+      series: {
+        ...IDLE_SNAPSHOT.series,
+        start_second: 10,
+        rps: [1, 2, 3, 1],
+        fps: [0, 0, 0, 0],
+        users: [1, 1, 2, 2],
+        avg_latency_ms: [5, 6, 7, 1],
+      },
+      flags: { ...IDLE_SNAPSHOT.flags, series_seconds: 4, percentiles_over_time: false },
+    },
+  });
+  try {
+    const ticks = page.canvas.calls
+      .filter((call) => call.id === "chart-latency" && call.name === "fillText")
+      .map((call) => call.value[0]);
+    for (const second of ["10", "11", "12"]) {
+      assert.ok(ticks.includes(second), "x tick " + second + " in " + ticks);
+    }
+    assert.equal(ticks.includes("13"), false, "no x tick for the second still filling: " + ticks);
   } finally {
     page.window.close();
   }

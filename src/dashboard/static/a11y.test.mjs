@@ -413,6 +413,12 @@ test("Stop after an invalid Apply clears the Target's invalid state", async () =
 
 // The RPS chart.
 
+test("the RPS chart leaves out the newest second, still counting", () => {
+  assert.deepEqual(charts.completeSeconds([]), []);
+  assert.deepEqual(charts.completeSeconds([5]), []);
+  assert.deepEqual(charts.completeSeconds([10, 10, 3]), [10, 10]);
+});
+
 test("the failures line is dashed and the RPS line solid", () => {
   const datasets = charts.rpsDatasets({
     rps: "#3d8bfd",
