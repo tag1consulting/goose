@@ -905,7 +905,8 @@ pub(crate) fn deletable_files() -> Vec<String> {
     names
 }
 
-/// Whether a Goose process holds `folder` for its run: Delete leaves it alone.
+/// Whether a Goose process reserves `folder` for its run, so Delete leaves it
+/// alone.
 /// A process that ended without giving the folder up leaves [`RESERVED`]
 /// behind; removing that file by hand frees the folder.
 #[cfg(feature = "dashboard")]

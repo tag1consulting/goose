@@ -149,7 +149,7 @@
     o the runs panel lists each folder beside the run's folder that holds a `report.json` or `report.json.gz`, newest first, with its notes, and offers each report as HTML, JSON or Markdown
     o the runs panel compares two reports, and with `--dashboard-control` deletes one: its reports and Goose's logs, then its folder if that leaves it empty
     o Delete refuses the folder of the run in progress, the folder a bare `--goose-log` is open in, and a folder another Goose process is writing to
-    o the end of run banner offers the report's downloads, or says why it failed; a run with no folder shows why for the whole run
+    o the end of run banner offers the report's downloads, or says why the report failed; a run with no folder shows why for the whole run
     o new routes `GET /api/v1/reports`, `GET /api/v1/reports/{name}/{file}` and `GET /api/v1/reports/{name}/compare.md`
     o new control routes `POST /api/v1/control/report`, `POST /api/v1/control/report/now`, `POST /api/v1/control/quit` and `DELETE /api/v1/reports/{name}`, with `--dashboard-control` only
     o the Quit button, shown while idle, shuts Goose down
@@ -167,7 +167,7 @@
     o **bug fix**: Ctrl-C while Idle after a run exits; it canceled into a plan that held 0 users with no end
     o **bug fix**: a graph series that starts after the run did is drawn from its own first second
     o **API change**: `GooseConfiguration` has the new public fields `output_dir`, `compress`, `notes`, `report_graph_data` and `render_report`, and `GooseDefault` the new variants `OutputDir`, `Compress`, `Notes` and `ReportGraphData`
-    o **API change**: `config::RUN_FOLDER` is public; an output field holds it when its flag is given without a path, and a Controller's `config` shows it as `(the run's folder)`
+    o **API change**: `config::RUN_FOLDER` is public; an output field holds it when its flag is given without a path, and a Controller's `config` and `config-json` show it as `(the run's folder)`
     o **API change**: `reset_killswitch()` is public
     o `--no-save`, `--runs-dir`, `GooseDefault::NoSave`, `GooseDefault::RunsDir`, `run.json`, `/api/v1/runs` and its routes, and the snapshot's top level `save` are removed, and the SSE `closed` event's data is `1` again; none was released, so the snapshot stays `version: 1`
  - [#694](https://github.com/tag1consulting/goose/issues/694) refuse a Users change while a Stop, `shutdown` or Ctrl-C is ramping the load test down; Users was accepted during that ramp down and brought the load test back

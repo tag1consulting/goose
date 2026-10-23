@@ -60,8 +60,8 @@
 //! [`BufWriter`](https://docs.rs/tokio/*/tokio/io/struct.BufWriter.html). The logger thread only
 //! starts if at least one logger is enabled.
 //!
-//! The `--goose-log` run time option records the errors and messages Goose logs. It is not
-//! written by the logger thread: the global logger writes it, through a handle kept in this
+//! The `--goose-log` run time option records the errors and messages Goose logs. The logger
+//! thread does not write this log: the global logger writes it, through a handle kept in this
 //! file. The log a bare `--goose-log` writes moves into each run's folder as the run
 //! starts. A Goose log named `.gz` ends a gzip member at the end of each run, so the file
 //! is whole between runs.

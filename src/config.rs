@@ -2398,7 +2398,8 @@ fn non_empty(value: &Option<String>) -> Option<&str> {
     value.as_deref().filter(|value| !value.is_empty())
 }
 
-/// An output flag's value as an error and a Controller's `config` show it.
+/// An output flag's value as an error and a Controller's `config` and
+/// `config-json` show it.
 fn shown_path(value: &str) -> String {
     if value == RUN_FOLDER {
         "(the run's folder)".to_string()

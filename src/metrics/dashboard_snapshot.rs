@@ -97,8 +97,8 @@ pub(crate) struct SnapshotReport {
     /// Why the last report Goose tried to write into the run's folder
     /// failed, or why the run has no folder.
     pub error: Option<String>,
-    /// How many reports Goose has written into a run's folder since it
-    /// started, at the end of a run or by Save report now.
+    /// How many reports Goose has written into a run's folder since the
+    /// process started, at the end of a run or by Save report now.
     pub writes: u64,
 }
 

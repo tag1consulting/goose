@@ -225,8 +225,8 @@ last_report_name: string | null,
  */
 error: string | null,
 /**
- * How many reports Goose has written into a run's folder since it
- * started, at the end of a run or by Save report now.
+ * How many reports Goose has written into a run's folder since the
+ * process started, at the end of a run or by Save report now.
  */
 writes: number, };
 
