@@ -245,8 +245,8 @@ function postReport(path: string, body: string): Promise<{ ok: boolean; message:
 }
 
 /** Whether `box` can be changed now. */
-function switchAvailable(box: HTMLInputElement): boolean {
-  return controlEnabled && !switchPending && !(box === saveReportBox && noFolderReason);
+function switchAvailable(box: HTMLInputElement | null): boolean {
+  return !!box && controlEnabled && !switchPending && !(box === saveReportBox && noFolderReason);
 }
 
 function onSwitch(field: "save" | "graph_data", box: HTMLInputElement): void {
@@ -260,9 +260,7 @@ function onSwitch(field: "save" | "graph_data", box: HTMLInputElement): void {
   void postReport("/api/v1/control/report", JSON.stringify({ [field]: box.checked })).then(
     (answer) => {
       switchPending = false;
-      for (const other of [saveReportBox, graphDataBox]) {
-        if (other) setAvailable(other, switchAvailable(other));
-      }
+      for (const other of [saveReportBox, graphDataBox]) setAvailable(other, switchAvailable(other));
       if (!answer.ok) {
         box.checked = !box.checked;
         showRunsError("Couldn't change the switch: " + answer.message);
@@ -319,10 +317,7 @@ let bannerKey: string | null = null;
 /** The banner once a run's report is written, with its downloads. */
 function setRunBanner(report: SnapshotReport, phase: string): void {
   if (!runBannerEl) return;
-  const key =
-    phase === "idle"
-      ? (report.last_report || "") + "|" + (report.last_report_name || "") + "|" + (report.error || "")
-      : "";
+  const key = phase === "idle" ? (report.last_report || "") + "|" + (report.error || "") : "";
   if (key === bannerKey) return;
   bannerKey = key;
   // The element stays in the page, empty when there is nothing to say, so
@@ -339,12 +334,10 @@ function setRunBanner(report: SnapshotReport, phase: string): void {
   runBannerEl.className = "run-banner info";
   const text = document.createElement("span");
   runBannerEl.appendChild(text);
+  text.textContent = "Report saved in " + report.last_report + ".";
   // The routes take only some folder names; for any other, say where it is.
-  if (!report.last_report_name) {
-    text.textContent = "Report saved in " + report.last_report + ".";
-    return;
-  }
-  text.textContent = "Report saved in " + report.last_report + ". Download HTML, JSON or Markdown.";
+  if (!report.last_report_name) return;
+  text.textContent += " Download HTML, JSON or Markdown.";
   runBannerEl.appendChild(downloadButtons(report.last_report_name));
 }
 
@@ -549,9 +542,7 @@ export function loadRuns(): void {
 export function setRunsControl(enabled: boolean): void {
   controlEnabled = enabled;
   if (runsDeleteCol) runsDeleteCol.hidden = !enabled;
-  for (const box of [saveReportBox, graphDataBox]) {
-    if (box) setAvailable(box, switchAvailable(box));
-  }
+  for (const box of [saveReportBox, graphDataBox]) setAvailable(box, switchAvailable(box));
   if (saveNowButton) {
     saveNowButton.hidden = !enabled;
     setAvailable(saveNowButton, saveNowAvailable());

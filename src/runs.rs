@@ -219,11 +219,7 @@ impl RunFolder {
 
     /// The error for a folder Goose can't write to.
     pub(crate) fn error(&self, e: io::Error) -> GooseError {
-        GooseError::InvalidOption {
-            option: "--output-dir".to_string(),
-            value: self.path.to_string_lossy().into_owned(),
-            detail: format!("Can't write to {}: {e}", self.path.display()),
-        }
+        folder_error(&self.path, e)
     }
 
     /// Fail before any load when the folder can't be written to: the nearest
@@ -261,6 +257,16 @@ impl RunFolder {
     }
 }
 
+/// The error for `path` in a run's folder, or the folder, that Goose can't
+/// write to.
+pub(crate) fn folder_error(path: &Path, e: io::Error) -> GooseError {
+    GooseError::InvalidOption {
+        option: "--output-dir".to_string(),
+        value: path.to_string_lossy().into_owned(),
+        detail: format!("Can't write to {}: {e}", path.display()),
+    }
+}
+
 /// Take `base`, or the first of `base-2`, `base-3` and so on, that is
 /// missing or an empty folder: create it, then create [`RESERVED`] in it only
 /// if no other process has, so two processes never take the same folder.
@@ -274,31 +280,50 @@ fn reserve(base: &Path) -> io::Result<PathBuf> {
     let name = base
         .file_name()
         .map(|name| name.to_string_lossy().into_owned());
-    for n in 1u32.. {
+    let mut n = 1u32;
+    // Another process can remove an empty folder between the steps below;
+    // the same name is then tried again, a few times at most.
+    let mut retries = 3;
+    loop {
         let candidate = match (n, &name) {
             (1, _) | (_, None) => base.to_path_buf(),
             (n, Some(name)) => base.with_file_name(format!("{name}-{n}")),
         };
-        let free = match std::fs::create_dir(&candidate) {
-            Ok(()) => true,
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => is_empty_folder(&candidate)?,
+        let (created, free) = match std::fs::create_dir(&candidate) {
+            Ok(()) => (true, Ok(true)),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                (false, is_empty_folder(&candidate))
+            }
             Err(e) => return Err(e),
         };
-        if free {
-            match std::fs::OpenOptions::new()
+        let taken = match free {
+            Ok(true) => std::fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)
                 .open(candidate.join(RESERVED))
-            {
-                Ok(_) => return Ok(candidate),
-                // Another process took it first.
-                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
-                Err(e) => return Err(e),
+                .map(|_| true),
+            other => other,
+        };
+        match taken {
+            Ok(true) => return Ok(candidate),
+            Ok(false) => {}
+            // Another process took it first.
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound && retries > 0 => {
+                retries -= 1;
+                continue;
+            }
+            Err(e) => {
+                if created {
+                    let _ = std::fs::remove_dir(&candidate);
+                }
+                return Err(e);
             }
         }
         if name.is_none() {
             break;
         }
+        n += 1;
     }
     Err(io::Error::new(
         io::ErrorKind::AlreadyExists,
@@ -321,13 +346,15 @@ fn is_empty_folder(path: &Path) -> io::Result<bool> {
 pub(crate) struct Output {
     /// The run's folder, chosen when the run starts, when it may need one.
     pub folder: Option<RunFolder>,
-    /// The folder this process holds [`RESERVED`] in, until its run ends.
+    /// The folder this process holds [`RESERVED`] in: until its run ends, or
+    /// while a bare `--goose-log` is open there, until the next run starts.
     reserved: Option<PathBuf>,
     /// Save report: write `report.json` and `report.html` into the folder.
     pub save_report: bool,
     /// Goose turned Save report off for this run, as the folder only the
-    /// dashboard asked for can't be written to; the next run turns it on.
-    pub save_report_held: bool,
+    /// dashboard asked for can't be written to; it is on again when the run
+    /// ends.
+    save_report_held: bool,
     /// Include graph data in the JSON report.
     pub graph_data: bool,
     /// When the run started.
@@ -357,8 +384,22 @@ impl Output {
         *lock(&self.error) = error;
     }
 
-    /// Give up the run's folder as its run ends: remove [`RESERVED`], then the
-    /// folder if that leaves it empty. Only the first call does anything.
+    /// Why the run in progress has no folder.
+    fn no_folder_reason(&self) -> String {
+        self.error()
+            .unwrap_or_else(|| "this run has no folder".to_string())
+    }
+
+    /// As a run ends: turn Save report on again if Goose turned it off for
+    /// the run, as its folder could not be written to.
+    pub(crate) fn end_save_report_hold(&mut self) {
+        if std::mem::take(&mut self.save_report_held) {
+            self.save_report = true;
+        }
+    }
+
+    /// Give up the run's folder: remove [`RESERVED`], then the folder if that
+    /// leaves it empty. Only the first call does anything.
     pub(crate) fn release_folder(&mut self) {
         release(self.reserved.take());
     }
@@ -373,7 +414,7 @@ fn release(folder: Option<PathBuf>) {
 }
 
 /// `mutex` locked, even after a panic while it was held.
-fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+pub(crate) fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -437,22 +478,13 @@ impl GooseAttack {
         self.output.set_error(None);
         self.output.saved_now = false;
         self.output.started = None;
-        if std::mem::take(&mut self.output.save_report_held) {
-            self.output.save_report = true;
-        }
+        self.output.end_save_report_hold();
         if !self.configuration.uses_run_folder() {
             return Ok(());
         }
         let started = Local::now();
         let folder = RunFolder::choose(&self.configuration, started)
-            .map_err(|e| {
-                let base = RunFolder::base(&self.configuration, started);
-                GooseError::InvalidOption {
-                    option: "--output-dir".to_string(),
-                    value: base.to_string_lossy().into_owned(),
-                    detail: format!("Can't write to {}: {e}", base.display()),
-                }
-            })
+            .map_err(|e| folder_error(&RunFolder::base(&self.configuration, started), e))
             .and_then(|folder| {
                 self.output.reserved = Some(folder.path.clone());
                 folder.check_writable().map(|()| folder)
@@ -479,7 +511,8 @@ impl GooseAttack {
                 None => GOOSE_LOG.to_string(),
             };
             // Move the log first, so the line naming this run's folder lands
-            // in that folder's log.
+            // in that folder's log. A failure here ends the session, so the
+            // last run's folder, given up next, holds no open log after it.
             move_goose_log(&folder.file(&name)).map_err(|e| folder.error(e))?;
         }
         info!("writing this run's files to {}", folder.path.display());
@@ -540,7 +573,8 @@ impl GooseAttack {
     /// Save report on, the folder's, attempting both even if one fails.
     /// Returns the first error, except that a folder's report that fails
     /// when the session `returns_to_idle` is only shown on the dashboard, so
-    /// the session goes on.
+    /// the session goes on. An autostarted run that would wait for a
+    /// dashboard tab exits on that error instead.
     pub(crate) async fn write_end_of_run(
         &mut self,
         returns_to_idle: bool,
@@ -895,10 +929,7 @@ impl GooseAttack {
             );
         }
         if save == Some(true) && self.run_in_progress && self.output.folder.is_none() {
-            let message = self
-                .output
-                .error()
-                .unwrap_or_else(|| "this run has no folder".to_string());
+            let message = self.output.no_folder_reason();
             return self.control_outcome(
                 goose_attack_run_state,
                 false,
@@ -959,10 +990,7 @@ impl GooseAttack {
             );
         }
         let Some(folder) = self.output.folder.clone() else {
-            let message = self
-                .output
-                .error()
-                .unwrap_or_else(|| "this run has no folder".to_string());
+            let message = self.output.no_folder_reason();
             return refuse(self, goose_attack_run_state, "report_failed", &message);
         };
         if self
@@ -1319,6 +1347,60 @@ mod tests {
             });
             assert_eq!(keep, sent, "path={path}");
         }
+    }
+
+    /// The run's folder goes at its end when the run wrote nothing into it;
+    /// otherwise only [`RESERVED`] goes.
+    #[test]
+    fn a_released_folder_goes_only_when_empty() {
+        let parent = temp_dir("release");
+        let started = Local::now();
+        let empty =
+            RunFolder::choose(&configuration(Some(&parent.join("empty"))), started).unwrap();
+        let mut output = Output::default();
+        output.reserved = Some(empty.path.clone());
+        output.release_folder();
+        assert!(!empty.path.exists());
+        let used = RunFolder::choose(&configuration(Some(&parent.join("used"))), started).unwrap();
+        std::fs::write(used.file("goose.log"), "x").unwrap();
+        output.reserved = Some(used.path.clone());
+        output.release_folder();
+        assert!(used.file("goose.log").exists());
+        assert!(!used.file(RESERVED).exists());
+        std::fs::remove_dir_all(&parent).ok();
+    }
+
+    /// A folder report that fails ends the run with an error, unless the
+    /// session returns to Idle, which shows the reason instead; a
+    /// `--report-file` path that fails is an error either way.
+    #[tokio::test]
+    async fn a_failed_folder_report_is_an_error_unless_the_session_goes_on() {
+        let parent = temp_dir("end-of-run-error");
+        let run = |report_file: Vec<String>| {
+            let mut attack = GooseAttack::initialize_with_config(GooseConfiguration {
+                report_file,
+                ..configuration(Some(&parent.join("run")))
+            })
+            .unwrap();
+            let folder = RunFolder::choose(&attack.configuration, Local::now()).unwrap();
+            // A folder where report.html goes, so the write fails.
+            std::fs::create_dir(folder.file(REPORT_HTML)).unwrap();
+            attack.run_in_progress = true;
+            attack.output.started = Some(Utc::now());
+            attack.output.save_report = true;
+            attack.output.folder = Some(folder);
+            attack
+        };
+        let mut attack = run(Vec::new());
+        assert!(attack.write_end_of_run(false).await.is_err());
+        let mut attack = run(Vec::new());
+        attack.write_end_of_run(true).await.unwrap();
+        let error = attack.output.error().unwrap_or_default();
+        assert!(error.contains(&*parent.to_string_lossy()), "{}", error);
+        let missing = parent.join("missing").join("report.html");
+        let mut attack = run(vec![missing.to_string_lossy().into_owned()]);
+        assert!(attack.write_end_of_run(true).await.is_err());
+        std::fs::remove_dir_all(&parent).ok();
     }
 
     /// The banner's downloads name only a folder the report routes take.

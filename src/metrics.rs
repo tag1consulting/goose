@@ -5003,9 +5003,8 @@ impl std::io::Write for ReportOut {
 
 /// Write a run's folder report from `source`: `report.html`, then
 /// `report.json` last, each through a temporary file and a rename, so a
-/// folder never holds half a report. With `compress`, the
-/// level, each is gzipped and named with `.gz` added. Returns the files
-/// written.
+/// folder never holds half a report. With `compress`, the level, each is
+/// gzipped and named with `.gz` added. Returns the files written.
 pub(crate) fn write_folder_report(
     folder: &std::path::Path,
     source: &ReportSource<'_>,
@@ -5020,8 +5019,6 @@ pub(crate) fn write_folder_report(
         Some(content) => content,
         None => html.insert(source.html(baseline)?),
     };
-    // Each report is written to a temporary file and renamed into place, so
-    // a reader never sees one half written.
     let write = |name: &str, body: &dyn Fn(&mut ReportOut) -> std::io::Result<()>| {
         let name = format!("{name}{gz}");
         let path = folder.join(&name);
@@ -5036,7 +5033,7 @@ pub(crate) fn write_folder_report(
             Ok(()) => Ok(path),
             Err(err) => {
                 let _ = fs::remove_file(&tmp);
-                Err(folder_io_error(&path, err))
+                Err(crate::runs::folder_error(&path, err))
             }
         }
     };
@@ -5049,15 +5046,6 @@ pub(crate) fn write_folder_report(
             .map_err(|e| std::io::Error::other(e.to_string()))
     })?;
     Ok(vec![html_path, json_path])
-}
-
-/// The error for a report that can't be written to `path` in a run's folder.
-fn folder_io_error(path: &std::path::Path, err: std::io::Error) -> GooseError {
-    GooseError::InvalidOption {
-        option: "--output-dir".to_string(),
-        value: path.to_string_lossy().into_owned(),
-        detail: format!("Can't write to {}: {err}", path.display()),
-    }
 }
 
 /// The error for a report that can't be written to `path`.

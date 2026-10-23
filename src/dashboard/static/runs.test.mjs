@@ -376,6 +376,11 @@ test("Delete shows only with control on, confirms, and sends DELETE with the Bea
   const listed = () => page.requests.filter((r) => r.path === "/api/v1/reports").length;
   const before = listed();
 
+  // The running row's Delete does nothing.
+  buttons[5].click();
+  await settle(page.window);
+  assert.deepEqual(asked, []);
+
   // Declined: nothing is sent.
   buttons[1].click();
   await settle(page.window);
@@ -456,6 +461,11 @@ test("without control the switches stay read only as snapshots arrive", async ()
     assert.equal(doc.getElementById("save-report").checked, save);
     assert.equal(doc.getElementById("save-report").getAttribute("aria-disabled"), "true");
     assert.equal(doc.getElementById("graph-data").getAttribute("aria-disabled"), "true");
+    // A click on a read only switch changes nothing and sends nothing.
+    doc.getElementById("save-report").click();
+    await settle(page.window);
+    assert.equal(doc.getElementById("save-report").checked, save);
+    assert.equal(page.requests.filter((r) => r.method === "POST").length, 0);
     assert.equal(doc.getElementById("save-now").hidden, true);
   }
 });
@@ -500,6 +510,7 @@ test("a switch keeps focus while its change is sent, and Save report now sends o
   save.click();
   await settle(page.window);
   assert.equal(doc.activeElement, save);
+  assert.equal(save.disabled, false);
   assert.equal(save.getAttribute("aria-disabled"), "true");
   // A click while it is unavailable changes nothing and sends nothing.
   const checked = save.checked;
@@ -565,6 +576,18 @@ test("a run with no folder shows why for the whole run, with Save report off", a
   await settle(page.window);
   assert.equal(banner.hidden, true);
   assert.equal(save.getAttribute("aria-disabled"), "false");
+});
+
+test("one report is counted as one, and a long note stays on one line with all of it on hover", async () => {
+  const notes = "a long note ".repeat(20).trim();
+  const page = await openPage("/?token=" + TOKEN, FRESH, TOKEN, {
+    reports: { dir: "goose-runs", reports: [report("nightly", { notes })] },
+  });
+  const doc = page.window.document;
+  assert.equal(doc.getElementById("runs-footer").textContent, "1 report in goose-runs");
+  const cell = doc.querySelector("#runs-body td.run-notes");
+  assert.equal(cell.title, notes);
+  assert.equal(cell.textContent, notes);
 });
 
 test("the banner offers downloads only for a folder the routes take", async () => {

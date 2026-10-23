@@ -2397,7 +2397,7 @@ fn non_empty(value: &Option<String>) -> Option<&str> {
     value.as_deref().filter(|value| !value.is_empty())
 }
 
-/// An output flag's value as an error shows it.
+/// An output flag's value as an error and a Controller's `config` show it.
 fn shown_path(value: &str) -> String {
     if value == RUN_FOLDER {
         "(the run's folder)".to_string()
@@ -4053,10 +4053,10 @@ impl GooseConfiguration {
         // --render-report writes the reports --report-file paths name, with the
         // notes and graph data of the JSON report it reads.
         if let Some(render_report) = self.render_report() {
-            if self.notes().is_some() {
+            if let Some(notes) = self.notes() {
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.notes`".to_string(),
-                    value: self.notes().unwrap_or_default().to_string(),
+                    value: notes.to_string(),
                     detail: "`configuration.notes` (--notes) is not allowed with --render-report, which keeps the notes of the JSON report it reads."
                         .to_string(),
                 });
@@ -4717,11 +4717,18 @@ mod test {
     /// it expected a usize.
     #[test]
     fn compress_default_expects_a_usize() {
+        let attack = || GooseAttack::initialize_with_config(GooseConfiguration::default());
         for result in [
-            GooseAttack::initialize_with_config(GooseConfiguration::default())
-                .and_then(|a| a.set_default(GooseDefault::Compress, "6")),
-            GooseAttack::initialize_with_config(GooseConfiguration::default())
-                .and_then(|a| a.set_default(GooseDefault::Compress, true)),
+            attack().and_then(|a| a.set_default(GooseDefault::Compress, "6")),
+            attack().and_then(|a| a.set_default(GooseDefault::Compress, true)),
+            attack().and_then(|a| a.set_default(GooseDefault::Compress, 6.0)),
+            attack().and_then(|a| a.set_default(GooseDefault::Compress, GooseLogFormat::Json)),
+            attack().and_then(|a| {
+                a.set_default(
+                    GooseDefault::Compress,
+                    GooseCoordinatedOmissionMitigation::Disabled,
+                )
+            }),
         ] {
             match result {
                 Err(GooseError::InvalidOption { detail, .. }) => {
@@ -4823,6 +4830,73 @@ mod test {
         configuration.configure(&defaults).unwrap();
         assert_eq!(configuration.notes(), None);
         assert!(!configuration.report_graph_data);
+        assert!(configuration.validate().is_ok());
+    }
+
+    /// Only the dashboard asks for the folder when no output flag is given
+    /// without a path and no `--output-dir`, from the command line or code.
+    #[test]
+    fn folder_only_for_dashboard_table() {
+        let dashboard = || GooseConfiguration {
+            dashboard: true,
+            ..Default::default()
+        };
+        assert!(dashboard().folder_only_for_dashboard());
+        for configuration in [
+            GooseConfiguration {
+                report_file: vec![RUN_FOLDER.to_string()],
+                ..dashboard()
+            },
+            GooseConfiguration {
+                request_log: Some(RUN_FOLDER.to_string()),
+                ..dashboard()
+            },
+            GooseConfiguration {
+                output_dir: Some("runs".to_string()),
+                ..dashboard()
+            },
+        ] {
+            assert!(!configuration.folder_only_for_dashboard());
+        }
+        let mut configuration = dashboard();
+        let defaults = GooseDefaults {
+            output_dir: Some("runs".to_string()),
+            ..GooseDefaults::default()
+        };
+        configuration.configure(&defaults).unwrap();
+        assert!(!configuration.folder_only_for_dashboard());
+    }
+
+    /// Under `--no-metrics` the dashboard saves nothing, so `--output-dir`
+    /// alone is refused, and the error never says to add `--dashboard`.
+    #[test]
+    fn output_dir_under_no_metrics_never_suggests_the_dashboard() {
+        let configuration = GooseConfiguration {
+            output_dir: Some("runs".to_string()),
+            dashboard: true,
+            no_metrics: true,
+            co_mitigation: Some(GooseCoordinatedOmissionMitigation::Disabled),
+            ..Default::default()
+        };
+        match configuration.validate() {
+            Err(GooseError::InvalidOption { detail, .. }) => {
+                assert!(detail.contains("except under --no-metrics"), "{}", detail);
+                assert!(!detail.contains("add --dashboard"), "{}", detail);
+            }
+            other => panic!("{:?}", other),
+        }
+    }
+
+    /// An empty `--render-report` is not given.
+    #[test]
+    fn an_empty_render_report_is_not_set() {
+        let configuration = GooseConfiguration {
+            render_report: Some(String::new()),
+            notes: Some("kept".to_string()),
+            report_file: vec!["report.html".to_string()],
+            ..Default::default()
+        };
+        assert_eq!(configuration.render_report(), None);
         assert!(configuration.validate().is_ok());
     }
 

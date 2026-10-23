@@ -412,24 +412,23 @@ fn markdown_paragraph(text: &str) -> String {
         .join("  \n")
 }
 
-/// `line` with a backslash before a leading `#`, `-` or `+`, the `.` after
-/// leading digits, and every `<`, `>` and `|`.
+/// `line` without its indent, which could start a code block, and with a
+/// backslash before a leading `#`, `-`, `+`, `*` or `=`, the `.` or `)` after
+/// leading digits, and every `\\`, `<`, `>` and `|`.
 fn escape_line(line: &str) -> String {
-    let start = line.len() - line.trim_start().len();
-    let (indent, mut rest) = line.split_at(start);
+    let mut rest = line.trim_start();
     let mut out = String::with_capacity(line.len() + 8);
-    out.push_str(indent);
-    if rest.starts_with(['#', '-', '+']) {
+    if rest.starts_with(['#', '-', '+', '*', '=']) {
         out.push('\\');
     }
     let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
-    if digits > 0 && rest[digits..].starts_with('.') {
-        out.push_str(&rest[..digits]);
-        out.push_str("\\.");
+    if digits > 0 && rest[digits..].starts_with(['.', ')']) {
+        out.push_str(&rest[..digits + 1]);
+        out.insert(out.len() - 1, '\\');
         rest = &rest[digits + 1..];
     }
     for c in rest.chars() {
-        if matches!(c, '<' | '>' | '|') {
+        if matches!(c, '\\' | '<' | '>' | '|') {
             out.push('\\');
         }
         out.push(c);
@@ -446,11 +445,12 @@ mod tests {
     #[test]
     fn notes_are_escaped_line_by_line() {
         let note = "# not a heading\n- not a list\n+ nor this\n> not a quote\n12. not a list\n\
-                    a <b>tag</b> | a cell\n  1.5 seconds";
+                    a <b>tag</b> | a cell\n  1.5 seconds\n* star\n===\n3) item\n\\# kept\n    not code";
         assert_eq!(
             markdown_paragraph(note),
             "\\# not a heading  \n\\- not a list  \n\\+ nor this  \n\\> not a quote  \n\
-             12\\. not a list  \na \\<b\\>tag\\</b\\> \\| a cell  \n  1\\.5 seconds"
+             12\\. not a list  \na \\<b\\>tag\\</b\\> \\| a cell  \n1\\.5 seconds  \n\
+             \\* star  \n\\===  \n3\\) item  \n\\\\# kept  \nnot code"
         );
     }
 }

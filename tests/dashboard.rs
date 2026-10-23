@@ -793,6 +793,10 @@ async fn test_control_disabled_returns_404() {
         let resp = post_control(&client, &base, path, Some(body), true).await;
         assert_eq!(resp.status(), 404, "control off must 404 {}", path);
     }
+    let snap = get_snapshot_json(&client, &base, Some(AUTH_TOKEN))
+        .await
+        .unwrap();
+    assert_eq!(snap["report"]["save"], true, "{}", snap["report"]);
     let resp = client
         .delete(format!("{base}/api/v1/reports/nightly"))
         .header("Authorization", bearer_header())
@@ -3440,6 +3444,8 @@ async fn test_report_switches_refuse_what_they_cannot_do() {
         assert!(Instant::now() < deadline, "{}", snap["report"]);
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
+    // The failed write left no temporary file.
+    assert!(!folder.join(".report.html.tmp").exists());
     std::fs::remove_dir(&in_the_way).unwrap();
     let stop = post_control(&client, &base, "/api/v1/control/stop", Some("{}"), true).await;
     assert_eq!(stop.status(), 200);
@@ -3532,27 +3538,33 @@ async fn test_save_report_now_counts_its_writes() {
         wait_for_active_users(&client, &base, Some(AUTH_TOKEN), 2, Duration::from_secs(30)).await;
     let before = snap["report"]["writes"].as_u64().expect("writes");
     // Several at once: the first writes, and one sent while it is still
-    // writing is refused.
-    let answers = futures::future::join_all((0..5).map(|_| {
-        post_control(
-            &client,
-            &base,
-            "/api/v1/control/report/now",
-            Some("{}"),
-            true,
-        )
-    }))
-    .await;
+    // writing is refused. A burst the main loop happens to take one at a
+    // time, each after the last write ended, is sent again.
     let mut codes = Vec::new();
     let mut oks = 0u64;
-    for answer in answers {
-        let body: serde_json::Value = answer.json().await.unwrap();
-        codes.push(if body["ok"] == true {
-            oks += 1;
-            "ok".to_string()
-        } else {
-            body["error"].as_str().unwrap_or_default().to_string()
-        });
+    for _ in 0..5 {
+        let answers = futures::future::join_all((0..5).map(|_| {
+            post_control(
+                &client,
+                &base,
+                "/api/v1/control/report/now",
+                Some("{}"),
+                true,
+            )
+        }))
+        .await;
+        for answer in answers {
+            let body: serde_json::Value = answer.json().await.unwrap();
+            codes.push(if body["ok"] == true {
+                oks += 1;
+                "ok".to_string()
+            } else {
+                body["error"].as_str().unwrap_or_default().to_string()
+            });
+        }
+        if codes.iter().any(|code| code == "report_busy") {
+            break;
+        }
     }
     assert!(codes.iter().any(|code| code == "ok"), "{:?}", codes);
     assert!(

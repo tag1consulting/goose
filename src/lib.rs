@@ -2446,6 +2446,7 @@ impl GooseAttack {
             if !self.goose_log_in_folder() {
                 self.output.release_folder();
             }
+            self.output.end_save_report_hold();
             // End the Goose log's gzip member, so the finished run's log is
             // whole while Idle; lines until the next run are whole members.
             logger::finish_goose_log();
@@ -3091,12 +3092,13 @@ impl GooseAttack {
         // A bare --goose-log moved into this run's folder, and stays open there
         // after the run ends.
         #[cfg(feature = "dashboard")]
-        if let (Some(log_folder), Some(folder), true) = (
-            &goose_attack_run_state.dashboard_log_folder,
-            &self.output.folder,
-            self.goose_log_in_folder(),
-        ) {
-            log_folder.set(Some(&folder.path));
+        if self.goose_log_in_folder() {
+            if let (Some(log_folder), Some(folder)) = (
+                &goose_attack_run_state.dashboard_log_folder,
+                &self.output.folder,
+            ) {
+                log_folder.set(Some(&folder.path));
+            }
         }
 
         // If enabled, spawn a logger thread.
@@ -3112,7 +3114,8 @@ impl GooseAttack {
         goose_attack_run_state.throttle_threads_tx = throttle_threads_tx;
         goose_attack_run_state.parent_to_throttle_tx = parent_to_throttle_tx;
 
-        // Re-create the metrics channel and spawn a fresh processor.
+        // Re-create the metrics channel and spawn a fresh processor. It reads
+        // Save report as start_run_folder left it, so that comes first.
         // The old processor exits when its command channel closes.
         let (all_threads_metrics_tx, metrics_rx): (
             flume::Sender<GooseMetric>,

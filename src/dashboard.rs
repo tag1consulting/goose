@@ -2550,6 +2550,16 @@ async fn control_quit_handler(
     .await
 }
 
+/// Delete's 409, with why it refused.
+fn conflict(message: &'static str) -> Response<Body> {
+    (
+        StatusCode::CONFLICT,
+        [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+        message,
+    )
+        .into_response()
+}
+
 /// Why Delete refuses a folder another Goose process holds for its run.
 const RESERVED_BY_ANOTHER: &str = "Another Goose process is writing to this folder.";
 
@@ -2585,12 +2595,7 @@ async fn delete_report_handler(
         None
     };
     if let Some(refused) = refused {
-        return (
-            StatusCode::CONFLICT,
-            [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
-            refused,
-        )
-            .into_response();
+        return conflict(refused);
     }
     // `remove_file` removes a symlink, never what it points to.
     let name_for_check = name.clone();
@@ -2616,12 +2621,7 @@ async fn delete_report_handler(
     })
     .await;
     match removed {
-        Ok(Ok(Some(StatusCode::CONFLICT))) => (
-            StatusCode::CONFLICT,
-            [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
-            RESERVED_BY_ANOTHER,
-        )
-            .into_response(),
+        Ok(Ok(Some(StatusCode::CONFLICT))) => conflict(RESERVED_BY_ANOTHER),
         Ok(Ok(Some(status))) => status.into_response(),
         Ok(Ok(None)) => {
             info!("[dashboard]: deleted the report in {name}");
