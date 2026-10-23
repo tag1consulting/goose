@@ -2550,12 +2550,15 @@ async fn control_quit_handler(
     .await
 }
 
+/// Why Delete refuses a folder another Goose process holds for its run.
+const RESERVED_BY_ANOTHER: &str = "Another Goose run is writing to this folder.";
+
 /// `DELETE /api/v1/reports/{name}`: remove a folder's reports, and the logs
 /// Goose names in a run's folder, then the folder if that leaves it empty;
 /// nothing else. Registered only with `--dashboard-control`, and authorized
 /// like the control routes. 204 when removed; 409 for the folder of the run
-/// in progress, or the one the Goose log is open in; a plain 404 for anything
-/// the listing would not list.
+/// in progress, the one the Goose log is open in, or one another process
+/// holds for its run; a plain 404 for anything the listing would not list.
 async fn delete_report_handler(
     State(state): State<Arc<DashboardState>>,
     headers: HeaderMap,
@@ -2576,6 +2579,8 @@ async fn delete_report_handler(
         Some("The run in progress writes to this folder.")
     } else if state.log_folder.is(&state.reports_dir, &name, &folder) {
         Some("Goose is writing its log to this folder.")
+    } else if runs::is_reserved(&folder) {
+        Some(RESERVED_BY_ANOTHER)
     } else {
         None
     };
@@ -2594,7 +2599,10 @@ async fn delete_report_handler(
         // Checked again just before the deletes: still a real folder, and
         // still a report the panel lists.
         if runs::report_folder(&reports_dir, &name_for_check).is_none() || !runs::is_listed(&json) {
-            return Ok(false);
+            return Ok(Some(StatusCode::NOT_FOUND));
+        }
+        if runs::is_reserved(&folder) {
+            return Ok(Some(StatusCode::CONFLICT));
         }
         for file in runs::deletable_files() {
             let path = folder.join(file);
@@ -2604,12 +2612,18 @@ async fn delete_report_handler(
         }
         // A folder that still holds other files stays.
         let _ = std::fs::remove_dir(&folder);
-        Ok::<_, std::io::Error>(true)
+        Ok::<_, std::io::Error>(None)
     })
     .await;
     match removed {
-        Ok(Ok(false)) => StatusCode::NOT_FOUND.into_response(),
-        Ok(Ok(true)) => {
+        Ok(Ok(Some(StatusCode::CONFLICT))) => (
+            StatusCode::CONFLICT,
+            [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+            RESERVED_BY_ANOTHER,
+        )
+            .into_response(),
+        Ok(Ok(Some(status))) => status.into_response(),
+        Ok(Ok(None)) => {
             info!("[dashboard]: deleted the report in {name}");
             StatusCode::NO_CONTENT.into_response()
         }

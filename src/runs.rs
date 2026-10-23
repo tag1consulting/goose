@@ -843,9 +843,15 @@ pub(crate) fn deletable_files() -> Vec<String> {
         .flat_map(|name| [format!(".{name}.tmp"), format!(".{name}.gz.tmp")])
         .collect();
     names.extend(temporary);
-    // Left by a process that ended without giving up the folder.
-    names.push(RESERVED.to_string());
     names
+}
+
+/// Whether a Goose process holds `folder` for its run: Delete leaves it alone.
+/// A process that ended without giving the folder up leaves [`RESERVED`]
+/// behind; removing that file by hand frees the folder.
+#[cfg(feature = "dashboard")]
+pub(crate) fn is_reserved(folder: &Path) -> bool {
+    std::fs::symlink_metadata(folder.join(RESERVED)).is_ok()
 }
 
 #[cfg(feature = "dashboard")]
@@ -1292,6 +1298,26 @@ mod tests {
                 _ => None,
             });
             assert_eq!(keep, sent, "path={path}");
+        }
+    }
+
+    /// The banner's downloads name only a folder the report routes take.
+    #[cfg(feature = "dashboard")]
+    #[test]
+    fn last_report_name_is_only_a_name_the_routes_take() {
+        let mut attack =
+            GooseAttack::initialize_with_config(GooseConfiguration::default()).unwrap();
+        for (folder, name) in [
+            ("goose-runs/nightly", Some("nightly")),
+            ("goose-runs/nightly run", None),
+        ] {
+            attack.output.last_report = Some(folder.to_string());
+            assert_eq!(
+                attack.report_snapshot().last_report_name.as_deref(),
+                name,
+                "{}",
+                folder
+            );
         }
     }
 

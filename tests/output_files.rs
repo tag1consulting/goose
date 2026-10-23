@@ -326,7 +326,14 @@ async fn notes_are_in_every_report() {
     assert!(!html.contains(notes));
     let md = std::fs::read_to_string(&md).unwrap();
     let after_title = md.split("# Goose Attack Report").nth(1).unwrap();
-    assert!(after_title.trim_start().starts_with(notes), "{}", md);
+    // The notes, escaped for Markdown.
+    assert!(
+        after_title
+            .trim_start()
+            .starts_with(&notes.replace('<', "\\<").replace('>', "\\>")),
+        "{}",
+        md
+    );
     std::fs::remove_dir_all(&dir).ok();
 }
 

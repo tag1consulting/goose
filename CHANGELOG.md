@@ -148,7 +148,7 @@
     o with `--dashboard-control` the switches can change at any time; without it they stay as the command line set them
     o the runs panel lists the reports in the folder that holds the run's folder, newest first, with each one's notes, and offers each as HTML, JSON or Markdown
     o the runs panel compares two reports, and with `--dashboard-control` deletes one: its reports and Goose's logs, then its folder if that leaves it empty
-    o Delete refuses the folder of the run in progress, and the folder a bare `--goose-log` is open in
+    o Delete refuses the folder of the run in progress, the folder a bare `--goose-log` is open in, and a folder another Goose process holds for its run
     o the end of run banner offers the report's downloads, or says why it failed; a run with no folder shows why for the whole run
     o new routes `GET /api/v1/reports`, `GET /api/v1/reports/{name}/{file}` and `GET /api/v1/reports/{name}/compare.md`
     o new control routes `POST /api/v1/control/report`, `POST /api/v1/control/report/now`, `POST /api/v1/control/quit` and `DELETE /api/v1/reports/{name}`, with `--dashboard-control` only

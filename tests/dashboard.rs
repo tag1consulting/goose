@@ -2554,7 +2554,8 @@ async fn test_reports_routes() {
     assert_eq!(markdown.status(), 200);
     assert!(header(&markdown, "content-type").starts_with("text/markdown"));
     let markdown = markdown.text().await.unwrap();
-    assert!(markdown.contains("second <run>"), "{}", markdown);
+    // The notes, escaped for Markdown.
+    assert!(markdown.contains("second \\<run\\>"), "{}", markdown);
     let html = get("/api/v1/reports/json-only/report.html".into(), true)
         .await
         .unwrap();
@@ -3088,6 +3089,9 @@ async fn test_delete_report() {
     write_one_report(&server, &outside.join("real"), "1", "linked to").await;
     std::os::unix::fs::symlink(outside.join("real"), parent.join("linked")).unwrap();
     write_one_report(&server, &parent.join("link-inside"), "1", "a linked log").await;
+    // A folder another Goose process holds for its run.
+    write_one_report(&server, &parent.join("held"), "1", "another run").await;
+    std::fs::write(parent.join("held").join(".goose-run"), "").unwrap();
     std::fs::write(outside.join("requests.csv"), "kept").unwrap();
     std::os::unix::fs::symlink(
         outside.join("requests.csv"),
@@ -3137,6 +3141,20 @@ async fn test_delete_report() {
         "kept"
     );
     std::fs::remove_file(parent.join("linked")).unwrap();
+    // Never a folder another process holds.
+    let resp = delete("held", true, false).await.unwrap();
+    assert_eq!(resp.status(), 409);
+    assert_eq!(
+        resp.text().await.unwrap(),
+        "Another Goose run is writing to this folder."
+    );
+    let mut held: Vec<String> = std::fs::read_dir(parent.join("held"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    held.sort();
+    assert_eq!(held, vec![".goose-run", "report.html", "report.json"]);
+    std::fs::remove_dir_all(parent.join("held")).unwrap();
 
     // Only the reports and Goose's logs go: a file Goose did not write stays,
     // and so does its folder.
@@ -3391,6 +3409,38 @@ async fn test_report_switches_refuse_what_they_cannot_do() {
         }
         make_writable(&folder);
     }
+    // A report that fails as it is written, after the folder passed the
+    // check, gives its reason on the dashboard too.
+    let in_the_way = folder.join("report.html");
+    std::fs::create_dir(&in_the_way).unwrap();
+    let body: serde_json::Value = post_control(
+        &client,
+        &base,
+        "/api/v1/control/report/now",
+        Some("{}"),
+        true,
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(body["ok"], true, "{}", body);
+    let in_the_way_str = in_the_way.to_string_lossy().into_owned();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let snap = get_snapshot_json(&client, &base, Some(AUTH_TOKEN))
+            .await
+            .unwrap();
+        if let Some(error) = snap["report"]["error"].as_str() {
+            if error.contains(&in_the_way_str) {
+                assert!(error.contains("Can't write to"), "{}", error);
+                break;
+            }
+        }
+        assert!(Instant::now() < deadline, "{}", snap["report"]);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    std::fs::remove_dir(&in_the_way).unwrap();
     let stop = post_control(&client, &base, "/api/v1/control/stop", Some("{}"), true).await;
     assert_eq!(stop.status(), 200);
     wait_for_phase(
