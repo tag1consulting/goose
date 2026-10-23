@@ -2,6 +2,7 @@
 // from charts.ts, which the tests bundle on its own without a page: these
 // look their elements up when the module loads.
 
+import { completeSeconds } from "./charts";
 import { requireElement } from "./dom";
 import { formatInt, formatMs, formatRate } from "./format";
 import { chartDataTable } from "./tables";
@@ -86,17 +87,18 @@ export function setLatencySummary(text: string): void {
  */
 export function updateChartData(series: SeriesWindow, averageLatency: boolean, targetUsers: number): void {
   const start = series.start_second;
-  // The newest second is still counting, so its requests and failures are
-  // short of a whole second's; left in, every summary leans to "falling".
-  const rps = recentTrend(series.rps.slice(0, -1));
+  // Left in, the newest second would lean every summary to "falling".
+  const rpsComplete = completeSeconds(series.rps);
+  const fpsComplete = completeSeconds(series.fps);
+  const rps = recentTrend(rpsComplete);
   setSummary(
     rpsSummary,
     series.rps.length === 0
       ? "No data yet."
       : withTrend("RPS " + formatRate(rps.mean), rps.trend) +
-          "; failures " + formatRate(recentTrend(series.fps.slice(0, -1)).mean) + "/s."
+          "; failures " + formatRate(recentTrend(fpsComplete).mean) + "/s."
   );
-  showRpsData(series.rps.map((rps, i) => ({ second: start + i, rps, fps: series.fps[i] || 0 })));
+  showRpsData(rpsComplete.map((rps, i) => ({ second: start + i, rps, fps: fpsComplete[i] || 0 })));
   const users = recentTrend(series.users);
   setSummary(
     usersSummary,

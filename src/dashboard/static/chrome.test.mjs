@@ -130,17 +130,18 @@ test("an OS theme change redraws the line charts in the new theme's colours", as
     colorScheme: "dark",
     canvas: true,
     // A few seconds of series, so both axes draw ticks and the legend shows.
+    // The RPS chart leaves out the last, still counting second.
     snapshot: {
       ...IDLE_SNAPSHOT,
       series: {
         ...IDLE_SNAPSHOT.series,
         start_second: 10,
-        rps: [1, 2, 3],
-        fps: [0, 1, 0],
-        users: [1, 1, 2],
-        avg_latency_ms: [5, 6, 7],
+        rps: [1, 2, 3, 1],
+        fps: [0, 1, 0, 0],
+        users: [1, 1, 2, 2],
+        avg_latency_ms: [5, 6, 7, 7],
       },
-      flags: { ...IDLE_SNAPSHOT.flags, series_seconds: 3 },
+      flags: { ...IDLE_SNAPSHOT.flags, series_seconds: 4 },
     },
   });
   try {

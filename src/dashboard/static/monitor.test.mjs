@@ -697,16 +697,16 @@ test("a chart's data table is built only once opened, then follows the data in p
 
   details.open = true;
   await settle(page.window);
-  assert.equal(body.rows.length, 25, "one row per second");
+  assert.equal(body.rows.length, 24, "one row per complete second");
   assert.deepEqual(cells(body.rows[0]), ["100", rate(100), rate(0.5)]);
   const row105 = Array.from(body.rows).find((tr) => tr.cells[0].textContent === "105");
   const row100 = body.rows[0];
 
   // The window moves on by a second.
   await send(page, snapshotWith({ series: series25(101) }));
-  assert.equal(body.rows.length, 25);
+  assert.equal(body.rows.length, 24);
   assert.equal(body.rows[0].cells[0].textContent, "101");
-  assert.equal(body.rows[24].cells[0].textContent, "125", "the newest second added");
+  assert.equal(body.rows[23].cells[0].textContent, "124", "the newest complete second added");
   assert.equal(row100.parentNode, null, "the oldest second removed");
   assert.equal(
     Array.from(body.rows).find((tr) => tr.cells[0].textContent === "105"),
@@ -740,10 +740,29 @@ test("as the window moves on, only the second leaving and the one arriving touch
     }
   }).observe(body, { childList: true });
   await send(page, snapshotWith({ series: series25(101) }));
-  assert.equal(body.rows.length, 25);
+  assert.equal(body.rows.length, 24);
   // Moving a row detaches it, and a screen reader on it loses its place.
   assert.equal(removed, 1, "only second 100 left the table");
-  assert.equal(added, 1, "only second 125 joined it");
+  assert.equal(added, 1, "only second 124 joined it");
+});
+
+test("the RPS data table ends at the last complete second, not the one still counting", async () => {
+  const page = await livePage();
+  const details = el(page, "chart-rps-details");
+  const body = el(page, "chart-rps-rows");
+  details.open = true;
+  await settle(page.window);
+  // Seconds 100 to 124, the newest still counting with 3 requests in.
+  const series = series25(100);
+  series.rps[24] = 3;
+  await send(page, snapshotWith({ series }));
+  const last = body.rows[body.rows.length - 1];
+  assert.deepEqual(cells(last), ["123", rate(123), rate(0.5)], "the second before the newest");
+  assert.equal(
+    Array.from(body.rows).some((tr) => tr.cells[0].textContent === "124"),
+    false,
+    "the second still counting has no row"
+  );
 });
 
 test("the users and average latency charts have data tables too", async () => {
