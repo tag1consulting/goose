@@ -152,9 +152,11 @@ export function baseChartOpts(colors: ChartColors): ChartOptions<"line"> {
 }
 
 /**
- * A per second rate series without its newest second. That second is still
- * counting, so it holds a fraction of a second's requests or failures, and
- * left in, the line ends in a drop to near zero on every snapshot.
+ * A per second series without its newest second, which is still filling. A
+ * rate there holds a fraction of a second's requests or failures, so the line
+ * would end in a drop to near zero on every snapshot. An average there reads
+ * low: requests are recorded when they finish, under the second they started
+ * in, so that second is still short of its slowest ones.
  */
 export function completeSeconds(values: number[]): number[] {
   return values.slice(0, -1);
@@ -294,8 +296,9 @@ export function updateCharts(series: SeriesWindow, averageLatency: boolean): voi
     chartUsers.update("none");
   }
   if (averageLatency && drawable(chartLatency)) {
-    chartLatency.data.labels = labels;
-    chartLatency.data.datasets[0].data = lat;
+    const latComplete = completeSeconds(lat);
+    chartLatency.data.labels = labels.slice(0, latComplete.length);
+    chartLatency.data.datasets[0].data = latComplete;
     chartLatency.update("none");
   }
 }

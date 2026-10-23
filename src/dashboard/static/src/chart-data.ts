@@ -111,12 +111,13 @@ export function updateChartData(series: SeriesWindow, averageLatency: boolean, t
   );
   showUsersData(series.users.map((users, i) => ({ second: start + i, users })));
   if (averageLatency) {
-    const lat = recentTrend(series.avg_latency_ms);
+    const latComplete = completeSeconds(series.avg_latency_ms);
+    const lat = recentTrend(latComplete);
     setLatencySummary(
       series.avg_latency_ms.length === 0
         ? "No data yet."
         : withTrend("Average " + formatMs(lat.mean) + " ms", lat.trend) + "."
     );
-    showLatencyData(series.avg_latency_ms.map((avg, i) => ({ second: start + i, avg })));
+    showLatencyData(latComplete.map((avg, i) => ({ second: start + i, avg })));
   }
 }

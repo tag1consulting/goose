@@ -765,6 +765,19 @@ test("the RPS data table ends at the last complete second, not the one still cou
   );
 });
 
+test("the average latency data table ends at the last complete second", async () => {
+  const page = await livePage();
+  el(page, "chart-latency-details").open = true;
+  await settle(page.window);
+  // Seconds 100 to 124, the newest still filling and short of its slowest requests.
+  const series = series25(100);
+  series.avg_latency_ms[24] = 1;
+  await send(page, snapshotWith({ series }, { percentiles_over_time: false }));
+  const body = el(page, "chart-latency-rows");
+  assert.equal(body.rows.length, 24, "one row per complete second");
+  assert.equal(body.rows[23].cells[0].textContent, "123", "the second before the newest");
+});
+
 test("the users and average latency charts have data tables too", async () => {
   const page = await livePage();
   el(page, "chart-users-details").open = true;
@@ -891,8 +904,9 @@ test("each summary follows the data: value, then rising, falling or steady", asy
 
   // Ten seconds at 100 then ten at 120: the mean is up 20 percent.
   const step = (before, after) => seriesOf(0, 20, (i) => (i < 10 ? before : after * (i % 2 ? 1.1 : 0.9)));
-  // Each RPS and failures series ends in the second still counting, here 7
-  // requests and no failures in, which the summary leaves out.
+  // Each RPS, failures and average latency series ends in the second still
+  // counting, here 7 requests at 7 ms and no failures in, which the summary
+  // leaves out.
   const counting = (values) => (values.length ? [...values, 7] : values);
   const snap = (rpsValues, usersValues, latencyValues, target = 200) =>
     snapshotWith(
@@ -903,7 +917,7 @@ test("each summary follows the data: value, then rising, falling or steady", asy
           counting(rpsValues),
           rpsValues.length ? [...step(0.5, 0.5), 0] : [],
           usersValues,
-          latencyValues
+          counting(latencyValues)
         ),
       },
       { percentiles_over_time: false }

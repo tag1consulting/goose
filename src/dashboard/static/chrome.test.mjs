@@ -194,6 +194,36 @@ test("an OS theme change redraws the line charts in the new theme's colours", as
   }
 });
 
+test("the average latency chart ends at the last complete second", async () => {
+  const page = await openPage("/?token=" + TOKEN, FRESH, TOKEN, {
+    canvas: true,
+    // Second 13 is still filling, short of its slowest requests.
+    snapshot: {
+      ...IDLE_SNAPSHOT,
+      series: {
+        ...IDLE_SNAPSHOT.series,
+        start_second: 10,
+        rps: [1, 2, 3, 1],
+        fps: [0, 0, 0, 0],
+        users: [1, 1, 2, 2],
+        avg_latency_ms: [5, 6, 7, 1],
+      },
+      flags: { ...IDLE_SNAPSHOT.flags, series_seconds: 4, percentiles_over_time: false },
+    },
+  });
+  try {
+    const ticks = page.canvas.calls
+      .filter((call) => call.id === "chart-latency" && call.name === "fillText")
+      .map((call) => call.value[0]);
+    for (const second of ["10", "11", "12"]) {
+      assert.ok(ticks.includes(second), "x tick " + second + " in " + ticks);
+    }
+    assert.equal(ticks.includes("13"), false, "no x tick for the second still filling: " + ticks);
+  } finally {
+    page.window.close();
+  }
+});
+
 test("an OS theme change with percentiles over time off does not draw the heatmap", async () => {
   const page = await openPage("/?token=" + TOKEN, FRESH, TOKEN, {
     colorScheme: "dark",
