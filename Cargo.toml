@@ -83,6 +83,8 @@ httpmock = "0.8"
 nix = { version = "0.30", features = ["signal"] }
 rustls = "0.23"
 serial_test = "3.2"
+# Paused time, for tests of when a user sends its metrics.
+tokio = { version = "1", features = ["test-util"] }
 # Generates src/dashboard/static/snapshot.d.ts from the snapshot structs in a
 # unit test; a dev-dependency, so normal builds do not depend on it.
 # Pinned exactly: dashboard_types_match_rust compares that file byte for byte

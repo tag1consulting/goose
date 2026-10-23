@@ -1919,8 +1919,25 @@ impl GooseUser {
             self.weighted_users_index,
         );
 
-        // Make the actual request.
-        let response = self.client.execute(built_request).await;
+        // Make the actual request. When the batch holds anything, send it at
+        // its deadline if the request is still running: a slow request would
+        // otherwise hold it, and the seconds it covers would read short.
+        let deadline = self.batch_deadline()?;
+        let response = match deadline {
+            None => self.client.execute(built_request).await,
+            Some(deadline) => {
+                let response = self.client.execute(built_request);
+                tokio::pin!(response);
+                tokio::select! {
+                    biased;
+                    response = &mut response => response,
+                    () = tokio::time::sleep_until(deadline) => {
+                        self.flush_batch()?;
+                        response.await
+                    }
+                }
+            }
+        };
         // Record Time to First Byte (TTFB): client.execute() returns when response headers
         // are received, not when the complete response body is downloaded.
         request_metric.set_response_duration(started.elapsed());
@@ -2650,20 +2667,53 @@ impl GooseUser {
         Ok(())
     }
 
+    /// Whether the batch holds any request, transaction or scenario.
+    fn batch_has_data(&self) -> bool {
+        self.batch_item_count > 0
+            || self
+                .metrics_batch
+                .as_ref()
+                .is_some_and(|b| !b.transactions.is_empty() || !b.scenarios.is_empty())
+    }
+
+    /// When a request starts with batching on, add the request still pending
+    /// to the batch, as finishing this request would, and return when the
+    /// batch is due: [`METRICS_BATCH_MAX_AGE`] after it started, or from now
+    /// for a batch of transactions only, which has no start. `None` when the
+    /// batch holds nothing.
+    fn batch_deadline(&mut self) -> Result<Option<tokio::time::Instant>, Box<TransactionError>> {
+        if self.metrics_batch.is_none() {
+            return Ok(None);
+        }
+        self.flush_pending_request()?;
+        if !self.batch_has_data() {
+            return Ok(None);
+        }
+        let left = self.batch_start.map_or(METRICS_BATCH_MAX_AGE, |start| {
+            METRICS_BATCH_MAX_AGE.saturating_sub(start.elapsed())
+        });
+        Ok(Some(tokio::time::Instant::now() + left))
+    }
+
+    /// Before a wait of at least [`METRICS_BATCH_MAX_AGE`], add the pending
+    /// request and transaction to the batch and send it. A batch's age is
+    /// checked only when something is added to it, so it would otherwise be
+    /// held through the wait.
+    pub(crate) fn flush_batch_before_wait(&mut self) -> TransactionResult {
+        if self.metrics_batch.is_none() {
+            return Ok(());
+        }
+        self.flush_pending_metrics()?;
+        self.flush_batch()
+    }
+
     /// Flush the current batch to the metrics channel.
     ///
     /// Sends the accumulated batch as a single [`GooseMetric::Batch`] message
     /// and resets the accumulator for the next batch.
     pub(crate) fn flush_batch(&mut self) -> TransactionResult {
-        if self.batch_item_count == 0 {
-            // Also check if there are transactions/scenarios without requests.
-            let has_data = self
-                .metrics_batch
-                .as_ref()
-                .is_some_and(|b| !b.transactions.is_empty() || !b.scenarios.is_empty());
-            if !has_data {
-                return Ok(());
-            }
+        if !self.batch_has_data() {
+            return Ok(());
         }
         let current_epoch = self
             .metrics_epoch
@@ -7007,5 +7057,56 @@ mod tests {
         let m = recv_request_metric(&rx);
         assert_eq!(m.name.as_ref(), "my_op");
         assert_eq!(m.transaction_name, transaction);
+    }
+
+    /// A slow request does not hold the batch: a batch already open, and the
+    /// request still pending from earlier in the transaction, are sent at the
+    /// batch's deadline while a request that takes 2 s is still running.
+    #[tokio::test(start_paused = true)]
+    async fn open_batch_is_sent_by_its_deadline_during_a_slow_request() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        // A server that answers 2 s, in paused time, after a request arrives.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buffer = [0; 1024];
+            let _ = stream.read(&mut buffer).await;
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            let _ = stream
+                .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n")
+                .await;
+        });
+
+        let mut configuration = GooseConfiguration::parse_args_default(&EMPTY_ARGS).unwrap();
+        configuration.co_mitigation = Some(GooseCoordinatedOmissionMitigation::Average);
+        let base_url = format!("http://{address}/").parse().unwrap();
+        let mut user = GooseUser::single(base_url, &configuration).unwrap();
+        let (tx, rx) = flume::unbounded();
+        user.metrics_channel = Some(tx);
+        user.metrics_batch = Some(GooseMetricBatch::new(0));
+        user.pending_request = Some(make_test_request_metric("/open"));
+        user.flush_pending_request().unwrap();
+        user.pending_request = Some(make_test_request_metric("/pending"));
+
+        let started = tokio::time::Instant::now();
+        let mut slow = tokio::spawn(async move { user.get("/slow").await.is_ok() });
+        let batch = tokio::select! {
+            metric = rx.recv_async() => match metric.unwrap() {
+                GooseMetric::Batch(batch) => batch,
+                other => panic!("expected a batch, got {:?}", other),
+            },
+            _ = &mut slow => panic!("the slow request returned before the open batch was sent"),
+        };
+        assert!(
+            started.elapsed() <= METRICS_BATCH_MAX_AGE,
+            "the batch was sent {:?} after the request started",
+            started.elapsed()
+        );
+        let mut names: Vec<&str> = batch.requests.keys().map(String::as_str).collect();
+        names.sort();
+        assert_eq!(names, ["GET /open", "GET /pending"]);
+        assert!(slow.await.unwrap(), "the slow request failed");
     }
 }
