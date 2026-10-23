@@ -159,11 +159,12 @@ Console and Goose log:
 
           Example: -q. Set in code with GooseDefault::Quiet.
 
-  -G, --goose-log <FILE>
+  -G, --goose-log [<FILE>]
           Write the Goose log to FILE
 
           Writes Goose's own log messages to FILE, at the detail --log-level
-          sets. Without it, there is no Goose log.
+          sets. Without FILE, writes goose.log into the run's folder. Without
+          the option, there is no Goose log.
 
           Example: -G goose.log. Set in code with GooseDefault::GooseLog.
 
@@ -189,7 +190,7 @@ Console and Goose log:
           Don't print metrics at the end
 
           Leaves the metrics out of the console when the load test ends. Reports
-          and the saved run are still written.
+          are still written.
 
           Set in code with GooseDefault::NoPrintMetrics.
 
@@ -202,42 +203,74 @@ Console and Goose log:
           Set in code with GooseDefault::NoErrorSummary.
 
 Reports:
-      --report-file <FILE>
+      --report-file [<FILE>]
           Write a report; repeatable
 
           Writes a report of the load test to FILE when it ends. The extension
           picks the type: .html or .htm, .md, .json, or .pdf with the
-          pdf-reports feature. Repeat the option to write several. Not allowed
+          pdf-reports feature. Without FILE, writes report.json and report.html
+          into the run's folder. Repeat the option to write several. Not allowed
           with --no-metrics.
 
           Example: --report-file report.html --report-file report.json. Set in
           code with GooseDefault::ReportFile.
 
-      --no-save
-          Don't save this run to the runs folder
+      --output-dir <DIR>
+          Run folder, or goose-runs/<start time>
 
-          By default, Goose saves each run's reports to its own folder under
-          --runs-dir, where --baseline-file can find it later. --report-file
-          still writes its reports. --no-metrics also turns saving off.
+          Sets the run's folder for output flags given without a path. Goose
+          creates it as the run starts, and removes it at the end of a run that
+          wrote nothing into it. When the folder already holds files, the run
+          uses DIR-2, DIR-3 and so on. Needs an output flag given without a
+          path, or --dashboard, which counts except under --no-metrics.
 
-          Set in code with GooseDefault::NoSave.
+          Example: --output-dir goose-runs/nightly --report-file. Set in code
+          with GooseDefault::OutputDir.
 
-      --runs-dir <DIR>
-          Runs folder [default: goose-runs]
+      --compress [<LEVEL>]
+          Gzip files in the run's folder, 1 to 9
 
-          The folder saved runs are written to. If a folder given here cannot be
-          created, the load test does not start; if the default cannot, Goose
-          only warns.
+          Gzips every file Goose writes into the run's folder, each named with
+          .gz added. A path given to an output flag keeps exactly that name; a
+          name that ends in .gz is gzipped without this option. LEVEL is 1
+          (fastest) to 9 (smallest), default 6, for every gzipped file.
 
-          Example: --runs-dir /var/tmp/goose-runs. Set in code with
-          GooseDefault::RunsDir.
+          Example: --report-file -R --compress 9. Set in code with
+          GooseDefault::Compress.
+
+      --notes <TEXT>
+          Label the run in its reports
+
+          Stores TEXT in the JSON report and shows it at the top of the HTML and
+          Markdown reports and in the dashboard. Needs --report-file or
+          --dashboard.
+
+          Example: --notes "baseline before cache change". Set in code with
+          GooseDefault::Notes.
+
+      --report-graph-data
+          Add graph data to the JSON report
+
+          Adds the per second data behind the HTML report's graphs to the JSON
+          report, so a report rendered from it with --render-report has its
+          graphs. Needs --report-file or --dashboard.
+
+          Set in code with GooseDefault::ReportGraphData.
+
+      --render-report <FILE>
+          Write reports from a JSON report, exit
+
+          Writes the reports named by --report-file paths from FILE, a JSON
+          report, then exits without running a load test.
+
+          Example: --render-report report.json --report-file report.html.
 
       --baseline-file <PATH>
           Compare against an earlier run
 
-          PATH is a JSON report written with --report-file, or the folder of a
-          saved run. Every report then shows how each metric changed from that
-          run.
+          PATH is a JSON report, plain or gzipped, or a folder that holds
+          report.json or report.json.gz. Every report then shows how each metric
+          changed from that run.
 
           Example: --baseline-file baseline.json. Set in code with
           GooseDefault::BaselineFile.
@@ -247,7 +280,7 @@ Reports:
 
           Report graphs show a line for the total and, by default, one more for
           each request, transaction or scenario. This leaves out the extra
-          lines. Needs --report-file or a saved run.
+          lines. Needs --report-file or --dashboard.
 
           Set in code with GooseDefault::NoGranularData.
 
@@ -288,7 +321,7 @@ Metrics:
       --no-metrics
           Don't collect any metrics
 
-          Turns off every metric, and with them saving the run. Not allowed with
+          Turns off every metric, and with them every report. Not allowed with
           --report-file, --request-log, --transaction-log, --scenario-log,
           --error-log or --co-mitigation.
 
@@ -330,11 +363,12 @@ Metrics:
           GooseDefault::CoordinatedOmissionMitigation.
 
 Logs:
-  -R, --request-log <FILE>
+  -R, --request-log [<FILE>]
           Log every request to FILE
 
-          Writes a line for each request, in --request-format. Not allowed with
-          --no-metrics.
+          Writes a line for each request, in --request-format. Without FILE,
+          writes requests.json, .csv or .log, as --request-format sets, into the
+          run's folder. Not allowed with --no-metrics.
 
           Example: -R requests.log. Set in code with GooseDefault::RequestLog.
 
@@ -353,11 +387,12 @@ Logs:
 
           Set in code with GooseDefault::RequestBody.
 
-  -T, --transaction-log <FILE>
+  -T, --transaction-log [<FILE>]
           Log every transaction to FILE
 
-          Writes a line for each transaction, in --transaction-format. Not
-          allowed with --no-metrics.
+          Writes a line for each transaction, in --transaction-format. Without
+          FILE, writes transactions.json, .csv or .log, as --transaction-format
+          sets, into the run's folder. Not allowed with --no-metrics.
 
           Example: -T transactions.log. Set in code with
           GooseDefault::TransactionLog.
@@ -370,11 +405,13 @@ Logs:
           Example: --transaction-format csv. Set in code with
           GooseDefault::TransactionFormat.
 
-  -S, --scenario-log <FILE>
+  -S, --scenario-log [<FILE>]
           Log every scenario to FILE
 
-          Writes a line for each run of a scenario, in --scenario-format. Not
-          allowed with --no-metrics.
+          Writes a line for each run of a scenario, in --scenario-format.
+          Without FILE, writes scenarios.json, .csv or .log, as
+          --scenario-format sets, into the run's folder. Not allowed with
+          --no-metrics.
 
           Example: -S scenarios.log. Set in code with GooseDefault::ScenarioLog.
 
@@ -386,11 +423,12 @@ Logs:
           Example: --scenario-format csv. Set in code with
           GooseDefault::ScenarioFormat.
 
-  -E, --error-log <FILE>
+  -E, --error-log [<FILE>]
           Log every error to FILE
 
-          Writes a line for each failed request, in --error-format. Not allowed
-          with --no-metrics.
+          Writes a line for each failed request, in --error-format. Without
+          FILE, writes errors.json, .csv or .log, as --error-format sets, into
+          the run's folder. Not allowed with --no-metrics.
 
           Example: -E errors.log. Set in code with GooseDefault::ErrorLog.
 
@@ -402,12 +440,13 @@ Logs:
           Example: --error-format csv. Set in code with
           GooseDefault::ErrorFormat.
 
-  -D, --debug-log <FILE>
+  -D, --debug-log [<FILE>]
           Write the debug log to FILE
 
           Writes what the load test logs with GooseUser::log_debug and
           GooseUser::set_failure, with response bodies unless --no-debug-body,
-          in --debug-format.
+          in --debug-format. Without FILE, writes debug.json, .csv or .log, as
+          --debug-format sets, into the run's folder.
 
           Example: -D debug.log. Set in code with GooseDefault::DebugLog.
 

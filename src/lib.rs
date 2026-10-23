@@ -365,8 +365,10 @@ const NO_USERS_OPTION: &str = "`configuration.users`";
 #[derive(Debug, Clone)]
 pub(crate) struct ControlOutcome {
     pub ok: bool,
-    /// Stable code when !ok, soft failures only (`invalid_phase`, `invalid_users`,
-    /// `prepare_failed`).
+    /// Stable code when !ok, for soft failures only: `invalid_phase`,
+    /// `prepare_failed` or `conflicting_settings`, for example, and
+    /// `invalid_report`, `report_busy` or `report_failed` from the report
+    /// control routes.
     pub error: Option<&'static str>,
     /// Human message, the reply every front end shows.
     pub message: String,
@@ -474,12 +476,16 @@ struct GooseAttackRunState {
     /// Signals the dashboard SnapshotHub to emit SSE `event: closed` on final exit.
     #[cfg(feature = "dashboard")]
     dashboard_close_tx: Option<tokio::sync::watch::Sender<bool>>,
-    /// The save state the dashboard sends with `event: closed`.
-    #[cfg(feature = "dashboard")]
-    dashboard_closed_data: Option<dashboard::ClosedData>,
     /// Dashboard tabs connected to the event stream.
     #[cfg(feature = "dashboard")]
     dashboard_active_sse: Option<Arc<AtomicUsize>>,
+    /// The folder of the run in progress, as the dashboard's report routes see it.
+    #[cfg(feature = "dashboard")]
+    dashboard_running_folder: Option<dashboard::RunningFolder>,
+    /// The folder a bare `--goose-log` is open in, as the dashboard's report
+    /// routes see it.
+    #[cfg(feature = "dashboard")]
+    dashboard_log_folder: Option<dashboard::RunningFolder>,
     /// The address the dashboard listens on, as logged at startup.
     #[cfg(feature = "dashboard")]
     dashboard_url: Option<String>,
@@ -576,8 +582,8 @@ pub struct GooseAttack {
     /// How the current run ended, and the killswitch reason when canceled.
     /// The first cause recorded wins; unset means the plan completed.
     ended_by: Option<(runs::EndedBy, Option<String>)>,
-    /// Saving runs to the runs directory.
-    saving: runs::Saving,
+    /// The run's folder and what Goose writes into it.
+    output: runs::Output,
     /// The Chrome binary PDF reports run, found once at startup.
     #[cfg(feature = "pdf-reports")]
     chrome: tokio::sync::OnceCell<report::chrome::ResolvedChrome>,
@@ -650,7 +656,7 @@ impl GooseAttack {
             graph_data: GraphData::new(),
             run_in_progress: false,
             ended_by: None,
-            saving: runs::Saving::default(),
+            output: runs::Output::default(),
             #[cfg(feature = "pdf-reports")]
             chrome: tokio::sync::OnceCell::new(),
         })
@@ -694,7 +700,7 @@ impl GooseAttack {
             graph_data: GraphData::new(),
             run_in_progress: false,
             ended_by: None,
-            saving: runs::Saving::default(),
+            output: runs::Output::default(),
             #[cfg(feature = "pdf-reports")]
             chrome: tokio::sync::OnceCell::new(),
         })
@@ -1212,7 +1218,6 @@ impl GooseAttack {
     ///         )
     ///         // Exit after one second so test doesn't run forever.
     ///         .set_default(GooseDefault::RunTime, 1)?
-    ///         .set_default(GooseDefault::NoSave, true)?
     ///         .execute()
     ///         .await?;
     ///
@@ -1231,10 +1236,26 @@ impl GooseAttack {
     ///     Ok(())
     /// }
     /// ```
-    pub async fn execute(mut self) -> Result<GooseMetrics, GooseError> {
+    pub async fn execute(self) -> Result<GooseMetrics, GooseError> {
+        /// Ends a gzipped Goose log's member on every way out of `execute()`:
+        /// a return, a panic unwinding through it, or its future dropped.
+        struct FinishGooseLog;
+        impl Drop for FinishGooseLog {
+            fn drop(&mut self) {
+                logger::finish_goose_log();
+            }
+        }
+        logger::start_goose_log();
+        let _finish = FinishGooseLog;
+        self.execute_load_test().await
+    }
+
+    /// [`Self::execute`], before the Goose log is finished.
+    async fn execute_load_test(mut self) -> Result<GooseMetrics, GooseError> {
         // If version flag is set, display package name and version and exit.
         if self.configuration.version {
             println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+            logger::finish_goose_log();
             std::process::exit(0);
         }
 
@@ -1258,6 +1279,7 @@ impl GooseAttack {
                     );
                 }
             }
+            logger::finish_goose_log();
             std::process::exit(0);
         }
 
@@ -1266,13 +1288,18 @@ impl GooseAttack {
 
         // Validate GooseConfiguration.
         self.configuration.validate()?;
+        self.output.save_report = self.configuration.save_report_at_start();
+        self.output.graph_data = self.configuration.report_graph_data;
 
-        // Check the runs directory, before any load.
-        self.check_runs_dir()?;
+        // Write reports from a JSON report, then exit.
+        if let Some(path) = self.configuration.render_report().map(str::to_string) {
+            return self.render_report(&path).await;
+        }
 
         // Display scenarios, then exit.
         if self.configuration.scenarios_list {
             self.print_scenarios();
+            logger::finish_goose_log();
             std::process::exit(0);
         }
 
@@ -1331,7 +1358,6 @@ impl GooseAttack {
             );
             print!("{}", self.metrics);
         }
-        self.print_save_outcome();
 
         Ok(self.metrics)
     }
@@ -1515,12 +1541,12 @@ impl GooseAttack {
         }
     }
 
-    /// After an autostarted run, whether to stay up for the dashboard: the
-    /// run was saved, it was not stopped or canceled on purpose, and a
-    /// dashboard tab is connected to the event stream.
+    /// After an autostarted run, whether to stay up for the dashboard: Save
+    /// report wrote the run's report, the run was not stopped or canceled on
+    /// purpose, and any client is connected to the event stream.
     #[cfg(feature = "dashboard")]
     fn should_wait_for_dashboard(&self, goose_attack_run_state: &GooseAttackRunState) -> bool {
-        let saved = matches!(self.saving.outcome, Some(runs::SaveOutcome::Saved { .. }));
+        let saved = self.output.last_report.is_some();
         let ended_on_its_own = matches!(
             self.ended_by,
             None | Some((runs::EndedBy::Completed, _)) | Some((runs::EndedBy::UsersExited, _))
@@ -1554,7 +1580,7 @@ impl GooseAttack {
     }
 
     /// Shut down from Idle as a Controller `shutdown` does: no run to stop,
-    /// so no metrics to print and nothing to save.
+    /// so no metrics to print and no report to write.
     fn shutdown_from_idle(&mut self, goose_attack_run_state: &mut GooseAttackRunState) {
         self.metrics.display_metrics = false;
         goose_attack_run_state.shutdown_after_stop = true;
@@ -1570,14 +1596,6 @@ impl GooseAttack {
         self.test_plan.steps = vec![(0, 0)];
         self.test_plan.current = 0;
         self.set_attack_phase(goose_attack_run_state, AttackPhase::Decrease);
-    }
-
-    /// Give the dashboard the current save state, sent with `event: closed`.
-    #[cfg(feature = "dashboard")]
-    fn publish_save_state(&self, goose_attack_run_state: &GooseAttackRunState) {
-        if let Some(closed_data) = &goose_attack_run_state.dashboard_closed_data {
-            closed_data.set(&self.save_snapshot());
-        }
     }
 
     /// Handle dashboard snapshot and series requests from the HTTP server task.
@@ -1662,7 +1680,7 @@ impl GooseAttack {
                         phase: phase.clone(),
                         stopping: goose_attack_run_state.stopping,
                         series_window_secs: metrics::dashboard_snapshot::SERIES_WINDOW_SECS,
-                        save: self.save_snapshot(),
+                        report: self.report_snapshot(),
                         settings: Box::new(self.snapshot_settings(goose_attack_run_state)),
                         heatmap_since,
                         respond,
@@ -1808,7 +1826,7 @@ impl GooseAttack {
                 metrics_disabled: self.configuration.no_metrics,
                 no_transaction_metrics: self.configuration.no_transaction_metrics,
                 no_scenario_metrics: self.configuration.no_scenario_metrics,
-                save: self.save_snapshot(),
+                report: self.report_snapshot(),
                 settings,
                 percentiles_over_time: self.configuration.records_latency_series(),
                 series_keys: self.graph_data.latency_series_keys(),
@@ -1981,20 +1999,22 @@ impl GooseAttack {
         let (
             dashboard_channel_rx,
             dashboard_close_tx,
-            dashboard_closed_data,
             dashboard_active_sse,
+            dashboard_running_folder,
+            dashboard_log_folder,
             dashboard_url,
             dashboard_server,
         ) = match dashboard::setup_dashboard(&self.configuration, dashboard_control_tx).await? {
             Some(setup) => (
                 Some(setup.request_rx),
                 Some(setup.close_tx),
-                Some(setup.closed_data),
                 Some(setup.active_sse),
+                Some(setup.running_folder),
+                Some(setup.log_folder),
                 Some(setup.url),
                 Some(setup.server),
             ),
-            None => (None, None, None, None, None, None),
+            None => (None, None, None, None, None, None, None),
         };
 
         // Grab now() once from the standard library, used by multiple timers in
@@ -2018,7 +2038,7 @@ impl GooseAttack {
             GraphData::for_metrics_processor(
                 self.configuration.records_latency_series(),
                 self.configuration.records_synthetic_latency(),
-                self.configuration.records_latency_columns(),
+                self.records_latency_columns(),
             ),
             self.configuration.clone(),
             self.scenarios.clone(),
@@ -2030,6 +2050,7 @@ impl GooseAttack {
             // the logger) before any user threads are spawned.
             None,
             metrics_epoch.clone(),
+            self.keeps_full_graph(),
         );
         let metrics_processor_handle = Some(tokio::spawn(processor.run()));
 
@@ -2055,9 +2076,11 @@ impl GooseAttack {
             #[cfg(feature = "dashboard")]
             dashboard_close_tx,
             #[cfg(feature = "dashboard")]
-            dashboard_closed_data,
-            #[cfg(feature = "dashboard")]
             dashboard_active_sse,
+            #[cfg(feature = "dashboard")]
+            dashboard_running_folder,
+            #[cfg(feature = "dashboard")]
+            dashboard_log_folder,
             #[cfg(feature = "dashboard")]
             dashboard_url,
             #[cfg(feature = "dashboard")]
@@ -2409,19 +2432,31 @@ impl GooseAttack {
             self.metrics
                 .history
                 .push(TestPlanHistory::step(TestPlanStepAction::Finished, 0));
-            // Write the --report-file reports and save the run, only when a
+            // Write the --report-file reports and Save report's, only when a
             // run happened since the last time (not on a shutdown from Idle).
-            let reports = if self.run_in_progress {
-                self.write_end_of_run().await
+            let ran = self.run_in_progress;
+            let reports = if ran {
+                self.write_end_of_run(!goose_attack_run_state.shutdown_after_stop)
+                    .await
             } else {
                 Ok(())
             };
             self.run_in_progress = false;
+            // A bare --goose-log stays open in the run's folder until the next
+            // run starts, and the folder stays reserved while the log is open.
+            if !self.goose_log_in_folder() {
+                self.output.release_folder();
+            }
+            self.output.end_save_report_hold();
+            // End the Goose log's gzip member, so the finished run's log is
+            // whole while Idle; lines until the next run are whole members.
+            logger::finish_goose_log();
             #[cfg(feature = "dashboard")]
-            self.publish_save_state(goose_attack_run_state);
+            if let Some(running) = &goose_attack_run_state.dashboard_running_folder {
+                running.set(None);
+            }
             if let Err(e) = reports {
-                // Print the final metrics, and say the run is saved, before
-                // failing on --report-file.
+                // Print the final metrics before failing on a report.
                 if self.metrics.display_metrics {
                     info!(
                         "printing final metrics after {} seconds...",
@@ -2429,13 +2464,13 @@ impl GooseAttack {
                     );
                     print!("{}", self.metrics);
                 }
-                self.print_save_outcome();
                 return Err(e);
             }
             // After an autostarted run, wait for a dashboard tab that is
-            // open so the saved run can still be downloaded from it.
+            // open so the run's report can still be downloaded from it.
             #[cfg(feature = "dashboard")]
-            let wait_for_dashboard = goose_attack_run_state.shutdown_after_stop
+            let wait_for_dashboard = ran
+                && goose_attack_run_state.shutdown_after_stop
                 && self.should_wait_for_dashboard(goose_attack_run_state);
             #[cfg(not(feature = "dashboard"))]
             let wait_for_dashboard = false;
@@ -2447,7 +2482,6 @@ impl GooseAttack {
                 if self.metrics.display_metrics {
                     println!("{}", self.metrics);
                 }
-                self.print_save_outcome();
                 #[cfg(feature = "dashboard")]
                 if wait_for_dashboard {
                     self.start_dashboard_wait(goose_attack_run_state);
@@ -3043,9 +3077,36 @@ impl GooseAttack {
         goose_attack_run_state.shutdown_after_stop = !self.configuration.no_autostart;
         goose_attack_run_state.all_users_spawned = false;
 
+        // Choose this run's folder, when it may need one, before any log opens
+        // in it, and start the Goose log's gzip member for the run.
+        self.start_run_folder()?;
+        logger::start_goose_log();
+        #[cfg(feature = "dashboard")]
+        if let Some(running) = &goose_attack_run_state.dashboard_running_folder {
+            running.set(
+                self.output
+                    .folder
+                    .as_ref()
+                    .map(|folder| folder.path.as_path()),
+            );
+        }
+        // A bare --goose-log moved into this run's folder, and stays open there
+        // after the run ends.
+        #[cfg(feature = "dashboard")]
+        if self.goose_log_in_folder() {
+            if let (Some(log_folder), Some(folder)) = (
+                &goose_attack_run_state.dashboard_log_folder,
+                &self.output.folder,
+            ) {
+                log_folder.set(Some(&folder.path));
+            }
+        }
+
         // If enabled, spawn a logger thread.
-        let (logger_handle, all_threads_logger_tx) =
-            self.configuration.setup_loggers(&self.defaults).await?;
+        let (logger_handle, all_threads_logger_tx) = self
+            .configuration
+            .setup_loggers(&self.defaults, self.output.folder.as_ref())
+            .await?;
         goose_attack_run_state.logger_handle = logger_handle;
         goose_attack_run_state.all_threads_logger_tx = all_threads_logger_tx;
 
@@ -3054,7 +3115,9 @@ impl GooseAttack {
         goose_attack_run_state.throttle_threads_tx = throttle_threads_tx;
         goose_attack_run_state.parent_to_throttle_tx = parent_to_throttle_tx;
 
-        // Re-create the metrics channel and spawn a fresh processor.
+        // Re-create the metrics channel and spawn a fresh processor. It reads
+        // Save report as start_run_folder left it, so start_run_folder runs
+        // first.
         // The old processor exits when its command channel closes.
         let (all_threads_metrics_tx, metrics_rx): (
             flume::Sender<GooseMetric>,
@@ -3069,7 +3132,7 @@ impl GooseAttack {
             GraphData::for_metrics_processor(
                 self.configuration.records_latency_series(),
                 self.configuration.records_synthetic_latency(),
-                self.configuration.records_latency_columns(),
+                self.records_latency_columns(),
             ),
             self.configuration.clone(),
             self.scenarios.clone(),
@@ -3077,6 +3140,7 @@ impl GooseAttack {
             goose_attack_run_state.request_counter_registry.clone(),
             goose_attack_run_state.all_threads_logger_tx.clone(),
             goose_attack_run_state.metrics_epoch.clone(),
+            self.keeps_full_graph(),
         );
         goose_attack_run_state.metrics_cmd_tx = metrics_cmd_tx;
         if let Some(handle) = goose_attack_run_state.metrics_processor_handle.take() {
@@ -3087,18 +3151,16 @@ impl GooseAttack {
         // Try to create the requested report files, to confirm access.
         self.create_reports().await?;
 
-        // Choose and create this run's directory, if saving runs.
-        self.start_saved_run()?;
         self.run_in_progress = true;
         self.ended_by = None;
-        #[cfg(feature = "dashboard")]
-        self.publish_save_state(goose_attack_run_state);
 
         // Record when the GooseAttack officially started. series_started is the
         // continuous graph clock and is not restarted on metrics reset.
         let now = time::Instant::now();
         self.started = Some(now);
         self.series_started = Some(now);
+        // The same start, as the reports' record gives it.
+        self.output.started = Some(chrono::Utc::now());
         // Align pre-created weighted users so request.elapsed matches series time.
         for user in &mut self.weighted_users {
             user.started = now;
@@ -3117,6 +3179,15 @@ impl GooseAttack {
         let mut goose_attack_run_state = self.initialize_attack().await?;
 
         let result = self.run_attack(&mut goose_attack_run_state).await;
+
+        // A run that ended early, on an error, leaves its logger running: end it,
+        // so every line is written.
+        if let Some(logger) = goose_attack_run_state.logger_handle.take() {
+            if let Some(logger_tx) = goose_attack_run_state.all_threads_logger_tx.as_ref() {
+                let _ = logger_tx.send(None);
+            }
+            let _ = logger.await;
+        }
 
         // Stop the dashboard server on every return path, including errors
         // from the phase loop, and wait for it so the port is free when
@@ -3189,8 +3260,6 @@ impl GooseAttack {
                     // without waiting for the next 1 Hz hub tick / flume disconnect.
                     #[cfg(feature = "dashboard")]
                     if let Some(close_tx) = goose_attack_run_state.dashboard_close_tx.take() {
-                        // The save state goes with `closed`: set it first.
-                        self.publish_save_state(goose_attack_run_state);
                         let _ = close_tx.send(true);
                     }
                     break;
@@ -3611,8 +3680,7 @@ mod tests {
             Ok(())
         }
         let configuration =
-            GooseConfiguration::parse_args_default(&["--no-telnet", "--no-websocket", "--no-save"])
-                .unwrap();
+            GooseConfiguration::parse_args_default(&["--no-telnet", "--no-websocket"]).unwrap();
         let mut goose_attack = GooseAttack::initialize_with_config(configuration)
             .unwrap()
             .register_scenario(scenario!("NoHost").register_transaction(transaction!(noop)));
@@ -3672,7 +3740,6 @@ mod tests {
             let configuration = GooseConfiguration::parse_args_default(&[
                 "--no-telnet",
                 "--no-websocket",
-                "--no-save",
                 "--users",
                 "1",
             ])
@@ -3718,7 +3785,6 @@ mod tests {
         let configuration = GooseConfiguration::parse_args_default(&[
             "--no-telnet",
             "--no-websocket",
-            "--no-save",
             "--users",
             "1",
             "--quiet",
@@ -3754,7 +3820,6 @@ mod tests {
         let configuration = GooseConfiguration::parse_args_default(&[
             "--no-telnet",
             "--no-websocket",
-            "--no-save",
             "--no-autostart",
             "--users",
             "100",
@@ -3853,7 +3918,6 @@ mod tests {
         let configuration = GooseConfiguration::parse_args_default(&[
             "--no-telnet",
             "--no-websocket",
-            "--no-save",
             "--users",
             "4",
         ])
@@ -3883,7 +3947,6 @@ mod tests {
         let configuration = GooseConfiguration::parse_args_default(&[
             "--no-telnet",
             "--no-websocket",
-            "--no-save",
             "--users",
             "5",
         ])
@@ -3913,7 +3976,6 @@ mod tests {
         let configuration = GooseConfiguration::parse_args_default(&[
             "--no-telnet",
             "--no-websocket",
-            "--no-save",
             "--users",
             "5",
             "--increase-rate",
@@ -3954,8 +4016,7 @@ mod tests {
     #[serial_test::serial]
     async fn test_set_users_refused_while_stopping() {
         let configuration =
-            GooseConfiguration::parse_args_default(&["--no-telnet", "--no-websocket", "--no-save"])
-                .unwrap();
+            GooseConfiguration::parse_args_default(&["--no-telnet", "--no-websocket"]).unwrap();
         let mut goose_attack = GooseAttack::initialize_with_config(configuration).unwrap();
         let mut run_state = goose_attack.initialize_attack().await.unwrap();
 
@@ -3996,8 +4057,7 @@ mod tests {
     #[serial_test::serial]
     async fn test_second_stop_refused_while_decreasing() {
         let configuration =
-            GooseConfiguration::parse_args_default(&["--no-telnet", "--no-websocket", "--no-save"])
-                .unwrap();
+            GooseConfiguration::parse_args_default(&["--no-telnet", "--no-websocket"]).unwrap();
         let mut goose_attack = GooseAttack::initialize_with_config(configuration).unwrap();
         let mut run_state = goose_attack.initialize_attack().await.unwrap();
 
@@ -4042,8 +4102,7 @@ mod tests {
     #[serial_test::serial]
     async fn test_dashboard_snapshot_carries_stopping() {
         let configuration =
-            GooseConfiguration::parse_args_default(&["--no-telnet", "--no-websocket", "--no-save"])
-                .unwrap();
+            GooseConfiguration::parse_args_default(&["--no-telnet", "--no-websocket"]).unwrap();
         let mut goose_attack = GooseAttack::initialize_with_config(configuration).unwrap();
         let mut run_state = goose_attack.initialize_attack().await.unwrap();
         let (dashboard_tx, dashboard_rx) = flume::unbounded();

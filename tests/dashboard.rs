@@ -93,6 +93,23 @@ impl Default for ControlTestOpts {
     }
 }
 
+/// A run folder in a new temporary folder, so the reports Save report writes
+/// stay out of the checkout.
+fn test_output_dir() -> String {
+    std::env::temp_dir()
+        .join(format!(
+            "goose-dashboard-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+        .join("run")
+        .to_string_lossy()
+        .into_owned()
+}
+
 /// Build a short-running observe-only load test with the dashboard enabled.
 /// Does not set `--report-file` — dashboard alone must be sufficient.
 fn build_dashboard_config(
@@ -118,7 +135,8 @@ fn build_dashboard_config(
         "--co-mitigation".into(),
         "disabled".into(),
         "--quiet".into(),
-        "--no-save".into(),
+        "--output-dir".into(),
+        test_output_dir(),
         "--host".into(),
         server.base_url(),
     ];
@@ -160,7 +178,8 @@ fn build_control_config(
         "--co-mitigation".into(),
         "disabled".into(),
         "--quiet".into(),
-        "--no-save".into(),
+        "--output-dir".into(),
+        test_output_dir(),
         "--host".into(),
         server.base_url(),
     ]);
@@ -596,6 +615,9 @@ async fn test_dashboard_token_auth() {
         "SSE content-type was {}",
         events_ct
     );
+    // A tab still connected when the run ends keeps Goose up for the report's
+    // download; this one closes first.
+    drop(events_ok);
 
     let _ = load_handle.await.expect("join").expect("execute");
 }
@@ -714,8 +736,18 @@ async fn test_control_disabled_returns_404() {
     let base_v4 = format!("http://127.0.0.1:{port}");
 
     // Observe-only (no --dashboard-control).
-    let configuration = build_dashboard_config(&server, "127.0.0.1", port, Some(AUTH_TOKEN));
+    let mut configuration = build_dashboard_config(&server, "127.0.0.1", port, Some(AUTH_TOKEN));
     assert!(!configuration.dashboard_control);
+    // A listed report beside the run's folder, so Delete's 404 comes from the
+    // missing route and not from a missing folder.
+    let parent = reports_dir("control-off");
+    configuration.output_dir = Some(parent.join("run").to_string_lossy().into_owned());
+    std::fs::create_dir(parent.join("nightly")).unwrap();
+    std::fs::write(
+        parent.join("nightly").join("report.json"),
+        r#"{"raw_metrics": {}}"#,
+    )
+    .unwrap();
 
     let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
     let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
@@ -723,8 +755,28 @@ async fn test_control_disabled_returns_404() {
     let (base, health) = wait_for_health(&[&base_v4], 80).await;
     let health_json: serde_json::Value = health.json().await.expect("health json");
     assert_eq!(health_json["control_enabled"], false);
+    let listing: serde_json::Value = reqwest::Client::new()
+        .get(format!("{base}/api/v1/reports"))
+        .header("Authorization", bearer_header())
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(listing["reports"][0]["name"], "nightly");
 
     let client = reqwest::Client::new();
+    // Rule 13: Save report is on during the run, and can't be changed.
+    let snap = wait_for_phase(
+        &client,
+        &base,
+        Some(AUTH_TOKEN),
+        &["increase", "maintain"],
+        Duration::from_secs(10),
+    )
+    .await;
+    assert_eq!(snap["report"]["save"], true, "{}", snap["report"]);
     let resp = post_control(&client, &base, "/api/v1/control/start", Some("{}"), true).await;
     assert_eq!(
         resp.status(),
@@ -734,15 +786,31 @@ async fn test_control_disabled_returns_404() {
     );
     let resp = post_control(&client, &base, "/api/v1/control/quit", Some("{}"), true).await;
     assert_eq!(resp.status(), 404, "control off must 404 quit");
+    for (path, body) in [
+        ("/api/v1/control/report", r#"{"save": false}"#),
+        ("/api/v1/control/report/now", "{}"),
+    ] {
+        let resp = post_control(&client, &base, path, Some(body), true).await;
+        assert_eq!(resp.status(), 404, "control off must 404 {}", path);
+    }
+    let snap = get_snapshot_json(&client, &base, Some(AUTH_TOKEN))
+        .await
+        .unwrap();
+    assert_eq!(snap["report"]["save"], true, "{}", snap["report"]);
     let resp = client
-        .delete(format!("{base}/api/v1/runs/2026-10-09-141203"))
+        .delete(format!("{base}/api/v1/reports/nightly"))
         .header("Authorization", bearer_header())
         .send()
         .await
         .expect("DELETE");
     assert_eq!(resp.status(), 404, "control off must 404 delete");
+    assert!(parent.join("nightly").join("report.json").exists());
 
     let _ = load.join().await.expect("execute");
+    // Rule 13: the run wrote its report into its folder without control.
+    assert!(parent.join("run").join("report.json").exists());
+    assert!(parent.join("run").join("report.html").exists());
+    std::fs::remove_dir_all(&parent).ok();
 }
 
 /// Case 2: control always requires token on loopback.
@@ -2276,13 +2344,13 @@ async fn test_dashboard_stops_when_execute_fails() {
 }
 
 // ---------------------------------------------------------------------------
-// Saved runs: listing, downloads, comparisons and the `closed` event.
+// Run folders: Save report, the reports routes, and the report switches.
 // ---------------------------------------------------------------------------
 
-/// A new empty directory for one test.
-fn saved_runs_dir(name: &str) -> std::path::PathBuf {
+/// A new empty folder for one test.
+fn reports_dir(name: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!(
-        "goose-dashboard-runs-{name}-{}-{}",
+        "goose-dashboard-reports-{name}-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -2293,15 +2361,18 @@ fn saved_runs_dir(name: &str) -> std::path::PathBuf {
     dir
 }
 
-/// Run one short load test saved into `runs` and return its run id.
-async fn save_one_run(server: &MockServer, runs: &std::path::Path, users: &str) -> String {
-    let runs_str = runs.to_string_lossy().into_owned();
-    let before: std::collections::HashSet<_> = saved_run_ids(runs).into_iter().collect();
+/// Run one short load test without the dashboard, its report written into
+/// `folder` by a bare `--report-file`, with `notes`.
+async fn write_one_report(server: &MockServer, folder: &std::path::Path, users: &str, notes: &str) {
+    let folder = folder.to_string_lossy().into_owned();
     let configuration = common::build_configuration(
         server,
         vec![
-            "--runs-dir",
-            &runs_str,
+            "--output-dir",
+            &folder,
+            "--report-file",
+            "--notes",
+            notes,
             "--users",
             users,
             "--increase-rate",
@@ -2313,27 +2384,6 @@ async fn save_one_run(server: &MockServer, runs: &std::path::Path, users: &str) 
         None,
     )
     .await;
-    let new: Vec<String> = saved_run_ids(runs)
-        .into_iter()
-        .filter(|id| !before.contains(id))
-        .collect();
-    assert_eq!(new.len(), 1, "one new run: {:?}", new);
-    new.into_iter().next().unwrap()
-}
-
-/// Run ids in `runs`, sorted.
-fn saved_run_ids(runs: &std::path::Path) -> Vec<String> {
-    let mut ids: Vec<String> = std::fs::read_dir(runs)
-        .map(|entries| {
-            entries
-                .filter_map(Result::ok)
-                .filter(|e| e.path().is_dir())
-                .map(|e| e.file_name().to_string_lossy().into_owned())
-                .collect()
-        })
-        .unwrap_or_default();
-    ids.sort();
-    ids
 }
 
 fn header<'a>(resp: &'a reqwest::Response, name: &str) -> &'a str {
@@ -2344,63 +2394,105 @@ fn header<'a>(resp: &'a reqwest::Response, name: &str) -> &'a str {
         .unwrap()
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[serial]
-async fn test_saved_runs_routes() {
-    let server = MockServer::start();
-    let _mocks = setup_mock_endpoints(&server);
-    let runs = saved_runs_dir("routes");
-    let older = save_one_run(&server, &runs, "1").await;
-    let newer = save_one_run(&server, &runs, "3").await;
-    assert!(newer > older);
+/// The names `GET /api/v1/reports` lists, in order.
+async fn listed_names(client: &reqwest::Client, base: &str) -> Vec<String> {
+    let listing: serde_json::Value = client
+        .get(format!("{base}/api/v1/reports"))
+        .header("Authorization", bearer_header())
+        .send()
+        .await
+        .expect("list reports")
+        .json()
+        .await
+        .expect("listing is JSON");
+    listing["reports"]
+        .as_array()
+        .expect("reports")
+        .iter()
+        .map(|report| report["name"].as_str().unwrap().to_string())
+        .collect()
+}
 
-    // A complete run with no requests, to compare against.
-    let empty = "2001-01-01-000000";
-    std::fs::create_dir(runs.join(empty)).unwrap();
-    let mut report: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(runs.join(&older).join("report.json")).unwrap(),
-    )
-    .unwrap();
-    report["raw_request_metrics"] = serde_json::json!([]);
-    report["raw_response_metrics"] = serde_json::json!([]);
-    std::fs::write(
-        runs.join(empty).join("report.json"),
-        serde_json::to_string(&report).unwrap(),
-    )
-    .unwrap();
-    let mut run_json: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(runs.join(&older).join("run.json")).unwrap())
-            .unwrap();
-    run_json["id"] = serde_json::json!(empty);
-    run_json["started"] = serde_json::json!("2001-01-01T00:00:00Z");
-    run_json["requests"] = serde_json::json!(0);
-    std::fs::write(
-        runs.join(empty).join("run.json"),
-        serde_json::to_string(&run_json).unwrap(),
-    )
-    .unwrap();
-    // Not listed and not served: an incomplete run (its reports but no
-    // run.json), a name that is not an id, and a symlink to a real run.
-    std::fs::create_dir(runs.join("2002-02-02-000000")).unwrap();
-    for file in ["report.html", "report.json", "report.md"] {
-        std::fs::copy(
-            runs.join(&older).join(file),
-            runs.join("2002-02-02-000000").join(file),
-        )
-        .unwrap();
-    }
-    std::fs::create_dir(runs.join("not-a-run")).unwrap();
-    #[cfg(unix)]
-    std::os::unix::fs::symlink(runs.join(&older), runs.join("2003-03-03-000000")).unwrap();
-
+/// Start a dashboard that runs nothing until told to, with run folders in
+/// `parent`; returns the load test and its base URL.
+async fn start_idle_dashboard(
+    server: &MockServer,
+    parent: &std::path::Path,
+    report_file: Vec<String>,
+    notes: Option<&str>,
+) -> (LoadTestGuard, String) {
     let port = reserve_port();
     let base_v4 = format!("http://127.0.0.1:{port}");
     let mut configuration =
-        build_control_config(&server, "127.0.0.1", port, ControlTestOpts::default());
-    configuration.runs_dir = Some(runs.to_string_lossy().into_owned());
+        build_control_config(server, "127.0.0.1", port, ControlTestOpts::default());
+    configuration.output_dir = Some(parent.join("dash").to_string_lossy().into_owned());
+    configuration.report_file = report_file;
+    configuration.notes = notes.map(str::to_string);
     let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
     let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
     let (base, _) = wait_for_health(&[&base_v4], 80).await;
+    (load, base)
+}
+
+/// Rules 12 and 13: the panel lists the folders that hold a report, also
+/// one written without the dashboard and while Idle; it serves each
+/// format, rendering one the folder lacks; and refuses anything else.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn test_reports_routes() {
+    let server = MockServer::start();
+    let _mocks = setup_mock_endpoints(&server);
+    let parent = reports_dir("routes");
+    write_one_report(&server, &parent.join("older"), "1", "first run").await;
+    write_one_report(&server, &parent.join("newer"), "3", "second <run>").await;
+
+    // A report.json alone, its HTML and Markdown rendered when asked for.
+    std::fs::create_dir(parent.join("json-only")).unwrap();
+    std::fs::copy(
+        parent.join("older").join("report.json"),
+        parent.join("json-only").join("report.json"),
+    )
+    .unwrap();
+    // A report with no requests, started long ago, to compare against.
+    let mut empty: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(parent.join("older").join("report.json")).unwrap(),
+    )
+    .unwrap();
+    empty["raw_request_metrics"] = serde_json::json!([]);
+    empty["raw_response_metrics"] = serde_json::json!([]);
+    empty["started"] = serde_json::json!("2001-01-01T00:00:00Z");
+    std::fs::create_dir(parent.join("empty")).unwrap();
+    std::fs::write(
+        parent.join("empty").join("report.json"),
+        serde_json::to_string(&empty).unwrap(),
+    )
+    .unwrap();
+    // Not listed and not served: a report still being written, a folder of
+    // logs, a name the routes refuse, a symlink to a folder, and a folder
+    // whose report.json is a symlink.
+    std::fs::create_dir(parent.join("partial")).unwrap();
+    std::fs::write(parent.join("partial").join(".report.json.tmp"), "{").unwrap();
+    std::fs::create_dir(parent.join("logs-only")).unwrap();
+    std::fs::write(parent.join("logs-only").join("goose.log"), "x").unwrap();
+    std::fs::create_dir(parent.join(".hidden")).unwrap();
+    std::fs::copy(
+        parent.join("older").join("report.json"),
+        parent.join(".hidden").join("report.json"),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(parent.join("older"), parent.join("linked")).unwrap();
+        std::fs::create_dir(parent.join("symjson")).unwrap();
+        std::os::unix::fs::symlink(
+            parent.join("older").join("report.json"),
+            parent.join("symjson").join("report.json"),
+        )
+        .unwrap();
+    }
+
+    // Idle under --no-autostart: no run has a folder yet.
+    let (load, base) = start_idle_dashboard(&server, &parent, Vec::new(), None).await;
     let client = reqwest::Client::new();
     let get = |path: String, auth: bool| {
         let mut req = client.get(format!("{base}{path}"));
@@ -2410,256 +2502,376 @@ async fn test_saved_runs_routes() {
         req.send()
     };
 
-    // The listing.
+    // The listing, newest first by start time.
     assert_eq!(
-        get("/api/v1/runs".into(), false).await.unwrap().status(),
+        get("/api/v1/reports".into(), false).await.unwrap().status(),
         401
     );
-    let listing = get("/api/v1/runs".into(), true).await.unwrap();
+    let listing = get("/api/v1/reports".into(), true).await.unwrap();
     assert_eq!(listing.status(), 200);
-    assert!(header(&listing, "content-security-policy").contains("default-src 'self'"));
     let listing: serde_json::Value = listing.json().await.unwrap();
-    assert_eq!(listing["dir"], runs.to_string_lossy().as_ref());
-    let ids: Vec<&str> = listing["runs"]
-        .as_array()
-        .unwrap()
+    assert_eq!(listing["dir"], parent.to_string_lossy().as_ref());
+    let reports = listing["reports"].as_array().unwrap();
+    let names: Vec<&str> = reports
         .iter()
-        .map(|run| run["id"].as_str().unwrap())
+        .map(|report| report["name"].as_str().unwrap())
         .collect();
-    assert_eq!(ids, vec![newer.as_str(), older.as_str(), empty]);
-    assert!(listing["total_bytes"].as_u64().unwrap() > 0);
+    assert_eq!(names, vec!["newer", "older", "json-only", "empty"]);
+    assert_eq!(reports[0]["notes"], "second <run>");
+    assert_eq!(reports[0]["in_progress"], false);
+    assert_eq!(reports[0]["running"], false);
+    assert_eq!(reports[0]["max_users"], 3);
+    assert!(reports[0]["requests"].as_u64().unwrap() > 0);
 
-    // A report download.
-    let path = format!("/api/v1/runs/{newer}/report.html");
-    assert_eq!(get(path.clone(), false).await.unwrap().status(), 401);
-    let download = get(path, true).await.unwrap();
+    // A stored report, as an attachment.
+    let download = get("/api/v1/reports/newer/report.html".into(), true)
+        .await
+        .unwrap();
     assert_eq!(download.status(), 200);
     let disposition = header(&download, "content-disposition").to_string();
     assert!(
         disposition.starts_with("attachment; filename=\"goose-")
-            && disposition.ends_with(&format!("-{newer}.html\"")),
+            && disposition.ends_with("-newer.html\""),
         "{}",
         disposition
     );
     assert_eq!(header(&download, "x-content-type-options"), "nosniff");
     assert_eq!(header(&download, "cache-control"), "no-store");
     assert_eq!(header(&download, "content-security-policy"), "sandbox");
-    assert!(header(&download, "content-type").starts_with("text/html"));
     let body = download.bytes().await.unwrap();
     assert_eq!(
         body.as_ref(),
-        std::fs::read(runs.join(&newer).join("report.html")).unwrap()
+        std::fs::read(parent.join("newer").join("report.html")).unwrap()
     );
-    for (file, kind) in [
-        ("report.json", "application/json"),
-        ("report.md", "text/markdown"),
-    ] {
-        let resp = get(format!("/api/v1/runs/{older}/{file}"), true)
+    assert_eq!(
+        get("/api/v1/reports/newer/report.html".into(), false)
             .await
-            .unwrap();
-        assert_eq!(resp.status(), 200, "{}", file);
-        assert!(header(&resp, "content-type").starts_with(kind));
-        assert_eq!(header(&resp, "content-security-policy"), "sandbox");
-    }
+            .unwrap()
+            .status(),
+        401
+    );
 
-    // The dashboard page keeps its own policy.
-    let page = client.get(format!("{base}/")).send().await.unwrap();
-    assert_eq!(page.status(), 200);
-    assert!(header(&page, "content-security-policy").contains("frame-ancestors 'none'"));
+    // Formats the folder lacks, rendered from its report.json.
+    let markdown = get("/api/v1/reports/newer/report.md".into(), true)
+        .await
+        .unwrap();
+    assert_eq!(markdown.status(), 200);
+    assert!(header(&markdown, "content-type").starts_with("text/markdown"));
+    let markdown = markdown.text().await.unwrap();
+    // The notes, escaped for Markdown.
+    assert!(markdown.contains("second \\<run\\>"), "{}", markdown);
+    let html = get("/api/v1/reports/json-only/report.html".into(), true)
+        .await
+        .unwrap();
+    assert_eq!(html.status(), 200);
+    let html = html.text().await.unwrap();
+    assert!(html.contains("first run"), "notes");
+    assert!(html.contains("graphs were not recorded"), "rule 7 note");
+    let json = get("/api/v1/reports/json-only/report.json".into(), true)
+        .await
+        .unwrap();
+    assert_eq!(json.status(), 200);
+    assert!(header(&json, "content-type").starts_with("application/json"));
 
-    // A comparison.
-    let path = format!("/api/v1/runs/{newer}/compare.md?baseline={older}");
-    assert_eq!(get(path.clone(), false).await.unwrap().status(), 401);
-    let compare = get(path, true).await.unwrap();
+    // A comparison, and one with a report that has no requests.
+    let compare = get(
+        "/api/v1/reports/newer/compare.md?baseline=older".into(),
+        true,
+    )
+    .await
+    .unwrap();
     assert_eq!(compare.status(), 200);
-    assert!(header(&compare, "content-disposition").ends_with(&format!("-{newer}-vs-{older}.md\"")));
-    assert_eq!(header(&compare, "content-security-policy"), "sandbox");
-    assert_eq!(header(&compare, "cache-control"), "no-store");
-    assert_eq!(header(&compare, "x-content-type-options"), "nosniff");
+    assert!(header(&compare, "content-disposition").ends_with("-newer-vs-older.md\""));
     let markdown = compare.text().await.unwrap();
-    let delta = regex::Regex::new(r"\([+-]\d").unwrap();
-    assert!(delta.is_match(&markdown), "{}", markdown);
-    // The first line names the run and the baseline, with when each started.
-    let named = regex::Regex::new(&format!(
-        r"^Run {newer} \(started \d{{4}}-\d{{2}}-\d{{2}} \d{{2}}:\d{{2}}:\d{{2}} UTC\) compared to baseline {older} \(started \d{{4}}-\d{{2}}-\d{{2}} \d{{2}}:\d{{2}}:\d{{2}} UTC\)\.\n\n"
-    ))
+    let named = regex::Regex::new(
+        r"^Run newer \(started \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC\) compared to baseline older \(started \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC\)\.\n\n",
+    )
     .unwrap();
     assert!(named.is_match(&markdown), "{}", markdown);
-
-    // A run with no requests can't be compared.
     let resp = get(
-        format!("/api/v1/runs/{newer}/compare.md?baseline={empty}"),
+        "/api/v1/reports/newer/compare.md?baseline=empty".into(),
         true,
     )
     .await
     .unwrap();
     assert_eq!(resp.status(), 422);
-    let reason = resp.text().await.unwrap();
-    assert_eq!(reason, format!("Run {empty} has no requests to compare."));
+    assert_eq!(
+        resp.text().await.unwrap(),
+        "Run empty has no requests to compare."
+    );
 
-    // Added after the listing: a real run directory whose report.html is a
-    // symlink to a file outside the runs directory.
-    let outside = saved_runs_dir("outside");
-    std::fs::write(outside.join("secret.html"), "outside the runs directory").unwrap();
-    std::fs::create_dir(runs.join("2004-04-04-000000")).unwrap();
-    for file in ["run.json", "report.json", "report.md"] {
-        std::fs::copy(
-            runs.join(&older).join(file),
-            runs.join("2004-04-04-000000").join(file),
-        )
-        .unwrap();
-    }
-    #[cfg(unix)]
-    std::os::unix::fs::symlink(
-        outside.join("secret.html"),
-        runs.join("2004-04-04-000000").join("report.html"),
-    )
-    .unwrap();
-
-    // Bad ids, files and traversal attempts are plain 404s.
+    // Bad names, files and traversal attempts are plain 404s.
     for path in [
-        "/api/v1/runs/2026-10-09-141203/report.html".to_string(),
-        format!("/api/v1/runs/{newer}/run.json"),
-        format!("/api/v1/runs/{newer}/report.pdf"),
-        format!("/api/v1/runs/{newer}/..%2Frun.json"),
-        "/api/v1/runs/..%2F..%2Fetc/report.html".to_string(),
-        "/api/v1/runs/%2Fetc%2Fpasswd/report.html".to_string(),
-        "/api/v1/runs/../report.html".to_string(),
-        format!("/api/v1/runs/{newer}%2F/report.html"),
-        format!("/api/v1/runs/{newer}/compare.md"),
-        format!("/api/v1/runs/{newer}/compare.md?baseline=..%2F{older}"),
-        format!("/api/v1/runs/{newer}/compare.md?baseline=2002-02-02-000000"),
-        "/api/v1/runs/2002-02-02-000000/report.html".to_string(),
-        "/api/v1/runs/2002-02-02-000000/report.json".to_string(),
-        "/api/v1/runs/not-a-run/report.html".to_string(),
-        "/api/v1/runs/2003-03-03-000000/report.html".to_string(),
-        "/api/v1/runs/2004-04-04-000000/report.html".to_string(),
+        "/api/v1/reports/missing/report.html",
+        "/api/v1/reports/newer/goose.log",
+        "/api/v1/reports/newer/report.pdf",
+        "/api/v1/reports/newer/..%2Freport.json",
+        "/api/v1/reports/..%2Fnewer/report.html",
+        "/api/v1/reports/%2Fetc/report.html",
+        "/api/v1/reports/../report.html",
+        "/api/v1/reports/.hidden/report.json",
+        "/api/v1/reports/partial/report.json",
+        "/api/v1/reports/logs-only/report.html",
+        "/api/v1/reports/linked/report.html",
+        "/api/v1/reports/symjson/report.json",
+        "/api/v1/reports/newer/compare.md",
+        "/api/v1/reports/newer/compare.md?baseline=..%2Folder",
+        "/api/v1/reports/newer/compare.md?baseline=partial",
     ] {
-        let resp = get(path.clone(), true).await.unwrap();
+        let resp = get(path.to_string(), true).await.unwrap();
         assert_eq!(resp.status(), 404, "{}", path);
     }
 
     load.abort().await;
-    std::fs::remove_dir_all(&runs).ok();
-    std::fs::remove_dir_all(&outside).ok();
+    std::fs::remove_dir_all(&parent).ok();
 }
 
-/// Read SSE from `resp` until `event: closed` and return its data.
-async fn read_closed_event(resp: &mut reqwest::Response, timeout: Duration) -> Option<String> {
-    let deadline = Instant::now() + timeout;
-    let mut text = String::new();
-    while Instant::now() < deadline {
-        match tokio::time::timeout(Duration::from_millis(500), resp.chunk()).await {
-            Ok(Ok(Some(chunk))) => {
-                text.push_str(&String::from_utf8_lossy(&chunk));
-                if let Some(at) = text.find("event: closed") {
-                    let rest = &text[at..];
-                    if let Some(end) = rest.find("\n\n") {
-                        let data = rest[..end]
-                            .lines()
-                            .filter_map(|line| line.strip_prefix("data: "))
-                            .collect::<Vec<_>>()
-                            .join("\n");
-                        return Some(data);
-                    }
-                }
-            }
-            Ok(Ok(None)) | Ok(Err(_)) => break,
-            Err(_) => continue,
-        }
-    }
-    None
-}
+/// Rule 12: a report another run left marked in progress lists as
+/// incomplete, never as running.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn test_report_left_in_progress_lists_as_incomplete() {
+    let server = MockServer::start();
+    let _mocks = setup_mock_endpoints(&server);
+    let parent = reports_dir("incomplete");
+    write_one_report(&server, &parent.join("cut"), "1", "cut short").await;
+    let path = parent.join("cut").join("report.json");
+    let mut report: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    report["in_progress"] = serde_json::json!(true);
+    std::fs::write(&path, serde_json::to_string(&report).unwrap()).unwrap();
 
-/// One autostarted dashboard run with an SSE client: the `closed` event
-/// carries the saved run's id.
-async fn closed_event_carries_saved_run(server: &MockServer) {
-    let runs = saved_runs_dir("closed");
-    let port = reserve_port();
-    let base_v4 = format!("http://127.0.0.1:{port}");
-    let mut configuration = build_dashboard_config(server, "127.0.0.1", port, Some(AUTH_TOKEN));
-    configuration.no_save = false;
-    configuration.runs_dir = Some(runs.to_string_lossy().into_owned());
-    configuration.run_time = Some("2".to_string());
-    let ready = arm_test_ready();
-    let start = transaction!(wait_for_test_ready);
-    let goose_attack =
-        common::build_load_test(configuration, vec![get_transactions()], Some(&start), None);
-    let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
-    let (base, _) = wait_for_health(&[&base_v4], 80).await;
-
-    let client = reqwest::Client::new();
-    let mut sse = client
-        .get(format!("{base}/api/v1/events"))
+    let (load, base) = start_idle_dashboard(&server, &parent, Vec::new(), None).await;
+    let listing: serde_json::Value = reqwest::Client::new()
+        .get(format!("{base}/api/v1/reports"))
         .header("Authorization", bearer_header())
         .send()
         .await
-        .expect("SSE connect");
-    assert_eq!(sse.status(), 200);
-    ready.send(()).expect("attack waits in test_start");
-
-    // With this tab connected, Goose waits after the run; once the run is
-    // saved, end the wait as Ctrl-C does.
-    wait_for_saved_runs(&runs, 1).await;
-    goose::trigger_killswitch("test: shut down after the run");
-    let data = read_closed_event(&mut sse, Duration::from_secs(30)).await;
-    goose::reset_killswitch();
-    let data = data.expect("closed event");
-    drop(sse);
-    load.join().await.expect("load test execute");
-
-    let ids = saved_run_ids(&runs);
-    assert_eq!(ids.len(), 1);
-    let save: serde_json::Value = serde_json::from_str(&data).expect("closed data is JSON");
-    assert_eq!(save["state"], "on");
-    assert_eq!(save["last_run"], ids[0].as_str());
-    assert!(save["reason"].is_null());
-    assert_eq!(save["dir"], runs.to_string_lossy().as_ref());
-    std::fs::remove_dir_all(&runs).ok();
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let cut = &listing["reports"][0];
+    assert_eq!(cut["name"], "cut");
+    assert_eq!(cut["in_progress"], true);
+    assert_eq!(cut["running"], false);
+    load.abort().await;
+    std::fs::remove_dir_all(&parent).ok();
 }
 
+/// Rules 9 to 11 and 13: Save report starts on with --dashboard and a
+/// --report-file path, the switches need the control token, Save report now
+/// writes a report marked in progress that the run's last report replaces,
+/// Delete refuses the running run's folder, and with Save report off a run
+/// writes only the paths.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial]
-async fn test_closed_event_carries_saved_run() {
+async fn test_save_report_switches() {
     let server = MockServer::start();
     let _mocks = setup_mock_endpoints(&server);
-    // GOOSE_CLOSED_EVENT_LOOPS repeats the body, to check it never flakes.
-    let loops: usize = std::env::var("GOOSE_CLOSED_EVENT_LOOPS")
-        .ok()
-        .and_then(|n| n.parse().ok())
-        .unwrap_or(1);
-    for _ in 0..loops {
-        closed_event_carries_saved_run(&server).await;
-    }
-}
+    let parent = reports_dir("switches");
+    let path = parent.join("always.html");
+    let path_str = path.to_string_lossy().into_owned();
+    let (load, base) =
+        start_idle_dashboard(&server, &parent, vec![path_str.clone()], Some("switches")).await;
+    let client = reqwest::Client::new();
 
-/// Wait until `count` runs in `runs` have their run.json.
-async fn wait_for_saved_runs(runs: &std::path::Path, count: usize) {
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        let saved = saved_run_ids(runs)
-            .iter()
-            .filter(|id| runs.join(id).join("run.json").exists())
-            .count();
-        if saved >= count {
-            return;
-        }
+    // The header's state: on, the path listed, the notes.
+    let snap = wait_for_phase(
+        &client,
+        &base,
+        Some(AUTH_TOKEN),
+        &["idle"],
+        Duration::from_secs(10),
+    )
+    .await;
+    assert_eq!(snap["report"]["save"], true);
+    assert_eq!(snap["report"]["graph_data"], false);
+    assert_eq!(snap["report"]["paths"], serde_json::json!([path_str]));
+    assert_eq!(snap["report"]["notes"], "switches");
+
+    // The switches need the control token and a body naming one.
+    for (body, auth, status) in [
+        (r#"{"save": false}"#, false, 401),
+        ("{}", true, 400),
+        (r#"{"save": "no"}"#, true, 400),
+        (r#"{"save": false, "other": 1}"#, true, 400),
+    ] {
+        let resp = post_control(&client, &base, "/api/v1/control/report", Some(body), auth).await;
+        assert_eq!(resp.status(), status, "{}", body);
+    }
+    let resp = post_control(
+        &client,
+        &base,
+        "/api/v1/control/report/now",
+        Some("{}"),
+        false,
+    )
+    .await;
+    assert_eq!(resp.status(), 401);
+    // Save report now needs a run in progress.
+    let resp = post_control(
+        &client,
+        &base,
+        "/api/v1/control/report/now",
+        Some("{}"),
+        true,
+    )
+    .await;
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["ok"], false);
+    assert_eq!(body["error"], "invalid_phase");
+    let resp = post_control(
+        &client,
+        &base,
+        "/api/v1/control/report",
+        Some(r#"{"graph_data": true}"#),
+        true,
+    )
+    .await;
+    assert_eq!(resp.status(), 200);
+
+    // Run 1, with Save report on: Save report now, then the final report.
+    let start = post_control(&client, &base, "/api/v1/control/start", Some("{}"), true).await;
+    assert_eq!(start.status(), 200);
+    wait_for_active_users(&client, &base, Some(AUTH_TOKEN), 2, Duration::from_secs(30)).await;
+    let now = post_control(
+        &client,
+        &base,
+        "/api/v1/control/report/now",
+        Some("{}"),
+        true,
+    )
+    .await;
+    let body: serde_json::Value = now.json().await.unwrap();
+    assert_eq!(body["ok"], true, "{}", body);
+    let folder = parent.join("dash");
+    let json = folder.join("report.json");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !json.exists() {
         assert!(
             Instant::now() < deadline,
-            "{} of {} runs saved",
-            saved,
-            count
+            "Save report now wrote no report.json"
         );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let report: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&json).unwrap()).unwrap();
+    assert_eq!(report["in_progress"], true);
+    assert!(report["ended"].is_null());
+    assert!(report["graphs"].is_object(), "Include graph data is on");
+    let listing: serde_json::Value = client
+        .get(format!("{base}/api/v1/reports"))
+        .header("Authorization", bearer_header())
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(listing["reports"][0]["name"], "dash");
+    assert_eq!(listing["reports"][0]["running"], true);
+    // Delete refuses the folder of the run in progress.
+    let resp = client
+        .delete(format!("{base}/api/v1/reports/dash"))
+        .header("Authorization", bearer_header())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 409);
+    // Save report turned off after Save report now: the run's last report
+    // still replaces the one marked in progress.
+    let resp = post_control(
+        &client,
+        &base,
+        "/api/v1/control/report",
+        Some(r#"{"save": false}"#),
+        true,
+    )
+    .await;
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["ok"], true);
+    let stop = post_control(&client, &base, "/api/v1/control/stop", Some("{}"), true).await;
+    assert_eq!(stop.status(), 200);
+    let snap = wait_for_phase(
+        &client,
+        &base,
+        Some(AUTH_TOKEN),
+        &["idle"],
+        Duration::from_secs(30),
+    )
+    .await;
+    let report: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&json).unwrap()).unwrap();
+    assert_eq!(report["in_progress"], false, "the final report replaced it");
+    assert_eq!(report["ended_by"], "stopped");
+    assert_eq!(report["notes"], "switches");
+    assert!(folder.join("report.html").exists());
+    assert!(path.exists());
+    assert_eq!(
+        snap["report"]["last_report"],
+        folder.to_string_lossy().as_ref()
+    );
+    // The panel lists the final report, not the one Save report now wrote.
+    let listing: serde_json::Value = client
+        .get(format!("{base}/api/v1/reports"))
+        .header("Authorization", bearer_header())
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(listing["reports"][0]["name"], "dash");
+    assert_eq!(listing["reports"][0]["in_progress"], false);
+    assert_eq!(listing["reports"][0]["ended_by"], "stopped");
+
+    // Run 2, with Save report still off: only the path is written.
+    std::fs::remove_file(&path).unwrap();
+    let start = post_control(&client, &base, "/api/v1/control/start", Some("{}"), true).await;
+    assert_eq!(start.status(), 200);
+    wait_for_active_users(&client, &base, Some(AUTH_TOKEN), 2, Duration::from_secs(30)).await;
+    let snap = get_snapshot_json(&client, &base, Some(AUTH_TOKEN))
+        .await
+        .unwrap();
+    assert_eq!(snap["report"]["save"], false);
+    // Run 1's folder holds files, so run 2 has the next.
+    assert_eq!(
+        snap["report"]["folder"],
+        parent.join("dash-2").to_string_lossy().as_ref()
+    );
+    let stop = post_control(&client, &base, "/api/v1/control/stop", Some("{}"), true).await;
+    assert_eq!(stop.status(), 200);
+    wait_for_phase(
+        &client,
+        &base,
+        Some(AUTH_TOKEN),
+        &["idle"],
+        Duration::from_secs(30),
+    )
+    .await;
+    assert!(path.exists(), "a --report-file path is always written");
+    assert!(!parent.join("dash-2").exists(), "nothing asked for dash-2");
+
+    load.abort().await;
+    std::fs::remove_dir_all(&parent).ok();
+}
+
+/// Wait until `folder` holds its report.json.
+async fn wait_for_report(folder: &std::path::Path) {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !folder.join("report.json").exists() {
+        assert!(Instant::now() < deadline, "no report in {:?}", folder);
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
 
-/// Start an autostarted, saved dashboard run held at test_start, with
-/// dashboard control when `control`; returns the load test, the base URL,
-/// and the gate that lets it run.
+/// Start an autostarted dashboard run held at test_start, its report saved
+/// into `folder`, with dashboard control when `control`; returns the load
+/// test, the base URL, and the gate that lets it run.
 async fn start_saved_dashboard_run(
     server: &MockServer,
-    runs: &std::path::Path,
+    folder: &std::path::Path,
     stop: Option<&Transaction>,
     control: bool,
 ) -> (LoadTestGuard, String, tokio::sync::oneshot::Sender<()>) {
@@ -2667,8 +2879,7 @@ async fn start_saved_dashboard_run(
     let base_v4 = format!("http://127.0.0.1:{port}");
     let mut configuration = build_dashboard_config(server, "127.0.0.1", port, Some(AUTH_TOKEN));
     configuration.dashboard_control = control;
-    configuration.no_save = false;
-    configuration.runs_dir = Some(runs.to_string_lossy().into_owned());
+    configuration.output_dir = Some(folder.to_string_lossy().into_owned());
     configuration.run_time = Some("2".to_string());
     let ready = arm_test_ready();
     let start = transaction!(wait_for_test_ready);
@@ -2686,10 +2897,11 @@ async fn test_dashboard_waits_after_autostarted_run() {
     let _mocks = setup_mock_endpoints(&server);
     let client = reqwest::Client::new();
 
-    // A tab connected when the run ends: Goose goes idle and the run can be
-    // downloaded. It stays up after the tab closes, until Quit.
-    let runs = saved_runs_dir("wait");
-    let (load, base, ready) = start_saved_dashboard_run(&server, &runs, None, true).await;
+    // A tab connected when the run ends: Goose goes idle and the report can
+    // be downloaded. It stays up after the tab closes, until Quit.
+    let parent = reports_dir("wait");
+    let folder = parent.join("run");
+    let (load, base, ready) = start_saved_dashboard_run(&server, &folder, None, true).await;
     let sse = client
         .get(format!("{base}/api/v1/events"))
         .header("Authorization", bearer_header())
@@ -2698,8 +2910,7 @@ async fn test_dashboard_waits_after_autostarted_run() {
         .expect("SSE connect");
     assert_eq!(sse.status(), 200);
     ready.send(()).expect("attack waits in test_start");
-    wait_for_saved_runs(&runs, 1).await;
-    let id = saved_run_ids(&runs).remove(0);
+    wait_for_report(&folder).await;
     let snap = wait_for_phase(
         &client,
         &base,
@@ -2708,15 +2919,28 @@ async fn test_dashboard_waits_after_autostarted_run() {
         Duration::from_secs(10),
     )
     .await;
-    assert_eq!(snap["save"]["last_run"], id.as_str());
+    assert_eq!(
+        snap["report"]["last_report"],
+        folder.to_string_lossy().as_ref()
+    );
     let download = client
-        .get(format!("{base}/api/v1/runs/{id}/report.html"))
+        .get(format!("{base}/api/v1/reports/run/report.html"))
         .header("Authorization", bearer_header())
         .send()
         .await
         .expect("download while waiting");
     assert_eq!(download.status(), 200);
     assert!(!download.bytes().await.unwrap().is_empty());
+
+    // The run has ended, so its folder is no longer the running one.
+    let resp = client
+        .delete(format!("{base}/api/v1/reports/run"))
+        .header("Authorization", bearer_header())
+        .send()
+        .await
+        .expect("delete after the run");
+    assert_eq!(resp.status(), 204);
+    assert!(!folder.exists());
 
     // No exit timer: still up with no tab connected.
     drop(sse);
@@ -2737,13 +2961,14 @@ async fn test_dashboard_waits_after_autostarted_run() {
         .expect("Goose exits on Quit")
         .expect("load test execute");
     assert!(metrics.duration > 0);
-    // Nothing more was saved on the way out.
-    assert_eq!(saved_run_ids(&runs), vec![id]);
-    std::fs::remove_dir_all(&runs).ok();
+    // Nothing more was written on the way out.
+    assert!(!parent.join("run-2").exists());
+    std::fs::remove_dir_all(&parent).ok();
 
     // No tab connected when the run ends: Goose exits at once, as before.
-    let runs = saved_runs_dir("nowait");
-    let (load, _base, ready) = start_saved_dashboard_run(&server, &runs, None, true).await;
+    let parent = reports_dir("nowait");
+    let folder = parent.join("run");
+    let (load, _base, ready) = start_saved_dashboard_run(&server, &folder, None, true).await;
     let started = Instant::now();
     ready.send(()).expect("attack waits in test_start");
     tokio::time::timeout(Duration::from_secs(20), load.join())
@@ -2751,8 +2976,8 @@ async fn test_dashboard_waits_after_autostarted_run() {
         .expect("Goose exits without waiting")
         .expect("load test execute");
     assert!(started.elapsed() < Duration::from_secs(15));
-    assert_eq!(saved_run_ids(&runs).len(), 1);
-    std::fs::remove_dir_all(&runs).ok();
+    assert!(folder.join("report.json").exists());
+    std::fs::remove_dir_all(&parent).ok();
 }
 
 /// How many times test_stop ran since the counting test reset it.
@@ -2767,16 +2992,16 @@ fn test_stop_runs() -> usize {
     TEST_STOP_RUNS.load(std::sync::atomic::Ordering::SeqCst)
 }
 
-/// Run an autostarted, saved dashboard run that counts test_stop, with an
-/// SSE client connected, until Goose waits Idle after it. Returns the load
+/// Run an autostarted dashboard run that counts test_stop, with an SSE
+/// client connected, until Goose waits Idle after it. Returns the load
 /// test, the base URL and the SSE response that keeps the wait going.
 async fn wait_after_counted_run(
     server: &MockServer,
-    runs: &std::path::Path,
+    folder: &std::path::Path,
 ) -> (LoadTestGuard, String, reqwest::Response) {
     TEST_STOP_RUNS.store(0, std::sync::atomic::Ordering::SeqCst);
     let stop = transaction!(count_test_stop);
-    let (load, base, ready) = start_saved_dashboard_run(server, runs, Some(&stop), true).await;
+    let (load, base, ready) = start_saved_dashboard_run(server, folder, Some(&stop), true).await;
     let client = reqwest::Client::new();
     let sse = client
         .get(format!("{base}/api/v1/events"))
@@ -2786,7 +3011,7 @@ async fn wait_after_counted_run(
         .expect("SSE connect");
     assert_eq!(sse.status(), 200);
     ready.send(()).expect("attack waits in test_start");
-    wait_for_saved_runs(runs, 1).await;
+    wait_for_report(folder).await;
     wait_for_phase(
         &client,
         &base,
@@ -2806,8 +3031,8 @@ async fn test_test_stop_runs_once_when_exiting_from_idle() {
     let _mocks = setup_mock_endpoints(&server);
 
     // Ctrl-C while waiting Idle after the run.
-    let runs = saved_runs_dir("test-stop-ctrl-c");
-    let (load, _base, sse) = wait_after_counted_run(&server, &runs).await;
+    let parent = reports_dir("test-stop-ctrl-c");
+    let (load, _base, sse) = wait_after_counted_run(&server, &parent.join("run")).await;
     goose::trigger_killswitch("test: exit from Idle");
     let result = tokio::time::timeout(Duration::from_secs(15), load.join())
         .await
@@ -2816,11 +3041,11 @@ async fn test_test_stop_runs_once_when_exiting_from_idle() {
     drop(sse);
     result.expect("load test execute");
     assert_eq!(test_stop_runs(), 1, "test_stop ran again on exit from Idle");
-    std::fs::remove_dir_all(&runs).ok();
+    std::fs::remove_dir_all(&parent).ok();
 
     // Quit while waiting Idle after the run.
-    let runs = saved_runs_dir("test-stop-quit");
-    let (load, base, sse) = wait_after_counted_run(&server, &runs).await;
+    let parent = reports_dir("test-stop-quit");
+    let (load, base, sse) = wait_after_counted_run(&server, &parent.join("run")).await;
     let client = reqwest::Client::new();
     let quit = post_control(&client, &base, "/api/v1/control/quit", Some("{}"), true).await;
     assert_eq!(quit.status(), 200);
@@ -2830,34 +3055,58 @@ async fn test_test_stop_runs_once_when_exiting_from_idle() {
         .expect("load test execute");
     drop(sse);
     assert_eq!(test_stop_runs(), 1, "test_stop ran again on Quit");
-    std::fs::remove_dir_all(&runs).ok();
+    std::fs::remove_dir_all(&parent).ok();
 }
 
+/// Delete needs the control token in the Authorization header, removes a
+/// folder's reports and Goose's logs and nothing else, and refuses a name the
+/// listing would not list.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial]
-async fn test_delete_saved_run() {
+async fn test_delete_report() {
     let server = MockServer::start();
     let _mocks = setup_mock_endpoints(&server);
-    let runs = saved_runs_dir("delete");
-    let older = save_one_run(&server, &runs, "1").await;
-    // Not deletable: an incomplete run, and a symlink to a real run.
-    std::fs::create_dir(runs.join("2002-02-02-000000")).unwrap();
-    std::fs::write(runs.join("2002-02-02-000000").join("report.html"), "x").unwrap();
-    #[cfg(unix)]
-    std::os::unix::fs::symlink(runs.join(&older), runs.join("2003-03-03-000000")).unwrap();
+    let parent = reports_dir("delete");
+    write_one_report(&server, &parent.join("old"), "1", "to delete").await;
+    for file in [
+        "goose.log",
+        "requests.csv",
+        "transactions.json",
+        "scenarios.log",
+        "errors.csv.gz",
+        "debug.log",
+        ".report.json.tmp",
+        "keep.txt",
+    ] {
+        std::fs::write(parent.join("old").join(file), "x").unwrap();
+    }
+    write_one_report(&server, &parent.join("gone"), "1", "all of it").await;
+    std::fs::create_dir(parent.join("no-report")).unwrap();
+    std::fs::write(parent.join("no-report").join("report.html"), "x").unwrap();
+    // A report.json that is not a Goose report: the panel does not list it.
+    std::fs::create_dir(parent.join("other")).unwrap();
+    std::fs::write(parent.join("other").join("report.json"), "{}").unwrap();
+    std::fs::write(parent.join("other").join("debug.log"), "x").unwrap();
+    // A symlink to a real report folder outside, and a report folder whose
+    // requests.csv is a symlink to a file outside.
+    let outside = reports_dir("delete-outside");
+    write_one_report(&server, &outside.join("real"), "1", "linked to").await;
+    std::os::unix::fs::symlink(outside.join("real"), parent.join("linked")).unwrap();
+    write_one_report(&server, &parent.join("link-inside"), "1", "a linked log").await;
+    // A folder another Goose process holds for its run.
+    write_one_report(&server, &parent.join("held"), "1", "another run").await;
+    std::fs::write(parent.join("held").join(".goose-run"), "").unwrap();
+    std::fs::write(outside.join("requests.csv"), "kept").unwrap();
+    std::os::unix::fs::symlink(
+        outside.join("requests.csv"),
+        parent.join("link-inside").join("requests.csv"),
+    )
+    .unwrap();
 
-    let port = reserve_port();
-    let base_v4 = format!("http://127.0.0.1:{port}");
-    let mut configuration =
-        build_control_config(&server, "127.0.0.1", port, ControlTestOpts::default());
-    configuration.no_save = false;
-    configuration.runs_dir = Some(runs.to_string_lossy().into_owned());
-    let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
-    let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
-    let (base, _) = wait_for_health(&[&base_v4], 80).await;
+    let (load, base) = start_idle_dashboard(&server, &parent, Vec::new(), None).await;
     let client = reqwest::Client::new();
-    let delete = |id: String, auth: bool, token_in_url: bool| {
-        let mut url = format!("{base}/api/v1/runs/{id}");
+    let delete = |name: &str, auth: bool, token_in_url: bool| {
+        let mut url = format!("{base}/api/v1/reports/{name}");
         if token_in_url {
             url.push_str(&format!("?token={AUTH_TOKEN}"));
         }
@@ -2867,52 +3116,207 @@ async fn test_delete_saved_run() {
         }
         req.send()
     };
-
-    // The control token, in the Authorization header only.
-    assert_eq!(
-        delete(older.clone(), false, false).await.unwrap().status(),
-        401
-    );
-    assert_eq!(
-        delete(older.clone(), false, true).await.unwrap().status(),
-        401
-    );
-    assert_eq!(
-        delete(older.clone(), true, true).await.unwrap().status(),
-        401
-    );
-    for id in [
-        "not-a-run",
-        "..%2F..%2Fetc",
-        "2026-10-09-141203",
-        "2002-02-02-000000",
-        "2003-03-03-000000",
-    ] {
-        let resp = delete(id.to_string(), true, false).await.unwrap();
-        assert_eq!(resp.status(), 404, "{}", id);
+    assert_eq!(delete("old", false, false).await.unwrap().status(), 401);
+    assert_eq!(delete("old", false, true).await.unwrap().status(), 401);
+    assert_eq!(delete("old", true, true).await.unwrap().status(), 401);
+    for name in ["missing", "..%2F..%2Fetc", ".hidden", "no-report", "other"] {
+        assert_eq!(
+            delete(name, true, false).await.unwrap().status(),
+            404,
+            "{}",
+            name
+        );
     }
-    assert!(runs.join("2002-02-02-000000").join("report.html").exists());
-    assert!(runs.join(&older).join("run.json").exists());
+    assert!(parent.join("no-report").join("report.html").exists());
+    assert!(parent.join("other").join("report.json").exists());
+    assert!(parent.join("other").join("debug.log").exists());
+    // Never through a symlinked folder.
+    assert_eq!(delete("linked", true, false).await.unwrap().status(), 404);
+    assert!(outside.join("real").join("report.json").exists());
+    assert!(outside.join("real").join("report.html").exists());
+    // A symlinked file goes, and what it points to stays.
+    assert_eq!(
+        delete("link-inside", true, false).await.unwrap().status(),
+        204
+    );
+    assert!(std::fs::symlink_metadata(parent.join("link-inside")).is_err());
+    assert_eq!(
+        std::fs::read_to_string(outside.join("requests.csv")).unwrap(),
+        "kept"
+    );
+    std::fs::remove_file(parent.join("linked")).unwrap();
+    // Never a folder another process holds.
+    let resp = delete("held", true, false).await.unwrap();
+    assert_eq!(resp.status(), 409);
+    assert_eq!(
+        resp.text().await.unwrap(),
+        "Another Goose process is writing to this folder."
+    );
+    let mut held: Vec<String> = std::fs::read_dir(parent.join("held"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    held.sort();
+    assert_eq!(held, vec![".goose-run", "report.html", "report.json"]);
+    std::fs::remove_dir_all(parent.join("held")).unwrap();
 
-    // The run being written now has no run.json yet, so it is a 404.
-    let start = post_control(&client, &base, "/api/v1/control/start", Some("{}"), true).await;
-    assert_eq!(start.status(), 200);
-    wait_for_phase(
-        &client,
-        &base,
-        Some(AUTH_TOKEN),
-        &["increase", "maintain"],
-        Duration::from_secs(30),
+    // Only the reports and Goose's logs go: a file Goose did not write stays,
+    // and so does its folder.
+    assert_eq!(delete("old", true, false).await.unwrap().status(), 204);
+    let mut left: Vec<String> = std::fs::read_dir(parent.join("old"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    left.sort();
+    assert_eq!(left, vec!["keep.txt"]);
+    assert_eq!(delete("old", true, false).await.unwrap().status(), 404);
+    // A folder left empty goes too.
+    assert_eq!(delete("gone", true, false).await.unwrap().status(), 204);
+    assert!(!parent.join("gone").exists());
+    assert_eq!(listed_names(&client, &base).await, Vec::<String>::new());
+
+    load.abort().await;
+    std::fs::remove_dir_all(&parent).ok();
+    std::fs::remove_dir_all(&outside).ok();
+}
+
+/// Rules 12 and 14: a folder holding only gzipped reports is listed; a
+/// gzipped report is sent as it is to a client that accepts gzip, and
+/// decompressed for one that does not; a format the folder lacks is rendered
+/// from `report.json.gz`; and Delete removes the gzipped files.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn test_gzipped_reports_in_the_panel() {
+    use std::io::Read;
+    let server = MockServer::start();
+    let _mocks = setup_mock_endpoints(&server);
+    let parent = reports_dir("gzipped");
+    let folder = parent.join("small");
+    let folder_str = folder.to_string_lossy().into_owned();
+    let configuration = common::build_configuration(
+        &server,
+        vec![
+            "--output-dir",
+            &folder_str,
+            "--report-file",
+            "--notes",
+            "gzipped",
+            "--compress",
+        ],
+    );
+    common::run_load_test(
+        common::build_load_test(configuration, vec![get_transactions()], None, None),
+        None,
     )
     .await;
-    let active: Vec<String> = saved_run_ids(&runs)
-        .into_iter()
-        .filter(|id| !runs.join(id).join("run.json").exists() && id != "2002-02-02-000000")
-        .collect();
-    assert_eq!(active.len(), 1, "{:?}", active);
-    let resp = delete(active[0].clone(), true, false).await.unwrap();
-    assert_eq!(resp.status(), 404);
-    assert!(runs.join(&active[0]).is_dir());
+    let gunzip = |bytes: &[u8]| {
+        let mut out = Vec::new();
+        flate2::read::GzDecoder::new(bytes)
+            .read_to_end(&mut out)
+            .unwrap();
+        out
+    };
+    let stored = std::fs::read(folder.join("report.html.gz")).unwrap();
+
+    let (load, base) = start_idle_dashboard(&server, &parent, Vec::new(), None).await;
+    let client = reqwest::Client::builder().no_gzip().build().unwrap();
+    assert_eq!(listed_names(&client, &base).await, vec!["small"]);
+
+    // Accepts gzip: the stored file, as it is.
+    let resp = client
+        .get(format!("{base}/api/v1/reports/small/report.html"))
+        .header("Authorization", bearer_header())
+        .header("Accept-Encoding", "gzip, deflate")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(header(&resp, "content-encoding"), "gzip");
+    assert!(header(&resp, "content-type").starts_with("text/html"));
+    assert!(header(&resp, "content-disposition").ends_with("-small.html\""));
+    assert_eq!(resp.bytes().await.unwrap().as_ref(), stored.as_slice());
+
+    // Does not accept gzip: decompressed.
+    for accept in [None, Some("identity"), Some("gzip;q=0")] {
+        let mut req = client
+            .get(format!("{base}/api/v1/reports/small/report.html"))
+            .header("Authorization", bearer_header());
+        if let Some(accept) = accept {
+            req = req.header("Accept-Encoding", accept);
+        }
+        let resp = req.send().await.unwrap();
+        assert_eq!(resp.status(), 200, "{:?}", accept);
+        assert!(
+            resp.headers().get("content-encoding").is_none(),
+            "{:?}",
+            accept
+        );
+        assert_eq!(
+            resp.bytes().await.unwrap().as_ref(),
+            gunzip(&stored).as_slice()
+        );
+    }
+
+    // Markdown, which the folder lacks, rendered from report.json.gz.
+    let resp = client
+        .get(format!("{base}/api/v1/reports/small/report.md"))
+        .header("Authorization", bearer_header())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert!(resp.text().await.unwrap().contains("gzipped"));
+
+    // Delete removes the gzipped reports, and the folder they leave empty.
+    let resp = client
+        .delete(format!("{base}/api/v1/reports/small"))
+        .header("Authorization", bearer_header())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 204);
+    assert!(!folder.exists());
+
+    load.abort().await;
+    std::fs::remove_dir_all(&parent).ok();
+}
+
+/// Rule 10: Save report turned on during a run keeps the graph data from
+/// then on, so the report has a heatmap; with it off at the start, Goose kept
+/// only the dashboard's window and no heatmap.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn test_save_report_turned_on_during_a_run() {
+    let server = MockServer::start();
+    let _mocks = setup_mock_endpoints(&server);
+    let parent = reports_dir("on-mid-run");
+    let (load, base) = start_idle_dashboard(&server, &parent, Vec::new(), None).await;
+    let client = reqwest::Client::new();
+    let resp = post_control(
+        &client,
+        &base,
+        "/api/v1/control/report",
+        Some(r#"{"save": false, "graph_data": true}"#),
+        true,
+    )
+    .await;
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["ok"], true, "{}", body);
+    let start = post_control(&client, &base, "/api/v1/control/start", Some("{}"), true).await;
+    assert_eq!(start.status(), 200);
+    wait_for_active_users(&client, &base, Some(AUTH_TOKEN), 2, Duration::from_secs(30)).await;
+    let resp = post_control(
+        &client,
+        &base,
+        "/api/v1/control/report",
+        Some(r#"{"save": true}"#),
+        true,
+    )
+    .await;
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["ok"], true, "{}", body);
+    // Requests after the switch, for the heatmap to hold.
+    tokio::time::sleep(Duration::from_secs(2)).await;
     let stop = post_control(&client, &base, "/api/v1/control/stop", Some("{}"), true).await;
     assert_eq!(stop.status(), 200);
     wait_for_phase(
@@ -2923,18 +3327,386 @@ async fn test_delete_saved_run() {
         Duration::from_secs(30),
     )
     .await;
-
-    // A complete run is removed.
-    let resp = delete(older.clone(), true, false).await.unwrap();
-    assert_eq!(resp.status(), 204);
-    assert!(!runs.join(&older).exists());
-    let resp = delete(older.clone(), true, false).await.unwrap();
-    assert_eq!(resp.status(), 404);
-    // Once saved, the run that was active can be deleted too.
-    assert!(runs.join(&active[0]).join("run.json").exists());
-    let resp = delete(active[0].clone(), true, false).await.unwrap();
-    assert_eq!(resp.status(), 204);
-
+    let report: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(parent.join("dash").join("report.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        report["graphs"]["heatmap"].is_object(),
+        "Save report turned on during the run keeps the heatmap: {}",
+        report["graphs"]
+    );
     load.abort().await;
-    std::fs::remove_dir_all(&runs).ok();
+    std::fs::remove_dir_all(&parent).ok();
+}
+
+/// Make `folder` read only; false, after printing why, when it can still be
+/// written to, as it can by root.
+fn make_read_only(folder: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(folder, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let probe = folder.join(".probe");
+    if std::fs::write(&probe, "x").is_ok() {
+        std::fs::remove_file(&probe).ok();
+        make_writable(folder);
+        eprintln!(
+            "skipped: {} can still be written to read only, so this runs as root",
+            folder.display()
+        );
+        return false;
+    }
+    true
+}
+
+fn make_writable(folder: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(folder, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// Save report now answers a folder it can't write to with a refusal that
+/// gives the reason, and the run goes on; with `--no-metrics`, Save report
+/// can't be turned on.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn test_report_switches_refuse_what_they_cannot_do() {
+    let server = MockServer::start();
+    let _mocks = setup_mock_endpoints(&server);
+    let parent = reports_dir("refusals");
+    let (load, base) = start_idle_dashboard(&server, &parent, Vec::new(), None).await;
+    let client = reqwest::Client::new();
+    let start = post_control(&client, &base, "/api/v1/control/start", Some("{}"), true).await;
+    assert_eq!(start.status(), 200);
+    wait_for_active_users(&client, &base, Some(AUTH_TOKEN), 2, Duration::from_secs(30)).await;
+    // The run's folder, made read only.
+    let folder = parent.join("dash");
+    let folder_str = folder.to_string_lossy().into_owned();
+    if make_read_only(&folder) {
+        let resp = post_control(
+            &client,
+            &base,
+            "/api/v1/control/report/now",
+            Some("{}"),
+            true,
+        )
+        .await;
+        let body: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(body["ok"], false, "{}", body);
+        assert_eq!(body["error"], "report_failed");
+        // The run goes on, and the dashboard says why the report wasn't saved.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let snap = get_snapshot_json(&client, &base, Some(AUTH_TOKEN))
+                .await
+                .unwrap();
+            assert!(
+                ["increase", "maintain"].contains(&snap["phase"].as_str().unwrap()),
+                "{}",
+                snap["phase"]
+            );
+            if let Some(error) = snap["report"]["error"].as_str() {
+                assert!(error.contains("Can't write to"), "{}", error);
+                assert!(error.contains(&folder_str), "{}", error);
+                break;
+            }
+            assert!(Instant::now() < deadline, "{}", snap["report"]);
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+        make_writable(&folder);
+    }
+    // A report that fails as it is written, after the folder passed the
+    // check, gives its reason on the dashboard too.
+    let in_the_way = folder.join("report.html");
+    std::fs::create_dir(&in_the_way).unwrap();
+    let body: serde_json::Value = post_control(
+        &client,
+        &base,
+        "/api/v1/control/report/now",
+        Some("{}"),
+        true,
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(body["ok"], true, "{}", body);
+    let in_the_way_str = in_the_way.to_string_lossy().into_owned();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let snap = get_snapshot_json(&client, &base, Some(AUTH_TOKEN))
+            .await
+            .unwrap();
+        if let Some(error) = snap["report"]["error"].as_str() {
+            if error.contains(&in_the_way_str) {
+                assert!(error.contains("Can't write to"), "{}", error);
+                break;
+            }
+        }
+        assert!(Instant::now() < deadline, "{}", snap["report"]);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    // The failed write left no temporary file.
+    assert!(!folder.join(".report.html.tmp").exists());
+    std::fs::remove_dir(&in_the_way).unwrap();
+    let stop = post_control(&client, &base, "/api/v1/control/stop", Some("{}"), true).await;
+    assert_eq!(stop.status(), 200);
+    wait_for_phase(
+        &client,
+        &base,
+        Some(AUTH_TOKEN),
+        &["idle"],
+        Duration::from_secs(30),
+    )
+    .await;
+    load.abort().await;
+
+    let port = reserve_port();
+    let base_v4 = format!("http://127.0.0.1:{port}");
+    let mut configuration =
+        build_control_config(&server, "127.0.0.1", port, ControlTestOpts::default());
+    configuration.no_metrics = true;
+    configuration.co_mitigation = None;
+    // A bare --debug-log, which --no-metrics allows, gives the run a folder.
+    configuration.output_dir = Some(parent.join("none").to_string_lossy().into_owned());
+    configuration.debug_log = Some("\0".to_string());
+    let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
+    let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
+    let (base, _) = wait_for_health(&[&base_v4], 80).await;
+    let snap = wait_for_phase(
+        &client,
+        &base,
+        Some(AUTH_TOKEN),
+        &["idle"],
+        Duration::from_secs(10),
+    )
+    .await;
+    assert_eq!(snap["report"]["save"], false);
+    let resp = post_control(
+        &client,
+        &base,
+        "/api/v1/control/report",
+        Some(r#"{"save": true}"#),
+        true,
+    )
+    .await;
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["ok"], false, "{}", body);
+    assert_eq!(body["error"], "invalid_report");
+    // Nor can Save report now write one, even with a folder for a bare log.
+    let start = post_control(&client, &base, "/api/v1/control/start", Some("{}"), true).await;
+    assert_eq!(start.status(), 200);
+    wait_for_active_users(&client, &base, Some(AUTH_TOKEN), 2, Duration::from_secs(30)).await;
+    let resp = post_control(
+        &client,
+        &base,
+        "/api/v1/control/report/now",
+        Some("{}"),
+        true,
+    )
+    .await;
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["ok"], false, "{}", body);
+    assert_eq!(body["error"], "invalid_report");
+    let stop = post_control(&client, &base, "/api/v1/control/stop", Some("{}"), true).await;
+    assert_eq!(stop.status(), 200);
+    wait_for_phase(
+        &client,
+        &base,
+        Some(AUTH_TOKEN),
+        &["idle"],
+        Duration::from_secs(30),
+    )
+    .await;
+    assert!(!parent.join("none").join("report.json").exists());
+    load.abort().await;
+    std::fs::remove_dir_all(&parent).ok();
+}
+
+/// Save report now counts each report it writes in the snapshot's `writes`,
+/// so the runs panel lists it once it is there, and refuses with
+/// `report_busy` while one is still being written.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn test_save_report_now_counts_its_writes() {
+    let server = MockServer::start();
+    let _mocks = setup_mock_endpoints(&server);
+    let parent = reports_dir("now-writes");
+    let (load, base) = start_idle_dashboard(&server, &parent, Vec::new(), None).await;
+    let client = reqwest::Client::new();
+    let start = post_control(&client, &base, "/api/v1/control/start", Some("{}"), true).await;
+    assert_eq!(start.status(), 200);
+    let snap =
+        wait_for_active_users(&client, &base, Some(AUTH_TOKEN), 2, Duration::from_secs(30)).await;
+    let before = snap["report"]["writes"].as_u64().expect("writes");
+    // Several at once: the first writes, and one sent while it is still
+    // writing is refused. A burst the main loop happens to take one at a
+    // time, each after the last write ended, is sent again.
+    let mut codes = Vec::new();
+    let mut oks = 0u64;
+    for _ in 0..5 {
+        let answers = futures::future::join_all((0..5).map(|_| {
+            post_control(
+                &client,
+                &base,
+                "/api/v1/control/report/now",
+                Some("{}"),
+                true,
+            )
+        }))
+        .await;
+        for answer in answers {
+            let body: serde_json::Value = answer.json().await.unwrap();
+            codes.push(if body["ok"] == true {
+                oks += 1;
+                "ok".to_string()
+            } else {
+                body["error"].as_str().unwrap_or_default().to_string()
+            });
+        }
+        if codes.iter().any(|code| code == "report_busy") {
+            break;
+        }
+    }
+    assert!(codes.iter().any(|code| code == "ok"), "{:?}", codes);
+    assert!(
+        codes.iter().any(|code| code == "report_busy"),
+        "{:?}",
+        codes
+    );
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let snap = get_snapshot_json(&client, &base, Some(AUTH_TOKEN))
+            .await
+            .unwrap();
+        if snap["report"]["writes"].as_u64().unwrap_or_default() > before {
+            break;
+        }
+        assert!(Instant::now() < deadline, "{}", snap["report"]);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(parent.join("dash").join("report.json").exists());
+    let stop = post_control(&client, &base, "/api/v1/control/stop", Some("{}"), true).await;
+    assert_eq!(stop.status(), 200);
+    let snap = wait_for_phase(
+        &client,
+        &base,
+        Some(AUTH_TOKEN),
+        &["idle"],
+        Duration::from_secs(30),
+    )
+    .await;
+    assert_eq!(snap["report"]["last_report_name"], "dash");
+    // Each Save report now that answered ok wrote once, and the end of the
+    // run wrote once more.
+    assert_eq!(
+        snap["report"]["writes"].as_u64(),
+        Some(before + oks + 1),
+        "{}",
+        snap["report"]
+    );
+    load.abort().await;
+    std::fs::remove_dir_all(&parent).ok();
+}
+
+/// A folder report that fails at the end of a run in a session that goes on
+/// leaves the session at Idle, with the reason on the dashboard.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn test_failed_folder_report_keeps_the_session() {
+    let server = MockServer::start();
+    let _mocks = setup_mock_endpoints(&server);
+    let parent = reports_dir("failed-keeps-session");
+    let (load, base) = start_idle_dashboard(&server, &parent, Vec::new(), None).await;
+    let client = reqwest::Client::new();
+    let start = post_control(&client, &base, "/api/v1/control/start", Some("{}"), true).await;
+    assert_eq!(start.status(), 200);
+    wait_for_active_users(&client, &base, Some(AUTH_TOKEN), 2, Duration::from_secs(30)).await;
+    let folder = parent.join("dash");
+    if !make_read_only(&folder) {
+        load.abort().await;
+        std::fs::remove_dir_all(&parent).ok();
+        return;
+    }
+    let stop = post_control(&client, &base, "/api/v1/control/stop", Some("{}"), true).await;
+    assert_eq!(stop.status(), 200);
+    let snap = wait_for_phase(
+        &client,
+        &base,
+        Some(AUTH_TOKEN),
+        &["idle"],
+        Duration::from_secs(30),
+    )
+    .await;
+    make_writable(&folder);
+    let error = snap["report"]["error"].as_str().unwrap_or_default();
+    assert!(
+        error.contains(&*folder.to_string_lossy()),
+        "{}",
+        snap["report"]
+    );
+    load.abort().await;
+    std::fs::remove_dir_all(&parent).ok();
+}
+
+/// Rule 15: under --compress, Save report now writes the run's folder report
+/// gzipped: a report.json.gz marked in progress, and no plain report.json.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn test_save_report_now_gzips_under_compress() {
+    use std::io::Read;
+    let server = MockServer::start();
+    let _mocks = setup_mock_endpoints(&server);
+    let parent = reports_dir("now-gzipped");
+    let port = reserve_port();
+    let base_v4 = format!("http://127.0.0.1:{port}");
+    let mut configuration =
+        build_control_config(&server, "127.0.0.1", port, ControlTestOpts::default());
+    configuration.output_dir = Some(parent.join("dash").to_string_lossy().into_owned());
+    configuration.compress = Some(6);
+    let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
+    let load = LoadTestGuard::new(tokio::spawn(async move { goose_attack.execute().await }));
+    let (base, _) = wait_for_health(&[&base_v4], 80).await;
+    let client = reqwest::Client::new();
+    let start = post_control(&client, &base, "/api/v1/control/start", Some("{}"), true).await;
+    assert_eq!(start.status(), 200);
+    wait_for_active_users(&client, &base, Some(AUTH_TOKEN), 2, Duration::from_secs(30)).await;
+    let now = post_control(
+        &client,
+        &base,
+        "/api/v1/control/report/now",
+        Some("{}"),
+        true,
+    )
+    .await;
+    let body: serde_json::Value = now.json().await.unwrap();
+    assert_eq!(body["ok"], true, "{}", body);
+    let folder = parent.join("dash");
+    let gz = folder.join("report.json.gz");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !gz.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "Save report now wrote no report.json.gz"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(!folder.join("report.json").exists());
+    assert!(!folder.join("report.html").exists());
+    let mut text = String::new();
+    flate2::read::GzDecoder::new(std::fs::File::open(&gz).unwrap())
+        .read_to_string(&mut text)
+        .unwrap();
+    let report: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(report["in_progress"], true);
+    let stop = post_control(&client, &base, "/api/v1/control/stop", Some("{}"), true).await;
+    assert_eq!(stop.status(), 200);
+    wait_for_phase(
+        &client,
+        &base,
+        Some(AUTH_TOKEN),
+        &["idle"],
+        Duration::from_secs(30),
+    )
+    .await;
+    load.abort().await;
+    std::fs::remove_dir_all(&parent).ok();
 }

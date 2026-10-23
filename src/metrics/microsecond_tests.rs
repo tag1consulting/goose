@@ -5,7 +5,8 @@
 use super::buckets::{bucket_end, bucket_index, bucket_value};
 use super::common::{load_baseline_file, prepare_data_with_baseline, ReportData, ReportOptions};
 use super::dashboard_snapshot::{
-    build_dashboard_snapshot, DashboardSnapshotInput, SeriesWindow, SnapshotSave, SnapshotSettings,
+    build_dashboard_snapshot, DashboardSnapshotInput, SeriesWindow, SnapshotReport,
+    SnapshotSettings,
 };
 use super::millis::{format_micros, Millis};
 use super::*;
@@ -748,7 +749,7 @@ fn snapshot_input(metrics: &GooseMetrics) -> DashboardSnapshotInput<'_> {
         metrics_disabled: false,
         no_transaction_metrics: false,
         no_scenario_metrics: false,
-        save: SnapshotSave::off("goose-runs"),
+        report: SnapshotReport::default(),
         settings: SnapshotSettings::idle(),
         percentiles_over_time: false,
         series_keys: HashSet::new(),
@@ -947,7 +948,7 @@ fn html_and_markdown_reports_show_averages_as_times() {
     assert!(html.contains("<td>0</td>"), "{}", html);
 
     let mut markdown = Vec::new();
-    crate::report::write_markdown_report(&mut markdown, report).unwrap();
+    crate::report::write_markdown_report(&mut markdown, report, &[]).unwrap();
     let markdown = String::from_utf8(markdown).unwrap();
     assert!(
         markdown.contains("| GET | / | 2 | 0 | 1.5 | 1 | 2 |"),
@@ -998,7 +999,7 @@ fn status_code_breakdown_averages_show_as_times() {
         assert!(html.contains("<td>1.5</td>"), "{}", html);
     }
     let mut markdown = Vec::new();
-    crate::report::write_markdown_report(&mut markdown, report).unwrap();
+    crate::report::write_markdown_report(&mut markdown, report, &[]).unwrap();
     let markdown = String::from_utf8(markdown).unwrap();
     for status in [200, 500] {
         let line = format!("| | \u{2514}\u{2500} {status} (50.0%) | 2 | | 1.5 | 1 | 2 | | |");
@@ -1034,11 +1035,11 @@ fn a_breakdown_average_on_a_half_microsecond_reads_the_same_everywhere() {
     assert_eq!(format_value(&row.response_time_average), "0.01");
 }
 
-/// Two saved runs with microseconds compare by their microseconds: each
+/// Two JSON reports with microseconds compare by their microseconds: each
 /// run's rows are rebuilt from its raw timing data, as a baseline's are.
 #[cfg(feature = "dashboard")]
 #[test]
-fn saved_runs_with_microseconds_compare_by_their_microseconds() {
+fn reports_with_microseconds_compare_by_their_microseconds() {
     let metrics = request_metrics(&[("GET /", &[2_350; 5])]);
     let dir = std::env::temp_dir().join(format!("goose-us-compare-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();

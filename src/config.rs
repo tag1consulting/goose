@@ -14,11 +14,35 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use crate::logger::GooseLogFormat;
+use crate::logger::{GooseLogFile, GooseLogFormat};
 use crate::metrics::GooseCoordinatedOmissionMitigation;
 use crate::test_plan::TestPlan;
 use crate::util;
 use crate::{GooseAttack, GooseError};
+
+/// The value an output field of [`GooseConfiguration`] holds when its flag is given
+/// without a path, such as a bare `--report-file`: Goose then writes that file into the
+/// run's folder. A command line can't hold a NUL, so no path a user types is taken for
+/// it, and `""` keeps its meaning of no file. Set it in code to ask for the same.
+pub const RUN_FOLDER: &str = "\0";
+
+/// The gzip level when neither `--compress` nor [`GooseDefault::Compress`] sets one.
+const DEFAULT_COMPRESSION_LEVEL: u32 = 6;
+
+/// The value `--compress` takes when it is given without a level:
+/// [`DEFAULT_COMPRESSION_LEVEL`] as text.
+const DEFAULT_COMPRESSION_ARG: &str = match DEFAULT_COMPRESSION_LEVEL {
+    1 => "1",
+    2 => "2",
+    3 => "3",
+    4 => "4",
+    5 => "5",
+    6 => "6",
+    7 => "7",
+    8 => "8",
+    9 => "9",
+    _ => panic!("the default gzip level is 1 to 9"),
+};
 
 /// The address the dashboard listens on when neither `--dashboard-host` nor
 /// [`GooseDefault::DashboardHost`] sets one.
@@ -232,17 +256,21 @@ pub struct GooseConfiguration {
         action = clap::ArgAction::Count
     )]
     pub quiet: u8,
-    /// Write the Goose log to FILE
-    ///
-    /// Writes Goose's own log messages to FILE, at the detail --log-level sets. Without it,
-    /// there is no Goose log.
-    ///
-    /// Example: -G goose.log. Set in code with GooseDefault::GooseLog.
+    /// The Goose log file `--goose-log` names. Holds [`RUN_FOLDER`] when the flag is given
+    /// without a path.
     #[arg(
         help_heading = "Console and Goose log",
         short = 'G',
         long,
-        value_name = "FILE"
+        value_name = "FILE",
+        num_args = 0..=1,
+        default_missing_value = RUN_FOLDER,
+        help = "Write the Goose log to FILE",
+        long_help = "Write the Goose log to FILE\n\n\
+            Writes Goose's own log messages to FILE, at the detail --log-level sets. \
+            Without FILE, writes goose.log into the run's folder. Without the option, \
+            there is no Goose log.\n\n\
+            Example: -G goose.log. Set in code with GooseDefault::GooseLog."
     )]
     pub goose_log: Option<String>,
     /// More Goose log detail (-g, -gg)
@@ -268,8 +296,8 @@ pub struct GooseConfiguration {
     pub running_metrics: Option<usize>,
     /// Don't print metrics at the end
     ///
-    /// Leaves the metrics out of the console when the load test ends. Reports and the saved
-    /// run are still written.
+    /// Leaves the metrics out of the console when the load test ends. Reports are still
+    /// written.
     ///
     /// Set in code with GooseDefault::NoPrintMetrics.
     #[arg(help_heading = "Console and Goose log", long)]
@@ -283,37 +311,90 @@ pub struct GooseConfiguration {
     #[arg(help_heading = "Console and Goose log", long)]
     pub no_error_summary: bool,
 
-    /// Write a report; repeatable
-    ///
-    /// Writes a report of the load test to FILE when it ends. The extension picks the type:
-    /// .html or .htm, .md, .json, or .pdf with the pdf-reports feature. Repeat the option
-    /// to write several. Not allowed with --no-metrics.
-    ///
-    /// Example: --report-file report.html --report-file report.json. Set in code with
-    /// GooseDefault::ReportFile.
-    #[arg(help_heading = "Reports", long, value_name = "FILE")]
+    /// The reports `--report-file` names, in the order given. An entry is [`RUN_FOLDER`]
+    /// for each `--report-file` given without a path.
+    #[arg(
+        help_heading = "Reports",
+        long,
+        value_name = "FILE",
+        num_args = 0..=1,
+        default_missing_value = RUN_FOLDER,
+        help = "Write a report; repeatable",
+        long_help = "Write a report; repeatable\n\n\
+            Writes a report of the load test to FILE when it ends. The extension picks \
+            the type: .html or .htm, .md, .json, or .pdf with the pdf-reports feature. \
+            Without FILE, writes report.json and report.html into the run's folder. \
+            Repeat the option to write several. Not allowed with --no-metrics.\n\n\
+            Example: --report-file report.html --report-file report.json. Set in code \
+            with GooseDefault::ReportFile."
+    )]
     pub report_file: Vec<String>,
-    /// Don't save this run to the runs folder
+    /// The run's folder `--output-dir` names, where output flags given without a
+    /// path and the dashboard's Save report write; `None` names
+    /// `goose-runs/<start time>`.
+    #[arg(
+        help_heading = "Reports",
+        long,
+        value_name = "DIR",
+        help = "Run folder, or goose-runs/<start time>",
+        long_help = "Run folder, or goose-runs/<start time>\n\n\
+            Sets the run's folder for output flags given without a path. Goose creates it \
+            as the run starts, and removes it at the end of a run that wrote nothing into \
+            it. When the folder already holds files, the run uses DIR-2, DIR-3 and so on. \
+            Needs an output flag given without a path, or --dashboard, which counts \
+            except under --no-metrics.\n\n\
+            Example: --output-dir goose-runs/nightly --report-file. Set in code with \
+            GooseDefault::OutputDir."
+    )]
+    pub output_dir: Option<String>,
+    /// Gzip files in the run's folder, 1 to 9
     ///
-    /// By default, Goose saves each run's reports to its own folder under --runs-dir, where
-    /// --baseline-file can find it later. --report-file still writes its reports.
-    /// --no-metrics also turns saving off.
+    /// Gzips every file Goose writes into the run's folder, each named with .gz added. A
+    /// path given to an output flag keeps exactly that name; a name that ends in .gz is
+    /// gzipped without this option. LEVEL is 1 (fastest) to 9 (smallest), default 6, for
+    /// every gzipped file.
     ///
-    /// Set in code with GooseDefault::NoSave.
+    /// Example: --report-file -R --compress 9. Set in code with GooseDefault::Compress.
+    #[arg(
+        help_heading = "Reports",
+        long,
+        value_name = "LEVEL",
+        num_args = 0..=1,
+        default_missing_value = DEFAULT_COMPRESSION_ARG,
+        value_parser = clap::value_parser!(u32).range(1..=9)
+    )]
+    pub compress: Option<u32>,
+    /// Label the run in its reports
+    ///
+    /// Stores TEXT in the JSON report and shows it at the top of the HTML and Markdown
+    /// reports and in the dashboard. Needs --report-file or --dashboard.
+    ///
+    /// Example: --notes "baseline before cache change". Set in code with
+    /// GooseDefault::Notes.
+    #[arg(help_heading = "Reports", long, value_name = "TEXT")]
+    pub notes: Option<String>,
+    /// Add graph data to the JSON report
+    ///
+    /// Adds the per second data behind the HTML report's graphs to the JSON report, so
+    /// a report rendered from it with --render-report has its graphs. Needs --report-file or
+    /// --dashboard.
+    ///
+    /// Set in code with GooseDefault::ReportGraphData.
     #[arg(help_heading = "Reports", long)]
-    pub no_save: bool,
-    /// Runs folder [default: goose-runs]
+    pub report_graph_data: bool,
+    /// Write reports from a JSON report, exit
     ///
-    /// The folder saved runs are written to. If a folder given here cannot be created, the
-    /// load test does not start; if the default cannot, Goose only warns.
+    /// Writes the reports named by --report-file paths from FILE, a JSON report, then exits
+    /// without running a load test.
     ///
-    /// Example: --runs-dir /var/tmp/goose-runs. Set in code with GooseDefault::RunsDir.
-    #[arg(help_heading = "Reports", long, value_name = "DIR")]
-    pub runs_dir: Option<String>,
+    /// Example: --render-report report.json --report-file report.html.
+    #[arg(help_heading = "Reports", long, value_name = "FILE")]
+    pub render_report: Option<String>,
     /// Compare against an earlier run
     ///
-    /// PATH is a JSON report written with --report-file, or the folder of a saved run.
-    /// Every report then shows how each metric changed from that run.
+    /// PATH is a JSON report, plain or gzipped, or a folder that holds report.json or
+    /// report.json.gz. Every report then
+    /// shows how each metric changed from that run.
     ///
     /// Example: --baseline-file baseline.json. Set in code with GooseDefault::BaselineFile.
     #[arg(help_heading = "Reports", long, value_name = "PATH")]
@@ -321,8 +402,8 @@ pub struct GooseConfiguration {
     /// Graph only totals in reports
     ///
     /// Report graphs show a line for the total and, by default, one more for each request,
-    /// transaction or scenario. This leaves out the extra lines. Needs --report-file or a
-    /// saved run.
+    /// transaction or scenario. This leaves out the extra lines. Needs --report-file or
+    /// --dashboard.
     ///
     /// Set in code with GooseDefault::NoGranularData.
     #[arg(help_heading = "Reports", long)]
@@ -365,7 +446,7 @@ pub struct GooseConfiguration {
     pub no_reset_metrics: bool,
     /// Don't collect any metrics
     ///
-    /// Turns off every metric, and with them saving the run. Not allowed with
+    /// Turns off every metric, and with them every report. Not allowed with
     /// --report-file, --request-log, --transaction-log, --scenario-log, --error-log or
     /// --co-mitigation.
     ///
@@ -414,12 +495,22 @@ pub struct GooseConfiguration {
     )]
     pub co_mitigation: Option<GooseCoordinatedOmissionMitigation>,
 
-    /// Log every request to FILE
-    ///
-    /// Writes a line for each request, in --request-format. Not allowed with --no-metrics.
-    ///
-    /// Example: -R requests.log. Set in code with GooseDefault::RequestLog.
-    #[arg(help_heading = "Logs", short = 'R', long, value_name = "FILE")]
+    /// The request log file `--request-log` names. Holds [`RUN_FOLDER`] when the flag is
+    /// given without a path.
+    #[arg(
+        help_heading = "Logs",
+        short = 'R',
+        long,
+        value_name = "FILE",
+        num_args = 0..=1,
+        default_missing_value = RUN_FOLDER,
+        help = "Log every request to FILE",
+        long_help = "Log every request to FILE\n\n\
+            Writes a line for each request, in --request-format. Without FILE, writes \
+            requests.json, .csv or .log, as --request-format sets, into the run's \
+            folder. Not allowed with --no-metrics.\n\n\
+            Example: -R requests.log. Set in code with GooseDefault::RequestLog."
+    )]
     pub request_log: Option<String>,
     /// Request log format
     ///
@@ -442,13 +533,22 @@ pub struct GooseConfiguration {
     /// Set in code with GooseDefault::RequestBody.
     #[arg(help_heading = "Logs", long)]
     pub request_body: bool,
-    /// Log every transaction to FILE
-    ///
-    /// Writes a line for each transaction, in --transaction-format. Not allowed with
-    /// --no-metrics.
-    ///
-    /// Example: -T transactions.log. Set in code with GooseDefault::TransactionLog.
-    #[arg(help_heading = "Logs", short = 'T', long, value_name = "FILE")]
+    /// The transaction log file `--transaction-log` names. Holds [`RUN_FOLDER`] when the
+    /// flag is given without a path.
+    #[arg(
+        help_heading = "Logs",
+        short = 'T',
+        long,
+        value_name = "FILE",
+        num_args = 0..=1,
+        default_missing_value = RUN_FOLDER,
+        help = "Log every transaction to FILE",
+        long_help = "Log every transaction to FILE\n\n\
+            Writes a line for each transaction, in --transaction-format. Without FILE, \
+            writes transactions.json, .csv or .log, as --transaction-format sets, into \
+            the run's folder. Not allowed with --no-metrics.\n\n\
+            Example: -T transactions.log. Set in code with GooseDefault::TransactionLog."
+    )]
     pub transaction_log: Option<String>,
     /// Transaction log format
     ///
@@ -464,13 +564,22 @@ pub struct GooseConfiguration {
         hide_possible_values = true
     )]
     pub transaction_format: Option<GooseLogFormat>,
-    /// Log every scenario to FILE
-    ///
-    /// Writes a line for each run of a scenario, in --scenario-format. Not allowed with
-    /// --no-metrics.
-    ///
-    /// Example: -S scenarios.log. Set in code with GooseDefault::ScenarioLog.
-    #[arg(help_heading = "Logs", short = 'S', long, value_name = "FILE")]
+    /// The scenario log file `--scenario-log` names. Holds [`RUN_FOLDER`] when the flag is
+    /// given without a path.
+    #[arg(
+        help_heading = "Logs",
+        short = 'S',
+        long,
+        value_name = "FILE",
+        num_args = 0..=1,
+        default_missing_value = RUN_FOLDER,
+        help = "Log every scenario to FILE",
+        long_help = "Log every scenario to FILE\n\n\
+            Writes a line for each run of a scenario, in --scenario-format. Without \
+            FILE, writes scenarios.json, .csv or .log, as --scenario-format sets, into \
+            the run's folder. Not allowed with --no-metrics.\n\n\
+            Example: -S scenarios.log. Set in code with GooseDefault::ScenarioLog."
+    )]
     pub scenario_log: Option<String>,
     /// Scenario log format
     ///
@@ -486,13 +595,22 @@ pub struct GooseConfiguration {
         hide_possible_values = true
     )]
     pub scenario_format: Option<GooseLogFormat>,
-    /// Log every error to FILE
-    ///
-    /// Writes a line for each failed request, in --error-format. Not allowed with
-    /// --no-metrics.
-    ///
-    /// Example: -E errors.log. Set in code with GooseDefault::ErrorLog.
-    #[arg(help_heading = "Logs", short = 'E', long, value_name = "FILE")]
+    /// The error log file `--error-log` names. Holds [`RUN_FOLDER`] when the flag is given
+    /// without a path.
+    #[arg(
+        help_heading = "Logs",
+        short = 'E',
+        long,
+        value_name = "FILE",
+        num_args = 0..=1,
+        default_missing_value = RUN_FOLDER,
+        help = "Log every error to FILE",
+        long_help = "Log every error to FILE\n\n\
+            Writes a line for each failed request, in --error-format. Without FILE, \
+            writes errors.json, .csv or .log, as --error-format sets, into the run's \
+            folder. Not allowed with --no-metrics.\n\n\
+            Example: -E errors.log. Set in code with GooseDefault::ErrorLog."
+    )]
     pub error_log: Option<String>,
     /// Error log format
     ///
@@ -508,13 +626,23 @@ pub struct GooseConfiguration {
         hide_possible_values = true
     )]
     pub error_format: Option<GooseLogFormat>,
-    /// Write the debug log to FILE
-    ///
-    /// Writes what the load test logs with GooseUser::log_debug and GooseUser::set_failure,
-    /// with response bodies unless --no-debug-body, in --debug-format.
-    ///
-    /// Example: -D debug.log. Set in code with GooseDefault::DebugLog.
-    #[arg(help_heading = "Logs", short = 'D', long, value_name = "FILE")]
+    /// The debug log file `--debug-log` names. Holds [`RUN_FOLDER`] when the flag is given
+    /// without a path.
+    #[arg(
+        help_heading = "Logs",
+        short = 'D',
+        long,
+        value_name = "FILE",
+        num_args = 0..=1,
+        default_missing_value = RUN_FOLDER,
+        help = "Write the debug log to FILE",
+        long_help = "Write the debug log to FILE\n\n\
+            Writes what the load test logs with GooseUser::log_debug and \
+            GooseUser::set_failure, with response bodies unless --no-debug-body, in \
+            --debug-format. Without FILE, writes debug.json, .csv or .log, as \
+            --debug-format sets, into the run's folder.\n\n\
+            Example: -D debug.log. Set in code with GooseDefault::DebugLog."
+    )]
     pub debug_log: Option<String>,
     /// Debug log format
     ///
@@ -1081,10 +1209,14 @@ pub(crate) struct GooseDefaults {
     pub baseline_file: Option<String>,
     /// An optional default for the flag that disables granular data in HTML report graphs.
     pub no_granular_report: Option<bool>,
-    /// An optional default for not saving the run to the runs directory.
-    pub no_save: Option<bool>,
-    /// An optional default for the runs directory saved runs are written to.
-    pub runs_dir: Option<String>,
+    /// An optional default for the run's folder.
+    pub output_dir: Option<String>,
+    /// An optional default for the notes stored with the run's reports.
+    pub notes: Option<String>,
+    /// An optional default for gzipping each file in the run's folder, and the gzip level.
+    pub compress: Option<u32>,
+    /// An optional default for adding graph data to the JSON report.
+    pub report_graph_data: Option<bool>,
     /// An optional default for the requests log file name.
     pub request_log: Option<String>,
     /// An optional default for the requests log file format.
@@ -1213,10 +1345,14 @@ pub enum GooseDefault {
     BaselineFile,
     /// An optional default for the flag that disables granular data in HTML report graphs.
     NoGranularData,
-    /// An optional default for not saving the run to the runs directory.
-    NoSave,
-    /// An optional default for the runs directory saved runs are written to.
-    RunsDir,
+    /// An optional default for the run's folder.
+    OutputDir,
+    /// An optional default for the notes stored with the run's reports.
+    Notes,
+    /// An optional default for gzipping each file in the run's folder, and the gzip level, 1 to 9.
+    Compress,
+    /// An optional default for adding graph data to the JSON report.
+    ReportGraphData,
     /// An optional default for the request log file name.
     RequestLog,
     /// An optional default for the request log file format.
@@ -1329,7 +1465,8 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::DecreaseRate`]
 ///  - [`GooseDefault::Host`]
 ///  - [`GooseDefault::ReportFile`]
-///  - [`GooseDefault::RunsDir`]
+///  - [`GooseDefault::OutputDir`]
+///  - [`GooseDefault::Notes`]
 ///  - [`GooseDefault::RequestLog`]
 ///  - [`GooseDefault::ScenarioLog`]
 ///  - [`GooseDefault::Scenarios`]
@@ -1344,6 +1481,7 @@ pub enum GooseDefault {
 /// The following run-time options can be configured with a custom default using a
 /// [`usize`] integer:
 ///  - [`GooseDefault::Users`]
+///  - [`GooseDefault::Compress`]
 ///  - [`GooseDefault::IncreaseTime`]
 ///  - [`GooseDefault::DecreaseTime`]
 ///  - [`GooseDefault::RunTime`]
@@ -1380,7 +1518,7 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::NoStatusCodes`]
 ///  - [`GooseDefault::StickyFollow`]
 ///  - [`GooseDefault::NoGranularData`]
-///  - [`GooseDefault::NoSave`]
+///  - [`GooseDefault::ReportGraphData`]
 ///  - [`GooseDefault::Dashboard`]
 ///  - [`GooseDefault::DashboardControl`]
 ///  - [`GooseDefault::NoPercentilesOverTime`]
@@ -1438,7 +1576,8 @@ impl GooseDefaultType<&str> for GooseAttack {
                 }
             }
             GooseDefault::ReportFile => self.defaults.report_file = Some(vec![value.to_string()]),
-            GooseDefault::RunsDir => self.defaults.runs_dir = Some(value.to_string()),
+            GooseDefault::OutputDir => self.defaults.output_dir = Some(value.to_string()),
+            GooseDefault::Notes => self.defaults.notes = Some(value.to_string()),
             GooseDefault::BaselineFile => self.defaults.baseline_file = Some(value.to_string()),
             GooseDefault::RequestLog => self.defaults.request_log = Some(value.to_string()),
             GooseDefault::ScenarioLog => self.defaults.scenario_log = Some(value.to_string()),
@@ -1465,7 +1604,8 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::TelnetPort
             | GooseDefault::WebSocketPort
             | GooseDefault::DashboardPort
-            | GooseDefault::DashboardMaxClients => {
+            | GooseDefault::DashboardMaxClients
+            | GooseDefault::Compress => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: value.to_string(),
@@ -1490,7 +1630,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::NoStatusCodes
             | GooseDefault::StickyFollow
             | GooseDefault::NoGranularData
-            | GooseDefault::NoSave
+            | GooseDefault::ReportGraphData
             | GooseDefault::Dashboard
             | GooseDefault::DashboardControl
             | GooseDefault::NoPercentilesOverTime
@@ -1554,6 +1694,9 @@ impl GooseDefaultType<usize> for GooseAttack {
     fn set_default(mut self, key: GooseDefault, value: usize) -> Result<Box<Self>, GooseError> {
         match key {
             GooseDefault::Users => self.defaults.users = Some(value),
+            GooseDefault::Compress => {
+                self.defaults.compress = Some(std::convert::TryFrom::try_from(value).unwrap_or(u32::MAX))
+            }
             GooseDefault::IncreaseTime => self.defaults.increase_time = Some(value),
             GooseDefault::DecreaseTime => self.defaults.decrease_time = Some(value),
             GooseDefault::RunTime => self.defaults.run_time = Some(value),
@@ -1581,7 +1724,8 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::DecreaseRate
             | GooseDefault::Host
             | GooseDefault::ReportFile
-            | GooseDefault::RunsDir
+            | GooseDefault::OutputDir
+            | GooseDefault::Notes
             | GooseDefault::BaselineFile
             | GooseDefault::RequestLog
             | GooseDefault::ScenarioLog
@@ -1617,7 +1761,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::NoStatusCodes
             | GooseDefault::StickyFollow
             | GooseDefault::NoGranularData
-            | GooseDefault::NoSave
+            | GooseDefault::ReportGraphData
             | GooseDefault::Dashboard
             | GooseDefault::DashboardControl
             | GooseDefault::NoPercentilesOverTime
@@ -1688,7 +1832,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             GooseDefault::NoStatusCodes => self.defaults.no_status_codes = Some(value),
             GooseDefault::StickyFollow => self.defaults.sticky_follow = Some(value),
             GooseDefault::NoGranularData => self.defaults.no_granular_report = Some(value),
-            GooseDefault::NoSave => self.defaults.no_save = Some(value),
+            GooseDefault::ReportGraphData => self.defaults.report_graph_data = Some(value),
             GooseDefault::Dashboard => self.defaults.dashboard = Some(value),
             GooseDefault::DashboardControl => self.defaults.dashboard_control = Some(value),
             GooseDefault::NoPercentilesOverTime => {
@@ -1702,7 +1846,8 @@ impl GooseDefaultType<bool> for GooseAttack {
             | GooseDefault::DecreaseRate
             | GooseDefault::Host
             | GooseDefault::ReportFile
-            | GooseDefault::RunsDir
+            | GooseDefault::OutputDir
+            | GooseDefault::Notes
             | GooseDefault::BaselineFile
             | GooseDefault::RequestLog
             | GooseDefault::ScenarioLog
@@ -1736,7 +1881,8 @@ impl GooseDefaultType<bool> for GooseAttack {
             | GooseDefault::TelnetPort
             | GooseDefault::WebSocketPort
             | GooseDefault::DashboardPort
-            | GooseDefault::DashboardMaxClients => {
+            | GooseDefault::DashboardMaxClients
+            | GooseDefault::Compress => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: format!("{value}"),
@@ -1816,7 +1962,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::NoStatusCodes
             | GooseDefault::StickyFollow
             | GooseDefault::NoGranularData
-            | GooseDefault::NoSave
+            | GooseDefault::ReportGraphData
             | GooseDefault::Dashboard
             | GooseDefault::DashboardControl
             | GooseDefault::NoPercentilesOverTime
@@ -1838,7 +1984,8 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::DecreaseRate
             | GooseDefault::Host
             | GooseDefault::ReportFile
-            | GooseDefault::RunsDir
+            | GooseDefault::OutputDir
+            | GooseDefault::Notes
             | GooseDefault::BaselineFile
             | GooseDefault::RequestLog
             | GooseDefault::ScenarioLog
@@ -1872,7 +2019,8 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::TelnetPort
             | GooseDefault::WebSocketPort
             | GooseDefault::DashboardPort
-            | GooseDefault::DashboardMaxClients => {
+            | GooseDefault::DashboardMaxClients
+            | GooseDefault::Compress => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: format!("{value:?}"),
@@ -1947,7 +2095,7 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::NoStatusCodes
             | GooseDefault::StickyFollow
             | GooseDefault::NoGranularData
-            | GooseDefault::NoSave
+            | GooseDefault::ReportGraphData
             | GooseDefault::Dashboard
             | GooseDefault::DashboardControl
             | GooseDefault::NoPercentilesOverTime
@@ -1969,7 +2117,8 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::DecreaseRate
             | GooseDefault::Host
             | GooseDefault::ReportFile
-            | GooseDefault::RunsDir
+            | GooseDefault::OutputDir
+            | GooseDefault::Notes
             | GooseDefault::BaselineFile
             | GooseDefault::RequestLog
             | GooseDefault::ScenarioLog
@@ -2003,7 +2152,8 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::TelnetPort
             | GooseDefault::WebSocketPort
             | GooseDefault::DashboardPort
-            | GooseDefault::DashboardMaxClients => {
+            | GooseDefault::DashboardMaxClients
+            | GooseDefault::Compress => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: format!("{value:?}"),
@@ -2059,7 +2209,8 @@ impl GooseDefaultType<f64> for GooseAttack {
             | GooseDefault::DecreaseRate
             | GooseDefault::Host
             | GooseDefault::ReportFile
-            | GooseDefault::RunsDir
+            | GooseDefault::OutputDir
+            | GooseDefault::Notes
             | GooseDefault::BaselineFile
             | GooseDefault::RequestLog
             | GooseDefault::ScenarioLog
@@ -2093,7 +2244,8 @@ impl GooseDefaultType<f64> for GooseAttack {
             | GooseDefault::WebSocketPort
             | GooseDefault::DashboardPort
             | GooseDefault::DashboardMaxClients
-            | GooseDefault::PdfTimeout => {
+            | GooseDefault::PdfTimeout
+            | GooseDefault::Compress => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: value.to_string(),
@@ -2117,7 +2269,7 @@ impl GooseDefaultType<f64> for GooseAttack {
             | GooseDefault::NoStatusCodes
             | GooseDefault::StickyFollow
             | GooseDefault::NoGranularData
-            | GooseDefault::NoSave
+            | GooseDefault::ReportGraphData
             | GooseDefault::Dashboard
             | GooseDefault::DashboardControl
             | GooseDefault::NoPercentilesOverTime
@@ -2202,7 +2354,13 @@ impl GooseConfiguration {
             .find_map(|value| {
                 let v = value.value?;
                 if !value.message.is_empty() {
-                    info!("{} = {:?}", value.message, v);
+                    // A bare output flag reads as the run's folder, not as
+                    // the value Goose keeps for it.
+                    let shown = format!("{v:?}").replace(
+                        &format!("{RUN_FOLDER:?}"),
+                        &format!("{:?}", shown_path(RUN_FOLDER)),
+                    );
+                    info!("{} = {}", value.message, shown);
                 }
                 Some(v)
             })
@@ -2238,6 +2396,17 @@ fn timeout_millis(seconds: f64) -> Option<u64> {
 /// The value of an optional string option, `None` when it is not set or is empty.
 fn non_empty(value: &Option<String>) -> Option<&str> {
     value.as_deref().filter(|value| !value.is_empty())
+}
+
+/// An output flag's value as error messages and a Controller's `config` and
+/// `config-json` show it: `(the run's folder)` for [`RUN_FOLDER`], else the
+/// value itself.
+fn shown_path(value: &str) -> String {
+    if value == RUN_FOLDER {
+        "(the run's folder)".to_string()
+    } else {
+        value.to_string()
+    }
 }
 
 /// The seconds in an optional time span option, 0 when it is not set. A span that
@@ -2341,6 +2510,22 @@ impl GooseConfiguration {
                 value: defaults.goose_log.clone(),
                 filter: defaults.goose_log.is_none(),
                 message: "",
+            },
+        ]);
+
+        // Configure `compress` before the Goose logger, which gzips at its level.
+        self.compress = self.get_value(vec![
+            // Use --compress if set.
+            GooseValue {
+                value: self.compress,
+                filter: self.compress.is_none(),
+                message: "compress",
+            },
+            // Otherwise use GooseDefault if set.
+            GooseValue {
+                value: defaults.compress,
+                filter: defaults.compress.is_none(),
+                message: "compress",
             },
         ]);
 
@@ -2671,41 +2856,57 @@ impl GooseConfiguration {
             ])
             .unwrap_or_default();
 
-        // Configure `no_save`.
-        self.no_save = self
-            .get_value(vec![
-                // Use --no-save if set.
-                GooseValue {
-                    value: Some(self.no_save),
-                    filter: !self.no_save,
-                    message: "no_save",
-                },
-                // Otherwise use GooseDefault if set.
-                GooseValue {
-                    value: defaults.no_save,
-                    filter: defaults.no_save.is_none(),
-                    message: "no_save",
-                },
-            ])
-            .unwrap_or(false);
-
-        // Configure `runs_dir`. Left `None` unless given explicitly, so an
-        // explicit directory that can't be created is an error while the
-        // default one only warns; see `runs_dir_or_default()`.
-        self.runs_dir = self.get_value(vec![
-            // Use --runs-dir if set.
+        // Configure `output_dir`.
+        self.output_dir = self.get_value(vec![
+            // Use --output-dir if set.
             GooseValue {
-                value: self.runs_dir.clone(),
-                filter: self.runs_dir.is_none(),
-                message: "runs_dir",
+                value: self.output_dir.clone(),
+                filter: self.output_dir.is_none(),
+                message: "output_dir",
             },
             // Otherwise use GooseDefault if set.
             GooseValue {
-                value: defaults.runs_dir.clone(),
-                filter: defaults.runs_dir.is_none(),
-                message: "runs_dir",
+                value: defaults.output_dir.clone(),
+                filter: defaults.output_dir.is_none(),
+                message: "output_dir",
             },
         ]);
+
+        // Configure `notes`.
+        self.notes = self.get_value(vec![
+            // Use --notes if set.
+            GooseValue {
+                value: self.notes.clone(),
+                filter: self.notes.is_none(),
+                message: "notes",
+            },
+            // Otherwise use GooseDefault if set.
+            GooseValue {
+                value: defaults.notes.clone(),
+                // A rendered report keeps the notes of the JSON report it reads.
+                filter: defaults.notes.is_none() || self.render_report().is_some(),
+                message: "notes",
+            },
+        ]);
+
+        // Configure `report_graph_data`.
+        self.report_graph_data = self
+            .get_value(vec![
+                // Use --report-graph-data if set.
+                GooseValue {
+                    value: Some(self.report_graph_data),
+                    filter: !self.report_graph_data,
+                    message: "report_graph_data",
+                },
+                // Otherwise use GooseDefault if set.
+                GooseValue {
+                    value: defaults.report_graph_data,
+                    // A rendered report keeps the graph data of the JSON report it reads.
+                    filter: defaults.report_graph_data.is_none() || self.render_report().is_some(),
+                    message: "report_graph_data",
+                },
+            ])
+            .unwrap_or(false);
 
         // Configure `baseline_file`.
         self.baseline_file = self.get_value(vec![
@@ -3229,13 +3430,6 @@ impl GooseConfiguration {
         Ok(())
     }
 
-    /// Validate configured [`GooseConfiguration`] values.
-    /// Whether each run is saved to the runs directory: on unless `--no-save`
-    /// or `--no-metrics` is set.
-    pub(crate) fn saves_runs(&self) -> bool {
-        !self.no_save && !self.no_metrics
-    }
-
     /// The global host, `None` when no `--host` is set or it is empty.
     pub(crate) fn host(&self) -> Option<&str> {
         non_empty(&self.host)
@@ -3274,35 +3468,49 @@ impl GooseConfiguration {
         self.throttle_requests.unwrap_or_default()
     }
 
-    /// The Goose log file, `None` when `--goose-log` is not set or is empty.
+    /// The Goose log file `--goose-log` names, or [`RUN_FOLDER`] when it is given
+    /// without a path; `None` when it is not set or is empty.
     pub(crate) fn goose_log(&self) -> Option<&str> {
         non_empty(&self.goose_log)
     }
 
-    /// The request log file, `None` when `--request-log` is not set or is empty.
+    /// The request log file `--request-log` names, or [`RUN_FOLDER`] when it is given
+    /// without a path; `None` when it is not set or is empty.
     pub(crate) fn request_log(&self) -> Option<&str> {
         non_empty(&self.request_log)
     }
 
-    /// The transaction log file, `None` when `--transaction-log` is not set or is
-    /// empty.
+    /// The transaction log file `--transaction-log` names, or [`RUN_FOLDER`] when it is given
+    /// without a path; `None` when it is not set or is empty.
     pub(crate) fn transaction_log(&self) -> Option<&str> {
         non_empty(&self.transaction_log)
     }
 
-    /// The scenario log file, `None` when `--scenario-log` is not set or is empty.
+    /// The scenario log file `--scenario-log` names, or [`RUN_FOLDER`] when it is given
+    /// without a path; `None` when it is not set or is empty.
     pub(crate) fn scenario_log(&self) -> Option<&str> {
         non_empty(&self.scenario_log)
     }
 
-    /// The error log file, `None` when `--error-log` is not set or is empty.
+    /// The error log file `--error-log` names, or [`RUN_FOLDER`] when it is given
+    /// without a path; `None` when it is not set or is empty.
     pub(crate) fn error_log(&self) -> Option<&str> {
         non_empty(&self.error_log)
     }
 
-    /// The debug log file, `None` when `--debug-log` is not set or is empty.
+    /// The debug log file `--debug-log` names, or [`RUN_FOLDER`] when it is given
+    /// without a path; `None` when it is not set or is empty.
     pub(crate) fn debug_log(&self) -> Option<&str> {
         non_empty(&self.debug_log)
+    }
+
+    /// The report files `--report-file` names, in the order given.
+    pub(crate) fn report_paths(&self) -> Vec<String> {
+        self.report_file
+            .iter()
+            .filter(|report| *report != RUN_FOLDER)
+            .cloned()
+            .collect()
     }
 
     /// The print ready HTML file, `None` when `--pdf-print-html` is not set or is empty.
@@ -3310,9 +3518,92 @@ impl GooseConfiguration {
         non_empty(&self.pdf_print_html)
     }
 
-    /// The runs directory given with `--runs-dir`, `None` when it is not set or is empty.
-    pub(crate) fn runs_dir(&self) -> Option<&str> {
-        non_empty(&self.runs_dir)
+    /// The run's folder `--output-dir` names, `None` when it is not set or is empty.
+    pub(crate) fn output_dir(&self) -> Option<&str> {
+        non_empty(&self.output_dir)
+    }
+
+    /// The JSON report `--render-report` names, `None` when it is not set or is empty.
+    pub(crate) fn render_report(&self) -> Option<&str> {
+        non_empty(&self.render_report)
+    }
+
+    /// The notes `--notes` gives, `None` when it is not set or is empty.
+    pub(crate) fn notes(&self) -> Option<&str> {
+        non_empty(&self.notes)
+    }
+
+    /// The gzip level for every gzipped file: `--compress`, or 6.
+    pub(crate) fn compression_level(&self) -> u32 {
+        self.compress.unwrap_or(DEFAULT_COMPRESSION_LEVEL)
+    }
+
+    /// Whether a bare `--report-file` asks for report.json and report.html in the run's
+    /// folder.
+    pub(crate) fn report_in_folder(&self) -> bool {
+        self.report_file.iter().any(|report| report == RUN_FOLDER)
+    }
+
+    /// Whether any log option was given without a path, to write into the run's folder.
+    pub(crate) fn logs_in_folder(&self) -> bool {
+        [
+            &self.goose_log,
+            &self.request_log,
+            &self.transaction_log,
+            &self.scenario_log,
+            &self.error_log,
+            &self.debug_log,
+        ]
+        .iter()
+        .any(|log| log.as_deref() == Some(RUN_FOLDER))
+    }
+
+    /// Whether Save report starts on: with `--dashboard`, or a bare `--report-file`.
+    /// Never with `--no-metrics`, which keeps no report.
+    pub(crate) fn save_report_at_start(&self) -> bool {
+        !self.no_metrics && (self.dashboard || self.report_in_folder())
+    }
+
+    /// Whether a run may need a folder: an output flag given without a path, or the
+    /// dashboard, whose Save report can be turned on at any time.
+    pub(crate) fn uses_run_folder(&self) -> bool {
+        self.report_in_folder() || self.logs_in_folder() || (self.dashboard && !self.no_metrics)
+    }
+
+    /// This configuration as a Controller's `config` and `config-json` show it:
+    /// an output flag given without a path reads `(the run's folder)`, not
+    /// [`RUN_FOLDER`].
+    pub(crate) fn shown(&self) -> GooseConfiguration {
+        let mut shown = self.clone();
+        for log in [
+            &mut shown.goose_log,
+            &mut shown.request_log,
+            &mut shown.transaction_log,
+            &mut shown.scenario_log,
+            &mut shown.error_log,
+            &mut shown.debug_log,
+        ] {
+            if let Some(path) = log.as_mut() {
+                *path = shown_path(path);
+            }
+        }
+        for report in &mut shown.report_file {
+            *report = shown_path(report);
+        }
+        shown
+    }
+
+    /// Whether the graph data is kept for the whole run, with Save report set
+    /// to `save_report`: true when a report will be written at the run's end,
+    /// to a `--report-file` path or by Save report.
+    pub(crate) fn keeps_full_graph(&self, save_report: bool) -> bool {
+        !self.report_paths().is_empty() || save_report
+    }
+
+    /// Whether only the dashboard asks for a run's folder: no output flag given
+    /// without a path, and no `--output-dir`.
+    pub(crate) fn folder_only_for_dashboard(&self) -> bool {
+        !self.report_in_folder() && !self.logs_in_folder() && self.output_dir().is_none()
     }
 
     /// The address the dashboard listens on.
@@ -3382,36 +3673,26 @@ impl GooseConfiguration {
         self.pdf_timeout.unwrap_or(DEFAULT_PDF_TIMEOUT)
     }
 
-    /// The runs directory as given, or the default `goose-runs`.
-    pub(crate) fn runs_dir_or_default(&self) -> &str {
-        self.runs_dir().unwrap_or(crate::runs::DEFAULT_RUNS_DIR)
-    }
-
-    /// Whether per second graph data is recorded: for a saved run, a
-    /// `--report-file`, or the dashboard's charts.
+    /// Whether per second graph data is recorded: for a `--report-file`, or the
+    /// dashboard's charts and its Save report.
     pub(crate) fn records_graph_data(&self) -> bool {
-        self.saves_runs() || !self.report_file.is_empty() || self.dashboard
-    }
-
-    /// Whether per second graph data is kept for the whole run, as the
-    /// reports need. When only the dashboard records it, older data is pruned.
-    pub(crate) fn keeps_full_graph(&self) -> bool {
-        self.saves_runs() || !self.report_file.is_empty()
+        !self.report_file.is_empty() || self.dashboard
     }
 
     /// Whether response time histograms are kept for each second, for the
     /// dashboard's response time heatmap or the report's. Implies
     /// [`Self::records_graph_data`].
     pub(crate) fn records_latency_series(&self) -> bool {
-        (self.dashboard || self.keeps_full_graph())
-            && !self.no_percentiles_over_time
-            && !self.no_metrics
+        self.records_graph_data() && !self.no_percentiles_over_time && !self.no_metrics
     }
 
     /// Whether the per second histograms also fold into whole run columns,
-    /// for the report's response time heatmap.
+    /// for the report's response time heatmap, when the run starts with
+    /// Save report as configured: what `GooseAttack::records_latency_columns`
+    /// gives at the start of a run, for unit tests that build no GooseAttack.
+    #[cfg(test)]
     pub(crate) fn records_latency_columns(&self) -> bool {
-        self.keeps_full_graph() && self.records_latency_series()
+        self.keeps_full_graph(self.save_report_at_start()) && self.records_latency_series()
     }
 
     /// Whether the heatmap also keeps coordinated omission mitigation's
@@ -3424,6 +3705,7 @@ impl GooseConfiguration {
                 .is_some_and(|m| m != &GooseCoordinatedOmissionMitigation::Disabled)
     }
 
+    /// Validate configured [`GooseConfiguration`] values.
     pub(crate) fn validate(&self) -> Result<(), GooseError> {
         // Can't set both --verbose and --quiet.
         if self.verbose > 0 && self.quiet > 0 {
@@ -3653,14 +3935,14 @@ impl GooseConfiguration {
             if let Some(request_log) = self.request_log() {
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.request_log`".to_string(),
-                    value: request_log.to_string(),
+                    value: shown_path(request_log),
                     detail: "`configuration.request_log` can not be set with `configuration.no_metrics`.".to_string(),
                 });
             // Transaction log can't be written if metrics are disabled.
             } else if let Some(transaction_log) = self.transaction_log() {
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.transaction_log`".to_string(),
-                    value: transaction_log.to_string(),
+                    value: shown_path(transaction_log),
                     detail:
                         "`configuration.transaction_log` can not be set with `configuration.no_metrics`."
                             .to_string(),
@@ -3669,7 +3951,7 @@ impl GooseConfiguration {
             } else if let Some(scenario_log) = self.scenario_log() {
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.scenario_log`".to_string(),
-                    value: scenario_log.to_string(),
+                    value: shown_path(scenario_log),
                     detail:
                         "`configuration.scenario_log` can not be set with `configuration.no_metrics`."
                             .to_string(),
@@ -3678,7 +3960,7 @@ impl GooseConfiguration {
             } else if let Some(error_log) = self.error_log() {
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.error_log`".to_string(),
-                    value: error_log.to_string(),
+                    value: shown_path(error_log),
                     detail:
                         "`configuration.error_log` can not be set with `configuration.no_metrics`."
                             .to_string(),
@@ -3687,7 +3969,12 @@ impl GooseConfiguration {
             } else if !self.report_file.is_empty() {
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.report_file`".to_string(),
-                    value: format!("{:?}", self.report_file),
+                    value: self
+                        .report_file
+                        .iter()
+                        .map(|report| shown_path(report))
+                        .collect::<Vec<_>>()
+                        .join(", "),
                     detail:
                         "`configuration.report_file` can not be set with `configuration.no_metrics`."
                             .to_string(),
@@ -3705,14 +3992,94 @@ impl GooseConfiguration {
             }
         }
 
-        if self.report_file.is_empty() && !self.saves_runs() && self.no_granular_report {
+        // A report is written at the end of the run to a --report-file path, or by
+        // Save report, which a bare --report-file or --dashboard turns on.
+        let has_report = !self.report_file.is_empty() || self.dashboard;
+        if !has_report && self.no_granular_report {
             return Err(GooseError::InvalidOption {
                 option: "`configuration.no_granular_report`".to_string(),
                 value: true.to_string(),
                 detail:
-                    "`configuration.no_granular_report` can not be set without `configuration.report_file` when runs are not saved."
+                    "`configuration.no_granular_report` (--no-granular-report) needs a report: add --report-file or --dashboard."
                         .to_string(),
             });
+        }
+
+        // The gzip level, as GooseDefault::Compress can set any number.
+        if let Some(level) = self.compress.filter(|level| !(1..=9).contains(level)) {
+            return Err(GooseError::InvalidOption {
+                option: "`configuration.compress`".to_string(),
+                value: level.to_string(),
+                detail: "`configuration.compress` (--compress) is a gzip level from 1 to 9."
+                    .to_string(),
+            });
+        }
+
+        // --output-dir sets the folder that output flags given without a path write to.
+        if let Some(output_dir) = self.output_dir() {
+            if !self.uses_run_folder() {
+                let detail = if self.no_metrics {
+                    "`configuration.output_dir` (--output-dir) would hold nothing: --dashboard and a bare --report-file write into it except under --no-metrics, which is given here, so give a bare --goose-log or --debug-log."
+                } else {
+                    "`configuration.output_dir` (--output-dir) would hold nothing: give an output flag without a path, such as a bare --report-file, or add --dashboard."
+                };
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.output_dir`".to_string(),
+                    value: output_dir.to_string(),
+                    detail: detail.to_string(),
+                });
+            }
+        }
+
+        // Graph data goes in a JSON report.
+        if self.report_graph_data && !has_report {
+            return Err(GooseError::InvalidOption {
+                option: "`configuration.report_graph_data`".to_string(),
+                value: true.to_string(),
+                detail: "`configuration.report_graph_data` (--report-graph-data) needs a report: add --report-file or --dashboard."
+                    .to_string(),
+            });
+        }
+
+        // Notes are stored in the reports and shown in the dashboard.
+        if let Some(notes) = self.notes() {
+            if !has_report {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.notes`".to_string(),
+                    value: notes.to_string(),
+                    detail: "`configuration.notes` (--notes) would be stored nowhere: add --report-file or --dashboard."
+                        .to_string(),
+                });
+            }
+        }
+
+        // --render-report writes the JSON report it reads to the --report-file
+        // paths, with that report's own notes and graph data.
+        if let Some(render_report) = self.render_report() {
+            if let Some(notes) = self.notes() {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.notes`".to_string(),
+                    value: notes.to_string(),
+                    detail: "`configuration.notes` (--notes) is not allowed with --render-report, which keeps the notes of the JSON report it reads."
+                        .to_string(),
+                });
+            }
+            if self.report_graph_data {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.report_graph_data`".to_string(),
+                    value: true.to_string(),
+                    detail: "`configuration.report_graph_data` (--report-graph-data) is not allowed with --render-report, which keeps the graph data of the JSON report it reads."
+                        .to_string(),
+                });
+            }
+            if self.report_paths().is_empty() {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.render_report`".to_string(),
+                    value: render_report.to_string(),
+                    detail: "`configuration.render_report` (--render-report) writes the reports --report-file names: add --report-file with a path, such as --report-file report.html."
+                        .to_string(),
+                });
+            }
         }
 
         // Can't disable autostart unless a Controller or dashboard control can start the test.
@@ -3856,17 +4223,19 @@ impl GooseConfiguration {
     /// This ensures proper error handling when PDF functionality is requested but not available.
     /// Note: --pdf-print-html is always available as it only generates HTML+CSS without requiring Chromium.
     fn validate_pdf_configuration(&self) -> Result<(), GooseError> {
-        let has_pdf_reports = self
-            .report_file
-            .iter()
-            .any(|path| path.to_lowercase().ends_with(".pdf"));
+        let is_pdf = |path: &&String| {
+            crate::runs::without_gz(&path.to_lowercase())
+                .0
+                .ends_with(".pdf")
+        };
+        let has_pdf_reports = self.report_file.iter().any(|path| is_pdf(&path));
 
         // Check if PDF report generation is requested but feature not compiled
         if !cfg!(feature = "pdf-reports") && has_pdf_reports {
             let pdf_file = self
                 .report_file
                 .iter()
-                .find(|path| path.to_lowercase().ends_with(".pdf"))
+                .find(is_pdf)
                 .cloned()
                 .unwrap_or_else(|| "*.pdf".to_string());
 
@@ -3940,24 +4309,27 @@ impl GooseConfiguration {
             _ => LevelFilter::Trace,
         };
 
-        // Open the log file if configured, otherwise disable the log.
-        let goose_log = self.goose_log().map(PathBuf::from);
-
-        if let Some(log_to_file) = goose_log {
+        // Open the log file if configured, otherwise disable the log. A bare
+        // --goose-log waits for the run's folder. The global logger is set once
+        // for the process: a later `execute()` keeps writing the Goose log the
+        // first one opened, and does not create the file again under it.
+        if crate::logger::goose_log_installed() {
+            debug!("the Goose log is already open");
+        } else if let Some(goose_log) = self.goose_log() {
+            let path = (goose_log != RUN_FOLDER).then(|| PathBuf::from(goose_log));
+            let file = GooseLogFile::open(path.as_deref(), self.compression_level()).unwrap();
             match CombinedLogger::init(vec![
                 SimpleLogger::new(debug_level, Config::default()),
-                WriteLogger::new(
-                    log_level,
-                    Config::default(),
-                    std::fs::File::create(&log_to_file).unwrap(),
-                ),
+                WriteLogger::new(log_level, Config::default(), file.clone()),
             ]) {
-                Ok(_) => (),
+                Ok(_) => file.install(),
                 Err(e) => {
                     info!("failed to initialize CombinedLogger: {e}");
                 }
             }
-            info!("Writing to log file: {}", log_to_file.display());
+            if let Some(path) = path {
+                info!("Writing to log file: {}", path.display());
+            }
         } else {
             match CombinedLogger::init(vec![SimpleLogger::new(debug_level, Config::default())]) {
                 Ok(_) => (),
@@ -4344,65 +4716,213 @@ mod test {
         assert!(config.validate_dashboard_config().is_ok());
     }
 
+    /// `GooseDefault::Compress` takes a gzip level, so any other type says
+    /// it expected a usize.
+    #[test]
+    fn compress_default_expects_a_usize() {
+        let attack = || GooseAttack::initialize_with_config(GooseConfiguration::default());
+        #[allow(unused_mut)]
+        let mut results = vec![
+            attack().and_then(|a| a.set_default(GooseDefault::Compress, "6")),
+            attack().and_then(|a| a.set_default(GooseDefault::Compress, true)),
+            attack().and_then(|a| a.set_default(GooseDefault::Compress, GooseLogFormat::Json)),
+            attack().and_then(|a| {
+                a.set_default(
+                    GooseDefault::Compress,
+                    GooseCoordinatedOmissionMitigation::Disabled,
+                )
+            }),
+        ];
+        // GooseDefaultType<f64> exists only with the PDF reports.
+        #[cfg(feature = "pdf-reports")]
+        results.push(attack().and_then(|a| a.set_default(GooseDefault::Compress, 6.0)));
+        for result in results {
+            match result {
+                Err(GooseError::InvalidOption { detail, .. }) => {
+                    assert!(detail.contains("expected usize value"), "{}", detail)
+                }
+                _ => panic!("GooseDefault::Compress took a value that is not a usize"),
+            }
+        }
+    }
+
     #[test]
     fn graph_data_helpers_truth_table() {
-        // (no_save, no_metrics, report_file, dashboard) ->
-        //     (saves_runs, records_graph_data, keeps_full_graph)
+        // (no_metrics, report path, bare --report-file, dashboard) ->
+        //     (records_graph_data, save_report_at_start)
         let cases = [
-            ((false, false, false, false), (true, true, true)),
-            ((false, false, false, true), (true, true, true)),
-            ((false, false, true, false), (true, true, true)),
-            ((false, false, true, true), (true, true, true)),
-            ((true, false, false, false), (false, false, false)),
-            ((true, false, false, true), (false, true, false)),
-            ((true, false, true, false), (false, true, true)),
-            ((true, false, true, true), (false, true, true)),
-            // --no-metrics never saves a run.
-            ((false, true, false, false), (false, false, false)),
-            ((false, true, false, true), (false, true, false)),
+            ((false, false, false, false), (false, false)),
+            ((false, false, false, true), (true, true)),
+            ((false, true, false, false), (true, false)),
+            ((false, false, true, false), (true, true)),
+            ((false, true, true, true), (true, true)),
+            // --no-metrics keeps no report, so Save report starts off.
+            ((true, false, false, true), (true, false)),
         ];
-        for ((no_save, no_metrics, report_file, dashboard), expected) in cases {
+        for ((no_metrics, path, bare, dashboard), expected) in cases {
+            let mut report_file = Vec::new();
+            if path {
+                report_file.push("report.html".to_string());
+            }
+            if bare {
+                report_file.push(RUN_FOLDER.to_string());
+            }
             let configuration = GooseConfiguration {
-                no_save,
                 no_metrics,
-                report_file: if report_file {
-                    vec!["report.html".to_string()]
-                } else {
-                    Vec::new()
-                },
+                report_file,
                 dashboard,
                 ..Default::default()
             };
             assert_eq!(
                 (
-                    configuration.saves_runs(),
                     configuration.records_graph_data(),
-                    configuration.keeps_full_graph()
+                    configuration.save_report_at_start()
                 ),
                 expected,
-                "no_save={no_save} no_metrics={no_metrics} report_file={report_file} dashboard={dashboard}"
+                "no_metrics={no_metrics} path={path} bare={bare} dashboard={dashboard}"
             );
         }
     }
 
+    /// A rendered report keeps the notes and graph data of the JSON report it
+    /// is rendered from, so `--notes` and `--report-graph-data` are refused.
     #[test]
-    fn runs_dir_defaults_to_goose_runs() {
-        let mut configuration = GooseConfiguration::default();
-        assert_eq!(configuration.runs_dir_or_default(), "goose-runs");
-        configuration.runs_dir = Some("elsewhere".to_string());
-        assert_eq!(configuration.runs_dir_or_default(), "elsewhere");
+    fn render_report_refuses_notes_and_graph_data() {
+        let render = || GooseConfiguration {
+            render_report: Some("report.json".to_string()),
+            report_file: vec!["report.html".to_string()],
+            ..Default::default()
+        };
+        assert!(render().validate().is_ok());
+        for (configuration, field) in [
+            (
+                GooseConfiguration {
+                    notes: Some("new notes".to_string()),
+                    ..render()
+                },
+                "`configuration.notes`",
+            ),
+            (
+                GooseConfiguration {
+                    report_graph_data: true,
+                    ..render()
+                },
+                "`configuration.report_graph_data`",
+            ),
+        ] {
+            match configuration.validate() {
+                Err(GooseError::InvalidOption { option, detail, .. }) => {
+                    assert_eq!(option, field);
+                    assert!(detail.contains("--render-report"), "{}", detail);
+                }
+                other => panic!("{}: {:?}", field, other),
+            }
+        }
+    }
+
+    /// `GooseDefault::Notes` and `GooseDefault::ReportGraphData` set in code
+    /// don't stop `--render-report`, which keeps the JSON report's own.
+    #[test]
+    fn render_report_ignores_notes_and_graph_data_defaults() {
+        let mut configuration = GooseConfiguration {
+            render_report: Some("report.json".to_string()),
+            report_file: vec!["report.html".to_string()],
+            ..Default::default()
+        };
+        let defaults = GooseDefaults {
+            notes: Some("from code".to_string()),
+            report_graph_data: Some(true),
+            ..GooseDefaults::default()
+        };
+        configuration.configure(&defaults).unwrap();
+        assert_eq!(configuration.notes(), None);
+        assert!(!configuration.report_graph_data);
+        assert!(configuration.validate().is_ok());
+    }
+
+    /// Only the dashboard asks for the folder when no output flag is given
+    /// without a path and no `--output-dir`, from the command line or code.
+    #[test]
+    fn folder_only_for_dashboard_table() {
+        let dashboard = || GooseConfiguration {
+            dashboard: true,
+            ..Default::default()
+        };
+        assert!(dashboard().folder_only_for_dashboard());
+        for configuration in [
+            GooseConfiguration {
+                report_file: vec![RUN_FOLDER.to_string()],
+                ..dashboard()
+            },
+            GooseConfiguration {
+                request_log: Some(RUN_FOLDER.to_string()),
+                ..dashboard()
+            },
+            GooseConfiguration {
+                output_dir: Some("runs".to_string()),
+                ..dashboard()
+            },
+        ] {
+            assert!(!configuration.folder_only_for_dashboard());
+        }
+        let mut configuration = dashboard();
+        let defaults = GooseDefaults {
+            output_dir: Some("runs".to_string()),
+            ..GooseDefaults::default()
+        };
+        configuration.configure(&defaults).unwrap();
+        assert!(!configuration.folder_only_for_dashboard());
+    }
+
+    /// Under `--no-metrics` the dashboard saves nothing, so `--output-dir` with
+    /// only `--dashboard` is refused, and the error never says to add
+    /// `--dashboard`.
+    #[test]
+    fn output_dir_under_no_metrics_never_suggests_the_dashboard() {
+        let configuration = GooseConfiguration {
+            output_dir: Some("runs".to_string()),
+            dashboard: true,
+            no_metrics: true,
+            co_mitigation: Some(GooseCoordinatedOmissionMitigation::Disabled),
+            ..Default::default()
+        };
+        match configuration.validate() {
+            Err(GooseError::InvalidOption { detail, .. }) => {
+                assert!(detail.contains("except under --no-metrics"), "{}", detail);
+                assert!(!detail.contains("add --dashboard"), "{}", detail);
+            }
+            other => panic!("{:?}", other),
+        }
+    }
+
+    /// An empty `--render-report` is not given.
+    #[test]
+    fn an_empty_render_report_is_not_set() {
+        let configuration = GooseConfiguration {
+            render_report: Some(String::new()),
+            notes: Some("kept".to_string()),
+            report_file: vec!["report.html".to_string()],
+            ..Default::default()
+        };
+        assert_eq!(configuration.render_report(), None);
+        assert!(configuration.validate().is_ok());
     }
 
     #[test]
-    fn no_granular_report_allowed_when_saving_runs() {
+    fn no_granular_report_needs_a_report() {
         let mut configuration = GooseConfiguration {
             no_granular_report: true,
             ..Default::default()
         };
-        assert!(configuration.saves_runs());
-        assert!(configuration.validate().is_ok());
-        configuration.no_save = true;
         assert!(configuration.validate().is_err());
+        #[cfg(feature = "dashboard")]
+        {
+            configuration.dashboard = true;
+            assert!(configuration.validate().is_ok());
+            configuration.dashboard = false;
+        }
+        configuration.report_file = vec![RUN_FOLDER.to_string()];
+        assert!(configuration.validate().is_ok());
         configuration.report_file = vec!["report.html".to_string()];
         assert!(configuration.validate().is_ok());
     }
@@ -4550,7 +5070,6 @@ mod test {
             "2",
             "--no-telnet",
             "--no-websocket",
-            "--no-save",
             "--quiet",
             "--host",
             "http://127.0.0.1",
@@ -4720,9 +5239,11 @@ mod test {
             "a.html",
             "--report-file",
             "b.json",
-            "--no-save",
-            "--runs-dir",
+            "--output-dir",
             "runs",
+            "--notes",
+            "a note",
+            "--report-graph-data",
             "--baseline-file",
             "baseline.json",
             "--no-granular-report",
@@ -4816,8 +5337,9 @@ mod test {
         assert!(c.no_print_metrics);
         assert!(c.no_error_summary);
         assert_eq!(c.report_file, vec!["a.html", "b.json"]);
-        assert!(c.no_save);
-        assert_eq!(c.runs_dir.as_deref(), Some("runs"));
+        assert_eq!(c.output_dir.as_deref(), Some("runs"));
+        assert_eq!(c.notes.as_deref(), Some("a note"));
+        assert!(c.report_graph_data);
         assert_eq!(c.baseline_file.as_deref(), Some("baseline.json"));
         assert!(c.no_granular_report);
         assert_eq!(c.pdf_print_html.as_deref(), Some("print.html"));
@@ -4967,8 +5489,8 @@ mod test {
             "http://a/",
             "--host",
             "http://b/",
-            "--no-save",
-            "--no-save",
+            "--no-gzip",
+            "--no-gzip",
             "--report-file",
             "a.html",
             "--report-file",
@@ -4977,13 +5499,14 @@ mod test {
         .unwrap();
         assert_eq!(c.users, Some(2));
         assert_eq!(c.host.as_deref(), Some("http://b/"));
-        assert!(c.no_save);
+        assert!(c.no_gzip);
         assert_eq!(c.report_file, vec!["a.html", "a.html"]);
     }
 
     /// A value that begins with a hyphen goes after `=`. Given as its own argument it
-    /// is read as an option, so `--goose-log --no-save` is an error with a tip, never a
-    /// log file named `--no-save`.
+    /// is read as an option, so `--host --users` is an error with a tip, never a host
+    /// named `--users`, and `--goose-log --bogus` is a bare `--goose-log` and an
+    /// unknown option, never a log file named `--bogus`.
     #[test]
     fn option_value_beginning_with_hyphen() {
         let c = GooseConfiguration::parse_args_default(&[
@@ -5002,9 +5525,10 @@ mod test {
         assert_eq!(c.users, None);
 
         for (args, tip_option) in [
-            (&["--goose-log", "--no-save"][..], "--goose-log"),
-            (&["-G", "-g"], "-G"),
-            (&["--report-file", "-r.html"], "--report-file"),
+            (&["--host", "--users"][..], "--host"),
+            (&["-u", "-r"], "-u"),
+            (&["--baseline-file", "-old.json"], "--baseline-file"),
+            (&["--goose-log", "--bogus"], "--goose-log"),
             (
                 &["--dashboard-auth-token", "-s3cret"],
                 "--dashboard-auth-token",
@@ -5030,12 +5554,84 @@ mod test {
             }
         }
         // A flag that takes no value gets no tip.
-        match GooseConfiguration::parse_args_default(&["--no-save", "-x"]) {
+        match GooseConfiguration::parse_args_default(&["--no-gzip", "-x"]) {
             Err(GooseError::InvalidOption { detail, .. }) => {
                 assert!(!detail.contains("tip"), "{}", detail)
             }
             other => panic!("{:?}", other),
         }
+    }
+
+    /// `--report-file` and the six log options take an optional value: given without
+    /// a path they write into the run's folder, by short and long name alike, and
+    /// `""` still means no file.
+    #[test]
+    fn output_flags_take_an_optional_path() {
+        let folder = "\0";
+        for flags in [
+            &["--report-file"][..],
+            &["--goose-log"],
+            &["-G"],
+            &["--request-log"],
+            &["-R"],
+            &["--transaction-log"],
+            &["-T"],
+            &["--scenario-log"],
+            &["-S"],
+            &["--error-log"],
+            &["-E"],
+            &["--debug-log"],
+            &["-D"],
+        ] {
+            let c = GooseConfiguration::parse_args_default(flags)
+                .unwrap_or_else(|e| panic!("{:?}: {:?}", flags, e));
+            let value = serde_json::to_value(&c).unwrap();
+            let set: Vec<&str> = [
+                "goose_log",
+                "request_log",
+                "transaction_log",
+                "scenario_log",
+                "error_log",
+                "debug_log",
+            ]
+            .iter()
+            .copied()
+            .filter(|field| value[*field] == folder)
+            .collect();
+            if flags[0] == "--report-file" {
+                assert_eq!(c.report_file, vec![folder]);
+                assert!(set.is_empty());
+            } else {
+                assert_eq!(set.len(), 1, "{:?}", flags);
+            }
+        }
+
+        // A bare option followed by another option leaves that option its own.
+        let c = GooseConfiguration::parse_args_default(&["-G", "-g", "--request-log", "-u", "3"])
+            .unwrap();
+        assert_eq!(c.goose_log.as_deref(), Some(folder));
+        assert_eq!(c.request_log.as_deref(), Some(folder));
+        assert_eq!(c.log_level, 1);
+        assert_eq!(c.users, Some(3));
+        assert_eq!(c.goose_log(), Some(folder));
+        assert_eq!(c.request_log(), Some(folder));
+
+        // A bare --report-file twice is once; with paths, both are written.
+        let c = GooseConfiguration::parse_args_default(&[
+            "--report-file",
+            "--report-file",
+            "a.html",
+            "--report-file",
+        ])
+        .unwrap();
+        assert_eq!(c.report_paths(), vec!["a.html"]);
+        assert!(c.report_file.contains(&folder.to_string()));
+
+        // An empty path is still no file, as a GooseDefault can be turned off with.
+        let c = GooseConfiguration::parse_args_default(&["--goose-log", "", "-R", ""]).unwrap();
+        assert_eq!(c.goose_log.as_deref(), Some(""));
+        assert_eq!(c.goose_log(), None);
+        assert_eq!(c.request_log(), None);
     }
 
     /// A parse error names only what clap refused, never the rest of the command
@@ -5109,10 +5705,10 @@ mod test {
                 "invalid value 'many' for '--users <N>': invalid digit found in string",
             ),
             (
-                &["--no-save=true"],
-                "--no-save",
+                &["--no-gzip=true"],
+                "--no-gzip",
                 "true",
-                "unexpected value 'true' for '--no-save' found; no more were expected",
+                "unexpected value 'true' for '--no-gzip' found; no more were expected",
             ),
             (
                 &["--request-format", "xml"],

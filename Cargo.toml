@@ -12,6 +12,9 @@ keywords = ["loadtesting", "performance", "web", "framework", "tool"]
 license = "Apache-2.0"
 
 [dependencies]
+# Gzip for reports and logs. reqwest's gzip feature already pulls both in,
+# at these versions.
+async-compression = { version = "0.4.51", default-features = false, features = ["gzip", "tokio"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 clap = { version = "4.5", default-features = false, features = [
     "derive",
@@ -23,6 +26,7 @@ clap = { version = "4.5", default-features = false, features = [
 ] }
 ctrlc = "3"
 downcast-rs = "2.0"
+flate2 = "1.1.10"
 flume = "0.12"
 futures = "0.3"
 http = "1.1"

@@ -183,11 +183,13 @@ jobs:
         command: test 
         args: --verbose --all-features graph
 
-    # Goose saves every run to goose-runs/ by default; its own tests must not.
-    - name: 🔎 Tests wrote no saved runs
+    # An output flag given without a path, and the dashboard's Save report,
+    # write into goose-runs/ in the working directory. Goose's own tests write
+    # into temporary folders, never into the checkout.
+    - name: 🔎 Tests wrote nothing into goose-runs
       run: |
         if [ -e goose-runs ]; then
-          echo "::error::the tests wrote goose-runs/ in the checkout; set --no-save or GooseDefault::NoSave where they build a configuration"
+          echo "::error::the tests wrote goose-runs/ in the checkout; give the test an --output-dir in a temporary folder"
           find goose-runs | head -50
           exit 1
         fi

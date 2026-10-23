@@ -625,6 +625,17 @@ pub(crate) enum ControlCommand {
         settings: Box<RunSettings>,
         start: bool,
     },
+    /// The dashboard's Save report and Include graph data switches; `None`
+    /// leaves a switch as it is.
+    #[cfg(feature = "dashboard")]
+    Report {
+        save: Option<bool>,
+        graph_data: Option<bool>,
+    },
+    /// Save report now: write the run's report into its folder while the run
+    /// continues.
+    #[cfg(feature = "dashboard")]
+    SaveReportNow,
 }
 
 impl From<ControllerCommand> for ControlCommand {
@@ -644,6 +655,14 @@ impl std::fmt::Debug for ControlCommand {
                 .debug_tuple(if *start { "StartWith" } else { "Settings" })
                 .field(settings)
                 .finish(),
+            #[cfg(feature = "dashboard")]
+            Self::Report { save, graph_data } => f
+                .debug_struct("Report")
+                .field("save", save)
+                .field("graph_data", graph_data)
+                .finish(),
+            #[cfg(feature = "dashboard")]
+            Self::SaveReportNow => f.write_str("SaveReportNow"),
         }
     }
 }
@@ -804,9 +823,17 @@ impl GooseAttack {
             ControlCommand::Settings { settings, .. } => {
                 self.control_settings(goose_attack_run_state, *settings)
             }
+            #[cfg(feature = "dashboard")]
+            ControlCommand::Report { save, graph_data } => {
+                Ok(self.control_report(goose_attack_run_state, save, graph_data))
+            }
+            #[cfg(feature = "dashboard")]
+            ControlCommand::SaveReportNow => {
+                self.control_save_report_now(goose_attack_run_state).await
+            }
             ControlCommand::Command(command) => match command {
                 ControllerCommand::Config | ControllerCommand::ConfigJson => {
-                    let config = Box::new(self.configuration.clone());
+                    let config = Box::new(self.configuration.shown());
                     let _ = respond.send(ControlReply::Config(config));
                     return Ok(());
                 }
@@ -1923,7 +1950,6 @@ pub(crate) mod tests {
         use crate::controller::{ControllerCommand, INVALID_USERS_MSG, MAX_CONTROL_USERS};
 
         let configuration = GooseConfiguration::parse_args_default(&[
-            "--no-save",
             "--no-telnet",
             "--no-websocket",
             "--test-plan",
@@ -1978,7 +2004,6 @@ pub(crate) mod tests {
         // A scenario and host let a Users that wrongly gets through launch
         // users and fail the assertion, rather than loop with nothing to weight.
         let configuration = GooseConfiguration::parse_args_default(&[
-            "--no-save",
             "--no-telnet",
             "--no-websocket",
             "--host",
@@ -2006,8 +2031,7 @@ pub(crate) mod tests {
     #[serial_test::serial]
     async fn test_controller_users_overflow_refused() {
         let configuration =
-            GooseConfiguration::parse_args_default(&["--no-telnet", "--no-websocket", "--no-save"])
-                .unwrap();
+            GooseConfiguration::parse_args_default(&["--no-telnet", "--no-websocket"]).unwrap();
         let mut goose_attack = GooseAttack::initialize_with_config(configuration).unwrap();
         let mut run_state = goose_attack.initialize_attack().await.unwrap();
         let accepted = control(
@@ -2054,7 +2078,7 @@ pub(crate) mod tests {
 
     /// An idle load test with no scenario, built from `args`.
     async fn idle_attack(args: &[&str]) -> (GooseAttack, GooseAttackRunState) {
-        let mut all = vec!["--no-telnet", "--no-websocket", "--no-save", "--quiet"];
+        let mut all = vec!["--no-telnet", "--no-websocket", "--quiet"];
         all.extend_from_slice(args);
         let configuration = GooseConfiguration::parse_args_default(&all).unwrap();
         let mut goose_attack = GooseAttack::initialize_with_config(configuration).unwrap();
@@ -2357,6 +2381,39 @@ pub(crate) mod tests {
             assert!(run_state.shutdown_after_stop);
             assert_eq!(goose_attack.test_plan.steps, vec![(0, 0)]);
             assert_eq!(goose_attack.test_plan.current, 0);
+        });
+    }
+
+    /// `config` and `config-json` show an output flag given without a path
+    /// as the run's folder, never as the NUL Goose keeps for it.
+    #[test]
+    #[serial_test::serial]
+    fn test_control_config_shows_the_run_folder() {
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) =
+                idle_attack(&["--no-autostart", "--report-file", "-G"]).await;
+            for (line, json) in [("config-json", true), ("config", false)] {
+                let (controller_tx, controller_rx) = flume::unbounded();
+                run_state.controller_channel_rx = Some(controller_rx);
+                let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+                let command = line.parse::<ControllerCommand>().unwrap();
+                controller_tx.send((command.into(), response_tx)).unwrap();
+                goose_attack
+                    .handle_control_requests(&mut run_state)
+                    .await
+                    .unwrap();
+                let text = match response_rx.await.unwrap() {
+                    ControlReply::Config(config) if json => to_json(&config),
+                    ControlReply::Config(config) => format!("{config:#?}"),
+                    _ => panic!("{} answered no configuration", line),
+                };
+                assert!(text.contains("(the run's folder)"), "{}", text);
+                assert!(
+                    !text.contains("\\u0000") && !text.contains("\\0"),
+                    "{}",
+                    text
+                );
+            }
         });
     }
 
@@ -2831,7 +2888,6 @@ pub(crate) mod tests {
         let mut all = vec![
             "--no-telnet",
             "--no-websocket",
-            "--no-save",
             "--quiet",
             "--host",
             "http://127.0.0.1",

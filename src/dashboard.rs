@@ -4,7 +4,7 @@
 //! loop over an axum router that serves a minimal static shell, a one-shot
 //! metrics snapshot API, an SSE stream of coalesced snapshots, and (when
 //! `--dashboard-control` is set) authenticated Start/Stop/Users/Quit control
-//! endpoints and saved run deletion.
+//! endpoints, the report switches, and report deletion.
 //!
 //! The parent GooseAttack main loop answers [`DashboardRequest`]s via oneshot
 //! channels using [`MetricsCommand::GetDashboardSnapshot`] for snapshots.
@@ -24,7 +24,7 @@ use crate::controller::{
     RunSettings, SendError, CONTROL_TIMEOUT,
 };
 use crate::metrics::dashboard_snapshot::{
-    Heatmap, HeatmapColumn, HeatmapCursor, RequestSeries, SnapshotSave, SnapshotSettings,
+    Heatmap, HeatmapColumn, HeatmapCursor, RequestSeries, SnapshotSettings,
 };
 use crate::metrics::DashboardSnapshot;
 use crate::runs;
@@ -44,7 +44,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::convert::Infallible;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::io::AsyncReadExt;
 use tokio::sync::{oneshot, watch, Notify};
@@ -137,9 +137,13 @@ pub(crate) struct DashboardSetup {
     /// Concurrent SSE clients, which the main loop reads to decide whether
     /// to wait for a dashboard tab after an autostarted run.
     pub active_sse: Arc<AtomicUsize>,
-    /// The data of every `closed` event: the save state as JSON. The main
-    /// loop keeps it current, so it is right before the close signal fires.
-    pub closed_data: ClosedData,
+    /// The name of the folder of the run in progress, which Delete refuses
+    /// and the runs panel shows as running. The main loop keeps it current.
+    pub running_folder: RunningFolder,
+    /// The name of the folder a bare `--goose-log` is open in, which Delete
+    /// refuses. It stays set after the run ends, as the log stays open there
+    /// until the next run starts.
+    pub log_folder: RunningFolder,
     /// The address the dashboard listens on, as logged at startup.
     pub url: String,
     /// Signal SSE clients to emit `event: closed` and stop the hub loop.
@@ -241,34 +245,6 @@ impl ControlHttpErrorBody {
     fn with_field(mut self, field: Option<&str>) -> Self {
         self.field = field.map(str::to_string);
         self
-    }
-}
-
-/// The data of the SSE `closed` event, shared by the hub and the main loop.
-#[derive(Clone, Debug)]
-pub(crate) struct ClosedData(Arc<RwLock<String>>);
-
-impl ClosedData {
-    fn new(save: &SnapshotSave) -> Self {
-        let data = ClosedData(Arc::new(RwLock::new(String::new())));
-        data.set(save);
-        data
-    }
-
-    /// Replace the save state sent with `closed`.
-    pub(crate) fn set(&self, save: &SnapshotSave) {
-        let json = serde_json::to_string(save).unwrap_or_else(|_| "{}".to_string());
-        match self.0.write() {
-            Ok(mut data) => *data = json,
-            Err(poisoned) => *poisoned.into_inner() = json,
-        }
-    }
-
-    fn get(&self) -> String {
-        match self.0.read() {
-            Ok(data) => data.clone(),
-            Err(poisoned) => poisoned.into_inner().clone(),
-        }
     }
 }
 
@@ -382,8 +358,6 @@ struct HubInner {
     latest_tx: watch::Sender<Option<Bytes>>,
     /// Concurrent SSE subscribers (shared with [`DashboardSetup::active_sse`]).
     active_sse: Arc<AtomicUsize>,
-    /// The data of the `closed` event.
-    closed_data: ClosedData,
     /// Configured concurrent SSE client cap (default [`MAX_SSE_CLIENTS`]).
     max_sse_clients: usize,
     /// Unix-ms of the most recent `/api/v1/snapshot` poll mark (0 = never).
@@ -449,7 +423,6 @@ impl SnapshotHub {
         shutdown_tx: watch::Sender<bool>,
         max_sse_clients: usize,
         active_sse: Arc<AtomicUsize>,
-        closed_data: ClosedData,
     ) -> Self {
         let max_sse_clients = if max_sse_clients == 0 {
             MAX_SSE_CLIENTS
@@ -461,7 +434,6 @@ impl SnapshotHub {
             request_tx,
             latest_tx,
             active_sse,
-            closed_data,
             max_sse_clients,
             last_poll_ms: AtomicU64::new(0),
             last_build_at_ms: AtomicU64::new(0),
@@ -549,11 +521,6 @@ impl SnapshotHub {
     /// Snapshot requests that timed out waiting for a reply.
     fn snapshot_timeouts(&self) -> u64 {
         self.inner.snapshot_timeouts.load(Ordering::Relaxed)
-    }
-
-    /// The data to send with `closed`.
-    fn closed_data(&self) -> String {
-        self.inner.closed_data.get()
     }
 
     fn subscribe_latest(&self) -> watch::Receiver<Option<Bytes>> {
@@ -910,9 +877,15 @@ struct DashboardState {
     /// Recent `GET /api/v1/series` 200 answers by method and name, with when
     /// each was built.
     series_cache: Arc<Mutex<SeriesCache>>,
-    /// The runs directory as given, or the default: the saved run routes
-    /// read it, and only them.
-    runs_dir: String,
+    /// The folder run folders go in, which the report routes read, and only
+    /// them.
+    reports_dir: std::path::PathBuf,
+    /// Each `report.json` the listing has read, by path, size and time.
+    listing_cache: Arc<Mutex<runs::ListingCache>>,
+    /// The folder of the run in progress.
+    running_folder: RunningFolder,
+    /// The folder the Goose log is open in.
+    log_folder: RunningFolder,
     /// The controller addresses `GET /api/v1/health` reports.
     controllers: HealthControllers,
 }
@@ -1049,18 +1022,8 @@ pub(crate) async fn setup_dashboard(
     let build_count = Arc::new(AtomicU64::new(0));
     let (close_tx, _) = watch::channel(false);
     let active_sse = Arc::new(AtomicUsize::new(0));
-    // Until the main loop sets it: what the configuration says.
-    let closed_data = ClosedData::new(&SnapshotSave {
-        state: if configuration.saves_runs() {
-            "on"
-        } else {
-            "off"
-        }
-        .to_string(),
-        reason: None,
-        dir: configuration.runs_dir_or_default().to_string(),
-        last_run: None,
-    });
+    let running_folder = RunningFolder::default();
+    let log_folder = RunningFolder::default();
     let max_sse_clients = configuration.dashboard_max_clients();
     // Clone sender for the hub and the series handler (same channel).
     let hub = SnapshotHub::new(
@@ -1069,7 +1032,6 @@ pub(crate) async fn setup_dashboard(
         close_tx.clone(),
         max_sse_clients,
         Arc::clone(&active_sse),
-        closed_data.clone(),
     );
     let control_enabled = control_tx.is_some();
     let state = DashboardState {
@@ -1083,7 +1045,10 @@ pub(crate) async fn setup_dashboard(
         control_in_flight: Arc::new(AtomicUsize::new(0)),
         series_in_flight: Arc::new(AtomicUsize::new(0)),
         series_cache: Arc::new(Mutex::new(HashMap::new())),
-        runs_dir: configuration.runs_dir_or_default().to_string(),
+        reports_dir: runs::parent_folder(configuration),
+        listing_cache: Arc::new(Mutex::new(runs::ListingCache::new())),
+        running_folder: running_folder.clone(),
+        log_folder: log_folder.clone(),
         controllers: HealthControllers {
             telnet: (!configuration.no_telnet).then(|| {
                 format_bind_address(configuration.telnet_host(), configuration.telnet_port())
@@ -1123,7 +1088,8 @@ pub(crate) async fn setup_dashboard(
         bound_port: bound.port(),
         build_count,
         active_sse,
-        closed_data,
+        running_folder,
+        log_folder,
         url: format!("http://{bound}"),
         close_tx,
         server,
@@ -1288,7 +1254,7 @@ fn is_connection_error(e: &std::io::Error) -> bool {
 /// Build the axum router with public shell/static/health and auth-gated metrics.
 ///
 /// Control routes are registered only when `state.control_tx` is set
-/// (otherwise POST /api/v1/control/* and DELETE /api/v1/runs/{id} → 404). On a loopback bind every request
+/// (otherwise POST /api/v1/control/* and DELETE /api/v1/reports/{name} → 404). On a loopback bind every request
 /// must carry a loopback `Host`, so a page that rebinds its own domain to
 /// 127.0.0.1 cannot read the API.
 fn build_router(state: DashboardState, loopback_bind: bool) -> Router {
@@ -1301,8 +1267,8 @@ fn build_router(state: DashboardState, loopback_bind: bool) -> Router {
         .route("/api/v1/snapshot", get(snapshot_handler))
         .route("/api/v1/series", get(series_handler))
         .route("/api/v1/events", get(events_handler))
-        .route("/api/v1/runs", get(runs_handler))
-        .route("/api/v1/runs/{id}/{file}", get(run_file_handler));
+        .route("/api/v1/reports", get(reports_handler))
+        .route("/api/v1/reports/{name}/{file}", get(report_file_handler));
 
     if control_enabled {
         // Bound control request bodies so a large POST cannot blow memory/CPU
@@ -1311,9 +1277,14 @@ fn build_router(state: DashboardState, loopback_bind: bool) -> Router {
             .route("/api/v1/control/start", post(control_start_handler))
             .route("/api/v1/control/stop", post(control_stop_handler))
             .route("/api/v1/control/quit", post(control_quit_handler))
-            .route("/api/v1/runs/{id}", delete(delete_run_handler))
+            .route("/api/v1/reports/{name}", delete(delete_report_handler))
             .route("/api/v1/control/users", post(control_users_handler))
             .route("/api/v1/control/settings", post(control_settings_handler))
+            .route("/api/v1/control/report", post(control_report_handler))
+            .route(
+                "/api/v1/control/report/now",
+                post(control_report_now_handler),
+            )
             .layer(axum::extract::DefaultBodyLimit::max(CONTROL_BODY_LIMIT));
         router = router.merge(control_routes);
     }
@@ -1324,7 +1295,7 @@ fn build_router(state: DashboardState, loopback_bind: bool) -> Router {
     }
 
     router
-        // `if_not_present`: a saved run download sets its own
+        // `if_not_present`: a report download sets its own
         // `Content-Security-Policy: sandbox`; every other route sets none and
         // gets this one.
         .layer(SetResponseHeaderLayer::if_not_present(
@@ -1550,13 +1521,13 @@ async fn events_handler(
 
     // Sticky shutdown: do not hold a client slot; emit `closed` immediately.
     if state.hub.is_closed() {
-        return closed_sse_response(&state.hub);
+        return closed_sse_response();
     }
 
     if !state.hub.try_acquire_sse() {
         // Distinguish full cap vs raced into shutdown.
         if state.hub.is_closed() {
-            return closed_sse_response(&state.hub);
+            return closed_sse_response();
         }
         return (StatusCode::SERVICE_UNAVAILABLE, "too many SSE clients").into_response();
     }
@@ -1576,13 +1547,12 @@ async fn events_handler(
                 self.0.release_sse();
             }
         }
-        let guard = SseGuard(hub);
-        let hub = &guard.0;
+        let _guard = SseGuard(hub);
 
         // watch does not notify for the value present at subscribe time — check
         // sticky shutdown before pushing a stale snapshot or blocking forever.
         if *shutdown_rx.borrow() {
-            let _ = event_tx.send(closed_event(hub)).await;
+            let _ = event_tx.send(closed_event()).await;
             return;
         }
 
@@ -1603,7 +1573,7 @@ async fn events_handler(
                     }
                     // Re-check shutdown in case both fired; prefer closed.
                     if *shutdown_rx.borrow() {
-                        let _ = event_tx.send(closed_event(hub)).await;
+                        let _ = event_tx.send(closed_event()).await;
                         break;
                     }
                     let next = snap_rx.borrow_and_update().clone();
@@ -1616,7 +1586,7 @@ async fn events_handler(
                 result = shutdown_rx.changed() => {
                     let closed = result.is_err() || *shutdown_rx.borrow();
                     if closed {
-                        let _ = event_tx.send(closed_event(hub)).await;
+                        let _ = event_tx.send(closed_event()).await;
                         break;
                     }
                 }
@@ -1640,15 +1610,15 @@ async fn events_handler(
 
 /// One-shot SSE body that only delivers `event: closed` (late subscribers after
 /// sticky shutdown, without consuming a client slot).
-fn closed_sse_response(hub: &SnapshotHub) -> Response<Body> {
-    let event = closed_event(hub);
+fn closed_sse_response() -> Response<Body> {
+    let event = closed_event();
     let stream = stream::once(async move { Ok::<_, Infallible>(event) });
     Sse::new(stream).into_response()
 }
 
-/// The terminal `closed` event; its data is the save state as JSON.
-fn closed_event(hub: &SnapshotHub) -> Event {
-    Event::default().event("closed").data(hub.closed_data())
+/// The terminal `closed` event.
+fn closed_event() -> Event {
+    Event::default().event("closed").data("1")
 }
 
 fn snapshot_event(bytes: &Bytes) -> Event {
@@ -1656,20 +1626,66 @@ fn snapshot_event(bytes: &Bytes) -> Event {
     Event::default().event("snapshot").data(data)
 }
 
-/// Query of the saved run routes: the token, and for a comparison the
-/// baseline run.
+/// The name of a folder Goose is writing to, shared by the main loop and the
+/// report routes.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct RunningFolder(Arc<Mutex<Option<String>>>);
+
+impl RunningFolder {
+    /// Set the folder, or `None` once Goose no longer writes to it.
+    pub(crate) fn set(&self, folder: Option<&std::path::Path>) {
+        let name = folder
+            .and_then(std::path::Path::file_name)
+            .map(|name| name.to_string_lossy().into_owned());
+        match self.0.lock() {
+            Ok(mut running) => *running = name,
+            Err(poisoned) => *poisoned.into_inner() = name,
+        }
+    }
+
+    fn get(&self) -> Option<String> {
+        match self.0.lock() {
+            Ok(running) => running.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        }
+    }
+
+    /// Whether this is the folder `name`, at `folder` in `parent`: by name, or
+    /// by identity, so a name in another case on a filesystem that ignores
+    /// case is still this folder.
+    fn is(&self, parent: &Path, name: &str, folder: &Path) -> bool {
+        self.get().is_some_and(|own| {
+            own == name
+                || std::fs::symlink_metadata(parent.join(&own))
+                    .is_ok_and(|metadata| same_file(folder, &metadata))
+        })
+    }
+}
+
+/// Query of the report routes: the token, and for a comparison the baseline.
 #[derive(Debug, Deserialize)]
-struct RunQuery {
+struct ReportQuery {
     token: Option<String>,
     baseline: Option<String>,
 }
 
-/// The comparison a run route serves besides its report files.
+/// The comparison a report route serves besides the reports.
 const COMPARE_MD: &str = "compare.md";
 
-/// `GET /api/v1/runs`: every complete saved run, newest first. Read from disk
-/// on each request, never on the snapshot path.
-async fn runs_handler(
+/// `GET /api/v1/reports`.
+#[derive(Debug, Serialize)]
+struct ReportsListing {
+    /// The folder listed, as given, never made absolute.
+    dir: String,
+    /// Newest first.
+    reports: Vec<runs::ListedReport>,
+}
+
+/// `GET /api/v1/reports`: the folders in the folder run folders go in that
+/// hold a `report.json` or `report.json.gz`, newest first. Read from disk on
+/// each request, never on the snapshot path; each report is parsed again only
+/// when it changes.
+async fn reports_handler(
     State(state): State<Arc<DashboardState>>,
     headers: HeaderMap,
     Query(query): Query<TokenQuery>,
@@ -1677,75 +1693,140 @@ async fn runs_handler(
     if !authorize(&state.auth_token, &headers, query.token.as_deref()) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
-    let dir = state.runs_dir.clone();
-    let listed = tokio::task::spawn_blocking(move || runs::list_runs(Path::new(&dir), &dir)).await;
+    let listing_state = Arc::clone(&state);
+    let listed = tokio::task::spawn_blocking(move || {
+        let running = listing_state
+            .running_folder
+            .get()
+            .map(|name| listing_state.reports_dir.join(name));
+        let mut cache = match listing_state.listing_cache.lock() {
+            Ok(cache) => cache,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        runs::list_reports(&listing_state.reports_dir, running.as_deref(), &mut cache)
+    })
+    .await;
+    let dir = state.reports_dir.to_string_lossy().into_owned();
     match listed {
-        Ok(Ok(listing)) => Json(listing).into_response(),
+        Ok(Ok(reports)) => Json(ReportsListing { dir, reports }).into_response(),
         Ok(Err(e)) => {
-            warn!(
-                "[dashboard]: can't list saved runs in {}: {e}",
-                state.runs_dir
-            );
-            (StatusCode::INTERNAL_SERVER_ERROR, "can't list saved runs").into_response()
+            warn!("[dashboard]: can't list the reports in {dir}: {e}");
+            (StatusCode::INTERNAL_SERVER_ERROR, "can't list the reports").into_response()
         }
-        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "can't list saved runs").into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "can't list the reports").into_response(),
     }
 }
 
-/// `GET /api/v1/runs/{id}/{file}`: one of a saved run's reports, or with
-/// `file` `compare.md` and `?baseline={id}`, the run compared to the baseline
-/// run as Markdown. Anything that is not a valid run id, a known file, a real
-/// directory and a regular file is a plain 404.
-async fn run_file_handler(
+/// `GET /api/v1/reports/{name}/{file}`: one of a folder's reports, rendered
+/// from its `report.json` or `report.json.gz` when the folder lacks it; or
+/// with `file` `compare.md` and `?baseline={name}`, the report compared to the
+/// baseline as Markdown. Anything that is not a valid name, a known file, a real
+/// folder and a regular `report.json` or `report.json.gz` is a plain 404.
+async fn report_file_handler(
     State(state): State<Arc<DashboardState>>,
     headers: HeaderMap,
     path: Result<axum::extract::Path<(String, String)>, axum::extract::rejection::PathRejection>,
-    Query(query): Query<RunQuery>,
+    Query(query): Query<ReportQuery>,
 ) -> Response<Body> {
     if !authorize(&state.auth_token, &headers, query.token.as_deref()) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
-    let Ok(axum::extract::Path((id, file))) = path else {
+    let Ok(axum::extract::Path((name, file))) = path else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    if !runs::is_valid_run_id(&id) {
-        return StatusCode::NOT_FOUND.into_response();
-    }
     if file == COMPARE_MD {
-        return compare_response(&state.runs_dir, id, query.baseline).await;
+        return compare_response(&state.reports_dir, name, query.baseline).await;
     }
-    let Some(&name) = runs::REPORT_FILES.iter().find(|&&name| name == file) else {
+    let (content_type, ext) = match file.as_str() {
+        runs::REPORT_HTML => ("text/html; charset=utf-8", "html"),
+        runs::REPORT_JSON => ("application/json", "json"),
+        runs::REPORT_MD => ("text/markdown; charset=utf-8", "md"),
+        _ => return StatusCode::NOT_FOUND.into_response(),
+    };
+    let Some((folder, json)) = runs::report_folder(&state.reports_dir, &name) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    report_file_response(&state.runs_dir, &id, name).await
-}
-
-/// The run directory for `id`, if it is a real directory holding `file` and
-/// `run.json` as regular files: a run still being written, or whose save
-/// failed, has no `run.json` and is not served. `id` must already be valid
-/// and `file` one of the fixed names.
-fn run_file_path(
-    runs_dir: &str,
-    id: &str,
-    file: &str,
-) -> Option<(std::path::PathBuf, std::path::PathBuf)> {
-    let run_dir = Path::new(runs_dir).join(id);
-    let path = run_dir.join(file);
-    if runs::is_real_dir(&run_dir)
-        && runs::is_regular_file(&run_dir.join(runs::RUN_JSON))
-        && runs::is_regular_file(&path)
-    {
-        Some((run_dir, path))
-    } else {
-        None
+    // The report is read and parsed off the runtime the load test runs on.
+    let test = {
+        let json = json.clone();
+        tokio::task::spawn_blocking(move || download_test_name(&json))
+            .await
+            .unwrap_or_else(|_| "run".to_string())
+    };
+    let filename = format!("goose-{test}-{name}.{ext}");
+    if let Some(stored) = runs::regular_file(&folder, &file) {
+        // A report stored gzipped is sent as it is to a client that accepts
+        // gzip, and decompressed for any other.
+        let gzipped = runs::without_gz(&stored.to_string_lossy()).1;
+        if !gzipped || accepts_gzip(&headers) {
+            return stored_file_response(&stored, content_type, &filename, gzipped).await;
+        }
+        // The file opened is checked to be the one at the path, as when it is
+        // streamed.
+        let gunzipped = tokio::task::spawn_blocking(move || {
+            let file = std::fs::File::open(&stored)?;
+            let metadata = file.metadata()?;
+            if !metadata.is_file() || !same_file(&stored, &metadata) {
+                return Err(std::io::Error::other("the report changed"));
+            }
+            let mut body = Vec::new();
+            std::io::Read::read_to_end(&mut flate2::read::MultiGzDecoder::new(file), &mut body)?;
+            Ok(body)
+        })
+        .await;
+        return match gunzipped {
+            Ok(Ok(body)) => {
+                let length = body.len() as u64;
+                let mut response =
+                    download_response(content_type, &filename, Body::from(body), Some(length));
+                response
+                    .headers_mut()
+                    .insert(header::VARY, HeaderValue::from_static("Accept-Encoding"));
+                response
+            }
+            _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        };
+    }
+    // A format the folder lacks is rendered from its JSON report.
+    let rendered = tokio::task::spawn_blocking(move || render_report_file(&json, ext)).await;
+    match rendered {
+        Ok(Ok(body)) => {
+            let length = body.len() as u64;
+            download_response(content_type, &filename, Body::from(body), Some(length))
+        }
+        Ok(Err(reason)) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+            reason,
+        )
+            .into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
 
-/// `test` from a run's `run.json`, reduced to `[A-Za-z0-9_-]` for a file name.
-fn download_test_name(run_dir: &Path) -> String {
-    runs::read_run_info(run_dir)
-        .map(|info| {
-            info.test
+/// The HTML or Markdown report rendered from the JSON report at `json`. An
+/// error is one line for the person who asked.
+fn render_report_file(json: &Path, ext: &str) -> Result<Vec<u8>, String> {
+    let loaded = crate::metrics::LoadedReport::read(json)?;
+    let configuration = GooseConfiguration::default();
+    let empty = crate::graph::GraphData::new();
+    let source = loaded.source(&configuration, &empty);
+    let mut out = Vec::new();
+    let written = match ext {
+        "html" => source.html(None).map(|html| out = html.into_bytes()),
+        _ => source.write_markdown(&mut out, None),
+    };
+    written.map_err(|e| format!("Can't render the report: {e}"))?;
+    Ok(out)
+}
+
+/// `test` from the record in a `report.json`, reduced to `[A-Za-z0-9_-]` for
+/// a file name.
+fn download_test_name(json: &Path) -> String {
+    runs::read_record(json)
+        .map(|record| {
+            record
+                .test
                 .chars()
                 .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
                 .collect::<String>()
@@ -1784,12 +1865,40 @@ fn download_response(
     response
 }
 
-/// Stream a report file from disk.
-async fn report_file_response(runs_dir: &str, id: &str, name: &'static str) -> Response<Body> {
-    let Some((run_dir, path)) = run_file_path(runs_dir, id, name) else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let Ok(file) = tokio::fs::File::open(&path).await else {
+/// Whether a request's `Accept-Encoding` takes gzip: by name, else by `*`,
+/// and not with `q=0`.
+fn accepts_gzip(headers: &HeaderMap) -> bool {
+    let codings: Vec<(String, bool)> = headers
+        .get_all(header::ACCEPT_ENCODING)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .map(|coding| {
+            let mut parts = coding.split(';').map(str::trim);
+            let name = parts.next().unwrap_or_default().to_ascii_lowercase();
+            let refused = parts.any(|param| {
+                let param = param.to_ascii_lowercase();
+                param
+                    .strip_prefix("q=")
+                    .and_then(|q| q.trim().parse::<f32>().ok())
+                    .is_some_and(|q| q == 0.0)
+            });
+            (name, !refused)
+        })
+        .collect();
+    let taken = |name: &str| codings.iter().find(|(n, _)| n == name).map(|(_, ok)| *ok);
+    taken("gzip").or_else(|| taken("*")).unwrap_or(false)
+}
+
+/// Stream a report stored in a folder; one stored gzipped is sent with
+/// `Content-Encoding: gzip`.
+async fn stored_file_response(
+    path: &Path,
+    content_type: &'static str,
+    filename: &str,
+    gzipped: bool,
+) -> Response<Body> {
+    let Ok(file) = tokio::fs::File::open(path).await else {
         return StatusCode::NOT_FOUND.into_response();
     };
     // The file opened must be the regular file checked above, not something
@@ -1797,21 +1906,24 @@ async fn report_file_response(runs_dir: &str, id: &str, name: &'static str) -> R
     let Ok(metadata) = file.metadata().await else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    if !metadata.is_file() || !same_file(&path, &metadata) {
+    if !metadata.is_file() || !same_file(path, &metadata) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let (content_type, ext) = match name {
-        runs::REPORT_HTML => ("text/html; charset=utf-8", "html"),
-        runs::REPORT_JSON => ("application/json", "json"),
-        _ => ("text/markdown; charset=utf-8", "md"),
-    };
-    let test = download_test_name(&run_dir);
-    download_response(
+    let mut response = download_response(
         content_type,
-        &format!("goose-{test}-{id}.{ext}"),
+        filename,
         Body::from_stream(file_stream(file)),
         Some(metadata.len()),
-    )
+    );
+    if gzipped {
+        response
+            .headers_mut()
+            .insert(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"));
+        response
+            .headers_mut()
+            .insert(header::VARY, HeaderValue::from_static("Accept-Encoding"));
+    }
+    response
 }
 
 /// True when the open file's metadata is that of the file at `path` now, by
@@ -1853,36 +1965,42 @@ fn file_stream(
     })
 }
 
-/// The Markdown comparison of run `id` (the newer) to `baseline`.
-async fn compare_response(runs_dir: &str, id: String, baseline: Option<String>) -> Response<Body> {
-    let Some(baseline) = baseline.filter(|b| runs::is_valid_run_id(b)) else {
+/// The Markdown comparison of report `name` (the newer) to `baseline`.
+async fn compare_response(
+    reports_dir: &Path,
+    name: String,
+    baseline: Option<String>,
+) -> Response<Body> {
+    let Some(baseline) = baseline else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let (Some((run_dir, run_json)), Some((baseline_dir, baseline_json))) = (
-        run_file_path(runs_dir, &id, runs::REPORT_JSON),
-        run_file_path(runs_dir, &baseline, runs::REPORT_JSON),
+    let (Some((_, newer_json)), Some((_, baseline_json))) = (
+        runs::report_folder(reports_dir, &name),
+        runs::report_folder(reports_dir, &baseline),
     ) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let (run_id, baseline_id) = (id.clone(), baseline.clone());
-    let run_dir_for_names = run_dir.clone();
+    let (run_name, baseline_name) = (name.clone(), baseline.clone());
     let compared = tokio::task::spawn_blocking(move || {
-        let report =
-            crate::metrics::compare_reports(&run_json, &run_id, &baseline_json, &baseline_id)?;
-        let mut out = compared_runs_line(&run_dir_for_names, &run_id, &baseline_dir, &baseline_id)
-            .into_bytes();
+        let report = crate::metrics::compare_reports(
+            &newer_json,
+            &run_name,
+            &baseline_json,
+            &baseline_name,
+        )?;
+        let mut out =
+            compared_runs_line(&newer_json, &run_name, &baseline_json, &baseline_name).into_bytes();
         out.extend_from_slice(b"\n\n");
         out.extend(report);
-        Ok::<_, String>(out)
+        Ok::<_, String>((download_test_name(&newer_json), out))
     })
     .await;
     match compared {
-        Ok(Ok(markdown)) => {
-            let test = download_test_name(&run_dir);
+        Ok(Ok((test, markdown))) => {
             let length = markdown.len() as u64;
             download_response(
                 "text/markdown; charset=utf-8",
-                &format!("goose-{test}-{id}-vs-{baseline}.md"),
+                &format!("goose-{test}-{name}-vs-{baseline}.md"),
                 Body::from(markdown),
                 Some(length),
             )
@@ -1898,30 +2016,28 @@ async fn compare_response(runs_dir: &str, id: String, baseline: Option<String>) 
 }
 
 /// The first line of a comparison: which run is compared to which baseline,
-/// with when each started, from their `run.json`.
+/// with when each started, from their JSON reports.
 fn compared_runs_line(
-    run_dir: &Path,
-    run_id: &str,
-    baseline_dir: &Path,
-    baseline_id: &str,
+    newer_json: &Path,
+    run_name: &str,
+    baseline_json: &Path,
+    baseline_name: &str,
 ) -> String {
-    let started = |dir: &Path| {
-        runs::read_run_info(dir)
-            .map(|info| {
-                chrono::DateTime::parse_from_rfc3339(&info.started)
-                    .map(|time| {
-                        time.with_timezone(&chrono::Utc)
-                            .format("%Y-%m-%d %H:%M:%S UTC")
-                            .to_string()
-                    })
-                    .unwrap_or(info.started)
+    let started = |json: &Path| {
+        runs::read_record(json)
+            .and_then(|record| record.started)
+            .and_then(|started| chrono::DateTime::parse_from_rfc3339(&started).ok())
+            .map(|time| {
+                time.with_timezone(&chrono::Utc)
+                    .format("%Y-%m-%d %H:%M:%S UTC")
+                    .to_string()
             })
             .unwrap_or_else(|| "at an unknown time".to_string())
     };
     format!(
-        "Run {run_id} (started {}) compared to baseline {baseline_id} (started {}).",
-        started(run_dir),
-        started(baseline_dir)
+        "Run {run_name} (started {}) compared to baseline {baseline_name} (started {}).",
+        started(newer_json),
+        started(baseline_json)
     )
 }
 
@@ -2434,47 +2550,86 @@ async fn control_quit_handler(
     .await
 }
 
-/// `DELETE /api/v1/runs/{id}`: remove a complete saved run from disk.
-/// Registered only with `--dashboard-control`, and authorized like the
-/// control routes. 204 when removed; a plain 404 for anything that is not a
-/// valid run id naming a real directory that holds a regular `run.json`,
-/// which includes the run being written now: it has no `run.json` until it
-/// ends.
-async fn delete_run_handler(
+/// Delete's 409, with why it refused.
+fn conflict(message: &'static str) -> Response<Body> {
+    (
+        StatusCode::CONFLICT,
+        [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+        message,
+    )
+        .into_response()
+}
+
+/// Why Delete refuses a folder another Goose process reserves for its run.
+const RESERVED_BY_ANOTHER: &str = "Another Goose process is writing to this folder.";
+
+/// `DELETE /api/v1/reports/{name}`: remove a folder's reports, and the logs
+/// Goose names in a run's folder, then the folder if that leaves it empty;
+/// nothing else. Registered only with `--dashboard-control`, and authorized
+/// like the control routes. 204 when removed; 409 for the folder of the run
+/// in progress, the one the Goose log is open in, or one another process
+/// reserves for its run; a plain 404 for anything the listing would not list.
+async fn delete_report_handler(
     State(state): State<Arc<DashboardState>>,
     headers: HeaderMap,
     path: Result<axum::extract::Path<String>, axum::extract::rejection::PathRejection>,
     Query(query): Query<TokenQuery>,
 ) -> Response<Body> {
     if !authorize_control(&state.auth_token, &headers, query.token.as_deref()) {
-        warn!("[dashboard]: delete run auth failure");
+        warn!("[dashboard]: delete report auth failure");
         return StatusCode::UNAUTHORIZED.into_response();
     }
-    let Ok(axum::extract::Path(id)) = path else {
+    let Ok(axum::extract::Path(name)) = path else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    if !runs::is_valid_run_id(&id) {
+    let Some((folder, json)) = runs::report_folder(&state.reports_dir, &name) else {
         return StatusCode::NOT_FOUND.into_response();
+    };
+    let refused = if state.running_folder.is(&state.reports_dir, &name, &folder) {
+        Some("The run in progress writes to this folder.")
+    } else if state.log_folder.is(&state.reports_dir, &name, &folder) {
+        Some("Goose is writing its log to this folder.")
+    } else if runs::is_reserved(&folder) {
+        Some(RESERVED_BY_ANOTHER)
+    } else {
+        None
+    };
+    if let Some(refused) = refused {
+        return conflict(refused);
     }
-    let run_dir = Path::new(&state.runs_dir).join(&id);
-    // `remove_dir_all` removes a symlink inside the run directory, never
-    // what it points to.
+    // `remove_file` removes a symlink, never what it points to.
+    let name_for_check = name.clone();
+    let reports_dir = state.reports_dir.clone();
     let removed = tokio::task::spawn_blocking(move || {
-        if !runs::is_real_dir(&run_dir) || !runs::is_regular_file(&run_dir.join(runs::RUN_JSON)) {
-            return Ok(false);
+        // Checked again just before the deletes: still a real folder, and
+        // still a report the panel lists.
+        if runs::report_folder(&reports_dir, &name_for_check).is_none() || !runs::is_listed(&json) {
+            return Ok(Some(StatusCode::NOT_FOUND));
         }
-        std::fs::remove_dir_all(&run_dir).map(|()| true)
+        if runs::is_reserved(&folder) {
+            return Ok(Some(StatusCode::CONFLICT));
+        }
+        for file in runs::deletable_files() {
+            let path = folder.join(file);
+            if std::fs::symlink_metadata(&path).is_ok_and(|m| !m.is_dir()) {
+                std::fs::remove_file(&path)?;
+            }
+        }
+        // A folder that still holds other files stays.
+        let _ = std::fs::remove_dir(&folder);
+        Ok::<_, std::io::Error>(None)
     })
     .await;
     match removed {
-        Ok(Ok(true)) => {
-            info!("[dashboard]: deleted saved run {id}");
+        Ok(Ok(Some(StatusCode::CONFLICT))) => conflict(RESERVED_BY_ANOTHER),
+        Ok(Ok(Some(status))) => status.into_response(),
+        Ok(Ok(None)) => {
+            info!("[dashboard]: deleted the report in {name}");
             StatusCode::NO_CONTENT.into_response()
         }
-        Ok(Ok(false)) => StatusCode::NOT_FOUND.into_response(),
         Ok(Err(e)) => {
-            warn!("[dashboard]: can't delete saved run {id}: {e}");
-            (StatusCode::INTERNAL_SERVER_ERROR, "can't delete the run").into_response()
+            warn!("[dashboard]: can't delete the report in {name}: {e}");
+            (StatusCode::INTERNAL_SERVER_ERROR, "can't delete the report").into_response()
         }
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
@@ -2494,6 +2649,68 @@ async fn control_users_handler(
         Ok(command) => dispatch_control(&state, command, "users").await,
         Err((code, msg)) => control_http_error(StatusCode::BAD_REQUEST, "users", code, msg),
     }
+}
+
+/// Parse `{"save": bool, "graph_data": bool}`, each optional, at least one,
+/// nothing else.
+fn parse_report_body(body: &[u8]) -> Result<ControlCommand, (&'static str, &'static str)> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct ReportBody {
+        save: Option<bool>,
+        graph_data: Option<bool>,
+    }
+    let body: ReportBody = serde_json::from_slice(trim_ascii_whitespace(body)).map_err(|_| {
+        (
+            "bad_request",
+            "request body must be {\"save\": true or false, \"graph_data\": true or false}",
+        )
+    })?;
+    if body.save.is_none() && body.graph_data.is_none() {
+        return Err((
+            "bad_request",
+            "request body names neither save nor graph_data",
+        ));
+    }
+    Ok(ControlCommand::Report {
+        save: body.save,
+        graph_data: body.graph_data,
+    })
+}
+
+/// Save report and Include graph data: authorized, with a body naming the
+/// switches to set.
+async fn control_report_handler(
+    State(state): State<Arc<DashboardState>>,
+    headers: HeaderMap,
+    Query(query): Query<TokenQuery>,
+    body: Bytes,
+) -> Response<Body> {
+    if !authorize_control(&state.auth_token, &headers, query.token.as_deref()) {
+        warn!("[dashboard]: control report auth failure");
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    match parse_report_body(&body) {
+        Ok(command) => dispatch_control(&state, command, "report").await,
+        Err((code, msg)) => control_http_error(StatusCode::BAD_REQUEST, "report", code, msg),
+    }
+}
+
+/// Save report now: authorized, with an empty body.
+async fn control_report_now_handler(
+    State(state): State<Arc<DashboardState>>,
+    headers: HeaderMap,
+    Query(query): Query<TokenQuery>,
+    body: Bytes,
+) -> Response<Body> {
+    if !authorize_control(&state.auth_token, &headers, query.token.as_deref()) {
+        warn!("[dashboard]: control report now auth failure");
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    if let Err((code, msg)) = parse_empty_control_body(&body) {
+        return control_http_error(StatusCode::BAD_REQUEST, "report_now", code, msg);
+    }
+    dispatch_control(&state, ControlCommand::SaveReportNow, "report_now").await
 }
 
 #[cfg(test)]
@@ -2551,7 +2768,7 @@ mod tests {
                 series_seconds: 300,
                 percentiles_over_time: false,
             },
-            save: SnapshotSave::off("goose-runs"),
+            report: crate::metrics::dashboard_snapshot::SnapshotReport::default(),
             settings: crate::metrics::dashboard_snapshot::SnapshotSettings::idle(),
             build_time: Duration::ZERO,
         }
@@ -2619,6 +2836,12 @@ mod tests {
                 return outcome(true, None, "settings configured", "idle", 0, None);
             }
             ControlCommand::Settings { start: true, .. } => ControllerCommand::Start,
+            ControlCommand::Report { .. } => {
+                return outcome(true, None, "save report on", "idle", 0, None);
+            }
+            ControlCommand::SaveReportNow => {
+                return outcome(true, None, "saving the report", "maintain", 1, None);
+            }
             ControlCommand::Command(command) => command,
         };
         match command {
@@ -2760,6 +2983,34 @@ mod tests {
             }
         }
         buf
+    }
+
+    #[test]
+    fn accepts_gzip_reads_accept_encoding() {
+        let with = |value: Option<&str>| {
+            let mut headers = HeaderMap::new();
+            if let Some(value) = value {
+                headers.insert(
+                    header::ACCEPT_ENCODING,
+                    HeaderValue::from_str(value).unwrap(),
+                );
+            }
+            accepts_gzip(&headers)
+        };
+        for yes in ["gzip", "gzip, deflate, br", "br;q=1.0, GZIP;q=0.5", "*"] {
+            assert!(with(Some(yes)), "{}", yes);
+        }
+        for no in [
+            "identity",
+            "deflate, br",
+            "gzip;q=0",
+            "gzip; q=0.0",
+            "*;q=0",
+            "gzip;Q=0",
+        ] {
+            assert!(!with(Some(no)), "{}", no);
+        }
+        assert!(!with(None));
     }
 
     #[test]
@@ -3459,7 +3710,6 @@ mod tests {
             shutdown_tx,
             0,
             Arc::new(AtomicUsize::new(0)),
-            ClosedData::new(&SnapshotSave::off("goose-runs")),
         );
         (hub, request_rx)
     }
@@ -3694,7 +3944,6 @@ mod tests {
             close_tx,
             MAX_SSE_CLIENTS,
             Arc::new(AtomicUsize::new(0)),
-            ClosedData::new(&SnapshotSave::off("goose-runs")),
         );
 
         // First poll.

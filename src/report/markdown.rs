@@ -13,13 +13,16 @@ use std::io::Write;
 struct Markdown<'m, 'w, W: Write> {
     w: &'w mut W,
     data: ReportData<'m>,
+    /// Paragraphs under the title, such as the run's notes.
+    intro: &'w [String],
 }
 
 pub(crate) fn write_markdown_report<W: Write>(
     w: &mut W,
     data: ReportData,
+    intro: &[String],
 ) -> Result<(), GooseError> {
-    Markdown { w, data }.write()
+    Markdown { w, data, intro }.write()
 }
 
 impl<W: Write> Markdown<'_, '_, W> {
@@ -44,6 +47,9 @@ impl<W: Write> Markdown<'_, '_, W> {
 # Goose Attack Report
 "#
         )?;
+        for paragraph in self.intro {
+            writeln!(self.w, "{}\n", markdown_paragraph(paragraph))?;
+        }
 
         Ok(())
     }
@@ -393,5 +399,58 @@ impl<W: Write> Markdown<'_, '_, W> {
         }
 
         Ok(())
+    }
+}
+
+/// `text` as one Markdown paragraph, its own line breaks kept as hard breaks,
+/// and each line escaped so it starts no heading, list or quote, and holds no
+/// HTML tag or table cell break.
+fn markdown_paragraph(text: &str) -> String {
+    text.lines()
+        .map(|line| escape_line(line.trim_end()))
+        .collect::<Vec<_>>()
+        .join("  \n")
+}
+
+/// `line` without its indent, which could start a code block, and with a
+/// backslash before a leading `#`, `-`, `+`, `*` or `=`, the `.` or `)` after
+/// leading digits, and every `\`, `<`, `>` and `|`.
+fn escape_line(line: &str) -> String {
+    let mut rest = line.trim_start();
+    let mut out = String::with_capacity(line.len() + 8);
+    if rest.starts_with(['#', '-', '+', '*', '=']) {
+        out.push('\\');
+    }
+    let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+    if digits > 0 && rest[digits..].starts_with(['.', ')']) {
+        out.push_str(&rest[..digits + 1]);
+        out.insert(out.len() - 1, '\\');
+        rest = &rest[digits + 1..];
+    }
+    for c in rest.chars() {
+        if matches!(c, '\\' | '<' | '>' | '|') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A note's lines read as text, never as Markdown blocks, HTML or table
+    /// cells, and keep their line breaks.
+    #[test]
+    fn notes_are_escaped_line_by_line() {
+        let note = "# not a heading\n- not a list\n+ nor this\n> not a quote\n12. not a list\n\
+                    a <b>tag</b> | a cell\n  1.5 seconds\n* star\n===\n3) item\n\\# kept\n    not code";
+        assert_eq!(
+            markdown_paragraph(note),
+            "\\# not a heading  \n\\- not a list  \n\\+ nor this  \n\\> not a quote  \n\
+             12\\. not a list  \na \\<b\\>tag\\</b\\> \\| a cell  \n1\\.5 seconds  \n\
+             \\* star  \n\\===  \n3\\) item  \n\\\\# kept  \nnot code"
+        );
     }
 }

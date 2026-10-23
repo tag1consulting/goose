@@ -52,9 +52,9 @@ scenarios: Array<ScenarioRow>,
  */
 transactions: Array<TransactionRow>, series: SeriesWindow, flags: SnapshotFlags,
 /**
- * Whether runs are saved, and the last run Goose saved or tried to save.
+ * The report the run writes: Save report, its folder and paths.
  */
-save: SnapshotSave,
+report: SnapshotReport,
 /**
  * The run settings: what the next Start runs, and where the running
  * test is.
@@ -186,24 +186,49 @@ scenario_metrics_disabled: boolean, requests_truncated: boolean, errors_truncate
  */
 percentiles_over_time: boolean, };
 
-type SnapshotSave = {
+type SnapshotReport = {
 /**
- * `on`, `off` (`--no-save` or `--no-metrics`), or `failed` (the runs
- * directory or the run's directory couldn't be created).
+ * Save report: write the run's `report.json` and `report.html` into its
+ * folder.
  */
-state: "on" | "off" | "failed",
+save: boolean,
 /**
- * Why the last run couldn't be saved, or why this run isn't saved.
+ * Include graph data: the JSON report holds the per second graph data.
  */
-reason: string | null,
+graph_data: boolean,
 /**
- * The runs directory as given, never resolved to an absolute path.
+ * The current or last run's folder, as given, never made absolute;
+ * `null` before the first run, and for a run that has none.
  */
-dir: string,
+folder: string | null,
 /**
- * The id of the last run Goose saved or tried to save.
+ * The `--report-file` paths, which are always written.
  */
-last_run: string | null, };
+paths: Array<string>,
+/**
+ * The run's `--notes`.
+ */
+notes: string | null,
+/**
+ * The folder of the last report written into a run's folder at the end
+ * of a run.
+ */
+last_report: string | null,
+/**
+ * The name the report routes take for `last_report`; `null` when they
+ * take none, as for a name with a space.
+ */
+last_report_name: string | null,
+/**
+ * Why the last report Goose tried to write into the run's folder
+ * failed, or why the run has no folder.
+ */
+error: string | null,
+/**
+ * How many reports Goose has written into a run's folder since the
+ * process started, at the end of a run or by Save report now.
+ */
+writes: number, };
 
 type SnapshotSettings = {
 /**

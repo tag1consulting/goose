@@ -1,46 +1,57 @@
-//! Saved runs: every load test is saved by default to its own directory under
-//! the runs directory (`goose-runs` unless `--runs-dir` says otherwise).
+//! Run folders: where the output flags given without a path, and the dashboard's
+//! Save report, write a run's files.
 //!
-//! A run directory is named after the local time the run started,
-//! `YYYY-MM-DD-HHMMSS`, with `-2`, `-3` and so on appended when two runs start
-//! in the same second. It holds the HTML, JSON and Markdown reports, then
-//! `run.json`, written last, which marks the run complete.
+//! A run's folder is `--output-dir`, or `goose-runs/<YYYYMMDD-HHMMSS>` from the
+//! local time the run started. Goose never writes a run into a folder that
+//! already holds files when the run starts: it takes `-2`, `-3` and so on,
+//! always counted on the original name. The folder is created as the run
+//! starts and holds a `.goose-run` file while the run lasts, so no other run
+//! takes the folder. It is removed at the end of the run if the run wrote
+//! nothing.
 
+use crate::config::{GooseConfiguration, RUN_FOLDER};
+use crate::graph::GraphData;
+use crate::logger::{move_goose_log, GooseLogFormat};
 #[cfg(feature = "dashboard")]
-use crate::metrics::dashboard_snapshot::SnapshotSave;
-use crate::metrics::{load_baseline_file, ReportData, ReportSet};
+use crate::metrics::dashboard_snapshot::SnapshotReport;
+#[cfg(feature = "dashboard")]
+use crate::metrics::MetricsCommand;
+use crate::metrics::{load_baseline_file, write_folder_report, GooseMetrics, LoadedReport};
+#[cfg(feature = "dashboard")]
+use crate::{ControlOutcome, GooseAttackRunState};
 use crate::{GooseAttack, GooseError};
 use chrono::{DateTime, Local, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
-use std::io::{self, Write};
+#[cfg(feature = "dashboard")]
+use std::collections::HashMap;
+use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
-/// The runs directory when `--runs-dir` is not given.
-pub(crate) const DEFAULT_RUNS_DIR: &str = "goose-runs";
+/// The folder run folders go in when `--output-dir` is not given.
+pub(crate) const DEFAULT_PARENT: &str = "goose-runs";
 
-/// The HTML report of a saved run.
+/// The HTML report in a run's folder.
 pub(crate) const REPORT_HTML: &str = "report.html";
-/// The JSON report of a saved run, also read by `--baseline-file <run dir>`.
+/// The JSON report in a run's folder, also read by `--baseline-file <folder>`.
 pub(crate) const REPORT_JSON: &str = "report.json";
-/// The Markdown report of a saved run.
+/// The Markdown report, which the dashboard renders from the JSON report.
+#[cfg(feature = "dashboard")]
 pub(crate) const REPORT_MD: &str = "report.md";
-/// The summary of a saved run, written last.
-pub(crate) const RUN_JSON: &str = "run.json";
 
-/// The reports a saved run holds, in the order they are written.
-pub(crate) const REPORT_FILES: [&str; 3] = [REPORT_HTML, REPORT_JSON, REPORT_MD];
+/// The file that reserves a run's folder for its run, so no other process
+/// takes the folder.
+pub(crate) const RESERVED: &str = ".goose-run";
 
-/// The `format` of the `run.json` this version writes.
-pub(crate) const RUN_FORMAT: u32 = 1;
+/// The Goose log in a run's folder.
+pub(crate) const GOOSE_LOG: &str = "goose.log";
+/// The names of the other logs in a run's folder, before their format's
+/// extension.
+pub(crate) const LOG_NAMES: [&str; 5] =
+    ["requests", "transactions", "scenarios", "errors", "debug"];
 
-/// Highest suffix tried when run directories for the same second already exist.
-const MAX_RUN_SUFFIX: u32 = 999;
-
-/// The `.gitignore` Goose writes in a runs directory it creates, so saved
-/// runs are not committed by accident.
-const GITIGNORE: &str = "*\n# Created by Goose. Delete this file to commit saved runs.\n";
-
-/// How a run ended, as recorded in `run.json`.
+/// How a run ended, as its JSON report records it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum EndedBy {
@@ -54,287 +65,1045 @@ pub(crate) enum EndedBy {
     UsersExited,
 }
 
-/// One file of a saved run, as listed in `run.json`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct RunFile {
-    pub name: String,
-    pub bytes: u64,
-}
-
-/// The contents of `run.json`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) struct RunInfo {
-    pub format: u32,
-    pub id: String,
+/// The record of a run that its JSON report holds beside its metrics. Every
+/// field has a default, so a JSON report written before them still loads.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct RunRecord {
+    /// The run's `--notes`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    #[serde(default)]
     pub goose_version: String,
-    /// The load test's executable name, without extension.
+    /// The load test's executable name.
+    #[serde(default)]
     pub test: String,
-    /// RFC 3339, UTC.
-    pub started: String,
-    /// RFC 3339, UTC.
-    pub ended: String,
-    pub duration_secs: u64,
-    pub max_users: u64,
-    pub hosts: Vec<String>,
-    pub requests: u64,
-    pub failed_requests: u64,
-    pub ended_by: EndedBy,
+    /// When the run started, RFC 3339, UTC.
+    #[serde(default)]
+    pub started: Option<String>,
+    /// When the run ended, RFC 3339, UTC; `None` while it is in progress.
+    #[serde(default)]
+    pub ended: Option<String>,
+    /// How the run ended; `None` while it is in progress.
+    #[serde(default)]
+    pub ended_by: Option<EndedBy>,
+    /// Why the run was canceled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub canceled_reason: Option<String>,
-    pub baseline: Option<String>,
-    pub files: Vec<RunFile>,
+    /// Written by Save report now while the run continued; the report at the
+    /// end of the run replaces it.
+    #[serde(default)]
+    pub in_progress: bool,
+    /// When the graphs do not cover the whole run: where they start, and why.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graphs_start: Option<GraphsStart>,
 }
 
-/// The run being saved: chosen when it starts, written when it ends.
-#[derive(Clone, Debug)]
-pub(crate) struct ActiveRun {
-    pub id: String,
-    /// The run directory on disk.
-    pub path: PathBuf,
-    /// The run directory as shown to the user: the runs directory as given,
-    /// then the id.
-    pub display: String,
-    pub started: DateTime<Utc>,
+/// Where a report's graphs start when they do not cover the whole run.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct GraphsStart {
+    /// RFC 3339, UTC.
+    pub time: String,
+    pub reason: String,
 }
 
-/// What became of a saved run, printed after the final metrics.
-#[derive(Clone, Debug)]
-pub(crate) enum SaveOutcome {
-    /// Saved; the reports as shown to the user.
-    Saved { id: String, files: Vec<String> },
-    /// The run could not be saved.
-    Failed { id: String, error: String },
+impl GraphsStart {
+    /// The sentence a report shows.
+    pub(crate) fn describe(&self) -> String {
+        let time = DateTime::parse_from_rfc3339(&self.time)
+            .map(|time| {
+                time.with_timezone(&Local)
+                    .format("%Y-%m-%d %H:%M:%S")
+                    .to_string()
+            })
+            .unwrap_or_else(|_| self.time.clone());
+        format!(
+            "The graphs start at {time}, not at the start of the run: {}",
+            self.reason
+        )
+    }
 }
 
-impl std::fmt::Display for SaveOutcome {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            SaveOutcome::Saved { id, files } => {
-                writeln!(f, "Saved run {id}:")?;
-                for file in files {
-                    writeln!(f, "  {file}")?;
-                }
-                Ok(())
-            }
-            SaveOutcome::Failed { id, error } => writeln!(f, "Couldn't save run {id}: {error}."),
+impl RunRecord {
+    /// The paragraphs the HTML and Markdown reports open with: the notes, and
+    /// whether the report was written while the run continued.
+    pub(crate) fn intro(&self) -> Vec<String> {
+        let mut intro = Vec::new();
+        if let Some(notes) = self.notes.as_deref().filter(|notes| !notes.is_empty()) {
+            intro.push(notes.to_string());
         }
-    }
-}
-
-/// Whether runs are being saved, as the dashboard shows it.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum SaveState {
-    /// Runs are saved.
-    On,
-    /// `--no-save` or `--no-metrics`.
-    #[default]
-    Off,
-    /// The runs directory or this run's directory couldn't be created.
-    Failed,
-}
-
-impl SaveState {
-    #[cfg_attr(not(feature = "dashboard"), allow(dead_code))]
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            SaveState::On => "on",
-            SaveState::Off => "off",
-            SaveState::Failed => "failed",
+        if self.in_progress {
+            intro.push(IN_PROGRESS.to_string());
         }
+        intro
     }
 }
 
-/// Saving runs, kept on [`GooseAttack`].
-#[derive(Debug, Default)]
-pub(crate) struct Saving {
-    /// The run being saved, from its start to its end.
-    pub active: Option<ActiveRun>,
-    /// What became of the last saved run, until it is printed.
-    pub outcome: Option<SaveOutcome>,
-    /// Whether runs are saved.
-    pub state: SaveState,
-    /// Why the last run couldn't be saved, or why runs aren't saved.
-    pub reason: Option<String>,
-    /// The id of the last run Goose tried to save.
-    pub last_run: Option<String>,
-    /// A failure to create the default runs directory is logged once.
-    pub failure_logged: bool,
-}
+/// What a report written by Save report now says.
+pub(crate) const IN_PROGRESS: &str =
+    "This report was saved while the run was in progress. The report written when the run ends replaces it.";
 
-/// `dir` and `name` joined with one `/`, as shown to the user: never resolved
-/// to an absolute path.
-pub(crate) fn display_join(dir: &str, name: &str) -> String {
-    if dir.ends_with('/') {
-        format!("{dir}{name}")
-    } else {
-        format!("{dir}/{name}")
+/// `name` without a trailing `.gz`, and whether it had one: a report or log
+/// named `.gz` is written gzipped, in the format the rest of the name gives.
+pub(crate) fn without_gz(name: &str) -> (&str, bool) {
+    match name.strip_suffix(".gz") {
+        Some(inner) => (inner, true),
+        None => (name, false),
     }
 }
 
-/// True for a run id: `YYYY-MM-DD-HHMMSS`, optionally followed by `-` and a
-/// suffix of one to three digits. Nothing else, so an id is always safe to
-/// join to the runs directory.
-#[cfg_attr(not(feature = "dashboard"), allow(dead_code))]
-pub(crate) fn is_valid_run_id(id: &str) -> bool {
-    let bytes = id.as_bytes();
-    // YYYY-MM-DD-HHMMSS is 17 bytes.
-    if bytes.len() < 17 {
-        return false;
-    }
-    let (base, suffix) = bytes.split_at(17);
-    let base_ok = base.iter().enumerate().all(|(i, b)| match i {
-        4 | 7 | 10 => *b == b'-',
-        _ => b.is_ascii_digit(),
-    });
-    let suffix_ok = match suffix {
-        [] => true,
-        [b'-', digits @ ..] => {
-            (1..=3).contains(&digits.len()) && digits.iter().all(u8::is_ascii_digit)
-        }
-        _ => false,
+/// The file name of a log in a run's folder: `name` with its format's
+/// extension.
+pub(crate) fn log_file_name(name: &str, format: Option<&GooseLogFormat>) -> String {
+    let extension = match format {
+        Some(GooseLogFormat::Csv) => "csv",
+        Some(GooseLogFormat::Raw | GooseLogFormat::Pretty) => "log",
+        Some(GooseLogFormat::Json) | None => "json",
     };
-    base_ok && suffix_ok
+    format!("{name}.{extension}")
 }
 
-/// The id of a run started at `started`, local time.
-pub(crate) fn run_id_base(started: DateTime<Local>) -> String {
-    started.format("%Y-%m-%d-%H%M%S").to_string()
+/// The folder run folders go in: the one `--output-dir` sits in, or
+/// `goose-runs`.
+#[cfg(any(test, feature = "dashboard"))]
+pub(crate) fn parent_folder(configuration: &GooseConfiguration) -> PathBuf {
+    match configuration.output_dir() {
+        Some(dir) => match Path::new(dir).parent() {
+            Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
+            _ => PathBuf::from("."),
+        },
+        None => PathBuf::from(DEFAULT_PARENT),
+    }
 }
 
-/// Create the runs directory if it does not exist. When Goose creates it, a
-/// `.gitignore` is written inside so saved runs are not committed by accident.
-pub(crate) fn ensure_runs_dir(dir: &Path) -> io::Result<()> {
-    if let Some(parent) = dir.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)?;
+/// A run's folder, chosen when the run starts.
+#[derive(Clone, Debug)]
+pub(crate) struct RunFolder {
+    /// The folder, as given or as Goose named it, never made absolute.
+    pub path: PathBuf,
+}
+
+impl RunFolder {
+    /// The folder of a run started at `started`: `--output-dir`, or
+    /// `goose-runs/<YYYYMMDD-HHMMSS>`, or the first of `-2`, `-3` and so on
+    /// that Goose can take. The folder is created and holds [`RESERVED`]
+    /// when this returns.
+    pub(crate) fn choose(
+        configuration: &GooseConfiguration,
+        started: DateTime<Local>,
+    ) -> io::Result<RunFolder> {
+        Ok(RunFolder {
+            path: reserve(&Self::base(configuration, started))?,
+        })
+    }
+
+    /// The name a run started at `started` asks for, before any suffix.
+    fn base(configuration: &GooseConfiguration, started: DateTime<Local>) -> PathBuf {
+        match configuration.output_dir() {
+            Some(dir) => PathBuf::from(dir),
+            None => Path::new(DEFAULT_PARENT).join(started.format("%Y%m%d-%H%M%S").to_string()),
         }
     }
-    match std::fs::create_dir(dir) {
-        Ok(()) => std::fs::write(dir.join(".gitignore"), GITIGNORE),
-        Err(e) if e.kind() == io::ErrorKind::AlreadyExists && dir.is_dir() => Ok(()),
+
+    /// `name` in this folder.
+    pub(crate) fn file(&self, name: &str) -> PathBuf {
+        self.path.join(name)
+    }
+
+    /// The folder's name as the dashboard shows it.
+    #[cfg(test)]
+    pub(crate) fn name(&self) -> String {
+        self.path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    }
+
+    /// The error for a folder Goose can't write to.
+    pub(crate) fn error(&self, e: io::Error) -> GooseError {
+        folder_error(&self.path, e)
+    }
+
+    /// Fail before any load when the folder can't be written to: the nearest
+    /// folder that exists must be a folder Goose can create a file in. The
+    /// file is removed at once.
+    pub(crate) fn check_writable(&self) -> Result<(), GooseError> {
+        let mut dir = self.path.as_path();
+        loop {
+            match std::fs::metadata(dir) {
+                Ok(metadata) if metadata.is_dir() => break,
+                Ok(_) => {
+                    return Err(self.error(io::Error::other(format!(
+                        "{} is not a folder",
+                        dir.display()
+                    ))))
+                }
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                    dir = match dir.parent() {
+                        Some(parent) if !parent.as_os_str().is_empty() => parent,
+                        _ => Path::new("."),
+                    };
+                }
+                Err(e) => return Err(self.error(e)),
+            }
+        }
+        let probe = dir.join(format!(".goose-write-check-{}", std::process::id()));
+        // A probe left by an earlier process with the same id goes first.
+        let _ = std::fs::remove_file(&probe);
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&probe)
+            .and_then(|_| std::fs::remove_file(&probe))
+            .map_err(|e| self.error(e))
+    }
+}
+
+/// The error for `path` in a run's folder, or the folder, that Goose can't
+/// write to.
+pub(crate) fn folder_error(path: &Path, e: io::Error) -> GooseError {
+    GooseError::InvalidOption {
+        option: "--output-dir".to_string(),
+        value: path.to_string_lossy().into_owned(),
+        detail: format!("Can't write to {}: {e}", path.display()),
+    }
+}
+
+/// Take `base`, or the first of `base-2`, `base-3` and so on, that is
+/// missing or an empty folder: create it, then create [`RESERVED`] in it only
+/// if no other process has, so two processes never take the same folder.
+fn reserve(base: &Path) -> io::Result<PathBuf> {
+    if let Some(parent) = base
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(parent)?;
+    }
+    let name = base
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned());
+    let mut n = 1u32;
+    // Another process can remove an empty folder between the steps below;
+    // the same name is then tried again, a few times at most.
+    let mut retries = 3;
+    loop {
+        let candidate = match (n, &name) {
+            (1, _) | (_, None) => base.to_path_buf(),
+            (n, Some(name)) => base.with_file_name(format!("{name}-{n}")),
+        };
+        let (created, free) = match std::fs::create_dir(&candidate) {
+            Ok(()) => (true, Ok(true)),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                (false, is_empty_folder(&candidate))
+            }
+            Err(e) => return Err(e),
+        };
+        let taken = match free {
+            Ok(true) => std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(candidate.join(RESERVED))
+                .map(|_| true),
+            other => other,
+        };
+        match taken {
+            Ok(true) => return Ok(candidate),
+            Ok(false) => {}
+            // Another process took it first.
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound && retries > 0 => {
+                retries -= 1;
+                continue;
+            }
+            Err(e) => {
+                if created {
+                    let _ = std::fs::remove_dir(&candidate);
+                }
+                return Err(e);
+            }
+        }
+        if name.is_none() {
+            break;
+        }
+        n += 1;
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        format!("{} already holds files", base.display()),
+    ))
+}
+
+/// True when `path` is a folder with nothing in it, never following a
+/// symlink.
+fn is_empty_folder(path: &Path) -> io::Result<bool> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_dir() => Ok(std::fs::read_dir(path)?.next().is_none()),
+        Ok(_) => Ok(false),
         Err(e) => Err(e),
     }
 }
 
-/// Create a new run directory under `runs_dir` named `base`, or `base-2` up
-/// to `base-999` when that already exists. Returns the id and the path.
-pub(crate) fn create_run_dir(runs_dir: &Path, base: &str) -> io::Result<(String, PathBuf)> {
-    for n in 1..=MAX_RUN_SUFFIX {
-        let id = if n == 1 {
-            base.to_string()
-        } else {
-            format!("{base}-{n}")
-        };
-        let path = runs_dir.join(&id);
-        match std::fs::create_dir(&path) {
-            Ok(()) => return Ok((id, path)),
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+/// What Goose writes for each run, kept on [`GooseAttack`].
+#[derive(Debug, Default)]
+pub(crate) struct Output {
+    /// The run's folder, chosen when the run starts, when it may need one.
+    pub folder: Option<RunFolder>,
+    /// The folder this process reserves with [`RESERVED`]. It stays reserved
+    /// until its run ends. While a bare `--goose-log` is open there, it stays
+    /// reserved until the next run starts.
+    reserved: Option<PathBuf>,
+    /// Save report: write `report.json` and `report.html` into the folder.
+    pub save_report: bool,
+    /// Goose turned Save report off for this run, as the folder only the
+    /// dashboard asked for can't be written to; it is on again when the run
+    /// ends.
+    save_report_held: bool,
+    /// Include graph data in the JSON report.
+    pub graph_data: bool,
+    /// When the run started.
+    pub started: Option<DateTime<Utc>>,
+    /// The folder of the last report written into a run's folder at the end
+    /// of a run.
+    pub last_report: Option<String>,
+    /// Why the last report Goose tried to write into the folder failed,
+    /// shared with the task Save report now writes in.
+    error: Arc<Mutex<Option<String>>>,
+    /// The reports Goose has written into a run's folder in this process,
+    /// shared with the task Save report now writes in.
+    writes: Arc<AtomicU64>,
+    /// Save report now wrote a report during this run, which the report at
+    /// its end replaces.
+    pub saved_now: bool,
+    /// The report Save report now is writing.
+    pub saving_now: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl Output {
+    /// Why the last report Goose tried to write into the folder failed.
+    #[cfg(any(test, feature = "dashboard"))]
+    pub(crate) fn error(&self) -> Option<String> {
+        lock(&self.error).clone()
+    }
+
+    pub(crate) fn set_error(&self, error: Option<String>) {
+        *lock(&self.error) = error;
+    }
+
+    /// Why the run in progress has no folder.
+    #[cfg(feature = "dashboard")]
+    fn no_folder_reason(&self) -> String {
+        self.error()
+            .unwrap_or_else(|| "this run has no folder".to_string())
+    }
+
+    /// As a run ends: turn Save report on again if Goose turned it off for
+    /// the run, as its folder could not be written to.
+    pub(crate) fn end_save_report_hold(&mut self) {
+        if std::mem::take(&mut self.save_report_held) {
+            self.save_report = true;
+        }
+    }
+
+    /// Give up the run's folder: remove [`RESERVED`], then the folder if that
+    /// leaves it empty. Only the first call does anything.
+    pub(crate) fn release_folder(&mut self) {
+        release(self.reserved.take());
+    }
+}
+
+/// Remove [`RESERVED`] from `folder`, then the folder if that leaves it empty.
+fn release(folder: Option<PathBuf>) {
+    if let Some(folder) = folder {
+        let _ = std::fs::remove_file(folder.join(RESERVED));
+        let _ = std::fs::remove_dir(&folder);
+    }
+}
+
+/// `mutex` locked, even after a panic while it was held.
+pub(crate) fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+impl Drop for Output {
+    /// A run that ends with an error still gives up its folder.
+    fn drop(&mut self) {
+        self.release_folder();
+    }
+}
+
+/// The seconds of graph data Goose keeps for the dashboard while no report
+/// at the end of the run needs more: twice its chart window.
+pub(crate) const DASHBOARD_GRAPH_SECS: usize =
+    crate::metrics::dashboard_snapshot::SERIES_WINDOW_SECS as usize * 2;
+
+impl GooseAttack {
+    /// Record how the run ended. The first cause recorded wins.
+    pub(crate) fn set_ended_by(&mut self, ended_by: EndedBy, reason: Option<String>) {
+        if self.run_in_progress && self.ended_by.is_none() {
+            self.ended_by = Some((ended_by, reason));
+        }
+    }
+
+    /// Whether the graph data is kept for the whole run: a report will be
+    /// written at its end, to a `--report-file` path or by Save report.
+    pub(crate) fn keeps_full_graph(&self) -> bool {
+        self.configuration.keeps_full_graph(self.output.save_report)
+    }
+
+    /// Whether the per second histograms also fold into whole run columns,
+    /// for the report's response time heatmap.
+    pub(crate) fn records_latency_columns(&self) -> bool {
+        self.keeps_full_graph() && self.configuration.records_latency_series()
+    }
+
+    /// When a run starts: choose its folder when it may need one, failing
+    /// before any load when it can't be written to. A folder only the
+    /// dashboard asks for that can't be written to is skipped with a warning
+    /// instead, and Save report is off for the run.
+    pub(crate) fn start_run_folder(&mut self) -> Result<(), GooseError> {
+        // The last run's folder is given up only once a bare --goose-log has
+        // moved out of it, so no other process deletes the open log.
+        let previous = self.output.reserved.take();
+        let started = self.choose_run_folder();
+        release(previous);
+        started
+    }
+
+    /// Whether a bare `--goose-log` is open in the run's folder, and stays
+    /// open there after the run ends until the next run starts.
+    pub(crate) fn goose_log_in_folder(&self) -> bool {
+        self.configuration.goose_log() == Some(RUN_FOLDER) && crate::logger::goose_log_installed()
+    }
+
+    /// [`Self::start_run_folder`], before the last run's folder is given up.
+    fn choose_run_folder(&mut self) -> Result<(), GooseError> {
+        self.output.folder = None;
+        self.output.last_report = None;
+        self.output.set_error(None);
+        self.output.saved_now = false;
+        self.output.started = None;
+        self.output.end_save_report_hold();
+        if !self.configuration.uses_run_folder() {
+            return Ok(());
+        }
+        let started = Local::now();
+        let folder = RunFolder::choose(&self.configuration, started)
+            .map_err(|e| folder_error(&RunFolder::base(&self.configuration, started), e))
+            .and_then(|folder| {
+                self.output.reserved = Some(folder.path.clone());
+                folder.check_writable().map(|()| folder)
+            });
+        let folder = match folder {
+            Ok(folder) => folder,
+            Err(e) if self.configuration.folder_only_for_dashboard() => {
+                let reason = reason(&e);
+                warn!("{reason}. This run's report is not saved.");
+                self.output.release_folder();
+                self.output.set_error(Some(reason));
+                if self.output.save_report {
+                    self.output.save_report = false;
+                    self.output.save_report_held = true;
+                }
+                return Ok(());
+            }
             Err(e) => return Err(e),
-        }
-    }
-    Err(io::Error::new(
-        io::ErrorKind::AlreadyExists,
-        format!("{base} and every suffix up to -{MAX_RUN_SUFFIX} already exist"),
-    ))
-}
-
-/// The complete saved runs in a runs directory, as `GET /api/v1/runs` lists
-/// them.
-#[cfg_attr(not(feature = "dashboard"), allow(dead_code))]
-#[derive(Debug, Serialize)]
-pub(crate) struct RunsListing {
-    /// The runs directory as given.
-    pub dir: String,
-    /// Bytes in the listed runs' files.
-    pub total_bytes: u64,
-    /// Newest first, by `started`.
-    pub runs: Vec<RunInfo>,
-}
-
-/// The real directory or regular file at `path`, never following a symlink.
-#[cfg_attr(not(feature = "dashboard"), allow(dead_code))]
-pub(crate) fn is_real_dir(path: &Path) -> bool {
-    std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_dir())
-}
-
-/// See [`is_real_dir`].
-#[cfg_attr(not(feature = "dashboard"), allow(dead_code))]
-pub(crate) fn is_regular_file(path: &Path) -> bool {
-    std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_file())
-}
-
-/// Read a run's `run.json`, if the run is complete.
-#[cfg_attr(not(feature = "dashboard"), allow(dead_code))]
-pub(crate) fn read_run_info(run_dir: &Path) -> Option<RunInfo> {
-    let path = run_dir.join(RUN_JSON);
-    if !is_regular_file(&path) {
-        return None;
-    }
-    let text = std::fs::read_to_string(path).ok()?;
-    serde_json::from_str(&text).ok()
-}
-
-/// List every complete run in `runs_dir`: a real directory named by a run
-/// id that holds a readable `run.json`. Anything else, symlinks included, is
-/// skipped. A runs directory that does not exist lists no runs.
-#[cfg_attr(not(feature = "dashboard"), allow(dead_code))]
-pub(crate) fn list_runs(runs_dir: &Path, display: &str) -> io::Result<RunsListing> {
-    let mut listing = RunsListing {
-        dir: display.to_string(),
-        total_bytes: 0,
-        runs: Vec::new(),
-    };
-    let entries = match std::fs::read_dir(runs_dir) {
-        Ok(entries) => entries,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(listing),
-        Err(e) => return Err(e),
-    };
-    for entry in entries.filter_map(Result::ok) {
-        let name = entry.file_name();
-        let Some(id) = name.to_str() else { continue };
-        if !is_valid_run_id(id) {
-            continue;
-        }
-        let run_dir = runs_dir.join(id);
-        if !is_real_dir(&run_dir) {
-            continue;
-        }
-        let Some(mut info) = read_run_info(&run_dir) else {
-            continue;
         };
-        // The directory name is the id the routes take.
-        info.id = id.to_string();
-        if let Ok(files) = std::fs::read_dir(&run_dir) {
-            for file in files.filter_map(Result::ok) {
-                if let Ok(metadata) = std::fs::symlink_metadata(file.path()) {
-                    if metadata.file_type().is_file() {
-                        listing.total_bytes += metadata.len();
-                    }
+        // A bare --goose-log moves to each run's folder as the run starts.
+        if self.configuration.goose_log() == Some(RUN_FOLDER) {
+            let name = match self.configuration.compress {
+                Some(_) => format!("{GOOSE_LOG}.gz"),
+                None => GOOSE_LOG.to_string(),
+            };
+            // Move the log first, so the line naming this run's folder lands
+            // in that folder's log. A failure here ends the session, so the
+            // last run's folder, given up next, holds no open log after it.
+            move_goose_log(&folder.file(&name)).map_err(|e| folder.error(e))?;
+        }
+        info!("writing this run's files to {}", folder.path.display());
+        self.output.folder = Some(folder);
+        Ok(())
+    }
+
+    /// The record of a report drawn from `graph_data`, whose first second is
+    /// where its graphs start.
+    pub(crate) fn report_record_for(&self, in_progress: bool, graph_data: &GraphData) -> RunRecord {
+        self.report_record(in_progress, graph_data.first_second())
+    }
+
+    /// The record of the run in its reports: written while it continues when
+    /// `in_progress`, otherwise at its end. `graphs_from` is the first second
+    /// of the run the graph data holds.
+    pub(crate) fn report_record(&self, in_progress: bool, graphs_from: usize) -> RunRecord {
+        let (ended_by, canceled_reason) = match (in_progress, &self.ended_by) {
+            (true, _) => (None, None),
+            (false, Some((ended_by, reason))) => (Some(*ended_by), reason.clone()),
+            (false, None) => (Some(EndedBy::Completed), None),
+        };
+        RunRecord {
+            notes: self.configuration.notes().map(str::to_string),
+            goose_version: env!("CARGO_PKG_VERSION").to_string(),
+            test: test_name(),
+            started: self.output.started.map(rfc3339),
+            ended: (!in_progress).then(|| rfc3339(Utc::now())),
+            ended_by,
+            canceled_reason,
+            in_progress,
+            graphs_start: self.graphs_start(graphs_from),
+        }
+    }
+
+    /// Where the graphs start when they do not cover the whole run, as the
+    /// dashboard keeps only its window while no report needs more.
+    fn graphs_start(&self, graphs_from: usize) -> Option<GraphsStart> {
+        let started = self.output.started.filter(|_| graphs_from > 0)?;
+        let reason = if self.keeps_full_graph() {
+            format!(
+                "Save report was off for part of the run, and Goose then keeps only the dashboard's last {} minutes of graphs.",
+                DASHBOARD_GRAPH_SECS / 60
+            )
+        } else {
+            format!(
+                "Save report is off, so Goose keeps only the dashboard's last {} minutes of graphs.",
+                DASHBOARD_GRAPH_SECS / 60
+            )
+        };
+        Some(GraphsStart {
+            time: rfc3339(started + chrono::Duration::seconds(graphs_from as i64)),
+            reason,
+        })
+    }
+
+    /// When a run has fully stopped: write the `--report-file` reports and, with
+    /// Save report on or after a Save report now, the folder's, attempting
+    /// both even if one fails. Returns the first error. When the session
+    /// `returns_to_idle`, a folder's report that fails is only logged and
+    /// shown on the dashboard, and the session goes on. When the session shuts
+    /// down after the run instead, as after an autostarted run that ends on its
+    /// own, a Controller `shutdown` or Ctrl-C, it returns that error.
+    pub(crate) async fn write_end_of_run(
+        &mut self,
+        returns_to_idle: bool,
+    ) -> Result<(), GooseError> {
+        // A report Save report now is still writing finishes first, so this
+        // one replaces it.
+        if let Some(saving) = self.output.saving_now.take() {
+            let _ = saving.await;
+        }
+        // Load the baseline once for all report writers. A baseline that no
+        // longer loads fails the --report-file reports, as it does at
+        // startup, and the folder's report is written without it.
+        let (baseline, baseline_error) = match &self.configuration.baseline_file {
+            Some(file) => match load_baseline_file(file) {
+                Ok(baseline) => (Some(baseline), None),
+                Err(e) => (None, Some(e)),
+            },
+            None => (None, None),
+        };
+        let record = self.report_record_for(false, &self.graph_data);
+        let save = self.output.save_report || self.output.saved_now;
+        let folder = match (save, self.output.folder.as_ref()) {
+            (true, Some(folder)) => Some(folder.path.clone()),
+            _ => None,
+        };
+        // The HTML report is generated once for --report-file and the folder.
+        let mut html = None;
+        let source = self.report_source(&record);
+        let report_files = match baseline_error {
+            Some(e) => Err(e),
+            None => {
+                self.write_report_files(&source, baseline.as_ref(), &mut html)
+                    .await
+            }
+        };
+        let written = match folder {
+            None => return report_files,
+            Some(folder) => write_folder_report(
+                &folder,
+                &source,
+                baseline.as_ref(),
+                &mut html,
+                self.configuration.compress,
+            )
+            .map(|files| (folder, files)),
+        };
+        match written {
+            Ok((folder, files)) => {
+                for file in files {
+                    info!("report file written to: {}", file.display());
+                }
+                self.output.last_report = Some(folder.to_string_lossy().into_owned());
+                self.output.set_error(None);
+                self.output.writes.fetch_add(1, Ordering::Relaxed);
+                report_files
+            }
+            Err(e) => {
+                let reason = reason(&e);
+                error!("couldn't save the report: {reason}");
+                self.output.set_error(Some(reason));
+                if returns_to_idle {
+                    report_files
+                } else {
+                    report_files.and(Err(e))
                 }
             }
         }
-        listing.runs.push(info);
     }
-    listing.runs.sort_by(|a, b| {
-        let started = |info: &RunInfo| DateTime::parse_from_rfc3339(&info.started).ok();
-        // Runs started in the same second sort by id: `-2` after the first.
-        started(b).cmp(&started(a)).then_with(|| b.id.cmp(&a.id))
+}
+
+impl GooseAttack {
+    /// `--render-report`: write the reports `--report-file` paths name from the
+    /// JSON report at `path`, without running a load test.
+    pub(crate) async fn render_report(&self, path: &str) -> Result<GooseMetrics, GooseError> {
+        let loaded =
+            LoadedReport::read(Path::new(path)).map_err(|detail| GooseError::InvalidOption {
+                option: "--render-report".to_string(),
+                value: path.to_string(),
+                detail,
+            })?;
+        let baseline = match &self.configuration.baseline_file {
+            Some(file) => Some(load_baseline_file(file)?),
+            None => None,
+        };
+        let empty = GraphData::new();
+        let source = loaded.source(&self.configuration, &empty);
+        self.create_reports().await?;
+        self.write_report_files(&source, baseline.as_ref(), &mut None)
+            .await?;
+        Ok(loaded.data.raw_metrics.into_owned())
+    }
+
+    /// The report this run writes, as the dashboard shows it.
+    #[cfg(feature = "dashboard")]
+    pub(crate) fn report_snapshot(&self) -> SnapshotReport {
+        SnapshotReport {
+            save: self.output.save_report,
+            graph_data: self.output.graph_data,
+            folder: self
+                .output
+                .folder
+                .as_ref()
+                .map(|folder| folder.path.to_string_lossy().into_owned()),
+            paths: self.configuration.report_paths(),
+            notes: self.configuration.notes().map(str::to_string),
+            last_report: self.output.last_report.clone(),
+            last_report_name: self
+                .output
+                .last_report
+                .as_deref()
+                .and_then(|folder| Path::new(folder).file_name())
+                .map(|name| name.to_string_lossy().into_owned())
+                .filter(|name| is_report_name(name)),
+            error: self.output.error(),
+            writes: self.output.writes.load(Ordering::Relaxed),
+        }
+    }
+}
+
+/// One report the runs panel lists: a folder's name and what its
+/// `report.json` says about its run.
+#[cfg(feature = "dashboard")]
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct ListedReport {
+    /// The folder's name, which the report routes take.
+    pub name: String,
+    #[serde(flatten)]
+    pub record: RunRecord,
+    /// Still marked in progress, and the folder of the run in progress now.
+    pub running: bool,
+    pub duration_secs: u64,
+    pub max_users: u64,
+    pub requests: u64,
+    pub failed_requests: u64,
+    /// When the run started, else when the report was written: what the list
+    /// is sorted by. Seconds since the epoch.
+    #[serde(skip)]
+    sort_key: i64,
+}
+
+/// What a listing remembers of each `report.json`, by path, so a file is
+/// parsed again only when its size or modification time changes.
+#[cfg(feature = "dashboard")]
+pub(crate) type ListingCache = HashMap<PathBuf, (u64, std::time::SystemTime, ListedReport)>;
+
+/// True for a folder name the report routes take: a letter or digit, then
+/// letters, digits, `.`, `_` and `-`. Never `..`, never a path.
+#[cfg(feature = "dashboard")]
+pub(crate) fn is_report_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphanumeric())
+        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+}
+
+/// The real folder `name` in `parent` and the regular `report.json`, else
+/// `report.json.gz`, in it, never following a symlink.
+#[cfg(feature = "dashboard")]
+pub(crate) fn report_folder(parent: &Path, name: &str) -> Option<(PathBuf, PathBuf)> {
+    if !is_report_name(name) {
+        return None;
+    }
+    let folder = parent.join(name);
+    if !std::fs::symlink_metadata(&folder).is_ok_and(|m| m.file_type().is_dir()) {
+        return None;
+    }
+    let json = regular_file(&folder, REPORT_JSON)?;
+    Some((folder, json))
+}
+
+/// The regular file `name`, else `name.gz`, in `folder`, never following a
+/// symlink.
+#[cfg(feature = "dashboard")]
+pub(crate) fn regular_file(folder: &Path, name: &str) -> Option<PathBuf> {
+    [name.to_string(), format!("{name}.gz")]
+        .iter()
+        .map(|name| folder.join(name))
+        .find(|path| std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_file()))
+}
+
+/// The reports in the folders of `parent`, one level down, newest first.
+/// `running` is the folder of the run in progress, if any. A folder that
+/// does not exist lists nothing; a report that can't be read is left out.
+#[cfg(feature = "dashboard")]
+pub(crate) fn list_reports(
+    parent: &Path,
+    running: Option<&Path>,
+    cache: &mut ListingCache,
+) -> io::Result<Vec<ListedReport>> {
+    let entries = match std::fs::read_dir(parent) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            cache.clear();
+            return Ok(Vec::new());
+        }
+        Err(e) => return Err(e),
+    };
+    let mut listed = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for entry in entries.filter_map(Result::ok) {
+        let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+            continue;
+        };
+        let Some((folder, json)) = report_folder(parent, &name) else {
+            continue;
+        };
+        let Ok(metadata) = std::fs::metadata(&json) else {
+            continue;
+        };
+        let modified = metadata.modified().unwrap_or(std::time::UNIX_EPOCH);
+        seen.insert(json.clone());
+        let cached = cache
+            .get(&json)
+            .filter(|(len, time, _)| *len == metadata.len() && *time == modified)
+            .map(|(_, _, report)| report.clone());
+        let mut report = match cached {
+            Some(report) => report,
+            None => match read_listed(&json, &name, modified) {
+                Some(report) => {
+                    cache.insert(json.clone(), (metadata.len(), modified, report.clone()));
+                    report
+                }
+                None => continue,
+            },
+        };
+        report.running = report.record.in_progress && running == Some(folder.as_path());
+        listed.push(report);
+    }
+    cache.retain(|path, _| seen.contains(path));
+    listed.sort_by(|a, b| {
+        b.sort_key
+            .cmp(&a.sort_key)
+            .then_with(|| b.name.cmp(&a.name))
     });
-    Ok(listing)
+    Ok(listed)
 }
 
-/// Write `run.json` into the run directory through a temporary file and a
-/// rename, so a reader never sees it half written.
-pub(crate) fn write_run_json(run_dir: &Path, info: &RunInfo) -> io::Result<()> {
-    let tmp = run_dir.join(".run.json.tmp");
-    let mut file = std::fs::File::create(&tmp)?;
-    serde_json::to_writer_pretty(&mut file, info).map_err(io::Error::other)?;
-    file.write_all(b"\n")?;
-    file.sync_all()?;
-    drop(file);
-    std::fs::rename(&tmp, run_dir.join(RUN_JSON))
+/// The record of the run in the JSON report at `json`, plain or gzipped.
+#[cfg(feature = "dashboard")]
+pub(crate) fn read_record(json: &Path) -> Option<RunRecord> {
+    let text = crate::metrics::read_report_text(json).ok()?;
+    serde_json::from_str(&text).ok()
 }
 
-/// RFC 3339 in UTC, to the second, as `run.json` records times.
+/// Whether the runs panel would list the report at `json`: Delete touches
+/// nothing in a folder the panel does not show.
+#[cfg(feature = "dashboard")]
+pub(crate) fn is_listed(json: &Path) -> bool {
+    read_listed(json, "", std::time::UNIX_EPOCH).is_some()
+}
+
+/// What the runs panel shows of the report at `json`, in the folder `name`.
+#[cfg(feature = "dashboard")]
+fn read_listed(json: &Path, name: &str, modified: std::time::SystemTime) -> Option<ListedReport> {
+    #[derive(Deserialize)]
+    struct Listed {
+        raw_metrics: Metrics,
+    }
+    #[derive(Deserialize)]
+    struct Metrics {
+        #[serde(default)]
+        duration: u64,
+        #[serde(default)]
+        maximum_users: u64,
+        #[serde(default)]
+        requests: HashMap<String, Requests>,
+    }
+    #[derive(Deserialize)]
+    struct Requests {
+        #[serde(default)]
+        success_count: u64,
+        #[serde(default)]
+        fail_count: u64,
+    }
+    let text = crate::metrics::read_report_text(json).ok()?;
+    let record: RunRecord = serde_json::from_str(&text).ok()?;
+    let metrics = serde_json::from_str::<Listed>(&text).ok()?.raw_metrics;
+    let written = DateTime::<Utc>::from(modified).timestamp();
+    let sort_key = record
+        .started
+        .as_deref()
+        .and_then(|started| DateTime::parse_from_rfc3339(started).ok())
+        .map_or(written, |started| started.timestamp());
+    Some(ListedReport {
+        name: name.to_string(),
+        record,
+        running: false,
+        duration_secs: metrics.duration,
+        max_users: metrics.maximum_users,
+        requests: metrics
+            .requests
+            .values()
+            .map(|r| r.success_count + r.fail_count)
+            .sum(),
+        failed_requests: metrics.requests.values().map(|r| r.fail_count).sum(),
+        sort_key,
+    })
+}
+
+/// The files `DELETE /api/v1/reports/{name}` removes from a run's folder:
+/// its reports and the logs Goose names there, plain and gzipped.
+#[cfg(feature = "dashboard")]
+pub(crate) fn deletable_files() -> Vec<String> {
+    let mut names = vec![
+        REPORT_JSON.to_string(),
+        REPORT_HTML.to_string(),
+        REPORT_MD.to_string(),
+        GOOSE_LOG.to_string(),
+    ];
+    for name in LOG_NAMES {
+        for extension in ["json", "csv", "log"] {
+            names.push(format!("{name}.{extension}"));
+        }
+    }
+    let gzipped: Vec<String> = names.iter().map(|name| format!("{name}.gz")).collect();
+    names.extend(gzipped);
+    // The reports' temporary files, left by a process that ended while
+    // writing one.
+    let temporary: Vec<String> = [REPORT_JSON, REPORT_HTML]
+        .iter()
+        .flat_map(|name| [format!(".{name}.tmp"), format!(".{name}.gz.tmp")])
+        .collect();
+    names.extend(temporary);
+    names
+}
+
+/// Whether a Goose process reserves `folder` for its run, so Delete leaves it
+/// alone.
+/// A process that ended without giving the folder up leaves [`RESERVED`]
+/// behind; removing that file by hand frees the folder.
+#[cfg(feature = "dashboard")]
+pub(crate) fn is_reserved(folder: &Path) -> bool {
+    std::fs::symlink_metadata(folder.join(RESERVED)).is_ok()
+}
+
+#[cfg(feature = "dashboard")]
+impl GooseAttack {
+    /// The dashboard's Save report and Include graph data switches, which can
+    /// change at any time. Turning Save report on during a run keeps the
+    /// graphs from then on, and the dashboard's window before it.
+    pub(crate) fn control_report(
+        &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+        save: Option<bool>,
+        graph_data: Option<bool>,
+    ) -> ControlOutcome {
+        if save == Some(true) && self.configuration.no_metrics {
+            return self.control_outcome(
+                goose_attack_run_state,
+                false,
+                Some("invalid_report"),
+                "--no-metrics keeps no report to save",
+                None,
+            );
+        }
+        if save == Some(true) && self.run_in_progress && self.output.folder.is_none() {
+            let message = self.output.no_folder_reason();
+            return self.control_outcome(
+                goose_attack_run_state,
+                false,
+                Some("invalid_report"),
+                message,
+                None,
+            );
+        }
+        if let Some(graph_data) = graph_data {
+            self.output.graph_data = graph_data;
+        }
+        if save.is_some() {
+            self.output.save_report_held = false;
+        }
+        if let Some(save) = save.filter(|save| *save != self.output.save_report) {
+            let keeps_before = self.keeps_full_graph();
+            self.output.save_report = save;
+            let keep = self.keeps_full_graph();
+            if self.run_in_progress && keep != keeps_before {
+                let now = self.series_elapsed_secs();
+                let _ = goose_attack_run_state
+                    .metrics_cmd_tx
+                    .send(MetricsCommand::KeepGraph { keep, now });
+            }
+        }
+        let message = format!(
+            "save report {}, include graph data {}",
+            if self.output.save_report { "on" } else { "off" },
+            if self.output.graph_data { "on" } else { "off" }
+        );
+        self.control_outcome(goose_attack_run_state, true, None, message, None)
+    }
+
+    /// Save report now: write the run's report into its folder as it stands,
+    /// marked in progress, while the run continues. The report at the end of
+    /// the run replaces it.
+    pub(crate) async fn control_save_report_now(
+        &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+    ) -> Result<ControlOutcome, GooseError> {
+        let refuse = |attack: &Self, state: &GooseAttackRunState, error, message: &str| {
+            Ok(attack.control_outcome(state, false, Some(error), message.to_string(), None))
+        };
+        if self.configuration.no_metrics {
+            return refuse(
+                self,
+                goose_attack_run_state,
+                "invalid_report",
+                "--no-metrics keeps no report to save",
+            );
+        }
+        if !self.run_in_progress {
+            return refuse(
+                self,
+                goose_attack_run_state,
+                "invalid_phase",
+                "Save report now needs a run in progress",
+            );
+        }
+        let Some(folder) = self.output.folder.clone() else {
+            let message = self.output.no_folder_reason();
+            return refuse(self, goose_attack_run_state, "report_failed", &message);
+        };
+        if self
+            .output
+            .saving_now
+            .as_ref()
+            .is_some_and(|saving| !saving.is_finished())
+        {
+            return refuse(
+                self,
+                goose_attack_run_state,
+                "report_busy",
+                "a report is being saved; try again when it is written",
+            );
+        }
+        if let Err(e) = folder.check_writable() {
+            let reason = reason(&e);
+            self.output.set_error(Some(reason.clone()));
+            return refuse(self, goose_attack_run_state, "report_failed", &reason);
+        }
+        self.update_duration();
+        let (respond, report_data) = tokio::sync::oneshot::channel();
+        let sent = goose_attack_run_state
+            .metrics_cmd_tx
+            .send(MetricsCommand::GetReportData {
+                duration: self.metrics.duration,
+                total_users: self.metrics.total_users,
+                maximum_users: self.metrics.maximum_users,
+                history: self.metrics.history.clone(),
+                respond,
+            });
+        let (Ok(()), Ok((metrics, graph_data))) = (sent, report_data.await) else {
+            return refuse(
+                self,
+                goose_attack_run_state,
+                "report_failed",
+                "the metrics are not available",
+            );
+        };
+        let folder_path = folder.path.clone();
+        let record = self.report_record_for(true, &graph_data);
+        let configuration = self.configuration.clone();
+        let graph_data_in_json = self.output.graph_data;
+        let compress = self.configuration.compress;
+        let error = Arc::clone(&self.output.error);
+        let writes = Arc::clone(&self.output.writes);
+        self.output.saved_now = true;
+        self.output.saving_now = Some(tokio::task::spawn_blocking(move || {
+            let baseline = match configuration
+                .baseline_file
+                .as_ref()
+                .map(|file| load_baseline_file(file).map_err(|e| (file.clone(), reason(&e))))
+            {
+                Some(Ok(baseline)) => Some(baseline),
+                Some(Err((file, reason))) => {
+                    warn!("the report saved now has no baseline, as {file} doesn't load: {reason}");
+                    None
+                }
+                None => None,
+            };
+            let source = crate::metrics::ReportSource {
+                configuration: &configuration,
+                metrics: &metrics,
+                graph_data: &graph_data,
+                graphs: true,
+                heatmap: None,
+                loaded: None,
+                record: &record,
+                graph_data_in_json,
+            };
+            match write_folder_report(
+                &folder_path,
+                &source,
+                baseline.as_ref(),
+                &mut None,
+                compress,
+            ) {
+                Ok(files) => {
+                    for file in files {
+                        info!("in progress report written to: {}", file.display());
+                    }
+                    *lock(&error) = None;
+                    writes.fetch_add(1, Ordering::Relaxed);
+                }
+                Err(e) => {
+                    let reason = reason(&e);
+                    error!("couldn't save the report now: {reason}");
+                    *lock(&error) = Some(reason);
+                }
+            }
+        }));
+        let message = format!("saving the report to {}", folder.path.display());
+        Ok(self.control_outcome(goose_attack_run_state, true, None, message, None))
+    }
+}
+
+/// Why `e` happened, as the dashboard shows it: an invalid option's detail,
+/// which its `Display` leaves out.
+pub(crate) fn reason(e: &GooseError) -> String {
+    match e {
+        GooseError::InvalidOption { detail, .. } => detail.clone(),
+        other => other.to_string(),
+    }
+}
+
+/// RFC 3339 in UTC, to the second, as the JSON report records times.
 pub(crate) fn rfc3339(time: DateTime<Utc>) -> String {
     time.to_rfc3339_opts(SecondsFormat::Secs, true)
 }
@@ -347,243 +1116,6 @@ pub(crate) fn test_name() -> String {
         .unwrap_or_default()
 }
 
-/// The text of an error writing a saved run: the I/O error alone where
-/// there is one.
-fn error_text(error: &GooseError) -> String {
-    match error {
-        GooseError::Io(e) => e.to_string(),
-        GooseError::Serde(e) => e.to_string(),
-        GooseError::InvalidOption { detail, .. } => detail.clone(),
-        other => other.to_string(),
-    }
-}
-
-impl GooseAttack {
-    /// At startup: say when `--no-save` overrides `--runs-dir`, and create an
-    /// explicitly given runs directory, failing before any load if it can't
-    /// be created.
-    pub(crate) fn check_runs_dir(&mut self) -> Result<(), GooseError> {
-        if let Some(runs_dir) = self
-            .configuration
-            .runs_dir()
-            .filter(|_| self.configuration.no_save)
-        {
-            println!("Not saving this run: --no-save is set, so --runs-dir {runs_dir} is ignored.");
-        }
-        if !self.configuration.saves_runs() {
-            self.saving.state = SaveState::Off;
-            return Ok(());
-        }
-        self.saving.state = SaveState::On;
-        if let Some(dir) = self.configuration.runs_dir() {
-            ensure_runs_dir(Path::new(dir)).map_err(|e| runs_dir_error(dir, dir, e))?;
-        }
-        Ok(())
-    }
-
-    /// When a run starts: create its directory under the runs directory. A
-    /// directory that can't be created is an error only when the runs
-    /// directory was given explicitly; otherwise the run goes unsaved, with
-    /// one warning.
-    pub(crate) fn start_saved_run(&mut self) -> Result<(), GooseError> {
-        self.saving.active = None;
-        if !self.configuration.saves_runs() {
-            self.saving.state = SaveState::Off;
-            return Ok(());
-        }
-        let dir = self.configuration.runs_dir_or_default().to_string();
-        let explicit = self.configuration.runs_dir().is_some();
-        let started = Utc::now();
-        let base = run_id_base(started.with_timezone(&Local));
-        let created = ensure_runs_dir(Path::new(&dir))
-            .map_err(|e| (dir.clone(), e))
-            .and_then(|()| {
-                create_run_dir(Path::new(&dir), &base).map_err(|e| (display_join(&dir, &base), e))
-            });
-        match created {
-            Ok((id, path)) => {
-                let display = display_join(&dir, &id);
-                info!(
-                    "Saving this run to {display} (on long soak tests, use --no-save to keep memory flat)"
-                );
-                self.saving.state = SaveState::On;
-                self.saving.reason = None;
-                self.saving.active = Some(ActiveRun {
-                    id,
-                    path,
-                    display,
-                    started,
-                });
-                Ok(())
-            }
-            Err((failed, e)) => {
-                if explicit {
-                    return Err(runs_dir_error(&dir, &failed, e));
-                }
-                if !self.saving.failure_logged {
-                    warn!(
-                        "Not saving this run: can't create {failed} ({e}). Use --runs-dir to choose another directory, or --no-save to stop this warning."
-                    );
-                    self.saving.failure_logged = true;
-                }
-                self.saving.state = SaveState::Failed;
-                self.saving.reason = Some(e.to_string());
-                // This run has no id; the last saved run is not the one that failed.
-                self.saving.last_run = None;
-                Ok(())
-            }
-        }
-    }
-
-    /// Record how the run ended. The first cause recorded wins.
-    pub(crate) fn set_ended_by(&mut self, ended_by: EndedBy, reason: Option<String>) {
-        if self.run_in_progress && self.ended_by.is_none() {
-            self.ended_by = Some((ended_by, reason));
-        }
-    }
-
-    /// When a run has fully stopped: write the `--report-file` reports and
-    /// the saved run, attempting both even if one fails. A saved run that
-    /// can't be written is a warning; a `--report-file` error is returned.
-    pub(crate) async fn write_end_of_run(&mut self) -> Result<(), GooseError> {
-        // Load the baseline once for all report writers.
-        let (baseline, baseline_error) = match &self.configuration.baseline_file {
-            Some(file) => match load_baseline_file(file) {
-                Ok(baseline) => (Some(baseline), None),
-                Err(e) => (None, Some(e)),
-            },
-            None => (None, None),
-        };
-        // The HTML report is generated once for --report-file and the saved run.
-        let mut html = None;
-        let report_files = match baseline_error {
-            Some(e) => Err(e),
-            None => self.write_report_files(baseline.as_ref(), &mut html).await,
-        };
-
-        if let Some(run) = self.saving.active.take() {
-            let outcome = self
-                .write_saved_run(&run, baseline.as_ref(), &mut html)
-                .await;
-            self.saving.last_run = Some(run.id.clone());
-            match &outcome {
-                SaveOutcome::Saved { .. } => self.saving.reason = None,
-                SaveOutcome::Failed { id, error } => {
-                    warn!("Couldn't save run {id}: {error}.");
-                    self.saving.reason = Some(error.clone());
-                }
-            }
-            self.saving.outcome = Some(outcome);
-        }
-
-        report_files
-    }
-
-    /// Write a saved run's reports through the report writers, then
-    /// `run.json` last.
-    async fn write_saved_run(
-        &self,
-        run: &ActiveRun,
-        baseline: Option<&ReportData<'static>>,
-        html: &mut Option<String>,
-    ) -> SaveOutcome {
-        let failed = |error: String| SaveOutcome::Failed {
-            id: run.id.clone(),
-            error,
-        };
-        let reports: Vec<String> = REPORT_FILES
-            .iter()
-            .map(|name| run.path.join(name).to_string_lossy().into_owned())
-            .collect();
-        if let Err(e) = self
-            .process_reports(&reports, ReportSet::SavedRun, true, baseline, html)
-            .await
-        {
-            return failed(error_text(&e));
-        }
-
-        let mut files = Vec::with_capacity(REPORT_FILES.len());
-        for name in REPORT_FILES {
-            match std::fs::metadata(run.path.join(name)) {
-                Ok(metadata) => files.push(RunFile {
-                    name: name.to_string(),
-                    bytes: metadata.len(),
-                }),
-                Err(e) => return failed(e.to_string()),
-            }
-        }
-        let mut hosts: Vec<String> = self.metrics.hosts.iter().cloned().collect();
-        hosts.sort();
-        let (requests, failed_requests) =
-            self.metrics
-                .requests
-                .values()
-                .fold((0u64, 0u64), |(total, fails), request| {
-                    (
-                        total + (request.success_count + request.fail_count) as u64,
-                        fails + request.fail_count as u64,
-                    )
-                });
-        let (ended_by, canceled_reason) =
-            self.ended_by.clone().unwrap_or((EndedBy::Completed, None));
-        let info = RunInfo {
-            format: RUN_FORMAT,
-            id: run.id.clone(),
-            goose_version: env!("CARGO_PKG_VERSION").to_string(),
-            test: test_name(),
-            started: rfc3339(run.started),
-            ended: rfc3339(Utc::now()),
-            duration_secs: self.metrics.duration as u64,
-            max_users: self.metrics.maximum_users as u64,
-            hosts,
-            requests,
-            failed_requests,
-            ended_by,
-            canceled_reason,
-            baseline: self.configuration.baseline_file.clone(),
-            files,
-        };
-        if let Err(e) = write_run_json(&run.path, &info) {
-            return failed(e.to_string());
-        }
-
-        SaveOutcome::Saved {
-            id: run.id.clone(),
-            files: REPORT_FILES
-                .iter()
-                .map(|name| display_join(&run.display, name))
-                .collect(),
-        }
-    }
-
-    /// Saving runs, as the dashboard shows it.
-    #[cfg(feature = "dashboard")]
-    pub(crate) fn save_snapshot(&self) -> SnapshotSave {
-        SnapshotSave {
-            state: self.saving.state.as_str().to_string(),
-            reason: self.saving.reason.clone(),
-            dir: self.configuration.runs_dir_or_default().to_string(),
-            last_run: self.saving.last_run.clone(),
-        }
-    }
-
-    /// Print what became of the saved run, once, after the final metrics.
-    pub(crate) fn print_save_outcome(&mut self) {
-        if let Some(outcome) = self.saving.outcome.take() {
-            print!("{outcome}");
-        }
-    }
-}
-
-/// The error for an explicitly given runs directory that can't be used.
-fn runs_dir_error(dir: &str, failed: &str, e: io::Error) -> GooseError {
-    GooseError::InvalidOption {
-        option: "--runs-dir".to_string(),
-        value: dir.to_string(),
-        detail: format!("Can't create {failed}: {e}"),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -591,7 +1123,7 @@ mod tests {
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "goose-runs-test-{name}-{}-{}",
+            "goose-folder-test-{name}-{}-{}",
             std::process::id(),
             Utc::now().timestamp_nanos_opt().unwrap_or_default()
         ));
@@ -599,224 +1131,420 @@ mod tests {
         dir
     }
 
+    fn configuration(output_dir: Option<&Path>) -> GooseConfiguration {
+        GooseConfiguration {
+            output_dir: output_dir.map(|dir| dir.to_string_lossy().into_owned()),
+            ..Default::default()
+        }
+    }
+
     #[test]
-    fn run_id_format() {
+    fn default_folder_is_named_for_the_start_time() {
         let started = Local.with_ymd_and_hms(2026, 10, 9, 14, 12, 3).unwrap();
-        let id = run_id_base(started);
-        assert_eq!(id, "2026-10-09-141203");
-        assert!(is_valid_run_id(&id));
+        let base = RunFolder::base(&configuration(None), started);
+        assert_eq!(base, Path::new("goose-runs/20261009-141203"));
     }
 
+    /// The first of DIR, DIR-2, DIR-3 that is missing or empty, always
+    /// counted on DIR.
     #[test]
-    fn run_id_validation() {
-        for good in [
-            "2026-10-09-141203",
-            "2026-10-09-141203-2",
-            "2026-10-09-141203-99",
-            "2026-10-09-141203-999",
-        ] {
-            assert!(is_valid_run_id(good), "{} should be valid", good);
+    fn folder_holding_files_is_never_reused() {
+        let parent = temp_dir("suffix");
+        let dir = parent.join("nightly");
+        let started = Local::now();
+        let choose = || RunFolder::choose(&configuration(Some(&dir)), started).unwrap();
+        let mut chosen = Vec::new();
+        for _ in 0..4 {
+            let folder = choose();
+            std::fs::write(folder.file("goose.log"), "x").unwrap();
+            std::fs::remove_file(folder.file(RESERVED)).unwrap();
+            chosen.push(folder.name());
         }
-        for bad in [
-            "",
-            "..",
-            "../2026-10-09-141203",
-            "2026-10-09-141203/..",
-            "2026-10-09-141203/",
-            "2026-10-09-141203%2F..",
-            "%2F2026-10-09-141203",
-            "/2026-10-09-141203",
-            "/etc/passwd",
-            "2026-10-09-141203-",
-            "2026-10-09-141203-1000",
-            "2026-10-09-141203-a",
-            "2026-10-09-14120",
-            "2026-10-09T141203",
-            "2026_10-09-141203",
-            "2026-10-09-141203 ",
-            "\u{ff12}026-10-09-141203",
-            "2026-10-09-141203\0",
-        ] {
-            assert!(!is_valid_run_id(bad), "{:?} should be invalid", bad);
-        }
+        assert_eq!(chosen, ["nightly", "nightly-2", "nightly-3", "nightly-4"]);
+
+        // An empty folder is used; a file in the way is skipped.
+        std::fs::remove_file(parent.join("nightly-3").join("goose.log")).unwrap();
+        assert_eq!(choose().name(), "nightly-3");
+        std::fs::write(parent.join("nightly-5"), "a file").unwrap();
+        std::fs::write(parent.join("nightly-3").join("goose.log"), "x").unwrap();
+        assert_eq!(choose().name(), "nightly-6");
+        std::fs::remove_dir_all(&parent).ok();
     }
 
+    /// Two runs that choose before either writes never share a folder, and
+    /// an empty folder that is already there goes to the first of them.
     #[test]
-    fn create_run_dir_retries_with_suffix() {
-        let runs = temp_dir("suffix");
-        let (first, first_path) = create_run_dir(&runs, "2026-10-09-141203").unwrap();
-        let (second, second_path) = create_run_dir(&runs, "2026-10-09-141203").unwrap();
-        let (third, _) = create_run_dir(&runs, "2026-10-09-141203").unwrap();
-        assert_eq!(first, "2026-10-09-141203");
-        assert_eq!(second, "2026-10-09-141203-2");
-        assert_eq!(third, "2026-10-09-141203-3");
-        assert!(first_path.is_dir() && second_path.is_dir());
-        assert!(is_valid_run_id(&second) && is_valid_run_id(&third));
-        std::fs::remove_dir_all(&runs).ok();
-    }
-
-    #[test]
-    fn ensure_runs_dir_writes_gitignore_only_when_creating() {
-        let parent = temp_dir("gitignore");
-        let runs = parent.join("nested").join("goose-runs");
-        ensure_runs_dir(&runs).unwrap();
-        let gitignore = std::fs::read_to_string(runs.join(".gitignore")).unwrap();
-        let mut lines = gitignore.lines();
-        assert_eq!(lines.next(), Some("*"));
+    fn a_chosen_folder_is_reserved_at_once() {
+        let parent = temp_dir("reserve");
+        let dir = parent.join("nightly");
+        let started = Local::now();
+        let first = RunFolder::choose(&configuration(Some(&dir)), started).unwrap();
+        let second = RunFolder::choose(&configuration(Some(&dir)), started).unwrap();
         assert_eq!(
-            lines.next(),
-            Some("# Created by Goose. Delete this file to commit saved runs.")
+            (first.name(), second.name()),
+            ("nightly".into(), "nightly-2".into())
         );
+        assert!(first.path.is_dir() && second.path.is_dir());
 
-        // An existing directory is left alone.
-        let existing = parent.join("existing");
-        std::fs::create_dir(&existing).unwrap();
-        ensure_runs_dir(&existing).unwrap();
-        assert!(!existing.join(".gitignore").exists());
+        let empty = parent.join("empty");
+        std::fs::create_dir(&empty).unwrap();
+        let first = RunFolder::choose(&configuration(Some(&empty)), started).unwrap();
+        let second = RunFolder::choose(&configuration(Some(&empty)), started).unwrap();
+        assert_eq!(
+            (first.name(), second.name()),
+            ("empty".into(), "empty-2".into())
+        );
         std::fs::remove_dir_all(&parent).ok();
     }
 
     #[test]
-    fn run_json_round_trip() {
-        let run_dir = temp_dir("runjson");
-        let info = RunInfo {
-            format: RUN_FORMAT,
-            id: "2026-10-09-141203".to_string(),
-            goose_version: "0.19.0-dev".to_string(),
-            test: "loadtest".to_string(),
-            started: "2026-10-09T12:12:03Z".to_string(),
-            ended: "2026-10-09T12:13:03Z".to_string(),
-            duration_secs: 60,
-            max_users: 10,
-            hosts: vec!["http://localhost".to_string()],
-            requests: 1234,
-            failed_requests: 5,
-            ended_by: EndedBy::Canceled,
-            canceled_reason: Some("SIGINT received".to_string()),
-            baseline: None,
-            files: vec![RunFile {
-                name: REPORT_HTML.to_string(),
-                bytes: 42,
-            }],
+    fn writable_check_finds_the_nearest_folder() {
+        let parent = temp_dir("writable");
+        let folder = RunFolder {
+            path: parent.join("a").join("b"),
         };
-        write_run_json(&run_dir, &info).unwrap();
-        assert!(!run_dir.join(".run.json.tmp").exists());
-        let text = std::fs::read_to_string(run_dir.join(RUN_JSON)).unwrap();
-        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
-        assert_eq!(value["ended_by"], "canceled");
-        assert_eq!(value["canceled_reason"], "SIGINT received");
-        assert!(value["baseline"].is_null());
-        let back: RunInfo = serde_json::from_str(&text).unwrap();
-        assert_eq!(back, info);
-        std::fs::remove_dir_all(&run_dir).ok();
-    }
+        folder.check_writable().unwrap();
+        // Nothing is left behind, and nothing is created.
+        assert_eq!(std::fs::read_dir(&parent).unwrap().count(), 0);
 
-    fn info(id: &str, started: &str) -> RunInfo {
-        RunInfo {
-            format: RUN_FORMAT,
-            id: id.to_string(),
-            goose_version: "0.19.0-dev".to_string(),
-            test: "loadtest".to_string(),
-            started: started.to_string(),
-            ended: started.to_string(),
-            duration_secs: 1,
-            max_users: 1,
-            hosts: Vec::new(),
-            requests: 1,
-            failed_requests: 0,
-            ended_by: EndedBy::Completed,
-            canceled_reason: None,
-            baseline: None,
-            files: Vec::new(),
+        std::fs::write(parent.join("a"), "a file").unwrap();
+        let error = folder.check_writable().unwrap_err();
+        match error {
+            GooseError::InvalidOption { option, value, .. } => {
+                assert_eq!(option, "--output-dir");
+                assert_eq!(value, folder.path.to_string_lossy());
+            }
+            other => panic!("{:?}", other),
         }
+        std::fs::remove_dir_all(&parent).ok();
     }
 
+    /// Rule 5: when the graphs start after the run did, the record says when
+    /// and why; when they cover the run, it says nothing.
     #[test]
-    fn list_runs_skips_what_is_not_a_complete_run_and_sorts_by_started() {
-        let runs = temp_dir("list");
-        // Listed. The names sort differently from the start times, which
-        // decide the order.
-        for (id, started) in [
-            ("2026-10-09-141203", "2026-10-09T12:12:03Z"),
-            ("2026-10-09-141203-2", "2026-10-09T12:12:03+00:00"),
-            ("2025-01-01-000000", "2026-12-31T00:00:00Z"),
-            ("2026-10-10-090000", "2026-10-10T07:00:00Z"),
-        ] {
-            std::fs::create_dir(runs.join(id)).unwrap();
-            write_run_json(&runs.join(id), &info(id, started)).unwrap();
-            std::fs::write(runs.join(id).join(REPORT_MD), "# report\n").unwrap();
-        }
-        // Not listed: no run.json, a name that is not an id, run.json that is
-        // not JSON, a file named like a run, and a symlink to a real run.
-        std::fs::create_dir(runs.join("2026-10-11-000000")).unwrap();
-        std::fs::create_dir(runs.join("latest")).unwrap();
-        write_run_json(
-            &runs.join("latest"),
-            &info("latest", "2027-01-01T00:00:00Z"),
-        )
-        .unwrap();
-        std::fs::create_dir(runs.join("2026-10-12-000000")).unwrap();
-        std::fs::write(runs.join("2026-10-12-000000").join(RUN_JSON), "{").unwrap();
-        std::fs::write(runs.join("2026-10-13-000000"), "not a directory").unwrap();
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(
-            runs.join("2026-10-10-090000"),
-            runs.join("2026-10-14-000000"),
-        )
-        .unwrap();
+    fn graphs_start_when_the_graphs_do_not_cover_the_run() {
+        let mut attack = GooseAttack::initialize_with_config(configuration(None)).unwrap();
+        attack.output.started = Some(Utc.with_ymd_and_hms(2026, 10, 22, 10, 0, 0).unwrap());
+        assert_eq!(attack.report_record(false, 0).graphs_start, None);
+        attack.output.save_report = true;
+        let start = attack.report_record(false, 300).graphs_start.unwrap();
+        assert_eq!(start.time, "2026-10-22T10:05:00Z");
+        assert!(start
+            .reason
+            .contains("Save report was off for part of the run"));
+        attack.output.save_report = false;
+        let start = attack.report_record(false, 300).graphs_start.unwrap();
+        assert!(start.reason.starts_with("Save report is off"));
+    }
 
-        let listing = list_runs(&runs, "given/dir").unwrap();
-        let ids: Vec<&str> = listing.runs.iter().map(|run| run.id.as_str()).collect();
+    /// Rule 5: the report written at the end of a run whose graph data no
+    /// longer reaches back to its start records where its graphs start.
+    #[tokio::test]
+    async fn the_end_of_run_report_says_where_its_graphs_start() {
+        use crate::test_plan::{TestPlanHistory, TestPlanStepAction};
+        let parent = temp_dir("graphs-start");
+        let mut attack =
+            GooseAttack::initialize_with_config(configuration(Some(&parent.join("run")))).unwrap();
+        let started = Utc.with_ymd_and_hms(2026, 10, 22, 10, 0, 0).unwrap();
+        attack.run_in_progress = true;
+        attack.output.started = Some(started);
+        attack.output.save_report = true;
+        attack.output.folder =
+            Some(RunFolder::choose(&attack.configuration, Local::now()).unwrap());
+        for step in [TestPlanStepAction::Increasing, TestPlanStepAction::Finished] {
+            attack.metrics.history.push(TestPlanHistory::step(step, 0));
+        }
+        for second in 0..=900 {
+            attack.graph_data.record_users_per_second(1, second);
+        }
+        attack.graph_data.prune_to_window(600);
+        let origin = attack.graph_data.first_second();
+        assert!(origin > 0);
+        attack.write_end_of_run(false).await.unwrap();
+        let report: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(parent.join("run").join(REPORT_JSON)).unwrap(),
+        )
+        .unwrap();
         assert_eq!(
-            ids,
-            vec![
-                "2025-01-01-000000",
-                "2026-10-10-090000",
-                "2026-10-09-141203-2",
-                "2026-10-09-141203",
-            ]
+            report["graphs_start"]["time"],
+            rfc3339(started + chrono::Duration::seconds(origin as i64))
         );
-        assert_eq!(listing.dir, "given/dir");
-        let expected: u64 = ids
-            .iter()
-            .map(|id| {
-                ["run.json", REPORT_MD]
-                    .iter()
-                    .map(|f| std::fs::metadata(runs.join(id).join(f)).unwrap().len())
-                    .sum::<u64>()
+        std::fs::remove_dir_all(&parent).ok();
+    }
+
+    /// Rule 11: a report written while the run continues is marked in
+    /// progress, has no end, and says so at its top.
+    #[test]
+    fn a_report_saved_now_is_marked_in_progress() {
+        let mut attack = GooseAttack::initialize_with_config(configuration(None)).unwrap();
+        attack.run_in_progress = true;
+        attack.output.started = Some(Utc::now());
+        let record = attack.report_record(true, 0);
+        assert!(record.in_progress);
+        assert_eq!((record.ended.as_deref(), record.ended_by), (None, None));
+        assert_eq!(record.intro(), vec![IN_PROGRESS.to_string()]);
+        let record = attack.report_record(false, 0);
+        assert!(!record.in_progress);
+        assert_eq!(record.ended_by, Some(EndedBy::Completed));
+        assert!(record.intro().is_empty());
+    }
+
+    /// The graph data is kept whole when a `--report-file` path or Save report
+    /// needs it, when the run starts and after Save report is turned on or off.
+    #[test]
+    fn keeps_full_graph_table() {
+        for path in [false, true] {
+            for bare in [false, true] {
+                for dashboard in [false, true] {
+                    let mut report_file = Vec::new();
+                    if path {
+                        report_file.push("report.html".to_string());
+                    }
+                    if bare {
+                        report_file.push(RUN_FOLDER.to_string());
+                    }
+                    let mut attack = GooseAttack::initialize_with_config(GooseConfiguration {
+                        report_file,
+                        dashboard,
+                        ..Default::default()
+                    })
+                    .unwrap();
+                    let save = attack.configuration.save_report_at_start();
+                    assert_eq!(save, bare || dashboard);
+                    for save in [save, !save] {
+                        attack.output.save_report = save;
+                        assert_eq!(
+                            attack.keeps_full_graph(),
+                            path || save,
+                            "path={path} bare={bare} dashboard={dashboard} save={save}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Turning Save report off tells the metrics processor to stop keeping
+    /// the whole run's graphs only when no `--report-file` path needs them.
+    #[cfg(feature = "dashboard")]
+    #[tokio::test]
+    async fn save_report_off_keeps_the_graphs_a_path_needs() {
+        for (path, sent) in [(true, None), (false, Some(false))] {
+            let report_file = if path {
+                vec!["report.html".to_string()]
+            } else {
+                Vec::new()
+            };
+            let mut attack = GooseAttack::initialize_with_config(GooseConfiguration {
+                report_file,
+                no_telnet: true,
+                no_websocket: true,
+                ..Default::default()
             })
-            .sum();
-        assert_eq!(listing.total_bytes, expected);
+            .unwrap();
+            let mut run_state = attack.initialize_attack().await.unwrap();
+            let (metrics_cmd_tx, metrics_cmd_rx) = flume::unbounded();
+            run_state.metrics_cmd_tx = metrics_cmd_tx;
+            attack.run_in_progress = true;
+            attack.output.save_report = true;
+            assert!(attack.control_report(&mut run_state, Some(false), None).ok);
+            let keep = metrics_cmd_rx.try_iter().find_map(|command| match command {
+                MetricsCommand::KeepGraph { keep, .. } => Some(keep),
+                _ => None,
+            });
+            assert_eq!(keep, sent, "path={path}");
+        }
+    }
 
-        // A runs directory that does not exist lists nothing.
-        let missing = list_runs(&runs.join("missing"), "missing").unwrap();
-        assert!(missing.runs.is_empty());
-        assert_eq!(missing.total_bytes, 0);
-        std::fs::remove_dir_all(&runs).ok();
+    /// The run's folder goes at its end when the run wrote nothing into it;
+    /// otherwise only [`RESERVED`] goes.
+    #[test]
+    fn a_released_folder_goes_only_when_empty() {
+        let parent = temp_dir("release");
+        let started = Local::now();
+        let empty =
+            RunFolder::choose(&configuration(Some(&parent.join("empty"))), started).unwrap();
+        let mut output = Output::default();
+        output.reserved = Some(empty.path.clone());
+        output.release_folder();
+        assert!(!empty.path.exists());
+        let used = RunFolder::choose(&configuration(Some(&parent.join("used"))), started).unwrap();
+        std::fs::write(used.file("goose.log"), "x").unwrap();
+        output.reserved = Some(used.path.clone());
+        output.release_folder();
+        assert!(used.file("goose.log").exists());
+        assert!(!used.file(RESERVED).exists());
+        std::fs::remove_dir_all(&parent).ok();
+    }
+
+    /// A folder report that fails ends the run with an error, unless the
+    /// session returns to Idle, which shows the reason instead; a
+    /// `--report-file` path that fails is an error either way.
+    #[tokio::test]
+    async fn a_failed_folder_report_is_an_error_unless_the_session_goes_on() {
+        let parent = temp_dir("end-of-run-error");
+        let run = |report_file: Vec<String>| {
+            let mut attack = GooseAttack::initialize_with_config(GooseConfiguration {
+                report_file,
+                ..configuration(Some(&parent.join("run")))
+            })
+            .unwrap();
+            let folder = RunFolder::choose(&attack.configuration, Local::now()).unwrap();
+            // A folder where report.html goes, so the write fails.
+            std::fs::create_dir(folder.file(REPORT_HTML)).unwrap();
+            attack.run_in_progress = true;
+            attack.output.started = Some(Utc::now());
+            attack.output.save_report = true;
+            attack.output.folder = Some(folder);
+            attack
+        };
+        let mut attack = run(Vec::new());
+        assert!(attack.write_end_of_run(false).await.is_err());
+        let mut attack = run(Vec::new());
+        attack.write_end_of_run(true).await.unwrap();
+        let error = attack.output.error().unwrap_or_default();
+        assert!(error.contains(&*parent.to_string_lossy()), "{}", error);
+        let missing = parent.join("missing").join("report.html");
+        let mut attack = run(vec![missing.to_string_lossy().into_owned()]);
+        assert!(attack.write_end_of_run(true).await.is_err());
+        std::fs::remove_dir_all(&parent).ok();
+    }
+
+    /// The banner's downloads name only a folder the report routes take.
+    #[cfg(feature = "dashboard")]
+    #[test]
+    fn last_report_name_is_only_a_name_the_routes_take() {
+        let mut attack =
+            GooseAttack::initialize_with_config(GooseConfiguration::default()).unwrap();
+        for (folder, name) in [
+            ("goose-runs/nightly", Some("nightly")),
+            ("goose-runs/nightly run", None),
+        ] {
+            attack.output.last_report = Some(folder.to_string());
+            assert_eq!(
+                attack.report_snapshot().last_report_name.as_deref(),
+                name,
+                "{}",
+                folder
+            );
+        }
+    }
+
+    /// New fields default, so a JSON report from before them loads.
+    #[test]
+    fn a_record_without_its_fields_loads() {
+        let record: RunRecord = serde_json::from_str("{}").unwrap();
+        assert_eq!(record, RunRecord::default());
     }
 
     #[test]
-    fn save_outcome_display() {
-        let saved = SaveOutcome::Saved {
-            id: "2026-10-09-141203".to_string(),
-            files: vec![
-                "goose-runs/2026-10-09-141203/report.html".to_string(),
-                "goose-runs/2026-10-09-141203/report.json".to_string(),
-            ],
-        };
+    fn parent_folder_holds_the_run_folder() {
+        assert_eq!(parent_folder(&configuration(None)), Path::new("goose-runs"));
+        let nested = configuration(Some(Path::new("goose-runs/nightly")));
+        assert_eq!(parent_folder(&nested), Path::new("goose-runs"));
+        let bare = configuration(Some(Path::new("nightly")));
+        assert_eq!(parent_folder(&bare), Path::new("."));
+    }
+
+    #[test]
+    fn a_gz_name_is_its_inner_format() {
+        assert_eq!(without_gz("report.json.gz"), ("report.json", true));
+        assert_eq!(without_gz("report.pdf.gz"), ("report.pdf", true));
+        assert_eq!(without_gz("report.json"), ("report.json", false));
+        // Only one .gz is taken off.
+        assert_eq!(without_gz("x.gz.gz"), ("x.gz", true));
+    }
+
+    /// A folder's JSON report is its report.json, else its report.json.gz,
+    /// and a gzipped report that is cut short is an error, never a panic.
+    #[test]
+    fn gzipped_reports_are_read_whole_or_not_at_all() {
+        use std::io::Write;
+        let dir = temp_dir("gz-read");
+        let json = dir.join("report.json.gz");
+        let mut gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        gzip.write_all(br#"{"notes": "zipped"}"#).unwrap();
+        let bytes = gzip.finish().unwrap();
+        std::fs::write(&json, &bytes).unwrap();
+        assert_eq!(crate::metrics::json_report_path(&dir), json);
+        let text = crate::metrics::read_report_text(&json).unwrap();
+        assert_eq!(text, r#"{"notes": "zipped"}"#);
+        std::fs::write(dir.join("report.json"), "{}").unwrap();
         assert_eq!(
-            saved.to_string(),
-            "Saved run 2026-10-09-141203:\n  goose-runs/2026-10-09-141203/report.html\n  goose-runs/2026-10-09-141203/report.json\n"
+            crate::metrics::json_report_path(&dir),
+            dir.join("report.json")
         );
-        let failed = SaveOutcome::Failed {
-            id: "2026-10-09-141203".to_string(),
-            error: "Permission denied (os error 13)".to_string(),
+
+        std::fs::write(&json, &bytes[..bytes.len() - 6]).unwrap();
+        assert!(crate::metrics::read_report_text(&json).is_err());
+        std::fs::write(&json, b"plain text").unwrap();
+        assert!(crate::metrics::read_report_text(&json).is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(feature = "dashboard")]
+    #[test]
+    fn delete_takes_plain_and_gzipped_names() {
+        let names = deletable_files();
+        for name in [
+            "report.json",
+            "report.json.gz",
+            "goose.log.gz",
+            "requests.csv.gz",
+        ] {
+            assert!(names.iter().any(|n| n == name), "{}", name);
+        }
+        assert!(!names.iter().any(|n| n.contains('/')));
+    }
+
+    /// Rule 12: a listing parses a report again when it changes, so the
+    /// report that replaces one saved now lists as ended, never as running
+    /// or incomplete; a report marked in progress is running only for the
+    /// run in progress.
+    #[cfg(feature = "dashboard")]
+    #[test]
+    fn a_changed_report_is_listed_again() {
+        let parent = temp_dir("listing");
+        let folder = parent.join("run");
+        std::fs::create_dir(&folder).unwrap();
+        let json = folder.join(REPORT_JSON);
+        let report = |in_progress: bool, requests: u64| {
+            serde_json::json!({
+                "in_progress": in_progress,
+                "started": "2026-10-22T10:00:00Z",
+                "raw_metrics": {"requests": {"GET /": {"success_count": requests, "fail_count": 0}}},
+            })
+            .to_string()
         };
+        let mut cache = ListingCache::new();
+        std::fs::write(&json, report(true, 5)).unwrap();
+        let listed = list_reports(&parent, Some(&folder), &mut cache).unwrap();
+        assert!(listed[0].record.in_progress && listed[0].running);
+        assert_eq!(listed[0].requests, 5);
+        let listed = list_reports(&parent, None, &mut cache).unwrap();
+        assert!(listed[0].record.in_progress && !listed[0].running);
+
+        std::fs::write(&json, report(false, 12345)).unwrap();
+        let listed = list_reports(&parent, Some(&folder), &mut cache).unwrap();
+        assert!(!listed[0].record.in_progress && !listed[0].running);
+        assert_eq!(listed[0].requests, 12345);
+        std::fs::remove_dir_all(&parent).ok();
+    }
+
+    #[test]
+    fn log_names_follow_the_format() {
+        assert_eq!(log_file_name("requests", None), "requests.json");
         assert_eq!(
-            failed.to_string(),
-            "Couldn't save run 2026-10-09-141203: Permission denied (os error 13).\n"
+            log_file_name("errors", Some(&GooseLogFormat::Csv)),
+            "errors.csv"
         );
-        assert_eq!(display_join("goose-runs/", "x"), "goose-runs/x");
-        assert_eq!(display_join("goose-runs", "x"), "goose-runs/x");
+        assert_eq!(
+            log_file_name("debug", Some(&GooseLogFormat::Pretty)),
+            "debug.log"
+        );
+        assert_eq!(
+            log_file_name("scenarios", Some(&GooseLogFormat::Raw)),
+            "scenarios.log"
+        );
     }
 }

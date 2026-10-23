@@ -22,6 +22,8 @@ use serde::{Deserialize, Serialize};
 /// The following templates are necessary to build an html-formatted summary report.
 #[derive(Debug)]
 pub(crate) struct GooseReportTemplates<'a> {
+    /// Paragraphs under the title: the notes, and what the graphs cover.
+    pub notes_template: &'a str,
     pub raw_requests_template: &'a str,
     pub raw_responses_template: &'a str,
     pub co_requests_template: &'a str,
@@ -653,6 +655,23 @@ pub(crate) fn coordinated_omission_metrics_template(
     )
 }
 
+/// `text` with the characters HTML gives a meaning escaped, for an element's
+/// text.
+pub(crate) fn escape_html(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&#39;"),
+            _ => escaped.push(c),
+        }
+    }
+    escaped
+}
+
 /// Build the html report.
 pub(crate) fn build_report(
     users: &str,
@@ -682,6 +701,10 @@ pub(crate) fn build_report(
 
         .info span{{
             color: #b3c3bc;
+        }}
+
+        .notes {{
+            white-space: pre-wrap;
         }}
 
         table {{
@@ -737,6 +760,8 @@ pub(crate) fn build_report(
 <body>
     <div class="container">
         <h1>Goose Attack Report</h1>
+
+        {notes_template}
 
         <div class="info">
             <p>Users: <span>{users}</span> </p>
@@ -834,6 +859,7 @@ pub(crate) fn build_report(
     </div>
 </body>
 </html>"#,
+        notes_template = templates.notes_template,
         users = users,
         steps_rows = steps_rows,
         hosts = hosts,

@@ -18,7 +18,7 @@
       <span id="hosts" class="meta-item" title="Target hosts">—</span>
       <span id="run-settings" class="meta-item meta-wrap" hidden></span>
       <span id="duration" class="meta-item" title="Test duration">0s</span>
-      <span id="save-status" class="meta-item save-status" title="Saved runs"></span>
+      <span id="run-notes" class="meta-item run-notes" title="Notes" hidden></span>
       <span id="connection" class="connection disconnected" title="Connection status">
         <span class="dot" aria-hidden="true"></span>
         <span id="connection-label">connecting</span>
@@ -27,6 +27,13 @@
   </header>
 
   <main>
+  <div id="folder-banner" class="run-banner error" aria-live="polite" hidden></div>
+  <section id="report-bar" class="report-bar" aria-label="Report">
+    <label class="report-switch"><input type="checkbox" id="save-report" aria-disabled="true"> Save report</label>
+    <label class="report-switch"><input type="checkbox" id="graph-data" aria-disabled="true"> Include graph data</label>
+    <button type="button" id="save-now" class="ctrl-btn" aria-disabled="true" hidden>Save report now</button>
+    <span id="report-paths" class="report-paths" hidden></span>
+  </section>
   <section id="banner" class="banner hidden" role="status"></section>
   <p id="announce" class="visually-hidden" role="status"></p>
 
@@ -350,13 +357,14 @@
   </section>
 
   <section id="runs-panel" class="card" aria-labelledby="runs-heading">
-    <h2 id="runs-heading">Saved runs</h2>
-    <div class="table-wrap" tabindex="0" role="region" aria-label="Saved runs table">
+    <h2 id="runs-heading">Runs</h2>
+    <div class="table-wrap" tabindex="0" role="region" aria-label="Runs table">
       <table id="runs-table">
         <thead>
           <tr>
             <th scope="col">Run</th>
             <th scope="col">Started</th>
+            <th scope="col">Notes</th>
             <th scope="col">Duration</th>
             <th scope="col">Users</th>
             <th scope="col">Requests</th>
@@ -371,7 +379,7 @@
         <tbody id="runs-body"></tbody>
       </table>
     </div>
-    <p id="runs-empty" class="table-note">No saved runs yet.</p>
+    <p id="runs-empty" class="table-note">No reports yet.</p>
     <div class="runs-actions">
       <button type="button" id="runs-show-all" class="ctrl-btn" hidden>Show all</button>
       <p id="runs-compare-note" class="runs-compare-note" hidden></p>

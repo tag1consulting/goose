@@ -12,10 +12,10 @@ use crate::metrics::{buckets, GooseRequestMetricTimingData};
 use crate::test_plan::{TestPlanHistory, TestPlanStepAction};
 use chrono::prelude::*;
 use itertools::Itertools;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::convert::TryFrom;
 use std::fmt::Write;
 use std::marker::PhantomData;
@@ -972,6 +972,19 @@ impl LatencyRing {
         }
     }
 
+    /// Fold every packed second from `from` on into the columns; open
+    /// seconds fold in as they pack.
+    fn fold_packed(&mut self, from: usize, sink: &mut ColumnSink<'_>) {
+        let (slots, columns) = (&self.slots, &mut self.columns);
+        for slot in slots.iter().flatten() {
+            if slot.second >= from && slot.data.open.is_none() {
+                sink.feed(columns.as_mut(), slot.second, |column| {
+                    column.merge(&slot.data)
+                });
+            }
+        }
+    }
+
     /// [`Self::slot`], to build and keep its heatmap cells.
     fn slot_at_mut(&mut self, second: usize) -> Option<&mut RingSlot> {
         self.slots[second % SERIES_WINDOW_SECS as usize]
@@ -1060,6 +1073,7 @@ impl MeasuredColumns for AllRequests<'_> {
 /// while coordinated omission mitigation is on. A batch's response times for
 /// a name go to one ring; the all requests column of a second is only added
 /// up when a heatmap needs it.
+#[derive(Clone)]
 pub(crate) struct LatencyHistograms {
     /// Requests whose names have no ring of their own.
     others: LatencyRing,
@@ -1373,6 +1387,47 @@ impl LatencyHistograms {
             let mut ring = LatencyRing::with_columns(columns);
             ring.record_to(second, us, rev, &mut sink);
             by_request.insert(key.to_string(), ring);
+        }
+    }
+
+    /// Start or stop keeping whole run columns for the report's heatmap
+    /// while the run goes on, `now` being the current second. Started, the
+    /// columns count from the oldest second the rings can hold and take every
+    /// second they hold; stopped, the columns go.
+    fn keep_columns(&mut self, keep: bool, now: usize) {
+        if keep == self.all_columns.is_some() {
+            return;
+        }
+        let columns = || keep.then(Columns::default);
+        self.all_columns = columns();
+        for ring in self.rings.iter_mut() {
+            ring.columns = columns();
+        }
+        if let Some((all, by_request)) = self.synthetic.as_mut() {
+            all.columns = columns();
+            for ring in by_request.values_mut() {
+                ring.columns = columns();
+            }
+        }
+        self.origin = now.saturating_sub(SERIES_WINDOW_SECS as usize - 1);
+        self.all_width = 1;
+        self.request_width = 1;
+        self.set_limit();
+        if !keep {
+            return;
+        }
+        self.fit_columns(now);
+        let origin = self.origin;
+        for index in (0..self.rings.len()).map(Some).chain([None]) {
+            let (ring, mut sink) = self.ring(index);
+            ring.fold_packed(origin, &mut sink);
+        }
+        let (all_width, request_width) = (self.all_width, self.request_width);
+        if let Some((all, by_request)) = self.synthetic.as_mut() {
+            all.fold_packed(origin, &mut ColumnSink::own(origin, all_width));
+            for ring in by_request.values_mut() {
+                ring.fold_packed(origin, &mut ColumnSink::own(origin, request_width));
+            }
         }
     }
 
@@ -1819,7 +1874,106 @@ const REPORT_HEATMAP_MIDDLE: &str = r#"</script>
 const REPORT_HEATMAP_TAIL: &str = r#"</script>
             </div>"#;
 
-/// Used to collect graph data during a load test.
+/// The report heatmap's card, with `heatmap` as its JSON, or nothing when it
+/// can't be written.
+pub(crate) fn heatmap_card<H: Serialize + ?Sized>(heatmap: &H) -> String {
+    let mut card = REPORT_HEATMAP_HEAD.as_bytes().to_vec();
+    let mut serializer = serde_json::Serializer::with_formatter(&mut card, ScriptFormatter);
+    if heatmap.serialize(&mut serializer).is_err() {
+        return String::new();
+    }
+    card.extend_from_slice(REPORT_HEATMAP_MIDDLE.as_bytes());
+    card.extend_from_slice(REPORT_HEATMAP_SCRIPT.as_bytes());
+    card.extend_from_slice(REPORT_HEATMAP_TAIL.as_bytes());
+    card.shrink_to_fit();
+    String::from_utf8(card).unwrap_or_default()
+}
+
+/// The per second data the HTML report graphs, as the JSON report holds it
+/// with `--report-graph-data`: each series as its first second and its
+/// values, request names in order, and the heatmap as the HTML report embeds
+/// it.
+#[derive(Serialize)]
+pub(crate) struct ReportGraphs<'a> {
+    requests_per_second: BTreeMap<&'a str, &'a TimeSeries<u32, u32>>,
+    errors_per_second: BTreeMap<&'a str, &'a TimeSeries<u32, u32>>,
+    average_response_time: BTreeMap<&'a str, &'a TimeSeries<MovingAverage, f32>>,
+    transactions_per_second: &'a TimeSeries<usize, usize>,
+    scenarios_per_second: &'a TimeSeries<usize, usize>,
+    users_per_second: &'a TimeSeries<usize, usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    heatmap: Option<ReportGraphsHeatmap<'a>>,
+}
+
+/// The heatmap in the JSON report: built from the histograms, or read back
+/// from a JSON report.
+enum ReportGraphsHeatmap<'a> {
+    Live(ReportHeatmap<SeriesStream<'a>>),
+    Recorded(&'a serde_json::Value),
+}
+
+impl Serialize for ReportGraphsHeatmap<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            ReportGraphsHeatmap::Live(heatmap) => heatmap.serialize(serializer),
+            ReportGraphsHeatmap::Recorded(heatmap) => heatmap.serialize(serializer),
+        }
+    }
+}
+
+/// The graph data of a JSON report read back, to render its HTML report.
+#[derive(Deserialize)]
+pub(crate) struct RecordedGraphs {
+    #[serde(default)]
+    requests_per_second: HashMap<String, TimeSeries<u32, u32>>,
+    #[serde(default)]
+    errors_per_second: HashMap<String, TimeSeries<u32, u32>>,
+    #[serde(default)]
+    average_response_time: HashMap<String, TimeSeries<MovingAverage, f32>>,
+    #[serde(default = "TimeSeries::new")]
+    transactions_per_second: TimeSeries<usize, usize>,
+    #[serde(default = "TimeSeries::new")]
+    scenarios_per_second: TimeSeries<usize, usize>,
+    #[serde(default = "TimeSeries::new")]
+    users_per_second: TimeSeries<usize, usize>,
+    #[serde(default)]
+    heatmap: Option<serde_json::Value>,
+}
+
+impl RecordedGraphs {
+    /// The graph data, and the heatmap as the JSON report holds it.
+    pub(crate) fn into_parts(self) -> (GraphData, Option<serde_json::Value>) {
+        let items = |series: HashMap<String, TimeSeries<u32, u32>>| ItemsPerSecond {
+            series: series
+                .into_iter()
+                .map(|(name, counts)| {
+                    (
+                        name,
+                        KeySeries {
+                            counts,
+                            pending: None,
+                        },
+                    )
+                })
+                .collect(),
+            origin: 0,
+        };
+        let graph_data = GraphData {
+            requests_per_second: items(self.requests_per_second),
+            errors_per_second: items(self.errors_per_second),
+            average_response_time_per_second: self.average_response_time,
+            transactions_per_second: self.transactions_per_second,
+            scenarios_per_second: self.scenarios_per_second,
+            users_per_second: self.users_per_second,
+            latency: None,
+        };
+        (graph_data, self.heatmap)
+    }
+}
+
+/// Used to collect graph data during a load test. Cloned for Save report now,
+/// which writes a report while the run goes on.
+#[derive(Clone)]
 pub(crate) struct GraphData {
     /// Counts requests per second for each request type.
     requests_per_second: ItemsPerSecond,
@@ -2020,6 +2174,34 @@ impl GraphData {
         }
     }
 
+    /// The first second of the run the graph data holds: 0, unless the
+    /// dashboard's window dropped older seconds.
+    pub(crate) fn first_second(&self) -> usize {
+        self.users_per_second.origin
+    }
+
+    /// Whether the heatmap keeps whole run columns (unit tests).
+    #[cfg(test)]
+    pub(crate) fn has_latency_columns_for_test(&self) -> bool {
+        self.latency
+            .as_ref()
+            .is_some_and(|latency| latency.all_columns.is_some())
+    }
+
+    /// Start or stop keeping the report heatmap's whole run columns while the
+    /// run goes on, as Save report is turned on or off; `now` is the current
+    /// second on the series clock.
+    pub(crate) fn keep_latency_columns(&mut self, keep: bool, now: usize) {
+        if keep {
+            // Every response time held moves to its ring first, so the
+            // columns take it.
+            self.move_pending_latency();
+        }
+        if let Some(histograms) = self.latency.as_mut() {
+            histograms.keep_columns(keep, now);
+        }
+    }
+
     /// At the end of the run: move every pending response time to its ring
     /// and pack every open second, so the heatmap's whole run columns hold
     /// every time recorded.
@@ -2056,16 +2238,58 @@ impl GraphData {
         };
         // The JSON goes straight into the card, one series at a time, so
         // no other copy of it, or of every series' columns, is ever held.
-        let mut card = REPORT_HEATMAP_HEAD.as_bytes().to_vec();
-        let mut serializer = serde_json::Serializer::with_formatter(&mut card, ScriptFormatter);
-        if heatmap.serialize(&mut serializer).is_err() {
-            return String::new();
+        heatmap_card(&heatmap)
+    }
+
+    /// The report's heatmap, for the JSON report, when whole run columns are
+    /// kept and hold a response time.
+    fn report_heatmap(
+        &self,
+        co_active: bool,
+        started: DateTime<Utc>,
+    ) -> Option<ReportHeatmap<SeriesStream<'_>>> {
+        let latency = self.latency.as_ref().filter(|latency| {
+            latency
+                .all_columns
+                .as_ref()
+                .is_some_and(|all| all.columns.iter().any(|column| column.counter > 0))
+        })?;
+        latency.report_heatmap_with(co_active, started, SeriesStream { latency, co_active })
+    }
+
+    /// The per second data the HTML report graphs, for the JSON report. A
+    /// heatmap read back from a JSON report, `recorded`, goes in as it is.
+    pub(crate) fn report_graphs<'a>(
+        &'a self,
+        co_active: bool,
+        started: DateTime<Utc>,
+        recorded: Option<&'a serde_json::Value>,
+    ) -> ReportGraphs<'a> {
+        let counts = |items: &'a ItemsPerSecond| {
+            items
+                .series
+                .iter()
+                .map(|(name, series)| (name.as_str(), &series.counts))
+                .collect()
+        };
+        ReportGraphs {
+            requests_per_second: counts(&self.requests_per_second),
+            errors_per_second: counts(&self.errors_per_second),
+            average_response_time: self
+                .average_response_time_per_second
+                .iter()
+                .map(|(name, series)| (name.as_str(), series))
+                .collect(),
+            transactions_per_second: &self.transactions_per_second,
+            scenarios_per_second: &self.scenarios_per_second,
+            users_per_second: &self.users_per_second,
+            heatmap: match recorded {
+                Some(recorded) => Some(ReportGraphsHeatmap::Recorded(recorded)),
+                None => self
+                    .report_heatmap(co_active, started)
+                    .map(ReportGraphsHeatmap::Live),
+            },
         }
-        card.extend_from_slice(REPORT_HEATMAP_MIDDLE.as_bytes());
-        card.extend_from_slice(REPORT_HEATMAP_SCRIPT.as_bytes());
-        card.extend_from_slice(REPORT_HEATMAP_TAIL.as_bytes());
-        card.shrink_to_fit();
-        String::from_utf8(card).unwrap_or_default()
     }
 
     /// Whether response times are kept by second for the heatmaps.
@@ -2896,6 +3120,7 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
                             label = label,
                             values = json!(self.add_timestamp_to_html_graph_data(
                                 &sub_data.get_graph_data(),
+                                sub_data.origin,
                                 test_started_time
                             ))
                         );
@@ -3003,6 +3228,7 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
                 html_id = self.html_id,
                 main_values = json!(self.add_timestamp_to_html_graph_data(
                     &main_values.get_graph_data(),
+                    main_values.origin,
                     test_started_time
                 )),
                 y_axis_label = self.y_axis_label,
@@ -3022,22 +3248,21 @@ impl<'a, T: Clone + TimeSeriesValue<T, U>, U: Serialize + Copy + PartialEq + Par
     fn add_timestamp_to_html_graph_data(
         &self,
         data: &[Option<U>],
+        origin: usize,
         started: DateTime<Utc>,
     ) -> Vec<(String, U)> {
+        // A second no clock can show, from an origin read back from a JSON
+        // report, is left out rather than drawn.
         data.iter()
             .enumerate()
-            .map(|(second, value)| {
-                (
-                    Local
-                        .timestamp_opt(second as i64 + started.timestamp(), 0)
-                        // @TODO: Error handling
-                        .unwrap()
-                        .format("%Y-%m-%d %H:%M:%S")
-                        .to_string(),
-                    *value,
-                )
+            .filter_map(|(index, value)| {
+                let second = origin
+                    .checked_add(index)
+                    .and_then(|second| i64::try_from(second).ok())
+                    .and_then(|second| second.checked_add(started.timestamp()))?;
+                let time = Local.timestamp_opt(second, 0).single()?;
+                value.map(|data| (time.format("%Y-%m-%d %H:%M:%S").to_string(), data))
             })
-            .filter_map(|(time, data_option)| data_option.map(|data| (time, data)))
             .collect::<Vec<_>>()
     }
 }
@@ -3327,6 +3552,43 @@ impl<T: Clone + TimeSeriesValue<T, U>, U> TimeSeries<T, U> {
     }
 }
 
+/// A series in the JSON report: its first second and its values.
+impl<T: Serialize + TimeSeriesValue<T, U>, U> Serialize for TimeSeries<T, U> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut series = serializer.serialize_struct("TimeSeries", 2)?;
+        series.serialize_field("origin", &self.origin)?;
+        series.serialize_field("data", &self.data)?;
+        series.end()
+    }
+}
+
+/// A series read back from the JSON report, its total worked out again.
+impl<'de, T, U> Deserialize<'de> for TimeSeries<T, U>
+where
+    T: Deserialize<'de> + Clone + TimeSeriesValue<T, U>,
+{
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Stored<T> {
+            #[serde(default)]
+            origin: usize,
+            data: VecDeque<T>,
+        }
+        let stored = Stored::<T>::deserialize(deserializer)?;
+        let mut total = T::initial_value();
+        for value in &stored.data {
+            total.merge(value);
+        }
+        Ok(TimeSeries {
+            data: stored.data,
+            origin: stored.origin,
+            total,
+            phantom: PhantomData,
+        })
+    }
+}
+
 impl TimeSeries<u32, u32> {
     /// Takes one back from a given second, stopping at zero. Does nothing for
     /// a second the series does not hold.
@@ -3440,13 +3702,26 @@ impl TimeSeriesValue<MovingAverage, f32> for MovingAverage {
 /// Data structure to maintain moving averages.
 ///
 /// It will maintain the current average and the number of data items that
-/// were used to compute it.
-#[derive(Debug, Clone, Copy)]
+/// were used to compute it. The JSON report holds it as `[count, average]`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(from = "(u32, f32)", into = "(u32, f32)")]
 pub(crate) struct MovingAverage {
     /// Number of data items that were used to compute the current average.
     count: u32,
     /// Current average.
     average: f32,
+}
+
+impl From<(u32, f32)> for MovingAverage {
+    fn from((count, average): (u32, f32)) -> Self {
+        MovingAverage { count, average }
+    }
+}
+
+impl From<MovingAverage> for (u32, f32) {
+    fn from(average: MovingAverage) -> Self {
+        (average.count, average.average)
+    }
 }
 
 impl MovingAverage {
@@ -5489,9 +5764,24 @@ mod test {
         let empty = HashMap::new();
         let graph: Graph<usize, usize> = Graph::new("html_id", "Label", true, &empty);
 
+        // A series that starts later, as after Save report is turned on during
+        // a run, is drawn from its own first second.
+        let later = graph.add_timestamp_to_html_graph_data(
+            &data[2..],
+            2,
+            Utc.with_ymd_and_hms(2021, 12, 14, 15, 12, 23).unwrap(),
+        );
+        let all = graph.add_timestamp_to_html_graph_data(
+            &data,
+            0,
+            Utc.with_ymd_and_hms(2021, 12, 14, 15, 12, 23).unwrap(),
+        );
+        assert_eq!(later, all[2..]);
+
         assert_eq!(
             graph.add_timestamp_to_html_graph_data(
                 &data,
+                0,
                 Utc.with_ymd_and_hms(2021, 12, 14, 15, 12, 23).unwrap()
             ),
             vec![
@@ -6645,18 +6935,59 @@ mod test {
         assert_eq!(columns("GET /b").columns[20].counter, 1);
     }
 
-    /// Without whole run columns, as for the dashboard alone, the rings
-    /// work as before and the report has no heatmap.
+    /// A report whose graphs start after the run did, as after Save report
+    /// is turned on during a run, draws them from their first second, also
+    /// when it is rendered again from its JSON report.
+    #[test]
+    fn graphs_that_start_late_keep_their_first_second() {
+        let mut graph = GraphData::new();
+        for second in 0..=900 {
+            graph.record_users_per_second(10, second);
+            graph.record_requests_per_second("GET /a", second);
+            graph.record_requests_per_second("GET /b", second);
+        }
+        graph.prune_to_window(600);
+        let origin = graph.first_second();
+        assert!(origin > 0);
+        let started = Utc.with_ymd_and_hms(2026, 10, 22, 10, 0, 0).unwrap();
+        let at = |second: usize| {
+            Local
+                .timestamp_opt(started.timestamp() + second as i64, 0)
+                .unwrap()
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string()
+        };
+        let check = |graph: &GraphData| {
+            for markup in [
+                graph.get_active_users_graph(false).get_markup(&[], started),
+                graph
+                    .get_requests_per_second_graph(true)
+                    .get_markup(&[], started),
+            ] {
+                assert!(markup.contains(&at(origin)), "{}", markup);
+                assert!(!markup.contains(&at(origin - 1)), "{}", markup);
+            }
+        };
+        check(&graph);
+        let json = serde_json::to_string(&graph.report_graphs(false, started, None)).unwrap();
+        let (again, _) = serde_json::from_str::<RecordedGraphs>(&json)
+            .unwrap()
+            .into_parts();
+        assert_eq!(again.first_second(), origin);
+        check(&again);
+    }
+
+    /// Without whole run columns, as for the dashboard with Save report off,
+    /// the rings work as before and the report has no heatmap.
     #[test]
     fn no_columns_without_a_report() {
         let configuration =
-            crate::GooseConfiguration::parse_args_default(&["--dashboard", "--no-save"]).unwrap();
+            crate::GooseConfiguration::parse_args_default(&["--dashboard"]).unwrap();
         assert!(configuration.records_latency_series());
-        assert!(!configuration.records_latency_columns());
         let mut graph = GraphData::for_metrics_processor(
             configuration.records_latency_series(),
             configuration.records_synthetic_latency(),
-            configuration.records_latency_columns(),
+            false,
         );
         for second in 0..10 {
             graph.record_request_per_second_and_latency("GET /a", second, Some(10));
@@ -6668,7 +6999,7 @@ mod test {
         assert_eq!(latency.limit, usize::MAX);
         assert_eq!(graph.get_latency_heatmap_markup(false, Utc::now()), "");
 
-        // A saved run under the off switch keeps no histograms at all.
+        // A report under the off switch keeps no histograms at all.
         for args in [
             vec!["--no-percentiles-over-time"],
             vec!["--no-percentiles-over-time", "--report-file", "r.html"],

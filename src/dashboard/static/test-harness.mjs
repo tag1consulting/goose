@@ -21,7 +21,7 @@ function jsonResponse(status, body) {
   };
 }
 
-// A file download (or its error), as the saved run routes answer.
+// A file download (or its error), as the report routes answer.
 function fileResponse(status, body, filename) {
   const headers = new Map();
   if (filename) {
@@ -53,18 +53,19 @@ function fileResponse(status, body, filename) {
 // `controlDelayMs` (default 0) holds each control answer that long, so a test
 // can act while a request is in flight. `controlAnswer(command, body)`, given
 // the command (the last path segment) and the parsed body, may return
-// `{ status, body }` to answer an authorized control request with, or
-// undefined for the default answer.
+// `{ status, body }` to answer an authorized control request with, a promise
+// of it, to answer when the test resolves it, or undefined for the default
+// answer.
 //
 // Request heatmaps: `GET /api/v1/series` answers `seriesStatus` (default 200)
 // with the `series` body (default: an empty heatmap for the requested name),
 // or the body `series(url)` returns when it is a function, after
 // `seriesDelayMs` (default 0).
 //
-// Saved runs: `runs` is the listing `GET /api/v1/runs` answers (default: no
-// runs); a report or comparison under /api/v1/runs/ answers with a small body
-// and a Content-Disposition naming it, or `runFileStatus` with a one line
-// reason.
+// Reports: `reports` is the listing `GET /api/v1/reports` answers (default:
+// none); a report or comparison under /api/v1/reports/ answers with a small
+// body and a Content-Disposition naming it, or `reportFileStatus` with a one
+// line reason.
 export function stubServer(token, options = {}) {
   const {
     controlEnabled = false,
@@ -74,8 +75,8 @@ export function stubServer(token, options = {}) {
     controlBody = { error: "busy", message: "busy" },
     snapshotStatus = 200,
     snapshot = IDLE_SNAPSHOT,
-    runs = { dir: "goose-runs", total_bytes: 0, runs: [] },
-    runFileStatus = 200,
+    reports = { dir: "goose-runs", reports: [] },
+    reportFileStatus = 200,
     seriesStatus = 200,
     series = null,
     seriesDelayMs = 0,
@@ -90,21 +91,21 @@ export function stubServer(token, options = {}) {
     const bearer = headers["Authorization"] || "";
     const body = init && typeof init.body === "string" ? init.body : undefined;
     requests.push({ method, path: url.pathname, url: url.href, bearer, body });
-    if (url.pathname.startsWith("/api/v1/runs") && method === "DELETE") {
+    if (url.pathname.startsWith("/api/v1/reports") && method === "DELETE") {
       // Deletes are control: a Bearer token and no `?token=`.
       const ok =
         !url.searchParams.has("token") && bearer === "Bearer " + controlToken;
       return Promise.resolve(fileResponse(ok ? 204 : 401, ""));
     }
-    if (url.pathname.startsWith("/api/v1/runs")) {
+    if (url.pathname.startsWith("/api/v1/reports")) {
       const ok =
         url.searchParams.get("token") === token || bearer === "Bearer " + token;
       if (!ok) return Promise.resolve(fileResponse(401, "unauthorized"));
-      if (url.pathname === "/api/v1/runs") {
-        return Promise.resolve(jsonResponse(200, runs));
+      if (url.pathname === "/api/v1/reports") {
+        return Promise.resolve(jsonResponse(200, reports));
       }
-      if (runFileStatus !== 200) {
-        return Promise.resolve(fileResponse(runFileStatus, "Run x has no requests to compare."));
+      if (reportFileStatus !== 200) {
+        return Promise.resolve(fileResponse(reportFileStatus, "Run x has no requests to compare."));
       }
       const parts = url.pathname.split("/");
       const name = "goose-test-" + parts[4] + "-" + parts[5];
@@ -130,6 +131,9 @@ export function stubServer(token, options = {}) {
       const custom = controlAnswer
         ? controlAnswer(command, body === undefined ? undefined : JSON.parse(body))
         : undefined;
+      if (custom && typeof custom.then === "function") {
+        return custom.then((later) => jsonResponse(later.status, later.body));
+      }
       const answer = custom
         ? jsonResponse(custom.status, custom.body)
         : controlStatus === 200

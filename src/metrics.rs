@@ -22,7 +22,11 @@ mod microsecond_tests;
 pub use buckets::TimeBuckets;
 #[cfg(feature = "dashboard")]
 pub(crate) use common::compare_reports;
-pub(crate) use common::{load_baseline_file, ReportData};
+#[cfg(test)]
+pub(crate) use common::json_report_path;
+#[cfg(any(test, feature = "dashboard"))]
+pub(crate) use common::read_report_text;
+pub(crate) use common::{load_baseline_file, LoadedReport, ReportData};
 pub use coordinated_omission::{CadenceCalculator, CoMetricsSummary, CoordinatedOmissionMetrics};
 pub(crate) use dashboard_snapshot::DashboardSnapshot;
 pub(crate) use delta::{ApplyBaseline, DeltaTo, Value};
@@ -35,6 +39,7 @@ use crate::graph::GraphData;
 use crate::logger::{GooseLog, GooseLoggerTx};
 use crate::metrics::common::ReportOptions;
 use crate::report;
+use crate::runs::RunRecord;
 use crate::test_plan::{TestPlanHistory, TestPlanStepAction};
 use crate::util;
 use crate::{GooseAttack, GooseAttackRunState, GooseConfiguration, GooseError};
@@ -74,7 +79,6 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::fs::File;
-use tokio::io::AsyncWriteExt;
 
 /// Used to send metrics from [`GooseUser`](../goose/struct.GooseUser.html) threads
 /// to the parent Goose process.
@@ -351,6 +355,20 @@ pub(crate) enum MetricsCommand {
         history: Vec<TestPlanHistory>,
         respond: tokio::sync::oneshot::Sender<GooseMetrics>,
     },
+    /// Keep the graph data for the whole run, or only the dashboard's window,
+    /// as Save report is turned on or off. `now` is the current second on
+    /// the series clock.
+    #[cfg_attr(not(feature = "dashboard"), allow(dead_code))]
+    KeepGraph { keep: bool, now: usize },
+    /// Copies of the metrics and graph data so far, for Save report now.
+    #[cfg_attr(not(feature = "dashboard"), allow(dead_code))]
+    GetReportData {
+        duration: usize,
+        total_users: usize,
+        maximum_users: usize,
+        history: Vec<TestPlanHistory>,
+        respond: tokio::sync::oneshot::Sender<(GooseMetrics, GraphData)>,
+    },
     /// Flush all pending metrics and return the final state for reporting.
     Shutdown {
         duration: usize,
@@ -383,8 +401,8 @@ pub(crate) enum MetricsCommand {
         /// `GooseAttackRunState.stopping`: a cancel is ramping the run down.
         stopping: bool,
         series_window_secs: u32,
-        /// Saving runs, which only the main loop knows.
-        save: dashboard_snapshot::SnapshotSave,
+        /// The report the run writes, which only the main loop knows.
+        report: dashboard_snapshot::SnapshotReport,
         /// The run settings, which only the main loop knows.
         settings: Box<dashboard_snapshot::SnapshotSettings>,
         /// What the dashboard holds of the heatmap: only columns changed
@@ -437,6 +455,10 @@ pub(crate) struct MetricsProcessor {
     logger_tx: GooseLoggerTx,
     /// Shared epoch counter for batch validity across metrics resets.
     metrics_epoch: MetricsEpoch,
+    /// Keep the graph data for the whole run, as a report at the end of the
+    /// run needs; otherwise only the dashboard's window. Changes with Save
+    /// report.
+    keep_full_graph: bool,
 }
 
 /// THIS IS AN EXPERIMENTAL FEATURE, DISABLED BY DEFAULT. Optionally mitigate the loss of data
@@ -1171,7 +1193,7 @@ impl PartialOrd for GooseRequestMetricAggregate {
 /// [`TimeBuckets`], and the fastest, slowest and total. Only the buckets
 /// that hold a time are kept.
 ///
-/// It serializes, in a JSON report or saved run, with each bucket once, in
+/// It serializes, in a JSON report, with each bucket once, in
 /// `times_us`, beside the fastest, slowest and total in microseconds and in
 /// whole milliseconds; an earlier Goose, which reads whole millisecond
 /// `times`, can not read it. A report from an earlier Goose, with only
@@ -1851,7 +1873,6 @@ impl<'de> Deserialize<'de> for ScenarioMetricAggregate {
 ///         .set_default(GooseDefault::Host, "http://localhost/")?
 ///         // Set a default run time so this test runs to completion.
 ///         .set_default(GooseDefault::RunTime, 1)?
-///         .set_default(GooseDefault::NoSave, true)?
 ///         .execute()
 ///         .await?;
 ///
@@ -3216,6 +3237,7 @@ impl MetricsProcessor {
         request_counter_registry: GooseRequestCounterRegistry,
         logger_tx: GooseLoggerTx,
         metrics_epoch: MetricsEpoch,
+        keep_full_graph: bool,
     ) -> Self {
         MetricsProcessor {
             metrics_rx,
@@ -3228,6 +3250,7 @@ impl MetricsProcessor {
             request_counter_registry,
             logger_tx,
             metrics_epoch,
+            keep_full_graph,
         }
     }
 
@@ -3428,6 +3451,31 @@ impl MetricsProcessor {
                 let _ = respond.send(snapshot);
                 false
             }
+            MetricsCommand::KeepGraph { keep, now } => {
+                self.keep_full_graph = keep;
+                self.graph_data.keep_latency_columns(keep, now);
+                false
+            }
+            MetricsCommand::GetReportData {
+                duration,
+                total_users,
+                maximum_users,
+                history,
+                respond,
+            } => {
+                self.drain_pending();
+                self.sync_atomic_counters();
+                let mut metrics = self.metrics.clone();
+                metrics.duration = duration;
+                metrics.total_users = total_users;
+                metrics.maximum_users = maximum_users;
+                metrics.history = history;
+                let mut graph_data = self.graph_data.clone();
+                // Fold every response time held into the copy's columns.
+                graph_data.finish_latency_columns();
+                let _ = respond.send((metrics, graph_data));
+                false
+            }
             MetricsCommand::Shutdown {
                 duration,
                 total_users,
@@ -3458,7 +3506,7 @@ impl MetricsProcessor {
                 phase,
                 stopping,
                 series_window_secs,
-                save,
+                report,
                 settings,
                 heatmap_since,
                 respond,
@@ -3498,7 +3546,7 @@ impl MetricsProcessor {
                         metrics_disabled: self.configuration.no_metrics,
                         no_transaction_metrics: self.configuration.no_transaction_metrics,
                         no_scenario_metrics: self.configuration.no_scenario_metrics,
-                        save,
+                        report,
                         settings: *settings,
                         percentiles_over_time: self.configuration.records_latency_series(),
                         series_keys: self.graph_data.latency_series_keys(),
@@ -3557,14 +3605,14 @@ impl MetricsProcessor {
 
     /// Prune GraphData to a trailing window when only the live dashboard needs series.
     ///
-    /// HTML/markdown reports need full-run history; when a run is saved or
-    /// `report_file` is set we never prune. Dashboard export uses at most [`dashboard_snapshot::SERIES_WINDOW_SECS`];
+    /// The HTML and Markdown reports graph the whole run, so nothing is pruned while a
+    /// report will be written at the end of it. Dashboard export uses at most [`dashboard_snapshot::SERIES_WINDOW_SECS`];
     /// we keep 2× that as a small buffer against edge flicker at the window boundary.
     ///
     /// Call only from low-frequency paths (`RecordUsers`, `GetDashboardSnapshot`),
     /// not from per-request/transaction/scenario handlers.
     fn maybe_prune_dashboard_graph(&mut self) {
-        if self.configuration.dashboard && !self.configuration.keeps_full_graph() {
+        if self.configuration.dashboard && !self.keep_full_graph {
             let keep = dashboard_snapshot::SERIES_WINDOW_SECS.saturating_mul(2);
             self.graph_data.prune_to_window(keep);
         }
@@ -4216,41 +4264,37 @@ impl GooseAttack {
         };
     }
 
-    /// Process a set of reports: the `--report-file` reports or a saved run's.
+    /// Process the `--report-file` reports.
     ///
-    /// If `write` is true, then also write the data. Otherwise just create the files to ensure
-    /// we have access. `html` caches the HTML report so it is generated once
-    /// however many sets name an HTML file.
+    /// With a `source`, write each report from it. Without one, create the files, so a
+    /// path Goose can't write to fails before the load test. `html` caches the HTML report so it is generated once
+    /// however many reports name an HTML file.
     ///
-    /// Creating stops at the first error. Writing tries every report, logs
-    /// each failure (an error for `--report-file`, a warning for a saved
-    /// run), and returns the first.
+    /// Creating stops at the first error. Writing tries every report, logs each
+    /// failure, and returns the first.
     pub(crate) async fn process_reports(
         &self,
         reports: &[String],
-        set: ReportSet,
-        write: bool,
+        source: Option<&ReportSource<'_>>,
         baseline: Option<&ReportData<'static>>,
         html: &mut Option<String>,
     ) -> Result<(), GooseError> {
         let mut first_error = None;
+        // Like the HTML report, a PDF report is rendered once for every name.
+        let mut pdf = None;
         for report in reports {
             if let Err(e) = self
-                .process_report(report, set, write, baseline, html)
+                .process_report(report, source, baseline, html, &mut pdf)
                 .await
             {
-                if !write {
+                if source.is_none() {
                     return Err(e);
                 }
-                let message = match &e {
+                match &e {
                     GooseError::InvalidOption { value, detail, .. } => {
-                        format!("couldn't write the report {report}: {value}. {detail}")
+                        error!("couldn't write the report {report}: {value}. {detail}")
                     }
-                    other => format!("couldn't write the report {report}: {other:?}"),
-                };
-                match set {
-                    ReportSet::ReportFiles => error!("{message}"),
-                    ReportSet::SavedRun => warn!("{message}"),
+                    other => error!("couldn't write the report {report}: {other:?}"),
                 }
                 first_error.get_or_insert(e);
             }
@@ -4258,56 +4302,27 @@ impl GooseAttack {
         first_error.map_or(Ok(()), Err)
     }
 
-    /// Create one report file, and if `write` is true, write it.
+    /// Create one report file, and with a `source`, write it. A name that ends in
+    /// `.gz` is written gzipped, in the format the rest of the name gives.
     async fn process_report(
         &self,
         report: &str,
-        set: ReportSet,
-        write: bool,
+        source: Option<&ReportSource<'_>>,
         baseline: Option<&ReportData<'static>>,
         html: &mut Option<String>,
+        pdf: &mut Option<Vec<u8>>,
     ) -> Result<(), GooseError> {
-        let create = |path: PathBuf| async move {
-            File::create(&path)
-                .await
-                .map_err(|err| set.io_error(&path.to_string_lossy(), err))
-        };
-
-        let path = PathBuf::from(report);
-        match path.extension().map(OsStr::to_string_lossy).as_deref() {
-            Some("html" | "htm") => {
-                let file = create(path).await?;
-                if write {
-                    let content = match html {
-                        Some(content) => content,
-                        None => html.insert(self.generate_html_report_content(baseline)?),
-                    };
-                    self.write_html_report(file, report, set, content).await?;
-                }
-            }
-            Some("json") => {
-                let file = create(path).await?;
-                if write {
-                    self.write_json_report(file, report, set, baseline).await?;
-                }
-            }
-            Some("md") => {
-                let file = create(path).await?;
-                if write {
-                    self.write_markdown_report(file, report, set, baseline)
-                        .await?;
-                }
-            }
+        let (inner, gzip) = crate::runs::without_gz(report);
+        let kind = match std::path::Path::new(inner)
+            .extension()
+            .map(OsStr::to_string_lossy)
+            .as_deref()
+        {
+            Some("html" | "htm") => "html",
+            Some("json") => "json",
+            Some("md") => "markdown",
             #[cfg(feature = "pdf-reports")]
-            Some("pdf") => {
-                let file = create(path.clone()).await?;
-                if write {
-                    if let Err(e) = self.write_pdf_report(file, report, baseline).await {
-                        remove_if_empty(&path).await;
-                        return Err(e);
-                    }
-                }
-            }
+            Some("pdf") => "pdf",
             #[cfg(not(feature = "pdf-reports"))]
             Some("pdf") => {
                 return Err(GooseError::InvalidOption {
@@ -4331,8 +4346,52 @@ impl GooseAttack {
                     detail: format!("Unknown report file type: {ext}"),
                 })
             }
-        }
-
+        };
+        let path = PathBuf::from(report);
+        let file = File::create(&path)
+            .await
+            .map_err(|err| report_io_error(report, err))?;
+        let Some(source) = source else {
+            return Ok(());
+        };
+        let mut out = ReportOut::new(
+            file.into_std().await,
+            gzip,
+            self.configuration.compression_level(),
+        );
+        let written = match kind {
+            "html" => {
+                let content = match html {
+                    Some(content) => content,
+                    None => html.insert(source.html(baseline)?),
+                };
+                out.write_all(content.as_bytes())
+                    .map_err(|err| report_io_error(report, err))
+            }
+            "json" => source.write_json(&mut out, baseline),
+            "markdown" => source.write_markdown(&mut out, baseline),
+            _ => {
+                let bytes = match pdf {
+                    Some(bytes) => bytes,
+                    None => match self.pdf_report(source, baseline).await {
+                        Ok(bytes) => pdf.insert(bytes),
+                        Err(e) => {
+                            // Dropping a gzip writer writes an empty member,
+                            // so the file goes by name: Goose created it above.
+                            drop(out);
+                            let _ = tokio::fs::remove_file(&path).await;
+                            return Err(e);
+                        }
+                    },
+                };
+                out.write_all(bytes)
+                    .map_err(|err| report_io_error(report, err))
+            }
+        };
+        // Finish the file, gzip trailer and all, here: an error on drop would be
+        // lost.
+        written.and_then(|()| out.finish().map_err(|err| report_io_error(report, err)))?;
+        info!("{kind} report file written to: {report}");
         Ok(())
     }
 
@@ -4342,23 +4401,17 @@ impl GooseAttack {
     ///
     /// The Chrome check runs first, so a run it stops leaves no report file behind.
     pub(crate) async fn create_reports(&self) -> Result<(), GooseError> {
+        let reports = self.configuration.report_paths();
         #[cfg(feature = "pdf-reports")]
-        if self.configuration.report_file.iter().any(|report| {
-            std::path::Path::new(report)
+        if reports.iter().any(|report| {
+            std::path::Path::new(crate::runs::without_gz(report).0)
                 .extension()
                 .is_some_and(|ext| ext == "pdf")
         }) {
             self.preflight_pdf().await?;
         }
 
-        self.process_reports(
-            &self.configuration.report_file,
-            ReportSet::ReportFiles,
-            false,
-            None,
-            &mut None,
-        )
-        .await
+        self.process_reports(&reports, None, None, &mut None).await
     }
 
     /// The Chrome binary PDF reports run, found (and if need be downloaded)
@@ -4397,25 +4450,25 @@ impl GooseAttack {
         Ok(())
     }
 
-    /// Write all `--report-file` reports, and `--pdf-print-html` if set,
+    /// Write all `--report-file` reports from `source`, and `--pdf-print-html` if set,
     /// even when a report failed. Returns the first error.
     pub(crate) async fn write_report_files(
         &self,
+        source: &ReportSource<'_>,
         baseline: Option<&ReportData<'static>>,
         html: &mut Option<String>,
     ) -> Result<(), GooseError> {
         let reports = self
             .process_reports(
-                &self.configuration.report_file,
-                ReportSet::ReportFiles,
-                true,
+                &self.configuration.report_paths(),
+                Some(source),
                 baseline,
                 html,
             )
             .await;
 
         // Write PDF-optimized HTML if configured (always available)
-        let print_html = self.write_print_html_if_configured(baseline).await;
+        let print_html = self.write_print_html_if_configured(source, baseline).await;
 
         first_error(reports, print_html)
     }
@@ -4424,6 +4477,7 @@ impl GooseAttack {
     /// This functionality is always available regardless of feature flags.
     async fn write_print_html_if_configured(
         &self,
+        source: &ReportSource<'_>,
         baseline: Option<&ReportData<'static>>,
     ) -> Result<(), GooseError> {
         if let Some(pdf_print_html) = self.configuration.pdf_print_html() {
@@ -4431,7 +4485,7 @@ impl GooseAttack {
             use tokio::fs as async_fs;
 
             // Generate HTML report content
-            let html_report = self.generate_html_report_content(baseline)?;
+            let html_report = source.html(baseline)?;
 
             // Add print-optimized CSS using the shared function
             let print_optimized_html = generate_print_optimized_html_content(&html_report);
@@ -4451,13 +4505,230 @@ impl GooseAttack {
         Ok(())
     }
 
-    /// Generate HTML report content that can be used for both HTML and PDF reports.
-    /// Returns the complete HTML content as a string.
-    fn generate_html_report_content(
+    /// The reports of the run in progress or just ended, from its metrics and
+    /// graph data, recorded as `record` says.
+    pub(crate) fn report_source<'a>(&'a self, record: &'a RunRecord) -> ReportSource<'a> {
+        ReportSource {
+            configuration: &self.configuration,
+            metrics: &self.metrics,
+            graph_data: &self.graph_data,
+            graphs: true,
+            heatmap: None,
+            loaded: None,
+            record,
+            graph_data_in_json: self.output.graph_data,
+        }
+    }
+
+    /// A PDF report, rendered by Chrome from the print ready HTML report.
+    #[cfg(feature = "pdf-reports")]
+    async fn pdf_report(
+        &self,
+        source: &ReportSource<'_>,
+        baseline: Option<&ReportData<'static>>,
+    ) -> Result<Vec<u8>, GooseError> {
+        use crate::report::pdf::generate_pdf_from_html;
+        use crate::report::print::generate_print_optimized_html_content;
+        use tokio::fs as async_fs;
+
+        // Generate HTML report content using the shared function
+        let html_report = source.html(baseline)?;
+
+        // Add print-optimized CSS for better PDF output using the shared function
+        let print_optimized_html = generate_print_optimized_html_content(&html_report);
+
+        // If pdf_print_html is configured, save the PDF-optimized HTML for debugging
+        if let Some(pdf_print_html) = self.configuration.pdf_print_html() {
+            if let Err(e) = async_fs::write(pdf_print_html, &print_optimized_html).await {
+                return Err(GooseError::InvalidOption {
+                    option: "--pdf-print-html".to_string(),
+                    value: pdf_print_html.to_string(),
+                    detail: format!("Failed to write PDF-optimized HTML: {e}"),
+                });
+            }
+            info!("PDF-optimized HTML saved to: {pdf_print_html}");
+        }
+
+        // The Chrome found at startup, by create_reports, unless it was a
+        // download that another Goose run's refresh has since removed.
+        let startup = self.pdf_chrome().await?;
+        let found_again;
+        let chrome = if startup.needs_new_lookup() {
+            info!(
+                "the downloaded Chrome at {} was removed, most likely by another Goose run's refresh; looking for Chrome again",
+                startup.path.display()
+            );
+            found_again = report::chrome::resolve_chrome().await?;
+            &found_again
+        } else {
+            startup
+        };
+
+        // Generate PDF from HTML using the configurable timeout and scale.
+        // Launching Chrome and rendering block, so they run off the runtime.
+        let scale = self.configuration.pdf_scale_or_default();
+        let verbose = self.configuration.verbose > 0;
+        let timeout = self.configuration.pdf_timeout_or_default();
+        let chrome = chrome.clone();
+        tokio::task::spawn_blocking(move || {
+            generate_pdf_from_html(&print_optimized_html, scale, verbose, timeout, &chrome)
+        })
+        .await
+        .map_err(|e| chrome_task_error("writing the PDF report", e))?
+    }
+
+    /// A PDF report needs the pdf-reports feature, which `process_report`
+    /// checks first.
+    #[cfg(not(feature = "pdf-reports"))]
+    async fn pdf_report(
+        &self,
+        _source: &ReportSource<'_>,
+        _baseline: Option<&ReportData<'static>>,
+    ) -> Result<Vec<u8>, GooseError> {
+        unreachable!("process_report refuses a PDF report without the pdf-reports feature")
+    }
+}
+
+/// What a report is written from: a run's metrics and graph data, the run's
+/// own or copies of them, or a JSON report read back, and the record of the
+/// run that goes with them.
+pub(crate) struct ReportSource<'a> {
+    pub configuration: &'a GooseConfiguration,
+    pub metrics: &'a GooseMetrics,
+    pub graph_data: &'a GraphData,
+    /// Graphs were recorded. A JSON report read back without graph data has none.
+    pub graphs: bool,
+    /// The heatmap of a JSON report read back, which keeps no histograms.
+    pub heatmap: Option<&'a serde_json::Value>,
+    /// The tables of a JSON report read back.
+    pub loaded: Option<&'a ReportData<'static>>,
+    pub record: &'a RunRecord,
+    /// The JSON report includes the graph data.
+    pub graph_data_in_json: bool,
+}
+
+/// The JSON report: the record of the run, its metrics, and, when asked for,
+/// the per second data the HTML report graphs.
+#[derive(Serialize)]
+struct JsonReport<'a> {
+    #[serde(flatten)]
+    record: &'a RunRecord,
+    #[serde(flatten)]
+    data: ReportData<'a>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    graphs: Option<crate::graph::ReportGraphs<'a>>,
+}
+
+impl ReportSource<'_> {
+    /// The report's tables, with any baseline's deltas.
+    pub(crate) fn data(&self, baseline: Option<&ReportData<'static>>) -> ReportData<'_> {
+        match self.loaded {
+            Some(loaded) => {
+                let mut data = loaded.clone();
+                if let Some(baseline) = baseline {
+                    common::apply_baseline_deltas(&mut data, baseline);
+                }
+                data
+            }
+            None => common::prepare_data_with_baseline(
+                ReportOptions {
+                    no_transaction_metrics: self.configuration.no_transaction_metrics,
+                    no_scenario_metrics: self.configuration.no_scenario_metrics,
+                    no_status_codes: self.configuration.no_status_codes,
+                },
+                self.metrics,
+                baseline,
+            ),
+        }
+    }
+
+    /// Write the JSON report to `writer`.
+    pub(crate) fn write_json<W: std::io::Write>(
+        &self,
+        writer: W,
+        baseline: Option<&ReportData<'static>>,
+    ) -> Result<(), GooseError> {
+        let co_active = self.co_active();
+        let report = JsonReport {
+            record: self.record,
+            data: self.data(baseline),
+            graphs: (self.graph_data_in_json && self.graphs).then(|| {
+                self.graph_data
+                    .report_graphs(co_active, self.started(), self.heatmap)
+            }),
+        };
+        serde_json::to_writer_pretty(writer, &report)?;
+        Ok(())
+    }
+
+    /// Write the Markdown report to `writer`.
+    pub(crate) fn write_markdown<W: std::io::Write>(
+        &self,
+        writer: &mut W,
+        baseline: Option<&ReportData<'static>>,
+    ) -> Result<(), GooseError> {
+        report::write_markdown_report(writer, self.data(baseline), &self.record.intro())
+    }
+
+    /// When the run started, as the graphs count it.
+    fn started(&self) -> DateTime<Utc> {
+        self.metrics
+            .history
+            .first()
+            .map_or_else(Utc::now, |step| step.timestamp)
+    }
+
+    /// Whether coordinated omission mitigation recorded synthetic times.
+    fn co_active(&self) -> bool {
+        self.metrics
+            .coordinated_omission_metrics
+            .as_ref()
+            .is_some_and(|metrics| metrics.has_events())
+    }
+
+    /// The heatmap card: from the histograms, or from the JSON read back.
+    fn heatmap_markup(&self, started: DateTime<Utc>) -> String {
+        match self.heatmap {
+            Some(heatmap) => crate::graph::heatmap_card(heatmap),
+            None => self
+                .graph_data
+                .get_latency_heatmap_markup(self.co_active(), started),
+        }
+    }
+
+    /// The paragraphs at the top of the HTML report: the notes, and what the
+    /// graphs cover.
+    fn notes_markup(&self) -> String {
+        let mut markup = String::new();
+        for paragraph in self.record.intro() {
+            let _ = write!(
+                markup,
+                "<p class=\"notes\">{}</p>",
+                report::escape_html(&paragraph)
+            );
+        }
+        if !self.graphs {
+            let _ = write!(
+                markup,
+                "<p class=\"notes\">{}</p>",
+                report::escape_html(GRAPHS_NOT_RECORDED)
+            );
+        } else if let Some(start) = &self.record.graphs_start {
+            let _ = write!(
+                markup,
+                "<p class=\"notes\">{}</p>",
+                report::escape_html(&start.describe())
+            );
+        }
+        markup
+    }
+
+    /// The HTML report, which the PDF report is also made from.
+    pub(crate) fn html(
         &self,
         baseline: Option<&ReportData<'static>>,
     ) -> Result<String, GooseError> {
-        let test_start_time = self.metrics.history.first().unwrap().timestamp;
+        let test_start_time = self.started();
 
         // Prepare report summary variables.
         let users = self.metrics.maximum_users.to_string();
@@ -4539,7 +4810,7 @@ impl GooseAttack {
             errors,
             status_code_metrics,
             coordinated_omission_metrics: _,
-        } = self.prepare_report_data(baseline)?;
+        } = self.data(baseline);
 
         // Compile the request metrics template.
         let mut raw_requests_rows = Vec::new();
@@ -4647,6 +4918,7 @@ impl GooseAttack {
             &steps_overview,
             hosts,
             report::GooseReportTemplates {
+                notes_template: &self.notes_markup(),
                 raw_requests_template: &raw_requests_rows.join("\n"),
                 raw_responses_template: &raw_responses_rows.join("\n"),
                 co_requests_template: &co_requests_template,
@@ -4663,13 +4935,7 @@ impl GooseAttack {
                     .graph_data
                     .get_average_response_time_graph(!self.configuration.no_granular_report)
                     .get_markup(&self.metrics.history, test_start_time),
-                graph_latency_heatmap_template: &self.graph_data.get_latency_heatmap_markup(
-                    self.metrics
-                        .coordinated_omission_metrics
-                        .as_ref()
-                        .is_some_and(|metrics| metrics.has_events()),
-                    test_start_time,
-                ),
+                graph_latency_heatmap_template: &self.heatmap_markup(test_start_time),
                 graph_users_per_second: &self
                     .graph_data
                     .get_active_users_graph(!self.configuration.no_granular_report)
@@ -4678,174 +4944,117 @@ impl GooseAttack {
             },
         ))
     }
+}
 
-    /// Prepare report data with optional baseline comparison.
-    pub(crate) fn prepare_report_data(
-        &self,
-        baseline: Option<&ReportData<'static>>,
-    ) -> Result<ReportData<'_>, GooseError> {
-        let options = ReportOptions {
-            no_transaction_metrics: self.configuration.no_transaction_metrics,
-            no_scenario_metrics: self.configuration.no_scenario_metrics,
-            no_status_codes: self.configuration.no_status_codes,
-        };
+/// What a report rendered from a JSON report without graph data says.
+pub(crate) const GRAPHS_NOT_RECORDED: &str =
+    "The graphs were not recorded: the JSON report this was rendered from has no graph data (--report-graph-data).";
 
-        Ok(common::prepare_data_with_baseline(
-            options,
-            &self.metrics,
-            baseline,
-        ))
-    }
+/// A report file being written, gzipped when its name ends in `.gz`. Every
+/// format goes through it, so a report is gzipped in this one place.
+pub(crate) enum ReportOut {
+    Plain(BufWriter<std::fs::File>),
+    /// Buffered above the encoder, so it compresses a buffer at a time
+    /// rather than each small write the serializers make.
+    Gzip(BufWriter<flate2::write::GzEncoder<std::fs::File>>),
+}
 
-    /// Write a JSON report.
-    pub(crate) async fn write_json_report(
-        &self,
-        report_file: File,
-        path: &str,
-        set: ReportSet,
-        baseline: Option<&ReportData<'static>>,
-    ) -> Result<(), GooseError> {
-        let data = self.prepare_report_data(baseline)?;
-
-        let mut writer = BufWriter::new(report_file.into_std().await);
-        serde_json::to_writer_pretty(&mut writer, &data)?;
-        // Flush here: an error on drop would be lost.
-        writer.flush().map_err(|err| set.io_error(path, err))?;
-
-        set.log_written("json", path);
-
-        Ok(())
-    }
-
-    /// Write a Markdown report.
-    pub(crate) async fn write_markdown_report(
-        &self,
-        report_file: File,
-        path: &str,
-        set: ReportSet,
-        baseline: Option<&ReportData<'static>>,
-    ) -> Result<(), GooseError> {
-        let data = self.prepare_report_data(baseline)?;
-
-        let mut writer = BufWriter::new(report_file.into_std().await);
-        report::write_markdown_report(&mut writer, data)?;
-        // Flush here: an error on drop would be lost.
-        writer.flush().map_err(|err| set.io_error(path, err))?;
-
-        set.log_written("markdown", path);
-
-        Ok(())
-    }
-
-    // Write an HTML-formatted report.
-    pub(crate) async fn write_html_report(
-        &self,
-        mut report_file: File,
-        path: &str,
-        set: ReportSet,
-        report: &str,
-    ) -> Result<(), GooseError> {
-        // Write the report to file.
-        if let Err(e) = report_file.write_all(report.as_ref()).await {
-            return Err(set.io_error(path, e));
-        };
-        // Be sure the file flushes to disk.
-        report_file
-            .flush()
-            .await
-            .map_err(|err| set.io_error(path, err))?;
-
-        set.log_written("html", path);
-
-        Ok(())
-    }
-
-    /// Write a PDF report.
-    #[cfg(feature = "pdf-reports")]
-    pub(crate) async fn write_pdf_report(
-        &self,
-        _report_file: File,
-        path: &str,
-        baseline: Option<&ReportData<'static>>,
-    ) -> Result<(), GooseError> {
-        use crate::report::pdf::generate_pdf_from_html;
-        use crate::report::print::generate_print_optimized_html_content;
-        use tokio::fs as async_fs;
-
-        // Generate HTML report content using the shared function
-        let html_report = self.generate_html_report_content(baseline)?;
-
-        // Add print-optimized CSS for better PDF output using the shared function
-        let print_optimized_html = generate_print_optimized_html_content(&html_report);
-
-        // If pdf_print_html is configured, save the PDF-optimized HTML for debugging
-        if let Some(pdf_print_html) = self.configuration.pdf_print_html() {
-            if let Err(e) = async_fs::write(pdf_print_html, &print_optimized_html).await {
-                return Err(GooseError::InvalidOption {
-                    option: "--pdf-print-html".to_string(),
-                    value: pdf_print_html.to_string(),
-                    detail: format!("Failed to write PDF-optimized HTML: {e}"),
-                });
-            }
-            info!("PDF-optimized HTML saved to: {pdf_print_html}");
-        }
-
-        // The Chrome found at startup, by create_reports, unless it was a
-        // download that another Goose run's refresh has since removed.
-        let startup = self.pdf_chrome().await?;
-        let found_again;
-        let chrome = if startup.needs_new_lookup() {
-            info!(
-                "the downloaded Chrome at {} was removed, most likely by another Goose run's refresh; looking for Chrome again",
-                startup.path.display()
-            );
-            found_again = report::chrome::resolve_chrome().await?;
-            &found_again
+impl ReportOut {
+    /// Write to `file`, gzipped at `level` when `gzip`.
+    pub(crate) fn new(file: std::fs::File, gzip: bool, level: u32) -> Self {
+        if gzip {
+            ReportOut::Gzip(BufWriter::new(flate2::write::GzEncoder::new(
+                file,
+                flate2::Compression::new(level),
+            )))
         } else {
-            startup
-        };
-
-        // Generate PDF from HTML using the configurable timeout and scale.
-        // Launching Chrome and rendering block, so they run off the runtime.
-        let output = PathBuf::from(path);
-        let scale = self.configuration.pdf_scale_or_default();
-        let verbose = self.configuration.verbose > 0;
-        let timeout = self.configuration.pdf_timeout_or_default();
-        let chrome = chrome.clone();
-        tokio::task::spawn_blocking(move || {
-            generate_pdf_from_html(
-                &print_optimized_html,
-                &output,
-                scale,
-                verbose,
-                timeout,
-                &chrome,
-            )
-        })
-        .await
-        .map_err(|e| chrome_task_error("writing the PDF report", e))??;
-
-        info!("pdf report file written to: {path}");
-
-        Ok(())
+            ReportOut::Plain(BufWriter::new(file))
+        }
     }
 
-    /// Write a PDF report (feature not enabled).
-    #[cfg(not(feature = "pdf-reports"))]
-    #[allow(dead_code)]
-    pub(crate) async fn write_pdf_report(
-        &self,
-        _report_file: File,
-        path: &str,
-        _baseline: Option<&ReportData<'static>>,
-    ) -> Result<(), GooseError> {
-        // This should never be called when pdf_reports_enabled is true, as the validation
-        // in process_reports should have already handled that case
-        Err(GooseError::InvalidOption {
-            option: "--report-file".to_string(),
-            value: path.to_string(),
-            detail: "PDF reports require compiling with the 'pdf-reports' feature flag".to_string(),
-        })
+    /// Write the gzip trailer, if any, and flush, returning any error.
+    pub(crate) fn finish(self) -> std::io::Result<()> {
+        match self {
+            ReportOut::Plain(mut file) => file.flush(),
+            ReportOut::Gzip(gzip) => gzip
+                .into_inner()
+                .map_err(|e| e.into_error())?
+                .finish()?
+                .flush(),
+        }
+    }
+}
+
+impl std::io::Write for ReportOut {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        match self {
+            ReportOut::Plain(file) => file.write(buf),
+            ReportOut::Gzip(gzip) => gzip.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self {
+            ReportOut::Plain(file) => file.flush(),
+            ReportOut::Gzip(gzip) => gzip.flush(),
+        }
+    }
+}
+
+/// Write a run's folder report from `source`: `report.html`, then
+/// `report.json` last, each through a temporary file and a rename, so a
+/// folder never holds half a report. When `compress` holds a level, each is
+/// gzipped at that level and named with `.gz` added. Returns the files
+/// written.
+pub(crate) fn write_folder_report(
+    folder: &std::path::Path,
+    source: &ReportSource<'_>,
+    baseline: Option<&ReportData<'static>>,
+    html: &mut Option<String>,
+    compress: Option<u32>,
+) -> Result<Vec<PathBuf>, GooseError> {
+    use std::fs;
+    let gz = if compress.is_some() { ".gz" } else { "" };
+    let level = compress.unwrap_or_default();
+    let content = match html {
+        Some(content) => content,
+        None => html.insert(source.html(baseline)?),
+    };
+    let write = |name: &str, body: &dyn Fn(&mut ReportOut) -> std::io::Result<()>| {
+        let name = format!("{name}{gz}");
+        let path = folder.join(&name);
+        let tmp = folder.join(format!(".{name}.tmp"));
+        let written = fs::File::create(&tmp).and_then(|file| {
+            let mut out = ReportOut::new(file.try_clone()?, compress.is_some(), level);
+            body(&mut out)?;
+            out.finish()?;
+            file.sync_all()
+        });
+        match written.and_then(|()| fs::rename(&tmp, &path)) {
+            Ok(()) => Ok(path),
+            Err(err) => {
+                let _ = fs::remove_file(&tmp);
+                Err(crate::runs::folder_error(&path, err))
+            }
+        }
+    };
+    let html_path = write(crate::runs::REPORT_HTML, &|out| {
+        out.write_all(content.as_bytes())
+    })?;
+    let json_path = write(crate::runs::REPORT_JSON, &|out| {
+        source
+            .write_json(out, baseline)
+            .map_err(|e| std::io::Error::other(e.to_string()))
+    })?;
+    Ok(vec![html_path, json_path])
+}
+
+/// The error for a report that can't be written to `path`.
+fn report_io_error(path: &str, err: std::io::Error) -> GooseError {
+    GooseError::InvalidOption {
+        option: "--report-file".to_string(),
+        value: path.to_string(),
+        detail: format!("Failed to create report file: {err}"),
     }
 }
 
@@ -4872,50 +5081,6 @@ fn first_error(
             Err(first)
         }
         (first, second) => first.and(second),
-    }
-}
-
-/// Removes a report file that is still empty, the state `create_reports`
-/// leaves it in, after the report could not be written.
-#[cfg(feature = "pdf-reports")]
-async fn remove_if_empty(path: &std::path::Path) {
-    if let Ok(metadata) = tokio::fs::metadata(path).await {
-        if metadata.is_file() && metadata.len() == 0 {
-            let _ = tokio::fs::remove_file(path).await;
-        }
-    }
-}
-
-/// Which reports [`GooseAttack::process_reports`] writes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ReportSet {
-    /// The `--report-file` reports: a failure is an invalid option.
-    ReportFiles,
-    /// A saved run's reports: a failure is the I/O error alone. Each failed
-    /// file is logged as a warning, and the first error is returned to the
-    /// caller.
-    SavedRun,
-}
-
-impl ReportSet {
-    /// The error for an I/O failure on the report at `path`.
-    fn io_error(self, path: &str, err: std::io::Error) -> GooseError {
-        match self {
-            ReportSet::ReportFiles => GooseError::InvalidOption {
-                option: "--report-file".to_string(),
-                value: path.to_string(),
-                detail: format!("Failed to create report file: {err}"),
-            },
-            ReportSet::SavedRun => GooseError::Io(err),
-        }
-    }
-
-    /// Log a written report; a saved run's are listed together when it ends.
-    fn log_written(self, kind: &str, path: &str) {
-        match self {
-            ReportSet::ReportFiles => info!("{kind} report file written to: {path}"),
-            ReportSet::SavedRun => debug!("{kind} report file written to: {path}"),
-        }
     }
 }
 
@@ -6055,6 +6220,7 @@ mod test {
 
     /// Build a minimal MetricsProcessor for unit tests of process_* paths.
     fn make_dashboard_test_processor(configuration: GooseConfiguration) -> MetricsProcessor {
+        let keep_full_graph = configuration.keeps_full_graph(configuration.save_report_at_start());
         let (_metrics_tx, metrics_rx) = flume::unbounded();
         let (_cmd_tx, cmd_rx) = flume::unbounded();
         MetricsProcessor::new(
@@ -6068,6 +6234,7 @@ mod test {
             Arc::new(Mutex::new(HashMap::new())),
             None,
             Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            keep_full_graph,
         )
     }
 
@@ -6122,7 +6289,6 @@ mod test {
         let configuration = GooseConfiguration {
             dashboard: false,
             report_file: Vec::new(),
-            no_save: true,
             ..Default::default()
         };
 
@@ -6135,7 +6301,7 @@ mod test {
         let window = processor.graph_data.export_series_window(300);
         assert!(
             window.rps.is_empty(),
-            "series must stay empty when no run is saved and neither report_file nor dashboard is set"
+            "series must stay empty when neither report_file nor dashboard is set"
         );
     }
 
@@ -6144,14 +6310,14 @@ mod test {
         // Multi-hour soaks with --dashboard (no --report-file) must not retain
         // unbounded per-second series; keep 2× SERIES_WINDOW_SECS max.
         // Pruning runs from low-frequency RecordUsers / snapshot, not per request.
-        // A saved run keeps the full series, so this needs --no-save.
+        // Save report keeps the full series, so this turns it off.
         let configuration = GooseConfiguration {
             dashboard: true,
             report_file: Vec::new(),
-            no_save: true,
             ..Default::default()
         };
         let mut processor = make_dashboard_test_processor(configuration);
+        processor.keep_full_graph = false;
 
         let keep = dashboard_snapshot::SERIES_WINDOW_SECS.saturating_mul(2) as usize;
         // Record past the keep window so pruning must drop early samples.
@@ -6201,7 +6367,6 @@ mod test {
         let configuration = GooseConfiguration {
             dashboard: true,
             report_file: vec!["report.html".to_string()],
-            no_save: true,
             ..Default::default()
         };
         let mut processor = make_dashboard_test_processor(configuration);
@@ -6228,15 +6393,15 @@ mod test {
     }
 
     #[test]
-    fn graph_data_not_pruned_when_saving_runs() {
-        // The default: the dashboard is on and the run is saved, so the saved
-        // report needs every second even without --report-file.
+    fn graph_data_not_pruned_with_save_report_on() {
+        // The dashboard's default: Save report is on, so the report needs every
+        // second even without --report-file.
         let configuration = GooseConfiguration {
             dashboard: true,
             report_file: Vec::new(),
             ..Default::default()
         };
-        assert!(configuration.saves_runs());
+        assert!(configuration.save_report_at_start());
         let mut processor = make_dashboard_test_processor(configuration);
 
         let far_second = dashboard_snapshot::SERIES_WINDOW_SECS as usize * 2 + 200;
@@ -6253,9 +6418,80 @@ mod test {
         assert!(!shutdown);
         assert!(
             processor.graph_data.max_series_len_for_test() > far_second,
-            "a saved run must retain the full series, got len {}",
+            "Save report must retain the full series, got len {}",
             processor.graph_data.max_series_len_for_test()
         );
+    }
+
+    /// Save report turned on during a run: the totals still cover the whole
+    /// run, the graphs keep from then on plus the dashboard's window before
+    /// it, and the heatmap gets whole run columns; turned off, the window
+    /// alone again. Save report now's copy is the same, and leaves the
+    /// processor's own data alone.
+    #[tokio::test]
+    async fn save_report_turned_on_during_a_run() {
+        let configuration = GooseConfiguration {
+            dashboard: true,
+            ..Default::default()
+        };
+        let mut processor = make_graph_test_processor(&configuration);
+        processor.keep_full_graph = false;
+        processor.graph_data.keep_latency_columns(false, 0);
+        let keep = dashboard_snapshot::SERIES_WINDOW_SECS as usize * 2;
+        let record = |processor: &mut MetricsProcessor, from: usize, to: usize| {
+            for sec in from..to {
+                let mut request = make_test_request_metric();
+                request.elapsed = sec as u64 * 1000 + 500;
+                request.response_time = 5;
+                processor.process_request_metric(&request);
+                let _ = processor.handle_command(MetricsCommand::RecordUsers {
+                    active_users: 1,
+                    elapsed_secs: sec,
+                });
+            }
+        };
+        record(&mut processor, 0, keep + 300);
+        let pruned_to = processor.graph_data.first_second();
+        assert!(pruned_to > 0, "Save report off keeps only the window");
+
+        // On: nothing more is dropped from here.
+        processor.handle_command(MetricsCommand::KeepGraph {
+            keep: true,
+            now: keep + 300,
+        });
+        assert!(processor.graph_data.has_latency_columns_for_test());
+        // The heatmap takes the seconds the rings held before the switch.
+        assert!(!processor
+            .graph_data
+            .get_latency_heatmap_markup(false, chrono::Utc::now())
+            .is_empty());
+        record(&mut processor, keep + 300, 2 * keep + 300);
+        assert_eq!(processor.graph_data.first_second(), pruned_to);
+
+        let (respond, rx) = tokio::sync::oneshot::channel();
+        processor.handle_command(MetricsCommand::GetReportData {
+            duration: 2 * keep + 300,
+            total_users: 1,
+            maximum_users: 1,
+            history: Vec::new(),
+            respond,
+        });
+        let (metrics, graph_data) = rx.await.unwrap();
+        let timed: usize = metrics.requests.values().map(|r| r.raw_data.counter).sum();
+        assert_eq!(timed, 2 * keep + 300, "the totals cover the whole run");
+        assert_eq!(graph_data.first_second(), pruned_to);
+        assert!(!graph_data
+            .get_latency_heatmap_markup(false, chrono::Utc::now())
+            .is_empty());
+
+        // Off again: back to the window, and no heatmap columns.
+        processor.handle_command(MetricsCommand::KeepGraph {
+            keep: false,
+            now: 2 * keep + 300,
+        });
+        assert!(!processor.graph_data.has_latency_columns_for_test());
+        record(&mut processor, 2 * keep + 300, 2 * keep + 400);
+        assert!(processor.graph_data.first_second() > pruned_to);
     }
 
     #[tokio::test]
@@ -6295,7 +6531,7 @@ mod test {
             phase: "maintain".to_string(),
             stopping: true,
             series_window_secs: dashboard_snapshot::SERIES_WINDOW_SECS,
-            save: dashboard_snapshot::SnapshotSave::off("goose-runs"),
+            report: dashboard_snapshot::SnapshotReport::default(),
             settings: Box::new(dashboard_snapshot::SnapshotSettings::idle()),
             heatmap_since: None,
             respond: respond_tx,
@@ -6337,7 +6573,10 @@ mod test {
     /// counted once, in column 0, as the report's totals count it (#746).
     #[test]
     fn reset_restarts_the_report_heatmap_columns() {
-        let configuration = GooseConfiguration::default();
+        let configuration = GooseConfiguration {
+            report_file: vec!["report.html".to_string()],
+            ..Default::default()
+        };
         assert!(configuration.records_latency_columns());
         let mut processor = make_dashboard_test_processor(configuration.clone());
         processor.graph_data = GraphData::for_metrics_processor(
@@ -6506,6 +6745,7 @@ mod test {
             Arc::new(Mutex::new(HashMap::new())),
             None,
             metrics_epoch,
+            false,
         )
     }
 
@@ -6947,6 +7187,7 @@ mod test {
             Arc::new(Mutex::new(HashMap::new())),
             None,
             Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            false,
         );
         for &rt in &response_times {
             let req = make_request_metric("/", rt, 200, 5000);
@@ -6977,6 +7218,7 @@ mod test {
             Arc::new(Mutex::new(HashMap::new())),
             None,
             Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            false,
         );
         let mut batch = GooseMetricBatch::new(0);
         batch.second = Some(5);
@@ -7130,7 +7372,7 @@ mod test {
                 phase: "maintain".to_string(),
                 stopping: false,
                 series_window_secs: dashboard_snapshot::SERIES_WINDOW_SECS,
-                save: dashboard_snapshot::SnapshotSave::off("goose-runs"),
+                report: dashboard_snapshot::SnapshotReport::default(),
                 settings: Box::new(dashboard_snapshot::SnapshotSettings::idle()),
                 heatmap_since: None,
                 respond,
@@ -7243,6 +7485,15 @@ mod test {
             processor.metrics.coordinated_omission_metrics =
                 Some(CoordinatedOmissionMetrics::new(mitigation));
         }
+        processor
+    }
+
+    /// [`make_graph_test_processor`] with Save report off, keeping only the
+    /// dashboard's window.
+    fn make_window_test_processor(configuration: &GooseConfiguration) -> MetricsProcessor {
+        let mut processor = make_graph_test_processor(configuration);
+        processor.keep_full_graph = false;
+        processor.graph_data.keep_latency_columns(false, 0);
         processor
     }
 
@@ -7367,13 +7618,11 @@ mod test {
         [
             GooseConfiguration {
                 dashboard: true,
-                no_save: true,
                 co_mitigation: Some(GooseCoordinatedOmissionMitigation::Average),
                 ..Default::default()
             },
             GooseConfiguration {
                 report_file: vec!["report.html".to_string()],
-                no_save: true,
                 no_percentiles_over_time: true,
                 co_mitigation: Some(GooseCoordinatedOmissionMitigation::Average),
                 ..Default::default()
@@ -7421,8 +7670,8 @@ mod test {
     /// request once.
     #[test]
     fn update_after_its_second_was_pruned_changes_nothing() {
+        // The dashboard with Save report off, which keeps only its window.
         let configuration = &update_test_configurations()[0];
-        assert!(!configuration.keeps_full_graph());
         let far_second = dashboard_snapshot::SERIES_WINDOW_SECS as usize * 2 + 120;
         let update_of = |original: &GooseRequestMetric, mark_failure: bool| {
             let mut update = original.clone();
@@ -7431,7 +7680,7 @@ mod test {
             update
         };
         for mark_failure in [true, false] {
-            let mut processor = make_graph_test_processor(configuration);
+            let mut processor = make_window_test_processor(configuration);
             let early = update_test_request(mark_failure);
             let mut late = update_test_request(mark_failure);
             late.elapsed = far_second as u64 * 1_000;
@@ -7542,7 +7791,7 @@ mod test {
             phase: "maintain".to_string(),
             stopping: false,
             series_window_secs: dashboard_snapshot::SERIES_WINDOW_SECS,
-            save: dashboard_snapshot::SnapshotSave::off("goose-runs"),
+            report: dashboard_snapshot::SnapshotReport::default(),
             settings: Box::new(dashboard_snapshot::SnapshotSettings::idle()),
             heatmap_since: None,
             respond,
@@ -7590,7 +7839,7 @@ mod test {
             phase: "maintain".to_string(),
             stopping: false,
             series_window_secs: dashboard_snapshot::SERIES_WINDOW_SECS,
-            save: dashboard_snapshot::SnapshotSave::off("goose-runs"),
+            report: dashboard_snapshot::SnapshotReport::default(),
             settings: Box::new(dashboard_snapshot::SnapshotSettings::idle()),
             heatmap_since: None,
             respond,
@@ -7619,16 +7868,16 @@ mod test {
                 dashboard: true,
                 ..Default::default()
             },
-            // A saved run, for the report's heatmap.
-            GooseConfiguration::default(),
+            // A report, for its heatmap.
+            GooseConfiguration {
+                report_file: vec!["report.html".to_string()],
+                ..Default::default()
+            },
         ] {
             assert!(on.records_latency_series());
         }
         for off in [
-            GooseConfiguration {
-                no_save: true,
-                ..Default::default()
-            },
+            GooseConfiguration::default(),
             GooseConfiguration {
                 no_percentiles_over_time: true,
                 ..Default::default()

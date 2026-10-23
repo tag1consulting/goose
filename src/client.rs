@@ -26,7 +26,6 @@
 //!         .register_scenario(scenario!("Test").set_host("http://localhost"))
 //!         .set_default(GooseDefault::RunTime, 3)?
 //!         .set_default(GooseDefault::Users, 1)?
-//!         .set_default(GooseDefault::NoSave, true)?
 //!         .execute().await?;
 //!     Ok(())
 //! }
@@ -49,7 +48,6 @@
 //!         .register_scenario(scenario!("Test").set_host("http://localhost"))
 //!         .set_default(GooseDefault::RunTime, 3)?
 //!         .set_default(GooseDefault::Users, 1)?
-//!         .set_default(GooseDefault::NoSave, true)?
 //!         .execute().await?;
 //!     Ok(())
 //! }
@@ -73,7 +71,6 @@
 //!         .register_scenario(scenario!("Test").set_host("http://localhost"))
 //!         .set_default(GooseDefault::RunTime, 3)?
 //!         .set_default(GooseDefault::Users, 1)?
-//!         .set_default(GooseDefault::NoSave, true)?
 //!         .execute().await?;
 //!     Ok(())
 //! }

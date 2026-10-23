@@ -98,10 +98,11 @@ Additional control rules:
 | `GET /api/v1/snapshot` | **Required** | |
 | `GET /api/v1/events` (SSE) | **Required** | |
 | `GET /api/v1/series` | **Required** | One request's response time heatmap; see [Request heatmap endpoint](#request-heatmap-endpoint) |
+| `GET /api/v1/reports` and `/api/v1/reports/*` | **Required** | The runs panel's reports; see [Report endpoints](#report-endpoints) |
 | `POST /api/v1/control/*` | **Always required** when control is enabled | Even on loopback; **404** when control is off |
-| `DELETE /api/v1/runs/{id}` | **Always required** when control is enabled | Control token, as for `POST /api/v1/control/*`; **404** when control is off |
+| `DELETE /api/v1/reports/{name}` | **Always required** when control is enabled | Control token, as for `POST /api/v1/control/*`; **404** when control is off |
 
-The shell and static assets stay public because classic `<script src>` loads cannot forward a document `?token=` query (or an in-memory secret). Sensitive data lives only in the snapshot and saved run APIs; mutation lives only on the control routes (the control POSTs and `DELETE /api/v1/runs/{id}`).
+The shell and static assets stay public because classic `<script src>` loads cannot forward a document `?token=` query (or an in-memory secret). Sensitive data lives only in the snapshot and report APIs; mutation lives only on the control routes (the control POSTs and `DELETE /api/v1/reports/{name}`).
 
 ### Browser bootstrap with `?token=`
 
@@ -202,7 +203,9 @@ Then Start from the UI or via `POST /api/v1/control/start`. Without Controllers 
 | `POST` | `/api/v1/control/stop` | empty or `{}` | Begin cancel → enters **Decrease** (eventual Idle) |
 | `POST` | `/api/v1/control/users` | `{"users": N}` | Set absolute target user count (`N` integer, 1–100_000) |
 | `POST` | `/api/v1/control/quit` | empty or `{}` | Shut Goose down; accepted only in **Idle** |
-| `DELETE` | `/api/v1/runs/{id}` | none | Delete a saved run from disk; see [Saved run endpoints](#saved-run-endpoints) |
+| `POST` | `/api/v1/control/report` | `{"save": B, "graph_data": B}`, either or both | Set Save report and Include graph data; see [Saving the report](#saving-the-report) |
+| `POST` | `/api/v1/control/report/now` | empty or `{}` | Save report now; accepted only while a run is in progress, else `invalid_phase` (`invalid_report` under `--no-metrics`) |
+| `DELETE` | `/api/v1/reports/{name}` | none | Delete a folder's reports and logs; see [Report endpoints](#report-endpoints) |
 
 Auth: `Authorization: Bearer <token>` only (query `?token=` → **401**). Missing/wrong token → **401**. Control disabled → **404**.
 
@@ -279,7 +282,7 @@ Example success bodies:
 }
 ```
 
-Logical rejections return **HTTP 200** with `"ok": false` and a stable `error` code: `invalid_phase` when the phase cannot take the command, `prepare_failed` when a Start cannot prepare the load test, `conflicting_settings` when the command conflicts with other settings, such as `users 1` while an increase time is set, and `no_host` when clearing the host would leave something with no host. When one setting is at fault the body also names it in `field` (for example `"field": "users"`, or `"field": "host"` for a Start with no host); `field` is left out otherwise. A malformed body returns **400** with `error` set to `bad_request`, and a `users` value that is not an integer from 1 to 100000 returns **400** with `invalid_users`; a 400 body has `"field": null`. A run settings body has 400 refusals of its own, which name the field; see [Run settings](#run-settings). A body larger than 16 KiB gets **413** with a plain text body, before the token is checked.
+Logical rejections return **HTTP 200** with `"ok": false` and a stable `error` code: `invalid_phase` when the phase cannot take the command, `prepare_failed` when a Start cannot prepare the load test, `conflicting_settings` when the command conflicts with other settings, such as `users 1` while an increase time is set, and `no_host` when clearing the host would leave something with no host. The report control routes add three: `invalid_report` under `--no-metrics`, or when Save report is turned on during a run with no folder; `report_busy` while Save report now is still writing the report it was last asked for; and `report_failed` when Save report now can't start writing the report, as during a run with no folder or when its folder can't be written to, with the reason in `message`; a write that fails after an `ok: true` answer shows in the snapshot's `report.error`. When one setting is at fault the body also names it in `field` (for example `"field": "users"`, or `"field": "host"` for a Start with no host); `field` is left out otherwise. A malformed body returns **400** with `error` set to `bad_request`, and a `users` value that is not an integer from 1 to 100000 returns **400** with `invalid_users`; a 400 body has `"field": null`. A run settings body has 400 refusals of its own, which name the field; see [Run settings](#run-settings). A body larger than 16 KiB gets **413** with a plain text body, before the token is checked.
 
 A Start is refused with `prepare_failed` and `"field": "host"` before it replies when some scenario has no host from `--host`, the scenario itself or the default host, and also when a `test_start` or `test_stop` transaction is registered and neither `--host` nor the default host is set, since those run with no scenario host. An autostarted run with the same configuration fails at launch instead.
 
@@ -486,8 +489,9 @@ These counters are ops-safe (timing and client counts only). The response does *
 - **Hosts** in the header: the current or last run's hosts. In Idle, when the next Start would load test other hosts, they read `Last run: …`.
 - **Run settings** in the header, with control off: the same summary line the control panel shows, leaving out the hosts while running, and including the next Start's hosts in Idle when they differ from the last run's; see [Run settings in the snapshot](#run-settings-in-the-snapshot)
 - **Control panel** (only when `--dashboard-control`): the run settings summary, Start / Stop / Quit / target users; see [Controlling a load test from the dashboard](#controlling-a-load-test-from-the-dashboard)
-- **Save state** in the header: `Saving to goose-runs`, `Not saving (turned off)`, or `Not saving: can't create goose-runs (reason)`; see [Saved runs](#saved-runs)
-- **Saved runs panel**: every saved run, with downloads and comparisons, and with `--dashboard-control` a Delete button for each
+- **Notes** in the header: the run's `--notes`
+- **Report bar** at the top of the page: the **Save report** and **Include graph data** switches, **Save report now** with control on, and the `--report-file` paths; see [Saving the report](#saving-the-report)
+- **Runs panel**: the reports in the folder that holds the run folders, with downloads and comparisons, and with `--dashboard-control` a Delete button for each
 
 Every figure in the KPI strip, the **Whole run** card and the tables covers the whole run, since the test started or since metrics were last reset; the labels say so, and hovering a table's `avg ms`, `min ms`, `p50`, `p95`, `p99`, `max ms` or `status codes` heading says "Whole run". Only the charts and the heatmap are by second. Goose measures response times to the microsecond. It shows times under 10 ms to the hundredth of a millisecond and from 10 ms in whole milliseconds, rounded half up, so a 0.418 ms response reads `0.42` and a 37.6 ms one `38`. Averages follow the same rule.
 
@@ -552,48 +556,62 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   "http://127.0.0.1:5118/api/v1/series?method=GET&name=%2F"
 ```
 
-## Saved runs
+## Saving the report
 
-Goose [saves every run](../getting-started/common.md#saved-runs) by default, and the dashboard serves the saved runs in its runs directory (`goose-runs`, or `--runs-dir`).
+[Output files](../getting-started/output-files.md) gives the rules for every file Goose writes. The dashboard adds rules 9 to 13.
 
-When a run ends, a banner reads `Run 2026-10-09-141203 saved. Download HTML, JSON or Markdown.` with a button for each report, or says why the run couldn't be saved (`Couldn't save this run: <reason>.` when its directory couldn't be created). When Goose exits, the closed banner says where the last run was saved on the machine running Goose.
+The report bar at the top of the page shows the **Save report** switch: whether this run's `report.json` and `report.html` are written to its folder, `goose-runs/<YYYYMMDD-HHMMSS>` unless `--output-dir` names one. It starts on with `--dashboard`, except under `--no-metrics`. It also starts on when `--report-file` paths are given; turn it off to get only those. The bar lists the `--report-file` paths, which are always written.
 
-The **Saved runs** panel lists every complete run, newest first: the run id, when it started (in the viewer's local time), how long it ran, its users, requests and failures, how it ended (`Finished`, `Stopped`, `Ctrl-C`, `Canceled: <reason>`, `Users exited`), the test, and buttons to download each report. The first 50 runs are shown; `Show all` lists the rest. The list is read when the page opens and whenever another run has been saved, never on a timer.
+Save report can be turned on or off at any time. While it is on, Goose keeps the run's graph data and heatmap for the whole run. While it is off and no `--report-file` path is given, Goose keeps only the dashboard's last 10 minutes of graphs and 5 minutes of heatmap, so memory stays flat on a long soak test. Turning it on during a run keeps graphs from then on, with that window before it, and the report says when its graphs start and why.
 
-With `--dashboard-control`, each run also has a **Delete** button. It asks `Delete run <id>? This removes its reports from disk.`, then deletes the run directory and lists the runs again. The run being written now can't be deleted.
+**Save report now** writes the run's report as it stands into its folder while the run continues, marked `in_progress`. The report at the end of the run replaces it, also when Save report is off. The second switch, **Include graph data**, adds the per second graph data to the JSON report, as `--report-graph-data` does, and can also be changed at any time.
 
-Check **Compare** on exactly two runs and `Download comparison` downloads a Markdown report of the newer run with the older as its baseline: every number shows its change, as with [`--baseline-file`](../getting-started/common.md#comparing-against-a-baseline). Runs with no requests can't be compared. When the two runs are from different tests the panel warns that the comparison may not mean much.
+Save report now, Delete, and changing either switch need `--dashboard-control` and the control token, as Start and Stop do. Without control the switches are shown read only, so Save report stays on and every `--dashboard` run writes `report.json` and `report.html` into its folder. A 60 minute run of `examples/simple` without control, with 300 users at about 28 requests a second over 2 request names, grew by about 0.8 MiB an hour. With `--dashboard-control` you can turn Save report off to keep memory flat. `--no-metrics` keeps no report, so Save report stays off.
+
+When a run ends, a banner reads `Report saved in <folder>. Download HTML, JSON or Markdown.`, naming the run's folder, with a button for each report, or says why the report couldn't be saved. For a folder whose name the report routes don't take (see [Report endpoints](#report-endpoints)), it reads `Report saved in <folder>.` with no buttons. A Save report now that fails while the run goes on is shown at the foot of the runs panel, with the reason.
+
+When only `--dashboard` asks for the run's folder, with no output flag given without a path and no `--output-dir`, a folder Goose can't write to does not stop the run. Goose prints a warning before any load, and runs with Save report off. A banner at the top of the page names the folder and the reason, and stays for the whole run. The Save report switch says why when you hover over it.
+
+### The runs panel
+
+The **Runs** panel looks in the folder that holds each run's folder: the parent of the `--output-dir` folder, or `goose-runs` by default. It lists each folder there that holds a `report.json` or `report.json.gz`. It lists only folders with a name the report routes take; see [Report endpoints](#report-endpoints). It lists them while Goose is Idle too, before any run has a folder, and it lists folders written by runs without the dashboard. Rows are sorted newest first, by start time, or by when the report was written if it records no start time. Each row shows the folder's name, when the run started (in the viewer's local time), its notes, how long it ran, its users, requests and failures, how it ended (`Finished`, `Stopped`, `Ctrl-C`, `Canceled: <reason>` or `Users exited`), and the test. A report still marked in progress shows as `Running` for the run in progress and as `Incomplete` for any other: a run that ended without its final report. The first 50 rows are shown; `Show all` lists the rest. The list is read when the page opens, when a run starts, when Goose writes a report into a run's folder, and after a Delete. Goose writes a report there at the end of a run and on Save report now, and the snapshot's `report.writes` counts those writes.
+
+Each row offers HTML, JSON and Markdown. A format the folder lacks is rendered from its JSON report; without graph data in it, the rendered HTML report says the graphs were not recorded.
+
+With `--dashboard-control`, each row also has a **Delete** button. It asks `Delete the reports and logs in <folder>?`, then deletes the folder's reports and the logs Goose names there, and the folder if that leaves it empty. The folder of the run in progress can't be deleted. Nor can the folder a bare `--goose-log` is open in: Goose keeps that log open in the last run's folder until the next run starts. Nor can a folder that holds `.goose-run`. A Goose process keeps that file in its run's folder while the run lasts, and after the run while a bare `--goose-log` is open there, so a dashboard never deletes what another process is writing. A process that is killed leaves the file behind; remove it by hand to free the folder.
+
+Check **Compare** on exactly two rows and `Download comparison` downloads a Markdown report of the newer run with the older as its baseline: every number shows its change, as with [`--baseline-file`](../getting-started/common.md#comparing-against-a-baseline). Runs with no requests can't be compared. When the two runs are from different tests the panel warns that the comparison may not mean much.
 
 Downloads are fetched with the token in an `Authorization` header and saved from the response, so the token never goes into a URL. Reports are always downloaded, never shown in the browser.
 
-### Saved run endpoints
+### Report endpoints
 
-The three `GET` routes need the token when one is configured, as `GET /api/v1/snapshot` does. `DELETE` is registered only with `--dashboard-control` and always needs the control token as `Authorization: Bearer`, as the control POSTs do. Each reads the disk on request only.
+The `GET` routes need the token when one is configured, as `GET /api/v1/snapshot` does. `DELETE` is registered only with `--dashboard-control` and always needs the control token as `Authorization: Bearer`, as the control POSTs do. Each reads the disk only on request. Goose keeps what it parsed of each JSON report in memory, keyed by path, size and modification time, and writes no index.
 
 | Endpoint | Returns |
 |----------|---------|
-| `GET /api/v1/runs` | `{ "dir": "goose-runs", "total_bytes": n, "runs": [ ... ] }`: the `run.json` of every complete run (a directory named by a run id that holds `run.json`), newest first |
-| `GET /api/v1/runs/{id}/{file}` | `report.html`, `report.json` or `report.md` of run `{id}`, as an attachment named `goose-<test>-<id>.<ext>` |
-| `GET /api/v1/runs/{id}/compare.md?baseline={id}` | Run `{id}` compared to the baseline run, as Markdown, named `goose-<test>-<id>-vs-<baseline id>.md`, starting with a line naming the run and the baseline and when each started. `422` with a one line reason when a run has no requests, or its `report.json` can't be read or is inconsistent |
-| `DELETE /api/v1/runs/{id}` | `204` once the run directory is deleted; the run being written now has no `run.json` until it ends, so it is a `404` like any incomplete run |
+| `GET /api/v1/reports` | `{ "dir": "goose-runs", "reports": [ ... ] }`: for each folder holding a regular `report.json` or `report.json.gz`, its `name`, the run's record from its JSON report (`notes`, `goose_version`, `test`, `started`, `ended`, `ended_by`, `canceled_reason`, `in_progress`, and `graphs_start` when set), `running`, `duration_secs`, `max_users`, `requests` and `failed_requests`, newest first |
+| `GET /api/v1/reports/{name}/{file}` | `report.html`, `report.json` or `report.md` of folder `{name}`, as an attachment named `goose-<test>-<name>.<ext>`; a format the folder lacks is rendered from its JSON report |
+| `GET /api/v1/reports/{name}/compare.md?baseline={name}` | Report `{name}` compared to the baseline, as Markdown, named `goose-<test>-<name>-vs-<baseline>.md`, starting with a line naming both and when each started. `422` with a one line reason when a run has no requests, or its JSON report can't be read or is inconsistent |
+| `DELETE /api/v1/reports/{name}` | `204` once the folder's `report.json`, `report.html`, `report.md`, `goose.log` and the request, transaction, scenario, error and debug logs Goose names there, each plain or gzipped, and any temporary report file a stopped process left, are deleted, then the folder if that leaves it empty; `409` for the folder of the run in progress, the folder a bare `--goose-log` is open in, or a folder that holds `.goose-run`; `404` for a folder the panel does not list |
 
-An id that is not a run id, any other file, and anything that is not a real directory holding a regular `run.json` and a regular file (a symlink included) is a plain `404`, so a run still being written, or whose save failed, is not served. Reports and comparisons are sent with `Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, `Cache-Control: no-store` and `Content-Security-Policy: sandbox`, so a report opened anyway runs no script with the dashboard's origin.
+A name is a letter or digit, then any mix of letters, digits, `.`, `_` and `-`. A folder with any other name is not listed. A name of any other form, a folder that is not one level down, a symlink, or a folder without a regular JSON report gets a plain `404`. A folder whose JSON report is not yet on disk is not listed: Goose writes the JSON report last, through a temporary file and a rename. Reports and comparisons are sent with `Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, `Cache-Control: no-store` and `Content-Security-Policy: sandbox`, so a report opened anyway runs no script with the dashboard's origin.
 
 ```bash
-curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:5118/api/v1/runs
+curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:5118/api/v1/reports
 curl -s -OJ -H "Authorization: Bearer $TOKEN" \
-  http://127.0.0.1:5118/api/v1/runs/2026-10-09-141203/report.html
+  http://127.0.0.1:5118/api/v1/reports/nightly/report.html
 curl -s -OJ -H "Authorization: Bearer $TOKEN" \
-  "http://127.0.0.1:5118/api/v1/runs/2026-10-09-151500/compare.md?baseline=2026-10-09-141203"
+  "http://127.0.0.1:5118/api/v1/reports/nightly-2/compare.md?baseline=nightly"
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"save": false}' http://127.0.0.1:5118/api/v1/control/report
 ```
 
-With no token, which only a loopback bind allows, every user on this machine can list and download every saved run while the dashboard is up, even if the files themselves are readable only by their owner. On a shared machine, set --dashboard-auth-token.
-
-The SSE `closed` event carries the save state as its data, the same object as the snapshot's `save`: `{"state":"on","reason":null,"dir":"goose-runs","last_run":"2026-10-09-141203"}`. Earlier 0.19.0-dev builds sent `1`; the dashboard page accepts both.
+With no token, which only a loopback bind allows, every user on this machine can list and download every report in that folder while the dashboard is up, even if the files themselves are readable only by their owner. On a shared machine, set `--dashboard-auth-token`.
 
 ### Waiting after an autostarted run
 
-When an autostarted `--dashboard` run (one without `--no-autostart`) ends, the run was saved, and any client is connected to the event stream, Goose stays up instead of exiting, so the run can still be downloaded. With `--dashboard-control` it prints:
+When an autostarted `--dashboard` run (one without `--no-autostart`) ends, Goose stays up instead of exiting if Save report wrote its report and any client is connected to the event stream, so the report can still be downloaded. With `--dashboard-control` it prints:
 
 ```
 Run finished. Download it from the dashboard at http://127.0.0.1:5118. Press Quit in the dashboard or Ctrl-C to exit.
@@ -605,7 +623,7 @@ and without it:
 Run finished. Download it from the dashboard at http://127.0.0.1:5118. Press Ctrl-C to exit.
 ```
 
-The phase goes back to `idle`, and the test does not start again. Goose exits on Quit in the dashboard, on Ctrl-C, or on a Controller `shutdown`; there is no exit timer, so closing the tab does not end the wait. Nothing is saved or printed again, and `test_stop` does not run again. Any client on `/api/v1/events` counts, not only browser tabs: a script tailing the event stream when the run ends keeps Goose up until Goose is told to quit. With no client connected when the run ends, Goose exits at once, as before. A run stopped from the dashboard or a Controller, or canceled with Ctrl-C, never waits.
+The phase goes back to `idle`, and the test does not start again. Goose exits on Quit in the dashboard, on Ctrl-C, or on a Controller `shutdown`; there is no exit timer, so closing the tab does not end the wait. Nothing is written or printed again, and `test_stop` does not run again. Any client on `/api/v1/events` counts, not only browser tabs: a script tailing the event stream when the run ends keeps Goose up until Goose is told to quit. With no client connected when the run ends, Goose exits at once, as before. A run stopped from the dashboard or a Controller, or canceled with Ctrl-C, never waits.
 
 ## Stability
 
@@ -620,6 +638,10 @@ Changes are additive where possible: new fields, new endpoints and new error cod
 ### `/api/v1` from 1.0
 
 Semver covers it: within 1.x no field, endpoint or error code is removed, renamed or given a different meaning. New ones may be added, so a client must ignore fields it does not know and must not fail on an error code it does not know.
+
+### The routes and the snapshot
+
+In 0.19 `/api/v1` serves `GET /api/v1/health`, `GET /api/v1/snapshot`, `GET /api/v1/events`, `GET /api/v1/series`, `GET /api/v1/reports`, `GET /api/v1/reports/{name}/{file}` and `GET /api/v1/reports/{name}/compare.md`, and with `--dashboard-control` `POST /api/v1/control/start`, `settings`, `stop`, `users`, `quit`, `report` and `report/now`, and `DELETE /api/v1/reports/{name}`. A snapshot's top level fields are `version`, `generated_at`, `goose_version`, `phase`, `stopping`, `duration_secs`, `active_users`, `maximum_users`, `target_users`, `total_users`, `hosts`, `aggregate`, `requests`, `errors`, `scenarios`, `transactions`, `series`, `flags`, `report` and `settings`. The SSE `closed` event's data is `1`.
 
 ### What the contract is
 
@@ -718,17 +740,17 @@ The tests load the bundled `app.js` into a jsdom page with a stubbed `fetch`, so
 
 ## GraphData memory cost
 
-Enabling `--dashboard` turns on the same per-second **GraphData** series collection used for HTML report graphs (also enabled by `--report-file` and by [saving runs](../getting-started/common.md#saved-runs), the default). Every saved run records it and keeps every second of the whole run for the report, with or without `--dashboard`, and so does `--report-file`. `--no-save` restores the earlier behaviour: without `--dashboard` or `--report-file` nothing is recorded, and with `--dashboard` alone the dashboard keeps only twice its chart window (10 minutes). That cost applies for the whole run even when no browser is connected:
+Enabling `--dashboard` turns on the same per second **GraphData** series collection used for HTML report graphs (also enabled by `--report-file`). Goose keeps every second of the whole run while a report will be written at the end of it: to a `--report-file` path, or by [Save report](#saving-the-report), which is on by default with `--dashboard`. With Save report off and no `--report-file` path, the dashboard keeps only twice its chart window (10 minutes). Without `--dashboard` or `--report-file` nothing is recorded. The recording costs memory even when no browser is connected:
 
-- Per-second counters for requests, errors, users, and average latency are retained for the duration of the test.
-- Memory scales with unique request names × run length (same class of cost as generating HTML graphs).
+- Per-second counters for requests, errors, users, and average latency are kept for the whole run while a report will be written, and for the last 10 minutes otherwise.
+- While a report will be written, memory grows with unique request names × run length, the same cost as generating HTML graphs; otherwise it stays flat.
 - Request and error tables truncate to the top rows (`flags.requests_truncated` / `flags.errors_truncated` when capped); series charts use a fixed trailing window (default 5 minutes).
 
 With no SSE client connected and no `GET /api/v1/snapshot` in the last two seconds (`/api/v1/health` does not count), the dashboard issues **no** snapshot builds (no extra metrics-processor work beyond GraphData recording). When clients are connected, snapshots are coalesced to about **1 Hz** for all viewers. Concurrent SSE clients are capped (default **32**, tunable with `--dashboard-max-clients`); further clients receive HTTP 503.
 
 Each snapshot build (while clients are connected or polling) runs on the **metrics processor** task: it drains pending metrics, exports the trailing series window, and builds percentile maps for the aggregate, up to 100 request rows, and one row per scenario and transaction, a number fixed by the load test's code. That cost scales with unique request names and the timing histograms Goose already maintains; the attack main loop does **not** await the build. Under extreme cardinality, prefer fewer unique request names, a shorter test, or disable the dashboard if you need absolute minimal overhead (same trade-off as `--report-file`).
 
-With `--dashboard`, and also for a saved run or a `--report-file`, Goose keeps one response time histogram per second for the last 300 seconds, for all requests together and for each of the first 100 request names, plus the same for synthetic times while coordinated omission mitigation is on. It does not grow with run length. Its size depends on how many request names there are and how many distinct response times occur: about 0.2 MB for all requests and 10 MB for 100 names with typical response times, and up to 30 MB in the worst case at the default 60 second timeout, more with a longer `--timeout`. Filling it costs little: in a test of 1,000 users at about 21,800 requests a second over 25 request names, the heatmap added no measurable CPU or instructions per request, the difference from the dashboard without it being within the runs' spread of about 1%, and 3.1 MiB of peak memory. Each user's batch of metrics is still sent every 100 requests or 250 ms, as without the heatmap; a batch keeps each request name's response times for the second it is filling and the next one, and a request from any other second sends it early. For the HTML report's heatmap, each second is also added once to whole run columns, up to 600 for all requests and 60 for each of those 100 names, which merge in pairs as they fill, so they too stop growing. `--no-percentiles-over-time` turns all of it off, along with the small per request cost of filling it.
+With `--dashboard`, and also for a `--report-file`, Goose keeps one response time histogram per second for the last 300 seconds, for all requests together and for each of the first 100 request names, plus the same for synthetic times while coordinated omission mitigation is on. It does not grow with run length. Its size depends on how many request names there are and how many distinct response times occur: about 0.2 MB for all requests and 10 MB for 100 names with typical response times, and up to 30 MB in the worst case at the default 60 second timeout, more with a longer `--timeout`. Filling it costs little. In a test of 1,000 users at about 21,800 requests a second over 25 request names, the heatmap added no measurable CPU or instructions per request: the difference from the dashboard without it was within the runs' spread of about 1%. It added 3.1 MiB of peak memory. Each user's batch of metrics is still sent every 100 requests or 250 ms, as without the heatmap; a batch keeps each request name's response times for the second it is filling and the next one, and a request from any other second sends it early. For the HTML report's heatmap, while a report will be written, each second is also added once to whole run columns: up to 600 for all requests and 60 for each of those 100 names. The columns merge in pairs as they fill, so they too stop growing. `--no-percentiles-over-time` turns all of it off, along with the small per request cost of filling it.
 
 For extreme runs with tens of thousands of unique request names, expect higher GraphData memory (same as `--report-file`). Disable the dashboard if you need absolute minimal overhead, just as you can disable Controllers with `--no-telnet --no-websocket`.
 

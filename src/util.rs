@@ -464,6 +464,8 @@ pub(crate) fn setup_ctrlc_handler() {
         // We've caught a ctrl-c, determine if it's the first time or an additional time.
         if is_killswitch_triggered() {
             warn!("caught another ctrl-c, exiting immediately...");
+            // Leave a gzipped Goose log whole, as a plain one already is.
+            crate::logger::finish_goose_log();
             std::process::exit(1);
         } else {
             warn!("caught ctrl-c, stopping...");
