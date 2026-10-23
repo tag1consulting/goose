@@ -140,6 +140,10 @@ pub(crate) struct DashboardSetup {
     /// The name of the folder of the run in progress, which Delete refuses
     /// and the runs panel shows as running. The main loop keeps it current.
     pub running_folder: RunningFolder,
+    /// The name of the folder a bare `--goose-log` is open in, which Delete
+    /// refuses. It stays set after the run ends, as the log stays open there
+    /// until the next run starts.
+    pub log_folder: RunningFolder,
     /// The address the dashboard listens on, as logged at startup.
     pub url: String,
     /// Signal SSE clients to emit `event: closed` and stop the hub loop.
@@ -880,6 +884,8 @@ struct DashboardState {
     listing_cache: Arc<Mutex<runs::ListingCache>>,
     /// The folder of the run in progress.
     running_folder: RunningFolder,
+    /// The folder the Goose log is open in.
+    log_folder: RunningFolder,
     /// The controller addresses `GET /api/v1/health` reports.
     controllers: HealthControllers,
 }
@@ -1017,6 +1023,7 @@ pub(crate) async fn setup_dashboard(
     let (close_tx, _) = watch::channel(false);
     let active_sse = Arc::new(AtomicUsize::new(0));
     let running_folder = RunningFolder::default();
+    let log_folder = RunningFolder::default();
     let max_sse_clients = configuration.dashboard_max_clients();
     // Clone sender for the hub and the series handler (same channel).
     let hub = SnapshotHub::new(
@@ -1041,6 +1048,7 @@ pub(crate) async fn setup_dashboard(
         reports_dir: runs::parent_folder(configuration),
         listing_cache: Arc::new(Mutex::new(runs::ListingCache::new())),
         running_folder: running_folder.clone(),
+        log_folder: log_folder.clone(),
         controllers: HealthControllers {
             telnet: (!configuration.no_telnet).then(|| {
                 format_bind_address(configuration.telnet_host(), configuration.telnet_port())
@@ -1081,6 +1089,7 @@ pub(crate) async fn setup_dashboard(
         build_count,
         active_sse,
         running_folder,
+        log_folder,
         url: format!("http://{bound}"),
         close_tx,
         server,
@@ -1617,13 +1626,13 @@ fn snapshot_event(bytes: &Bytes) -> Event {
     Event::default().event("snapshot").data(data)
 }
 
-/// The name of the folder of the run in progress, shared by the main loop
-/// and the report routes.
+/// The name of a folder Goose is writing to, shared by the main loop and the
+/// report routes.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct RunningFolder(Arc<Mutex<Option<String>>>);
 
 impl RunningFolder {
-    /// Set the folder of the run in progress, or `None` once it has ended.
+    /// Set the folder, or `None` once Goose no longer writes to it.
     pub(crate) fn set(&self, folder: Option<&std::path::Path>) {
         let name = folder
             .and_then(std::path::Path::file_name)
@@ -1639,6 +1648,17 @@ impl RunningFolder {
             Ok(running) => running.clone(),
             Err(poisoned) => poisoned.into_inner().clone(),
         }
+    }
+
+    /// Whether this is the folder `name`, at `folder` in `parent`: by name, or
+    /// by identity, so a name in another case on a filesystem that ignores
+    /// case is still this folder.
+    fn is(&self, parent: &Path, name: &str, folder: &Path) -> bool {
+        self.get().is_some_and(|own| {
+            own == name
+                || std::fs::symlink_metadata(parent.join(&own))
+                    .is_ok_and(|metadata| same_file(folder, &metadata))
+        })
     }
 }
 
@@ -2533,7 +2553,8 @@ async fn control_quit_handler(
 /// Goose names in a run's folder, then the folder if that leaves it empty;
 /// nothing else. Registered only with `--dashboard-control`, and authorized
 /// like the control routes. 204 when removed; 409 for the folder of the run
-/// in progress; a plain 404 for anything the listing would not list.
+/// in progress, or the one the Goose log is open in; a plain 404 for anything
+/// the listing would not list.
 async fn delete_report_handler(
     State(state): State<Arc<DashboardState>>,
     headers: HeaderMap,
@@ -2550,18 +2571,18 @@ async fn delete_report_handler(
     let Some((folder, json)) = runs::report_folder(&state.reports_dir, &name) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    // The same folder by identity too, so a name in another case on a
-    // filesystem that ignores case is still the running folder.
-    let running = state.running_folder.get().is_some_and(|running| {
-        running == name
-            || std::fs::symlink_metadata(state.reports_dir.join(&running))
-                .is_ok_and(|metadata| same_file(&folder, &metadata))
-    });
-    if running {
+    let refused = if state.running_folder.is(&state.reports_dir, &name, &folder) {
+        Some("The run in progress writes to this folder.")
+    } else if state.log_folder.is(&state.reports_dir, &name, &folder) {
+        Some("Goose is writing its log to this folder.")
+    } else {
+        None
+    };
+    if let Some(refused) = refused {
         return (
             StatusCode::CONFLICT,
             [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
-            "The run in progress writes to this folder.",
+            refused,
         )
             .into_response();
     }

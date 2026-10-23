@@ -480,6 +480,10 @@ struct GooseAttackRunState {
     /// The folder of the run in progress, as the dashboard's report routes see it.
     #[cfg(feature = "dashboard")]
     dashboard_running_folder: Option<dashboard::RunningFolder>,
+    /// The folder a bare `--goose-log` is open in, as the dashboard's report
+    /// routes see it.
+    #[cfg(feature = "dashboard")]
+    dashboard_log_folder: Option<dashboard::RunningFolder>,
     /// The address the dashboard listens on, as logged at startup.
     #[cfg(feature = "dashboard")]
     dashboard_url: Option<String>,
@@ -1993,6 +1997,7 @@ impl GooseAttack {
             dashboard_close_tx,
             dashboard_active_sse,
             dashboard_running_folder,
+            dashboard_log_folder,
             dashboard_url,
             dashboard_server,
         ) = match dashboard::setup_dashboard(&self.configuration, dashboard_control_tx).await? {
@@ -2001,10 +2006,11 @@ impl GooseAttack {
                 Some(setup.close_tx),
                 Some(setup.active_sse),
                 Some(setup.running_folder),
+                Some(setup.log_folder),
                 Some(setup.url),
                 Some(setup.server),
             ),
-            None => (None, None, None, None, None, None),
+            None => (None, None, None, None, None, None, None),
         };
 
         // Grab now() once from the standard library, used by multiple timers in
@@ -2069,6 +2075,8 @@ impl GooseAttack {
             dashboard_active_sse,
             #[cfg(feature = "dashboard")]
             dashboard_running_folder,
+            #[cfg(feature = "dashboard")]
+            dashboard_log_folder,
             #[cfg(feature = "dashboard")]
             dashboard_url,
             #[cfg(feature = "dashboard")]
@@ -3067,6 +3075,17 @@ impl GooseAttack {
                     .as_ref()
                     .map(|folder| folder.path.as_path()),
             );
+        }
+        // A bare --goose-log moved into this run's folder, and stays open there
+        // after the run ends.
+        #[cfg(feature = "dashboard")]
+        if let (Some(log_folder), Some(folder), true) = (
+            &goose_attack_run_state.dashboard_log_folder,
+            &self.output.folder,
+            self.configuration.goose_log() == Some(config::RUN_FOLDER)
+                && logger::goose_log_installed(),
+        ) {
+            log_folder.set(Some(&folder.path));
         }
 
         // If enabled, spawn a logger thread.
