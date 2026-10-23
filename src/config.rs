@@ -1579,7 +1579,8 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::TelnetPort
             | GooseDefault::WebSocketPort
             | GooseDefault::DashboardPort
-            | GooseDefault::DashboardMaxClients => {
+            | GooseDefault::DashboardMaxClients
+            | GooseDefault::Compress => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: value.to_string(),
@@ -1605,7 +1606,6 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::StickyFollow
             | GooseDefault::NoGranularData
             | GooseDefault::ReportGraphData
-            | GooseDefault::Compress
             | GooseDefault::Dashboard
             | GooseDefault::DashboardControl
             | GooseDefault::NoPercentilesOverTime
@@ -1823,7 +1823,6 @@ impl GooseDefaultType<bool> for GooseAttack {
             | GooseDefault::ReportFile
             | GooseDefault::OutputDir
             | GooseDefault::Notes
-            | GooseDefault::Compress
             | GooseDefault::BaselineFile
             | GooseDefault::RequestLog
             | GooseDefault::ScenarioLog
@@ -1857,7 +1856,8 @@ impl GooseDefaultType<bool> for GooseAttack {
             | GooseDefault::TelnetPort
             | GooseDefault::WebSocketPort
             | GooseDefault::DashboardPort
-            | GooseDefault::DashboardMaxClients => {
+            | GooseDefault::DashboardMaxClients
+            | GooseDefault::Compress => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: format!("{value}"),
@@ -1961,7 +1961,6 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::ReportFile
             | GooseDefault::OutputDir
             | GooseDefault::Notes
-            | GooseDefault::Compress
             | GooseDefault::BaselineFile
             | GooseDefault::RequestLog
             | GooseDefault::ScenarioLog
@@ -1995,7 +1994,8 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::TelnetPort
             | GooseDefault::WebSocketPort
             | GooseDefault::DashboardPort
-            | GooseDefault::DashboardMaxClients => {
+            | GooseDefault::DashboardMaxClients
+            | GooseDefault::Compress => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: format!("{value:?}"),
@@ -2094,7 +2094,6 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::ReportFile
             | GooseDefault::OutputDir
             | GooseDefault::Notes
-            | GooseDefault::Compress
             | GooseDefault::BaselineFile
             | GooseDefault::RequestLog
             | GooseDefault::ScenarioLog
@@ -2128,7 +2127,8 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::TelnetPort
             | GooseDefault::WebSocketPort
             | GooseDefault::DashboardPort
-            | GooseDefault::DashboardMaxClients => {
+            | GooseDefault::DashboardMaxClients
+            | GooseDefault::Compress => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: format!("{value:?}"),
@@ -2186,7 +2186,6 @@ impl GooseDefaultType<f64> for GooseAttack {
             | GooseDefault::ReportFile
             | GooseDefault::OutputDir
             | GooseDefault::Notes
-            | GooseDefault::Compress
             | GooseDefault::BaselineFile
             | GooseDefault::RequestLog
             | GooseDefault::ScenarioLog
@@ -2220,7 +2219,8 @@ impl GooseDefaultType<f64> for GooseAttack {
             | GooseDefault::WebSocketPort
             | GooseDefault::DashboardPort
             | GooseDefault::DashboardMaxClients
-            | GooseDefault::PdfTimeout => {
+            | GooseDefault::PdfTimeout
+            | GooseDefault::Compress => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
                     value: value.to_string(),
@@ -4624,6 +4624,25 @@ mod test {
         config.configure(&defaults).unwrap();
         assert!(config.dashboard_control);
         assert!(config.validate_dashboard_config().is_ok());
+    }
+
+    /// `GooseDefault::Compress` takes a gzip level, so any other type says
+    /// it expected a usize.
+    #[test]
+    fn compress_default_expects_a_usize() {
+        for result in [
+            GooseAttack::initialize_with_config(GooseConfiguration::default())
+                .and_then(|a| a.set_default(GooseDefault::Compress, "6")),
+            GooseAttack::initialize_with_config(GooseConfiguration::default())
+                .and_then(|a| a.set_default(GooseDefault::Compress, true)),
+        ] {
+            match result {
+                Err(GooseError::InvalidOption { detail, .. }) => {
+                    assert!(detail.contains("expected usize value"), "{}", detail)
+                }
+                _ => panic!("GooseDefault::Compress took a value that is not a usize"),
+            }
+        }
     }
 
     #[test]
