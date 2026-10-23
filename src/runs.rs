@@ -575,11 +575,12 @@ impl GooseAttack {
     }
 
     /// When a run has fully stopped: write the `--report-file` reports and, with
-    /// Save report on, the folder's, attempting both even if one fails.
-    /// Returns the first error. When the session `returns_to_idle`, a
-    /// folder's report that fails is only logged and shown on the dashboard,
-    /// and the session goes on. An autostarted run, which does not return to
-    /// Idle, returns that error.
+    /// Save report on or after a Save report now, the folder's, attempting
+    /// both even if one fails. Returns the first error. When the session
+    /// `returns_to_idle`, a folder's report that fails is only logged and
+    /// shown on the dashboard, and the session goes on. When the session shuts
+    /// down after the run instead, as after an autostarted run that ends on its
+    /// own, a Controller `shutdown` or Ctrl-C, it returns that error.
     pub(crate) async fn write_end_of_run(
         &mut self,
         returns_to_idle: bool,

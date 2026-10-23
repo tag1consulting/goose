@@ -62,9 +62,9 @@
 //!
 //! The `--goose-log` run time option records the errors and messages Goose logs. The logger
 //! thread does not write this log: the global logger writes it, through a handle kept in this
-//! file. The log a bare `--goose-log` writes moves into each run's folder as the run
-//! starts. A Goose log named `.gz` ends a gzip member at the end of each run, so the file
-//! is whole between runs.
+//! file. A bare `--goose-log` starts a new Goose log in each run's folder as the run starts,
+//! and lines logged between runs go to the last run's log. A Goose log named `.gz` ends a
+//! gzip member at the end of each run, so the file is whole between runs.
 //!
 //! ## Request File logger
 //! The Goose requests logger is enabled with the `--request-log` command-line option, or the
