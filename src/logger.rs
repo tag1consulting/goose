@@ -206,7 +206,6 @@ use async_compression::Level;
 use log::LevelFilter;
 use regex::RegexSet;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Mutex;
@@ -638,7 +637,9 @@ impl GooseLogger<GooseDebug> for GooseConfiguration {
         if let Some(debug_format) = self.debug_format.as_ref() {
             match debug_format {
                 // Use serde_json to create JSON.
-                GooseLogFormat::Json => json!(message).to_string(),
+                GooseLogFormat::Json => {
+                    serde_json::to_string(&message).expect("a log message serializes to JSON")
+                }
                 // Raw format is Debug output for GooseRawRequest structure.
                 GooseLogFormat::Raw => format!("{message:?}"),
                 // Pretty format is Debug Pretty output for GooseRawRequest structure.
@@ -667,7 +668,9 @@ impl GooseLogger<GooseErrorMetric> for GooseConfiguration {
         if let Some(error_format) = self.error_format.as_ref() {
             match error_format {
                 // Use serde_json to create JSON.
-                GooseLogFormat::Json => json!(message).to_string(),
+                GooseLogFormat::Json => {
+                    serde_json::to_string(&message).expect("a log message serializes to JSON")
+                }
                 // Raw format is Debug output for GooseErrorMetric structure.
                 GooseLogFormat::Raw => format!("{message:?}"),
                 // Pretty format is Debug Pretty output for GooseErrorMetric structure.
@@ -700,7 +703,9 @@ impl GooseLogger<GooseRequestMetric> for GooseConfiguration {
         if let Some(request_format) = self.request_format.as_ref() {
             match request_format {
                 // Use serde_json to create JSON.
-                GooseLogFormat::Json => json!(message).to_string(),
+                GooseLogFormat::Json => {
+                    serde_json::to_string(&message).expect("a log message serializes to JSON")
+                }
                 // Raw format is Debug output for GooseRequestMetric structure.
                 GooseLogFormat::Raw => format!("{message:?}"),
                 // Pretty format is Debug Pretty output for GooseRequestMetric structure.
@@ -742,7 +747,9 @@ impl GooseLogger<TransactionMetric> for GooseConfiguration {
         if let Some(transaction_format) = self.transaction_format.as_ref() {
             match transaction_format {
                 // Use serde_json to create JSON.
-                GooseLogFormat::Json => json!(message).to_string(),
+                GooseLogFormat::Json => {
+                    serde_json::to_string(&message).expect("a log message serializes to JSON")
+                }
                 // Raw format is Debug output for TransactionMetric structure.
                 GooseLogFormat::Raw => format!("{message:?}"),
                 // Pretty format is Debug Pretty output for TransactionMetric structure.
@@ -775,7 +782,9 @@ impl GooseLogger<ScenarioMetric> for GooseConfiguration {
         if let Some(scenario_format) = self.scenario_format.as_ref() {
             match scenario_format {
                 // Use serde_json to create JSON.
-                GooseLogFormat::Json => json!(message).to_string(),
+                GooseLogFormat::Json => {
+                    serde_json::to_string(&message).expect("a log message serializes to JSON")
+                }
                 // Raw format is Debug output for ScenarioMetric structure.
                 GooseLogFormat::Raw => format!("{message:?}"),
                 // Pretty format is Debug Pretty output for ScenarioMetric structure.
