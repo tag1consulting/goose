@@ -124,6 +124,14 @@ async fn delete_refuses_the_folder_of_the_open_goose_log() {
     // The folder stays held while the log is open in it, so another
     // process's Delete refuses it too.
     let held = folder.join(".goose-run").is_file();
+    // The next run moves the log into run-2, and only then gives up the
+    // first run's folder.
+    post(&client, &base, "start").await;
+    wait_for_phase(&client, &base, "maintain").await;
+    let released = !folder.join(".goose-run").exists();
+    let next = parent.join("run-2");
+    let next_held = next.join(".goose-run").is_file();
+    let next_log = next.join("goose.log").is_file();
     load.abort();
     let _ = load.await;
     std::fs::remove_dir_all(&parent).ok();
@@ -131,4 +139,13 @@ async fn delete_refuses_the_folder_of_the_open_goose_log() {
     assert_eq!(text, "Goose is writing its log to this folder.");
     assert!(log_kept, "Delete removed the open Goose log");
     assert!(held, "the folder of the open Goose log is not held");
+    assert!(
+        released,
+        "the next run did not give up the last run's folder"
+    );
+    assert!(next_held, "the next run's folder is not held");
+    assert!(
+        next_log,
+        "the Goose log did not move into the next run's folder"
+    );
 }

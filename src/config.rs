@@ -2880,7 +2880,8 @@ impl GooseConfiguration {
             // Otherwise use GooseDefault if set.
             GooseValue {
                 value: defaults.notes.clone(),
-                filter: defaults.notes.is_none(),
+                // A rendered report keeps the notes of the JSON report it reads.
+                filter: defaults.notes.is_none() || self.render_report().is_some(),
                 message: "notes",
             },
         ]);
@@ -2897,7 +2898,8 @@ impl GooseConfiguration {
                 // Otherwise use GooseDefault if set.
                 GooseValue {
                     value: defaults.report_graph_data,
-                    filter: defaults.report_graph_data.is_none(),
+                    // A rendered report keeps the graph data of the JSON report it reads.
+                    filter: defaults.report_graph_data.is_none() || self.render_report().is_some(),
                     message: "report_graph_data",
                 },
             ])
@@ -4802,6 +4804,26 @@ mod test {
                 other => panic!("{}: {:?}", field, other),
             }
         }
+    }
+
+    /// `GooseDefault::Notes` and `GooseDefault::ReportGraphData` set in code
+    /// don't stop `--render-report`, which keeps the JSON report's own.
+    #[test]
+    fn render_report_ignores_notes_and_graph_data_defaults() {
+        let mut configuration = GooseConfiguration {
+            render_report: Some("report.json".to_string()),
+            report_file: vec!["report.html".to_string()],
+            ..Default::default()
+        };
+        let defaults = GooseDefaults {
+            notes: Some("from code".to_string()),
+            report_graph_data: Some(true),
+            ..GooseDefaults::default()
+        };
+        configuration.configure(&defaults).unwrap();
+        assert_eq!(configuration.notes(), None);
+        assert!(!configuration.report_graph_data);
+        assert!(configuration.validate().is_ok());
     }
 
     #[test]
