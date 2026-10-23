@@ -56,11 +56,12 @@ export const IDLE_SNAPSHOT = {
     save: true,
     graph_data: false,
     folder: null,
-    parent: "goose-runs",
     paths: [],
     notes: null,
     last_report: null,
+    last_report_name: null,
     error: null,
+    writes: 0,
   },
   settings: {
     host: null,

@@ -2671,7 +2671,6 @@ async fn test_save_report_switches() {
     assert_eq!(snap["report"]["graph_data"], false);
     assert_eq!(snap["report"]["paths"], serde_json::json!([path_str]));
     assert_eq!(snap["report"]["notes"], "switches");
-    assert_eq!(snap["report"]["parent"], parent.to_string_lossy().as_ref());
 
     // The switches need the control token and a body naming one.
     for (body, auth, status) in [
@@ -3449,6 +3448,76 @@ async fn test_report_switches_refuse_what_they_cannot_do() {
     )
     .await;
     assert!(!parent.join("none").join("report.json").exists());
+    load.abort().await;
+    std::fs::remove_dir_all(&parent).ok();
+}
+
+/// Save report now counts each report it writes in the snapshot's `writes`,
+/// so the runs panel lists it once it is there, and refuses with
+/// `report_busy` while one is still being written.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn test_save_report_now_counts_its_writes() {
+    let server = MockServer::start();
+    let _mocks = setup_mock_endpoints(&server);
+    let parent = reports_dir("now-writes");
+    let (load, base) = start_idle_dashboard(&server, &parent, Vec::new(), None).await;
+    let client = reqwest::Client::new();
+    let start = post_control(&client, &base, "/api/v1/control/start", Some("{}"), true).await;
+    assert_eq!(start.status(), 200);
+    let snap =
+        wait_for_active_users(&client, &base, Some(AUTH_TOKEN), 2, Duration::from_secs(30)).await;
+    let before = snap["report"]["writes"].as_u64().expect("writes");
+    // Several at once: the first writes, and one sent while it is still
+    // writing is refused.
+    let answers = futures::future::join_all((0..5).map(|_| {
+        post_control(
+            &client,
+            &base,
+            "/api/v1/control/report/now",
+            Some("{}"),
+            true,
+        )
+    }))
+    .await;
+    let mut codes = Vec::new();
+    for answer in answers {
+        let body: serde_json::Value = answer.json().await.unwrap();
+        codes.push(if body["ok"] == true {
+            "ok".to_string()
+        } else {
+            body["error"].as_str().unwrap_or_default().to_string()
+        });
+    }
+    assert!(codes.iter().any(|code| code == "ok"), "{:?}", codes);
+    assert!(
+        codes.iter().any(|code| code == "report_busy"),
+        "{:?}",
+        codes
+    );
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let snap = get_snapshot_json(&client, &base, Some(AUTH_TOKEN))
+            .await
+            .unwrap();
+        if snap["report"]["writes"].as_u64().unwrap_or_default() > before {
+            break;
+        }
+        assert!(Instant::now() < deadline, "{}", snap["report"]);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(parent.join("dash").join("report.json").exists());
+    let stop = post_control(&client, &base, "/api/v1/control/stop", Some("{}"), true).await;
+    assert_eq!(stop.status(), 200);
+    let snap = wait_for_phase(
+        &client,
+        &base,
+        Some(AUTH_TOKEN),
+        &["idle"],
+        Duration::from_secs(30),
+    )
+    .await;
+    assert_eq!(snap["report"]["last_report_name"], "dash");
     load.abort().await;
     std::fs::remove_dir_all(&parent).ok();
 }

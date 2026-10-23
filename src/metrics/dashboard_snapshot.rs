@@ -82,18 +82,23 @@ pub(crate) struct SnapshotReport {
     /// Include graph data: the JSON report holds the per second graph data.
     pub graph_data: bool,
     /// The current or last run's folder, as given, never made absolute;
-    /// `null` before the first run.
+    /// `null` before the first run, and for a run that has none.
     pub folder: Option<String>,
-    /// The folder the runs panel lists: the one run folders go in.
-    pub parent: String,
     /// The `--report-file` paths, which are always written.
     pub paths: Vec<String>,
     /// The run's `--notes`.
     pub notes: Option<String>,
     /// The folder of the last report Save report wrote.
     pub last_report: Option<String>,
-    /// Why the last report Save report tried to write failed.
+    /// The name the report routes take for `last_report`; `null` when they
+    /// take none, as for a name with a space.
+    pub last_report_name: Option<String>,
+    /// Why the last report Goose tried to write into the run's folder
+    /// failed, or why the run has no folder.
     pub error: Option<String>,
+    /// How many reports Goose has written into a run's folder since it
+    /// started, at the end of a run or by Save report now.
+    pub writes: u64,
 }
 
 /// The run settings, as the dashboard shows them: what the next Start runs,

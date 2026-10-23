@@ -3536,6 +3536,12 @@ impl GooseConfiguration {
         self.report_in_folder() || self.logs_in_folder() || (self.dashboard && !self.no_metrics)
     }
 
+    /// Whether only the dashboard asks for a run's folder: no output flag given
+    /// without a path, and no `--output-dir`.
+    pub(crate) fn folder_only_for_dashboard(&self) -> bool {
+        !self.report_in_folder() && !self.logs_in_folder() && self.output_dir().is_none()
+    }
+
     /// The address the dashboard listens on.
     pub(crate) fn dashboard_host(&self) -> &str {
         non_empty(&self.dashboard_host).unwrap_or(DEFAULT_DASHBOARD_HOST)

@@ -25,6 +25,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 /// The folder run folders go in when `--output-dir` is not given.
 pub(crate) const DEFAULT_PARENT: &str = "goose-runs";
@@ -323,14 +325,21 @@ pub(crate) struct Output {
     reserved: Option<PathBuf>,
     /// Save report: write `report.json` and `report.html` into the folder.
     pub save_report: bool,
+    /// Goose turned Save report off for this run, as the folder only the
+    /// dashboard asked for can't be written to; the next run turns it on.
+    pub save_report_held: bool,
     /// Include graph data in the JSON report.
     pub graph_data: bool,
     /// When the run started.
     pub started: Option<DateTime<Utc>>,
     /// The folder of the last report Save report wrote.
     pub last_report: Option<String>,
-    /// Why the last report Save report tried to write failed.
-    pub error: Option<String>,
+    /// Why the last report Goose tried to write into the folder failed,
+    /// shared with the task Save report now writes in.
+    error: Arc<Mutex<Option<String>>>,
+    /// The reports Goose has written into a run's folder in this process,
+    /// shared with the task Save report now writes in.
+    writes: Arc<AtomicU64>,
     /// Save report now wrote a report during this run, which the report at
     /// its end replaces.
     pub saved_now: bool,
@@ -339,6 +348,15 @@ pub(crate) struct Output {
 }
 
 impl Output {
+    /// Why the last report Goose tried to write into the folder failed.
+    pub(crate) fn error(&self) -> Option<String> {
+        lock(&self.error).clone()
+    }
+
+    pub(crate) fn set_error(&self, error: Option<String>) {
+        *lock(&self.error) = error;
+    }
+
     /// Give up the run's folder as its run ends: remove [`RESERVED`], then the
     /// folder if that leaves it empty. Only the first call does anything.
     pub(crate) fn release_folder(&mut self) {
@@ -347,6 +365,13 @@ impl Output {
             let _ = std::fs::remove_dir(&folder);
         }
     }
+}
+
+/// `mutex` locked, even after a panic while it was held.
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 impl Drop for Output {
@@ -382,30 +407,51 @@ impl GooseAttack {
     }
 
     /// When a run starts: choose its folder when it may need one, failing
-    /// before any load when it can't be written to.
+    /// before any load when it can't be written to. A folder only the
+    /// dashboard asks for that can't be written to is skipped with a warning
+    /// instead, and Save report is off for the run.
     pub(crate) fn start_run_folder(&mut self) -> Result<(), GooseError> {
         self.output.release_folder();
         self.output.folder = None;
         self.output.last_report = None;
-        self.output.error = None;
+        self.output.set_error(None);
         self.output.saved_now = false;
         self.output.started = None;
+        if std::mem::take(&mut self.output.save_report_held) {
+            self.output.save_report = true;
+        }
         if !self.configuration.uses_run_folder() {
             return Ok(());
         }
-        let folder = RunFolder::choose(&self.configuration, Local::now()).map_err(|e| {
-            GooseError::InvalidOption {
-                option: "--output-dir".to_string(),
-                value: self
-                    .configuration
-                    .output_dir()
-                    .unwrap_or(DEFAULT_PARENT)
-                    .to_string(),
-                detail: format!("Can't choose the run's folder: {e}"),
+        let started = Local::now();
+        let folder = RunFolder::choose(&self.configuration, started)
+            .map_err(|e| {
+                let base = RunFolder::base(&self.configuration, started);
+                GooseError::InvalidOption {
+                    option: "--output-dir".to_string(),
+                    value: base.to_string_lossy().into_owned(),
+                    detail: format!("Can't write to {}: {e}", base.display()),
+                }
+            })
+            .and_then(|folder| {
+                self.output.reserved = Some(folder.path.clone());
+                folder.check_writable().map(|()| folder)
+            });
+        let folder = match folder {
+            Ok(folder) => folder,
+            Err(e) if self.configuration.folder_only_for_dashboard() => {
+                let reason = reason(&e);
+                warn!("{reason}. This run's report is not saved.");
+                self.output.release_folder();
+                self.output.set_error(Some(reason));
+                if self.output.save_report {
+                    self.output.save_report = false;
+                    self.output.save_report_held = true;
+                }
+                return Ok(());
             }
-        })?;
-        self.output.reserved = Some(folder.path.clone());
-        folder.check_writable()?;
+            Err(e) => return Err(e),
+        };
         // A bare --goose-log moves to each run's folder as the run starts.
         if self.configuration.goose_log() == Some(RUN_FOLDER) {
             let name = match self.configuration.compress {
@@ -527,13 +573,14 @@ impl GooseAttack {
                     info!("report file written to: {}", file.display());
                 }
                 self.output.last_report = Some(folder.to_string_lossy().into_owned());
-                self.output.error = None;
+                self.output.set_error(None);
+                self.output.writes.fetch_add(1, Ordering::Relaxed);
                 report_files
             }
             Err(e) => {
                 let reason = reason(&e);
                 error!("couldn't save the report: {reason}");
-                self.output.error = Some(reason);
+                self.output.set_error(Some(reason));
                 if returns_to_idle {
                     report_files
                 } else {
@@ -577,13 +624,18 @@ impl GooseAttack {
                 .folder
                 .as_ref()
                 .map(|folder| folder.path.to_string_lossy().into_owned()),
-            parent: parent_folder(&self.configuration)
-                .to_string_lossy()
-                .into_owned(),
             paths: self.configuration.report_paths(),
             notes: self.configuration.notes().map(str::to_string),
             last_report: self.output.last_report.clone(),
-            error: self.output.error.clone(),
+            last_report_name: self
+                .output
+                .last_report
+                .as_deref()
+                .and_then(|folder| Path::new(folder).file_name())
+                .map(|name| name.to_string_lossy().into_owned())
+                .filter(|name| is_report_name(name)),
+            error: self.output.error(),
+            writes: self.output.writes.load(Ordering::Relaxed),
         }
     }
 }
@@ -816,8 +868,24 @@ impl GooseAttack {
                 None,
             );
         }
+        if save == Some(true) && self.run_in_progress && self.output.folder.is_none() {
+            let message = self
+                .output
+                .error()
+                .unwrap_or_else(|| "this run has no folder".to_string());
+            return self.control_outcome(
+                goose_attack_run_state,
+                false,
+                Some("invalid_report"),
+                message,
+                None,
+            );
+        }
         if let Some(graph_data) = graph_data {
             self.output.graph_data = graph_data;
+        }
+        if save.is_some() {
+            self.output.save_report_held = false;
         }
         if let Some(save) = save.filter(|save| *save != self.output.save_report) {
             let keeps_before = self.keeps_full_graph();
@@ -856,13 +924,20 @@ impl GooseAttack {
                 "--no-metrics keeps no report to save",
             );
         }
-        let Some(folder) = self.output.folder.clone().filter(|_| self.run_in_progress) else {
+        if !self.run_in_progress {
             return refuse(
                 self,
                 goose_attack_run_state,
                 "invalid_phase",
                 "Save report now needs a run in progress",
             );
+        }
+        let Some(folder) = self.output.folder.clone() else {
+            let message = self
+                .output
+                .error()
+                .unwrap_or_else(|| "this run has no folder".to_string());
+            return refuse(self, goose_attack_run_state, "report_failed", &message);
         };
         if self
             .output
@@ -879,7 +954,7 @@ impl GooseAttack {
         }
         if let Err(e) = folder.check_writable() {
             let reason = reason(&e);
-            self.output.error = Some(reason.clone());
+            self.output.set_error(Some(reason.clone()));
             return refuse(self, goose_attack_run_state, "report_failed", &reason);
         }
         self.update_duration();
@@ -906,12 +981,22 @@ impl GooseAttack {
         let configuration = self.configuration.clone();
         let graph_data_in_json = self.output.graph_data;
         let compress = self.configuration.compress;
+        let error = Arc::clone(&self.output.error);
+        let writes = Arc::clone(&self.output.writes);
         self.output.saved_now = true;
         self.output.saving_now = Some(tokio::task::spawn_blocking(move || {
-            let baseline = configuration
+            let baseline = match configuration
                 .baseline_file
                 .as_ref()
-                .and_then(|file| load_baseline_file(file).ok());
+                .map(|file| load_baseline_file(file).map_err(|e| (file.clone(), reason(&e))))
+            {
+                Some(Ok(baseline)) => Some(baseline),
+                Some(Err((file, reason))) => {
+                    warn!("the report saved now has no baseline, as {file} doesn't load: {reason}");
+                    None
+                }
+                None => None,
+            };
             let source = crate::metrics::ReportSource {
                 configuration: &configuration,
                 metrics: &metrics,
@@ -933,8 +1018,14 @@ impl GooseAttack {
                     for file in files {
                         info!("in progress report written to: {}", file.display());
                     }
+                    *lock(&error) = None;
+                    writes.fetch_add(1, Ordering::Relaxed);
                 }
-                Err(e) => error!("couldn't save the report now: {e}"),
+                Err(e) => {
+                    let reason = reason(&e);
+                    error!("couldn't save the report now: {reason}");
+                    *lock(&error) = Some(reason);
+                }
             }
         }));
         let message = format!("saving the report to {}", folder.path.display());

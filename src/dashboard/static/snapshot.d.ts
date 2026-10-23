@@ -198,13 +198,9 @@ save: boolean,
 graph_data: boolean,
 /**
  * The current or last run's folder, as given, never made absolute;
- * `null` before the first run.
+ * `null` before the first run, and for a run that has none.
  */
 folder: string | null,
-/**
- * The folder the runs panel lists: the one run folders go in.
- */
-parent: string,
 /**
  * The `--report-file` paths, which are always written.
  */
@@ -218,9 +214,20 @@ notes: string | null,
  */
 last_report: string | null,
 /**
- * Why the last report Save report tried to write failed.
+ * The name the report routes take for `last_report`; `null` when they
+ * take none, as for a name with a space.
  */
-error: string | null, };
+last_report_name: string | null,
+/**
+ * Why the last report Goose tried to write into the run's folder
+ * failed, or why the run has no folder.
+ */
+error: string | null,
+/**
+ * How many reports Goose has written into a run's folder since it
+ * started, at the end of a run or by Save report now.
+ */
+writes: number, };
 
 type SnapshotSettings = {
 /**
