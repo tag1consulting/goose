@@ -210,7 +210,8 @@ paths: Array<string>,
  */
 notes: string | null,
 /**
- * The folder of the last report Save report wrote.
+ * The folder of the last report written into a run's folder at the end
+ * of a run.
  */
 last_report: string | null,
 /**

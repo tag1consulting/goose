@@ -62,8 +62,9 @@
 //!
 //! The `--goose-log` run time option records the errors and messages Goose logs. It is not
 //! written by the logger thread: the global logger writes it, through a handle kept in this
-//! file. A bare `--goose-log` moves into each run's folder as the run starts. A Goose log named
-//! `.gz` ends a gzip member at the end of each run, so the file is whole between runs.
+//! file. The log a bare `--goose-log` writes moves into each run's folder as the run
+//! starts. A Goose log named `.gz` ends a gzip member at the end of each run, so the file
+//! is whole between runs.
 //!
 //! ## Request File logger
 //! The Goose requests logger is enabled with the `--request-log` command-line option, or the
@@ -281,11 +282,11 @@ enum GooseLogTarget {
     File(std::fs::File),
     /// A Goose log named `.gz`: the gzip member being written, ended at the
     /// end of each run and each `execute()`. Lines are buffered above the
-    /// encoder, so it compresses a buffer at a time rather than each piece of
-    /// a line.
+    /// encoder, so it compresses one whole buffer at a time, not each piece
+    /// of a line.
     Gzip(std::io::BufWriter<flate2::write::GzEncoder<std::fs::File>>),
-    /// A Goose log named `.gz` between runs, between members: each line is a
-    /// whole member, and the pieces of a line not yet ended wait.
+    /// A Goose log named `.gz` between runs: each line is written as a whole
+    /// gzip member, and a line not yet ended waits in the buffer.
     GzipIdle(std::fs::File, Vec<u8>),
     /// The file failed; lines are dropped.
     Failed,

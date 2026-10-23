@@ -414,7 +414,7 @@ fn markdown_paragraph(text: &str) -> String {
 
 /// `line` without its indent, which could start a code block, and with a
 /// backslash before a leading `#`, `-`, `+`, `*` or `=`, the `.` or `)` after
-/// leading digits, and every `\\`, `<`, `>` and `|`.
+/// leading digits, and every `\`, `<`, `>` and `|`.
 fn escape_line(line: &str) -> String {
     let mut rest = line.trim_start();
     let mut out = String::with_capacity(line.len() + 8);

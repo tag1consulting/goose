@@ -129,24 +129,24 @@
     o `--report-file`, `--goose-log`, `--request-log`, `--transaction-log`, `--scenario-log`, `--error-log` and `--debug-log` take an optional path; without one they write into the run's folder
     o a bare `--report-file` writes `report.json` and `report.html`, a bare `--goose-log` writes `goose.log`, and a bare log option writes `requests`, `transactions`, `scenarios`, `errors` or `debug` with its format's extension
     o a bare `--report-file` beside `--report-file` paths writes both the folder's reports and the paths
-    o **behavior change**: an output flag followed by another option is given without a path, so `--goose-log --quiet` writes `goose.log` into the run's folder; it was an error
+    o **behavior change**: an output flag followed by another option is given without a path, so `--goose-log --quiet` writes `goose.log` into the run's folder; it was an error under #760, and 0.18 wrote the Goose log to a file named `--quiet`
     o new `--output-dir DIR` (`GooseDefault::OutputDir`) names the run's folder; without it the folder is `goose-runs/<YYYYMMDD-HHMMSS>`, from the run's local start time
-    o a run never writes into a folder that held files when it started: it takes the first of `DIR-2`, `DIR-3` and so on that is missing or empty, also when two processes start at once
+    o a run never writes into a folder that already holds files when the run starts: it takes the first of `DIR-2`, `DIR-3` and so on that is missing or empty, also when two processes start at once
     o the run's folder is created as the run starts, and removed at its end if the run wrote nothing into it
     o a folder Goose can't write to is an error before load starts
-    o a `--dashboard` run with no output flag given without a path and no `--output-dir` runs with a warning and Save report off when its folder can't be written to
+    o when only `--dashboard` asks for the run's folder and Goose can't write to it, the run goes on with a warning and Save report off
     o a report always holds the whole run's totals and percentiles; when its graphs start after the run did, it says when and why
     o new `--notes TEXT` (`GooseDefault::Notes`) is stored in the JSON report and shown in the HTML and Markdown reports and the dashboard
     o new `--report-graph-data` (`GooseDefault::ReportGraphData`) adds the graphs' per second data to the JSON report
-    o new `--render-report FILE.json` writes the reports `--report-file` paths name from a JSON report, then exits without running a load test
+    o new `--render-report FILE.json` reads a JSON report and writes it to the `--report-file` paths, then exits without running a load test
     o the JSON report adds `notes`, `goose_version`, `test`, `started`, `ended`, `ended_by`, `canceled_reason`, `in_progress` and `graphs_start`; older reports still load
-    o `report.json` and the Controller's `metrics-json` include the test plan history, so a Markdown report rendered from the JSON has its plan overview
-    o the dashboard's **Save report** switch writes `report.json` and `report.html` into the run's folder at the end of each run; it starts on with `--dashboard`
+    o **behavior change**: `report.json` and the Controller's `metrics-json` include the test plan history, so a Markdown report rendered from the JSON has its plan overview
+    o the dashboard's **Save report** switch writes `report.json` and `report.html` into the run's folder at the end of each run; it starts on with `--dashboard`, except under `--no-metrics`
     o while Save report is off and no `--report-file` path is given, Goose keeps only the dashboard's last 10 minutes of graphs and 5 minutes of heatmap
     o **Save report now** writes the report as it stands, marked in progress, while the run goes on; the report at the end of the run replaces it
     o **Include graph data** switches `--report-graph-data` on or off
     o with `--dashboard-control` the switches can change at any time; without it they stay as the command line set them
-    o the runs panel lists the reports in the folder that holds the run's folder, newest first, with each one's notes, and offers each as HTML, JSON or Markdown
+    o the runs panel lists each folder beside the run's folder that holds a `report.json` or `report.json.gz`, newest first, with its notes, and offers each report as HTML, JSON or Markdown
     o the runs panel compares two reports, and with `--dashboard-control` deletes one: its reports and Goose's logs, then its folder if that leaves it empty
     o Delete refuses the folder of the run in progress, the folder a bare `--goose-log` is open in, and a folder another Goose process is writing to
     o the end of run banner offers the report's downloads, or says why it failed; a run with no folder shows why for the whole run
@@ -155,7 +155,7 @@
     o the Quit button, shown while idle, shuts Goose down
     o the snapshot adds `report`, with `save`, `graph_data`, `folder`, `paths`, `notes`, `last_report`, `last_report_name`, `error` and `writes`; additive under `version: 1`
     o new control error codes `invalid_report`, `report_busy` and `report_failed`, in `ok: false` answers; additive under `version: 1`
-    o **behavior change**: after an autostarted `--dashboard` run that ended on its own and whose report Save report wrote, Goose stays up while a client follows the event stream, until Quit, Ctrl-C or a Controller `shutdown`
+    o **behavior change**: when an autostarted `--dashboard` run ends on its own and Save report wrote its report, Goose stays up while a client follows the event stream, until Quit, Ctrl-C or a Controller `shutdown`
     o **behavior change**: a report or log named `.gz` is written gzipped; 0.18 wrote such a log as plain text and refused such a report
     o Goose reads a `.json.gz` report wherever it reads a JSON report, and `--baseline-file` takes a run's folder
     o new `--compress [LEVEL]` (`GooseDefault::Compress`) gzips every file Goose writes into the run's folder, at a level from 1 to 9, 6 by default

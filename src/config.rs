@@ -29,7 +29,8 @@ pub const RUN_FOLDER: &str = "\0";
 /// The gzip level when neither `--compress` nor [`GooseDefault::Compress`] sets one.
 const DEFAULT_COMPRESSION_LEVEL: u32 = 6;
 
-/// [`DEFAULT_COMPRESSION_LEVEL`] as `--compress` given without a level reads it.
+/// The value `--compress` takes when it is given without a level:
+/// [`DEFAULT_COMPRESSION_LEVEL`] as text.
 const DEFAULT_COMPRESSION_ARG: &str = match DEFAULT_COMPRESSION_LEVEL {
     1 => "1",
     2 => "2",
@@ -3590,9 +3591,9 @@ impl GooseConfiguration {
         shown
     }
 
-    /// Whether the graph data is kept for the whole run when Save report is
-    /// `save_report`: a report will be written at its end, to a `--report-file`
-    /// path or by Save report.
+    /// Whether the graph data is kept for the whole run, with Save report set
+    /// to `save_report`: true when a report will be written at the run's end,
+    /// to a `--report-file` path or by Save report.
     pub(crate) fn keeps_full_graph(&self, save_report: bool) -> bool {
         !self.report_paths().is_empty() || save_report
     }
@@ -4050,8 +4051,8 @@ impl GooseConfiguration {
             }
         }
 
-        // --render-report writes the reports --report-file paths name, with the
-        // notes and graph data of the JSON report it reads.
+        // --render-report writes the JSON report it reads to the --report-file
+        // paths, with that report's own notes and graph data.
         if let Some(render_report) = self.render_report() {
             if let Some(notes) = self.notes() {
                 return Err(GooseError::InvalidOption {
@@ -4718,10 +4719,10 @@ mod test {
     #[test]
     fn compress_default_expects_a_usize() {
         let attack = || GooseAttack::initialize_with_config(GooseConfiguration::default());
-        for result in [
+        #[allow(unused_mut)]
+        let mut results = vec![
             attack().and_then(|a| a.set_default(GooseDefault::Compress, "6")),
             attack().and_then(|a| a.set_default(GooseDefault::Compress, true)),
-            attack().and_then(|a| a.set_default(GooseDefault::Compress, 6.0)),
             attack().and_then(|a| a.set_default(GooseDefault::Compress, GooseLogFormat::Json)),
             attack().and_then(|a| {
                 a.set_default(
@@ -4729,7 +4730,11 @@ mod test {
                     GooseCoordinatedOmissionMitigation::Disabled,
                 )
             }),
-        ] {
+        ];
+        // GooseDefaultType<f64> exists only with the PDF reports.
+        #[cfg(feature = "pdf-reports")]
+        results.push(attack().and_then(|a| a.set_default(GooseDefault::Compress, 6.0)));
+        for result in results {
             match result {
                 Err(GooseError::InvalidOption { detail, .. }) => {
                     assert!(detail.contains("expected usize value"), "{}", detail)

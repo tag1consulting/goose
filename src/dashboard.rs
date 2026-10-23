@@ -2560,7 +2560,7 @@ fn conflict(message: &'static str) -> Response<Body> {
         .into_response()
 }
 
-/// Why Delete refuses a folder another Goose process holds for its run.
+/// Why Delete refuses a folder another Goose process reserves for its run.
 const RESERVED_BY_ANOTHER: &str = "Another Goose process is writing to this folder.";
 
 /// `DELETE /api/v1/reports/{name}`: remove a folder's reports, and the logs
@@ -2568,7 +2568,7 @@ const RESERVED_BY_ANOTHER: &str = "Another Goose process is writing to this fold
 /// nothing else. Registered only with `--dashboard-control`, and authorized
 /// like the control routes. 204 when removed; 409 for the folder of the run
 /// in progress, the one the Goose log is open in, or one another process
-/// holds for its run; a plain 404 for anything the listing would not list.
+/// reserves for its run; a plain 404 for anything the listing would not list.
 async fn delete_report_handler(
     State(state): State<Arc<DashboardState>>,
     headers: HeaderMap,

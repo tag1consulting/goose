@@ -5,8 +5,9 @@
 //! local time the run started. Goose never writes a run into a folder that
 //! already holds files when the run starts: it takes `-2`, `-3` and so on,
 //! always counted on the original name. The folder is created as the run
-//! starts, holding a `.goose-run` file while the run lasts so no other run
-//! takes it, and removed at the end of the run if the run wrote nothing.
+//! starts and holds a `.goose-run` file while the run lasts, so no other run
+//! takes the folder. It is removed at the end of the run if the run wrote
+//! nothing.
 
 use crate::config::{GooseConfiguration, RUN_FOLDER};
 use crate::graph::GraphData;
@@ -39,8 +40,8 @@ pub(crate) const REPORT_JSON: &str = "report.json";
 #[cfg(feature = "dashboard")]
 pub(crate) const REPORT_MD: &str = "report.md";
 
-/// The file that holds a run's folder for its run, so no other process
-/// takes it.
+/// The file that reserves a run's folder for its run, so no other process
+/// takes the folder.
 pub(crate) const RESERVED: &str = ".goose-run";
 
 /// The Goose log in a run's folder.
@@ -346,8 +347,9 @@ fn is_empty_folder(path: &Path) -> io::Result<bool> {
 pub(crate) struct Output {
     /// The run's folder, chosen when the run starts, when it may need one.
     pub folder: Option<RunFolder>,
-    /// The folder this process holds [`RESERVED`] in: until its run ends, or
-    /// while a bare `--goose-log` is open there, until the next run starts.
+    /// The folder this process reserves with [`RESERVED`]. It stays reserved
+    /// until its run ends, or until the next run starts while a bare
+    /// `--goose-log` is open there.
     reserved: Option<PathBuf>,
     /// Save report: write `report.json` and `report.html` into the folder.
     pub save_report: bool,
@@ -359,7 +361,8 @@ pub(crate) struct Output {
     pub graph_data: bool,
     /// When the run started.
     pub started: Option<DateTime<Utc>>,
-    /// The folder of the last report Save report wrote.
+    /// The folder of the last report written into a run's folder at the end
+    /// of a run.
     pub last_report: Option<String>,
     /// Why the last report Goose tried to write into the folder failed,
     /// shared with the task Save report now writes in.
@@ -376,6 +379,7 @@ pub(crate) struct Output {
 
 impl Output {
     /// Why the last report Goose tried to write into the folder failed.
+    #[cfg(any(test, feature = "dashboard"))]
     pub(crate) fn error(&self) -> Option<String> {
         lock(&self.error).clone()
     }
@@ -385,6 +389,7 @@ impl Output {
     }
 
     /// Why the run in progress has no folder.
+    #[cfg(feature = "dashboard")]
     fn no_folder_reason(&self) -> String {
         self.error()
             .unwrap_or_else(|| "this run has no folder".to_string())
@@ -573,8 +578,8 @@ impl GooseAttack {
     /// Save report on, the folder's, attempting both even if one fails.
     /// Returns the first error, except that a folder's report that fails
     /// when the session `returns_to_idle` is only shown on the dashboard, so
-    /// the session goes on. An autostarted run that would wait for a
-    /// dashboard tab exits on that error instead.
+    /// the session goes on. An autostarted run, which does not return to
+    /// Idle, returns that error.
     pub(crate) async fn write_end_of_run(
         &mut self,
         returns_to_idle: bool,

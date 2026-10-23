@@ -88,7 +88,8 @@ pub(crate) struct SnapshotReport {
     pub paths: Vec<String>,
     /// The run's `--notes`.
     pub notes: Option<String>,
-    /// The folder of the last report Save report wrote.
+    /// The folder of the last report written into a run's folder at the end
+    /// of a run.
     pub last_report: Option<String>,
     /// The name the report routes take for `last_report`; `null` when they
     /// take none, as for a name with a space.

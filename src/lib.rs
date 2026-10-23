@@ -366,7 +366,7 @@ const NO_USERS_OPTION: &str = "`configuration.users`";
 pub(crate) struct ControlOutcome {
     pub ok: bool,
     /// Stable code when !ok, soft failures only, such as `invalid_phase`,
-    /// `prepare_failed`, `conflicting_settings`, and for the report routes
+    /// `prepare_failed`, `conflicting_settings`, and for the report control routes
     /// `invalid_report`, `report_busy` and `report_failed`.
     pub error: Option<&'static str>,
     /// Human message, the reply every front end shows.
@@ -2442,7 +2442,7 @@ impl GooseAttack {
             };
             self.run_in_progress = false;
             // A bare --goose-log stays open in the run's folder until the next
-            // run starts, and the folder stays held while it does.
+            // run starts, and the folder stays reserved while the log is open.
             if !self.goose_log_in_folder() {
                 self.output.release_folder();
             }
