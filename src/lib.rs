@@ -2429,6 +2429,7 @@ impl GooseAttack {
                 Ok(())
             };
             self.run_in_progress = false;
+            self.output.release_folder();
             #[cfg(feature = "dashboard")]
             if let Some(running) = &goose_attack_run_state.dashboard_running_folder {
                 running.set(None);
@@ -3071,7 +3072,7 @@ impl GooseAttack {
         // If enabled, spawn a logger thread.
         let (logger_handle, all_threads_logger_tx) = self
             .configuration
-            .setup_loggers(&self.defaults, self.output.folder.as_mut())
+            .setup_loggers(&self.defaults, self.output.folder.as_ref())
             .await?;
         goose_attack_run_state.logger_handle = logger_handle;
         goose_attack_run_state.all_threads_logger_tx = all_threads_logger_tx;

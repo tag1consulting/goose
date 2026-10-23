@@ -1009,7 +1009,7 @@ impl GooseConfiguration {
     pub(crate) async fn setup_loggers(
         &mut self,
         defaults: &GooseDefaults,
-        folder: Option<&mut RunFolder>,
+        folder: Option<&RunFolder>,
     ) -> Result<(GooseLoggerJoinHandle, GooseLoggerTx), GooseError> {
         // Update the logger configuration, loading defaults if necessasry.
         self.configure_loggers(defaults);
@@ -1061,7 +1061,6 @@ impl GooseConfiguration {
                 ),
             ] {
                 if log.as_deref() == Some(RUN_FOLDER) {
-                    folder.create().map_err(|e| folder.error(e))?;
                     let mut file = log_file_name(name, format.as_ref());
                     if self.compress.is_some() {
                         file.push_str(".gz");

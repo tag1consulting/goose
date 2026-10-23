@@ -4,8 +4,9 @@
 //! A run's folder is `--output-dir`, or `goose-runs/<YYYYMMDD-HHMMSS>` from the
 //! local time the run started. Goose never writes a run into a folder that
 //! already holds files when the run starts: it takes `-2`, `-3` and so on,
-//! always counted on the original name. The folder is created when Goose first
-//! writes into it.
+//! always counted on the original name. The folder is created as the run
+//! starts, holding a `.goose-run` file while the run lasts so no other run
+//! takes it, and removed at the end of the run if the run wrote nothing.
 
 use crate::config::{GooseConfiguration, RUN_FOLDER};
 use crate::graph::GraphData;
@@ -35,6 +36,10 @@ pub(crate) const REPORT_JSON: &str = "report.json";
 /// The Markdown report, which the dashboard renders from the JSON report.
 #[cfg(feature = "dashboard")]
 pub(crate) const REPORT_MD: &str = "report.md";
+
+/// The file that holds a run's folder for its run, so no other process
+/// takes it.
+pub(crate) const RESERVED: &str = ".goose-run";
 
 /// The Goose log in a run's folder.
 pub(crate) const GOOSE_LOG: &str = "goose.log";
@@ -172,26 +177,28 @@ pub(crate) fn parent_folder(configuration: &GooseConfiguration) -> PathBuf {
 pub(crate) struct RunFolder {
     /// The folder, as given or as Goose named it, never made absolute.
     pub path: PathBuf,
-    /// Goose has created it.
-    created: bool,
 }
 
 impl RunFolder {
     /// The folder of a run started at `started`: `--output-dir`, or
     /// `goose-runs/<YYYYMMDD-HHMMSS>`, or the first of `-2`, `-3` and so on
-    /// that is missing or empty.
+    /// that Goose can take. The folder is created and holds [`RESERVED`]
+    /// when this returns.
     pub(crate) fn choose(
         configuration: &GooseConfiguration,
         started: DateTime<Local>,
     ) -> io::Result<RunFolder> {
-        let base = match configuration.output_dir() {
+        Ok(RunFolder {
+            path: reserve(&Self::base(configuration, started))?,
+        })
+    }
+
+    /// The name a run started at `started` asks for, before any suffix.
+    fn base(configuration: &GooseConfiguration, started: DateTime<Local>) -> PathBuf {
+        match configuration.output_dir() {
             Some(dir) => PathBuf::from(dir),
             None => Path::new(DEFAULT_PARENT).join(started.format("%Y%m%d-%H%M%S").to_string()),
-        };
-        Ok(RunFolder {
-            path: first_free(&base)?,
-            created: false,
-        })
+        }
     }
 
     /// `name` in this folder.
@@ -206,17 +213,6 @@ impl RunFolder {
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default()
-    }
-
-    /// Create the folder, the first time Goose writes into it, and print its
-    /// path.
-    pub(crate) fn create(&mut self) -> io::Result<()> {
-        if !self.created {
-            std::fs::create_dir_all(&self.path)?;
-            self.created = true;
-            info!("writing this run's files to {}", self.path.display());
-        }
-        Ok(())
     }
 
     /// The error for a folder Goose can't write to.
@@ -263,9 +259,16 @@ impl RunFolder {
     }
 }
 
-/// `base`, or the first of `base-2`, `base-3` and so on, that is missing or
-/// an empty folder.
-fn first_free(base: &Path) -> io::Result<PathBuf> {
+/// Take `base`, or the first of `base-2`, `base-3` and so on, that is
+/// missing or an empty folder: create it, then create [`RESERVED`] in it only
+/// if no other process has, so two processes never take the same folder.
+fn reserve(base: &Path) -> io::Result<PathBuf> {
+    if let Some(parent) = base
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(parent)?;
+    }
     let name = base
         .file_name()
         .map(|name| name.to_string_lossy().into_owned());
@@ -274,8 +277,22 @@ fn first_free(base: &Path) -> io::Result<PathBuf> {
             (1, _) | (_, None) => base.to_path_buf(),
             (n, Some(name)) => base.with_file_name(format!("{name}-{n}")),
         };
-        if is_missing_or_empty(&candidate)? {
-            return Ok(candidate);
+        let free = match std::fs::create_dir(&candidate) {
+            Ok(()) => true,
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => is_empty_folder(&candidate)?,
+            Err(e) => return Err(e),
+        };
+        if free {
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(candidate.join(RESERVED))
+            {
+                Ok(_) => return Ok(candidate),
+                // Another process took it first.
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(e) => return Err(e),
+            }
         }
         if name.is_none() {
             break;
@@ -287,13 +304,13 @@ fn first_free(base: &Path) -> io::Result<PathBuf> {
     ))
 }
 
-/// True when nothing is at `path`, or it is a folder with nothing in it.
-fn is_missing_or_empty(path: &Path) -> io::Result<bool> {
+/// True when `path` is a folder with nothing in it, never following a
+/// symlink.
+fn is_empty_folder(path: &Path) -> io::Result<bool> {
     match std::fs::symlink_metadata(path) {
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(true),
-        Err(e) => Err(e),
         Ok(metadata) if metadata.is_dir() => Ok(std::fs::read_dir(path)?.next().is_none()),
         Ok(_) => Ok(false),
+        Err(e) => Err(e),
     }
 }
 
@@ -302,6 +319,8 @@ fn is_missing_or_empty(path: &Path) -> io::Result<bool> {
 pub(crate) struct Output {
     /// The run's folder, chosen when the run starts, when it may need one.
     pub folder: Option<RunFolder>,
+    /// The folder this process holds [`RESERVED`] in, until its run ends.
+    reserved: Option<PathBuf>,
     /// Save report: write `report.json` and `report.html` into the folder.
     pub save_report: bool,
     /// Include graph data in the JSON report.
@@ -317,6 +336,24 @@ pub(crate) struct Output {
     pub saved_now: bool,
     /// The report Save report now is writing.
     pub saving_now: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl Output {
+    /// Give up the run's folder as its run ends: remove [`RESERVED`], then the
+    /// folder if that leaves it empty. Only the first call does anything.
+    pub(crate) fn release_folder(&mut self) {
+        if let Some(folder) = self.reserved.take() {
+            let _ = std::fs::remove_file(folder.join(RESERVED));
+            let _ = std::fs::remove_dir(&folder);
+        }
+    }
+}
+
+impl Drop for Output {
+    /// A run that ends with an error still gives up its folder.
+    fn drop(&mut self) {
+        self.release_folder();
+    }
 }
 
 /// The seconds of graph data Goose keeps for the dashboard while no report
@@ -347,6 +384,7 @@ impl GooseAttack {
     /// When a run starts: choose its folder when it may need one, failing
     /// before any load when it can't be written to.
     pub(crate) fn start_run_folder(&mut self) -> Result<(), GooseError> {
+        self.output.release_folder();
         self.output.folder = None;
         self.output.last_report = None;
         self.output.error = None;
@@ -355,7 +393,7 @@ impl GooseAttack {
         if !self.configuration.uses_run_folder() {
             return Ok(());
         }
-        let mut folder = RunFolder::choose(&self.configuration, Local::now()).map_err(|e| {
+        let folder = RunFolder::choose(&self.configuration, Local::now()).map_err(|e| {
             GooseError::InvalidOption {
                 option: "--output-dir".to_string(),
                 value: self
@@ -366,6 +404,7 @@ impl GooseAttack {
                 detail: format!("Can't choose the run's folder: {e}"),
             }
         })?;
+        self.output.reserved = Some(folder.path.clone());
         folder.check_writable()?;
         // A bare --goose-log moves to each run's folder as the run starts.
         if self.configuration.goose_log() == Some(RUN_FOLDER) {
@@ -375,11 +414,9 @@ impl GooseAttack {
             };
             // Move the log first, so the line naming this run's folder lands
             // in that folder's log.
-            std::fs::create_dir_all(&folder.path)
-                .and_then(|()| move_goose_log(&folder.file(&name)))
-                .and_then(|()| folder.create())
-                .map_err(|e| folder.error(e))?;
+            move_goose_log(&folder.file(&name)).map_err(|e| folder.error(e))?;
         }
+        info!("writing this run's files to {}", folder.path.display());
         self.output.folder = Some(folder);
         Ok(())
     }
@@ -454,13 +491,8 @@ impl GooseAttack {
         };
         let record = self.report_record_for(false, &self.graph_data);
         let save = self.output.save_report || self.output.saved_now;
-        let folder = match (save, self.output.folder.as_mut()) {
-            (true, Some(folder)) => Some(
-                folder
-                    .create()
-                    .map(|()| folder.path.clone())
-                    .map_err(|e| folder.error(e)),
-            ),
+        let folder = match (save, self.output.folder.as_ref()) {
+            (true, Some(folder)) => Some(folder.path.clone()),
             _ => None,
         };
         // The HTML report is generated once for --report-file and the folder.
@@ -475,16 +507,14 @@ impl GooseAttack {
         };
         let written = match folder {
             None => return report_files,
-            Some(folder) => folder.and_then(|folder| {
-                write_folder_report(
-                    &folder,
-                    &source,
-                    baseline.as_ref(),
-                    &mut html,
-                    self.configuration.compress,
-                )
-                .map(|files| (folder, files))
-            }),
+            Some(folder) => write_folder_report(
+                &folder,
+                &source,
+                baseline.as_ref(),
+                &mut html,
+                self.configuration.compress,
+            )
+            .map(|files| (folder, files)),
         };
         match written {
             Ok((folder, files)) => {
@@ -751,6 +781,8 @@ pub(crate) fn deletable_files() -> Vec<String> {
         .map(|name| format!(".{name}.tmp"))
         .collect();
     names.extend(temporary);
+    // Left by a process that ended without giving up the folder.
+    names.push(RESERVED.to_string());
     names
 }
 
@@ -854,13 +886,6 @@ impl GooseAttack {
                 "the metrics are not available",
             );
         };
-        if let Some(own) = self.output.folder.as_mut() {
-            if let Err(e) = own.create() {
-                let message = own.error(e).to_string();
-                self.output.error = Some(message.clone());
-                return refuse(self, goose_attack_run_state, "unavailable", &message);
-            }
-        }
         let folder_path = folder.path.clone();
         let record = self.report_record_for(true, &graph_data);
         let configuration = self.configuration.clone();
@@ -940,10 +965,8 @@ mod tests {
     #[test]
     fn default_folder_is_named_for_the_start_time() {
         let started = Local.with_ymd_and_hms(2026, 10, 9, 14, 12, 3).unwrap();
-        let folder = RunFolder::choose(&configuration(None), started).unwrap();
-        assert_eq!(folder.path, Path::new("goose-runs/20261009-141203"));
-        assert_eq!(folder.name(), "20261009-141203");
-        assert!(!folder.path.exists());
+        let base = RunFolder::base(&configuration(None), started);
+        assert_eq!(base, Path::new("goose-runs/20261009-141203"));
     }
 
     /// The first of DIR, DIR-2, DIR-3 that is missing or empty, always
@@ -956,9 +979,9 @@ mod tests {
         let choose = || RunFolder::choose(&configuration(Some(&dir)), started).unwrap();
         let mut chosen = Vec::new();
         for _ in 0..4 {
-            let mut folder = choose();
-            folder.create().unwrap();
+            let folder = choose();
             std::fs::write(folder.file("goose.log"), "x").unwrap();
+            std::fs::remove_file(folder.file(RESERVED)).unwrap();
             chosen.push(folder.name());
         }
         assert_eq!(chosen, ["nightly", "nightly-2", "nightly-3", "nightly-4"]);
@@ -972,12 +995,37 @@ mod tests {
         std::fs::remove_dir_all(&parent).ok();
     }
 
+    /// Two runs that choose before either writes never share a folder, and
+    /// an empty folder that is already there goes to the first of them.
+    #[test]
+    fn a_chosen_folder_is_reserved_at_once() {
+        let parent = temp_dir("reserve");
+        let dir = parent.join("nightly");
+        let started = Local::now();
+        let first = RunFolder::choose(&configuration(Some(&dir)), started).unwrap();
+        let second = RunFolder::choose(&configuration(Some(&dir)), started).unwrap();
+        assert_eq!(
+            (first.name(), second.name()),
+            ("nightly".into(), "nightly-2".into())
+        );
+        assert!(first.path.is_dir() && second.path.is_dir());
+
+        let empty = parent.join("empty");
+        std::fs::create_dir(&empty).unwrap();
+        let first = RunFolder::choose(&configuration(Some(&empty)), started).unwrap();
+        let second = RunFolder::choose(&configuration(Some(&empty)), started).unwrap();
+        assert_eq!(
+            (first.name(), second.name()),
+            ("empty".into(), "empty-2".into())
+        );
+        std::fs::remove_dir_all(&parent).ok();
+    }
+
     #[test]
     fn writable_check_finds_the_nearest_folder() {
         let parent = temp_dir("writable");
         let folder = RunFolder {
             path: parent.join("a").join("b"),
-            created: false,
         };
         folder.check_writable().unwrap();
         // Nothing is left behind, and nothing is created.
