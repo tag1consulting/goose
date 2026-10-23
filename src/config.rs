@@ -341,8 +341,8 @@ pub struct GooseConfiguration {
             Sets the run's folder for output flags given without a path. Goose creates it \
             as the run starts, and removes it at the end of a run that wrote nothing into \
             it. When the folder already holds files, the run uses DIR-2, DIR-3 and so on. \
-            Needs an output flag given without a path, or --dashboard, which saves its \
-            report there except under --no-metrics.\n\n\
+            Needs an output flag given without a path, or --dashboard, which counts \
+            except under --no-metrics.\n\n\
             Example: --output-dir goose-runs/nightly --report-file. Set in code with \
             GooseDefault::OutputDir."
     )]
@@ -2398,8 +2398,9 @@ fn non_empty(value: &Option<String>) -> Option<&str> {
     value.as_deref().filter(|value| !value.is_empty())
 }
 
-/// An output flag's value as an error and a Controller's `config` and
-/// `config-json` show it.
+/// An output flag's value as error messages and a Controller's `config` and
+/// `config-json` show it: `(the run's folder)` for [`RUN_FOLDER`], else the
+/// value itself.
 fn shown_path(value: &str) -> String {
     if value == RUN_FOLDER {
         "(the run's folder)".to_string()
@@ -4018,7 +4019,7 @@ impl GooseConfiguration {
         if let Some(output_dir) = self.output_dir() {
             if !self.uses_run_folder() {
                 let detail = if self.no_metrics {
-                    "`configuration.output_dir` (--output-dir) would hold nothing: --dashboard and a bare --report-file write into it except under --no-metrics, so give a log option without a path, such as a bare --debug-log."
+                    "`configuration.output_dir` (--output-dir) would hold nothing: --dashboard and a bare --report-file write into it except under --no-metrics, which is given here, so give a bare --goose-log or --debug-log."
                 } else {
                     "`configuration.output_dir` (--output-dir) would hold nothing: give an output flag without a path, such as a bare --report-file, or add --dashboard."
                 };

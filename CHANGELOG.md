@@ -147,7 +147,7 @@
     o **Include graph data** switches `--report-graph-data` on or off
     o with `--dashboard-control` the switches can change at any time; without it they stay as the command line set them
     o the runs panel lists each folder beside the run's folder that holds a `report.json` or `report.json.gz`, newest first, with its notes, and offers each report as HTML, JSON or Markdown
-    o the runs panel compares two reports, and with `--dashboard-control` deletes one: its reports and Goose's logs, then its folder if that leaves it empty
+    o the runs panel compares two reports, and with `--dashboard-control` deletes a run's folder: its reports and the logs Goose names there, then the folder if that leaves it empty
     o Delete refuses the folder of the run in progress, the folder a bare `--goose-log` is open in, and a folder another Goose process is writing to
     o the end of run banner offers the report's downloads, or says why the report failed; a run with no folder shows why for the whole run
     o new routes `GET /api/v1/reports`, `GET /api/v1/reports/{name}/{file}` and `GET /api/v1/reports/{name}/compare.md`
