@@ -429,7 +429,9 @@ function renderRuns(): void {
     const nameCell = textCell(report.name);
     nameCell.className = "run-id";
     tr.appendChild(nameCell);
-    tr.appendChild(textCell(startedText(report.started)));
+    const started = textCell(startedText(report.started));
+    started.className = "run-started";
+    tr.appendChild(started);
     const notes = textCell(report.notes || "");
     notes.className = "run-notes";
     // One line, cut short; the whole note on hover.

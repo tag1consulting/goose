@@ -930,12 +930,35 @@ footer {
 }
 
 /* One line, cut short with an ellipsis, so every column fits; the whole
-   note is in the cell's title. */
+   note is in the cell's title. The start time wraps for the same reason. */
 td.run-notes {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 14rem;
+  max-width: 8rem;
+}
+
+#runs-table td.run-started {
+  white-space: normal;
+  min-width: 6.5rem;
+}
+
+/* Narrower windows: smaller text, padding and notes, so Delete stays in
+   view at 1024 wide. */
+@media (max-width: 1200px) {
+  #runs-table {
+    font-size: 0.85rem;
+  }
+
+  #runs-table th,
+  #runs-table td {
+    padding-left: 0.35rem;
+    padding-right: 0.35rem;
+  }
+
+  #runs-table td.run-notes {
+    max-width: 5.5rem;
+  }
 }
 
 .run-banner {
@@ -982,6 +1005,9 @@ td.run-notes {
 .ctrl-btn.run-delete {
   padding: 0.2rem 0.55rem;
   font-size: 0.8rem;
+}
+
+.ctrl-btn.run-delete:not([aria-disabled="true"]) {
   border-color: color-mix(in srgb, var(--err) 55%, var(--border));
   color: var(--err);
 }
