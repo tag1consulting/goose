@@ -155,7 +155,7 @@
     o the Quit button, shown while idle, shuts Goose down
     o the snapshot adds `report`, with `save`, `graph_data`, `folder`, `paths`, `notes`, `last_report`, `last_report_name`, `error` and `writes`; additive under `version: 1`
     o new control error codes `invalid_report`, `report_busy` and `report_failed`, in `ok: false` answers; additive under `version: 1`
-    o **behavior change**: when an autostarted `--dashboard` run ends on its own and Save report wrote its report, Goose stays up while a client follows the event stream, until Quit, Ctrl-C or a Controller `shutdown`
+    o **behavior change**: when an autostarted `--dashboard` run ends on its own, Save report wrote its report and a client is connected to the event stream, Goose stays up until Quit, Ctrl-C or a Controller `shutdown`
     o **behavior change**: a report or log named `.gz` is written gzipped; 0.18 wrote such a log as plain text and refused such a report
     o Goose reads a `.json.gz` report wherever it reads a JSON report, and `--baseline-file` takes a run's folder
     o new `--compress [LEVEL]` (`GooseDefault::Compress`) gzips every file Goose writes into the run's folder, at a level from 1 to 9, 6 by default
