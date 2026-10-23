@@ -3544,9 +3544,11 @@ async fn test_save_report_now_counts_its_writes() {
     }))
     .await;
     let mut codes = Vec::new();
+    let mut oks = 0u64;
     for answer in answers {
         let body: serde_json::Value = answer.json().await.unwrap();
         codes.push(if body["ok"] == true {
+            oks += 1;
             "ok".to_string()
         } else {
             body["error"].as_str().unwrap_or_default().to_string()
@@ -3581,6 +3583,14 @@ async fn test_save_report_now_counts_its_writes() {
     )
     .await;
     assert_eq!(snap["report"]["last_report_name"], "dash");
+    // Each Save report now that answered ok wrote once, and the end of the
+    // run wrote once more.
+    assert_eq!(
+        snap["report"]["writes"].as_u64(),
+        Some(before + oks + 1),
+        "{}",
+        snap["report"]
+    );
     load.abort().await;
     std::fs::remove_dir_all(&parent).ok();
 }
