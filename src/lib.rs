@@ -2432,7 +2432,8 @@ impl GooseAttack {
             // run happened since the last time (not on a shutdown from Idle).
             let ran = self.run_in_progress;
             let reports = if ran {
-                self.write_end_of_run().await
+                self.write_end_of_run(!goose_attack_run_state.shutdown_after_stop)
+                    .await
             } else {
                 Ok(())
             };

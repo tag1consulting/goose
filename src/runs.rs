@@ -472,8 +472,13 @@ impl GooseAttack {
 
     /// When a run has fully stopped: write the `--report-file` reports and, with
     /// Save report on, the folder's, attempting both even if one fails.
-    /// Returns the first error.
-    pub(crate) async fn write_end_of_run(&mut self) -> Result<(), GooseError> {
+    /// Returns the first error, except that a folder's report that fails
+    /// when the session `returns_to_idle` is only shown on the dashboard, so
+    /// the session goes on.
+    pub(crate) async fn write_end_of_run(
+        &mut self,
+        returns_to_idle: bool,
+    ) -> Result<(), GooseError> {
         // A report Save report now is still writing finishes first, so this
         // one replaces it.
         if let Some(saving) = self.output.saving_now.take() {
@@ -526,9 +531,14 @@ impl GooseAttack {
                 report_files
             }
             Err(e) => {
-                error!("couldn't save the report: {e}");
-                self.output.error = Some(e.to_string());
-                report_files.and(Err(e))
+                let reason = reason(&e);
+                error!("couldn't save the report: {reason}");
+                self.output.error = Some(reason);
+                if returns_to_idle {
+                    report_files
+                } else {
+                    report_files.and(Err(e))
+                }
             }
         }
     }
@@ -863,9 +873,14 @@ impl GooseAttack {
             return refuse(
                 self,
                 goose_attack_run_state,
-                "busy",
+                "report_busy",
                 "a report is being saved; try again when it is written",
             );
+        }
+        if let Err(e) = folder.check_writable() {
+            let reason = reason(&e);
+            self.output.error = Some(reason.clone());
+            return refuse(self, goose_attack_run_state, "report_failed", &reason);
         }
         self.update_duration();
         let (respond, report_data) = tokio::sync::oneshot::channel();
@@ -882,7 +897,7 @@ impl GooseAttack {
             return refuse(
                 self,
                 goose_attack_run_state,
-                "unavailable",
+                "report_failed",
                 "the metrics are not available",
             );
         };
@@ -924,6 +939,15 @@ impl GooseAttack {
         }));
         let message = format!("saving the report to {}", folder.path.display());
         Ok(self.control_outcome(goose_attack_run_state, true, None, message, None))
+    }
+}
+
+/// Why `e` happened, as the dashboard shows it: an invalid option's detail,
+/// which its `Display` leaves out.
+pub(crate) fn reason(e: &GooseError) -> String {
+    match e {
+        GooseError::InvalidOption { detail, .. } => detail.clone(),
+        other => other.to_string(),
     }
 }
 
@@ -1084,7 +1108,7 @@ mod tests {
         attack.graph_data.prune_to_window(600);
         let origin = attack.graph_data.first_second();
         assert!(origin > 0);
-        attack.write_end_of_run().await.unwrap();
+        attack.write_end_of_run(false).await.unwrap();
         let report: serde_json::Value = serde_json::from_str(
             &std::fs::read_to_string(parent.join("run").join(REPORT_JSON)).unwrap(),
         )

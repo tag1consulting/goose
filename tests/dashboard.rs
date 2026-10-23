@@ -3278,8 +3278,32 @@ async fn test_save_report_turned_on_during_a_run() {
     std::fs::remove_dir_all(&parent).ok();
 }
 
-/// Save report now answers a folder it can't create with a refusal and the
-/// run goes on; with `--no-metrics`, Save report can't be turned on.
+/// Make `folder` read only; false, after printing why, when it can still be
+/// written to, as it can by root.
+fn make_read_only(folder: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(folder, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let probe = folder.join(".probe");
+    if std::fs::write(&probe, "x").is_ok() {
+        std::fs::remove_file(&probe).ok();
+        make_writable(folder);
+        eprintln!(
+            "skipped: {} can still be written to read only, so this runs as root",
+            folder.display()
+        );
+        return false;
+    }
+    true
+}
+
+fn make_writable(folder: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(folder, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// Save report now answers a folder it can't write to with a refusal that
+/// gives the reason, and the run goes on; with `--no-metrics`, Save report
+/// can't be turned on.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial]
 async fn test_report_switches_refuse_what_they_cannot_do() {
@@ -3291,37 +3315,42 @@ async fn test_report_switches_refuse_what_they_cannot_do() {
     let start = post_control(&client, &base, "/api/v1/control/start", Some("{}"), true).await;
     assert_eq!(start.status(), 200);
     wait_for_active_users(&client, &base, Some(AUTH_TOKEN), 2, Duration::from_secs(30)).await;
-    // A file where the run's folder would go.
-    std::fs::write(parent.join("dash"), "in the way").unwrap();
-    let resp = post_control(
-        &client,
-        &base,
-        "/api/v1/control/report/now",
-        Some("{}"),
-        true,
-    )
-    .await;
-    let body: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(body["ok"], false, "{}", body);
-    assert_eq!(body["error"], "unavailable");
-    // The run goes on, and the dashboard says why the report wasn't saved.
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        let snap = get_snapshot_json(&client, &base, Some(AUTH_TOKEN))
-            .await
-            .unwrap();
-        assert!(
-            ["increase", "maintain"].contains(&snap["phase"].as_str().unwrap()),
-            "{}",
-            snap["phase"]
-        );
-        if snap["report"]["error"].is_string() {
-            break;
+    // The run's folder, made read only.
+    let folder = parent.join("dash");
+    let folder_str = folder.to_string_lossy().into_owned();
+    if make_read_only(&folder) {
+        let resp = post_control(
+            &client,
+            &base,
+            "/api/v1/control/report/now",
+            Some("{}"),
+            true,
+        )
+        .await;
+        let body: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(body["ok"], false, "{}", body);
+        assert_eq!(body["error"], "report_failed");
+        // The run goes on, and the dashboard says why the report wasn't saved.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let snap = get_snapshot_json(&client, &base, Some(AUTH_TOKEN))
+                .await
+                .unwrap();
+            assert!(
+                ["increase", "maintain"].contains(&snap["phase"].as_str().unwrap()),
+                "{}",
+                snap["phase"]
+            );
+            if let Some(error) = snap["report"]["error"].as_str() {
+                assert!(error.contains("Can't write to"), "{}", error);
+                assert!(error.contains(&folder_str), "{}", error);
+                break;
+            }
+            assert!(Instant::now() < deadline, "{}", snap["report"]);
+            tokio::time::sleep(Duration::from_millis(200)).await;
         }
-        assert!(Instant::now() < deadline, "{}", snap["report"]);
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        make_writable(&folder);
     }
-    std::fs::remove_file(parent.join("dash")).unwrap();
     let stop = post_control(&client, &base, "/api/v1/control/stop", Some("{}"), true).await;
     assert_eq!(stop.status(), 200);
     wait_for_phase(
@@ -3392,6 +3421,46 @@ async fn test_report_switches_refuse_what_they_cannot_do() {
     )
     .await;
     assert!(!parent.join("none").join("report.json").exists());
+    load.abort().await;
+    std::fs::remove_dir_all(&parent).ok();
+}
+
+/// A folder report that fails at the end of a run in a session that goes on
+/// leaves the session at Idle, with the reason on the dashboard.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn test_failed_folder_report_keeps_the_session() {
+    let server = MockServer::start();
+    let _mocks = setup_mock_endpoints(&server);
+    let parent = reports_dir("failed-keeps-session");
+    let (load, base) = start_idle_dashboard(&server, &parent, Vec::new(), None).await;
+    let client = reqwest::Client::new();
+    let start = post_control(&client, &base, "/api/v1/control/start", Some("{}"), true).await;
+    assert_eq!(start.status(), 200);
+    wait_for_active_users(&client, &base, Some(AUTH_TOKEN), 2, Duration::from_secs(30)).await;
+    let folder = parent.join("dash");
+    if !make_read_only(&folder) {
+        load.abort().await;
+        std::fs::remove_dir_all(&parent).ok();
+        return;
+    }
+    let stop = post_control(&client, &base, "/api/v1/control/stop", Some("{}"), true).await;
+    assert_eq!(stop.status(), 200);
+    let snap = wait_for_phase(
+        &client,
+        &base,
+        Some(AUTH_TOKEN),
+        &["idle"],
+        Duration::from_secs(30),
+    )
+    .await;
+    make_writable(&folder);
+    let error = snap["report"]["error"].as_str().unwrap_or_default();
+    assert!(
+        error.contains(&*folder.to_string_lossy()),
+        "{}",
+        snap["report"]
+    );
     load.abort().await;
     std::fs::remove_dir_all(&parent).ok();
 }

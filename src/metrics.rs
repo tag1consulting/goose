@@ -5019,7 +5019,7 @@ pub(crate) fn write_folder_report(
     let html_path = folder.join(format!("{}{gz}", crate::runs::REPORT_HTML));
     let json_name = format!("{}{gz}", crate::runs::REPORT_JSON);
     let json_path = folder.join(&json_name);
-    let io_error = |path: &std::path::Path, err| report_io_error(&path.to_string_lossy(), err);
+    let io_error = |path: &std::path::Path, err| folder_io_error(path, err);
 
     let content = match html {
         Some(content) => content,
@@ -5047,6 +5047,15 @@ pub(crate) fn write_folder_report(
         return Err(io_error(&json_path, err));
     }
     Ok(vec![html_path, json_path])
+}
+
+/// The error for a report that can't be written to `path` in a run's folder.
+fn folder_io_error(path: &std::path::Path, err: std::io::Error) -> GooseError {
+    GooseError::InvalidOption {
+        option: "--output-dir".to_string(),
+        value: path.to_string_lossy().into_owned(),
+        detail: format!("Can't write to {}: {err}", path.display()),
+    }
 }
 
 /// The error for a report that can't be written to `path`.
