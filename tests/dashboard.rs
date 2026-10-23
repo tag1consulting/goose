@@ -3070,6 +3070,18 @@ async fn test_delete_report() {
     std::fs::create_dir(parent.join("other")).unwrap();
     std::fs::write(parent.join("other").join("report.json"), "{}").unwrap();
     std::fs::write(parent.join("other").join("debug.log"), "x").unwrap();
+    // A symlink to a real report folder outside, and a report folder whose
+    // requests.csv is a symlink to a file outside.
+    let outside = reports_dir("delete-outside");
+    write_one_report(&server, &outside.join("real"), "1", "linked to").await;
+    std::os::unix::fs::symlink(outside.join("real"), parent.join("linked")).unwrap();
+    write_one_report(&server, &parent.join("link-inside"), "1", "a linked log").await;
+    std::fs::write(outside.join("requests.csv"), "kept").unwrap();
+    std::os::unix::fs::symlink(
+        outside.join("requests.csv"),
+        parent.join("link-inside").join("requests.csv"),
+    )
+    .unwrap();
 
     let (load, base) = start_idle_dashboard(&server, &parent, Vec::new(), None).await;
     let client = reqwest::Client::new();
@@ -3098,6 +3110,21 @@ async fn test_delete_report() {
     assert!(parent.join("no-report").join("report.html").exists());
     assert!(parent.join("other").join("report.json").exists());
     assert!(parent.join("other").join("debug.log").exists());
+    // Never through a symlinked folder.
+    assert_eq!(delete("linked", true, false).await.unwrap().status(), 404);
+    assert!(outside.join("real").join("report.json").exists());
+    assert!(outside.join("real").join("report.html").exists());
+    // A symlinked file goes, and what it points to stays.
+    assert_eq!(
+        delete("link-inside", true, false).await.unwrap().status(),
+        204
+    );
+    assert!(std::fs::symlink_metadata(parent.join("link-inside")).is_err());
+    assert_eq!(
+        std::fs::read_to_string(outside.join("requests.csv")).unwrap(),
+        "kept"
+    );
+    std::fs::remove_file(parent.join("linked")).unwrap();
 
     // Only the reports and Goose's logs go: a file Goose did not write stays,
     // and so does its folder.
@@ -3116,6 +3143,7 @@ async fn test_delete_report() {
 
     load.abort().await;
     std::fs::remove_dir_all(&parent).ok();
+    std::fs::remove_dir_all(&outside).ok();
 }
 
 /// Rules 12 and 14: a folder holding only gzipped reports is listed; a
