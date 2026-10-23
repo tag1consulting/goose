@@ -6229,8 +6229,7 @@ mod test {
 
     /// Build a minimal MetricsProcessor for unit tests of process_* paths.
     fn make_dashboard_test_processor(configuration: GooseConfiguration) -> MetricsProcessor {
-        let keep_full_graph =
-            !configuration.report_paths().is_empty() || configuration.save_report_at_start();
+        let keep_full_graph = configuration.keeps_full_graph(configuration.save_report_at_start());
         let (_metrics_tx, metrics_rx) = flume::unbounded();
         let (_cmd_tx, cmd_rx) = flume::unbounded();
         MetricsProcessor::new(

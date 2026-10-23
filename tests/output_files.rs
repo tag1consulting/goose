@@ -146,6 +146,68 @@ async fn bare_flags_write_into_the_run_folder() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A bare `--report-file` and a `--report-file` path are both written under
+/// `--no-print-metrics`, the HTML generated once for both.
+#[tokio::test]
+#[serial]
+async fn folder_and_path_reports_without_printed_metrics() {
+    let server = MockServer::start();
+    let _mock = setup_mock_server_endpoints(&server);
+    let dir = temp_dir("no-print");
+    let folder = dir.join("run");
+    let html = dir.join("P.html");
+    run(
+        &server,
+        vec![
+            "--output-dir",
+            &folder.to_string_lossy(),
+            "--report-file",
+            "--report-file",
+            &html.to_string_lossy(),
+            "--no-print-metrics",
+        ],
+    )
+    .await;
+    assert_eq!(names(&folder), vec!["report.html", "report.json"]);
+    assert_eq!(
+        std::fs::read(&html).unwrap(),
+        std::fs::read(folder.join("report.html")).unwrap()
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+async fn cancel_the_run(user: &mut GooseUser) -> TransactionResult {
+    let _goose = user.get(INDEX_PATH).await?;
+    goose::trigger_killswitch("compression test");
+    Ok(())
+}
+
+/// A run canceled by the killswitch says so in its JSON report, with the
+/// reason given.
+#[tokio::test]
+#[serial]
+async fn a_canceled_run_records_why() {
+    let server = MockServer::start();
+    let _mock = setup_mock_server_endpoints(&server);
+    let dir = temp_dir("canceled");
+    let folder = dir.join("run");
+    let configuration = common::build_configuration(
+        &server,
+        vec!["--output-dir", &folder.to_string_lossy(), "--report-file"],
+    );
+    let scenario = scenario!("Cancel").register_transaction(transaction!(cancel_the_run));
+    common::run_load_test(
+        common::build_load_test(configuration, vec![scenario], None, None),
+        None,
+    )
+    .await;
+    goose::reset_killswitch();
+    let report = read_json(&folder.join("report.json"));
+    assert_eq!(report["ended_by"], "canceled", "{}", report["ended_by"]);
+    assert_eq!(report["canceled_reason"], "compression test");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// Rule 4: a run never writes into a folder that holds files when it
 /// starts; it takes the first of DIR-2, DIR-3 and so on that is missing or
 /// empty, counted on DIR.
@@ -295,7 +357,14 @@ async fn render_report_with_and_without_graph_data() {
     .await;
     run(&server, vec!["--report-file", &without]).await;
     let calls = mock.calls();
-    let graphs = &read_json(Path::new(&with))["graphs"];
+    let with_report = read_json(Path::new(&with));
+    assert!(
+        with_report["raw_metrics"]["history"]
+            .as_array()
+            .is_some_and(|history| !history.is_empty()),
+        "the plan history is in the JSON report"
+    );
+    let graphs = &with_report["graphs"];
     assert!(graphs["requests_per_second"]["GET /"]["data"].is_array());
     assert!(graphs["users_per_second"]["data"].is_array());
     assert!(read_json(Path::new(&without)).get("graphs").is_none());
@@ -334,6 +403,7 @@ async fn render_report_with_and_without_graph_data() {
         let html = std::fs::read_to_string(&html).unwrap();
         let md = std::fs::read_to_string(&md).unwrap();
         assert!(md.contains("GET"), "{}", md);
+        assert!(md.contains("## Plan Overview"), "{}", md);
         if name == "with" {
             assert!(html.contains("graph-rps"), "the graphs are drawn");
             assert!(html.contains("class=\"graph heatmap\""), "the heatmap");

@@ -3568,6 +3568,13 @@ impl GooseConfiguration {
         shown
     }
 
+    /// Whether the graph data is kept for the whole run when Save report is
+    /// `save_report`: a report will be written at its end, to a `--report-file`
+    /// path or by Save report.
+    pub(crate) fn keeps_full_graph(&self, save_report: bool) -> bool {
+        !self.report_paths().is_empty() || save_report
+    }
+
     /// Whether only the dashboard asks for a run's folder: no output flag given
     /// without a path, and no `--output-dir`.
     pub(crate) fn folder_only_for_dashboard(&self) -> bool {
@@ -3660,8 +3667,7 @@ impl GooseConfiguration {
     /// gives at the start of a run, for unit tests that build no GooseAttack.
     #[cfg(test)]
     pub(crate) fn records_latency_columns(&self) -> bool {
-        (!self.report_paths().is_empty() || self.save_report_at_start())
-            && self.records_latency_series()
+        self.keeps_full_graph(self.save_report_at_start()) && self.records_latency_series()
     }
 
     /// Whether the heatmap also keeps coordinated omission mitigation's

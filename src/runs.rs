@@ -397,7 +397,7 @@ impl GooseAttack {
     /// Whether the graph data is kept for the whole run: a report will be
     /// written at its end, to a `--report-file` path or by Save report.
     pub(crate) fn keeps_full_graph(&self) -> bool {
-        !self.configuration.report_paths().is_empty() || self.output.save_report
+        self.configuration.keeps_full_graph(self.output.save_report)
     }
 
     /// Whether the per second histograms also fold into whole run columns,
@@ -1226,6 +1226,73 @@ mod tests {
         assert!(!record.in_progress);
         assert_eq!(record.ended_by, Some(EndedBy::Completed));
         assert!(record.intro().is_empty());
+    }
+
+    /// The graph data is kept whole when a `--report-file` path or Save report
+    /// needs it, as Save report starts and after it is turned the other way.
+    #[test]
+    fn keeps_full_graph_table() {
+        for path in [false, true] {
+            for bare in [false, true] {
+                for dashboard in [false, true] {
+                    let mut report_file = Vec::new();
+                    if path {
+                        report_file.push("report.html".to_string());
+                    }
+                    if bare {
+                        report_file.push(RUN_FOLDER.to_string());
+                    }
+                    let mut attack = GooseAttack::initialize_with_config(GooseConfiguration {
+                        report_file,
+                        dashboard,
+                        ..Default::default()
+                    })
+                    .unwrap();
+                    let save = attack.configuration.save_report_at_start();
+                    assert_eq!(save, bare || dashboard);
+                    for save in [save, !save] {
+                        attack.output.save_report = save;
+                        assert_eq!(
+                            attack.keeps_full_graph(),
+                            path || save,
+                            "path={path} bare={bare} dashboard={dashboard} save={save}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Turning Save report off tells the metrics processor to stop keeping
+    /// the whole run's graphs only when no `--report-file` path needs them.
+    #[cfg(feature = "dashboard")]
+    #[tokio::test]
+    async fn save_report_off_keeps_the_graphs_a_path_needs() {
+        for (path, sent) in [(true, None), (false, Some(false))] {
+            let report_file = if path {
+                vec!["report.html".to_string()]
+            } else {
+                Vec::new()
+            };
+            let mut attack = GooseAttack::initialize_with_config(GooseConfiguration {
+                report_file,
+                no_telnet: true,
+                no_websocket: true,
+                ..Default::default()
+            })
+            .unwrap();
+            let mut run_state = attack.initialize_attack().await.unwrap();
+            let (metrics_cmd_tx, metrics_cmd_rx) = flume::unbounded();
+            run_state.metrics_cmd_tx = metrics_cmd_tx;
+            attack.run_in_progress = true;
+            attack.output.save_report = true;
+            assert!(attack.control_report(&mut run_state, Some(false), None).ok);
+            let keep = metrics_cmd_rx.try_iter().find_map(|command| match command {
+                MetricsCommand::KeepGraph { keep, .. } => Some(keep),
+                _ => None,
+            });
+            assert_eq!(keep, sent, "path={path}");
+        }
     }
 
     /// New fields default, so a JSON report from before them loads.
