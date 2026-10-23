@@ -2441,7 +2441,11 @@ impl GooseAttack {
                 Ok(())
             };
             self.run_in_progress = false;
-            self.output.release_folder();
+            // A bare --goose-log stays open in the run's folder until the next
+            // run starts, and the folder stays held while it does.
+            if !self.goose_log_in_folder() {
+                self.output.release_folder();
+            }
             // End the Goose log's gzip member, so the finished run's log is
             // whole while Idle; lines until the next run are whole members.
             logger::finish_goose_log();
@@ -3090,8 +3094,7 @@ impl GooseAttack {
         if let (Some(log_folder), Some(folder), true) = (
             &goose_attack_run_state.dashboard_log_folder,
             &self.output.folder,
-            self.configuration.goose_log() == Some(config::RUN_FOLDER)
-                && logger::goose_log_installed(),
+            self.goose_log_in_folder(),
         ) {
             log_folder.set(Some(&folder.path));
         }

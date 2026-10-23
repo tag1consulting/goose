@@ -360,10 +360,15 @@ impl Output {
     /// Give up the run's folder as its run ends: remove [`RESERVED`], then the
     /// folder if that leaves it empty. Only the first call does anything.
     pub(crate) fn release_folder(&mut self) {
-        if let Some(folder) = self.reserved.take() {
-            let _ = std::fs::remove_file(folder.join(RESERVED));
-            let _ = std::fs::remove_dir(&folder);
-        }
+        release(self.reserved.take());
+    }
+}
+
+/// Remove [`RESERVED`] from `folder`, then the folder if that leaves it empty.
+fn release(folder: Option<PathBuf>) {
+    if let Some(folder) = folder {
+        let _ = std::fs::remove_file(folder.join(RESERVED));
+        let _ = std::fs::remove_dir(&folder);
     }
 }
 
@@ -411,7 +416,22 @@ impl GooseAttack {
     /// dashboard asks for that can't be written to is skipped with a warning
     /// instead, and Save report is off for the run.
     pub(crate) fn start_run_folder(&mut self) -> Result<(), GooseError> {
-        self.output.release_folder();
+        // The last run's folder is given up only once a bare --goose-log has
+        // moved out of it, so no other process deletes the open log.
+        let previous = self.output.reserved.take();
+        let started = self.choose_run_folder();
+        release(previous);
+        started
+    }
+
+    /// Whether a bare `--goose-log` is open in the run's folder, and stays
+    /// open there after the run ends until the next run starts.
+    pub(crate) fn goose_log_in_folder(&self) -> bool {
+        self.configuration.goose_log() == Some(RUN_FOLDER) && crate::logger::goose_log_installed()
+    }
+
+    /// [`Self::start_run_folder`], before the last run's folder is given up.
+    fn choose_run_folder(&mut self) -> Result<(), GooseError> {
         self.output.folder = None;
         self.output.last_report = None;
         self.output.set_error(None);

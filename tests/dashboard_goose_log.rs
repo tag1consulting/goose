@@ -121,10 +121,14 @@ async fn delete_refuses_the_folder_of_the_open_goose_log() {
     let status = resp.status();
     let text = resp.text().await.unwrap();
     let log_kept = folder.join("goose.log").is_file();
+    // The folder stays held while the log is open in it, so another
+    // process's Delete refuses it too.
+    let held = folder.join(".goose-run").is_file();
     load.abort();
     let _ = load.await;
     std::fs::remove_dir_all(&parent).ok();
     assert_eq!(status, 409, "{text}");
     assert_eq!(text, "Goose is writing its log to this folder.");
     assert!(log_kept, "Delete removed the open Goose log");
+    assert!(held, "the folder of the open Goose log is not held");
 }

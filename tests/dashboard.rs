@@ -3146,7 +3146,7 @@ async fn test_delete_report() {
     assert_eq!(resp.status(), 409);
     assert_eq!(
         resp.text().await.unwrap(),
-        "Another Goose run is writing to this folder."
+        "Another Goose process is writing to this folder."
     );
     let mut held: Vec<String> = std::fs::read_dir(parent.join("held"))
         .unwrap()

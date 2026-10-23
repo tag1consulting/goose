@@ -2551,7 +2551,7 @@ async fn control_quit_handler(
 }
 
 /// Why Delete refuses a folder another Goose process holds for its run.
-const RESERVED_BY_ANOTHER: &str = "Another Goose run is writing to this folder.";
+const RESERVED_BY_ANOTHER: &str = "Another Goose process is writing to this folder.";
 
 /// `DELETE /api/v1/reports/{name}`: remove a folder's reports, and the logs
 /// Goose names in a run's folder, then the folder if that leaves it empty;
