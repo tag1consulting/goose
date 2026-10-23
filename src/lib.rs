@@ -2439,6 +2439,9 @@ impl GooseAttack {
             };
             self.run_in_progress = false;
             self.output.release_folder();
+            // End the Goose log's gzip member, so the finished run's log is
+            // whole while Idle; lines until the next run are whole members.
+            logger::finish_goose_log();
             #[cfg(feature = "dashboard")]
             if let Some(running) = &goose_attack_run_state.dashboard_running_folder {
                 running.set(None);
@@ -3066,8 +3069,9 @@ impl GooseAttack {
         goose_attack_run_state.all_users_spawned = false;
 
         // Choose this run's folder, when it may need one, before any log opens
-        // in it.
+        // in it, and start the Goose log's gzip member for the run.
         self.start_run_folder()?;
+        logger::start_goose_log();
         #[cfg(feature = "dashboard")]
         if let Some(running) = &goose_attack_run_state.dashboard_running_folder {
             running.set(

@@ -276,11 +276,12 @@ enum GooseLogTarget {
     Waiting(Vec<u8>),
     File(std::fs::File),
     /// A Goose log named `.gz`: the gzip member being written, ended at the
-    /// end of each `execute()`. Lines are buffered above the encoder, so it
-    /// compresses a buffer at a time rather than each piece of a line.
+    /// end of each run and each `execute()`. Lines are buffered above the
+    /// encoder, so it compresses a buffer at a time rather than each piece of
+    /// a line.
     Gzip(std::io::BufWriter<flate2::write::GzEncoder<std::fs::File>>),
-    /// A Goose log named `.gz` outside `execute()`, between members: each
-    /// line is a whole member, and the pieces of a line not yet ended wait.
+    /// A Goose log named `.gz` between runs, between members: each line is a
+    /// whole member, and the pieces of a line not yet ended wait.
     GzipIdle(std::fs::File, Vec<u8>),
     /// The file failed; lines are dropped.
     Failed,
@@ -456,14 +457,15 @@ pub(crate) fn move_goose_log(path: &std::path::Path) -> std::io::Result<()> {
     target.write_all(&waiting, handle.level)
 }
 
-/// Start the Goose log's gzip member as each `execute()` starts.
+/// Start the Goose log's gzip member as each `execute()` and each run starts.
 pub(crate) fn start_goose_log() {
     if let Some(handle) = goose_log_file() {
         handle.target().start(handle.level);
     }
 }
 
-/// End the Goose log's gzip member, or flush it, as each `execute()` ends.
+/// End the Goose log's gzip member, or flush it, as each run and each
+/// `execute()` ends.
 pub(crate) fn finish_goose_log() {
     if let Some(handle) = goose_log_file() {
         handle.target().finish();
