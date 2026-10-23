@@ -9,14 +9,14 @@ Logs include the entire [`TransactionMetric`](https://docs.rs/goose/*/goose/metr
 By default, logs are written in JSON Lines format. For example:
 
 ```json
-{"elapsed":837,"name":"","run_time":0,"run_time_fraction_us":921,"scenario_index":0,"success":true,"transaction_index":0,"user":5}
-{"elapsed":838,"name":"","run_time":0,"run_time_fraction_us":356,"scenario_index":0,"success":true,"transaction_index":1,"user":5}
-{"elapsed":5763,"name":"","run_time":1441,"run_time_fraction_us":862,"scenario_index":0,"success":true,"transaction_index":2,"user":2}
-{"elapsed":5880,"name":"","run_time":1454,"run_time_fraction_us":681,"scenario_index":0,"success":true,"transaction_index":2,"user":0}
-{"elapsed":7178,"name":"","run_time":1400,"run_time_fraction_us":259,"scenario_index":0,"success":true,"transaction_index":2,"user":1}
+{"elapsed":0,"scenario_index":0,"transaction_index":0,"name":"","run_time":1,"success":true,"user":0,"run_time_fraction_us":720}
+{"elapsed":1,"scenario_index":0,"transaction_index":1,"name":"","run_time":0,"success":true,"user":0,"run_time_fraction_us":89}
+{"elapsed":9694,"scenario_index":0,"transaction_index":2,"name":"","run_time":0,"success":true,"user":1,"run_time_fraction_us":325}
+{"elapsed":11082,"scenario_index":0,"transaction_index":2,"name":"","run_time":0,"success":true,"user":5,"run_time_fraction_us":447}
+{"elapsed":12519,"scenario_index":0,"transaction_index":2,"name":"","run_time":0,"success":true,"user":0,"run_time_fraction_us":200}
 ```
 
-These lines are from the [`simple`](../example/simple.md) example, whose transactions have no names. In the first line, `GooseUser` thread 5 successfully ran transaction 0, the login, in 921 microseconds. In the third line, `GooseUser` thread 2 successfully ran transaction 2, the `/about/` page, in 1,441.862 milliseconds.
+These lines are from the [`simple`](../example/simple.md) example, whose transactions have no names. In the first line, `GooseUser` thread 0 successfully ran transaction 0, the login, in 1.720 milliseconds. In the third line, `GooseUser` thread 1 successfully ran transaction 2, the `/about/` page, in 325 microseconds.
 
 The `--transaction-format` option can be used to log in `csv`, `json` (default), `raw` or `pretty` format. The `raw` format is Rust's debug output of the entire 
 [`TransactionMetric`](https://docs.rs/goose/*/goose/metrics/struct.TransactionMetric.html) object.
