@@ -9,8 +9,8 @@ Logs include the entire [`GooseErrorMetric`](https://docs.rs/goose/*/goose/metri
 By default, logs are written in JSON Lines format. For example:
 
 ```json
-{"elapsed":9318,"error":"503 Service Unavailable: /","final_url":"http://apache/","name":"(Auth) front page","raw":{"body":"","headers":[],"method":"Get","url":"http://apache/"},"redirected":false,"response_time":6,"status_code":503,"user":1}
-{"elapsed":9318,"error":"503 Service Unavailable: /node/8211","final_url":"http://apache/node/8211","name":"(Anon) node page","raw":{"body":"","headers":[],"method":"Get","url":"http://apache/node/8211"},"redirected":false,"response_time":6,"status_code":503,"user":3}
+{"elapsed":3,"raw":{"method":"Get","url":"http://127.0.0.1:18765/node/3484","headers":[],"body":"","custom_method":""},"name":"/node/3484","final_url":"http://127.0.0.1:18765/node/3484","redirected":false,"response_time":0,"status_code":503,"user":0,"error":"503 Service Unavailable: /node/3484"}
+{"elapsed":3,"raw":{"method":"Get","url":"http://127.0.0.1:18765/node/2652","headers":[],"body":"","custom_method":""},"name":"/node/2652","final_url":"http://127.0.0.1:18765/node/2652","redirected":false,"response_time":0,"status_code":503,"user":0,"error":"503 Service Unavailable: /node/2652"}
 ```
 
 The `--errors-format` option can be used to change the log format to `csv`, `json` (default), `raw` or `pretty` format. The `raw` format is Rust's debug output of the entire [`GooseErrorMetric`](https://docs.rs/goose/*/goose/metrics/struct.GooseErrorMetric.html) object.
