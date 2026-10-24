@@ -156,4 +156,12 @@ Rules given with `--threshold` replace every rule set in code; they are not adde
 
 ## Overhead
 
-BENCHMARK_PLACEHOLDER
+Thresholds add nothing per request. Goose checks the rules once a second, in the task that already collects the metrics. The check was measured with 32 users sending requests back to back to nginx on the same machine, an 18 core MacBook Pro. Each build had 5 runs of 10 minutes, alternating between builds, and the averages below are of the middle 3 runs by requests per second:
+
+| Build | Requests per second | p95 | CPU time |
+| ----- | ------------------: | --: | -------: |
+| Before thresholds | 127,536 | 0.367 ms | 2,398 s |
+| No thresholds | 127,454 (-0.06%) | 0.370 ms | 2,426 s (+1.2%) |
+| 3 thresholds | 127,273 (-0.21%) | 0.377 ms | 2,452 s (+2.3%) |
+
+The 3 thresholds were `p95<500ms`, `error-rate<1%` and `p99<1s for GET /about/`. The differences in throughput and latency are within run to run noise. The CPU time varied more from run to run than between builds, but may be 1% to 2% higher than before thresholds.
