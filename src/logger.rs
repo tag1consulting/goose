@@ -206,7 +206,6 @@ use async_compression::Level;
 use log::LevelFilter;
 use regex::RegexSet;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Mutex;
@@ -638,7 +637,9 @@ impl GooseLogger<GooseDebug> for GooseConfiguration {
         if let Some(debug_format) = self.debug_format.as_ref() {
             match debug_format {
                 // Use serde_json to create JSON.
-                GooseLogFormat::Json => json!(message).to_string(),
+                GooseLogFormat::Json => {
+                    serde_json::to_string(&message).expect("a log message serializes to JSON")
+                }
                 // Raw format is Debug output for GooseRawRequest structure.
                 GooseLogFormat::Raw => format!("{message:?}"),
                 // Pretty format is Debug Pretty output for GooseRawRequest structure.
@@ -667,7 +668,9 @@ impl GooseLogger<GooseErrorMetric> for GooseConfiguration {
         if let Some(error_format) = self.error_format.as_ref() {
             match error_format {
                 // Use serde_json to create JSON.
-                GooseLogFormat::Json => json!(message).to_string(),
+                GooseLogFormat::Json => {
+                    serde_json::to_string(&message).expect("a log message serializes to JSON")
+                }
                 // Raw format is Debug output for GooseErrorMetric structure.
                 GooseLogFormat::Raw => format!("{message:?}"),
                 // Pretty format is Debug Pretty output for GooseErrorMetric structure.
@@ -700,7 +703,9 @@ impl GooseLogger<GooseRequestMetric> for GooseConfiguration {
         if let Some(request_format) = self.request_format.as_ref() {
             match request_format {
                 // Use serde_json to create JSON.
-                GooseLogFormat::Json => json!(message).to_string(),
+                GooseLogFormat::Json => {
+                    serde_json::to_string(&message).expect("a log message serializes to JSON")
+                }
                 // Raw format is Debug output for GooseRequestMetric structure.
                 GooseLogFormat::Raw => format!("{message:?}"),
                 // Pretty format is Debug Pretty output for GooseRequestMetric structure.
@@ -742,7 +747,9 @@ impl GooseLogger<TransactionMetric> for GooseConfiguration {
         if let Some(transaction_format) = self.transaction_format.as_ref() {
             match transaction_format {
                 // Use serde_json to create JSON.
-                GooseLogFormat::Json => json!(message).to_string(),
+                GooseLogFormat::Json => {
+                    serde_json::to_string(&message).expect("a log message serializes to JSON")
+                }
                 // Raw format is Debug output for TransactionMetric structure.
                 GooseLogFormat::Raw => format!("{message:?}"),
                 // Pretty format is Debug Pretty output for TransactionMetric structure.
@@ -775,7 +782,9 @@ impl GooseLogger<ScenarioMetric> for GooseConfiguration {
         if let Some(scenario_format) = self.scenario_format.as_ref() {
             match scenario_format {
                 // Use serde_json to create JSON.
-                GooseLogFormat::Json => json!(message).to_string(),
+                GooseLogFormat::Json => {
+                    serde_json::to_string(&message).expect("a log message serializes to JSON")
+                }
                 // Raw format is Debug output for ScenarioMetric structure.
                 GooseLogFormat::Raw => format!("{message:?}"),
                 // Pretty format is Debug Pretty output for ScenarioMetric structure.
@@ -1112,18 +1121,18 @@ impl GooseConfiguration {
     }
 
     /// Helper to write a line to the log file.
-    async fn write_to_log_file(&self, log_file: &mut BufWriter<LogSink>, formatted_message: &str) {
-        match log_file
-            .write_all(format!("{formatted_message}\n").as_ref())
-            .await
-        {
-            Ok(_) => (),
-            Err(e) => {
-                warn!(
-                    "failed to write to {}: {e}",
-                    self.debug_log().unwrap_or_default()
-                );
-            }
+    async fn write_to_log_file(
+        &self,
+        log_file: &mut BufWriter<LogSink>,
+        log_file_path: &str,
+        formatted_message: &str,
+    ) {
+        let written = match log_file.write_all(formatted_message.as_bytes()).await {
+            Ok(()) => log_file.write_all(b"\n").await,
+            Err(e) => Err(e),
+        };
+        if let Err(e) = written {
+            warn!("failed to write to {log_file_path}: {e}");
         }
     }
 
@@ -1151,7 +1160,12 @@ impl GooseConfiguration {
         if self.debug_format == Some(GooseLogFormat::Csv) {
             if let Some(log_file) = debug_log.as_mut() {
                 // This will generate a warning if it fails to write to log file.
-                self.write_to_log_file(log_file, debug_csv_header()).await;
+                self.write_to_log_file(
+                    log_file,
+                    self.debug_log().unwrap_or_default(),
+                    debug_csv_header(),
+                )
+                .await;
             }
         }
 
@@ -1163,7 +1177,12 @@ impl GooseConfiguration {
         if self.error_format == Some(GooseLogFormat::Csv) {
             if let Some(log_file) = error_log.as_mut() {
                 // This will generate a warning if it fails to write to log file.
-                self.write_to_log_file(log_file, error_csv_header()).await;
+                self.write_to_log_file(
+                    log_file,
+                    self.error_log().unwrap_or_default(),
+                    error_csv_header(),
+                )
+                .await;
             }
         }
 
@@ -1185,8 +1204,12 @@ impl GooseConfiguration {
         if self.request_format == Some(GooseLogFormat::Csv) {
             if let Some(log_file) = request_log.as_mut() {
                 // This will generate a warning if it fails to write to log file.
-                self.write_to_log_file(log_file, requests_csv_header())
-                    .await;
+                self.write_to_log_file(
+                    log_file,
+                    self.request_log().unwrap_or_default(),
+                    requests_csv_header(),
+                )
+                .await;
             }
         }
 
@@ -1198,8 +1221,12 @@ impl GooseConfiguration {
         if self.transaction_format == Some(GooseLogFormat::Csv) {
             if let Some(log_file) = transaction_log.as_mut() {
                 // This will generate a warning if it fails to write to log file.
-                self.write_to_log_file(log_file, transactions_csv_header())
-                    .await;
+                self.write_to_log_file(
+                    log_file,
+                    self.transaction_log().unwrap_or_default(),
+                    transactions_csv_header(),
+                )
+                .await;
             }
         }
 
@@ -1211,8 +1238,12 @@ impl GooseConfiguration {
         if self.scenario_format == Some(GooseLogFormat::Csv) {
             if let Some(log_file) = scenario_log.as_mut() {
                 // This will generate a warning if it fails to write to log file.
-                self.write_to_log_file(log_file, scenarios_csv_header())
-                    .await;
+                self.write_to_log_file(
+                    log_file,
+                    self.scenario_log().unwrap_or_default(),
+                    scenarios_csv_header(),
+                )
+                .await;
             }
         }
 
@@ -1220,30 +1251,41 @@ impl GooseConfiguration {
         while let Ok(received_message) = receiver.recv_async().await {
             if let Some(message) = received_message {
                 let formatted_message;
-                if let Some(log_file) = match message {
+                if let Some((log_file, log_file_path)) = match message {
                     GooseLog::Debug(debug_message) => {
-                        formatted_message = self.format_message(debug_message).to_string();
-                        debug_log.as_mut()
+                        formatted_message = self.format_message(debug_message);
+                        debug_log
+                            .as_mut()
+                            .map(|file| (file, self.debug_log().unwrap_or_default()))
                     }
                     GooseLog::Error(error_message) => {
-                        formatted_message = self.format_message(error_message).to_string();
-                        error_log.as_mut()
+                        formatted_message = self.format_message(error_message);
+                        error_log
+                            .as_mut()
+                            .map(|file| (file, self.error_log().unwrap_or_default()))
                     }
                     GooseLog::Request(request_message) => {
-                        formatted_message = self.format_message(request_message).to_string();
-                        request_log.as_mut()
+                        formatted_message = self.format_message(request_message);
+                        request_log
+                            .as_mut()
+                            .map(|file| (file, self.request_log().unwrap_or_default()))
                     }
                     GooseLog::Transaction(transaction_message) => {
-                        formatted_message = self.format_message(transaction_message).to_string();
-                        transaction_log.as_mut()
+                        formatted_message = self.format_message(transaction_message);
+                        transaction_log
+                            .as_mut()
+                            .map(|file| (file, self.transaction_log().unwrap_or_default()))
                     }
                     GooseLog::Scenario(scenario_message) => {
-                        formatted_message = self.format_message(scenario_message).to_string();
-                        scenario_log.as_mut()
+                        formatted_message = self.format_message(scenario_message);
+                        scenario_log
+                            .as_mut()
+                            .map(|file| (file, self.scenario_log().unwrap_or_default()))
                     }
                 } {
                     // This will generate a warning if it fails to write to log file.
-                    self.write_to_log_file(log_file, &formatted_message).await;
+                    self.write_to_log_file(log_file, log_file_path, &formatted_message)
+                        .await;
                 }
             } else {
                 // Empty message means it's time to exit.
@@ -1385,5 +1427,103 @@ mod microsecond_tests {
         assert_eq!(last_csv_cell(&csv), "750");
         let raw = configuration(GooseLogFormat::Raw).format_message(scenario);
         assert!(raw.ends_with("run_time_fraction_us: 750 }"), "{}", raw);
+    }
+}
+
+/// Each JSON log line, its keys in the order of the message's fields.
+#[cfg(test)]
+mod json_line_tests {
+    use super::*;
+    use crate::goose::{GooseMethod, TransactionName};
+    use crate::metrics::{GooseRawRequest, TransactionDetail};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    fn configuration() -> GooseConfiguration {
+        let mut configuration = GooseConfiguration::parse_args_default(&[] as &[&str]).unwrap();
+        configuration.debug_format = Some(GooseLogFormat::Json);
+        configuration.error_format = Some(GooseLogFormat::Json);
+        configuration.transaction_format = Some(GooseLogFormat::Json);
+        configuration.scenario_format = Some(GooseLogFormat::Json);
+        configuration
+    }
+
+    #[test]
+    fn error_json_line() {
+        let error = GooseErrorMetric {
+            elapsed: 9318,
+            raw: GooseRawRequest::new(GooseMethod::Get, "http://example.com/", vec![], ""),
+            name: "(Auth) front page".to_string(),
+            final_url: "http://example.com/".to_string(),
+            redirected: false,
+            response_time: 6,
+            status_code: 503,
+            user: 1,
+            error: "503 Service Unavailable: /".to_string(),
+        };
+        assert_eq!(
+            configuration().format_message(error),
+            r#"{"elapsed":9318,"raw":{"method":"Get","url":"http://example.com/","headers":[],"body":"","custom_method":""},"name":"(Auth) front page","final_url":"http://example.com/","redirected":false,"response_time":6,"status_code":503,"user":1,"error":"503 Service Unavailable: /"}"#
+        );
+    }
+
+    #[test]
+    fn transaction_json_line() {
+        let mut transaction = TransactionMetric::new(837, 0, 2, Arc::from("log in"), 5);
+        transaction.set_duration(Duration::from_micros(1_250), false);
+        assert_eq!(
+            configuration().format_message(transaction),
+            r#"{"elapsed":837,"scenario_index":0,"transaction_index":2,"name":"log in","run_time":1,"success":false,"user":5,"run_time_fraction_us":250}"#
+        );
+    }
+
+    #[test]
+    fn scenario_json_line() {
+        let scenario = ScenarioMetric::new(
+            14_503,
+            Arc::from("Website User"),
+            0,
+            Duration::from_micros(750),
+            3,
+        );
+        assert_eq!(
+            configuration().format_message(scenario),
+            r#"{"elapsed":14503,"name":"Website User","index":0,"run_time":0,"user":3,"run_time_fraction_us":750}"#
+        );
+    }
+
+    /// The nested request's strings need escaping: quotes, a comma, a newline,
+    /// a control character and a letter outside ASCII.
+    #[test]
+    fn debug_json_line() {
+        let request = GooseRequestMetric::new(
+            GooseRawRequest::new(
+                GooseMethod::Post,
+                "http://example.com/a?b=\"c\"",
+                vec![],
+                "name=\"Zoë\", one\ntwo\u{1}",
+            ),
+            TransactionDetail {
+                scenario_index: 0,
+                scenario_name: Arc::from("Anon"),
+                transaction_index: Some(1),
+                transaction_name: TransactionName::InheritNameByRequests(Arc::from("front page")),
+            },
+            "/a",
+            1500,
+            2,
+        );
+        let debug = GooseDebug {
+            tag: "post".to_string(),
+            request: Some(request),
+            header: None,
+            body: Some("ok".to_string()),
+        };
+        let line = configuration().format_message(debug);
+        assert!(!line.contains('\n'), "{}", line);
+        assert_eq!(
+            line,
+            r#"{"tag":"post","request":{"elapsed":1500,"scenario_index":0,"scenario_name":"Anon","transaction_index":1,"transaction_name":{"InheritNameByRequests":"front page"},"raw":{"method":"Post","url":"http://example.com/a?b=\"c\"","headers":[],"body":"name=\"Zoë\", one\ntwo\u0001","custom_method":""},"name":"/a","final_url":"","redirected":false,"response_time":0,"status_code":0,"success":true,"update":false,"user":2,"error":"","coordinated_omission_elapsed":0,"user_cadence":0,"response_time_fraction_us":0},"header":null,"body":"ok"}"#
+        );
     }
 }

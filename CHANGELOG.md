@@ -1,6 +1,11 @@
 # Changelog
 
 ## 0.19.0-dev
+ - [#772](https://github.com/tag1consulting/goose/pull/772) build each JSON log line straight from its message instead of through a `serde_json::Value`; in a 1,000 user test on two cores this cut the instructions the request log adds to each request by 72% and the CPU it adds by 57% (#771)
+    o **behavior change**: the keys in a JSON log line come in the order of the message's fields, where before they were sorted by name. Each line holds the same keys and values
+    o the Book's logging overview adds "What logging costs": what the request log and gzip cost per request, and when to compress
+    o the logger writes each line without copying it twice
+    o a failed write to a log names that log in its warning; it named the debug log
  - [#770](https://github.com/tag1consulting/goose/pull/770) the dashboard and the HTML report draw a second only once its metrics are in: users send their metrics before waiting, the dashboard's RPS and average latency charts and their data tables end at the last complete second, and the report's per second count graphs leave out the run's final, partial second (#769)
  - [#767](https://github.com/tag1consulting/goose/pull/767) keep request, transaction and scenario times in microseconds, in buckets never more than 1% off, and show times under 10 ms to the hundredth of a millisecond (#585, #737, #366)
     o every time is taken from a `Duration` once and kept to the microsecond: a 0.4 ms request reads `0.4` where it read `0`, its minimum is 0.4 rather than 0, and the average is the mean of the real times rather than of whole milliseconds

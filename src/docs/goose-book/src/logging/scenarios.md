@@ -9,14 +9,14 @@ Logs include the entire [`ScenarioMetric`](https://docs.rs/goose/*/goose/metrics
 By default, logs are written in JSON Lines format. For example:
 
 ```json
-{"elapsed":14503,"index":0,"name":"WebsiteUser","run_time":14502,"run_time_fraction_us":461,"user":0}
-{"elapsed":17395,"index":0,"name":"WebsiteUser","run_time":17060,"run_time_fraction_us":565,"user":2}
-{"elapsed":23377,"index":0,"name":"WebsiteUser","run_time":23208,"run_time_fraction_us":145,"user":1}
-{"elapsed":26472,"index":0,"name":"WebsiteUser","run_time":25968,"run_time_fraction_us":166,"user":3}
-{"elapsed":26754,"index":0,"name":"WebsiteUser","run_time":26082,"run_time_fraction_us":767,"user":4}
+{"elapsed":16257,"name":"WebsiteUser","index":0,"run_time":13743,"user":5,"run_time_fraction_us":763}
+{"elapsed":21584,"name":"WebsiteUser","index":0,"run_time":21082,"user":1,"run_time_fraction_us":281}
+{"elapsed":22090,"name":"WebsiteUser","index":0,"run_time":20582,"user":3,"run_time_fraction_us":454}
+{"elapsed":24129,"name":"WebsiteUser","index":0,"run_time":22119,"user":4,"run_time_fraction_us":5}
+{"elapsed":25525,"name":"WebsiteUser","index":0,"run_time":25523,"user":0,"run_time_fraction_us":239}
 ```
 
-These lines are from the [`simple`](../example/simple.md) example. In the first line, `GooseUser` thread 0 ran the complete `WebsiteUser` scenario in 14,502.461 milliseconds, which includes the wait after each transaction. In the fifth line, `GooseUser` thread 4 ran it in 26,082.767 milliseconds.
+These lines are from the [`simple`](../example/simple.md) example. In the first line, `GooseUser` thread 5 ran the complete `WebsiteUser` scenario in 13,743.763 milliseconds, which includes the wait after each transaction. In the fifth line, `GooseUser` thread 0 ran it in 25,523.239 milliseconds.
 
 The `--scenario-format` option can be used to log in `csv`, `json` (default), `raw` or `pretty` format. The `raw` format is Rust's debug output of the entire 
 [`ScenarioMetric`](https://docs.rs/goose/*/goose/metrics/struct.ScenarioMetric.html) object.
