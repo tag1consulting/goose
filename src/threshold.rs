@@ -140,6 +140,30 @@ impl ThresholdResult {
 /// What [`Threshold::observe`] shows for a rule whose metric has no samples.
 const NO_SAMPLES: &str = "no samples";
 
+/// The metrics a rule can name, for the reasons rules are refused.
+const METRICS: &str = "use pNN (such as p95 or p99.9), avg, max, error-rate or rps.";
+
+/// Why a percentile out of range is refused.
+const PERCENTILE_RANGE: &str =
+    "the percentile must be greater than 0 and less than 100, such as p95 or p99.9.";
+
+/// Why a rule with `for` and no request is refused.
+const NO_REQUEST: &str =
+    "\"for\" needs a request name as the requests table shows it, such as GET /login.";
+
+/// Why a time value that does not parse is refused, after the value.
+const NOT_A_TIME: &str =
+    "is not a time; use a number with us, ms or s, such as 500ms. A bare number is milliseconds.";
+
+/// Why an error rate value that does not parse is refused, after the value.
+const NOT_A_PERCENT: &str = "is not a percent; use a number with an optional %, such as 1%.";
+
+/// Why an error rate over 100% is refused.
+const OVER_100: &str = "an error rate can not be more than 100%.";
+
+/// Why a requests per second value that does not parse is refused, after the value.
+const NOT_A_RATE: &str = "is not a number of requests per second, such as 200.";
+
 /// The `--threshold` rule `rule` refused, with `detail` saying why.
 fn invalid(rule: &str, detail: &str) -> GooseError {
     GooseError::InvalidOption {
@@ -202,23 +226,18 @@ impl FromStr for Threshold {
             "" => {
                 return Err(invalid(
                     rule,
-                    "it has no metric before the operator; use pNN (such as p95 or p99.9), avg, max, error-rate or rps.",
+                    &format!("it has no metric before the operator; {METRICS}"),
                 ))
             }
             _ => match name.strip_prefix('p').map(plain_number) {
                 Some(Some(percent)) if percent > 0.0 && percent < 100.0 => {
                     Metric::Percentile(percent)
                 }
-                Some(Some(_)) => {
-                    return Err(invalid(
-                        rule,
-                        "the percentile must be greater than 0 and less than 100, such as p95 or p99.9.",
-                    ))
-                }
+                Some(Some(_)) => return Err(invalid(rule, PERCENTILE_RANGE)),
                 _ => {
                     return Err(invalid(
                         rule,
-                        &format!("{name:?} is not a metric; use pNN (such as p95 or p99.9), avg, max, error-rate or rps."),
+                        &format!("{name:?} is not a metric; {METRICS}"),
                     ))
                 }
             },
@@ -254,10 +273,7 @@ impl FromStr for Threshold {
             return Err(invalid(rule, "it has no value after the operator."));
         }
         let request = match request {
-            Some("") => return Err(invalid(
-                rule,
-                "\"for\" needs a request name as the requests table shows it, such as GET /login.",
-            )),
+            Some("") => return Err(invalid(rule, NO_REQUEST)),
             other => other.map(str::to_string),
         };
 
@@ -273,33 +289,18 @@ impl FromStr for Threshold {
             };
             match plain_number(number) {
                 Some(number) => number * scale,
-                None => {
-                    return Err(invalid(
-                        rule,
-                        &format!("{value:?} is not a time; use a number with us, ms or s, such as 500ms. A bare number is milliseconds."),
-                    ))
-                }
+                None => return Err(invalid(rule, &format!("{value:?} {NOT_A_TIME}"))),
             }
         } else if metric == Metric::ErrorRate {
             match plain_number(value.strip_suffix('%').unwrap_or(value)) {
                 Some(percent) if percent <= 100.0 => percent,
-                Some(_) => return Err(invalid(rule, "an error rate can not be more than 100%.")),
-                None => return Err(invalid(
-                    rule,
-                    &format!(
-                        "{value:?} is not a percent; use a number with an optional %, such as 1%."
-                    ),
-                )),
+                Some(_) => return Err(invalid(rule, OVER_100)),
+                None => return Err(invalid(rule, &format!("{value:?} {NOT_A_PERCENT}"))),
             }
         } else {
             match plain_number(value) {
                 Some(rate) => rate,
-                None => {
-                    return Err(invalid(
-                        rule,
-                        &format!("{value:?} is not a number of requests per second, such as 200."),
-                    ))
-                }
+                None => return Err(invalid(rule, &format!("{value:?} {NOT_A_RATE}"))),
             }
         };
 

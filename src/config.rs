@@ -494,22 +494,26 @@ pub struct GooseConfiguration {
         hide_possible_values = true
     )]
     pub co_mitigation: Option<GooseCoordinatedOmissionMitigation>,
-    /// Pass/fail rule, such as p95<500ms
-    ///
-    /// RULE is <metric><op><value>, with an optional " for <request>". The metric is pNN
-    /// or pNN.N (a response time percentile, such as p95 or p99.9), avg, max, error-rate
-    /// (failed requests as a percent of all) or rps (requests per second). The op is <,
-    /// <=, > or >=. A time takes us, ms or s, a bare number being ms; an error-rate takes
-    /// an optional %. A rule that ends "for" and a request, as the requests table names
-    /// it, judges only that request, as in "p99<2s for GET /checkout"; without it, the
-    /// rule judges all requests together. A failing rule stops the run, unless
-    /// --no-threshold-abort is set, and always fails it with a nonzero exit code. Repeat
-    /// the option for several rules; they replace any set in code. Not allowed with
-    /// --no-metrics.
-    ///
-    /// Example: --threshold "p95<500ms" --threshold "error-rate<1%". Set in code with
-    /// GooseDefault::Threshold, once for each rule.
-    #[arg(help_heading = "Metrics", long, value_name = "RULE")]
+    /// The `--threshold` rules, in the order given.
+    #[arg(
+        help_heading = "Metrics",
+        long,
+        value_name = "RULE",
+        help = "Pass/fail rule, such as p95<500ms",
+        long_help = "Pass/fail rule, such as p95<500ms\n\n\
+            RULE is <metric><op><value>, with an optional \" for <request>\". The metric is \
+            pNN or pNN.N (a response time percentile, such as p95 or p99.9), avg, max, \
+            error-rate (failed requests as a percent of all) or rps (requests per second). \
+            The op is <, <=, > or >=. A time takes us, ms or s, a bare number being ms; an \
+            error-rate takes an optional %. A rule that ends \"for\" and a request, as the \
+            requests table names it, judges only that request, as in \"p99<2s for GET \
+            /checkout\"; without it, the rule judges all requests together. A failing rule \
+            stops the run, unless --no-threshold-abort is set, and always fails it with a \
+            nonzero exit code. Repeat the option for several rules; they replace any set in \
+            code. Not allowed with --no-metrics.\n\n\
+            Example: --threshold \"p95<500ms\" --threshold \"error-rate<1%\". Set in code \
+            with GooseDefault::Threshold, once for each rule."
+    )]
     pub threshold: Vec<String>,
     /// Judge thresholds only at the end
     ///
