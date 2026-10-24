@@ -1121,18 +1121,18 @@ impl GooseConfiguration {
     }
 
     /// Helper to write a line to the log file.
-    async fn write_to_log_file(&self, log_file: &mut BufWriter<LogSink>, formatted_message: &str) {
-        match log_file
-            .write_all(format!("{formatted_message}\n").as_ref())
-            .await
-        {
-            Ok(_) => (),
-            Err(e) => {
-                warn!(
-                    "failed to write to {}: {e}",
-                    self.debug_log().unwrap_or_default()
-                );
-            }
+    async fn write_to_log_file(
+        &self,
+        log_file: &mut BufWriter<LogSink>,
+        log_file_path: &str,
+        formatted_message: &str,
+    ) {
+        let written = match log_file.write_all(formatted_message.as_bytes()).await {
+            Ok(()) => log_file.write_all(b"\n").await,
+            Err(e) => Err(e),
+        };
+        if let Err(e) = written {
+            warn!("failed to write to {log_file_path}: {e}");
         }
     }
 
@@ -1160,7 +1160,12 @@ impl GooseConfiguration {
         if self.debug_format == Some(GooseLogFormat::Csv) {
             if let Some(log_file) = debug_log.as_mut() {
                 // This will generate a warning if it fails to write to log file.
-                self.write_to_log_file(log_file, debug_csv_header()).await;
+                self.write_to_log_file(
+                    log_file,
+                    self.debug_log().unwrap_or_default(),
+                    debug_csv_header(),
+                )
+                .await;
             }
         }
 
@@ -1172,7 +1177,12 @@ impl GooseConfiguration {
         if self.error_format == Some(GooseLogFormat::Csv) {
             if let Some(log_file) = error_log.as_mut() {
                 // This will generate a warning if it fails to write to log file.
-                self.write_to_log_file(log_file, error_csv_header()).await;
+                self.write_to_log_file(
+                    log_file,
+                    self.error_log().unwrap_or_default(),
+                    error_csv_header(),
+                )
+                .await;
             }
         }
 
@@ -1194,8 +1204,12 @@ impl GooseConfiguration {
         if self.request_format == Some(GooseLogFormat::Csv) {
             if let Some(log_file) = request_log.as_mut() {
                 // This will generate a warning if it fails to write to log file.
-                self.write_to_log_file(log_file, requests_csv_header())
-                    .await;
+                self.write_to_log_file(
+                    log_file,
+                    self.request_log().unwrap_or_default(),
+                    requests_csv_header(),
+                )
+                .await;
             }
         }
 
@@ -1207,8 +1221,12 @@ impl GooseConfiguration {
         if self.transaction_format == Some(GooseLogFormat::Csv) {
             if let Some(log_file) = transaction_log.as_mut() {
                 // This will generate a warning if it fails to write to log file.
-                self.write_to_log_file(log_file, transactions_csv_header())
-                    .await;
+                self.write_to_log_file(
+                    log_file,
+                    self.transaction_log().unwrap_or_default(),
+                    transactions_csv_header(),
+                )
+                .await;
             }
         }
 
@@ -1220,8 +1238,12 @@ impl GooseConfiguration {
         if self.scenario_format == Some(GooseLogFormat::Csv) {
             if let Some(log_file) = scenario_log.as_mut() {
                 // This will generate a warning if it fails to write to log file.
-                self.write_to_log_file(log_file, scenarios_csv_header())
-                    .await;
+                self.write_to_log_file(
+                    log_file,
+                    self.scenario_log().unwrap_or_default(),
+                    scenarios_csv_header(),
+                )
+                .await;
             }
         }
 
@@ -1229,30 +1251,41 @@ impl GooseConfiguration {
         while let Ok(received_message) = receiver.recv_async().await {
             if let Some(message) = received_message {
                 let formatted_message;
-                if let Some(log_file) = match message {
+                if let Some((log_file, log_file_path)) = match message {
                     GooseLog::Debug(debug_message) => {
-                        formatted_message = self.format_message(debug_message).to_string();
-                        debug_log.as_mut()
+                        formatted_message = self.format_message(debug_message);
+                        debug_log
+                            .as_mut()
+                            .map(|file| (file, self.debug_log().unwrap_or_default()))
                     }
                     GooseLog::Error(error_message) => {
-                        formatted_message = self.format_message(error_message).to_string();
-                        error_log.as_mut()
+                        formatted_message = self.format_message(error_message);
+                        error_log
+                            .as_mut()
+                            .map(|file| (file, self.error_log().unwrap_or_default()))
                     }
                     GooseLog::Request(request_message) => {
-                        formatted_message = self.format_message(request_message).to_string();
-                        request_log.as_mut()
+                        formatted_message = self.format_message(request_message);
+                        request_log
+                            .as_mut()
+                            .map(|file| (file, self.request_log().unwrap_or_default()))
                     }
                     GooseLog::Transaction(transaction_message) => {
-                        formatted_message = self.format_message(transaction_message).to_string();
-                        transaction_log.as_mut()
+                        formatted_message = self.format_message(transaction_message);
+                        transaction_log
+                            .as_mut()
+                            .map(|file| (file, self.transaction_log().unwrap_or_default()))
                     }
                     GooseLog::Scenario(scenario_message) => {
-                        formatted_message = self.format_message(scenario_message).to_string();
-                        scenario_log.as_mut()
+                        formatted_message = self.format_message(scenario_message);
+                        scenario_log
+                            .as_mut()
+                            .map(|file| (file, self.scenario_log().unwrap_or_default()))
                     }
                 } {
                     // This will generate a warning if it fails to write to log file.
-                    self.write_to_log_file(log_file, &formatted_message).await;
+                    self.write_to_log_file(log_file, log_file_path, &formatted_message)
+                        .await;
                 }
             } else {
                 // Empty message means it's time to exit.
