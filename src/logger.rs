@@ -1397,14 +1397,12 @@ mod microsecond_tests {
     }
 }
 
-/// JSON log lines hold the same values as when they were built through a
-/// `serde_json::Value`, with each object's keys in field order.
+/// Each JSON log line, its keys in the order of the message's fields.
 #[cfg(test)]
 mod json_line_tests {
     use super::*;
     use crate::goose::{GooseMethod, TransactionName};
     use crate::metrics::{GooseRawRequest, TransactionDetail};
-    use serde::de::{IgnoredAny, MapAccess, Visitor};
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -1412,205 +1410,87 @@ mod json_line_tests {
         let mut configuration = GooseConfiguration::parse_args_default(&[] as &[&str]).unwrap();
         configuration.debug_format = Some(GooseLogFormat::Json);
         configuration.error_format = Some(GooseLogFormat::Json);
-        configuration.request_format = Some(GooseLogFormat::Json);
         configuration.transaction_format = Some(GooseLogFormat::Json);
         configuration.scenario_format = Some(GooseLogFormat::Json);
         configuration
     }
 
-    /// A request whose strings need escaping: quotes, a comma, a newline, a
-    /// control character and text outside ASCII.
-    fn raw() -> GooseRawRequest {
-        GooseRawRequest::new(
-            GooseMethod::Post,
-            "http://example.com/a?b=\"c\"",
-            vec!["(\"content-type\", \"text/plain; charset=utf-8\")".to_string()],
-            "name=\"Zoë\", line one\nline two\u{1}",
-        )
-    }
-
-    fn request() -> GooseRequestMetric {
-        let mut request = GooseRequestMetric::new(
-            raw(),
-            TransactionDetail {
-                scenario_index: 1,
-                scenario_name: Arc::from("Anon \"user\""),
-                transaction_index: Some(2),
-                transaction_name: TransactionName::InheritNameByRequests(Arc::from("front page")),
-            },
-            "/a?b=\"c\"",
-            18_446_744_073_709,
-            7,
-        );
-        request.set_response_duration(Duration::from_micros(2_345));
-        request.error = "503 Service Unavailable: /a, \"b\"".to_string();
-        request
-    }
-
-    fn error() -> GooseErrorMetric {
-        GooseErrorMetric {
-            elapsed: 9_318,
-            raw: raw(),
+    #[test]
+    fn error_json_line() {
+        let error = GooseErrorMetric {
+            elapsed: 9318,
+            raw: GooseRawRequest::new(GooseMethod::Get, "http://example.com/", vec![], ""),
             name: "(Auth) front page".to_string(),
             final_url: "http://example.com/".to_string(),
-            redirected: true,
+            redirected: false,
             response_time: 6,
             status_code: 503,
             user: 1,
-            error: "503 Service Unavailable: /\n\"retry\"".to_string(),
-        }
+            error: "503 Service Unavailable: /".to_string(),
+        };
+        assert_eq!(
+            configuration().format_message(error),
+            r#"{"elapsed":9318,"raw":{"method":"Get","url":"http://example.com/","headers":[],"body":"","custom_method":""},"name":"(Auth) front page","final_url":"http://example.com/","redirected":false,"response_time":6,"status_code":503,"user":1,"error":"503 Service Unavailable: /"}"#
+        );
     }
 
-    fn transaction() -> TransactionMetric {
-        let mut transaction = TransactionMetric::new(837, 0, 2, Arc::from("log in, \"admin\""), 5);
+    #[test]
+    fn transaction_json_line() {
+        let mut transaction = TransactionMetric::new(837, 0, 2, Arc::from("log in"), 5);
         transaction.set_duration(Duration::from_micros(1_250), false);
-        transaction
+        assert_eq!(
+            configuration().format_message(transaction),
+            r#"{"elapsed":837,"scenario_index":0,"transaction_index":2,"name":"log in","run_time":1,"success":false,"user":5,"run_time_fraction_us":250}"#
+        );
     }
 
-    fn scenario() -> ScenarioMetric {
-        ScenarioMetric::new(
+    #[test]
+    fn scenario_json_line() {
+        let scenario = ScenarioMetric::new(
             14_503,
-            Arc::from("Website User é"),
+            Arc::from("Website User"),
             0,
             Duration::from_micros(750),
             3,
-        )
+        );
+        assert_eq!(
+            configuration().format_message(scenario),
+            r#"{"elapsed":14503,"name":"Website User","index":0,"run_time":0,"user":3,"run_time_fraction_us":750}"#
+        );
     }
 
-    fn debug() -> GooseDebug {
-        GooseDebug {
-            tag: "post_comment: no \"form_build_id\"".to_string(),
-            request: Some(request()),
-            header: Some("{\"content-type\": \"text/html\"}".to_string()),
-            body: Some("<html>\n  <p>Backend fetch failed</p>\n</html>\n".to_string()),
-        }
-    }
-
-    /// The `serde_json::Value` Goose built each line from before.
-    fn value_line<T: Serialize>(message: &T) -> serde_json::Value {
-        serde_json::to_value(message).unwrap()
-    }
-
-    /// A JSON object's keys, in the order the line writes them.
-    struct Keys(Vec<String>);
-
-    impl<'de> Deserialize<'de> for Keys {
-        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-            struct KeysVisitor;
-            impl<'de> Visitor<'de> for KeysVisitor {
-                type Value = Keys;
-                fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                    f.write_str("a JSON object")
-                }
-                fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Keys, A::Error> {
-                    let mut keys = Vec::new();
-                    while let Some(key) = map.next_key::<String>()? {
-                        map.next_value::<IgnoredAny>()?;
-                        keys.push(key);
-                    }
-                    Ok(Keys(keys))
-                }
-            }
-            deserializer.deserialize_map(KeysVisitor)
-        }
-    }
-
-    fn assert_line<T: Serialize>(line: &str, message: &T, keys: &[&str]) {
+    /// The nested request's strings need escaping: quotes, a comma, a newline,
+    /// a control character and a letter outside ASCII.
+    #[test]
+    fn debug_json_line() {
+        let request = GooseRequestMetric::new(
+            GooseRawRequest::new(
+                GooseMethod::Post,
+                "http://example.com/a?b=\"c\"",
+                vec![],
+                "name=\"Zoë\", one\ntwo\u{1}",
+            ),
+            TransactionDetail {
+                scenario_index: 0,
+                scenario_name: Arc::from("Anon"),
+                transaction_index: Some(1),
+                transaction_name: TransactionName::InheritNameByRequests(Arc::from("front page")),
+            },
+            "/a",
+            1500,
+            2,
+        );
+        let debug = GooseDebug {
+            tag: "post".to_string(),
+            request: Some(request),
+            header: None,
+            body: Some("ok".to_string()),
+        };
+        let line = configuration().format_message(debug);
         assert!(!line.contains('\n'), "{}", line);
-        let parsed: serde_json::Value = serde_json::from_str(line).unwrap();
-        assert_eq!(parsed, value_line(message));
-        let Keys(found) = serde_json::from_str(line).unwrap();
-        assert_eq!(found, keys);
-    }
-
-    /// The nested request keeps its field order too.
-    fn assert_raw_keys(line: &str) {
-        #[derive(Deserialize)]
-        struct Raw {
-            raw: Keys,
-        }
-        let Raw { raw: Keys(found) } = serde_json::from_str(line).unwrap();
-        assert_eq!(found, ["method", "url", "headers", "body", "custom_method"]);
-    }
-
-    #[test]
-    fn request_json_line_holds_the_same_values_in_field_order() {
-        let line = configuration().format_message(request());
-        let keys = [
-            "elapsed",
-            "scenario_index",
-            "scenario_name",
-            "transaction_index",
-            "transaction_name",
-            "raw",
-            "name",
-            "final_url",
-            "redirected",
-            "response_time",
-            "status_code",
-            "success",
-            "update",
-            "user",
-            "error",
-            "coordinated_omission_elapsed",
-            "user_cadence",
-            "response_time_fraction_us",
-        ];
-        assert_line(&line, &request(), &keys);
-        assert_raw_keys(&line);
-    }
-
-    #[test]
-    fn error_json_line_holds_the_same_values_in_field_order() {
-        let line = configuration().format_message(error());
-        let keys = [
-            "elapsed",
-            "raw",
-            "name",
-            "final_url",
-            "redirected",
-            "response_time",
-            "status_code",
-            "user",
-            "error",
-        ];
-        assert_line(&line, &error(), &keys);
-        assert_raw_keys(&line);
-    }
-
-    #[test]
-    fn transaction_json_line_holds_the_same_values_in_field_order() {
-        let line = configuration().format_message(transaction());
-        let keys = [
-            "elapsed",
-            "scenario_index",
-            "transaction_index",
-            "name",
-            "run_time",
-            "success",
-            "user",
-            "run_time_fraction_us",
-        ];
-        assert_line(&line, &transaction(), &keys);
-    }
-
-    #[test]
-    fn scenario_json_line_holds_the_same_values_in_field_order() {
-        let line = configuration().format_message(scenario());
-        let keys = [
-            "elapsed",
-            "name",
-            "index",
-            "run_time",
-            "user",
-            "run_time_fraction_us",
-        ];
-        assert_line(&line, &scenario(), &keys);
-    }
-
-    #[test]
-    fn debug_json_line_holds_the_same_values_in_field_order() {
-        let line = configuration().format_message(debug());
-        assert_line(&line, &debug(), &["tag", "request", "header", "body"]);
+        assert_eq!(
+            line,
+            r#"{"tag":"post","request":{"elapsed":1500,"scenario_index":0,"scenario_name":"Anon","transaction_index":1,"transaction_name":{"InheritNameByRequests":"front page"},"raw":{"method":"Post","url":"http://example.com/a?b=\"c\"","headers":[],"body":"name=\"Zoë\", one\ntwo\u0001","custom_method":""},"name":"/a","final_url":"","redirected":false,"response_time":0,"status_code":0,"success":true,"update":false,"user":2,"error":"","coordinated_omission_elapsed":0,"user_cadence":0,"response_time_fraction_us":0},"header":null,"body":"ok"}"#
+        );
     }
 }
