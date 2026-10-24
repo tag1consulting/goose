@@ -53,6 +53,7 @@ mod report;
 mod run_shape;
 mod runs;
 pub mod test_plan;
+pub mod threshold;
 mod throttle;
 mod user;
 pub mod util;
@@ -151,7 +152,6 @@ type UnsequencedTransactions = Vec<Transaction>;
 type SequencedTransactions = BTreeMap<usize, Vec<Transaction>>;
 
 /// An enumeration of all errors a [`GooseAttack`](./struct.GooseAttack.html) can return.
-#[derive(Debug)]
 pub enum GooseError {
     /// Wraps a [`std::io::Error`](https://doc.rust-lang.org/std/io/struct.Error.html).
     Io(io::Error),
@@ -213,6 +213,14 @@ pub enum GooseError {
         /// An optional explanation of the error.
         detail: String,
     },
+    /// The load test ran, and at least one `--threshold` failed. Every report was
+    /// written first.
+    ThresholdsFailed {
+        /// The rules that failed, in the order they were given.
+        failed: Vec<threshold::ThresholdResult>,
+        /// The metrics of the run, as `execute()` returns them when every rule passes.
+        metrics: Box<GooseMetrics>,
+    },
 }
 /// Implement a helper to provide a text description of all possible types of errors.
 impl GooseError {
@@ -229,6 +237,7 @@ impl GooseError {
             GooseError::InvalidWeight { .. } => "invalid weight specified",
             GooseError::InvalidControllerCommand { .. } => "invalid controller command",
             GooseError::NoScenarios { .. } => "no scenarios defined",
+            GooseError::ThresholdsFailed { .. } => "one or more thresholds failed",
         }
     }
 }
@@ -248,7 +257,81 @@ impl fmt::Display for GooseError {
             GooseError::InvalidHost {
                 ref parse_error, ..
             } => write!(f, "GooseError: {} ({})", self.describe(), parse_error),
+            GooseError::ThresholdsFailed { ref failed, .. } => {
+                let failed = failed
+                    .iter()
+                    .map(|result| format!("{}, observed {}", result.rule, result.observed))
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                write!(f, "GooseError: {} ({})", self.describe(), failed)
+            }
             _ => write!(f, "GooseError: {}", self.describe()),
+        }
+    }
+}
+
+/// As `#[derive(Debug)]` writes it, except that the metrics of
+/// [`GooseError::ThresholdsFailed`] are left out: a `main` that returns this error
+/// prints it, and the metrics of a whole run would bury the rules that failed.
+impl fmt::Debug for GooseError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            GooseError::Io(source) => f.debug_tuple("Io").field(source).finish(),
+            GooseError::Reqwest(source) => f.debug_tuple("Reqwest").field(source).finish(),
+            GooseError::TokioJoin(source) => f.debug_tuple("TokioJoin").field(source).finish(),
+            GooseError::Serde(source) => f.debug_tuple("Serde").field(source).finish(),
+            GooseError::FeatureNotEnabled { feature, detail } => f
+                .debug_struct("FeatureNotEnabled")
+                .field("feature", feature)
+                .field("detail", detail)
+                .finish(),
+            GooseError::InvalidHost {
+                host,
+                detail,
+                parse_error,
+            } => f
+                .debug_struct("InvalidHost")
+                .field("host", host)
+                .field("detail", detail)
+                .field("parse_error", parse_error)
+                .finish(),
+            GooseError::InvalidOption {
+                option,
+                value,
+                detail,
+            } => f
+                .debug_struct("InvalidOption")
+                .field("option", option)
+                .field("value", value)
+                .field("detail", detail)
+                .finish(),
+            GooseError::InvalidWaitTime {
+                min_wait,
+                max_wait,
+                detail,
+            } => f
+                .debug_struct("InvalidWaitTime")
+                .field("min_wait", min_wait)
+                .field("max_wait", max_wait)
+                .field("detail", detail)
+                .finish(),
+            GooseError::InvalidWeight { weight, detail } => f
+                .debug_struct("InvalidWeight")
+                .field("weight", weight)
+                .field("detail", detail)
+                .finish(),
+            GooseError::InvalidControllerCommand { detail } => f
+                .debug_struct("InvalidControllerCommand")
+                .field("detail", detail)
+                .finish(),
+            GooseError::NoScenarios { detail } => f
+                .debug_struct("NoScenarios")
+                .field("detail", detail)
+                .finish(),
+            GooseError::ThresholdsFailed { failed, .. } => f
+                .debug_struct("ThresholdsFailed")
+                .field("failed", failed)
+                .finish_non_exhaustive(),
         }
     }
 }
@@ -505,6 +588,10 @@ struct GooseAttackRunState {
     user_channels: Vec<flume::Sender<GooseUserCommand>>,
     /// Timer tracking when to display running metrics, if enabled.
     running_metrics_timer: std::time::Instant,
+    /// When the next `--threshold` check is due, or `None` while the thresholds are
+    /// not checked: without any, under `--no-threshold-abort`, and before the metrics
+    /// being collected are the ones the run keeps.
+    threshold_check_at: Option<std::time::Instant>,
     /// Boolean flag indicating if all [`GooseUser`](./goose/struct.GooseUser.html)s
     /// have been spawned.
     all_users_spawned: bool,
@@ -1359,7 +1446,81 @@ impl GooseAttack {
             print!("{}", self.metrics);
         }
 
+        // Every report is written: fail the run when a threshold failed.
+        let failed: Vec<threshold::ThresholdResult> = self
+            .metrics
+            .thresholds
+            .iter()
+            .filter(|result| !result.passed)
+            .cloned()
+            .collect();
+        if !failed.is_empty() {
+            for result in &failed {
+                error!(
+                    "threshold {} failed: observed {}",
+                    result.rule, result.observed
+                );
+            }
+            return Err(GooseError::ThresholdsFailed {
+                failed,
+                metrics: Box::new(self.metrics),
+            });
+        }
+
         Ok(self.metrics)
+    }
+
+    /// The users of a users ramp, which resets its metrics once every user has
+    /// started unless `--no-reset-metrics` is set; `None` for `--test-plan` or
+    /// `--iterations`, which never reset them. A users ramp always has users; with
+    /// none, as when a ramp setting reached a running test plan before Controllers
+    /// refused it, the run is treated as a test plan rather than panicking.
+    pub(crate) fn ramp_users(&self) -> Option<usize> {
+        match self.configuration.users {
+            Some(users)
+                if self.configuration.test_plan.is_none()
+                    && self.configuration.iterations() == 0 =>
+            {
+                Some(users)
+            }
+            _ => None,
+        }
+    }
+
+    /// Start checking the thresholds, the first check `--threshold-abort-delay`
+    /// from now, when a failing one stops the run.
+    pub(crate) fn start_threshold_checks(&self, goose_attack_run_state: &mut GooseAttackRunState) {
+        if self.configuration.aborts_on_thresholds() {
+            let delay = self.configuration.threshold_abort_delay_secs() as u64;
+            goose_attack_run_state.threshold_check_at =
+                std::time::Instant::now().checked_add(Duration::from_secs(delay));
+        }
+    }
+
+    /// Once a second while the thresholds are checked, and only while users start
+    /// or run, ask the metrics processor to check them (fire-and-forget). Nothing is
+    /// sent without thresholds or under `--no-threshold-abort`.
+    fn check_thresholds(&mut self, goose_attack_run_state: &mut GooseAttackRunState) {
+        let Some(due) = goose_attack_run_state.threshold_check_at else {
+            return;
+        };
+        if !matches!(
+            self.attack_phase,
+            AttackPhase::Increase | AttackPhase::Maintain
+        ) {
+            return;
+        }
+        let now = std::time::Instant::now();
+        if now < due {
+            return;
+        }
+        goose_attack_run_state.threshold_check_at = Some(now + Duration::from_secs(1));
+        self.update_duration();
+        let _ = goose_attack_run_state
+            .metrics_cmd_tx
+            .send(MetricsCommand::CheckThresholds {
+                duration: self.metrics.duration,
+            });
     }
 
     // Returns OK(()) if there's a valid host, GooseError with details if not.
@@ -2090,6 +2251,7 @@ impl GooseAttack {
             users: Vec::new(),
             user_channels: Vec::new(),
             running_metrics_timer: std_now,
+            threshold_check_at: None,
             users_shutdown: HashSet::new(),
             all_users_spawned: false,
             shutdown_after_stop: !self.configuration.no_autostart,
@@ -2427,6 +2589,16 @@ impl GooseAttack {
                     self.metrics = final_metrics;
                     self.graph_data = final_graph_data;
                 }
+            }
+            // Judge every threshold on the final metrics, before any report is
+            // written, so every report shows the results.
+            if self.run_in_progress && !self.configuration.thresholds.is_empty() {
+                self.metrics.thresholds = threshold::evaluate(
+                    &self.configuration.thresholds,
+                    &self.metrics,
+                    threshold::Check::Final,
+                    self.metrics.threshold_abort,
+                );
             }
             // The load test is fully stopped at this point.
             self.metrics
@@ -3074,6 +3246,13 @@ impl GooseAttack {
         goose_attack_run_state.users = Vec::new();
         goose_attack_run_state.user_channels = Vec::new();
         goose_attack_run_state.running_metrics_timer = std_now;
+        // Check the thresholds from the start, unless the metrics reset once every
+        // user has started: judging metrics about to be thrown away could stop the
+        // run for nothing, so reset_metrics() starts the checks then.
+        goose_attack_run_state.threshold_check_at = None;
+        if self.ramp_users().is_none() || self.configuration.no_reset_metrics {
+            self.start_threshold_checks(goose_attack_run_state);
+        }
         goose_attack_run_state.shutdown_after_stop = !self.configuration.no_autostart;
         goose_attack_run_state.all_users_spawned = false;
 
@@ -3281,6 +3460,10 @@ impl GooseAttack {
             // Check if it's time to display running metrics, sending a command
             // to the dedicated metrics processor task if so.
             self.sync_metrics(goose_attack_run_state);
+
+            // Check if it's time to check the thresholds, sending a command to the
+            // dedicated metrics processor task if so.
+            self.check_thresholds(goose_attack_run_state);
 
             // Check if the dashboard or a Controller has sent a command.
             self.handle_control_requests(goose_attack_run_state).await?;
@@ -3669,6 +3852,59 @@ mod tests {
         assert!(
             !is_killswitch_triggered(),
             "Killswitch should be false after reset"
+        );
+    }
+
+    /// The main loop sends `CheckThresholds` at most once a second, only with a
+    /// threshold that can stop the run, only while users start or run, and only
+    /// once `--threshold-abort-delay` has passed. Without thresholds it sends
+    /// nothing.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn check_thresholds_is_sent_only_while_thresholds_can_abort() {
+        async fn checks_sent(args: &[&str], phase: AttackPhase) -> usize {
+            let mut all = vec!["--no-telnet", "--no-websocket"];
+            all.extend_from_slice(args);
+            let configuration = GooseConfiguration::parse_args_default(&all).unwrap();
+            let mut goose_attack = GooseAttack::initialize_with_config(configuration).unwrap();
+            let defaults = goose_attack.defaults.clone();
+            goose_attack.configuration.configure(&defaults).unwrap();
+            let mut run_state = goose_attack.initialize_attack().await.unwrap();
+            let (metrics_cmd_tx, metrics_cmd_rx) = flume::unbounded();
+            run_state.metrics_cmd_tx = metrics_cmd_tx;
+            goose_attack.attack_phase = phase;
+            goose_attack.start_threshold_checks(&mut run_state);
+            // Two loop turns in the same second send at most one check.
+            goose_attack.check_thresholds(&mut run_state);
+            goose_attack.check_thresholds(&mut run_state);
+            metrics_cmd_rx
+                .try_iter()
+                .filter(|command| matches!(command, MetricsCommand::CheckThresholds { .. }))
+                .count()
+        }
+
+        assert_eq!(checks_sent(&[], AttackPhase::Maintain).await, 0);
+        assert_eq!(checks_sent(&[], AttackPhase::Increase).await, 0);
+        let rule = ["--threshold", "p95<500ms"];
+        assert_eq!(checks_sent(&rule, AttackPhase::Maintain).await, 1);
+        assert_eq!(checks_sent(&rule, AttackPhase::Increase).await, 1);
+        assert_eq!(checks_sent(&rule, AttackPhase::Decrease).await, 0);
+        assert_eq!(checks_sent(&rule, AttackPhase::Idle).await, 0);
+        assert_eq!(
+            checks_sent(
+                &["--threshold", "p95<500ms", "--no-threshold-abort"],
+                AttackPhase::Maintain
+            )
+            .await,
+            0
+        );
+        assert_eq!(
+            checks_sent(
+                &["--threshold", "p95<500ms", "--threshold-abort-delay", "3"],
+                AttackPhase::Maintain
+            )
+            .await,
+            0
         );
     }
 

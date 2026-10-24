@@ -9,7 +9,7 @@
 //! [`GooseErrorMetrics`] are displayed in tables.
 
 pub(crate) mod buckets;
-mod common;
+pub(crate) mod common;
 pub mod coordinated_omission;
 pub(crate) mod dashboard_snapshot;
 mod delta;
@@ -41,6 +41,7 @@ use crate::metrics::common::ReportOptions;
 use crate::report;
 use crate::runs::RunRecord;
 use crate::test_plan::{TestPlanHistory, TestPlanStepAction};
+use crate::threshold::{self, ThresholdResult};
 use crate::util;
 use crate::{GooseAttack, GooseAttackRunState, GooseConfiguration, GooseError};
 use chrono::prelude::*;
@@ -326,6 +327,12 @@ pub(crate) enum MetricsCommand {
         total_users: usize,
         maximum_users: usize,
     },
+    /// Check the `--threshold` rules against the metrics so far (fire-and-forget),
+    /// triggering the killswitch on the first that fails.
+    ///
+    /// Like the dashboard commands, the processor drains at most
+    /// [`METRICS_DRAIN_LIMIT`] pending metrics first, so a busy run can not hold it.
+    CheckThresholds { duration: usize },
     /// Record the current user count for the users-per-second graph.
     RecordUsers {
         active_users: usize,
@@ -2005,6 +2012,16 @@ pub struct GooseMetrics {
     /// Tracks CO events, synthetic vs actual requests, and provides detailed
     /// analysis of coordinated omission impact on the load test.
     pub coordinated_omission_metrics: Option<CoordinatedOmissionMetrics>,
+    /// The result of each `--threshold` rule, in the order given, judged when the
+    /// run ended; empty without thresholds.
+    ///
+    /// Set with `--threshold` or
+    /// [GooseDefault::Threshold](../config/enum.GooseDefault.html#variant.Threshold).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub thresholds: Vec<ThresholdResult>,
+    /// The index of the threshold that stopped the run while it was going, if one did.
+    #[serde(skip)]
+    pub(crate) threshold_abort: Option<usize>,
     /// Flag indicating whether or not these are the final metrics, used to determine
     /// which metrics should be displayed. Defaults to false.
     pub(crate) final_metrics: bool,
@@ -2963,6 +2980,42 @@ impl GooseMetrics {
         Ok(())
     }
 
+    /// Optionally prepares a table of the thresholds and their results.
+    ///
+    /// This function is invoked by `GooseMetrics::print()`.
+    pub(crate) fn fmt_thresholds(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Thresholds are judged only when the run ends, so there are results only in
+        // the final metrics.
+        if self.thresholds.is_empty() {
+            return Ok(());
+        }
+
+        writeln!(
+            fmt,
+            "\n === THRESHOLDS ===\n ------------------------------------------------------------------------------"
+        )?;
+        writeln!(fmt, " {:<44} | {:>14} | Result", "Rule", "Observed")?;
+        writeln!(
+            fmt,
+            " ------------------------------------------------------------------------------"
+        )?;
+        for result in &self.thresholds {
+            writeln!(
+                fmt,
+                " {:<44} | {:>14} | {}",
+                util::truncate_string(&result.rule, 44),
+                result.observed,
+                result.verdict(),
+            )?;
+        }
+        writeln!(
+            fmt,
+            " ------------------------------------------------------------------------------"
+        )?;
+
+        Ok(())
+    }
+
     // Determine the seconds, minutes and hours between two chrono:DateTimes.
     pub(crate) fn get_seconds_minutes_hours(
         &self,
@@ -3115,6 +3168,7 @@ impl fmt::Display for GooseMetrics {
         self.fmt_percentiles(fmt)?;
         self.fmt_status_codes(fmt)?;
         self.fmt_errors(fmt)?;
+        self.fmt_thresholds(fmt)?;
 
         // Display enhanced coordinated omission metrics if available (before overview)
         if let Some(co_metrics) = &self.coordinated_omission_metrics {
@@ -3368,6 +3422,28 @@ impl MetricsProcessor {
                 self.metrics.total_users = total_users;
                 self.metrics.maximum_users = maximum_users;
                 self.metrics.print_running();
+                false
+            }
+            MetricsCommand::CheckThresholds { duration } => {
+                // Once the killswitch is triggered, by a threshold or anything
+                // else, the run is stopping and there is nothing more to judge.
+                if self.metrics.threshold_abort.is_none() && !crate::is_killswitch_triggered() {
+                    // Capped, as for a dashboard snapshot: draining until empty
+                    // could take as long as a busy run keeps sending.
+                    self.drain_up_to(METRICS_DRAIN_LIMIT);
+                    self.sync_atomic_counters();
+                    self.metrics.duration = duration;
+                    if let Some((index, reason)) =
+                        threshold::first_failure(&self.configuration.thresholds, &self.metrics)
+                    {
+                        crate::trigger_killswitch(&reason);
+                        // Only the first reason is kept: the rule stopped the run
+                        // only if nothing else triggered the killswitch first.
+                        if crate::killswitch_reason().as_deref() == Some(reason.as_str()) {
+                            self.metrics.threshold_abort = Some(index);
+                        }
+                    }
+                }
                 false
             }
             MetricsCommand::RecordUsers {
@@ -4185,20 +4261,8 @@ impl GooseAttack {
         if !goose_attack_run_state.all_users_spawned {
             goose_attack_run_state.all_users_spawned = true;
             // Only reset metrics on startup if not using `--test-plan` or
-            // `--iterations`. A users ramp always has users; with none, as
-            // when a ramp setting reached a running test plan before
-            // Controllers refused it, the run is treated as a test plan
-            // rather than panicking.
-            let users = match self.configuration.users {
-                Some(users)
-                    if self.configuration.test_plan.is_none()
-                        && self.configuration.iterations() == 0 =>
-                {
-                    Some(users)
-                }
-                _ => None,
-            };
-            if let Some(users) = users {
+            // `--iterations`.
+            if let Some(users) = self.ramp_users() {
                 if !self.configuration.no_reset_metrics {
                     self.update_duration();
 
@@ -4220,6 +4284,10 @@ impl GooseAttack {
 
                     // Reset running_metrics_timer.
                     goose_attack_run_state.running_metrics_timer = std::time::Instant::now();
+
+                    // The metrics collected from here are kept, so the thresholds
+                    // can judge them.
+                    self.start_threshold_checks(goose_attack_run_state);
 
                     if self.metrics.display_metrics {
                         if goose_attack_run_state.active_users < users {
@@ -4929,6 +4997,18 @@ impl ReportSource<'_> {
             })
             .unwrap_or_default();
 
+        let thresholds_template = if self.metrics.thresholds.is_empty() {
+            String::new()
+        } else {
+            let threshold_rows = self
+                .metrics
+                .thresholds
+                .iter()
+                .map(report::threshold_row)
+                .join("\n");
+            report::thresholds_template(&threshold_rows)
+        };
+
         // Compile and return the report template.
         Ok(report::build_report(
             &users,
@@ -4944,6 +5024,7 @@ impl ReportSource<'_> {
                 scenarios_template: &scenarios_template,
                 status_codes_template: &status_code_template,
                 errors_template: &errors_template,
+                thresholds_template: &thresholds_template,
                 graph_rps_template: &self
                     .graph_data
                     .get_requests_per_second_graph(!self.configuration.no_granular_report)
@@ -7418,6 +7499,54 @@ mod test {
         assert_eq!(metrics.requests["GET /"].status_code_counts[&200], queued);
         assert_eq!(metrics_tx.len(), 0);
         task.await.unwrap();
+    }
+
+    /// A threshold check drains at most one capped turn of metrics, triggers the
+    /// killswitch with the rule and what it observed, and after that judges
+    /// nothing more.
+    #[test]
+    #[serial_test::serial]
+    fn check_thresholds_drains_capped_and_triggers_the_killswitch() {
+        crate::reset_killswitch();
+        let queued = 2 * METRICS_DRAIN_LIMIT + 10;
+        let (mut processor, metrics_tx, _cmd_tx) = make_channel_processor(queued);
+        processor.configuration.thresholds = vec!["max<5ms".parse().unwrap()];
+
+        assert!(!processor.handle_command(MetricsCommand::CheckThresholds { duration: 2 }));
+        assert_eq!(
+            processor.metrics.requests["GET /"].raw_data.counter,
+            METRICS_DRAIN_LIMIT
+        );
+        assert_eq!(
+            crate::killswitch_reason().as_deref(),
+            Some("threshold max<5ms failed: observed 10ms")
+        );
+        assert_eq!(processor.metrics.threshold_abort, Some(0));
+
+        // The run is stopping: a later check neither drains nor judges.
+        let waiting = metrics_tx.len();
+        assert!(!processor.handle_command(MetricsCommand::CheckThresholds { duration: 3 }));
+        assert_eq!(metrics_tx.len(), waiting);
+
+        // A killswitch triggered first, by anything else, is not the threshold's.
+        crate::reset_killswitch();
+        let (mut processor, _metrics_tx, _cmd_tx) = make_channel_processor(1);
+        processor.configuration.thresholds = vec!["max<5ms".parse().unwrap()];
+        crate::trigger_killswitch("user code");
+        processor.handle_command(MetricsCommand::CheckThresholds { duration: 2 });
+        assert_eq!(processor.metrics.threshold_abort, None);
+        assert_eq!(crate::killswitch_reason().as_deref(), Some("user code"));
+
+        // A rule that passes, or has no samples yet, stops nothing.
+        crate::reset_killswitch();
+        let (mut processor, _metrics_tx, _cmd_tx) = make_channel_processor(1);
+        processor.configuration.thresholds = vec![
+            "max<1s".parse().unwrap(),
+            "max<5ms for GET /other".parse().unwrap(),
+        ];
+        processor.handle_command(MetricsCommand::CheckThresholds { duration: 2 });
+        assert!(!crate::is_killswitch_triggered());
+        assert_eq!(processor.metrics.threshold_abort, None);
     }
 
     #[test]

@@ -29,6 +29,7 @@ impl<W: Write> Markdown<'_, '_, W> {
     pub fn write(mut self) -> Result<(), GooseError> {
         self.write_header()?;
         self.write_plan_overview()?;
+        self.write_thresholds()?;
         self.write_request_metrics()?;
         self.write_response_metrics()?;
         self.write_status_code_metrics()?;
@@ -291,6 +292,41 @@ impl<W: Write> Markdown<'_, '_, W> {
             writeln!(
                 self.w,
                 r#"| {name} | {users} | {count} | {response_time_average} | {response_time_minimum}  | {response_time_maximum} | {count_per_second:.2} | {iterations:.2} |"#
+            )?;
+        }
+
+        Ok(())
+    }
+
+    fn write_thresholds(&mut self) -> Result<(), GooseError> {
+        let thresholds = &self.data.raw_metrics.thresholds;
+        if thresholds.is_empty() {
+            return Ok(());
+        }
+
+        write!(
+            self.w,
+            r#"
+## Thresholds
+
+| Rule | Observed | Result |
+| ---- | -------: | ------ |
+"#
+        )?;
+
+        for result in thresholds {
+            // A failing row is bold, as well as saying so.
+            let verdict = if result.passed {
+                result.verdict().to_string()
+            } else {
+                format!("**{}**", result.verdict())
+            };
+            writeln!(
+                self.w,
+                "| `{}` | {} | {} |",
+                result.rule.replace('|', "\\|"),
+                result.observed,
+                verdict
             )?;
         }
 

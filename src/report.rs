@@ -32,6 +32,8 @@ pub(crate) struct GooseReportTemplates<'a> {
     pub scenarios_template: &'a str,
     pub status_codes_template: &'a str,
     pub errors_template: &'a str,
+    /// The thresholds table, or nothing without thresholds.
+    pub thresholds_template: &'a str,
     pub graph_rps_template: &'a str,
     pub graph_average_response_time_template: &'a str,
     pub graph_latency_heatmap_template: &'a str,
@@ -587,6 +589,67 @@ pub fn error_row(error: &ErrorMetric) -> String {
     )
 }
 
+/// The styles of the thresholds table, added to the html report only with it, so a
+/// report without thresholds is unchanged.
+const THRESHOLDS_STYLE: &str = r#"
+
+        .threshold-fail td {
+            font-weight: bold;
+            color: #a40000;
+            background: #fdeaea;
+        }
+
+        .threshold-fail td:first-child {
+            border-left: 6px solid #a40000;
+        }
+
+        .threshold-pass td:first-child {
+            border-left: 6px solid #2e7d32;
+        }"#;
+
+/// If thresholds were judged, add a thresholds table to the html report.
+pub(crate) fn thresholds_template(threshold_rows: &str) -> String {
+    format!(
+        r#"
+
+        <div class="thresholds">
+        <h2>Thresholds</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th colspan="2">Rule</th>
+                    <th>Observed</th>
+                    <th colspan="2">Result</th>
+                </tr>
+            </thead>
+            <tbody>
+                {threshold_rows}
+            </tbody>
+        </table>
+    </div>"#,
+    )
+}
+
+/// Build an individual threshold row in the html report. A failing row says so in
+/// words, with a mark, in bold and with a border, so it never rests on colour.
+pub(crate) fn threshold_row(result: &crate::threshold::ThresholdResult) -> String {
+    let (class, mark) = if result.passed {
+        ("threshold-pass", "&#10003;")
+    } else {
+        ("threshold-fail", "&#10007;")
+    };
+    format!(
+        r#"<tr class="{class}">
+        <td colspan="2"><code>{rule}</code></td>
+        <td>{observed}</td>
+        <td colspan="2">{mark} {verdict}</td>
+    </tr>"#,
+        rule = escape_html(&result.rule),
+        observed = escape_html(&result.observed),
+        verdict = result.verdict(),
+    )
+}
+
 /// If enhanced CO metrics are available, add a CO metrics summary table to the html report.
 pub(crate) fn coordinated_omission_metrics_template(
     co_summary: &metrics::CoMetricsSummary,
@@ -753,7 +816,7 @@ pub(crate) fn build_report(
 
         .graph {{
             margin-bottom: 1em;
-        }}
+        }}{thresholds_style}
     </style>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.2.2/dist/echarts.min.js"></script>
 </head>
@@ -782,7 +845,7 @@ pub(crate) fn build_report(
                         {steps_rows}
                     </tbody>
                 </table>
-        </div>
+        </div>{thresholds_template}
 
         <div class="requests">
             <h2>Request Metrics</h2>
@@ -873,6 +936,12 @@ pub(crate) fn build_report(
         scenarios_template = templates.scenarios_template,
         status_codes_template = templates.status_codes_template,
         errors_template = templates.errors_template,
+        thresholds_template = templates.thresholds_template,
+        thresholds_style = if templates.thresholds_template.is_empty() {
+            ""
+        } else {
+            THRESHOLDS_STYLE
+        },
         graph_rps_template = templates.graph_rps_template,
         graph_average_response_time_template = templates.graph_average_response_time_template,
         graph_latency_heatmap_template = templates.graph_latency_heatmap_template,

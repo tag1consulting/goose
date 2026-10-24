@@ -494,6 +494,50 @@ pub struct GooseConfiguration {
         hide_possible_values = true
     )]
     pub co_mitigation: Option<GooseCoordinatedOmissionMitigation>,
+    /// Pass/fail rule, such as p95<500ms
+    ///
+    /// RULE is <metric><op><value>, with an optional " for <request>". The metric is pNN
+    /// or pNN.N (a response time percentile, such as p95 or p99.9), avg, max, error-rate
+    /// (failed requests as a percent of all) or rps (requests per second). The op is <,
+    /// <=, > or >=. A time takes us, ms or s, a bare number being ms; an error-rate takes
+    /// an optional %. A rule that ends "for" and a request, as the requests table names
+    /// it, judges only that request, as in "p99<2s for GET /checkout"; without it, the
+    /// rule judges all requests together. A failing rule stops the run, unless
+    /// --no-threshold-abort is set, and always fails it with a nonzero exit code. Repeat
+    /// the option for several rules; they replace any set in code. Not allowed with
+    /// --no-metrics.
+    ///
+    /// Example: --threshold "p95<500ms" --threshold "error-rate<1%". Set in code with
+    /// GooseDefault::Threshold, once for each rule.
+    #[arg(help_heading = "Metrics", long, value_name = "RULE")]
+    pub threshold: Vec<String>,
+    /// Judge thresholds only at the end
+    ///
+    /// By default, Goose checks every --threshold once a second while the run's metrics
+    /// are kept, and stops the run when one fails. This judges them only when the run
+    /// ends, which still fails it when a rule fails.
+    ///
+    /// Set in code with GooseDefault::NoThresholdAbort.
+    #[arg(help_heading = "Metrics", long)]
+    pub no_threshold_abort: bool,
+    /// Wait before thresholds can stop the run
+    ///
+    /// Checking starts once the metrics are kept: at the end of a users ramp's increase,
+    /// when the metrics reset, or from the start with --test-plan, --iterations or
+    /// --no-reset-metrics. This waits TIME more before the first check, to let a cold
+    /// cache warm up. TIME is as for --increase-time; the default is 0. It never changes
+    /// the judgement at the end of the run. Needs --threshold, and not allowed with
+    /// --no-threshold-abort.
+    ///
+    /// Example: --threshold-abort-delay 30s. Set in code with
+    /// GooseDefault::ThresholdAbortDelay, in seconds.
+    #[arg(help_heading = "Metrics", long, value_name = "TIME")]
+    pub threshold_abort_delay: Option<String>,
+    /// The `--threshold` rules, or the [`GooseDefault::Threshold`] rules when none is
+    /// given, as `configure` parses them.
+    #[arg(skip)]
+    #[serde(skip)]
+    pub(crate) thresholds: Vec<crate::threshold::Threshold>,
 
     /// The request log file `--request-log` names. Holds [`RUN_FOLDER`] when the flag is
     /// given without a path.
@@ -1253,6 +1297,12 @@ pub(crate) struct GooseDefaults {
     pub timeout: Option<String>,
     /// An optional default for coordinated omission mitigation.
     pub co_mitigation: Option<GooseCoordinatedOmissionMitigation>,
+    /// The default thresholds, one for each `set_default(GooseDefault::Threshold, ..)`.
+    pub threshold: Vec<String>,
+    /// An optional default for judging thresholds only at the end of the run.
+    pub no_threshold_abort: Option<bool>,
+    /// An optional default number of seconds to wait before a threshold can stop the run.
+    pub threshold_abort_delay: Option<usize>,
     /// An optional default to not track status code metrics.
     pub no_status_codes: Option<bool>,
     /// An optional default maximum requests per second.
@@ -1383,6 +1433,13 @@ pub enum GooseDefault {
     NoWebSocket,
     /// An optional default for coordinated omission mitigation.
     CoordinatedOmissionMitigation,
+    /// A pass/fail rule, such as `p95<500ms`. Each call adds one rule; rules given
+    /// with `--threshold` replace every rule set here.
+    Threshold,
+    /// An optional default for judging thresholds only at the end of the run.
+    NoThresholdAbort,
+    /// An optional default number of seconds to wait before a threshold can stop the run.
+    ThresholdAbortDelay,
     /// An optional default for not automatically starting load test.
     NoAutoStart,
     /// An optional default timeout for all requests, in seconds.
@@ -1472,6 +1529,7 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::Scenarios`]
 ///  - [`GooseDefault::TelnetHost`]
 ///  - [`GooseDefault::TestPlan`]
+///  - [`GooseDefault::Threshold`]
 ///  - [`GooseDefault::Timeout`]
 ///  - [`GooseDefault::TransactionLog`]
 ///  - [`GooseDefault::WebSocketHost`]
@@ -1485,6 +1543,7 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::IncreaseTime`]
 ///  - [`GooseDefault::DecreaseTime`]
 ///  - [`GooseDefault::RunTime`]
+///  - [`GooseDefault::ThresholdAbortDelay`]
 ///  - [`GooseDefault::Iterations`]
 ///  - [`GooseDefault::RunningMetrics`]
 ///  - [`GooseDefault::LogLevel`]
@@ -1506,6 +1565,7 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::NoResetMetrics`]
 ///  - [`GooseDefault::NoPrintMetrics`]
 ///  - [`GooseDefault::NoMetrics`]
+///  - [`GooseDefault::NoThresholdAbort`]
 ///  - [`GooseDefault::NoTransactionMetrics`]
 ///  - [`GooseDefault::NoScenarioMetrics`]
 ///  - [`GooseDefault::RequestBody`]
@@ -1585,6 +1645,11 @@ impl GooseDefaultType<&str> for GooseAttack {
             GooseDefault::TelnetHost => self.defaults.telnet_host = Some(value.to_string()),
             GooseDefault::TestPlan => self.defaults.test_plan = Some(value.parse::<TestPlan>()?),
             GooseDefault::Timeout => self.defaults.timeout = Some(value.to_string()),
+            GooseDefault::Threshold => {
+                // Refuse an invalid rule here, where the code that set it is known.
+                value.parse::<crate::threshold::Threshold>()?;
+                self.defaults.threshold.push(value.to_string())
+            }
             GooseDefault::TransactionLog => self.defaults.transaction_log = Some(value.to_string()),
             GooseDefault::WebSocketHost => self.defaults.websocket_host = Some(value.to_string()),
             GooseDefault::DashboardHost => self.defaults.dashboard_host = Some(value.to_string()),
@@ -1596,6 +1661,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::IncreaseTime
             | GooseDefault::DecreaseTime
             | GooseDefault::RunTime
+            | GooseDefault::ThresholdAbortDelay
             | GooseDefault::Iterations
             | GooseDefault::LogLevel
             | GooseDefault::Quiet
@@ -1617,6 +1683,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             GooseDefault::RunningMetrics
             | GooseDefault::NoResetMetrics
             | GooseDefault::NoMetrics
+            | GooseDefault::NoThresholdAbort
             | GooseDefault::NoTransactionMetrics
             | GooseDefault::NoScenarioMetrics
             | GooseDefault::RequestBody
@@ -1700,6 +1767,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             GooseDefault::IncreaseTime => self.defaults.increase_time = Some(value),
             GooseDefault::DecreaseTime => self.defaults.decrease_time = Some(value),
             GooseDefault::RunTime => self.defaults.run_time = Some(value),
+            GooseDefault::ThresholdAbortDelay => self.defaults.threshold_abort_delay = Some(value),
             GooseDefault::Iterations => self.defaults.iterations = Some(value),
             GooseDefault::RunningMetrics => self.defaults.running_metrics = Some(value),
             GooseDefault::LogLevel => self.defaults.log_level = Some(value as u8),
@@ -1733,6 +1801,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::TelnetHost
             | GooseDefault::TestPlan
             | GooseDefault::Timeout
+            | GooseDefault::Threshold
             | GooseDefault::TransactionLog
             | GooseDefault::WebSocketHost
             | GooseDefault::DashboardHost
@@ -1748,6 +1817,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             }
             GooseDefault::NoResetMetrics
             | GooseDefault::NoMetrics
+            | GooseDefault::NoThresholdAbort
             | GooseDefault::NoTransactionMetrics
             | GooseDefault::NoScenarioMetrics
             | GooseDefault::RequestBody
@@ -1816,6 +1886,7 @@ impl GooseDefaultType<bool> for GooseAttack {
         match key {
             GooseDefault::NoResetMetrics => self.defaults.no_reset_metrics = Some(value),
             GooseDefault::NoMetrics => self.defaults.no_metrics = Some(value),
+            GooseDefault::NoThresholdAbort => self.defaults.no_threshold_abort = Some(value),
             GooseDefault::NoTransactionMetrics => {
                 self.defaults.no_transaction_metrics = Some(value)
             }
@@ -1855,6 +1926,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             | GooseDefault::TelnetHost
             | GooseDefault::TestPlan
             | GooseDefault::Timeout
+            | GooseDefault::Threshold
             | GooseDefault::TransactionLog
             | GooseDefault::WebSocketHost
             | GooseDefault::DashboardHost
@@ -1872,6 +1944,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             | GooseDefault::IncreaseTime
             | GooseDefault::DecreaseTime
             | GooseDefault::RunTime
+            | GooseDefault::ThresholdAbortDelay
             | GooseDefault::RunningMetrics
             | GooseDefault::Iterations
             | GooseDefault::LogLevel
@@ -1949,6 +2022,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             // Otherwise display a helpful and explicit error.
             GooseDefault::NoResetMetrics
             | GooseDefault::NoMetrics
+            | GooseDefault::NoThresholdAbort
             | GooseDefault::NoTransactionMetrics
             | GooseDefault::NoScenarioMetrics
             | GooseDefault::RequestBody
@@ -1993,6 +2067,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::TelnetHost
             | GooseDefault::TestPlan
             | GooseDefault::Timeout
+            | GooseDefault::Threshold
             | GooseDefault::TransactionLog
             | GooseDefault::WebSocketHost
             | GooseDefault::DashboardHost
@@ -2010,6 +2085,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::IncreaseTime
             | GooseDefault::DecreaseTime
             | GooseDefault::RunTime
+            | GooseDefault::ThresholdAbortDelay
             | GooseDefault::RunningMetrics
             | GooseDefault::Iterations
             | GooseDefault::LogLevel
@@ -2082,6 +2158,7 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             // Otherwise display a helpful and explicit error.
             GooseDefault::NoResetMetrics
             | GooseDefault::NoMetrics
+            | GooseDefault::NoThresholdAbort
             | GooseDefault::NoTransactionMetrics
             | GooseDefault::NoScenarioMetrics
             | GooseDefault::RequestBody
@@ -2126,6 +2203,7 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::TelnetHost
             | GooseDefault::TestPlan
             | GooseDefault::Timeout
+            | GooseDefault::Threshold
             | GooseDefault::TransactionLog
             | GooseDefault::WebSocketHost
             | GooseDefault::DashboardHost
@@ -2143,6 +2221,7 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::IncreaseTime
             | GooseDefault::DecreaseTime
             | GooseDefault::RunTime
+            | GooseDefault::ThresholdAbortDelay
             | GooseDefault::RunningMetrics
             | GooseDefault::Iterations
             | GooseDefault::LogLevel
@@ -2218,6 +2297,7 @@ impl GooseDefaultType<f64> for GooseAttack {
             | GooseDefault::TelnetHost
             | GooseDefault::TestPlan
             | GooseDefault::Timeout
+            | GooseDefault::Threshold
             | GooseDefault::TransactionLog
             | GooseDefault::WebSocketHost
             | GooseDefault::DashboardHost
@@ -2234,6 +2314,7 @@ impl GooseDefaultType<f64> for GooseAttack {
             | GooseDefault::IncreaseTime
             | GooseDefault::DecreaseTime
             | GooseDefault::RunTime
+            | GooseDefault::ThresholdAbortDelay
             | GooseDefault::Iterations
             | GooseDefault::RunningMetrics
             | GooseDefault::LogLevel
@@ -2256,6 +2337,7 @@ impl GooseDefaultType<f64> for GooseAttack {
             }
             GooseDefault::NoResetMetrics
             | GooseDefault::NoMetrics
+            | GooseDefault::NoThresholdAbort
             | GooseDefault::NoTransactionMetrics
             | GooseDefault::NoScenarioMetrics
             | GooseDefault::RequestBody
@@ -3382,6 +3464,62 @@ impl GooseConfiguration {
             ])
             .unwrap_or(false);
 
+        // Configure `threshold`: command line rules replace every default rule.
+        self.threshold = if self.threshold.is_empty() {
+            defaults.threshold.clone()
+        } else {
+            std::mem::take(&mut self.threshold)
+        };
+        if !self.threshold.is_empty() {
+            info!("threshold = {:?}", self.threshold);
+        }
+        self.thresholds = self
+            .threshold
+            .iter()
+            .map(|rule| rule.parse())
+            .collect::<Result<_, _>>()?;
+
+        // Configure `no_threshold_abort`.
+        self.no_threshold_abort = self
+            .get_value(vec![
+                // Use --no-threshold-abort if set.
+                GooseValue {
+                    value: Some(self.no_threshold_abort),
+                    filter: !self.no_threshold_abort,
+                    message: "no_threshold_abort",
+                },
+                // Otherwise use GooseDefault if set.
+                GooseValue {
+                    value: defaults.no_threshold_abort,
+                    filter: defaults.no_threshold_abort.is_none(),
+                    message: "no_threshold_abort",
+                },
+            ])
+            .unwrap_or(false);
+
+        // Configure `threshold_abort_delay`.
+        let threshold_abort_delay = self
+            .threshold_abort_delay
+            .as_deref()
+            .map(|value| timespan("threshold_abort_delay", value))
+            .transpose()?;
+        self.threshold_abort_delay = self
+            .get_value(vec![
+                // Use --threshold-abort-delay if set.
+                GooseValue {
+                    value: threshold_abort_delay,
+                    filter: threshold_abort_delay.is_none(),
+                    message: "threshold_abort_delay",
+                },
+                // Otherwise use GooseDefault if set.
+                GooseValue {
+                    value: defaults.threshold_abort_delay,
+                    filter: defaults.threshold_abort_delay.is_none(),
+                    message: "threshold_abort_delay",
+                },
+            ])
+            .map(|v| v.to_string());
+
         // Configure `pdf_scale` and `pdf_timeout` when PDF reports feature is enabled.
         #[cfg(feature = "pdf-reports")]
         {
@@ -3428,6 +3566,18 @@ impl GooseConfiguration {
         }
 
         Ok(())
+    }
+
+    /// Whether the thresholds are checked while the run goes, so a failing one stops
+    /// it: there is at least one, and `--no-threshold-abort` is not set.
+    pub(crate) fn aborts_on_thresholds(&self) -> bool {
+        !self.thresholds.is_empty() && !self.no_threshold_abort && !self.no_metrics
+    }
+
+    /// The seconds to wait before the first threshold check, 0 when
+    /// `--threshold-abort-delay` is not set.
+    pub(crate) fn threshold_abort_delay_secs(&self) -> usize {
+        seconds(&self.threshold_abort_delay)
     }
 
     /// The global host, `None` when no `--host` is set or it is empty.
@@ -3924,6 +4074,37 @@ impl GooseConfiguration {
                     option: "`configuration.no_reset_metrics".to_string(),
                     value: self.no_reset_metrics.to_string(),
                     detail: "`configuration.no_reset_metrics` can not be set with `configuration.iterations` (metrics are not reset)."
+                        .to_string(),
+                });
+            }
+        }
+
+        // Thresholds judge metrics, so need them.
+        if self.no_metrics && !self.threshold.is_empty() {
+            return Err(GooseError::InvalidOption {
+                option: "`configuration.threshold`".to_string(),
+                value: self.threshold.join(", "),
+                detail: "`configuration.threshold` can not be set with `configuration.no_metrics`, as there would be no metrics to judge."
+                    .to_string(),
+            });
+        }
+
+        // A threshold abort delay delays a threshold's abort, so needs one that can abort.
+        if let Some(delay) = self.threshold_abort_delay.as_ref() {
+            if self.threshold.is_empty() {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.threshold_abort_delay`".to_string(),
+                    value: delay.to_string(),
+                    detail:
+                        "`configuration.threshold_abort_delay` needs a `configuration.threshold`."
+                            .to_string(),
+                });
+            }
+            if self.no_threshold_abort {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.threshold_abort_delay`".to_string(),
+                    value: delay.to_string(),
+                    detail: "`configuration.threshold_abort_delay` can not be set with `configuration.no_threshold_abort`, which never stops the run."
                         .to_string(),
                 });
             }

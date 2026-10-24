@@ -362,6 +362,47 @@ Metrics:
           Example: --co-mitigation average. Set in code with
           GooseDefault::CoordinatedOmissionMitigation.
 
+      --threshold <RULE>
+          Pass/fail rule, such as p95<500ms
+
+          RULE is <metric><op><value>, with an optional " for <request>". The
+          metric is pNN or pNN.N (a response time percentile, such as p95 or
+          p99.9), avg, max, error-rate (failed requests as a percent of all) or
+          rps (requests per second). The op is <, <=, > or >=. A time takes us,
+          ms or s, a bare number being ms; an error-rate takes an optional %. A
+          rule that ends "for" and a request, as the requests table names it,
+          judges only that request, as in "p99<2s for GET /checkout"; without
+          it, the rule judges all requests together. A failing rule stops the
+          run, unless --no-threshold-abort is set, and always fails it with a
+          nonzero exit code. Repeat the option for several rules; they replace
+          any set in code. Not allowed with --no-metrics.
+
+          Example: --threshold "p95<500ms" --threshold "error-rate<1%". Set in
+          code with GooseDefault::Threshold, once for each rule.
+
+      --no-threshold-abort
+          Judge thresholds only at the end
+
+          By default, Goose checks every --threshold once a second while the
+          run's metrics are kept, and stops the run when one fails. This judges
+          them only when the run ends, which still fails it when a rule fails.
+
+          Set in code with GooseDefault::NoThresholdAbort.
+
+      --threshold-abort-delay <TIME>
+          Wait before thresholds can stop the run
+
+          Checking starts once the metrics are kept: at the end of a users
+          ramp's increase, when the metrics reset, or from the start with
+          --test-plan, --iterations or --no-reset-metrics. This waits TIME more
+          before the first check, to let a cold cache warm up. TIME is as for
+          --increase-time; the default is 0. It never changes the judgement at
+          the end of the run. Needs --threshold, and not allowed with
+          --no-threshold-abort.
+
+          Example: --threshold-abort-delay 30s. Set in code with
+          GooseDefault::ThresholdAbortDelay, in seconds.
+
 Logs:
   -R, --request-log [<FILE>]
           Log every request to FILE
