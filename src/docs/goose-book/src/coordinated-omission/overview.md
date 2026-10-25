@@ -34,7 +34,7 @@ Time 34s: Send request ✅ (1 second response)
 - "Looks like mostly good performance"
 
 **What really happened:**
-During that 30-second freeze, **30 more requests should have been made** but couldn't because the thread was stuck waiting. So instead of 4 requests, there should have been 34 requests affected by the server problem.
+During that 30-second freeze, **29 more requests should have been made** but couldn't because the thread was stuck waiting. So instead of 4 requests, there should have been 33 requests affected by the server problem.
 
 ## Why This Matters
 
@@ -87,7 +87,7 @@ Result: "4 requests, looks mostly fine" ❌ MISLEADING
 Timeline: |--1s--|--1s--|--------30s--------|--1s--|  
 Real:        ✅     ✅          ❌           ✅
 Synthetic:              ❌❌❌❌❌...❌❌❌    (29 more)
-Result: "34 total requests, 30-second freeze affected 87.9% of traffic" ✅ ACCURATE
+Result: "33 total requests, 30-second freeze affected 87.9% of traffic" ✅ ACCURATE
 ```
 
 ## The Key Insight

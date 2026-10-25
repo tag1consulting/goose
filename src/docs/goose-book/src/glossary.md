@@ -4,7 +4,7 @@
 The stage a load test is in, which Goose logs as `entering GooseAttack phase:` and the [dashboard](./controller/dashboard.html) shows. A load test is **Idle** before it starts, when a [Controller](#controller) can still change its configuration (see [`--no-autostart`](./controller/overview.html)); in **Increase** while [GooseUsers](#gooseuser) launch; in **Maintain** once all are running; in **Decrease** while they stop; and in **Shutdown** as Goose exits.
 
 ## Baseline
-An earlier run's JSON report, given with [`--baseline-file`](./getting-started/common.html#comparing-against-a-baseline). Every report of the current run then shows each number's change from the baseline, such as `1,234 (+200)`.
+An earlier run's JSON report, given with [`--baseline-file`](./getting-started/common.html#comparing-against-a-baseline). The current run's HTML and Markdown reports (and a PDF report, made from the HTML) then show each number's change from the baseline, such as `1,234 (+200)`; the JSON report and the console do not.
 
 ## Controller
 An interface that allows real-time control of a running Goose load test. Goose provides both [Telnet](./controller/telnet.html) and [WebSocket](./controller/websocket.html) controllers for dynamically adjusting test parameters like user count, increase rate, and runtime during execution.

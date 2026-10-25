@@ -43,13 +43,13 @@ use goose::prelude::*;
 > **Note:** Using the above prelude automatically adds the following `use` statements necessary when writing a load test, so you don't need to manually add all of them:
 >
 > ```rust,ignore
-> use crate::config::{GooseDefault, GooseDefaultType};
-> use crate::goose::{
+> use goose::config::{GooseDefault, GooseDefaultType};
+> use goose::goose::{
 >     GooseMethod, GooseRequest, GooseUser, Scenario, Transaction, TransactionError,
 >     TransactionFunction, TransactionResult,
 > };
-> use crate::metrics::{GooseCoordinatedOmissionMitigation, GooseMetrics};
-> use crate::{scenario, transaction, GooseAttack, GooseError, GooseScheduler};
+> use goose::metrics::{GooseCoordinatedOmissionMitigation, GooseMetrics};
+> use goose::{scenario, transaction, GooseAttack, GooseError, GooseScheduler};
 > ```
 
 Then create a new load testing function. For our example we're simply going to load the front page of the website we're load-testing. Goose passes all load testing functions a mutable reference to a GooseUser object, which is used to track metrics and make web requests. Thanks to the [Reqwest](https://docs.rs/reqwest/) library, the Goose client manages things like cookies, headers, and sessions for you. Load testing functions must be declared async, ensuring that your simulated users don't become CPU-locked.
