@@ -4,7 +4,7 @@ The [`examples/closure.rs`](https://github.com/tag1consulting/goose/blob/main/ex
 
 ## Details
 
-The paths to be loaded are first defiend in a vector:
+The paths to be loaded are first defined in a vector:
 ```rust
 {{#include ../../../../../examples/closure.rs:30}}
 ```
