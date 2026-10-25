@@ -3,20 +3,20 @@
 //! A [`Threshold`] is a rule such as `p95<500ms`, `error-rate<1%`, `rps>=200` or
 //! `p99<2s for GET /checkout`, given with `--threshold` or
 //! [`GooseDefault::Threshold`](../config/enum.GooseDefault.html#variant.Threshold).
-//! Unless `--no-threshold-abort` is set, Goose checks every rule once a second while
-//! the run's metrics are kept, and the first rule that fails stops the run through the
-//! killswitch. Every rule is judged once more when the run ends, and
+//! Unless `--no-threshold-abort` is set, Goose checks every rule once a second from
+//! when the run first enters Maintain, and the first rule that fails stops the run
+//! through the killswitch. Every rule is judged once more when the run ends, and
 //! [`GooseAttack::execute`](../struct.GooseAttack.html#method.execute) returns
 //! [`GooseError::ThresholdsFailed`] when any fails. Each rule's result is kept in
 //! [`GooseMetrics::thresholds`].
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
 
 use crate::metrics::{
-    common::RequestTotals, format_micros, per_second_calculations, GooseMetrics,
-    GooseRequestMetricTimingData,
+    common::RequestTotals, format_micros, GooseMetrics, GooseRequestMetricTimingData,
 };
 use crate::GooseError;
 
@@ -31,7 +31,7 @@ enum Metric {
     Maximum,
     /// Failed requests as a percent of all requests.
     ErrorRate,
-    /// Requests per second over the run so far.
+    /// Requests per second, from when checking started.
     RequestsPerSecond,
 }
 
@@ -78,15 +78,18 @@ pub(crate) enum Check {
 /// One pass/fail rule on the run's metrics, parsed from text such as `p95<500ms`.
 ///
 /// The text is `<metric><op><value>`, optionally followed by ` for <request>`:
-///  - `<metric>` is `pNN` or `pNN.N` (a response time percentile, such as `p95` or
-///    `p99.9`), `avg`, `max`, `error-rate` (failed requests as a percent of all
-///    requests) or `rps` (requests per second over the run so far);
+///  - `<metric>` is `pNN`, with optional decimals (a response time percentile, such
+///    as `p95` or `p99.9`), `avg`, `max`, `error-rate` (failed requests as a percent
+///    of all requests) or `rps` (requests per second);
 ///  - `<op>` is `<`, `<=`, `>` or `>=`;
 ///  - `<value>` is, for a time, a number with `us`, `ms` or `s`, a bare number being
 ///    milliseconds; for `error-rate`, a number with an optional `%`; for `rps`, a
 ///    number;
-///  - ` for <request>` judges only the request the requests table names so, such as
-///    `GET /login`; without it, the rule judges all requests together.
+///  - ` for <request>` judges only the request of that name, as the HTML or Markdown
+///    report names it, such as `GET /login`; without it, the rule judges all
+///    requests together.
+///
+/// A rule that can never pass, such as `p95<0` or `error-rate>100%`, is refused.
 ///
 /// # Example
 /// ```rust
@@ -115,12 +118,15 @@ pub struct ThresholdResult {
     /// The rule, as it was given.
     pub rule: String,
     /// What was observed, as the reports show it, such as `812ms`, `0.4%` or
-    /// `213.5`; `no samples` when the rule's metric had none.
+    /// `213.5 from Maintain`; `no samples` when the rule's metric had none. For the
+    /// rule that stopped the run, the value at the stop and the value at the end,
+    /// as in `100% at abort, 0.8% at end`, when they differ.
     pub observed: String,
-    /// What was observed as a number, in milliseconds for a time, a percent for
-    /// `error-rate` and requests per second for `rps`; `None` without samples.
+    /// What was observed at the end as a number, in milliseconds for a time, a
+    /// percent for `error-rate` and requests per second for `rps`; `None` without
+    /// samples.
     pub value: Option<f64>,
-    /// Whether the rule passed.
+    /// Whether the rule passed. The rule that stopped the run never passed.
     pub passed: bool,
     /// Whether this rule failing stopped the run while it was going.
     pub aborted: bool,
@@ -137,6 +143,31 @@ impl ThresholdResult {
     }
 }
 
+/// Where `rps` rules count from: the run time, and how many times each request had
+/// been made, when checking started.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ThresholdStart {
+    /// The run time in seconds, to the microsecond.
+    seconds: f64,
+    /// How many times each request had been made, successful or failed.
+    requests: HashMap<String, usize>,
+}
+
+impl ThresholdStart {
+    /// Where `rps` rules count from, when checking starts `seconds` into the run
+    /// with `metrics`.
+    pub(crate) fn of(metrics: &GooseMetrics, seconds: f64) -> Self {
+        ThresholdStart {
+            seconds,
+            requests: metrics
+                .requests
+                .iter()
+                .map(|(key, request)| (key.clone(), request.success_count + request.fail_count))
+                .collect(),
+        }
+    }
+}
+
 /// What [`Threshold::observe`] shows for a rule whose metric has no samples.
 const NO_SAMPLES: &str = "no samples";
 
@@ -149,7 +180,7 @@ const PERCENTILE_RANGE: &str =
 
 /// Why a rule with `for` and no request is refused.
 const NO_REQUEST: &str =
-    "\"for\" needs a request name as the requests table shows it, such as GET /login.";
+    "\"for\" needs a request name as the HTML report shows it, such as GET /login.";
 
 /// Why a time value that does not parse is refused, after the value.
 const NOT_A_TIME: &str =
@@ -196,6 +227,25 @@ fn short_number(number: f64) -> String {
     let text = format!("{number:.2}");
     let text = text.trim_end_matches('0').trim_end_matches('.');
     text.to_string()
+}
+
+/// Why a rule that compares `metric` with `limit` by `operator` can never pass, if
+/// it can not.
+fn never_passes(metric: Metric, operator: Operator, limit: f64) -> Option<&'static str> {
+    match (metric, operator) {
+        (_, Operator::Less) if limit == 0.0 => Some(match metric {
+            Metric::ErrorRate => "no error rate is less than 0%.",
+            Metric::RequestsPerSecond => "no rate is less than 0.",
+            _ => "no response time is less than 0.",
+        }),
+        (Metric::RequestsPerSecond, Operator::LessOrEqual) if limit == 0.0 => {
+            Some("a rate is only judged once requests are made, so it is always above 0.")
+        }
+        (Metric::ErrorRate, Operator::Greater) if limit == 100.0 => {
+            Some("no error rate is more than 100%.")
+        }
+        _ => None,
+    }
 }
 
 impl FromStr for Threshold {
@@ -260,7 +310,7 @@ impl FromStr for Threshold {
         }
 
         // The value ends at " for ", which names the request. The space before
-        // it makes a rule with no value, as in "p95< for GET /", read so.
+        // it makes a rule with no value, as in "p95< for GET /", parse as one.
         let rest = format!(" {}", rest.trim());
         let (value, request) = match rest.find(" for ") {
             Some(at) => (rest[..at].trim(), Some(rest[at + 5..].trim())),
@@ -303,6 +353,9 @@ impl FromStr for Threshold {
                 None => return Err(invalid(rule, &format!("{value:?} {NOT_A_RATE}"))),
             }
         };
+        if let Some(reason) = never_passes(metric, operator, limit) {
+            return Err(invalid(rule, &format!("it can never pass; {reason}")));
+        }
 
         Ok(Threshold {
             rule: rule.to_string(),
@@ -327,7 +380,11 @@ struct Figures<'a> {
     times: &'a GooseRequestMetricTimingData,
     requests: usize,
     failures: usize,
-    duration: usize,
+    /// The seconds `requests` were made in, for `rps`.
+    seconds: f64,
+    /// Whether `requests` and `seconds` count from when checking started, for
+    /// `rps`.
+    from_maintain: bool,
 }
 
 /// An observed value: in the rule's own unit for comparing, as a number for
@@ -339,6 +396,16 @@ struct Observed {
 }
 
 impl Threshold {
+    /// The lowest rate this rule passes at, and whether it passes at exactly that
+    /// rate, when it is an `rps>` or `rps>=` rule.
+    pub(crate) fn rate_floor(&self) -> Option<(f64, bool)> {
+        match (self.metric, self.operator) {
+            (Metric::RequestsPerSecond, Operator::Greater) => Some((self.limit, false)),
+            (Metric::RequestsPerSecond, Operator::GreaterOrEqual) => Some((self.limit, true)),
+            _ => None,
+        }
+    }
+
     /// What this rule observes in `figures`, or `None` when its metric has no
     /// samples.
     fn observe(&self, figures: &Figures) -> Option<Observed> {
@@ -370,13 +437,17 @@ impl Threshold {
                 })
             }
             // Before a whole second there is no rate to judge.
-            Metric::RequestsPerSecond if figures.requests > 0 && figures.duration > 0 => {
-                let (rate, _) = per_second_calculations(figures.duration, figures.requests, 0);
-                let rate = f64::from(rate);
+            Metric::RequestsPerSecond if figures.requests > 0 && figures.seconds >= 1.0 => {
+                let rate = figures.requests as f64 / figures.seconds;
+                let shown = if figures.from_maintain {
+                    format!("{} from Maintain", short_number(rate))
+                } else {
+                    short_number(rate)
+                };
                 Some(Observed {
                     compared: rate,
                     value: rate,
-                    shown: short_number(rate),
+                    shown,
                 })
             }
             _ => None,
@@ -388,53 +459,76 @@ impl Threshold {
 /// judge every request.
 struct Judge<'m> {
     metrics: &'m GooseMetrics,
+    /// The run time in seconds, to the microsecond, as the rules are judged.
+    seconds: f64,
     totals: Option<RequestTotals>,
 }
 
 impl<'m> Judge<'m> {
-    fn new(metrics: &'m GooseMetrics) -> Self {
+    fn new(metrics: &'m GooseMetrics, seconds: f64) -> Self {
         Judge {
             metrics,
+            seconds,
             totals: None,
         }
     }
 
-    /// What `threshold` observes, or `None` without samples.
+    /// What `threshold` observes, or `None` without samples. An `rps` rule counts
+    /// from when checking started, if it has.
     fn observe(&mut self, threshold: &Threshold) -> Option<Observed> {
-        let duration = self.metrics.duration;
+        let metrics = self.metrics;
+        let start = metrics
+            .threshold_start
+            .as_ref()
+            .filter(|_| threshold.metric == Metric::RequestsPerSecond);
+        let seconds = start.map_or(metrics.duration as f64, |start| {
+            self.seconds - start.seconds
+        });
         match &threshold.request {
             Some(key) => {
-                let request = self.metrics.requests.get(key)?;
+                let request = metrics.requests.get(key)?;
+                let made = start.map_or(0, |start| start.requests.get(key).copied().unwrap_or(0));
                 threshold.observe(&Figures {
                     times: &request.raw_data,
-                    requests: request.success_count + request.fail_count,
+                    requests: (request.success_count + request.fail_count).saturating_sub(made),
                     failures: request.fail_count,
-                    duration,
+                    seconds,
+                    from_maintain: start.is_some(),
                 })
             }
             None => {
-                let metrics = self.metrics;
                 let totals = self
                     .totals
                     .get_or_insert_with(|| RequestTotals::of(metrics.requests.values()));
+                let made = start.map_or(0, |start| start.requests.values().sum());
                 threshold.observe(&Figures {
                     times: &totals.times,
-                    requests: totals.requests,
+                    requests: totals.requests.saturating_sub(made),
                     failures: totals.failures,
-                    duration,
+                    seconds,
+                    from_maintain: start.is_some(),
                 })
             }
         }
     }
 }
 
-/// The first of `thresholds` that fails on `metrics` while the run is going, as its
-/// index and the killswitch's reason. A rule with no samples yet is skipped.
+/// A rule that failed while the run was going: its index, what it observed as
+/// the reports show it, and the killswitch's reason.
+pub(crate) struct Failure {
+    pub(crate) index: usize,
+    pub(crate) observed: String,
+    pub(crate) reason: String,
+}
+
+/// The first of `thresholds` that fails on `metrics`, `seconds` into the run, while
+/// it is going. A rule with no samples yet is skipped.
 pub(crate) fn first_failure(
     thresholds: &[Threshold],
     metrics: &GooseMetrics,
-) -> Option<(usize, String)> {
-    let mut judge = Judge::new(metrics);
+    seconds: f64,
+) -> Option<Failure> {
+    let mut judge = Judge::new(metrics, seconds);
     thresholds
         .iter()
         .enumerate()
@@ -443,24 +537,25 @@ pub(crate) fn first_failure(
             (!threshold
                 .operator
                 .passes(observed.compared, threshold.limit))
-            .then(|| {
-                (
-                    index,
-                    format!("threshold {threshold} failed: observed {}", observed.shown),
-                )
+            .then(|| Failure {
+                index,
+                reason: format!("threshold {threshold} failed: observed {}", observed.shown),
+                observed: observed.shown,
             })
         })
 }
 
-/// Judge every one of `thresholds` on `metrics` as `check` does. `aborted` is the
-/// index of the rule that stopped the run, if one did.
+/// Judge every one of `thresholds` on `metrics`, `seconds` into the run, as `check`
+/// does. `aborted` is the index of the rule that stopped the run and what it
+/// observed then, if one did: that rule fails whatever it observes now.
 pub(crate) fn evaluate(
     thresholds: &[Threshold],
     metrics: &GooseMetrics,
     check: Check,
-    aborted: Option<usize>,
+    aborted: Option<(usize, &str)>,
+    seconds: f64,
 ) -> Vec<ThresholdResult> {
-    let mut judge = Judge::new(metrics);
+    let mut judge = Judge::new(metrics, seconds);
     thresholds
         .iter()
         .enumerate()
@@ -475,24 +570,65 @@ pub(crate) fn evaluate(
                 ),
                 None => (NO_SAMPLES.to_string(), None, check == Check::MidRun),
             };
-            ThresholdResult {
-                rule: threshold.rule.clone(),
-                observed,
-                value,
-                passed,
-                aborted: aborted == Some(index),
+            match aborted {
+                Some((aborted, at_abort)) if aborted == index => ThresholdResult {
+                    rule: threshold.rule.clone(),
+                    observed: if observed == at_abort {
+                        observed
+                    } else {
+                        format!("{at_abort} at abort, {observed} at end")
+                    },
+                    value,
+                    passed: false,
+                    aborted: true,
+                },
+                _ => ThresholdResult {
+                    rule: threshold.rule.clone(),
+                    observed,
+                    value,
+                    passed,
+                    aborted: false,
+                },
             }
         })
         .collect()
 }
 
+/// A warning for each of `thresholds` that names a request the run never made,
+/// suggesting the request it most likely means.
+pub(crate) fn unknown_requests(thresholds: &[Threshold], metrics: &GooseMetrics) -> Vec<String> {
+    thresholds
+        .iter()
+        .filter_map(|threshold| {
+            let name = threshold.request.as_deref()?;
+            if metrics.requests.contains_key(name) {
+                return None;
+            }
+            let mut warning = format!("threshold {threshold}: no request named {name:?}");
+            if let Some(key) = suggestion(name, metrics.requests.keys().map(String::as_str)) {
+                warning.push_str(&format!("; did you mean {key:?}?"));
+            }
+            Some(warning)
+        })
+        .collect()
+}
+
+/// The one of `keys` that `name` most likely means: the same but for ASCII case,
+/// or, for a name the console cut short with `..`, one that starts with the rest.
+/// `None` when no key or more than one matches.
+fn suggestion<'k>(name: &str, keys: impl IntoIterator<Item = &'k str>) -> Option<&'k str> {
+    let cut = name.strip_suffix("..");
+    let mut matches = keys.into_iter().filter(|key| {
+        key.eq_ignore_ascii_case(name) || cut.is_some_and(|cut| key.starts_with(cut))
+    });
+    let key = matches.next()?;
+    matches.next().is_none().then_some(key)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{GooseConfiguration, GooseDefault, GooseDefaultType};
     use crate::metrics::GooseRequestMetricAggregate;
-    use crate::GooseAttack;
-    use clap::Parser;
 
     fn parse(rule: &str) -> Threshold {
         rule.parse()
@@ -517,79 +653,27 @@ mod tests {
 
     #[test]
     fn every_metric_operator_and_unit_parses() {
+        use Metric::*;
+        use Operator::*;
+        #[rustfmt::skip]
         let cases: &[(&str, Metric, Operator, f64, Option<&str>)] = &[
-            (
-                "p50<500ms",
-                Metric::Percentile(50.0),
-                Operator::Less,
-                500_000.0,
-                None,
-            ),
-            (
-                "p95<=2s",
-                Metric::Percentile(95.0),
-                Operator::LessOrEqual,
-                2_000_000.0,
-                None,
-            ),
-            (
-                "p99.9>750us",
-                Metric::Percentile(99.9),
-                Operator::Greater,
-                750.0,
-                None,
-            ),
-            (
-                "p1>=250",
-                Metric::Percentile(1.0),
-                Operator::GreaterOrEqual,
-                250_000.0,
-                None,
-            ),
-            ("avg<1.5ms", Metric::Average, Operator::Less, 1_500.0, None),
-            ("max<0.5s", Metric::Maximum, Operator::Less, 500_000.0, None),
-            (
-                "error-rate<1%",
-                Metric::ErrorRate,
-                Operator::Less,
-                1.0,
-                None,
-            ),
-            (
-                "error-rate<=0.5",
-                Metric::ErrorRate,
-                Operator::LessOrEqual,
-                0.5,
-                None,
-            ),
-            (
-                "rps>=200",
-                Metric::RequestsPerSecond,
-                Operator::GreaterOrEqual,
-                200.0,
-                None,
-            ),
-            (
-                "rps>12.5",
-                Metric::RequestsPerSecond,
-                Operator::Greater,
-                12.5,
-                None,
-            ),
-            (
-                "p99<2s for GET /checkout",
-                Metric::Percentile(99.0),
-                Operator::Less,
-                2_000_000.0,
-                Some("GET /checkout"),
-            ),
-            (
-                " p95 < 500ms for POST login for real ",
-                Metric::Percentile(95.0),
-                Operator::Less,
-                500_000.0,
-                Some("POST login for real"),
-            ),
+            ("p50<500ms", Percentile(50.0), Less, 500_000.0, None),
+            ("p95<=2s", Percentile(95.0), LessOrEqual, 2_000_000.0, None),
+            ("p99.9>750us", Percentile(99.9), Greater, 750.0, None),
+            ("p99.99<1s", Percentile(99.99), Less, 1_000_000.0, None),
+            ("p1>=250", Percentile(1.0), GreaterOrEqual, 250_000.0, None),
+            ("avg<1.5ms", Average, Less, 1_500.0, None),
+            ("max<0.5s", Maximum, Less, 500_000.0, None),
+            ("p95<=0", Percentile(95.0), LessOrEqual, 0.0, None),
+            ("error-rate<1%", ErrorRate, Less, 1.0, None),
+            ("error-rate<=0.5", ErrorRate, LessOrEqual, 0.5, None),
+            ("error-rate<=0", ErrorRate, LessOrEqual, 0.0, None),
+            ("error-rate>=100%", ErrorRate, GreaterOrEqual, 100.0, None),
+            ("rps>=200", RequestsPerSecond, GreaterOrEqual, 200.0, None),
+            ("rps>12.5", RequestsPerSecond, Greater, 12.5, None),
+            ("rps>0", RequestsPerSecond, Greater, 0.0, None),
+            ("p99<2s for GET /checkout", Percentile(99.0), Less, 2_000_000.0, Some("GET /checkout")),
+            (" p95 < 500ms for POST login for real ", Percentile(95.0), Less, 500_000.0, Some("POST login for real")),
         ];
         for &(rule, metric, operator, limit, request) in cases {
             let threshold = parse(rule);
@@ -607,37 +691,78 @@ mod tests {
 
     #[test]
     fn invalid_rules_are_refused_with_a_reason() {
-        assert!(refused("").contains("can not be empty"));
-        assert!(refused("   ").contains("can not be empty"));
-        assert!(refused("p95").contains("no operator"));
-        assert!(refused("<500ms").contains("no metric"));
-        assert!(refused("latency<500ms").contains("\"latency\" is not a metric"));
-        assert!(refused("pp95<5ms").contains("is not a metric"));
-        assert!(refused("p<5ms").contains("is not a metric"));
-        assert!(refused("p0<5ms").contains("greater than 0 and less than 100"));
-        assert!(refused("p100<5ms").contains("greater than 0 and less than 100"));
-        assert!(refused("p100.0<5ms").contains("greater than 0 and less than 100"));
-        assert!(refused("p95=500ms").contains("must be <, <=, > or >="));
-        assert!(refused("p95==500ms").contains("must be <, <=, > or >="));
-        assert!(refused("p95<<500ms").contains("must be <, <=, > or >="));
-        assert!(refused("p95=<500ms").contains("must be <, <=, > or >="));
-        assert!(refused("p95<").contains("no value"));
-        assert!(refused("p95< for GET /").contains("no value"));
-        assert!(refused("p95<5m").contains("\"5m\" is not a time"));
-        assert!(refused("p95<5min").contains("is not a time"));
-        assert!(refused("p95<-5ms").contains("is not a time"));
-        assert!(refused("p95<NaNms").contains("is not a time"));
-        assert!(refused("p95<1e3ms").contains("is not a time"));
-        assert!(refused("p95<5 ms").contains("is not a time"));
-        assert!(refused("error-rate<1ms").contains("is not a percent"));
-        assert!(refused("error-rate<101%").contains("more than 100%"));
-        assert!(refused("rps>2s").contains("is not a number of requests per second"));
-        assert!(refused("rps>inf").contains("is not a number of requests per second"));
-        assert!(refused("p95<500ms for").contains("needs a request name"));
-        assert!(refused("p95<500ms for ").contains("needs a request name"));
-        assert!(refused("p95<500ms for   ").contains("needs a request name"));
-        // Every reason names the rule.
-        assert!(refused("p0<5ms").starts_with("threshold \"p0<5ms\": "));
+        let cases = [
+            ("", "can not be empty"),
+            ("   ", "can not be empty"),
+            ("p95", "no operator"),
+            ("<500ms", "no metric"),
+            ("latency<500ms", "\"latency\" is not a metric"),
+            ("pp95<5ms", "is not a metric"),
+            ("p<5ms", "is not a metric"),
+            ("p0<5ms", "greater than 0 and less than 100"),
+            ("p100<5ms", "greater than 0 and less than 100"),
+            ("p100.0<5ms", "greater than 0 and less than 100"),
+            ("p95=500ms", "must be <, <=, > or >="),
+            ("p95==500ms", "must be <, <=, > or >="),
+            ("p95<<500ms", "must be <, <=, > or >="),
+            ("p95=<500ms", "must be <, <=, > or >="),
+            ("p95<", "no value"),
+            ("p95< for GET /", "no value"),
+            ("p95<5m", "\"5m\" is not a time"),
+            ("p95<5min", "is not a time"),
+            ("p95<-5ms", "is not a time"),
+            ("p95<NaNms", "is not a time"),
+            ("p95<1e3ms", "is not a time"),
+            ("p95<5 ms", "is not a time"),
+            ("error-rate<1ms", "is not a percent"),
+            ("error-rate<101%", "more than 100%"),
+            ("rps>2s", "is not a number of requests per second"),
+            ("rps>inf", "is not a number of requests per second"),
+            ("p95<500ms for", "needs a request name"),
+            ("p95<500ms for ", "needs a request name"),
+            ("p95<500ms for   ", "needs a request name"),
+            // Rules that can never pass.
+            (
+                "p95<0",
+                "it can never pass; no response time is less than 0.",
+            ),
+            ("p99.9<0us", "it can never pass; no response time"),
+            ("avg<0ms", "it can never pass; no response time"),
+            ("max<0s for GET /", "it can never pass; no response time"),
+            (
+                "error-rate<0",
+                "it can never pass; no error rate is less than 0%.",
+            ),
+            (
+                "error-rate<0%",
+                "it can never pass; no error rate is less than 0%.",
+            ),
+            (
+                "error-rate>100",
+                "it can never pass; no error rate is more than 100%.",
+            ),
+            (
+                "error-rate>100%",
+                "it can never pass; no error rate is more than 100%.",
+            ),
+            ("rps<0", "it can never pass; no rate is less than 0."),
+            (
+                "rps<=0",
+                "it can never pass; a rate is only judged once requests",
+            ),
+            ("rps<=0.0 for GET /", "it can never pass"),
+        ];
+        for (rule, reason) in cases {
+            let refused = refused(rule);
+            // Every reason names the rule.
+            assert!(
+                refused.starts_with(&format!("threshold {:?}: ", rule.trim())),
+                "{}: {}",
+                rule,
+                refused
+            );
+            assert!(refused.contains(reason), "{}: {}", rule, refused);
+        }
     }
 
     /// A request named `name` with one time for each of `times_ms`, counted as
@@ -673,7 +798,14 @@ mod tests {
     }
 
     fn judge(rule: &str, metrics: &GooseMetrics, check: Check) -> ThresholdResult {
-        evaluate(&[parse(rule)], metrics, check, None).remove(0)
+        evaluate(
+            &[parse(rule)],
+            metrics,
+            check,
+            None,
+            metrics.duration as f64,
+        )
+        .remove(0)
     }
 
     #[test]
@@ -770,7 +902,7 @@ mod tests {
                 assert_eq!(end.observed, "no samples");
                 assert_eq!(end.value, None);
             }
-            assert_eq!(first_failure(&[parse(rule)], &empty), None);
+            assert!(first_failure(&[parse(rule)], &empty, 5.0).is_none());
         }
         let metrics = metrics_with(5, vec![request("/", &[10], 1, 0)]);
         let end = judge("p95<500ms for GET /never", &metrics, Check::Final);
@@ -778,190 +910,114 @@ mod tests {
         assert_eq!(end.observed, "no samples");
         // Before a whole second, there is no rate yet.
         let metrics = metrics_with(0, vec![request("/", &[10], 1, 0)]);
-        assert_eq!(first_failure(&[parse("rps>100")], &metrics), None);
+        assert!(first_failure(&[parse("rps>100")], &metrics, 0.5).is_none());
     }
 
     #[test]
     fn first_failure_names_the_rule_and_the_observed_value() {
         let metrics = metrics_with(2, vec![request("/", &[812], 1, 0)]);
         let rules = [parse("error-rate<1%"), parse("p95<500ms"), parse("max<1ms")];
-        assert_eq!(
-            first_failure(&rules, &metrics),
-            Some((1, "threshold p95<500ms failed: observed 812ms".to_string()))
-        );
-        let results = evaluate(&rules, &metrics, Check::Final, Some(1));
+        let failure = first_failure(&rules, &metrics, 2.0).unwrap();
+        assert_eq!(failure.index, 1);
+        assert_eq!(failure.observed, "812ms");
+        assert_eq!(failure.reason, "threshold p95<500ms failed: observed 812ms");
+        let results = evaluate(&rules, &metrics, Check::Final, Some((1, "812ms")), 2.0);
         assert_eq!(
             results
                 .iter()
-                .map(|r| (r.passed, r.aborted))
+                .map(|r| (r.passed, r.aborted, r.observed.as_str()))
                 .collect::<Vec<_>>(),
-            vec![(true, false), (false, true), (false, false)]
+            vec![
+                (true, false, "0%"),
+                (false, true, "812ms"),
+                (false, false, "812ms")
+            ]
         );
     }
 
-    /// The configuration `args` and `defaults` resolve to, or the reason it is refused.
-    fn configure(
-        args: &[&str],
-        defaults: &crate::config::GooseDefaults,
-    ) -> Result<GooseConfiguration, GooseError> {
-        let mut configuration = GooseConfiguration::try_parse_from(
-            std::iter::once("loadtest").chain(args.iter().copied()),
-        )
-        .expect("the command line parses");
-        configuration.configure(defaults)?;
-        configuration.validate()?;
-        Ok(configuration)
-    }
-
-    fn detail(result: Result<GooseConfiguration, GooseError>) -> String {
-        match result {
-            Err(GooseError::InvalidOption { detail, .. }) => detail,
-            other => panic!("{:?}", other),
-        }
-    }
-
+    /// The rule that stopped the run fails even when, by the end, what it observes
+    /// is back inside its limit, and its row shows both values.
     #[test]
-    fn abort_delay_parses_like_run_time() {
-        for (delay, secs) in [
-            ("30", 30),
-            ("30s", 30),
-            ("2m", 120),
-            ("1h30m", 5400),
-            ("0", 0),
-            ("1m30s", 90),
-        ] {
-            let configuration = configure(
-                &["--threshold", "p95<1s", "--threshold-abort-delay", delay],
-                &Default::default(),
-            )
-            .unwrap();
-            assert_eq!(configuration.threshold_abort_delay_secs(), secs, "{delay}");
-        }
-        let defaults = defaults_with(|attack| {
-            attack
-                .set_default(GooseDefault::Threshold, "p95<1s")?
-                .set_default(GooseDefault::ThresholdAbortDelay, 45)
-        });
-        let configuration = configure(&[], &defaults).unwrap();
-        assert_eq!(configuration.threshold_abort_delay_secs(), 45);
-        // The command line wins over a default.
-        let configuration = configure(&["--threshold-abort-delay", "3"], &defaults).unwrap();
-        assert_eq!(configuration.threshold_abort_delay_secs(), 3);
+    fn the_rule_that_stopped_the_run_always_fails() {
+        // At the end 5 of 1,000 requests failed, 0.5%; the rule stopped the run
+        // when every request so far had failed.
+        let metrics = metrics_with(10, vec![request("/", &[10], 1_000, 5)]);
+        let rules = [parse("error-rate<1%"), parse("p95<5s")];
+        let results = evaluate(&rules, &metrics, Check::Final, Some((0, "100%")), 10.0);
+        assert!(!results[0].passed);
+        assert!(results[0].aborted);
+        assert_eq!(results[0].verdict(), "FAIL, stopped the run");
+        assert_eq!(results[0].observed, "100% at abort, 0.5% at end");
+        assert_eq!(results[0].value, Some(0.5));
+        // The other rules are judged as always.
+        assert!(results[1].passed);
+        assert!(!results[1].aborted);
+        // When the value at the end is the value at the stop, it is shown once.
+        let results = evaluate(&rules, &metrics, Check::Final, Some((0, "0.5%")), 10.0);
+        assert_eq!(results[0].observed, "0.5%");
+        assert!(!results[0].passed);
     }
 
+    /// Once checking starts, an `rps` rule counts the requests made since then
+    /// over the seconds since then, and says so.
     #[test]
-    fn abort_delay_needs_a_threshold_that_can_abort() {
-        let refused = detail(configure(
-            &["--threshold-abort-delay", "10s"],
-            &Default::default(),
+    fn rps_counts_from_when_checking_started() {
+        let mut metrics = metrics_with(10, vec![request("/", &[10], 100, 0)]);
+        // Before checking starts, the whole run.
+        assert_eq!(judge("rps>=10", &metrics, Check::Final).observed, "10");
+        // Checking started 4.5 seconds in, with 20 requests made: 80 in 5.5 seconds,
+        // judged to the microsecond rather than the whole seconds of the duration.
+        metrics.threshold_start = Some(ThresholdStart::of(
+            &metrics_with(5, vec![request("/", &[10], 20, 0)]),
+            4.5,
         ));
-        assert!(
-            refused.contains("needs a `configuration.threshold`"),
-            "{}",
-            refused
+        let result = judge("rps>=14.5", &metrics, Check::Final);
+        assert_eq!(result.observed, "14.55 from Maintain");
+        assert!(result.passed);
+        let result = judge("rps>=14.6 for GET /", &metrics, Check::Final);
+        assert_eq!(result.observed, "14.55 from Maintain");
+        assert!(!result.passed);
+        // The other metrics still read the whole run.
+        assert_eq!(
+            judge("error-rate<1%", &metrics, Check::Final).observed,
+            "0%"
         );
-        let refused = detail(configure(
-            &[
-                "--threshold",
-                "p95<1s",
-                "--no-threshold-abort",
-                "--threshold-abort-delay",
-                "10s",
-            ],
-            &Default::default(),
-        ));
-        assert!(
-            refused.contains("`configuration.no_threshold_abort`"),
-            "{}",
-            refused
-        );
-        let defaults =
-            defaults_with(|attack| attack.set_default(GooseDefault::ThresholdAbortDelay, 5));
-        assert!(configure(&[], &defaults).is_err());
-        let refused = detail(configure(
-            &["--threshold-abort-delay", "1x"],
-            &Default::default(),
-        ));
-        assert!(refused.contains("threshold_abort_delay"), "{}", refused);
+        // Within the first second after checking starts there is no rate yet.
+        assert!(first_failure(&[parse("rps>1000")], &metrics, 5.4).is_none());
+        let failure = first_failure(&[parse("rps>1000")], &metrics, 5.5).unwrap();
+        assert_eq!(failure.observed, "80 from Maintain");
     }
 
     #[test]
-    fn thresholds_need_metrics() {
-        let refused = detail(configure(
-            &["--threshold", "p95<1s", "--no-metrics"],
-            &Default::default(),
-        ));
-        assert!(
-            refused.contains("`configuration.no_metrics`"),
-            "{}",
-            refused
+    fn an_unknown_request_suggests_the_one_meant() {
+        let keys = ["GET /Login", "GET /a-very-long-request-path"];
+        // Only the case differs.
+        assert_eq!(suggestion("get /login", keys), Some("GET /Login"));
+        // Cut short as the console's requests table does.
+        let cut = crate::util::truncate_string(keys[1], 24);
+        assert_eq!(cut, "GET /a-very-long-reque..");
+        assert_eq!(suggestion(&cut, keys), Some(keys[1]));
+        // Two that match are no suggestion.
+        let keys = [
+            "GET /a-very-long-request-path-1",
+            "GET /a-very-long-request-path-2",
+        ];
+        assert_eq!(suggestion(&cut, keys), None);
+        assert_eq!(suggestion("GET /other", keys), None);
+
+        let metrics = metrics_with(5, vec![request("/Login", &[10], 1, 0)]);
+        let rules = [
+            parse("p95<1s for get /login"),
+            parse("p95<1s for GET /Login"),
+            parse("p95<1s for POST /"),
+            parse("p95<1s"),
+        ];
+        assert_eq!(
+            unknown_requests(&rules, &metrics),
+            [
+                "threshold p95<1s for get /login: no request named \"get /login\"; did you mean \"GET /Login\"?",
+                "threshold p95<1s for POST /: no request named \"POST /\"",
+            ]
         );
-        let defaults = defaults_with(|attack| attack.set_default(GooseDefault::Threshold, "rps>1"));
-        assert!(configure(&["--no-metrics"], &defaults).is_err());
-    }
-
-    #[test]
-    fn rules_from_the_command_line_and_from_defaults() {
-        let defaults = defaults_with(|attack| {
-            attack
-                .set_default(GooseDefault::Threshold, "p95<500ms")?
-                .set_default(GooseDefault::Threshold, "error-rate<1%")
-        });
-        // Two defaults are two rules.
-        let configuration = configure(&[], &defaults).unwrap();
-        let rules: Vec<String> = configuration
-            .thresholds
-            .iter()
-            .map(ToString::to_string)
-            .collect();
-        assert_eq!(rules, ["p95<500ms", "error-rate<1%"]);
-        assert!(configuration.aborts_on_thresholds());
-        // Command line rules replace the defaults.
-        let configuration = configure(
-            &["--threshold", "rps>=200", "--threshold", "max<2s"],
-            &defaults,
-        )
-        .unwrap();
-        let rules: Vec<String> = configuration
-            .thresholds
-            .iter()
-            .map(ToString::to_string)
-            .collect();
-        assert_eq!(rules, ["rps>=200", "max<2s"]);
-        // --no-threshold-abort keeps the rules for the end of the run.
-        let configuration = configure(&["--no-threshold-abort"], &defaults).unwrap();
-        assert_eq!(configuration.thresholds.len(), 2);
-        assert!(!configuration.aborts_on_thresholds());
-        let defaults = defaults_with(|attack| {
-            attack
-                .set_default(GooseDefault::Threshold, "p95<500ms")?
-                .set_default(GooseDefault::NoThresholdAbort, true)
-        });
-        assert!(!configure(&[], &defaults).unwrap().aborts_on_thresholds());
-        // No rules, nothing to abort on.
-        assert!(!configure(&[], &Default::default())
-            .unwrap()
-            .aborts_on_thresholds());
-        // An invalid rule is refused before the load test, from either place.
-        let refused = detail(configure(&["--threshold", "p100<1s"], &Default::default()));
-        assert!(refused.contains("less than 100"), "{}", refused);
-        match GooseAttack::initialize_with_config(GooseConfiguration::default())
-            .unwrap()
-            .set_default(GooseDefault::Threshold, "p95")
-        {
-            Err(GooseError::InvalidOption { detail, .. }) => {
-                assert!(detail.contains("no operator"))
-            }
-            Err(other) => panic!("{:?}", other),
-            Ok(_) => panic!("p95 was taken"),
-        }
-    }
-
-    /// The defaults `set` gives a new `GooseAttack`.
-    fn defaults_with(
-        set: impl FnOnce(GooseAttack) -> Result<Box<GooseAttack>, GooseError>,
-    ) -> crate::config::GooseDefaults {
-        let attack = GooseAttack::initialize_with_config(GooseConfiguration::default()).unwrap();
-        set(attack).unwrap().defaults.clone()
     }
 }

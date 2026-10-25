@@ -152,6 +152,7 @@ type UnsequencedTransactions = Vec<Transaction>;
 type SequencedTransactions = BTreeMap<usize, Vec<Transaction>>;
 
 /// An enumeration of all errors a [`GooseAttack`](./struct.GooseAttack.html) can return.
+#[derive(Debug)]
 pub enum GooseError {
     /// Wraps a [`std::io::Error`](https://doc.rust-lang.org/std/io/struct.Error.html).
     Io(io::Error),
@@ -219,8 +220,29 @@ pub enum GooseError {
         /// The rules that failed, in the order they were given.
         failed: Vec<threshold::ThresholdResult>,
         /// The metrics of the run, as `execute()` returns them when every rule passes.
-        metrics: Box<GooseMetrics>,
+        metrics: ThresholdMetrics,
     },
+}
+
+/// The metrics of a run that failed a threshold, held by
+/// [`GooseError::ThresholdsFailed`]. It reads as the [`GooseMetrics`] it holds, as in
+/// `metrics.duration`, and its `Debug` leaves them out: a `main` that returns the
+/// error prints it, and the metrics of a whole run would bury the rules that failed.
+#[derive(Default)]
+pub struct ThresholdMetrics(pub Box<GooseMetrics>);
+
+impl std::ops::Deref for ThresholdMetrics {
+    type Target = GooseMetrics;
+
+    fn deref(&self) -> &GooseMetrics {
+        &self.0
+    }
+}
+
+impl fmt::Debug for ThresholdMetrics {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str("ThresholdMetrics { .. }")
+    }
 }
 /// Implement a helper to provide a text description of all possible types of errors.
 impl GooseError {
@@ -266,72 +288,6 @@ impl fmt::Display for GooseError {
                 write!(f, "GooseError: {} ({})", self.describe(), failed)
             }
             _ => write!(f, "GooseError: {}", self.describe()),
-        }
-    }
-}
-
-/// As `#[derive(Debug)]` writes it, except that the metrics of
-/// [`GooseError::ThresholdsFailed`] are left out: a `main` that returns this error
-/// prints it, and the metrics of a whole run would bury the rules that failed.
-impl fmt::Debug for GooseError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            GooseError::Io(source) => f.debug_tuple("Io").field(source).finish(),
-            GooseError::Reqwest(source) => f.debug_tuple("Reqwest").field(source).finish(),
-            GooseError::TokioJoin(source) => f.debug_tuple("TokioJoin").field(source).finish(),
-            GooseError::Serde(source) => f.debug_tuple("Serde").field(source).finish(),
-            GooseError::FeatureNotEnabled { feature, detail } => f
-                .debug_struct("FeatureNotEnabled")
-                .field("feature", feature)
-                .field("detail", detail)
-                .finish(),
-            GooseError::InvalidHost {
-                host,
-                detail,
-                parse_error,
-            } => f
-                .debug_struct("InvalidHost")
-                .field("host", host)
-                .field("detail", detail)
-                .field("parse_error", parse_error)
-                .finish(),
-            GooseError::InvalidOption {
-                option,
-                value,
-                detail,
-            } => f
-                .debug_struct("InvalidOption")
-                .field("option", option)
-                .field("value", value)
-                .field("detail", detail)
-                .finish(),
-            GooseError::InvalidWaitTime {
-                min_wait,
-                max_wait,
-                detail,
-            } => f
-                .debug_struct("InvalidWaitTime")
-                .field("min_wait", min_wait)
-                .field("max_wait", max_wait)
-                .field("detail", detail)
-                .finish(),
-            GooseError::InvalidWeight { weight, detail } => f
-                .debug_struct("InvalidWeight")
-                .field("weight", weight)
-                .field("detail", detail)
-                .finish(),
-            GooseError::InvalidControllerCommand { detail } => f
-                .debug_struct("InvalidControllerCommand")
-                .field("detail", detail)
-                .finish(),
-            GooseError::NoScenarios { detail } => f
-                .debug_struct("NoScenarios")
-                .field("detail", detail)
-                .finish(),
-            GooseError::ThresholdsFailed { failed, .. } => f
-                .debug_struct("ThresholdsFailed")
-                .field("failed", failed)
-                .finish_non_exhaustive(),
         }
     }
 }
@@ -643,6 +599,9 @@ pub struct GooseAttack {
     /// and report rate windows exclude ramp-up. Do **not** use this for the
     /// active-users series clock — see [`Self::series_started`].
     started: Option<time::Instant>,
+    /// The seconds since `started`, to the microsecond, when `metrics.duration` was
+    /// last set from them.
+    elapsed: f64,
     /// Continuous clock for per-second graph series (especially active users).
     ///
     /// Set once when a run starts (`reset_run_state`) and **not** restarted on
@@ -733,6 +692,7 @@ impl GooseAttack {
             attack_phase: AttackPhase::Idle,
             scheduler: GooseScheduler::RoundRobin,
             started: None,
+            elapsed: 0.0,
             series_started: None,
             test_plan: TestPlan::new(),
             run_shape: None,
@@ -777,6 +737,7 @@ impl GooseAttack {
             attack_phase: AttackPhase::Idle,
             scheduler: GooseScheduler::RoundRobin,
             started: None,
+            elapsed: 0.0,
             series_started: None,
             test_plan: TestPlan::new(),
             run_shape: None,
@@ -1268,6 +1229,12 @@ impl GooseAttack {
             self.run_shape = None;
         }
 
+        // Thresholds are checked from when the run first holds its users steady,
+        // so a ramp up never fails a rule while the run goes.
+        if phase == AttackPhase::Maintain && goose_attack_run_state.threshold_check_at.is_none() {
+            self.start_threshold_checks(goose_attack_run_state);
+        }
+
         // Optional debug output.
         info!("entering GooseAttack phase: {:?}", phase);
 
@@ -1463,37 +1430,31 @@ impl GooseAttack {
             }
             return Err(GooseError::ThresholdsFailed {
                 failed,
-                metrics: Box::new(self.metrics),
+                metrics: ThresholdMetrics(Box::new(self.metrics)),
             });
         }
 
         Ok(self.metrics)
     }
 
-    /// The users of a users ramp, which resets its metrics once every user has
-    /// started unless `--no-reset-metrics` is set; `None` for `--test-plan` or
-    /// `--iterations`, which never reset them. A users ramp always has users; with
-    /// none, as when a ramp setting reached a running test plan before Controllers
-    /// refused it, the run is treated as a test plan rather than panicking.
-    pub(crate) fn ramp_users(&self) -> Option<usize> {
-        match self.configuration.users {
-            Some(users)
-                if self.configuration.test_plan.is_none()
-                    && self.configuration.iterations() == 0 =>
-            {
-                Some(users)
-            }
-            _ => None,
-        }
-    }
-
     /// Start checking the thresholds, the first check `--threshold-abort-delay`
-    /// from now, when a failing one stops the run.
-    pub(crate) fn start_threshold_checks(&self, goose_attack_run_state: &mut GooseAttackRunState) {
+    /// from now, when a failing one stops the run, and have `rps` rules count from
+    /// now.
+    pub(crate) fn start_threshold_checks(
+        &mut self,
+        goose_attack_run_state: &mut GooseAttackRunState,
+    ) {
         if self.configuration.aborts_on_thresholds() {
             let delay = self.configuration.threshold_abort_delay_secs() as u64;
             goose_attack_run_state.threshold_check_at =
                 std::time::Instant::now().checked_add(Duration::from_secs(delay));
+            self.update_duration();
+            let _ =
+                goose_attack_run_state
+                    .metrics_cmd_tx
+                    .send(MetricsCommand::StartThresholdChecks {
+                        seconds: self.elapsed,
+                    });
         }
     }
 
@@ -1520,6 +1481,7 @@ impl GooseAttack {
             .metrics_cmd_tx
             .send(MetricsCommand::CheckThresholds {
                 duration: self.metrics.duration,
+                seconds: self.elapsed,
             });
     }
 
@@ -2597,8 +2559,17 @@ impl GooseAttack {
                     &self.configuration.thresholds,
                     &self.metrics,
                     threshold::Check::Final,
-                    self.metrics.threshold_abort,
+                    self.metrics
+                        .threshold_abort
+                        .as_ref()
+                        .map(|(index, observed)| (*index, observed.as_str())),
+                    self.elapsed,
                 );
+                for warning in
+                    threshold::unknown_requests(&self.configuration.thresholds, &self.metrics)
+                {
+                    warn!("{warning}");
+                }
             }
             // The load test is fully stopped at this point.
             self.metrics
@@ -3246,13 +3217,8 @@ impl GooseAttack {
         goose_attack_run_state.users = Vec::new();
         goose_attack_run_state.user_channels = Vec::new();
         goose_attack_run_state.running_metrics_timer = std_now;
-        // Check the thresholds from the start, unless the metrics reset once every
-        // user has started: judging metrics about to be thrown away could stop the
-        // run for nothing, so reset_metrics() starts the checks then.
+        // The thresholds are checked from when the run first enters Maintain.
         goose_attack_run_state.threshold_check_at = None;
-        if self.ramp_users().is_none() || self.configuration.no_reset_metrics {
-            self.start_threshold_checks(goose_attack_run_state);
-        }
         goose_attack_run_state.shutdown_after_stop = !self.configuration.no_autostart;
         goose_attack_run_state.all_users_spawned = false;
 
@@ -3855,14 +3821,22 @@ mod tests {
         );
     }
 
-    /// The main loop sends `CheckThresholds` at most once a second, only with a
-    /// threshold that can stop the run, only while users start or run, and only
-    /// once `--threshold-abort-delay` has passed. Without thresholds it sends
-    /// nothing.
+    /// Checking starts when the run first enters Maintain, through
+    /// `set_attack_phase`. From there the main loop sends `CheckThresholds` at most
+    /// once a second, in Maintain and in a later Increase but never in Decrease or
+    /// Idle, once `--threshold-abort-delay` has passed since Maintain. Without a
+    /// threshold that can stop the run it sends nothing.
     #[tokio::test]
     #[serial_test::serial]
-    async fn check_thresholds_is_sent_only_while_thresholds_can_abort() {
-        async fn checks_sent(args: &[&str], phase: AttackPhase) -> usize {
+    async fn checks_start_when_the_run_first_enters_maintain() {
+        /// An idle attack with `args`, whose metrics commands come out of the receiver.
+        async fn attack(
+            args: &[&str],
+        ) -> (
+            GooseAttack,
+            GooseAttackRunState,
+            flume::Receiver<MetricsCommand>,
+        ) {
             let mut all = vec!["--no-telnet", "--no-websocket"];
             all.extend_from_slice(args);
             let configuration = GooseConfiguration::parse_args_default(&all).unwrap();
@@ -3872,40 +3846,163 @@ mod tests {
             let mut run_state = goose_attack.initialize_attack().await.unwrap();
             let (metrics_cmd_tx, metrics_cmd_rx) = flume::unbounded();
             run_state.metrics_cmd_tx = metrics_cmd_tx;
-            goose_attack.attack_phase = phase;
-            goose_attack.start_threshold_checks(&mut run_state);
-            // Two loop turns in the same second send at most one check.
-            goose_attack.check_thresholds(&mut run_state);
-            goose_attack.check_thresholds(&mut run_state);
-            metrics_cmd_rx
-                .try_iter()
-                .filter(|command| matches!(command, MetricsCommand::CheckThresholds { .. }))
-                .count()
+            assert_eq!(goose_attack.attack_phase, AttackPhase::Idle);
+            (goose_attack, run_state, metrics_cmd_rx)
         }
 
-        assert_eq!(checks_sent(&[], AttackPhase::Maintain).await, 0);
-        assert_eq!(checks_sent(&[], AttackPhase::Increase).await, 0);
-        let rule = ["--threshold", "p95<500ms"];
-        assert_eq!(checks_sent(&rule, AttackPhase::Maintain).await, 1);
-        assert_eq!(checks_sent(&rule, AttackPhase::Increase).await, 1);
-        assert_eq!(checks_sent(&rule, AttackPhase::Decrease).await, 0);
-        assert_eq!(checks_sent(&rule, AttackPhase::Idle).await, 0);
+        /// Enter `phase`, then take two loop turns in the same second: the checks
+        /// and the starts sent.
+        fn enter(
+            goose_attack: &mut GooseAttack,
+            run_state: &mut GooseAttackRunState,
+            commands: &flume::Receiver<MetricsCommand>,
+            phase: AttackPhase,
+        ) -> (usize, usize) {
+            goose_attack.set_attack_phase(run_state, phase);
+            goose_attack.check_thresholds(run_state);
+            goose_attack.check_thresholds(run_state);
+            commands
+                .try_iter()
+                .fold((0, 0), |(checks, starts), command| match command {
+                    MetricsCommand::CheckThresholds { .. } => (checks + 1, starts),
+                    MetricsCommand::StartThresholdChecks { .. } => (checks, starts + 1),
+                    _ => (checks, starts),
+                })
+        }
+
+        let (mut goose_attack, mut run_state, commands) =
+            attack(&["--threshold", "p95<500ms"]).await;
+        // Nothing while users start, before the run first holds them.
         assert_eq!(
-            checks_sent(
-                &["--threshold", "p95<500ms", "--no-threshold-abort"],
+            enter(
+                &mut goose_attack,
+                &mut run_state,
+                &commands,
+                AttackPhase::Increase
+            ),
+            (0, 0)
+        );
+        // Checking starts in Maintain, once.
+        assert_eq!(
+            enter(
+                &mut goose_attack,
+                &mut run_state,
+                &commands,
                 AttackPhase::Maintain
-            )
-            .await,
-            0
+            ),
+            (1, 1)
+        );
+        // A second later, a later Increase is checked, and Decrease is not.
+        run_state.threshold_check_at = Some(std::time::Instant::now());
+        assert_eq!(
+            enter(
+                &mut goose_attack,
+                &mut run_state,
+                &commands,
+                AttackPhase::Increase
+            ),
+            (1, 0)
+        );
+        run_state.threshold_check_at = Some(std::time::Instant::now());
+        assert_eq!(
+            enter(
+                &mut goose_attack,
+                &mut run_state,
+                &commands,
+                AttackPhase::Decrease
+            ),
+            (0, 0)
+        );
+        // Entering Maintain again does not start checking again.
+        let due = run_state.threshold_check_at;
+        goose_attack.set_attack_phase(&mut run_state, AttackPhase::Maintain);
+        assert_eq!(run_state.threshold_check_at, due);
+        run_state.threshold_check_at = Some(std::time::Instant::now());
+        assert_eq!(
+            enter(
+                &mut goose_attack,
+                &mut run_state,
+                &commands,
+                AttackPhase::Idle
+            ),
+            (0, 0)
+        );
+
+        // The delay counts from Maintain.
+        let (mut goose_attack, mut run_state, commands) =
+            attack(&["--threshold", "p95<500ms", "--threshold-abort-delay", "3"]).await;
+        assert_eq!(
+            enter(
+                &mut goose_attack,
+                &mut run_state,
+                &commands,
+                AttackPhase::Increase
+            ),
+            (0, 0)
+        );
+        let entered = std::time::Instant::now();
+        assert_eq!(
+            enter(
+                &mut goose_attack,
+                &mut run_state,
+                &commands,
+                AttackPhase::Maintain
+            ),
+            (0, 1)
+        );
+        let due = run_state.threshold_check_at.expect("checking started");
+        assert!(due >= entered + Duration::from_secs(3));
+        assert!(due <= std::time::Instant::now() + Duration::from_secs(3));
+
+        // Nothing without a threshold that can stop the run.
+        for args in [
+            &[][..],
+            &["--threshold", "p95<500ms", "--no-threshold-abort"],
+        ] {
+            let (mut goose_attack, mut run_state, commands) = attack(args).await;
+            for phase in [AttackPhase::Increase, AttackPhase::Maintain] {
+                assert_eq!(
+                    enter(&mut goose_attack, &mut run_state, &commands, phase),
+                    (0, 0),
+                    "{args:?}"
+                );
+            }
+            assert_eq!(run_state.threshold_check_at, None);
+        }
+    }
+
+    /// A `main` that returns `ThresholdsFailed` prints the rules that failed, not
+    /// the metrics of the whole run, which still read through the error.
+    #[test]
+    fn thresholds_failed_prints_only_the_rules() {
+        let error = GooseError::ThresholdsFailed {
+            failed: vec![threshold::ThresholdResult {
+                rule: "p95<500ms".to_string(),
+                observed: "812ms".to_string(),
+                value: Some(812.0),
+                passed: false,
+                aborted: true,
+            }],
+            metrics: ThresholdMetrics(Box::new(GooseMetrics {
+                duration: 7,
+                ..Default::default()
+            })),
+        };
+        assert_eq!(
+            format!("{error:?}"),
+            "ThresholdsFailed { failed: [ThresholdResult { rule: \"p95<500ms\", \
+             observed: \"812ms\", value: Some(812.0), passed: false, aborted: true }], \
+             metrics: ThresholdMetrics { .. } }"
         );
         assert_eq!(
-            checks_sent(
-                &["--threshold", "p95<500ms", "--threshold-abort-delay", "3"],
-                AttackPhase::Maintain
-            )
-            .await,
-            0
+            error.to_string(),
+            "GooseError: one or more thresholds failed (p95<500ms, observed 812ms)"
         );
+        let GooseError::ThresholdsFailed { metrics, .. } = error else {
+            unreachable!()
+        };
+        assert_eq!(metrics.duration, 7);
+        assert_eq!(metrics.0.duration, 7);
     }
 
     /// A refused Start names its one cause: not idle, no host, or no users.

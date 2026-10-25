@@ -67,6 +67,31 @@ fn load_test(server: &MockServer, args: Vec<&str>, transactions: Vec<Transaction
     common::build_load_test(configuration, vec![scenario], None, None)
 }
 
+/// A load test of `transactions` with only `args`, the host and `--quiet` on the
+/// command line, for options the common defaults conflict with, such as
+/// `--iterations` and `--test-plan`.
+fn bare_load_test(
+    server: &MockServer,
+    args: Vec<&str>,
+    transactions: Vec<Transaction>,
+) -> GooseAttack {
+    let host = server.base_url();
+    let mut all = vec![
+        "--host",
+        host.as_str(),
+        "--co-mitigation",
+        "disabled",
+        "--quiet",
+    ];
+    all.extend(args);
+    let configuration = GooseConfiguration::parse_args_default(&all).unwrap();
+    let mut scenario = scenario!("LoadTest");
+    for transaction in transactions {
+        scenario = scenario.register_transaction(transaction);
+    }
+    common::build_load_test(configuration, vec![scenario], None, None)
+}
+
 /// How long `goose_attack` ran, and what it returned.
 async fn run(goose_attack: GooseAttack) -> (Duration, Result<GooseMetrics, GooseError>) {
     let started = Instant::now();
@@ -79,7 +104,7 @@ fn thresholds_failed(
     result: Result<GooseMetrics, GooseError>,
 ) -> (Vec<ThresholdResult>, GooseMetrics) {
     match result {
-        Err(GooseError::ThresholdsFailed { failed, metrics }) => (failed, *metrics),
+        Err(GooseError::ThresholdsFailed { failed, metrics }) => (failed, *metrics.0),
         Err(other) => panic!("expected ThresholdsFailed, got {:?}", other),
         Ok(metrics) => panic!(
             "expected ThresholdsFailed, got Ok: {:?}",
@@ -471,9 +496,9 @@ async fn reports_show_thresholds_and_render_them_again() {
     assert_eq!(
         markdown_rows,
         [
-            format!("| `error-rate<1%` | {observed} | **FAIL** |"),
+            format!("| error-rate\\<1% | {observed} | **FAIL** |"),
             format!(
-                "| `p95<5s for GET /ok` | {} | PASS |",
+                "| p95\\<5s for GET /ok | {} | PASS |",
                 metrics.thresholds[1].observed
             ),
         ]
@@ -508,26 +533,191 @@ async fn reports_show_thresholds_and_render_them_again() {
     assert_eq!(rendered, (html_rows, markdown_rows));
 }
 
-#[test]
-/// A main that returns the error prints the rules that failed, not the metrics
-/// of the whole run.
-fn thresholds_failed_prints_only_the_rules() {
-    let error = GooseError::ThresholdsFailed {
-        failed: vec![ThresholdResult {
-            rule: "p95<500ms".to_string(),
-            observed: "812ms".to_string(),
-            value: Some(812.0),
-            passed: false,
-            aborted: true,
-        }],
-        metrics: Box::default(),
-    };
-    let debug = format!("{error:?}");
-    assert!(debug.starts_with("ThresholdsFailed { failed: [ThresholdResult { rule: \"p95<500ms\""));
-    assert!(debug.ends_with(", .. }"));
-    assert!(!debug.contains("requests"));
-    assert_eq!(
-        error.to_string(),
-        "GooseError: one or more thresholds failed (p95<500ms, observed 812ms)"
+#[tokio::test]
+#[serial]
+/// Without a metrics reset, under --no-reset-metrics or --iterations, checking
+/// still waits for the run to enter Maintain: every user starts before the failing
+/// rule stops the run, well before its run time.
+async fn checks_wait_for_maintain_without_a_reset() {
+    for mode in [
+        vec!["--no-reset-metrics", "--run-time", LONG_RUN_TIME],
+        vec!["--iterations", "1000000"],
+    ] {
+        let server = MockServer::start();
+        let _mocks = setup_mock_server_endpoints(&server);
+
+        let mut args = vec![
+            "--users",
+            "4",
+            "--increase-rate",
+            "2",
+            "--threshold",
+            "error-rate<1%",
+        ];
+        args.extend(mode.iter().copied());
+        let goose_attack = bare_load_test(&server, args, vec![transaction!(get_fail)]);
+        let (elapsed, result) = run(goose_attack).await;
+        let (failed, metrics) = thresholds_failed(result);
+
+        assert_eq!(metrics.maximum_users, 4, "{mode:?}");
+        assert!(
+            elapsed >= Duration::from_millis(1_500),
+            "{:?}: ran {:?}",
+            mode,
+            elapsed
+        );
+        assert!(elapsed < ABORTED_WITHIN, "{:?}: ran {:?}", mode, elapsed);
+        assert_eq!(failed[0].rule, "error-rate<1%");
+        assert!(failed[0].aborted, "{:?}", mode);
+    }
+}
+
+#[tokio::test]
+#[serial]
+/// An rps rule counts from Maintain: a test plan whose hold makes the rate but
+/// whose ramp up drags the whole run's average under it passes, without stopping
+/// the run.
+async fn rps_counts_from_maintain() {
+    let server = MockServer::start();
+    let _mocks = setup_mock_server_endpoints(&server);
+
+    // Each user makes at most about 3.3 requests a second to the 300 ms
+    // endpoint, so 10 users hold about 33 a second. Over the whole run, a ramp
+    // up of 8 seconds to 10 users and a hold of 4 seconds make at most
+    // (5 * 8 + 10 * 4) * 3.3 / 12, about 22 a second.
+    let goose_attack = bare_load_test(
+        &server,
+        vec!["--test-plan", "10,8s;10,4s;0,0", "--threshold", "rps>=24"],
+        vec![transaction!(get_slow)],
     );
+    let (_, result) = run(goose_attack).await;
+    let metrics = result.expect("the hold makes the rate");
+
+    let rule = &metrics.thresholds[0];
+    assert!(rule.passed, "{:?}", rule);
+    assert!(!rule.aborted);
+    assert!(rule.observed.ends_with(" from Maintain"), "{:?}", rule);
+    // The whole run's rate is under the rule's limit.
+    let requests: usize = metrics
+        .requests
+        .values()
+        .map(|request| request.success_count + request.fail_count)
+        .sum();
+    let whole_run = requests as f64 / metrics.duration as f64;
+    assert!(whole_run < 24.0, "{}", whole_run);
+}
+
+#[tokio::test]
+#[serial]
+/// The rule that stopped the run says so in the console's Thresholds table and in
+/// every report, and a JSON report rendered again says the same.
+async fn reports_show_the_rule_that_stopped_the_run() {
+    let server = MockServer::start();
+    let _mocks = setup_mock_server_endpoints(&server);
+
+    let html = report_path("aborted.html");
+    let markdown = report_path("aborted.md");
+    let json = report_path("aborted.json");
+    let goose_attack = load_test(
+        &server,
+        vec![
+            "--users",
+            "2",
+            "--increase-rate",
+            "2",
+            "--run-time",
+            LONG_RUN_TIME,
+            "--threshold",
+            "error-rate<1%",
+            "--threshold",
+            "p95<5s",
+            "--report-file",
+            html.to_str().unwrap(),
+            "--report-file",
+            markdown.to_str().unwrap(),
+            "--report-file",
+            json.to_str().unwrap(),
+        ],
+        vec![transaction!(get_fail)],
+    );
+    let (elapsed, result) = run(goose_attack).await;
+    let (_, metrics) = thresholds_failed(result);
+    assert!(elapsed < ABORTED_WITHIN, "ran {:?}", elapsed);
+    let aborted = &metrics.thresholds[0];
+    assert!(aborted.aborted && !aborted.passed);
+    assert!(aborted.observed.starts_with("100%"), "{:?}", aborted);
+    let passed = &metrics.thresholds[1];
+
+    let console = format!("{metrics}");
+    let table = console
+        .split(" === THRESHOLDS ===\n")
+        .nth(1)
+        .expect("a console Thresholds table");
+    let rows: Vec<&str> = table.lines().skip(3).take(2).collect();
+    assert_eq!(
+        rows,
+        [
+            format!(
+                " {:<44} | {:>14} | FAIL, stopped the run",
+                "error-rate<1%", aborted.observed
+            ),
+            format!(" {:<44} | {:>14} | PASS", "p95<5s", passed.observed),
+        ]
+    );
+
+    let (html_rows, markdown_rows) = sections(
+        &std::fs::read_to_string(&html).unwrap(),
+        &std::fs::read_to_string(&markdown).unwrap(),
+    );
+    assert_eq!(
+        html_rows,
+        [
+            format!(
+                "<code>error-rate&lt;1%</code> | {} | &#10007; FAIL, stopped the run",
+                aborted.observed
+            ),
+            format!(
+                "<code>p95&lt;5s</code> | {} | &#10003; PASS",
+                passed.observed
+            ),
+        ]
+    );
+    assert_eq!(
+        markdown_rows,
+        [
+            format!(
+                "| error-rate\\<1% | {} | **FAIL, stopped the run** |",
+                aborted.observed
+            ),
+            format!("| p95\\<5s | {} | PASS |", passed.observed),
+        ]
+    );
+
+    // Render the JSON report again, as HTML and Markdown.
+    let rendered_html = report_path("aborted-rendered.html");
+    let rendered_markdown = report_path("aborted-rendered.md");
+    let configuration = GooseConfiguration::parse_args_default(&[
+        "--render-report",
+        json.to_str().unwrap(),
+        "--report-file",
+        rendered_html.to_str().unwrap(),
+        "--report-file",
+        rendered_markdown.to_str().unwrap(),
+        "--quiet",
+    ])
+    .unwrap();
+    GooseAttack::initialize_with_config(configuration)
+        .unwrap()
+        .register_scenario(scenario!("Render").register_transaction(transaction!(get_ok)))
+        .execute()
+        .await
+        .expect("rendering a report never fails a threshold");
+    let rendered = sections(
+        &std::fs::read_to_string(&rendered_html).unwrap(),
+        &std::fs::read_to_string(&rendered_markdown).unwrap(),
+    );
+    for path in [&html, &markdown, &json, &rendered_html, &rendered_markdown] {
+        let _ = std::fs::remove_file(path);
+    }
+    assert_eq!(rendered, (html_rows, markdown_rows));
 }

@@ -502,36 +502,36 @@ pub struct GooseConfiguration {
         help = "Pass/fail rule, such as p95<500ms",
         long_help = "Pass/fail rule, such as p95<500ms\n\n\
             RULE is <metric><op><value>, with an optional \" for <request>\". The metric is \
-            pNN or pNN.N (a response time percentile, such as p95 or p99.9), avg, max, \
-            error-rate (failed requests as a percent of all) or rps (requests per second). \
-            The op is <, <=, > or >=. A time takes us, ms or s, a bare number being ms; an \
-            error-rate takes an optional %. A rule that ends \"for\" and a request, as the \
-            requests table names it, judges only that request, as in \"p99<2s for GET \
-            /checkout\"; without it, the rule judges all requests together. A failing rule \
-            stops the run, unless --no-threshold-abort is set, and always fails it with a \
-            nonzero exit code. Repeat the option for several rules; they replace any set in \
-            code. Not allowed with --no-metrics.\n\n\
+            pNN with optional decimals (a response time percentile, such as p95 or p99.9), \
+            avg, max, error-rate (failed requests as a percent of all) or rps (requests per \
+            second from when checking starts). The op is <, <=, > or >=. A time takes us, ms \
+            or s, a bare number being ms; an error-rate takes an optional %. A rule that ends \
+            \"for\" and a request, named as the HTML or Markdown report names it, judges only \
+            that request, as in \"p99<2s for GET /checkout\"; the console cuts long names \
+            short. Without it, the rule judges all requests together. A rule that can never \
+            pass is refused. A failing rule stops the run, unless --no-threshold-abort is \
+            set, and always fails it: execute() returns GooseError::ThresholdsFailed, so a \
+            main that returns Result<(), GooseError> exits nonzero. Repeat the option for \
+            several rules; they replace any set in code. Not allowed with --no-metrics.\n\n\
             Example: --threshold \"p95<500ms\" --threshold \"error-rate<1%\". Set in code \
             with GooseDefault::Threshold, once for each rule."
     )]
     pub threshold: Vec<String>,
     /// Judge thresholds only at the end
     ///
-    /// By default, Goose checks every --threshold once a second while the run's metrics
-    /// are kept, and stops the run when one fails. This judges them only when the run
-    /// ends, which still fails it when a rule fails.
+    /// By default, Goose checks every --threshold once a second from when the run first
+    /// enters Maintain, and stops the run when one fails. This judges them only when
+    /// the run ends, which still fails it when a rule fails.
     ///
     /// Set in code with GooseDefault::NoThresholdAbort.
     #[arg(help_heading = "Metrics", long)]
     pub no_threshold_abort: bool,
     /// Wait before thresholds can stop the run
     ///
-    /// Checking starts once the metrics are kept: at the end of a users ramp's increase,
-    /// when the metrics reset, or from the start with --test-plan, --iterations or
-    /// --no-reset-metrics. This waits TIME more before the first check, to let a cold
-    /// cache warm up. TIME is as for --increase-time; the default is 0. It never changes
-    /// the judgement at the end of the run. Needs --threshold, and not allowed with
-    /// --no-threshold-abort.
+    /// Checking starts when the run first enters Maintain, holding its users steady,
+    /// and this waits TIME more before the first check, to let a cold cache warm up.
+    /// TIME is as for --run-time; the default is 0. It never changes the judgement at
+    /// the end of the run. Needs --threshold, and not allowed with --no-threshold-abort.
     ///
     /// Example: --threshold-abort-delay 30s. Set in code with
     /// GooseDefault::ThresholdAbortDelay, in seconds.
@@ -3575,7 +3575,20 @@ impl GooseConfiguration {
     /// Whether the thresholds are checked while the run goes, so a failing one stops
     /// it: there is at least one, and `--no-threshold-abort` is not set.
     pub(crate) fn aborts_on_thresholds(&self) -> bool {
-        !self.thresholds.is_empty() && !self.no_threshold_abort && !self.no_metrics
+        !self.thresholds.is_empty() && !self.no_threshold_abort
+    }
+
+    /// Why no threshold can stop this run while it goes, when thresholds could but
+    /// the test plan never enters Maintain, where checking starts.
+    pub(crate) fn threshold_plan_warning(&self) -> Option<String> {
+        if !self.aborts_on_thresholds() {
+            return None;
+        }
+        let plan = TestPlan::build(self).ok()?;
+        (!plan.steps.is_empty() && !plan.holds()).then(|| {
+            "the test plan never holds its users steady, which is when threshold checks start, so no threshold can stop this run while it goes; its rules are judged when it ends."
+                .to_string()
+        })
     }
 
     /// The seconds to wait before the first threshold check, 0 when
@@ -4112,6 +4125,30 @@ impl GooseConfiguration {
                         .to_string(),
                 });
             }
+        }
+
+        // An `rps` rule the throttle keeps the run from reaching can never pass.
+        if let Some(throttle) = self.throttle_requests {
+            for threshold in &self.thresholds {
+                let Some((floor, inclusive)) = threshold.rate_floor() else {
+                    continue;
+                };
+                let throttle = throttle as f64;
+                if floor > throttle || (floor == throttle && !inclusive) {
+                    let rule = threshold.to_string();
+                    return Err(GooseError::InvalidOption {
+                        option: "`configuration.threshold`".to_string(),
+                        detail: format!(
+                            "threshold {rule:?}: it can never pass; `configuration.throttle_requests` caps the run at {throttle} requests a second."
+                        ),
+                        value: rule,
+                    });
+                }
+            }
+        }
+
+        if let Some(warning) = self.threshold_plan_warning() {
+            warn!("{warning}");
         }
 
         // Validate `no_metrics`.
@@ -6487,5 +6524,306 @@ mod test {
         let parsed = GooseConfiguration::try_parse_from(["loadtest", "--users", "2"]).unwrap();
         let expected = GooseConfiguration::parse_args_default(&["--users", "2"]).unwrap();
         assert_eq!(as_json(&parsed), as_json(&expected));
+    }
+
+    /// The configuration `args` and `defaults` resolve to and validate as, or the
+    /// reason it is refused.
+    fn validated(
+        args: &[&str],
+        defaults: &GooseDefaults,
+    ) -> Result<GooseConfiguration, GooseError> {
+        let mut configuration =
+            GooseConfiguration::parse_args_default(args).expect("the command line parses");
+        configuration.configure(defaults)?;
+        configuration.validate()?;
+        Ok(configuration)
+    }
+
+    /// Why `result` was refused, or a panic when it was not.
+    fn refused_detail(result: Result<GooseConfiguration, GooseError>) -> String {
+        match result {
+            Err(GooseError::InvalidOption { detail, .. }) => detail,
+            other => panic!("{:?}", other),
+        }
+    }
+
+    /// The defaults `set` gives a new `GooseAttack`.
+    fn defaults_from(
+        set: impl FnOnce(GooseAttack) -> Result<Box<GooseAttack>, GooseError>,
+    ) -> GooseDefaults {
+        let attack = GooseAttack::initialize_with_config(GooseConfiguration::default()).unwrap();
+        set(attack).unwrap().defaults.clone()
+    }
+
+    #[test]
+    fn abort_delay_parses_like_run_time() {
+        for (delay, secs) in [
+            ("30", 30),
+            ("30s", 30),
+            ("2m", 120),
+            ("1h30m", 5400),
+            ("0", 0),
+            ("1m30s", 90),
+        ] {
+            let configuration = validated(
+                &["--threshold", "p95<1s", "--threshold-abort-delay", delay],
+                &Default::default(),
+            )
+            .unwrap();
+            assert_eq!(configuration.threshold_abort_delay_secs(), secs, "{delay}");
+        }
+        let defaults = defaults_from(|attack| {
+            attack
+                .set_default(GooseDefault::Threshold, "p95<1s")?
+                .set_default(GooseDefault::ThresholdAbortDelay, 45)
+        });
+        let configuration = validated(&[], &defaults).unwrap();
+        assert_eq!(configuration.threshold_abort_delay_secs(), 45);
+        // The command line wins over a default.
+        let configuration = validated(&["--threshold-abort-delay", "3"], &defaults).unwrap();
+        assert_eq!(configuration.threshold_abort_delay_secs(), 3);
+    }
+
+    #[test]
+    fn abort_delay_needs_a_threshold_that_can_abort() {
+        let refused = refused_detail(validated(
+            &["--threshold-abort-delay", "10s"],
+            &Default::default(),
+        ));
+        assert!(
+            refused.contains("needs a `configuration.threshold`"),
+            "{}",
+            refused
+        );
+        let refused = refused_detail(validated(
+            &[
+                "--threshold",
+                "p95<1s",
+                "--no-threshold-abort",
+                "--threshold-abort-delay",
+                "10s",
+            ],
+            &Default::default(),
+        ));
+        assert!(
+            refused.contains("`configuration.no_threshold_abort`"),
+            "{}",
+            refused
+        );
+        let defaults =
+            defaults_from(|attack| attack.set_default(GooseDefault::ThresholdAbortDelay, 5));
+        assert!(validated(&[], &defaults).is_err());
+        let refused = refused_detail(validated(
+            &["--threshold-abort-delay", "1x"],
+            &Default::default(),
+        ));
+        assert!(refused.contains("threshold_abort_delay"), "{}", refused);
+    }
+
+    #[test]
+    fn thresholds_need_metrics() {
+        let refused = refused_detail(validated(
+            &["--threshold", "p95<1s", "--no-metrics"],
+            &Default::default(),
+        ));
+        assert!(
+            refused.contains("`configuration.no_metrics`"),
+            "{}",
+            refused
+        );
+        let defaults = defaults_from(|attack| attack.set_default(GooseDefault::Threshold, "rps>1"));
+        assert!(validated(&["--no-metrics"], &defaults).is_err());
+    }
+
+    #[test]
+    fn rules_from_the_command_line_and_from_defaults() {
+        let defaults = defaults_from(|attack| {
+            attack
+                .set_default(GooseDefault::Threshold, "p95<500ms")?
+                .set_default(GooseDefault::Threshold, "error-rate<1%")
+        });
+        // Two defaults are two rules.
+        let configuration = validated(&[], &defaults).unwrap();
+        let rules: Vec<String> = configuration
+            .thresholds
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert_eq!(rules, ["p95<500ms", "error-rate<1%"]);
+        assert!(configuration.aborts_on_thresholds());
+        // Command line rules replace the defaults.
+        let configuration = validated(
+            &["--threshold", "rps>=200", "--threshold", "max<2s"],
+            &defaults,
+        )
+        .unwrap();
+        let rules: Vec<String> = configuration
+            .thresholds
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert_eq!(rules, ["rps>=200", "max<2s"]);
+        // --no-threshold-abort keeps the rules for the end of the run.
+        let configuration = validated(&["--no-threshold-abort"], &defaults).unwrap();
+        assert_eq!(configuration.thresholds.len(), 2);
+        assert!(!configuration.aborts_on_thresholds());
+        let defaults = defaults_from(|attack| {
+            attack
+                .set_default(GooseDefault::Threshold, "p95<500ms")?
+                .set_default(GooseDefault::NoThresholdAbort, true)
+        });
+        assert!(!validated(&[], &defaults).unwrap().aborts_on_thresholds());
+        // No rules, nothing to abort on.
+        assert!(!validated(&[], &Default::default())
+            .unwrap()
+            .aborts_on_thresholds());
+        // An invalid rule is refused before the load test, from either place.
+        let refused = refused_detail(validated(&["--threshold", "p100<1s"], &Default::default()));
+        assert!(refused.contains("less than 100"), "{}", refused);
+        match GooseAttack::initialize_with_config(GooseConfiguration::default())
+            .unwrap()
+            .set_default(GooseDefault::Threshold, "p95")
+        {
+            Err(GooseError::InvalidOption { detail, .. }) => {
+                assert!(detail.contains("no operator"))
+            }
+            Err(other) => panic!("{:?}", other),
+            Ok(_) => panic!("p95 was taken"),
+        }
+    }
+
+    /// A rule that can never pass is refused before any user starts, from the
+    /// command line and from `GooseDefault::Threshold`, and so is an `rps` rule
+    /// that `--throttle-requests` keeps the run from reaching.
+    #[test]
+    fn impossible_rules_are_refused() {
+        // (rules, throttle, refused because)
+        let cases: &[(&str, Option<&str>, &str)] = &[
+            ("p95<0", None, "it can never pass; no response time"),
+            ("error-rate>100%", None, "it can never pass; no error rate"),
+            ("rps<=0", None, "it can never pass; a rate"),
+            ("rps>=200", Some("100"), "`configuration.throttle_requests`"),
+            ("rps>100", Some("100"), "`configuration.throttle_requests`"),
+            (
+                "rps>100.5",
+                Some("100"),
+                "`configuration.throttle_requests`",
+            ),
+            (
+                "rps>=100.5 for GET /",
+                Some("100"),
+                "`configuration.throttle_requests`",
+            ),
+        ];
+        for &(rule, throttle, because) in cases {
+            let mut args = vec!["--threshold", rule];
+            if let Some(throttle) = throttle {
+                args.extend(["--throttle-requests", throttle]);
+            }
+            let refused = refused_detail(validated(&args, &Default::default()));
+            assert!(refused.contains(because), "{}: {}", rule, refused);
+            assert!(
+                refused.starts_with(&format!("threshold {rule:?}: ")),
+                "{}",
+                refused
+            );
+
+            // The same rule set in code.
+            let defaults = match GooseAttack::initialize_with_config(GooseConfiguration::default())
+                .unwrap()
+                .set_default(GooseDefault::Threshold, rule)
+            {
+                Ok(attack) => attack,
+                // A rule that can never pass is refused by set_default itself.
+                Err(GooseError::InvalidOption { detail, .. }) => {
+                    assert!(detail.contains(because), "{}: {}", rule, detail);
+                    assert!(throttle.is_none(), "{}", rule);
+                    continue;
+                }
+                Err(other) => panic!("{}: {:?}", rule, other),
+            };
+            let throttle = throttle.expect("only a throttled rule parses");
+            let defaults = defaults
+                .set_default(
+                    GooseDefault::ThrottleRequests,
+                    throttle.parse::<usize>().unwrap(),
+                )
+                .unwrap()
+                .defaults
+                .clone();
+            let refused = refused_detail(validated(&[], &defaults));
+            assert!(refused.contains(because), "{}: {}", rule, refused);
+        }
+
+        // A rate the throttle allows is accepted, up to exactly the throttle.
+        for rule in ["rps>=100", "rps>99.9", "rps<=200", "rps>=100 for GET /"] {
+            validated(
+                &["--threshold", rule, "--throttle-requests", "100"],
+                &Default::default(),
+            )
+            .unwrap_or_else(|e| panic!("{}: {:?}", rule, e));
+        }
+        let defaults = defaults_from(|attack| {
+            attack
+                .set_default(GooseDefault::Threshold, "rps>=100")?
+                .set_default(GooseDefault::ThrottleRequests, 100)
+        });
+        validated(&[], &defaults).unwrap();
+    }
+
+    /// Goose warns when thresholds could stop the run but its test plan never
+    /// enters Maintain, so no rule is checked until the end.
+    #[test]
+    fn a_test_plan_that_never_holds_is_warned_about() {
+        let warning = |args: &[&str]| {
+            validated(args, &Default::default())
+                .unwrap()
+                .threshold_plan_warning()
+        };
+        let never_holds = ["--threshold", "p95<1s", "--test-plan", "10,5s;20,5s;0,5s"];
+        let message = warning(&never_holds).expect("a plan that never holds warns");
+        assert!(
+            message.contains("no threshold can stop this run"),
+            "{}",
+            message
+        );
+        assert!(message.contains("judged when it ends"), "{}", message);
+        // A step that keeps its users is a hold, and so is a last step with users.
+        for plan in ["10,5s;10,5s;0,5s", "10,5s;20,5s", "10,5s;20,5s;20,1m;0,0"] {
+            assert_eq!(
+                warning(&["--threshold", "p95<1s", "--test-plan", plan]),
+                None,
+                "{plan}"
+            );
+        }
+        // A users ramp holds while its run time lasts, and until stopped without one.
+        assert_eq!(warning(&["--threshold", "p95<1s", "--users", "5"]), None);
+        assert_eq!(
+            warning(&["--threshold", "p95<1s", "--users", "5", "--run-time", "10s"]),
+            None
+        );
+        // Ramping up straight into a ramp down never holds.
+        assert!(warning(&[
+            "--threshold",
+            "p95<1s",
+            "--users",
+            "5",
+            "--decrease-time",
+            "5s"
+        ])
+        .is_some());
+        // Nothing to warn about when no threshold can stop the run.
+        let plan = ["--test-plan", "10,5s;0,5s"];
+        assert_eq!(warning(&plan), None);
+        assert_eq!(
+            warning(
+                &[
+                    &plan[..],
+                    &["--threshold", "p95<1s", "--no-threshold-abort"]
+                ]
+                .concat()
+            ),
+            None
+        );
     }
 }

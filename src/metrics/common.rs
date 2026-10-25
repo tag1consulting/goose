@@ -914,6 +914,7 @@ impl From<BaselineGooseMetrics> for GooseMetrics {
             display_metrics: baseline.display_metrics,
             thresholds: baseline.thresholds,
             threshold_abort: None,
+            threshold_start: None,
         }
     }
 }
