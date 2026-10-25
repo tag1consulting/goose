@@ -6,7 +6,7 @@ If `--request-body` is also enabled, the request log will include the entire bod
 
 Logs include the entire [`GooseRequestMetric`](https://docs.rs/goose/*/goose/metrics/struct.GooseRequestMetric.html) object which also includes the entire [`GooseRawRequest`](https://docs.rs/goose/*/goose/metrics/struct.GooseRawRequest.html) object, both created for all client requests.
 
-The `headers` field of the `GooseRawRequest` lists the headers set on the individual request (for example by `.header()`, `.bearer_auth()`, `.json()` or `.form()`); client default headers and cookies are added by Reqwest when the request is sent and are not included. Request headers are only captured when the request log, the debug log or the error log is enabled, otherwise `headers` is empty.
+The `headers` field of the `GooseRawRequest` lists the headers set on the individual request (for example by `.header()`, `.bearer_auth()`, `.json()` or `.form()`); headers that Reqwest adds when it sends the request are not included: the client's default headers (those set with `.default_headers()`, the `User-Agent` and `Accept: */*`), the `Cookie` header from the cookie store, `Accept-Encoding` when compression is enabled, and the `Host` and `Content-Length` headers. Reqwest offers no way to read them: <https://github.com/tag1consulting/goose/issues/336>. Request headers are only captured when the request log, the debug log or the error log is enabled, otherwise `headers` is empty.
 
 ## Log Format
 
