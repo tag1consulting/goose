@@ -727,7 +727,15 @@ pub struct GooseRawRequest {
     pub method: GooseMethod,
     /// The full URL that was requested.
     pub url: String,
-    /// Any headers set by the client when making the request.
+    /// Headers set on this individual request, for example by `.header()`, `.bearer_auth()`,
+    /// `.json()` or `.form()`.
+    ///
+    /// Headers that Reqwest adds when it sends the request are not included: the client's
+    /// default headers (those set with `.default_headers()`, the `User-Agent` and
+    /// `Accept: */*`), the `Cookie` header from the cookie store, `Accept-Encoding` when
+    /// compression is enabled, and the `Host` and `Content-Length` headers. Reqwest offers
+    /// no way to read them, see
+    /// [issue #336](https://github.com/tag1consulting/goose/issues/336).
     ///
     /// Only captured when the request log, the debug log or the error log is enabled,
     /// as these are the only consumers. Empty otherwise.

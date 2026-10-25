@@ -8,7 +8,7 @@ If `--debug-log <foo>` is not specified at run time, nothing will be logged and 
 
 To write to the debug log, you must invoke [`log_debug`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.log_debug) from your load test transaction functions. The `tag` parameter allows you to record any arbitrary string: it can also identify where in the load test the log was generated, and/or why debug is being written, and/or other details such as the contents of a form the load test posts. Other paramters that can be included in the debug log are the complete Request that was made, as well as the Headers and Body of the Response.
 
-(_Known limitations in Reqwest prevent all headers from being recorded: <https://github.com/tag1consulting/goose/issues/336>_)
+(_The recorded request headers are only those set on the individual request: client default headers, the `User-Agent`, cookies, `Accept-Encoding`, `Host` and `Content-Length` are added later by Reqwest and are not recorded, see the [request log](requests.md) and <https://github.com/tag1consulting/goose/issues/336>._)
 
 See [`examples/drupal_loadtest`](https://github.com/tag1consulting/goose/blob/main/examples/drupal_loadtest.rs) for an example of how you might invoke [`log_debug`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.log_debug) from a load test.
 

@@ -4,6 +4,8 @@ Goose can optionally log details about all load test errors to a file. To enable
 
 Logs include the entire [`GooseErrorMetric`](https://docs.rs/goose/*/goose/metrics/struct.GooseErrorMetric.html) object, created any time a request results in an error.
 
+The `raw.headers` field follows the same rule as in the [request log](requests.md): it lists only the headers set on the individual request.
+
 ## Log Format
 
 By default, logs are written in JSON Lines format. For example:
