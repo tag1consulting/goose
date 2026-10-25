@@ -46,19 +46,29 @@ This leads to dangerously optimistic reports:
 
 ## How Goose Fixes This
 
+Coordinated omission mitigation is off by default; `--co-mitigation average`, `minimum` or `maximum` turns it on. See [Mitigation Strategies](mitigation.md).
+
 ### 1. Detects Missing Requests
-When Goose sees an abnormally long 30-second response, it recognizes: "During those 30 seconds, I should have made 30 requests but couldn't."
+Goose tracks how long each user takes to run through all of its transactions. When a run takes more than twice the user's usual cadence, as one held up by a 30 second freeze does, Goose recognizes: "During that run, this user should have made more requests but couldn't."
 
 ### 2. Synthetic Request Injection
 Goose adds "synthetic requests" to represent the requests that **would have been made** if the server hadn't frozen, giving you a complete picture of impact.
 
 ### 3. Clear Reporting
+Goose shows the measured and the adjusted response times side by side, and sums up the events. For the freeze above, the summary would read something like:
+
 ```
-=== COORDINATED OMISSION METRICS ===
-Total CO Events: 1
-Actual requests: 4  
-Synthetic requests: 29 (87.9%)
-Severity: 1 Critical event detected
+ === COORDINATED OMISSION METRICS ===
+ Duration: 34 seconds
+ Total CO Events: 1
+ Events per minute: 1.76
+
+ Request Breakdown:
+   Actual requests: 4
+   Synthetic requests: 29 (87.9%)
+
+ Severity Distribution:
+   Critical: 1
 ```
 
 This tells you: "87.9% of your expected traffic was affected by server problems!"
@@ -82,4 +92,4 @@ Result: "34 total requests, 30-second freeze affected 87.9% of traffic" ✅ ACCU
 
 ## The Key Insight
 
-Server problems don't just affect one request, they affect ALL the requests that should have happened during the problem period. Goose now captures this reality, giving you honest data about your system's behavior under load.
+Server problems don't just affect one request, they affect ALL the requests that should have happened during the problem period. With mitigation enabled, Goose captures this reality, giving you honest data about your system's behavior under load.

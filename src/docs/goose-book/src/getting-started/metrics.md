@@ -2,56 +2,55 @@
 
 Here's sample output generated when running a loadtest, in this case the [Umami example](../example/umami.html) that comes with Goose.
 
-In this case, the [Drupal Umami demo](https://www.drupal.org/docs/umami-drupal-demonstration-installation-profile) was installed in a local container. The following command was used to configure Goose and run the load test. The `-u9` tells Goose to spin up 9 users. The `-r3` option tells Goose to launch 3 users per second. The `-t1m` option tells Goose to run the load test for 1 minute, or 60 seconds. The `--no-reset-metrics` flag tells Goose to include all metrics, instead of the default which is to flush all metrics collected during start up. And finally, the `--report-file report.html` tells Goose to generate an HTML-formatted report named `report.html` once the load test finishes.
+In this case, the example ran against a local test server standing in for the [Drupal Umami demo](https://www.drupal.org/docs/umami-drupal-demonstration-installation-profile): it answers every page the example requests, with the titles, forms and static assets the example checks for. The following command was used to configure Goose and run the load test. The `-u9` tells Goose to spin up 9 users. The `-r3` option tells Goose to launch 3 users per second. The `-t1m` option tells Goose to run the load test for 1 minute, or 60 seconds. The `--no-reset-metrics` flag tells Goose to include all metrics, instead of the default which is to reset the metrics once every user has started. And finally, the two `--report-file` options tell Goose to write an HTML-formatted report named `report.html` and a Markdown-formatted report named `report.md` once the load test finishes.
 
 ## ASCII metrics
 
-This sample is output from an earlier Goose: its tables come from 0.16. Goose 0.19 shows times and averages under 10 ms to the hundredth of a millisecond and from 10 ms in whole milliseconds, rounded half up. It no longer rounds percentiles above 100 ms to 10 ms, 100 ms or whole seconds; they come from buckets never more than 1% off.
+The example names its transactions, such as `anon /`, but not its requests, so each request is named by its path: the run made requests under 93 names. In the request tables below, `...` marks the rows left out.
 
 ```bash
-% cargo run --release --example umami -- --host http://umami.ddev.site/ -u9 -r3 -t1m --no-reset-metrics --report-file report.html
-   Compiling goose v0.18.1 (~/goose)
-    Finished release [optimized] target(s) in 11.88s
-     Running `target/release/examples/umami --host 'http://umami.ddev.site/' -u9 -r3 -t1m --no-reset-metrics --report-file report.html`
-05:09:05 [INFO] Output verbosity level: INFO
-05:09:05 [INFO] Logfile verbosity level: WARN
-05:09:05 [INFO] users = 9
-05:09:05 [INFO] run_time = 60
-05:09:05 [INFO] increase_rate = 3
-05:09:05 [INFO] no_reset_metrics = true
-05:09:05 [INFO] report_file = report.html
-05:09:05 [INFO] iterations = 0
-05:09:05 [INFO] global host configured: http://umami.ddev.site/
-05:09:05 [INFO] allocating transactions and scenarios with RoundRobin scheduler
-05:09:05 [INFO] initializing 9 user states...
-05:09:05 [INFO] Telnet controller listening on: 0.0.0.0:5116
-05:09:05 [INFO] WebSocket controller listening on: 0.0.0.0:5117
-05:09:05 [INFO] entering GooseAttack phase: Increase
-05:09:05 [INFO] [user 1]: launching user from Anonymous Spanish user
-05:09:05 [INFO] [user 2]: launching user from Anonymous English user
-05:09:05 [INFO] [user 3]: launching user from Anonymous Spanish user
-05:09:06 [INFO] [user 4]: launching user from Anonymous English user
-05:09:06 [INFO] [user 5]: launching user from Anonymous Spanish user
-05:09:06 [INFO] [user 6]: launching user from Anonymous English user
-05:09:07 [INFO] [user 7]: launching user from Admin user
-05:09:07 [INFO] [user 8]: launching user from Anonymous Spanish user
-05:09:07 [INFO] [user 9]: launching user from Anonymous English user
+% cargo run --release --example umami -- --host http://127.0.0.1:19130/ -u9 -r3 -t1m --no-reset-metrics --report-file report.html --report-file report.md
+    Finished `release` profile [optimized] target(s) in 0.23s
+     Running `target/release/examples/umami --host 'http://127.0.0.1:19130/' -u9 -r3 -t1m --no-reset-metrics --report-file report.html --report-file report.md`
+21:10:43 [INFO] Output verbosity level: INFO
+21:10:43 [INFO] Logfile verbosity level: WARN
+21:10:43 [INFO] users = 9
+21:10:43 [INFO] run_time = 60
+21:10:43 [INFO] increase_rate = 3.0
+21:10:43 [INFO] no_reset_metrics = true
+21:10:43 [INFO] report_file = ["report.html", "report.md"]
+21:10:43 [INFO] global host configured: http://127.0.0.1:19130/
+21:10:43 [INFO] [scheduler]: allocating transactions and scenarios with RoundRobin scheduler
+21:10:43 [INFO] [scheduler]: initializing 9 user states...
+21:10:43 [INFO] [controller]: Telnet listening on: 0.0.0.0:5116
+21:10:43 [INFO] [controller]: WebSocket listening on: 0.0.0.0:5117
+21:10:43 [INFO] entering GooseAttack phase: Increase
+21:10:43 [INFO] [user 1]: launching user from Anonymous Spanish user
+21:10:43 [INFO] [user 2]: launching user from Anonymous English user
+21:10:43 [INFO] [user 3]: launching user from Anonymous Spanish user
+21:10:44 [INFO] [user 4]: launching user from Anonymous English user
+21:10:44 [INFO] [user 5]: launching user from Anonymous Spanish user
+21:10:44 [INFO] [user 6]: launching user from Anonymous English user
+21:10:45 [INFO] [user 7]: launching user from Admin user
+21:10:45 [INFO] [user 8]: launching user from Anonymous Spanish user
+21:10:45 [INFO] [user 9]: launching user from Anonymous English user
 All 9 users launched.
 
-05:09:08 [INFO] entering GooseAttack phase: Maintain
-05:10:08 [INFO] entering GooseAttack phase: Decrease
-05:10:08 [INFO] [user 2]: exiting user from Anonymous English user
-05:10:08 [INFO] [user 3]: exiting user from Anonymous Spanish user
-05:10:08 [INFO] [user 6]: exiting user from Anonymous English user
-05:10:08 [INFO] [user 8]: exiting user from Anonymous Spanish user
-05:10:08 [INFO] [user 4]: exiting user from Anonymous English user
-05:10:08 [INFO] [user 7]: exiting user from Admin user
-05:10:08 [INFO] [user 1]: exiting user from Anonymous Spanish user
-05:10:08 [INFO] [user 9]: exiting user from Anonymous English user
-05:10:08 [INFO] [user 5]: exiting user from Anonymous Spanish user
-05:10:08 [INFO] wrote html report file to: report.html
-05:10:08 [INFO] entering GooseAttack phase: Shutdown
-05:10:08 [INFO] printing final metrics after 63 seconds...
+21:10:46 [INFO] entering GooseAttack phase: Maintain
+21:11:46 [INFO] entering GooseAttack phase: Decrease
+21:11:46 [INFO] [user 5]: exiting from Anonymous Spanish user
+21:11:46 [INFO] [user 8]: exiting from Anonymous Spanish user
+21:11:46 [INFO] [user 6]: exiting from Anonymous English user
+21:11:46 [INFO] [user 7]: exiting from Admin user
+21:11:46 [INFO] [user 2]: exiting from Anonymous English user
+21:11:46 [INFO] [user 4]: exiting from Anonymous English user
+21:11:46 [INFO] [user 1]: exiting from Anonymous Spanish user
+21:11:46 [INFO] [user 9]: exiting from Anonymous English user
+21:11:46 [INFO] [user 3]: exiting from Anonymous Spanish user
+21:11:46 [INFO] html report file written to: report.html
+21:11:46 [INFO] markdown report file written to: report.md
+21:11:46 [INFO] entering GooseAttack phase: Shutdown
+21:11:46 [INFO] printing final metrics after 63 seconds...
 
  === PER SCENARIO METRICS ===
  ------------------------------------------------------------------------------
@@ -59,247 +58,178 @@ All 9 users launched.
  ------------------------------------------------------------------------------
  1: Anonymous English u.. |        4 |            8 |        0.13 |       2.00
  2: Anonymous Spanish u.. |        4 |            8 |        0.13 |       2.00
- 3: Admin user            |        1 |            1 |        0.02 |       1.00
+ 3: Admin user            |        1 |            2 |        0.03 |       2.00
  -------------------------+----------+--------------+-------------+------------
- Aggregated               |        9 |           17 |        0.27 |       1.89
+ Aggregated               |        9 |           18 |        0.29 |       2.00
  ------------------------------------------------------------------------------
  Name                     |    Avg (ms) |        Min |         Max |     Median
  ------------------------------------------------------------------------------
-   1: Anonymous English.. |       25251 |     19,488 |      31,308 |     19,488
-   2: Anonymous Spanish.. |       24394 |     20,954 |      27,821 |     20,954
-   3: Admin user          |       32431 |     32,431 |      32,431 |     32,431
+   1: Anonymous English.. |      26,437 |     21,959 |      31,240 |     26,608
+   2: Anonymous Spanish.. |      24,977 |     19,969 |      30,105 |     23,724
+   3: Admin user          |      29,412 |     28,898 |      29,927 |     28,898
  -------------------------+-------------+------------+-------------+-----------
- Aggregated               |       25270 |     19,488 |      32,431 |     19,488
+ Aggregated               |      26,119 |     19,969 |      31,240 |     26,608
 
  === PER TRANSACTION METRICS ===
  ------------------------------------------------------------------------------
  Name                     |   # times run |        # fails |  trans/s |  fail/s
  ------------------------------------------------------------------------------
  1: Anonymous English user
-   1: anon /              |            21 |         0 (0%) |     0.33 |    0.00
-   2: anon /en/basicpage  |            12 |         0 (0%) |     0.19 |    0.00
-   3: anon /en/articles/  |            12 |         0 (0%) |     0.19 |    0.00
-   4: anon /en/articles/% |            21 |         0 (0%) |     0.33 |    0.00
-   5: anon /en/recipes/   |            12 |         0 (0%) |     0.19 |    0.00
-   6: anon /en/recipes/%  |            36 |         0 (0%) |     0.57 |    0.00
-   7: anon /node/%nid     |            11 |         0 (0%) |     0.17 |    0.00
-   8: anon /en term       |            19 |         0 (0%) |     0.30 |    0.00
-   9: anon /en/search     |             9 |         0 (0%) |     0.14 |    0.00
-   10: anon /en/contact   |             9 |         0 (0%) |     0.14 |    0.00
+   1: anon /              |            20 |         0 (0%) |     0.32 |    0.00
+   2: anon /en/basicpage  |            11 |         0 (0%) |     0.17 |    0.00
+   3: anon /en/articles/  |            11 |         0 (0%) |     0.17 |    0.00
+   4: anon /en/articles/% |            19 |         0 (0%) |     0.30 |    0.00
+   5: anon /en/recipes/   |            11 |         0 (0%) |     0.17 |    0.00
+   6: anon /en/recipes/%  |            35 |         0 (0%) |     0.56 |    0.00
+   7: anon /node/%nid     |            10 |         0 (0%) |     0.16 |    0.00
+   8: anon /en term       |            17 |         0 (0%) |     0.27 |    0.00
+   9: anon /en/search     |             8 |         0 (0%) |     0.13 |    0.00
+   10: anon /en/contact   |             8 |         0 (0%) |     0.13 |    0.00
  2: Anonymous Spanish user
-   1: anon /es/           |            22 |         0 (0%) |     0.35 |    0.00
+   1: anon /es/           |            20 |         0 (0%) |     0.32 |    0.00
    2: anon /es/basicpage  |            12 |         0 (0%) |     0.19 |    0.00
    3: anon /es/articles/  |            12 |         0 (0%) |     0.19 |    0.00
-   4: anon /es/articles/% |            21 |         0 (0%) |     0.33 |    0.00
+   4: anon /es/articles/% |            20 |         0 (0%) |     0.32 |    0.00
    5: anon /es/recipes/   |            12 |         0 (0%) |     0.19 |    0.00
-   6: anon /es/recipes/%  |            37 |         0 (0%) |     0.59 |    0.00
-   7: anon /es term       |            21 |         0 (0%) |     0.33 |    0.00
-   8: anon /es/search     |            12 |         0 (0%) |     0.19 |    0.00
-   9: anon /es/contact    |            10 |         0 (0%) |     0.16 |    0.00
+   6: anon /es/recipes/%  |            36 |         0 (0%) |     0.57 |    0.00
+   7: anon /es term       |            18 |         0 (0%) |     0.29 |    0.00
+   8: anon /es/search     |            10 |         0 (0%) |     0.16 |    0.00
+   9: anon /es/contact    |             8 |         0 (0%) |     0.13 |    0.00
  3: Admin user           
    1: auth /en/user/login |             1 |         0 (0%) |     0.02 |    0.00
-   2: auth /              |             4 |         0 (0%) |     0.06 |    0.00
+   2: auth /              |             5 |         0 (0%) |     0.08 |    0.00
    3: auth /en/articles/  |             2 |         0 (0%) |     0.03 |    0.00
-   4: auth /en/node/%/e.. |             3 |         0 (0%) |     0.05 |    0.00
+   4: auth /en/node/%/e.. |             4 |         0 (0%) |     0.06 |    0.00
  -------------------------+---------------+----------------+----------+--------
- Aggregated               |           331 |         0 (0%) |     5.25 |    0.00
+ Aggregated               |           310 |         0 (0%) |     4.92 |    0.00
  ------------------------------------------------------------------------------
  Name                     |    Avg (ms) |        Min |         Max |     Median
  ------------------------------------------------------------------------------
  1: Anonymous English user
-   1: anon /              |      123.48 |         85 |         224 |        110
-   2: anon /en/basicpage  |       56.08 |         44 |          75 |         50
-   3: anon /en/articles/  |      147.58 |         91 |         214 |        140
-   4: anon /en/articles/% |      148.14 |         72 |         257 |        160
-   5: anon /en/recipes/   |      170.58 |        109 |         242 |        150
-   6: anon /en/recipes/%  |       66.08 |         48 |         131 |         60
-   7: anon /node/%nid     |       94.09 |         46 |         186 |         70
-   8: anon /en term       |      134.37 |         52 |         194 |        130
-   9: anon /en/search     |      282.33 |        190 |         339 |        270
-   10: anon /en/contact   |      246.89 |        186 |         346 |        260
+   1: anon /              |         136 |         84 |         181 |        130
+   2: anon /en/basicpage  |         115 |         80 |         170 |        114
+   3: anon /en/articles/  |         124 |         79 |         168 |        123
+   4: anon /en/articles/% |         122 |         67 |         171 |        122
+   5: anon /en/recipes/   |         121 |         81 |         165 |        121
+   6: anon /en/recipes/%  |         124 |         69 |         173 |        125
+   7: anon /node/%nid     |         137 |         84 |         175 |        131
+   8: anon /en term       |         131 |         81 |         162 |        131
+   9: anon /en/search     |         426 |        383 |         485 |        408
+   10: anon /en/contact   |         386 |        312 |         463 |        346
  2: Anonymous Spanish user
-   1: anon /es/           |      141.36 |         88 |         285 |        130
-   2: anon /es/basicpage  |       61.17 |         43 |          92 |         51
-   3: anon /es/articles/  |      130.58 |         87 |         187 |        110
-   4: anon /es/articles/% |      164.52 |         85 |         263 |        170
-   5: anon /es/recipes/   |      161.25 |        108 |         274 |        120
-   6: anon /es/recipes/%  |       65.24 |         47 |         107 |         61
-   7: anon /es term       |      145.14 |         49 |         199 |        150
-   8: anon /es/search     |      276.33 |        206 |         361 |        270
-   9: anon /es/contact    |      240.20 |        204 |         297 |        230
+   1: anon /es/           |         128 |         75 |         181 |        125
+   2: anon /es/basicpage  |         136 |         94 |         176 |        131
+   3: anon /es/articles/  |         122 |         86 |         164 |        111
+   4: anon /es/articles/% |         124 |         83 |         162 |        116
+   5: anon /es/recipes/   |         135 |         77 |         177 |        140
+   6: anon /es/recipes/%  |         125 |         71 |         181 |        117
+   7: anon /es term       |         127 |         78 |         184 |        117
+   8: anon /es/search     |         414 |        351 |         485 |        416
+   9: anon /es/contact    |         406 |        312 |         488 |        395
  3: Admin user           
-   1: auth /en/user/login |      262.00 |        262 |         262 |        262
-   2: auth /              |      260.75 |        238 |         287 |        250
-   3: auth /en/articles/  |      232.00 |        220 |         244 |        220
-   4: auth /en/node/%/e.. |      745.67 |        725 |         771 |        725
+   1: auth /en/user/login |         452 |        452 |         452 |        452
+   2: auth /              |         114 |         76 |         163 |        109
+   3: auth /en/articles/  |         117 |        100 |         134 |        100
+   4: auth /en/node/%/e.. |         582 |        514 |         639 |        578
  -------------------------+-------------+------------+-------------+-----------
- Aggregated               |      141.73 |         43 |         771 |        120
+ Aggregated               |         164 |         67 |         639 |        131
 
  === PER REQUEST METRICS ===
  ------------------------------------------------------------------------------
  Name                     |        # reqs |        # fails |    req/s |  fail/s
  ------------------------------------------------------------------------------
- GET anon /               |            21 |         0 (0%) |     0.33 |    0.00
- GET anon /en term        |            19 |         0 (0%) |     0.30 |    0.00
- GET anon /en/articles/   |            12 |         0 (0%) |     0.19 |    0.00
- GET anon /en/articles/%  |            21 |         0 (0%) |     0.33 |    0.00
- GET anon /en/basicpage   |            12 |         0 (0%) |     0.19 |    0.00
- GET anon /en/contact     |             9 |         0 (0%) |     0.14 |    0.00
- GET anon /en/recipes/    |            12 |         0 (0%) |     0.19 |    0.00
- GET anon /en/recipes/%   |            36 |         0 (0%) |     0.57 |    0.00
- GET anon /en/search      |             9 |         0 (0%) |     0.14 |    0.00
- GET anon /es term        |            21 |         0 (0%) |     0.33 |    0.00
- GET anon /es/            |            22 |         0 (0%) |     0.35 |    0.00
- GET anon /es/articles/   |            12 |         0 (0%) |     0.19 |    0.00
- GET anon /es/articles/%  |            21 |         0 (0%) |     0.33 |    0.00
- GET anon /es/basicpage   |            12 |         0 (0%) |     0.19 |    0.00
- GET anon /es/contact     |            10 |         0 (0%) |     0.16 |    0.00
- GET anon /es/recipes/    |            12 |         0 (0%) |     0.19 |    0.00
- GET anon /es/recipes/%   |            37 |         0 (0%) |     0.59 |    0.00
- GET anon /es/search      |            12 |         0 (0%) |     0.19 |    0.00
- GET anon /node/%nid      |            11 |         0 (0%) |     0.17 |    0.00
- GET auth /               |             4 |         0 (0%) |     0.06 |    0.00
- GET auth /en/articles/   |             2 |         0 (0%) |     0.03 |    0.00
- GET auth /en/node/%/edit |             6 |         0 (0%) |     0.10 |    0.00
- GET auth /en/user/login  |             1 |         0 (0%) |     0.02 |    0.00
- GET static asset         |         3,516 |         0 (0%) |    55.81 |    0.00
- POST anon /en/contact    |             9 |         0 (0%) |     0.14 |    0.00
- POST anon /en/search     |             9 |         0 (0%) |     0.14 |    0.00
- POST anon /es/contact    |            10 |         0 (0%) |     0.16 |    0.00
- POST anon /es/search     |            12 |         0 (0%) |     0.19 |    0.00
- POST auth /en/node/%/e.. |             3 |         0 (0%) |     0.05 |    0.00
- POST auth /en/user/login |             1 |         0 (0%) |     0.02 |    0.00
+ GET /                    |            25 |         0 (0%) |     0.40 |    0.00
+ GET /en/about-umami      |            11 |         0 (0%) |     0.17 |    0.00
+ GET /en/articles/        |            13 |         0 (0%) |     0.21 |    0.00
+ ...
+ GET static asset         |         3,530 |         0 (0%) |    56.03 |    0.00
+ POST /en/contact         |             8 |         0 (0%) |     0.13 |    0.00
+ POST /en/node/12/edit    |             1 |         0 (0%) |     0.02 |    0.00
+ POST /en/node/15/edit    |             1 |         0 (0%) |     0.02 |    0.00
+ POST /en/node/16/edit    |             2 |         0 (0%) |     0.03 |    0.00
+ POST /en/search/node     |             8 |         0 (0%) |     0.13 |    0.00
+ POST /en/user/login      |             1 |         0 (0%) |     0.02 |    0.00
+ POST /es/contact         |             8 |         0 (0%) |     0.13 |    0.00
+ POST /es/search/node     |            10 |         0 (0%) |     0.16 |    0.00
  -------------------------+---------------+----------------+----------+--------
- Aggregated               |         3,894 |         0 (0%) |    61.81 |    0.00
+ Aggregated               |         3,883 |         0 (0%) |    61.63 |    0.00
  ------------------------------------------------------------------------------
  Name                     |    Avg (ms) |        Min |         Max |     Median
  ------------------------------------------------------------------------------
- GET anon /               |       38.95 |         14 |         132 |         24
- GET anon /en term        |       95.63 |         22 |         159 |         98
- GET anon /en/articles/   |       61.67 |         16 |         139 |         42
- GET anon /en/articles/%  |       94.86 |         20 |         180 |        100
- GET anon /en/basicpage   |       25.67 |         17 |          40 |         24
- GET anon /en/contact     |       34.67 |         16 |          61 |         30
- GET anon /en/recipes/    |       59.83 |         17 |         130 |         45
- GET anon /en/recipes/%   |       27.86 |         16 |          56 |         22
- GET anon /en/search      |       54.33 |         20 |         101 |         30
- GET anon /es term        |      106.14 |         19 |         159 |        110
- GET anon /es/            |       51.41 |         18 |         179 |         29
- GET anon /es/articles/   |       53.42 |         17 |         110 |         27
- GET anon /es/articles/%  |      105.52 |         20 |         203 |        110
- GET anon /es/basicpage   |       27.25 |         18 |          55 |         22
- GET anon /es/contact     |       27.80 |         17 |          49 |         24
- GET anon /es/recipes/    |       59.08 |         18 |         165 |         26
- GET anon /es/recipes/%   |       28.65 |         16 |          61 |         26
- GET anon /es/search      |       46.42 |         17 |          99 |         25
- GET anon /node/%nid      |       52.73 |         17 |         133 |         38
- GET auth /               |      140.75 |        109 |         169 |        120
- GET auth /en/articles/   |      103.50 |         89 |         118 |         89
- GET auth /en/node/%/edit |      114.83 |         91 |         136 |        120
- GET auth /en/user/login  |       24.00 |         24 |          24 |         24
- GET static asset         |        5.11 |          2 |          38 |          5
- POST anon /en/contact    |      136.67 |         99 |         204 |        140
- POST anon /en/search     |      162.11 |        114 |         209 |        170
- POST anon /es/contact    |      137.70 |        111 |         174 |        130
- POST anon /es/search     |      164.08 |        118 |         235 |        140
- POST auth /en/node/%/e.. |      292.33 |        280 |         304 |        290
- POST auth /en/user/login |      143.00 |        143 |         143 |        143
+ GET /                    |          76 |         28 |         124 |         74
+ GET /en/about-umami      |          61 |         22 |         116 |         52
+ GET /en/articles/        |          67 |         24 |         116 |         68
+ ...
+ GET static asset         |        5.51 |       1.17 |          14 |       5.41
+ POST /en/contact         |         211 |        126 |         282 |        214
+ POST /en/node/12/edit    |         235 |        235 |         235 |        235
+ POST /en/node/15/edit    |         252 |        252 |         252 |        252
+ POST /en/node/16/edit    |         252 |        247 |         258 |        247
+ POST /en/search/node     |         230 |        185 |         266 |        224
+ POST /en/user/login      |         238 |        238 |         238 |        238
+ POST /es/contact         |         218 |        154 |         274 |        237
+ POST /es/search/node     |         223 |        152 |         287 |        216
  -------------------------+-------------+------------+-------------+-----------
- Aggregated               |       11.41 |          2 |         304 |          5
- ------------------------------------------------------------------------------
- Slowest page load within specified percentile of requests (in ms):
- ------------------------------------------------------------------------------
- Name                     |    50% |    75% |    98% |    99% |  99.9% | 99.99%
- ------------------------------------------------------------------------------
- GET anon /               |     24 |     29 |    130 |    130 |    130 |    130
- GET anon /en term        |     98 |    110 |    159 |    159 |    159 |    159
- GET anon /en/articles/   |     42 |     92 |    139 |    139 |    139 |    139
- GET anon /en/articles/%  |    100 |    120 |    180 |    180 |    180 |    180
- GET anon /en/basicpage   |     24 |     30 |     40 |     40 |     40 |     40
- GET anon /en/contact     |     30 |     46 |     61 |     61 |     61 |     61
- GET anon /en/recipes/    |     45 |     88 |    130 |    130 |    130 |    130
- GET anon /en/recipes/%   |     22 |     31 |     55 |     56 |     56 |     56
- GET anon /en/search      |     30 |     89 |    100 |    100 |    100 |    100
- GET anon /es term        |    110 |    130 |    159 |    159 |    159 |    159
- GET anon /es/            |     29 |     57 |    179 |    179 |    179 |    179
- GET anon /es/articles/   |     27 |     96 |    110 |    110 |    110 |    110
- GET anon /es/articles/%  |    110 |    140 |    200 |    200 |    200 |    200
- GET anon /es/basicpage   |     22 |     27 |     55 |     55 |     55 |     55
- GET anon /es/contact     |     24 |     35 |     49 |     49 |     49 |     49
- GET anon /es/recipes/    |     26 |    110 |    165 |    165 |    165 |    165
- GET anon /es/recipes/%   |     26 |     34 |     57 |     61 |     61 |     61
- GET anon /es/search      |     25 |     78 |     99 |     99 |     99 |     99
- GET anon /node/%nid      |     38 |     41 |    130 |    130 |    130 |    130
- GET auth /               |    120 |    160 |    169 |    169 |    169 |    169
- GET auth /en/articles/   |     89 |    118 |    118 |    118 |    118 |    118
- GET auth /en/node/%/edit |    120 |    130 |    136 |    136 |    136 |    136
- GET auth /en/user/login  |     24 |     24 |     24 |     24 |     24 |     24
- GET static asset         |      5 |      6 |     10 |     13 |     29 |     38
- POST anon /en/contact    |    140 |    150 |    200 |    200 |    200 |    200
- POST anon /en/search     |    170 |    180 |    209 |    209 |    209 |    209
- POST anon /es/contact    |    130 |    150 |    170 |    170 |    170 |    170
- POST anon /es/search     |    140 |    180 |    235 |    235 |    235 |    235
- POST auth /en/node/%/e.. |    290 |    290 |    300 |    300 |    300 |    300
- POST auth /en/user/login |    143 |    143 |    143 |    143 |    143 |    143
- -------------------------+--------+--------+--------+--------+--------+-------
- Aggregated               |      5 |      7 |    120 |    140 |    240 |    300
+ Aggregated               |          13 |       1.17 |         287 |       5.86
  ------------------------------------------------------------------------------
  Name                     |                                        Status codes 
  ------------------------------------------------------------------------------
- GET anon /               |                                            21 [200]
- GET anon /en term        |                                            19 [200]
- GET anon /en/articles/   |                                            12 [200]
- GET anon /en/articles/%  |                                            21 [200]
- GET anon /en/basicpage   |                                            12 [200]
- GET anon /en/contact     |                                             9 [200]
- GET anon /en/recipes/    |                                            12 [200]
- GET anon /en/recipes/%   |                                            36 [200]
- GET anon /en/search      |                                             9 [200]
- GET anon /es term        |                                            21 [200]
- GET anon /es/            |                                            22 [200]
- GET anon /es/articles/   |                                            12 [200]
- GET anon /es/articles/%  |                                            21 [200]
- GET anon /es/basicpage   |                                            12 [200]
- GET anon /es/contact     |                                            10 [200]
- GET anon /es/recipes/    |                                            12 [200]
- GET anon /es/recipes/%   |                                            37 [200]
- GET anon /es/search      |                                            12 [200]
- GET anon /node/%nid      |                                            11 [200]
- GET auth /               |                                             4 [200]
- GET auth /en/articles/   |                                             2 [200]
- GET auth /en/node/%/edit |                                             6 [200]
- GET auth /en/user/login  |                                             1 [200]
- GET static asset         |                                         3,516 [200]
- POST anon /en/contact    |                                             9 [200]
- POST anon /en/search     |                                             9 [200]
- POST anon /es/contact    |                                            10 [200]
- POST anon /es/search     |                                            12 [200]
- POST auth /en/node/%/e.. |                                             3 [200]
- POST auth /en/user/login |                                             1 [200]
+ GET /                    |                                            25 [200]
+ GET /en/about-umami      |                                            11 [200]
+ GET /en/articles/        |                                            13 [200]
+ ...
+ GET static asset         |                                         3,530 [200]
+ POST /en/contact         |                                             8 [200]
+ POST /en/node/12/edit    |                                             1 [200]
+ POST /en/node/15/edit    |                                             1 [200]
+ POST /en/node/16/edit    |                                             2 [200]
+ POST /en/search/node     |                                             8 [200]
+ POST /en/user/login      |                                             1 [200]
+ POST /es/contact         |                                             8 [200]
+ POST /es/search/node     |                                            10 [200]
  -------------------------+----------------------------------------------------
- Aggregated               |                                         3,894 [200] 
+ Aggregated               |                                         3,883 [200]
+```
 
- === OVERVIEW ===
- ------------------------------------------------------------------------------
- Action       Started               Stopped             Elapsed    Users
- ------------------------------------------------------------------------------
- Increasing:  2022-05-17 07:09:05 - 2022-05-17 07:09:08 (00:00:03, 0 -> 9)
- Maintaining: 2022-05-17 07:09:08 - 2022-05-17 07:10:08 (00:01:00, 9)
- Decreasing:  2022-05-17 07:10:08 - 2022-05-17 07:10:08 (00:00:00, 0 <- 9)
+The final summary ends with the status codes. Its percentile tables, the errors table and the overview of the test plan are not printed in this release; the HTML and Markdown reports hold them. From the `report.md` of the same run:
 
- Target host: http://umami.ddev.site/
- goose v0.18.1
- ------------------------------------------------------------------------------
+```markdown
+## Plan Overview
+
+| Action | Started | Stopped | Elapsed | Users |
+| ------ | ------- | ------- | ------- | ----: |
+| Increasing | 26-10-25 22:10:43 | 26-10-25 22:10:46 | 00:00:03 | 0 &rarr; 9 |
+| Maintaining | 26-10-25 22:10:46 | 26-10-25 22:11:46 | 00:01:00 | 9 |
+| Decreasing | 26-10-25 22:11:46 | 26-10-25 22:11:46 | 00:00:00 | 0 &larr; 9 |
+
+## Response Time Metrics
+
+| Method | Name | 50%ile (ms) | 60%ile (ms) | 70%ile (ms) | 80%ile (ms) | 90%ile (ms) | 95%ile (ms) | 99%ile (ms) | 100%ile (ms) |
+| ------ | ---- | ----------: | ----------: | ----------: | ----------: | ----------: | ----------: | ----------: | -----------: |
+| GET | / | 74 | 80 | 98 | 109 | 116 | 119 | 124 | 124 |
+| GET | /en/about-umami | 52 | 66 | 73 | 75 | 113 | 113 | 116 | 116 |
+| GET | /en/articles/ | 68 | 72 | 75 | 82 | 102 | 102 | 116 | 116 |
+| ... |
+| GET | static asset | 5.41 | 6.18 | 6.94 | 7.78 | 8.64 | 9.66 | 11 | 14 |
+| POST | /en/contact | 214 | 241 | 245 | 245 | 276 | 282 | 282 | 282 |
+| POST | /en/node/12/edit | 235 | 235 | 235 | 235 | 235 | 235 | 235 | 235 |
+| POST | /en/node/15/edit | 252 | 252 | 252 | 252 | 252 | 252 | 252 | 252 |
+| POST | /en/node/16/edit | 247 | 247 | 247 | 258 | 258 | 258 | 258 | 258 |
+| POST | /en/search/node | 224 | 234 | 253 | 253 | 257 | 266 | 266 | 266 |
+| POST | /en/user/login | 238 | 238 | 238 | 238 | 238 | 238 | 238 | 238 |
+| POST | /es/contact | 237 | 243 | 245 | 245 | 268 | 274 | 274 | 274 |
+| POST | /es/search/node | 216 | 218 | 237 | 251 | 272 | 287 | 287 | 287 |
+|  | Aggregated | 5.86 | 6.62 | 7.52 | 8.38 | 11 | 70 | 124 | 287 |
 ```
 
 ## Report Formats
 
 In addition to the metrics displayed on the CLI, Goose can generate detailed reports in multiple formats. Each format serves different use cases:
 
-- **HTML** - Interactive reports with charts and detailed visualizations
-- **JSON** - Machine-readable data for automated analysis and integration
-- **Markdown** - Text-based reports suitable for documentation and version control
-- **PDF** - Portable reports optimized for printing and sharing (requires `pdf-reports` feature)
+- **HTML**: Interactive reports with charts and detailed visualizations
+- **JSON**: Machine-readable data for automated analysis and integration
+- **Markdown**: Text-based reports suitable for documentation and version control
+- **PDF**: Portable reports optimized for printing and sharing (requires `pdf-reports` feature)
 
 You can generate multiple report formats simultaneously by using multiple `--report-file` arguments. The report type is determined by the file extension:
 
@@ -316,19 +246,21 @@ The following subsections describe each report format in detail.
 ### HTML report
 
 #### Overview
-The HTML report starts with a brief overview table, offering the same information found in the [ASCII overview](#ascii-metrics) above:
+The HTML report starts with a brief overview table of the test plan, the same table the Markdown report starts with, as [shown above](#ascii-metrics):
 ![Metrics overview](metrics-overview.jpg)
 
 **NOTE:** The HTML report includes some graphs that rely on the [eCharts JavaScript library](https://echarts.apache.org). The HTML report loads the library via CDN, which means that the graphs won't be loaded correctly if the CDN is not accessible.
 
 #### Requests
-Next the report includes a graph of all requests made during the duration of the load test. By default, the graph includes an aggregated average, as well as per-request details. It's possible to click on the request names at the top of the graph to hide/show specific requests on the graphs. In this case, the graph shows that most requests made by the load test were for static assets.
+Next the report includes a graph of the requests made each second during the load test. It has a line for all requests together and, by default, one for each request; `--no-granular-report` leaves out the lines for each request. It's possible to click on the request names at the top of the graph to hide/show specific requests on the graphs. In this case, the graph shows that most requests made by the load test were for static assets.
+
+The graphs that count something each second, the requests, errors, transactions and scenarios per second, leave out the run's final second when the run stopped partway through it, as a count there would hold only part of a second and the line would end in a drop. The response time and users graphs keep it.
 
 Below the graph is a table that shows per-request details, only partially included in this screenshot:
 ![Request metrics](metrics-requests.jpg)
 
 #### Response times
-The next graph shows the response times measured for each request made. Goose measures **Time to First Byte (TTFB)** — the time from when a request is sent until response headers are received, as measured by `reqwest::Client::execute()`. All "Response time" labels in Goose reports and console output refer to this measurement.
+The next graph shows the response times measured for each request made. Goose measures **Time to First Byte (TTFB)**: the time from when a request is sent until response headers are received, as measured by `reqwest::Client::execute()`. All "Response time" labels in Goose reports and console output refer to this measurement.
 
 **What TTFB includes:**
 
@@ -367,14 +299,15 @@ When a request returns multiple different HTTP status codes during a load test, 
 ```text
  Name                     |    Avg (ms) |        Min |         Max |     Median
  ------------------------------------------------------------------------------
- GET /                    |        4.69 |       2.57 |        8.88 |       4.38
-   └─ 200 (93.9%)         |        4.49 |       2.57 |        5.87 |          -
-   └─ 404 (6.1%)          |        7.73 |       7.02 |        8.88 |          -
+ GET /                    |        5.13 |       2.62 |        9.46 |        4.9
+   └─ 200 (98.2%)         |        5.05 |       2.62 |        7.93 |          -
+   └─ 404 (1.8%)          |        9.46 |       9.46 |        9.46 |          -
+ GET /about/              |        5.04 |       2.43 |        9.24 |        4.9
 ```
 
-This sample comes from the `simple` example run against a test server that answers some requests for `/` with a `404`. The `GET /` request returned both `200` and `404` responses, and the breakdown shows that 404 responses took longer on average (7.73 ms against 4.49 ms).
+This sample comes from the `simple` example run with `-u50 -r50 -t30s` against a local test server that answers some requests for `/` with a `404`. The `GET /` request returned both `200` and `404` responses, and the breakdown shows that the 404 response took longer (9.46 ms against an average of 5.05 ms). `GET /about/` returned only `200`, so it has no breakdown.
 
-Each breakdown row shows the status code, the percentage of total requests with that code, and the average, minimum, and maximum response times for that status code. The median column shows `-` because per-status-code breakdowns track aggregate statistics (count, total, min, max) rather than full response time distributions, so percentile calculations are not available at this level. Full percentile data remains available on the aggregate row.
+Each breakdown row shows the status code, the percentage of total requests with that code, and the average, minimum, and maximum response times for that status code. The median column shows `-` because per-status-code breakdowns track aggregate statistics (count, total, min, max) rather than full response time distributions, so percentile calculations are not available at this level. Full percentile data remains available on the aggregate row. A request that got no response at all, such as one that could not connect, counts under status code `0`. The breakdowns hold only measured times, never coordinated omission synthetic ones.
 
 Breakdowns only appear when a request returns two or more distinct status codes. If all requests for an endpoint return the same status code, no breakdown row is shown since it would be identical to the aggregate. This keeps the output clean for the common case while providing additional detail where it matters.
 
@@ -387,7 +320,7 @@ All status codes returned by the server are displayed in a table, per-request an
 #### Transactions
 The next graph summarizes all Transactions run during the load test. One or more requests are grouped logically inside Transactions. For example, the Transaction named `0.0 anon /` includes an anonymous (not-logged-in) request for the front page, as well as requests for all static assets found on the front page.
 
-Whereas a Request automatically fails based on the web server response code, the code that defines a Transaction must manually return an error for a Task to be considered failed. For example, the logic may be written to fail the Transaction of the html request fails, but not if one or more static asset requests fail.
+Whereas a Request automatically fails based on the web server response code, the code that defines a Transaction must manually return an error for a Transaction to be considered failed. For example, the logic may be written to fail the Transaction if the html request fails, but not if one or more static asset requests fail.
 
 This graph is also followed by a table showing details on all Transactions, partially shown here:
 ![Transaction metrics](metrics-transactions.jpg)
@@ -397,9 +330,9 @@ The next graph summarizes all Scenarios run during the load test. One or more Tr
 
 For example, the Scenario named `Anonymous English user` includes the above `anon /` Transaction, the `anon /en/basicpage`, and all the rest of the Transactions requesting pages in English.
 
-It is followed by a table, shown in entirety here because this load test only has 3 Scenarios. The `# Users` column indicates how many `GooseUser` threads were assigned to run this Scenario during the load test. The `# Times Run` column indicates how many times in aggregate all `GooseUser` threads ran completely through the Scenario. From there you can see how long on average it took a `GooseUser` thread to run through all Transactions and make all contained Requests to completely run the Scenario, as well as the minimum and maximum amount of time. Finally, `Iterations` is how many times each assigned `GooseUser` thread ran through the entire Scenario (Iterations times the # of Users will always equal the total # of times run).
+It is followed by a table, shown in entirety here because this load test only has 3 Scenarios. The `# Users` column indicates how many `GooseUser` threads were assigned to run this Scenario during the load test. The `# Times Run` column indicates how many times in aggregate all `GooseUser` threads ran completely through the Scenario. From there you can see how long on average it took a `GooseUser` thread to run through all Transactions and make all contained Requests to completely run the Scenario, as well as the minimum and maximum amount of time. Finally, `Iterations` is how many times each assigned `GooseUser` thread ran through the entire Scenario (for each Scenario, Iterations times the # of Users equals the total # of times run).
 
-As our example only ran for 60 seconds, and the `Admin user` Scenario took >30 seconds to run once, the load test only ran completely through this scenario one time, also reflected in the following table:
+As our example only ran for 60 seconds, and the `Admin user` Scenario takes about 30 seconds to run once, its one user only ran completely through it once or twice; in the run above it ran twice. The following table shows the same columns:
 ![Scenario metrics](metrics-scenarios.jpg)
 
 #### Users
@@ -408,11 +341,11 @@ The final graph shows how many users were running at the various stages of the l
 
 ### Markdown report
 
-The Markdown report follows the structure of the [HTML report](#html-report). However, it does not include the chart elements.
+The Markdown report follows the structure of the [HTML report](#html-report). However, it does not include the chart elements or the heatmap, and with coordinated omission mitigation it has the event summary but not the adjusted tables.
 
 ### JSON report
 
-The JSON report is a dump of the internal metrics collection. It is a JSON serialization of the `ReportData` structure. Mainly having a field named `raw_metrics`, carrying the content of [`GooseMetrics`](https://docs.rs/goose/latest/goose/metrics/struct.GooseMetrics.html).
+The JSON report is a dump of the internal metrics collection. Its `raw_metrics` field carries the content of [`GooseMetrics`](https://docs.rs/goose/latest/goose/metrics/struct.GooseMetrics.html). Beside it are `goose_version`, `test`, `started`, `ended`, `ended_by` and `in_progress`, which describe the run, the tables the other reports show (`raw_request_metrics`, `raw_response_metrics`, `co_request_metrics`, `co_response_metrics`, `scenario_metrics`, `transaction_metrics`, `status_code_metrics` and `errors`), and `coordinated_omission_metrics`, the [coordinated omission](../coordinated-omission/metrics.md) event summary. A JSON report can be loaded as a baseline with `--baseline-file`, or turned into the other reports with `--render-report`; see [Output files](output-files.md).
 
 ### PDF Reports
 
@@ -533,28 +466,38 @@ If you encounter issues generating PDF reports:
 
 ### Measuring Complete Download Time
 
-If your load test needs to measure total download time including the response body, you can implement custom timing:
+If your load test needs to measure total download time including the response body, read the body yourself and record the time it took with `record_custom_request_duration`, which shows it as a request of its own in every table and report:
 
 ```rust
 use goose::prelude::*;
 use std::time::Instant;
 
 async fn measure_full_download(user: &mut GooseUser) -> TransactionResult {
-    let start = Instant::now();
-    let response = user.get("/large-file").await?;
+    let started = Instant::now();
+    let goose = user.get("/large-file").await?;
 
-    // Read the entire response body to measure complete download
-    let _body = response.response?.text().await?;
-    let total_time = start.elapsed();
+    // Read the entire response body.
+    let success = match goose.response {
+        Ok(response) => response.bytes().await.is_ok(),
+        Err(_) => false,
+    };
 
-    // Log the complete download time for analysis
-    println!("Full download time: {}ms", total_time.as_millis());
+    // Record the time to the last byte as a request of its own.
+    user.record_custom_request_duration(
+        "DOWNLOAD",
+        "/large-file",
+        started.elapsed(),
+        success,
+        None,
+        None,
+    )
+    .await?;
 
     Ok(())
 }
 ```
 
-Goose doesn't currently have built-in support for custom metrics aggregation, so you would need to collect and analyze these measurements externally (e.g., through log parsing or an external metrics system).
+The `GET /large-file` row then holds the time to the first byte, and the `DOWNLOAD /large-file` row the time to the last.
 
 **Note:** Reading complete response bodies will consume more memory and may reduce the load generation capacity of your test.
 
