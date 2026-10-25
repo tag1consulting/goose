@@ -53,7 +53,7 @@ Mitigation is disabled by default. Enable it by naming the cadence to backfill a
 cargo run --release -- --co-mitigation average
 ```
 
-`--co-mitigation` takes `average`, `maximum`, `minimum` or `disabled`, ignoring case. In code, set it with `GooseDefault::CoordinatedOmissionMitigation` and a `GooseCoordinatedOmissionMitigation` value. It is not allowed with `--no-metrics`. Mitigation has no other options.
+`--co-mitigation` takes `average`, `maximum`, `minimum` or `disabled`, ignoring case. In code, set it with `GooseDefault::CoordinatedOmissionMitigation` and a `GooseCoordinatedOmissionMitigation` value. Any value but `disabled` is refused with `--no-metrics`. Mitigation has no other options.
 
 When enabled, this mode:
 - Tracks how long each user takes to run through all of its transactions
