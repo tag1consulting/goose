@@ -104,6 +104,7 @@ With `--output-dir goose-runs/nightly`, the panel lists the folders in `goose-ru
 **13. Save report now, Delete, and changing either switch need `--dashboard-control` and the control token, like Start and Stop.** Without control the switches are shown read only, so Save report stays on and every `--dashboard` run writes `report.json` and `report.html` into its folder, except under `--no-metrics`. Goose then also keeps the run's graph data for the whole run (rule 10).
 
 ```bash
+TOKEN=$(openssl rand -hex 16)
 cargo run --features dashboard --example simple -- --host http://localhost:8080 \
   --dashboard --dashboard-control --dashboard-auth-token "$TOKEN"
 ```
@@ -143,7 +144,7 @@ cargo run --release --example simple -- --host http://localhost:8080 -t 5m \
   --output-dir goose-runs/nightly --report-file
 ```
 
-Later, start the dashboard from the same working directory. With `--no-autostart` it waits for Start instead of running a new load test, and its runs panel lists `nightly`:
+Later, start the dashboard from the same working directory. With `--no-autostart` it does not run a new load test until a [Controller](../controller/overview.md) starts one, as the dashboard has no Start button without `--dashboard-control`, and its runs panel lists `nightly`:
 
 ```bash
 cargo run --release --features dashboard --example simple -- --host http://localhost:8080 --dashboard --no-autostart

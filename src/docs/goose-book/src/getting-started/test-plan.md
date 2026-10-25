@@ -54,9 +54,11 @@ $ cargo run --release -- -H http://local.dev/ --test-plan "500,5m;500,5m;2500,45
 
 ![Load spike test plan](test-plan-load-spike.png)
 
+In this run the first step took 8 minutes 20 seconds rather than 5 minutes: 500 users in 5 minutes is one user every 600 milliseconds, which Goose rounds up to one a second (see [Specifying the increase rate](./common.html#specifying-the-increase-rate)).
+
 ## Internals
 
-Internally, Goose converts the test plan into a vector of usize tuples, `Vec<(usize, usize)>`, where the first integer reflects the number of users to be running and the second integer reflects the time in milliseconds. You can see the internal representation when you start a load test, for example:
+Internally, Goose converts the test plan into a vector of usize tuples, `Vec<(usize, usize)>`, where the first integer reflects the number of users to be running and the second integer reflects the time in milliseconds. You can see the internal representation when you start a load test, for example as follows. With `--no-autostart` the load test waits to be started, so press `ctrl-c` once the line is printed:
 
 ```bash
 % cargo run --release --example simple -- --no-autostart --test-plan "100,30s;100,1h" | grep test_plan

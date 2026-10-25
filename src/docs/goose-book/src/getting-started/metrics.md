@@ -236,6 +236,7 @@ You can generate multiple report formats simultaneously by using multiple `--rep
 ```bash
 # Generate multiple report formats at once
 cargo run --example simple -- \
+  --host http://localhost:8080 \
   --report-file report.html \
   --report-file metrics.json \
   --report-file summary.md
@@ -244,6 +245,8 @@ cargo run --example simple -- \
 The following subsections describe each report format in detail.
 
 ### HTML report
+
+The screenshots in this section come from another run of the Umami example, with `-u9 -r3 -t2m`, against a local test server that answered a few requests with errors.
 
 #### Overview
 The HTML report starts with a brief overview table of the test plan, the same table the Markdown report starts with, as [shown above](#ascii-metrics):
@@ -281,11 +284,11 @@ The next graph shows the response times measured for each request made. Goose me
 - **Resource efficiency**: Not downloading complete responses allows Goose to generate more load with fewer resources
 - **Real-world relevance**: Many applications stream responses or use chunked encoding where TTFB is the critical performance metric
 
-Goose measures request, transaction and scenario times to the microsecond. The console, HTML, Markdown and PDF reports and the dashboard show times under 10 ms to the hundredth of a millisecond and times from 10 ms in whole milliseconds, rounded half up, so a 0.418 ms response reads `0.42` where whole milliseconds showed `0`. Averages follow the same rule, and a baseline delta is the difference of the two values shown. Percentiles come from buckets that are never more than 1% off the times they hold, so 2.2 ms and 2.5 ms, or 1.4 s and 1.6 s, are told apart. The fastest and slowest times are kept exactly. The JSON report's minimums, maximums and percentiles keep whole milliseconds, truncated, so a 37.999 ms time shown as `38` is `37` there. Its averages are means of the microseconds. Its raw timing data holds each bucket once, in `times_us`, with `minimum_time_us`, `maximum_time_us` and `total_time_us`. A JSON report from Goose 0.18.1 or later loads as a baseline.
+Goose measures request, transaction and scenario times to the microsecond. The console, HTML, Markdown and PDF reports and the dashboard show times under 10 ms to the hundredth of a millisecond and times from 10 ms in whole milliseconds, rounded half up, so a 0.418 ms response reads `0.42` where whole milliseconds showed `0`. Averages follow the same rule, and a baseline delta is the difference of the two values shown. Percentiles come from buckets that are never more than 1% off the times they hold, so 2.2 ms and 2.5 ms, or 1.4 s and 1.6 s, are told apart. The fastest and slowest times are kept exactly. The JSON report's minimums, maximums and percentiles keep whole milliseconds, truncated, so a 37.999 ms time shown as `38` is `37` there. Its averages are means of the microseconds. Its raw timing data holds each bucket once, in `times_us`, with `minimum_time_us`, `maximum_time_us` and `total_time_us`. A JSON report from Goose 0.18.1 or later loads as a baseline, except one from a run that received more than one status code; see [Comparing against a baseline](common.md#comparing-against-a-baseline).
 
 If your load test needs to measure total download time including the response body, see [Measuring Complete Download Time](#measuring-complete-download-time) below.
 
-In the following graph, it's apparent that POST requests had the slowest responses, which is logical as they are not cached. As before, it's possible to click on the request names at the top of the graph to hide/show details about specific requests.
+In the following graph, several of the slowest responses are POST requests, such as `POST /en/search/node`. As before, it's possible to click on the request names at the top of the graph to hide/show details about specific requests.
 
 Below the graph is a response time heatmap for the whole run, drawn as the [live dashboard](../controller/dashboard.md#the-response-time-heatmap) draws its own. Each column holds the requests that started in it. Each row is a range of response times, the same rows the dashboard draws, on a logarithmic axis. A cell's color shows how many requests took that long, on a logarithmic scale, and the legend shows the sparsest and busiest counts. Three lines show each column's p50, p95 and p99. A column starts as one second wide. The heatmap keeps at most 600 columns for all requests and 60 for each of the first 100 request names; when a series fills them, adjacent pairs merge and the columns double in width, so the chart states how wide each column is ("Each column is 8 seconds") and its memory stops growing however long the test runs. A column's percentiles are worked out from all of its requests, never averaged. A select chooses all requests or one request name, and when coordinated omission mitigation recorded synthetic times, **Adjusted** and **Measured** buttons choose whether they are counted. The heatmap is in the HTML report written at the end of a run, to a `--report-file` path or by Save report, and in one rendered from a JSON report written with `--report-graph-data`; `--no-percentiles-over-time` turns it off. The Markdown report has no heatmap, and the JSON report holds it only with `--report-graph-data`.
 
@@ -314,7 +317,7 @@ Breakdowns only appear when a request returns two or more distinct status codes.
 This feature is available in CLI output, HTML reports, and Markdown reports.
 
 #### Status codes
-All status codes returned by the server are displayed in a table, per-request and in aggregate. In our simple test, we received only `200 OK` responses.
+All status codes returned by the server are displayed in a table, per-request and in aggregate. In this run most responses were `200 OK`, but the test server answered a few requests with `500 Internal Server Error`, such as one of the 19 requests for `/en/about-umami`.
 ![Status code metrics](metrics-status-codes.jpg)
 
 #### Transactions
@@ -332,11 +335,11 @@ For example, the Scenario named `Anonymous English user` includes the above `ano
 
 It is followed by a table, shown in entirety here because this load test only has 3 Scenarios. The `# Users` column indicates how many `GooseUser` threads were assigned to run this Scenario during the load test. The `# Times Run` column indicates how many times in aggregate all `GooseUser` threads ran completely through the Scenario. From there you can see how long on average it took a `GooseUser` thread to run through all Transactions and make all contained Requests to completely run the Scenario, as well as the minimum and maximum amount of time. Finally, `Iterations` is how many times each assigned `GooseUser` thread ran through the entire Scenario (for each Scenario, Iterations times the # of Users equals the total # of times run).
 
-As our example only ran for 60 seconds, and the `Admin user` Scenario takes about 30 seconds to run once, its one user only ran completely through it once or twice; in the run above it ran twice. The following table shows the same columns:
+As this run lasted two minutes, and the `Admin user` Scenario takes 30 to 40 seconds to run once, its one user ran completely through it 3 times, while the 4 users of each anonymous Scenario ran through theirs 18 times in all:
 ![Scenario metrics](metrics-scenarios.jpg)
 
 #### Users
-The final graph shows how many users were running at the various stages of the load test. As configured, Goose quickly ramped up to 9 users, then sustained that level of traffic for a minute before shutting down:
+The final graph shows how many users were running at the various stages of the load test. As configured, Goose quickly ramped up to 9 users, then sustained that level of traffic for two minutes before shutting down:
 ![User metrics](metrics-users.jpg)
 
 ### Markdown report
@@ -345,7 +348,9 @@ The Markdown report follows the structure of the [HTML report](#html-report). Ho
 
 ### JSON report
 
-The JSON report is a dump of the internal metrics collection. Its `raw_metrics` field carries the content of [`GooseMetrics`](https://docs.rs/goose/latest/goose/metrics/struct.GooseMetrics.html). Beside it are `goose_version`, `test`, `started`, `ended`, `ended_by` and `in_progress`, which describe the run, the tables the other reports show (`raw_request_metrics`, `raw_response_metrics`, `co_request_metrics`, `co_response_metrics`, `scenario_metrics`, `transaction_metrics`, `status_code_metrics` and `errors`), and `coordinated_omission_metrics`, the [coordinated omission](../coordinated-omission/metrics.md) event summary. A JSON report can be loaded as a baseline with `--baseline-file`, or turned into the other reports with `--render-report`; see [Output files](output-files.md).
+The JSON report is a dump of the internal metrics collection. Its `raw_metrics` field carries the content of [`GooseMetrics`](https://docs.rs/goose/latest/goose/metrics/struct.GooseMetrics.html), including `history`, the test plan steps the run went through, and `thresholds`, the result of each `--threshold` rule (left out when there are none). Beside it are `goose_version`, `test`, `started`, `ended`, `ended_by` and `in_progress`, which describe the run, `notes` when the run had `--notes`, `canceled_reason`, why a canceled run was canceled, `graphs_start` when the graphs do not cover the whole run, the tables the other reports show (`raw_request_metrics`, `raw_response_metrics`, `co_request_metrics`, `co_response_metrics`, `scenario_metrics`, `transaction_metrics`, `status_code_metrics` and `errors`), and `coordinated_omission_metrics`, the [coordinated omission](../coordinated-omission/metrics.md) event summary. A JSON report can be loaded as a baseline with `--baseline-file`, or turned into the other reports with `--render-report`; see [Output files](output-files.md). With `--report-graph-data` it also has a `graphs` key holding the per second data the HTML report graphs and its heatmap.
+
+Each request in `raw_metrics.requests` keeps its timing data in `raw_data`, and, with coordinated omission mitigation, in `coordinated_omission_data` (`null` without it). Each holds `counter`, the number of times recorded; `minimum_time`, `maximum_time` and `total_time` in whole milliseconds; and the same three in microseconds, `minimum_time_us`, `maximum_time_us` and `total_time_us`, with `times_us`, which maps each bucket's time in microseconds to how many times fell in it. Each transaction and scenario holds `counter`, `min_time`, `max_time` and `total_time` in whole milliseconds and `times_us`, `min_time_us`, `max_time_us` and `total_time_us` in microseconds. In the tables beside `raw_metrics`, minimums, maximums and percentiles are whole milliseconds, truncated, and averages are means of the microseconds.
 
 ### PDF Reports
 
@@ -360,7 +365,7 @@ For users who want control over PDF generation or prefer to avoid additional dep
 
 ```bash
 # Generate printer-friendly HTML
-cargo run --example simple -- --pdf-print-html print-ready.html
+cargo run --example simple -- --host http://localhost:8080 --pdf-print-html print-ready.html
 
 # Then convert to PDF using your preferred tool:
 # - Browser: Open print-ready.html and use "Print to PDF"
@@ -383,9 +388,11 @@ This approach is always available and doesn't require any additional feature fla
 For automated PDF generation, Goose can create PDF reports directly using headless Chrome. This requires compilation with the `pdf-reports` feature flag:
 
 ```bash
-# Build Goose with PDF support
-cargo build --features pdf-reports
+# In your load test crate, build Goose with PDF support
+cargo build --release --features goose/pdf-reports
 ```
+
+In a load test crate the feature is `goose/pdf-reports`, or `features = ["pdf-reports"]` on the `goose` dependency in `Cargo.toml`. The commands below run the `simple` example in the Goose repository, where the feature is `pdf-reports`.
 
 #### System Requirements
 
@@ -414,7 +421,7 @@ Goose built for musl, such as on Alpine, never downloads Chrome, because Chrome 
 To use a particular browser, or to stop Goose from downloading one, set `CHROME`:
 
 ```bash
-CHROME=/opt/chromium/chrome cargo run --features pdf-reports --example simple -- --report-file report.pdf
+CHROME=/opt/chromium/chrome cargo run --features pdf-reports --example simple -- --host http://localhost:8080 --report-file report.pdf
 ```
 
 #### Generating PDF Reports
@@ -423,13 +430,13 @@ Once compiled with PDF support, generate PDF reports using the `--report-file` o
 
 ```bash
 # Generate only a PDF report
-cargo run --features pdf-reports --example simple -- --report-file report.pdf
+cargo run --features pdf-reports --example simple -- --host http://localhost:8080 --report-file report.pdf
 
 # Generate both HTML and PDF reports
-cargo run --features pdf-reports --example simple -- --report-file report.html --report-file report.pdf
+cargo run --features pdf-reports --example simple -- --host http://localhost:8080 --report-file report.html --report-file report.pdf
 
 # Generate PDF with custom scaling and timeout
-cargo run --features pdf-reports --example simple -- --report-file report.pdf --pdf-scale 1.2 --pdf-timeout 120
+cargo run --features pdf-reports --example simple -- --host http://localhost:8080 --report-file report.pdf --pdf-scale 1.2 --pdf-timeout 120
 ```
 
 #### Configuration Options
@@ -456,7 +463,7 @@ If you encounter issues generating PDF reports:
 - When Chrome won't start, the error names the binary and how Goose found it. On Linux it also says when the binary's ELF interpreter is missing (usually a glibc binary on a musl system) and lists the shared libraries `ldd` can't find; otherwise it shows what the binary printed when run with `--version`
 - Without `unzip`, install it (`apt install unzip`, `dnf install unzip`, `apk add unzip` or `brew install unzip`) or set `CHROME`
 - If a PDF report fails at the end of a run, the other reports are still written, and the empty PDF file is removed
-- Try verbose logging: `cargo run --features pdf-reports -- --report-file report.pdf -v`
+- Try verbose logging: `cargo run --features pdf-reports --example simple -- --host http://localhost:8080 --report-file report.pdf -v`
 
 **PDF generation failures:**
 - Confirm write permissions in the output directory
@@ -466,7 +473,7 @@ If you encounter issues generating PDF reports:
 
 ### Measuring Complete Download Time
 
-If your load test needs to measure total download time including the response body, read the body yourself and record the time it took with `record_custom_request_duration`, which shows it as a request of its own in every table and report:
+If your load test needs to measure total download time including the response body, read the body yourself and record the time it took with `record_custom_request_duration`, which records it as a request of its own:
 
 ```rust
 use goose::prelude::*;
@@ -497,7 +504,7 @@ async fn measure_full_download(user: &mut GooseUser) -> TransactionResult {
 }
 ```
 
-The `GET /large-file` row then holds the time to the first byte, and the `DOWNLOAD /large-file` row the time to the last.
+The `GET /large-file` row then holds the time to the first byte, and the `DOWNLOAD /large-file` row the time to the last. In this release the `# reqs`, `# fails`, `req/s` and `fail/s` columns read 0 for a custom request, and the Aggregated row does not count it, while its response times are recorded; with no status code given, the status code table shows it under `[0]`, as in the [TCP example](../example/tcp.md).
 
 **Note:** Reading complete response bodies will consume more memory and may reduce the load generation capacity of your test.
 

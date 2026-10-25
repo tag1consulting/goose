@@ -108,7 +108,7 @@ load test shut down
 goose> Connection closed by foreign host.
 ```
 
-Initially the load test is configured with an increase rate of 50, so goose increases and decreases the user count by 50 user threads per second. Later we reconfigure the increase rate to 5, slowing down the rate that goose alters the number of user threads. The result is more clearly illustrated in the following graph generated at the end of the above example load test:
+Initially the load test is configured with an increase rate of 50, so goose increases and decreases the user count by 50 user threads per second: with no decrease rate set, Goose lowers the user count at the increase rate. Later we reconfigure the increase rate to 5, slowing down the rate that goose alters the number of user threads. The result is more clearly illustrated in the following graph generated at the end of the above example load test:
 
 ![Controller dynamic users and increase rate](controller-users.png)
 
@@ -119,26 +119,26 @@ The above commands are also summarized in the plan overview of the Markdown repo
 
 | Action | Started | Stopped | Elapsed | Users |
 | ------ | ------- | ------- | ------- | ----: |
-| Increasing | 26-10-25 22:04:47 | 26-10-25 22:04:47 | 00:00:00 | 0 &rarr; 18 |
-| Maintaining | 26-10-25 22:04:47 | 26-10-25 22:04:52 | 00:00:05 | 18 |
-| Increasing | 26-10-25 22:04:52 | 26-10-25 22:04:52 | 00:00:00 | 18 &rarr; 20 |
-| Maintaining | 26-10-25 22:04:52 | 26-10-25 22:04:57 | 00:00:05 | 20 |
-| Increasing | 26-10-25 22:04:57 | 26-10-25 22:04:57 | 00:00:00 | 20 &rarr; 40 |
-| Maintaining | 26-10-25 22:04:57 | 26-10-25 22:05:02 | 00:00:05 | 40 |
-| Increasing | 26-10-25 22:05:02 | 26-10-25 22:05:03 | 00:00:01 | 40 &rarr; 80 |
-| Maintaining | 26-10-25 22:05:03 | 26-10-25 22:05:07 | 00:00:04 | 80 |
-| Decreasing | 26-10-25 22:05:07 | 26-10-25 22:05:08 | 00:00:01 | 40 &larr; 80 |
-| Maintaining | 26-10-25 22:05:08 | 26-10-25 22:05:12 | 00:00:04 | 40 |
-| Decreasing | 26-10-25 22:05:12 | 26-10-25 22:05:12 | 00:00:00 | 20 &larr; 40 |
-| Maintaining | 26-10-25 22:05:12 | 26-10-25 22:05:17 | 00:00:05 | 20 |
-| Increasing | 26-10-25 22:05:17 | 26-10-25 22:05:20 | 00:00:03 | 20 &rarr; 160 |
-| Maintaining | 26-10-25 22:05:20 | 26-10-25 22:05:22 | 00:00:02 | 160 |
-| Decreasing | 26-10-25 22:05:22 | 26-10-25 22:05:25 | 00:00:03 | 20 &larr; 160 |
-| Maintaining | 26-10-25 22:05:25 | 26-10-25 22:05:32 | 00:00:07 | 20 |
-| Increasing | 26-10-25 22:05:32 | 26-10-25 22:05:37 | 00:00:05 | 20 &rarr; 45 |
-| Decreasing | 26-10-25 22:05:37 | 26-10-25 22:05:42 | 00:00:05 | 20 &larr; 45 |
-| Maintaining | 26-10-25 22:05:42 | 26-10-25 22:05:42 | 00:00:00 | 20 |
-| Canceling | 26-10-25 22:05:42 | 26-10-25 22:05:42 | 00:00:00 | 0 &larr; 20 |
+| Increasing | 26-10-25 22:12:31 | 26-10-25 22:12:31 | 00:00:00 | 0 &rarr; 18 |
+| Maintaining | 26-10-25 22:12:31 | 26-10-25 22:12:43 | 00:00:12 | 18 |
+| Increasing | 26-10-25 22:12:43 | 26-10-25 22:12:43 | 00:00:00 | 18 &rarr; 20 |
+| Maintaining | 26-10-25 22:12:43 | 26-10-25 22:12:55 | 00:00:12 | 20 |
+| Increasing | 26-10-25 22:12:55 | 26-10-25 22:12:56 | 00:00:01 | 20 &rarr; 40 |
+| Maintaining | 26-10-25 22:12:56 | 26-10-25 22:13:07 | 00:00:11 | 40 |
+| Increasing | 26-10-25 22:13:07 | 26-10-25 22:13:08 | 00:00:01 | 40 &rarr; 80 |
+| Maintaining | 26-10-25 22:13:08 | 26-10-25 22:13:22 | 00:00:14 | 80 |
+| Decreasing | 26-10-25 22:13:22 | 26-10-25 22:13:23 | 00:00:01 | 40 &larr; 80 |
+| Maintaining | 26-10-25 22:13:23 | 26-10-25 22:13:34 | 00:00:11 | 40 |
+| Decreasing | 26-10-25 22:13:34 | 26-10-25 22:13:34 | 00:00:00 | 20 &larr; 40 |
+| Maintaining | 26-10-25 22:13:34 | 26-10-25 22:13:46 | 00:00:12 | 20 |
+| Increasing | 26-10-25 22:13:46 | 26-10-25 22:13:49 | 00:00:03 | 20 &rarr; 160 |
+| Maintaining | 26-10-25 22:13:49 | 26-10-25 22:14:01 | 00:00:12 | 160 |
+| Decreasing | 26-10-25 22:14:01 | 26-10-25 22:14:04 | 00:00:03 | 20 &larr; 160 |
+| Maintaining | 26-10-25 22:14:04 | 26-10-25 22:14:17 | 00:00:13 | 20 |
+| Increasing | 26-10-25 22:14:17 | 26-10-25 22:14:22 | 00:00:05 | 20 &rarr; 43 |
+| Decreasing | 26-10-25 22:14:22 | 26-10-25 22:14:27 | 00:00:05 | 20 &larr; 43 |
+| Maintaining | 26-10-25 22:14:27 | 26-10-25 22:14:47 | 00:00:20 | 20 |
+| Canceling | 26-10-25 22:14:47 | 26-10-25 22:14:48 | 00:00:01 | 0 &larr; 20 |
 ```
 
-The run starts with the default users, one per CPU core (18 here). At 5 users a second, the `users 80` that follows `increase_rate 5` had reached 45 users when `users 20` arrived 5 seconds later, so Goose turned back from 45.
+The run starts with the default users, one per CPU core (18 here). At 5 users a second, the `users 80` that follows `increase_rate 5` had reached 43 users when `users 20` arrived about 5 seconds later, so Goose turned back from 43.

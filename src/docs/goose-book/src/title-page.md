@@ -22,7 +22,7 @@ Goose writes an [HTML report](./getting-started/common.html#writing-an-html-form
 
 ## Brought To You By
 
-Goose development is sponsored by [Tag1 Consulting](https://tag1.com/), led by Tag1's CEO, [Jeremy Andrews](https://foundation.rust-lang.org/posts/2021-10-26-member-spotlight-tag1/), along with many [community contributions](https://github.com/tag1consulting/goose/graphs/contributors). Tag1 is a [member of the Rust Foundation](https://www.tag1consulting.com/blog/tag1-joins-rust-foundation-first-silver-member).
+Goose development is sponsored by [Tag1 Consulting](https://tag1.com/), led by Tag1's CEO, [Jeremy Andrews](https://github.com/jeremyandrews), along with many [community contributions](https://github.com/tag1consulting/goose/graphs/contributors). Tag1 is a [member of the Rust Foundation](https://www.tag1consulting.com/blog/tag1-joins-rust-foundation-first-silver-member).
 
 ## Additional Documentation
 

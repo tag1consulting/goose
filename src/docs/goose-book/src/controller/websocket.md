@@ -23,7 +23,7 @@ Responses will always be in the following format:
 {"response":String,"success":Boolean}
 ```
 
-For example:
+For example, from a load test built with the `pdf-reports` feature, so its configuration includes `pdf_scale` and `pdf_timeout`, which a build without that feature leaves out:
 ```bash
 % websocat ws://127.0.0.1:5117
 foo

@@ -94,7 +94,9 @@ The following defaults can be configured with a `GooseLogFormat`:
 The following defaults can be configured with a `GooseCoordinatedOmissionMitigation`:
  - default Coordinated Omission Mitigation strategy: `GooseDefault::CoordinatedOmissionMitigation`
 
-Setting a default with a value of the wrong type returns an error that names the type the default expects.
+Setting a default with a value of the wrong type returns an error that names the type the default expects. One exception: `GooseDefault::RunningMetrics` given a `&str` reports `expected bool value`, though it takes a `usize`.
+
+An option given on the command line takes the place of the default. A value of `0` undoes a default too: `--run-time 0`, `--increase-time 0`, `--decrease-time 0`, `--iterations 0` and `--throttle-requests 0` undo `GooseDefault::RunTime`, `IncreaseTime`, `DecreaseTime`, `Iterations` and `ThrottleRequests`, so the load test can, for example, run `--iterations` where the default set a run time. An empty file name turns off a log a default set: `--request-log ""` turns off the request log `GooseDefault::RequestLog` names, and the same goes for `--goose-log`, `--transaction-log`, `--scenario-log`, `--error-log` and `--debug-log`.
 
 For example, without any run-time options the following load test would automatically run against `http://local.dev/`, logging requests to `goose-requests.log` and debug to `goose-debug.log`. It will automatically launch 20 users at 4 users per second, so in 5 seconds, and run the load test for 15 minutes. Metrics will be displayed every minute during the test, and the status code table will be disabled. The order the defaults are set is not important.
 

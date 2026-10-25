@@ -55,7 +55,7 @@ As of Goose 0.16.0, by default all `INFO` and higher level log messages are disp
 
 ## HTML report
 
-When the load test finishes shutting down, it will display some [ASCII metrics](metrics.html#ascii-metrics) on the CLI and an HTML report will be created in the local directory named `report.html` as was configured above. The graphs and tables found in the HTML report are what are demonstrated below.
+When the load test finishes shutting down, it will display some [ASCII metrics](metrics.html#ascii-metrics) on the CLI and an HTML report will be created in the local directory named `report.html` as was configured above. The graphs and tables found in the HTML report are what are demonstrated below. The screenshots come from a longer run of the same load test, stopped with `ctrl-c` after about two and a half minutes.
 
 ![HTML report header section](report-header.png)
 
@@ -105,7 +105,7 @@ In real load tests, you'll most likely have multiple scenarios each with multipl
 
 ![HTML report user metrics section](report-users.png)
 
-Finally comes a chart showing how many users were running during the load test. You can see the users starting 1 per second at the start of the load test, as well as the final second when users quickly stopped.
+Finally comes a chart showing how many users were running during the load test. You can see the users starting 1 per second at the start of the load test. The run was stopped with `ctrl-c`, and the line stays at 18 users to its last point.
 
 Some sections appear only when they have something to show: thresholds, when `--threshold` is set; request and response time metrics adjusted for coordinated omission, and coordinated omission events, when mitigation recorded any; and errors, when any request failed.
 

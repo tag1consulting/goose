@@ -65,13 +65,7 @@ Custom errors are tracked in Goose metrics and visible in error logs, making it 
 ## Goose Eggs
 [Goose-eggs](https://github.com/tag1consulting/goose-eggs) are helpful in writing Goose load tests.
 
-To leverage Goose Eggs when writing your load test, include the crate in the dependency section of your `Cargo.toml`. Each goose-eggs release is built for one Goose release and works only with it: goose-eggs 0.6 depends on Goose 0.18, so with Goose 0.19 use the goose-eggs release that depends on Goose 0.19, as [crates.io](https://crates.io/crates/goose-eggs) lists.
-
-```toml
-[dependencies]
-goose = "^0.19"
-goose-eggs = "<the release that depends on Goose 0.19>"
-```
+To use Goose Eggs in your load test, add the crate to the dependency section of your `Cargo.toml`. Each goose-eggs release works with one Goose release: goose-eggs 0.6, the latest, is for Goose 0.18. Use goose-eggs with Goose 0.19 once a release built for it is on [crates.io](https://crates.io/crates/goose-eggs).
 
 For example, to use the Goose Eggs validation functions, bring the `Validate` structure and either the `validate_page` or the `validate_and_load_static_assets` function into scope:
 ```rust,ignore

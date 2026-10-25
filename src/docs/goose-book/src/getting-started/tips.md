@@ -25,7 +25,7 @@ The message does not say why the request failed. The error summary in the report
 | GET |  | 10 | error sending request : operation timed out |
 ```
 
-To change how long before requests time out, use `--timeout VALUE` when starting a load test, for example `--timeout 30` will time out requests that take longer than 30 seconds to return. A decimal is allowed, such as `--timeout 0.5` for half a second, down to `0.001`, one millisecond. To configure the timeout programmatically, use [`.set_default()`](https://docs.rs/goose/*/goose/config/trait.GooseDefaultType.html#tymethod.set_default) to set [GooseDefault::Timeout](https://docs.rs/goose/*/goose/config/enum.GooseDefault.html#variant.Timeout).
+To change how long before requests time out, use `--timeout VALUE` when starting a load test, for example `--timeout 30` will time out requests that take longer than 30 seconds to return. A decimal is allowed, such as `--timeout 0.5` for half a second. Goose rounds the timeout to the nearest millisecond and refuses it only when that is 0, so `0.0005` runs as 1 ms and any smaller value is refused. To configure the timeout programmatically, use [`.set_default()`](https://docs.rs/goose/*/goose/config/trait.GooseDefaultType.html#tymethod.set_default) to set [GooseDefault::Timeout](https://docs.rs/goose/*/goose/config/enum.GooseDefault.html#variant.Timeout).
 
 To completely disable timeouts, you must build a custom Reqwest Client with [`GooseUser::set_client_builder`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.set_client_builder). Alternatively, you can just set a very high timeout, for example `--timeout 86400` will let a request take up to 24 hours.
 
