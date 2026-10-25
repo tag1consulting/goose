@@ -3,6 +3,7 @@
 use httpmock::{Method::GET, Mock, MockServer};
 use serial_test::serial;
 use std::path::PathBuf;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 mod common;
@@ -36,6 +37,15 @@ pub async fn get_fail(user: &mut GooseUser) -> TransactionResult {
 
 pub async fn get_slow(user: &mut GooseUser) -> TransactionResult {
     let _goose = user.get(SLOW_PATH).await?;
+    Ok(())
+}
+
+// When each request of `get_slow_timed` finished.
+static FINISHED: Mutex<Vec<chrono::DateTime<chrono::Utc>>> = Mutex::new(Vec::new());
+
+pub async fn get_slow_timed(user: &mut GooseUser) -> TransactionResult {
+    let _goose = user.get(SLOW_PATH).await?;
+    FINISHED.lock().unwrap().push(chrono::Utc::now());
     Ok(())
 }
 
@@ -609,6 +619,172 @@ async fn rps_counts_from_maintain() {
         .sum();
     let whole_run = requests as f64 / metrics.duration as f64;
     assert!(whole_run < 25.0, "{}", whole_run);
+}
+
+/// The requests made, successful or failed.
+fn requests_made(metrics: &GooseMetrics) -> usize {
+    metrics
+        .requests
+        .values()
+        .map(|request| request.success_count + request.fail_count)
+        .sum()
+}
+
+#[tokio::test]
+#[serial]
+/// Under --no-threshold-abort an rps rule still counts only the hold, as with
+/// abort on: its row matches the same run's with abort on, and sits well above
+/// the whole run's rate, which a ramp up kept without a metrics reset drags down.
+async fn no_threshold_abort_rps_counts_only_the_hold() {
+    let mut rates = Vec::new();
+    for mode in [&[][..], &["--no-threshold-abort"][..]] {
+        let server = MockServer::start();
+        let _mocks = setup_mock_server_endpoints(&server);
+
+        // Each user makes at most about 3.3 requests a second to the 300 ms
+        // endpoint. A ramp up of 5 seconds to 10 users, 2 a second, is about 25
+        // user seconds; a hold of 5 seconds is 50 more. The hold makes about 33
+        // requests a second, the whole run about 75 * 3.3 / 10, or 25.
+        let mut args = vec![
+            "--users",
+            "10",
+            "--increase-rate",
+            "2",
+            "--run-time",
+            "5",
+            "--no-reset-metrics",
+            "--threshold",
+            "rps>=1",
+        ];
+        args.extend_from_slice(mode);
+        let goose_attack = load_test(&server, args, vec![transaction!(get_slow)]);
+        let (_, result) = run(goose_attack).await;
+        let metrics = result.expect("the hold makes the rate");
+
+        let rule = &metrics.thresholds[0];
+        assert!(rule.passed, "{:?}: {:?}", mode, rule);
+        assert!(
+            rule.observed.ends_with(" from Maintain"),
+            "{:?}: {:?}",
+            mode,
+            rule
+        );
+        let held = rule.value.expect("the hold has a rate");
+        let whole_run = requests_made(&metrics) as f64 / metrics.duration as f64;
+        assert!(
+            held > whole_run * 1.15,
+            "{:?}: held {} against {} for the whole run",
+            mode,
+            held,
+            whole_run
+        );
+        rates.push(held);
+    }
+    let (aborts, judged_at_end) = (rates[0], rates[1]);
+    assert!(
+        (aborts - judged_at_end).abs() <= aborts * 0.05,
+        "{} with abort, {} without",
+        aborts,
+        judged_at_end
+    );
+}
+
+#[tokio::test]
+#[serial]
+/// An rps rule counts every hold of a test plan, and not the Increase step
+/// between two of them: its rate is the requests finished in the holds over the
+/// seconds held, and not that rate with the Increase step's requests counted.
+async fn rps_skips_an_increase_between_holds() {
+    use goose::test_plan::TestPlanStepAction;
+
+    let server = MockServer::start();
+    let _mocks = setup_mock_server_endpoints(&server);
+    FINISHED.lock().unwrap().clear();
+
+    // A long hold at 1 user, a long Increase step to 20, and a short hold at 20:
+    // about 3.3 requests a second for 8 seconds and 66 for 2, so the holds make
+    // about 13 a second together, while the Increase step makes about 35.
+    let goose_attack = bare_load_test(
+        &server,
+        vec![
+            "--test-plan",
+            "1,1s;1,8s;20,8s;20,2s;0,0",
+            "--threshold",
+            "rps>=1",
+        ],
+        vec![transaction!(get_slow_timed)],
+    );
+    let (_, result) = run(goose_attack).await;
+    let metrics = result.expect("the holds make the rate");
+    let held = metrics.thresholds[0].value.expect("the holds have a rate");
+
+    // Each hold, from the history: from a Maintaining step to the step after it.
+    let holds: Vec<_> = metrics
+        .history
+        .windows(2)
+        .filter(|pair| matches!(pair[0].action, TestPlanStepAction::Maintaining))
+        .map(|pair| (pair[0].timestamp, pair[1].timestamp))
+        .collect();
+    assert_eq!(holds.len(), 2, "{:?}", metrics.history);
+    let finished = FINISHED.lock().unwrap().clone();
+    let within = |from, to| finished.iter().filter(|&&at| at >= from && at < to).count();
+    let seconds = |from: chrono::DateTime<chrono::Utc>, to: chrono::DateTime<chrono::Utc>| {
+        (to - from).num_microseconds().unwrap() as f64 / 1e6
+    };
+    let in_holds: usize = holds.iter().map(|&(from, to)| within(from, to)).sum();
+    let held_seconds: f64 = holds.iter().map(|&(from, to)| seconds(from, to)).sum();
+    let expected = in_holds as f64 / held_seconds;
+    assert!(
+        (held - expected).abs() <= expected * 0.1,
+        "observed {}, the holds made {}",
+        held,
+        expected
+    );
+    // Counting the Increase step's requests and seconds would raise it well past.
+    let (increase_from, increase_to) = (holds[0].1, holds[1].0);
+    let increase = within(increase_from, increase_to);
+    assert!(increase > 0);
+    let with_increase =
+        (in_holds + increase) as f64 / (held_seconds + seconds(increase_from, increase_to));
+    assert!(
+        with_increase > held * 1.25,
+        "observed {}, with the Increase step {}",
+        held,
+        with_increase
+    );
+}
+
+#[tokio::test]
+#[serial]
+/// A test plan that never holds its users steady has no time an rps rule
+/// counts: the rule fails at the end as `no samples`, while the other rules are
+/// judged over the whole run.
+async fn rps_without_a_hold_has_no_samples() {
+    let server = MockServer::start();
+    let _mocks = setup_mock_server_endpoints(&server);
+
+    let goose_attack = bare_load_test(
+        &server,
+        vec![
+            "--test-plan",
+            "4,3s;0,0",
+            "--threshold",
+            "rps>0",
+            "--threshold",
+            "p95<5s",
+        ],
+        vec![transaction!(get_ok)],
+    );
+    let (_, result) = run(goose_attack).await;
+    let (failed, metrics) = thresholds_failed(result);
+
+    assert!(requests_made(&metrics) > 0);
+    assert_eq!(failed.len(), 1);
+    assert_eq!(failed[0].rule, "rps>0");
+    assert_eq!(failed[0].observed, "no samples");
+    assert_eq!(failed[0].value, None);
+    assert!(!failed[0].aborted);
+    assert!(metrics.thresholds[1].passed, "{:?}", metrics.thresholds[1]);
 }
 
 #[tokio::test]

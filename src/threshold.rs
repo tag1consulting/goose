@@ -31,7 +31,7 @@ enum Metric {
     Maximum,
     /// Failed requests as a percent of all requests.
     ErrorRate,
-    /// Requests per second, from when checking started.
+    /// Requests per second while the run holds its users steady, in Maintain.
     RequestsPerSecond,
 }
 
@@ -80,7 +80,8 @@ pub(crate) enum Check {
 /// The text is `<metric><op><value>`, optionally followed by ` for <request>`:
 ///  - `<metric>` is `pNN`, with optional decimals (a response time percentile, such
 ///    as `p95` or `p99.9`), `avg`, `max`, `error-rate` (failed requests as a percent
-///    of all requests) or `rps` (requests per second, from when checking starts);
+///    of all requests) or `rps` (requests per second while the run holds its users
+///    steady, in Maintain);
 ///  - `<op>` is `<`, `<=`, `>` or `>=`;
 ///  - `<value>` is, for a time, a number with `us`, `ms` or `s`, a bare number being
 ///    milliseconds; for `error-rate`, a number with an optional `%`; for `rps`, a
@@ -169,12 +170,66 @@ impl ThresholdMark {
     }
 }
 
-/// What `rps` rules count: from when checking started, to when it last paused as
-/// the run stopped its users, or to now while checking goes on.
+/// What `rps` rules count: the time the run spent holding its users steady, in
+/// Maintain, summed over every hold, and the requests made in it. Increase,
+/// Decrease and Shutdown add nothing, with or without `--no-threshold-abort`.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct ThresholdWindow {
-    pub(crate) start: ThresholdMark,
-    pub(crate) end: Option<ThresholdMark>,
+pub(crate) struct RpsWindow {
+    /// The seconds of every hold that has ended, to the microsecond.
+    seconds: f64,
+    /// How many times each request was made in the holds that have ended.
+    requests: HashMap<String, usize>,
+    /// Where the hold now going started, while the run is in Maintain.
+    open: Option<ThresholdMark>,
+}
+
+impl RpsWindow {
+    /// The run enters Maintain at `mark`: a hold starts.
+    pub(crate) fn enter(&mut self, mark: ThresholdMark) {
+        if self.open.is_none() {
+            self.open = Some(mark);
+        }
+    }
+
+    /// The run leaves Maintain at `mark`: the hold going ends, and its seconds and
+    /// requests join those of the holds before it.
+    pub(crate) fn leave(&mut self, mark: ThresholdMark) {
+        let Some(start) = self.open.take() else {
+            return;
+        };
+        self.seconds += (mark.seconds - start.seconds).max(0.0);
+        for (key, made) in mark.requests {
+            let before = start.requests.get(&key).copied().unwrap_or(0);
+            *self.requests.entry(key).or_default() += made.saturating_sub(before);
+        }
+    }
+
+    /// The metrics were reset, with the run's clock and its counts: nothing counted
+    /// so far is kept, and a hold going starts again from the reset.
+    pub(crate) fn reset(&mut self) {
+        let open = self.open.is_some();
+        *self = RpsWindow::default();
+        if open {
+            self.open = Some(ThresholdMark::default());
+        }
+    }
+
+    /// The requests made while holding, and the seconds held, `seconds` into the
+    /// run when `made` requests had been made: of `request`, or every request
+    /// together for `None`.
+    fn held(&self, request: Option<&str>, made: usize, seconds: f64) -> (usize, f64) {
+        let ended = match request {
+            Some(key) => self.requests.get(key).copied().unwrap_or(0),
+            None => self.requests.values().sum(),
+        };
+        match &self.open {
+            Some(start) => (
+                ended + made.saturating_sub(start.made(request)),
+                self.seconds + (seconds - start.seconds).max(0.0),
+            ),
+            None => (ended, self.seconds),
+        }
+    }
 }
 
 /// What [`Threshold::observe`] shows for a rule whose metric has no samples.
@@ -391,9 +446,6 @@ struct Figures<'a> {
     failures: usize,
     /// The seconds `requests` were made in, for `rps`.
     seconds: f64,
-    /// Whether `requests` and `seconds` count from when checking started, for
-    /// `rps`.
-    from_maintain: bool,
 }
 
 /// An observed value: in the rule's own unit for comparing, as a number for
@@ -413,6 +465,12 @@ impl Threshold {
             (Metric::RequestsPerSecond, Operator::GreaterOrEqual) => Some((self.limit, true)),
             _ => None,
         }
+    }
+
+    /// Whether this is an `rps` rule, which counts only the time the run holds its
+    /// users steady.
+    pub(crate) fn is_rps(&self) -> bool {
+        self.metric == Metric::RequestsPerSecond
     }
 
     /// What this rule observes in `figures`, or `None` when its metric has no
@@ -445,18 +503,13 @@ impl Threshold {
                     shown: format!("{}%", short_number(percent)),
                 })
             }
-            // Before a whole second there is no rate to judge.
+            // Before a whole second held there is no rate to judge.
             Metric::RequestsPerSecond if figures.requests > 0 && figures.seconds >= 1.0 => {
                 let rate = figures.requests as f64 / figures.seconds;
-                let shown = if figures.from_maintain {
-                    format!("{} from Maintain", short_number(rate))
-                } else {
-                    short_number(rate)
-                };
                 Some(Observed {
                     compared: rate,
                     value: rate,
-                    shown,
+                    shown: format!("{} from Maintain", short_number(rate)),
                 })
             }
             _ => None,
@@ -482,53 +535,43 @@ impl<'m> Judge<'m> {
         }
     }
 
-    /// What `threshold` observes, or `None` without samples. Once checking has
-    /// started, an `rps` rule counts the requests in its window over the seconds in
-    /// it.
+    /// What `threshold` observes, or `None` without samples. An `rps` rule counts
+    /// only the requests made while the run held its users steady, over the
+    /// seconds it held them.
     fn observe(&mut self, threshold: &Threshold) -> Option<Observed> {
         let metrics = self.metrics;
-        let window = metrics
-            .threshold_window
-            .as_ref()
-            .filter(|_| threshold.metric == Metric::RequestsPerSecond);
         let request = threshold.request.as_deref();
         let now = self.seconds;
-        // The requests made in the window, and its seconds, when there is one.
-        let in_window = |made: usize| {
-            window.map_or((made, metrics.duration as f64), |window| {
-                let (made, seconds) = match &window.end {
-                    Some(end) => (end.made(request), end.seconds),
-                    None => (made, now),
-                };
-                (
-                    made.saturating_sub(window.start.made(request)),
-                    seconds - window.start.seconds,
-                )
-            })
+        // The requests an `rps` rule counts, and their seconds; the other metrics
+        // read every request made.
+        let held = |made: usize| {
+            if threshold.is_rps() {
+                metrics.rps_window.held(request, made, now)
+            } else {
+                (made, now)
+            }
         };
         match request {
             Some(key) => {
                 let aggregate = metrics.requests.get(key)?;
-                let (requests, seconds) = in_window(aggregate.success_count + aggregate.fail_count);
+                let (requests, seconds) = held(aggregate.success_count + aggregate.fail_count);
                 threshold.observe(&Figures {
                     times: &aggregate.raw_data,
                     requests,
                     failures: aggregate.fail_count,
                     seconds,
-                    from_maintain: window.is_some(),
                 })
             }
             None => {
                 let totals = self
                     .totals
                     .get_or_insert_with(|| RequestTotals::of(metrics.requests.values()));
-                let (requests, seconds) = in_window(totals.requests);
+                let (requests, seconds) = held(totals.requests);
                 threshold.observe(&Figures {
                     times: &totals.times,
                     requests,
                     failures: totals.failures,
                     seconds,
-                    from_maintain: window.is_some(),
                 })
             }
         }
@@ -832,8 +875,10 @@ mod tests {
 
     #[test]
     fn evaluation_at_the_exact_boundary() {
-        // One request a second for 4 seconds, each 200 ms, one of them failed.
-        let metrics = metrics_with(4, vec![request("/", &[200, 200, 200, 200], 4, 1)]);
+        // One request a second for 4 seconds, each 200 ms, one of them failed, all
+        // while the run held its users steady.
+        let mut metrics = metrics_with(4, vec![request("/", &[200, 200, 200, 200], 4, 1)]);
+        metrics.rps_window.enter(mark(0.0, 0));
         let cases = [
             ("max<200ms", false),
             ("max<=200ms", true),
@@ -869,7 +914,10 @@ mod tests {
             judge("error-rate<1%", &metrics, Check::Final).observed,
             "25%"
         );
-        assert_eq!(judge("rps>1", &metrics, Check::Final).observed, "1");
+        assert_eq!(
+            judge("rps>1", &metrics, Check::Final).observed,
+            "1 from Maintain"
+        );
         assert_eq!(judge("max<1s", &metrics, Check::Final).value, Some(200.0));
     }
 
@@ -930,8 +978,9 @@ mod tests {
         let end = judge("p95<500ms for GET /never", &metrics, Check::Final);
         assert!(!end.passed);
         assert_eq!(end.observed, "no samples");
-        // Before a whole second, there is no rate yet.
-        let metrics = metrics_with(0, vec![request("/", &[10], 1, 0)]);
+        // Before a whole second held, there is no rate yet.
+        let mut metrics = metrics_with(0, vec![request("/", &[10], 1, 0)]);
+        metrics.rps_window.enter(mark(0.0, 0));
         assert!(first_failure(&[parse("rps>100")], &metrics, 0.5).is_none());
     }
 
@@ -980,47 +1029,60 @@ mod tests {
         assert!(!results[0].passed);
     }
 
-    /// Once checking starts, an `rps` rule counts the requests made since then
-    /// over the seconds since then, and says so.
+    /// An `rps` rule counts only the requests made while the run held its users
+    /// steady, over the seconds it held them, summed over every hold, and says so.
     #[test]
-    fn rps_counts_from_when_checking_started() {
+    fn rps_counts_only_the_holds() {
         let mut metrics = metrics_with(10, vec![request("/", &[10], 100, 0)]);
-        // Before checking starts, the whole run.
-        assert_eq!(judge("rps>=10", &metrics, Check::Final).observed, "10");
-        // Checking started 4.5 seconds in, with 20 requests made: 80 in 5.5 seconds,
-        // judged to the microsecond rather than the whole seconds of the duration.
-        metrics.threshold_window = Some(ThresholdWindow {
-            start: mark(4.5, 20),
-            end: None,
-        });
+        // Without a hold there is no rate: skipped while the run goes, and a
+        // failure at the end, though the other metrics read the whole run.
+        assert!(first_failure(&[parse("rps>1000")], &metrics, 10.0).is_none());
+        let result = judge("rps>=10", &metrics, Check::Final);
+        assert_eq!(result.observed, NO_SAMPLES);
+        assert!(!result.passed);
+        assert_eq!(
+            judge("error-rate<1%", &metrics, Check::Final).observed,
+            "0%"
+        );
+
+        // A hold going since 4.5 seconds in, with 20 requests made: 80 in 5.5
+        // seconds, judged to the microsecond rather than the whole seconds of the
+        // duration.
+        metrics.rps_window.enter(mark(4.5, 20));
         let result = judge("rps>=14.5", &metrics, Check::Final);
         assert_eq!(result.observed, "14.55 from Maintain");
         assert!(result.passed);
         let result = judge("rps>=14.6 for GET /", &metrics, Check::Final);
         assert_eq!(result.observed, "14.55 from Maintain");
         assert!(!result.passed);
-        // The other metrics still read the whole run.
-        assert_eq!(
-            judge("error-rate<1%", &metrics, Check::Final).observed,
-            "0%"
-        );
-        // Within the first second after checking starts there is no rate yet.
+        // Within the first second held there is no rate yet.
         assert!(first_failure(&[parse("rps>1000")], &metrics, 5.4).is_none());
         let failure = first_failure(&[parse("rps>1000")], &metrics, 5.5).unwrap();
         assert_eq!(failure.observed, "80 from Maintain");
 
-        // Once checking paused as the run stopped its users, the window ends there:
-        // 60 requests in the 5 seconds to 9.5, whatever came after.
-        metrics.threshold_window = Some(ThresholdWindow {
-            start: mark(4.5, 20),
-            end: Some(mark(9.5, 80)),
-        });
+        // The hold ended at 9.5 with 80 made: 60 in 5 seconds, whatever came after.
+        metrics.rps_window.leave(mark(9.5, 80));
         let result = judge("rps>=12 for GET /", &metrics, Check::Final);
         assert_eq!(result.observed, "12 from Maintain");
         assert!(result.passed);
         assert_eq!(
             judge("rps<12", &metrics, Check::Final).observed,
             "12 from Maintain"
+        );
+
+        // A second hold, from 12 seconds in with 90 made: what came between the two
+        // holds is not counted. At 14 seconds, with 100 made, 70 in 7 seconds.
+        metrics.rps_window.enter(mark(12.0, 90));
+        assert_eq!(
+            evaluate(&[parse("rps>=10")], &metrics, Check::Final, None, 14.0)[0].observed,
+            "10 from Maintain"
+        );
+
+        // A reset starts over: until a whole second is held again, no rate.
+        metrics.rps_window.reset();
+        assert_eq!(
+            evaluate(&[parse("rps>=10")], &metrics, Check::Final, None, 0.5)[0].observed,
+            NO_SAMPLES
         );
     }
 

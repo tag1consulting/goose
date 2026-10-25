@@ -1230,23 +1230,28 @@ impl GooseAttack {
         }
 
         // Thresholds are checked from when the run first holds its users steady,
-        // so a ramp up never fails a rule while the run goes. Checking pauses
-        // while users stop, and the window `rps` rules count pauses with it.
-        let checked = |phase| matches!(phase, AttackPhase::Increase | AttackPhase::Maintain);
-        if goose_attack_run_state.threshold_check_at.is_none() {
-            if phase == AttackPhase::Maintain {
-                self.start_threshold_checks(goose_attack_run_state);
-            }
-        } else if checked(phase) != checked(self.attack_phase) {
+        // so a ramp up never fails a rule while the run goes.
+        if goose_attack_run_state.threshold_check_at.is_none() && phase == AttackPhase::Maintain {
+            self.start_threshold_checks(goose_attack_run_state);
+        }
+
+        // `rps` rules count only the time the run holds its users steady, in every
+        // mode, so each entry to Maintain starts a hold and each exit ends it.
+        let holds = |phase| phase == AttackPhase::Maintain;
+        if holds(phase) != holds(self.attack_phase)
+            && self
+                .configuration
+                .thresholds
+                .iter()
+                .any(threshold::Threshold::is_rps)
+        {
             self.update_duration();
             let seconds = self.elapsed;
-            let _ = goose_attack_run_state
-                .metrics_cmd_tx
-                .send(if checked(phase) {
-                    MetricsCommand::StartThresholdChecks { seconds }
-                } else {
-                    MetricsCommand::PauseThresholdChecks { seconds }
-                });
+            let _ = goose_attack_run_state.metrics_cmd_tx.send(if holds(phase) {
+                MetricsCommand::EnterMaintain { seconds }
+            } else {
+                MetricsCommand::LeaveMaintain { seconds }
+            });
         }
 
         // Optional debug output.
@@ -1452,8 +1457,7 @@ impl GooseAttack {
     }
 
     /// Start checking the thresholds, the first check `--threshold-abort-delay`
-    /// from now, when a failing one stops the run, and have `rps` rules count from
-    /// now.
+    /// from now, when a failing one stops the run.
     pub(crate) fn start_threshold_checks(
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
@@ -1462,13 +1466,6 @@ impl GooseAttack {
             let delay = self.configuration.threshold_abort_delay_secs() as u64;
             goose_attack_run_state.threshold_check_at =
                 std::time::Instant::now().checked_add(Duration::from_secs(delay));
-            self.update_duration();
-            let _ =
-                goose_attack_run_state
-                    .metrics_cmd_tx
-                    .send(MetricsCommand::StartThresholdChecks {
-                        seconds: self.elapsed,
-                    });
         }
     }
 
@@ -3838,9 +3835,10 @@ mod tests {
     /// Checking starts when the run first enters Maintain, through
     /// `set_attack_phase`. From there the main loop sends `CheckThresholds` at most
     /// once a second, in Maintain and in a later Increase but never in Decrease or
-    /// Idle, once `--threshold-abort-delay` has passed since Maintain. Leaving Increase
-    /// or Maintain pauses the window `rps` rules count, and coming back resumes it.
-    /// Without a threshold that can stop the run it sends nothing.
+    /// Idle, once `--threshold-abort-delay` has passed since Maintain. Without a
+    /// threshold that can stop the run it sends no check. With an `rps` rule, in
+    /// every mode, each entry to Maintain and each exit from it is sent, for the
+    /// holds `rps` rules count.
     #[tokio::test]
     #[serial_test::serial]
     async fn checks_start_when_the_run_first_enters_maintain() {
@@ -3865,8 +3863,8 @@ mod tests {
             (goose_attack, run_state, metrics_cmd_rx)
         }
 
-        /// Enter `phase`, then take two loop turns in the same second: the checks
-        /// and the starts sent.
+        /// Enter `phase`, then take two loop turns in the same second: the checks,
+        /// the entries to Maintain and the exits from it sent.
         fn enter(
             goose_attack: &mut GooseAttack,
             run_state: &mut GooseAttackRunState,
@@ -3878,17 +3876,17 @@ mod tests {
             goose_attack.check_thresholds(run_state);
             commands.try_iter().fold(
                 (0, 0, 0),
-                |(checks, starts, pauses), command| match command {
-                    MetricsCommand::CheckThresholds { .. } => (checks + 1, starts, pauses),
-                    MetricsCommand::StartThresholdChecks { .. } => (checks, starts + 1, pauses),
-                    MetricsCommand::PauseThresholdChecks { .. } => (checks, starts, pauses + 1),
-                    _ => (checks, starts, pauses),
+                |(checks, enters, leaves), command| match command {
+                    MetricsCommand::CheckThresholds { .. } => (checks + 1, enters, leaves),
+                    MetricsCommand::EnterMaintain { .. } => (checks, enters + 1, leaves),
+                    MetricsCommand::LeaveMaintain { .. } => (checks, enters, leaves + 1),
+                    _ => (checks, enters, leaves),
                 },
             )
         }
 
         let (mut goose_attack, mut run_state, commands) =
-            attack(&["--threshold", "p95<500ms"]).await;
+            attack(&["--threshold", "p95<500ms", "--threshold", "rps>=1"]).await;
         // Nothing while users start, before the run first holds them.
         assert_eq!(
             enter(
@@ -3909,7 +3907,8 @@ mod tests {
             ),
             (1, 1, 0)
         );
-        // A second later, a later Increase is checked, and Decrease pauses checking.
+        // A second later, a later Increase is checked, though it ends the hold,
+        // and Decrease is not checked.
         run_state.threshold_check_at = Some(std::time::Instant::now());
         assert_eq!(
             enter(
@@ -3918,7 +3917,7 @@ mod tests {
                 &commands,
                 AttackPhase::Increase
             ),
-            (1, 0, 0)
+            (1, 0, 1)
         );
         run_state.threshold_check_at = Some(std::time::Instant::now());
         assert_eq!(
@@ -3928,14 +3927,14 @@ mod tests {
                 &commands,
                 AttackPhase::Decrease
             ),
-            (0, 0, 1)
+            (0, 0, 0)
         );
-        // Entering Maintain again resumes checking without starting it again.
+        // Entering Maintain again starts a hold without starting checking again.
         let due = run_state.threshold_check_at;
         goose_attack.set_attack_phase(&mut run_state, AttackPhase::Maintain);
         assert_eq!(run_state.threshold_check_at, due);
         run_state.threshold_check_at = Some(std::time::Instant::now());
-        // The resume was sent, and Idle pauses checking again, sending no check.
+        // The hold was sent, and Idle ends it, sending no check.
         assert_eq!(
             enter(
                 &mut goose_attack,
@@ -3946,7 +3945,7 @@ mod tests {
             (0, 1, 1)
         );
 
-        // The delay counts from Maintain.
+        // The delay counts from Maintain. Without an `rps` rule no hold is sent.
         let (mut goose_attack, mut run_state, commands) =
             attack(&["--threshold", "p95<500ms", "--threshold-abort-delay", "3"]).await;
         assert_eq!(
@@ -3966,23 +3965,31 @@ mod tests {
                 &commands,
                 AttackPhase::Maintain
             ),
-            (0, 1, 0)
+            (0, 0, 0)
         );
         let due = run_state.threshold_check_at.expect("checking started");
         assert!(due >= entered + Duration::from_secs(3));
         assert!(due <= std::time::Instant::now() + Duration::from_secs(3));
 
-        // Nothing without a threshold that can stop the run.
-        for args in [
-            &[][..],
-            &["--threshold", "p95<500ms", "--no-threshold-abort"],
+        // No check without a threshold that can stop the run, but an `rps` rule
+        // still counts its holds under `--no-threshold-abort`.
+        for (args, holds) in [
+            (&[][..], 0),
+            (&["--threshold", "p95<500ms", "--no-threshold-abort"], 0),
+            (&["--threshold", "rps>=1", "--no-threshold-abort"], 1),
         ] {
             let (mut goose_attack, mut run_state, commands) = attack(args).await;
-            for phase in [AttackPhase::Increase, AttackPhase::Maintain] {
+            for (phase, expected) in [
+                (AttackPhase::Increase, (0, 0, 0)),
+                (AttackPhase::Maintain, (0, holds, 0)),
+                (AttackPhase::Decrease, (0, 0, holds)),
+            ] {
                 assert_eq!(
                     enter(&mut goose_attack, &mut run_state, &commands, phase),
-                    (0, 0, 0),
-                    "{args:?}"
+                    expected,
+                    "{:?} {:?}",
+                    args,
+                    phase
                 );
             }
             assert_eq!(run_state.threshold_check_at, None);

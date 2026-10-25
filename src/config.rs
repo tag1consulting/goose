@@ -504,8 +504,9 @@ pub struct GooseConfiguration {
             RULE is <metric><op><value>, with an optional \" for <request>\". The metric is \
             pNN with optional decimals (a response time percentile, such as p95 or p99.9), \
             avg, max, error-rate (failed requests as a percent of all) or rps (requests per \
-            second from when checking starts). The op is <, <=, > or >=. A time takes us, ms \
-            or s, a bare number being ms; an error-rate takes an optional %. A rule ending \
+            second while the run holds its users steady, in Maintain). The op is <, <=, > or \
+            >=. A time takes us, ms or s, a bare number being ms; an error-rate takes an \
+            optional %. A rule ending \
             \" for <request>\", named as the HTML or Markdown report names it, judges only \
             that request, as in \"p99<2s for GET /checkout\"; the console cuts long names \
             short. Without it, the rule judges all requests together. A rule that can never \
@@ -521,7 +522,8 @@ pub struct GooseConfiguration {
     ///
     /// By default, Goose checks every --threshold once a second from when the run first
     /// enters Maintain, and stops the run when one fails. With this set, Goose judges
-    /// them only when the run ends, and a failing rule still fails the run.
+    /// them only when the run ends, and a failing rule still fails the run. An rps rule
+    /// counts only the time spent holding users steady, as it does without this.
     ///
     /// Set in code with GooseDefault::NoThresholdAbort.
     #[arg(help_heading = "Metrics", long)]
@@ -3578,16 +3580,37 @@ impl GooseConfiguration {
         !self.thresholds.is_empty() && !self.no_threshold_abort
     }
 
-    /// Why no threshold can stop this run while it goes, when thresholds could but
-    /// the test plan never enters Maintain, where checking starts.
+    /// What a test plan that never enters Maintain, holding its users steady, costs
+    /// its thresholds: no rule can stop the run while it goes, when one could, as
+    /// checking starts there, and no `rps` rule can pass, as `rps` counts only that
+    /// time.
     pub(crate) fn threshold_plan_warning(&self) -> Option<String> {
-        if !self.aborts_on_thresholds() {
+        let aborts = self.aborts_on_thresholds();
+        let rps = self
+            .thresholds
+            .iter()
+            .any(crate::threshold::Threshold::is_rps);
+        if !aborts && !rps {
             return None;
         }
         let plan = TestPlan::build(self).ok()?;
-        (!plan.steps.is_empty() && !plan.holds()).then(|| {
-            "the test plan never holds its users steady, which is when threshold checks start, so no threshold can stop this run while it goes; its rules are judged when it ends."
-                .to_string()
+        if plan.steps.is_empty() || plan.holds() {
+            return None;
+        }
+        let rps = if rps {
+            "its rps rules can't pass, as they count only the time spent holding users steady"
+        } else {
+            ""
+        };
+        Some(if aborts {
+            let rps = if rps.is_empty() {
+                String::new()
+            } else {
+                format!(", and {rps}")
+            };
+            format!("the test plan never holds its users steady, which is when threshold checks start, so no threshold can stop this run while it goes; its rules are judged when it ends{rps}.")
+        } else {
+            format!("the test plan never holds its users steady, so {rps}.")
         })
     }
 
@@ -6772,7 +6795,8 @@ mod test {
     }
 
     /// Goose warns when thresholds could stop the run but its test plan never
-    /// enters Maintain, so no rule is checked until the end.
+    /// enters Maintain, so no rule is checked until the end, and when an `rps`
+    /// rule, which counts only Maintain, can't pass.
     #[test]
     fn a_test_plan_that_never_holds_is_warned_about() {
         let warning = |args: &[&str]| {
@@ -6812,7 +6836,24 @@ mod test {
             "5s"
         ])
         .is_some());
-        // Nothing to warn about when no threshold can stop the run.
+        // An `rps` rule can't pass without a hold, with or without abort.
+        let plan = ["--test-plan", "10,5s;20,5s;0,5s", "--threshold", "rps>=1"];
+        let message = warning(&plan).expect("an rps rule without a hold warns");
+        assert!(
+            message.contains("no threshold can stop this run"),
+            "{}",
+            message
+        );
+        assert!(message.contains("its rps rules can't pass"), "{}", message);
+        let message = warning(&[&plan[..], &["--no-threshold-abort"]].concat())
+            .expect("an rps rule without a hold warns under --no-threshold-abort");
+        assert_eq!(
+            message,
+            "the test plan never holds its users steady, so its rps rules can't pass, as they count only the time spent holding users steady."
+        );
+        assert!(!message.contains("no threshold can stop"), "{}", message);
+        // Nothing to warn about when no threshold can stop the run and none is
+        // an `rps` rule.
         let plan = ["--test-plan", "10,5s;0,5s"];
         assert_eq!(warning(&plan), None);
         assert_eq!(

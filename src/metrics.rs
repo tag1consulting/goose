@@ -338,15 +338,15 @@ pub(crate) enum MetricsCommand {
         /// The run time in seconds, to the microsecond, for `rps` rules.
         seconds: f64,
     },
-    /// Checking starts, or goes on after a pause, `seconds` into the run
-    /// (fire-and-forget): the first start opens the window `rps` rules count, and a
-    /// later one reopens it. It drains at most [`METRICS_DRAIN_LIMIT`] pending
-    /// metrics first, as [`MetricsCommand::CheckThresholds`] does.
-    StartThresholdChecks { seconds: f64 },
-    /// Checking pauses `seconds` into the run, as the run stops users
-    /// (fire-and-forget): the window `rps` rules count ends here unless checking
-    /// goes on. It drains as [`MetricsCommand::StartThresholdChecks`] does.
-    PauseThresholdChecks { seconds: f64 },
+    /// The run enters Maintain, holding its users steady, `seconds` into the run
+    /// (fire-and-forget): the hold `rps` rules count starts here. It drains at most
+    /// [`METRICS_DRAIN_LIMIT`] pending metrics first, as
+    /// [`MetricsCommand::CheckThresholds`] does.
+    EnterMaintain { seconds: f64 },
+    /// The run leaves Maintain `seconds` into the run (fire-and-forget): the hold
+    /// `rps` rules count ends here. It drains as [`MetricsCommand::EnterMaintain`]
+    /// does.
+    LeaveMaintain { seconds: f64 },
     /// Record the current user count for the users-per-second graph.
     RecordUsers {
         active_users: usize,
@@ -2037,9 +2037,9 @@ pub struct GooseMetrics {
     /// it observed then, if one did.
     #[serde(skip)]
     pub(crate) threshold_abort: Option<(usize, String)>,
-    /// What `rps` thresholds count, once checking has started.
+    /// What `rps` thresholds count: the time the run held its users steady.
     #[serde(skip)]
-    pub(crate) threshold_window: Option<crate::threshold::ThresholdWindow>,
+    pub(crate) rps_window: crate::threshold::RpsWindow,
     /// Flag indicating whether or not these are the final metrics, used to determine
     /// which metrics should be displayed. Defaults to false.
     pub(crate) final_metrics: bool,
@@ -3475,24 +3475,14 @@ impl MetricsProcessor {
                 }
                 false
             }
-            MetricsCommand::StartThresholdChecks { seconds } => {
-                match self.metrics.threshold_window.as_mut() {
-                    Some(window) => window.end = None,
-                    None => {
-                        let start = self.threshold_mark(seconds);
-                        self.metrics.threshold_window =
-                            Some(threshold::ThresholdWindow { start, end: None });
-                    }
-                }
+            MetricsCommand::EnterMaintain { seconds } => {
+                let mark = self.threshold_mark(seconds);
+                self.metrics.rps_window.enter(mark);
                 false
             }
-            MetricsCommand::PauseThresholdChecks { seconds } => {
-                if self.metrics.threshold_window.is_some() {
-                    let end = self.threshold_mark(seconds);
-                    if let Some(window) = self.metrics.threshold_window.as_mut() {
-                        window.end = Some(end);
-                    }
-                }
+            MetricsCommand::LeaveMaintain { seconds } => {
+                let mark = self.threshold_mark(seconds);
+                self.metrics.rps_window.leave(mark);
                 false
             }
             MetricsCommand::RecordUsers {
@@ -3542,12 +3532,10 @@ impl MetricsProcessor {
                         counters.reset();
                     }
                 }
-                // A reset restarts the run's clock and its counts, so a window `rps`
-                // rules already count, as when a Controller changed the users before
-                // the ramp up ended, starts again with them.
-                if self.metrics.threshold_window.is_some() {
-                    self.metrics.threshold_window = Some(threshold::ThresholdWindow::default());
-                }
+                // A reset restarts the run's clock and its counts, so what `rps`
+                // rules count, as when a Controller changed the users before the
+                // ramp up ended, starts again with them.
+                self.metrics.rps_window.reset();
                 // Increment the batch epoch so user-side batches accumulated
                 // before the reset are discarded when they arrive.
                 self.metrics_epoch.fetch_add(1, AtomicOrdering::Relaxed);
@@ -7647,11 +7635,12 @@ mod test {
         assert_eq!(processor.metrics.threshold_abort, None);
     }
 
-    /// The window `rps` thresholds count opens on the first start, with each
-    /// request's count from its atomic counters, ends on a pause, opens again on
-    /// a later start, and starts over at a metrics reset.
+    /// The holds `rps` thresholds count: each entry to Maintain starts one, with
+    /// each request's count from its atomic counters, each exit ends it and adds
+    /// its seconds and requests to the holds before, and a metrics reset starts
+    /// over, reopening a hold that was going.
     #[test]
-    fn threshold_window_starts_pauses_and_resets() {
+    fn rps_window_counts_holds_and_resets() {
         let (mut processor, _metrics_tx, _cmd_tx) = make_channel_processor(0);
         let counters = Arc::new(GooseRequestCounters::new());
         processor
@@ -7659,47 +7648,55 @@ mod test {
             .lock()
             .unwrap()
             .insert("GET /".to_string(), counters.clone());
-        let made = |window: &crate::threshold::ThresholdWindow| format!("{window:?}");
+        let shown = |processor: &MetricsProcessor| format!("{:?}", processor.metrics.rps_window);
 
-        // Nothing before checking starts, even on a pause.
-        processor.handle_command(MetricsCommand::PauseThresholdChecks { seconds: 1.0 });
-        assert!(processor.metrics.threshold_window.is_none());
+        // Leaving Maintain before entering it counts nothing.
+        processor.handle_command(MetricsCommand::LeaveMaintain { seconds: 1.0 });
+        assert_eq!(
+            shown(&processor),
+            "RpsWindow { seconds: 0.0, requests: {}, open: None }"
+        );
 
         counters.success.store(7, AtomicOrdering::Relaxed);
         counters.failure.store(3, AtomicOrdering::Relaxed);
-        processor.handle_command(MetricsCommand::StartThresholdChecks { seconds: 2.5 });
-        let window = processor.metrics.threshold_window.clone().unwrap();
+        processor.handle_command(MetricsCommand::EnterMaintain { seconds: 2.5 });
         assert_eq!(
-            made(&window),
-            "ThresholdWindow { start: ThresholdMark { seconds: 2.5, requests: {\"GET /\": 10} }, end: None }"
+            shown(&processor),
+            "RpsWindow { seconds: 0.0, requests: {}, open: Some(ThresholdMark { seconds: 2.5, requests: {\"GET /\": 10} }) }"
         );
 
         counters.success.store(27, AtomicOrdering::Relaxed);
-        processor.handle_command(MetricsCommand::PauseThresholdChecks { seconds: 6.0 });
-        let window = processor.metrics.threshold_window.clone().unwrap();
-        assert!(made(&window)
-            .contains("end: Some(ThresholdMark { seconds: 6.0, requests: {\"GET /\": 30} })"));
+        processor.handle_command(MetricsCommand::LeaveMaintain { seconds: 6.0 });
+        assert_eq!(
+            shown(&processor),
+            "RpsWindow { seconds: 3.5, requests: {\"GET /\": 20}, open: None }"
+        );
 
-        // Checking goes on: the window keeps its start and is open again.
-        processor.handle_command(MetricsCommand::StartThresholdChecks { seconds: 8.0 });
-        let window = processor.metrics.threshold_window.clone().unwrap();
-        assert!(made(&window).contains("seconds: 2.5"));
-        assert!(window.end.is_none());
+        // A ramp between holds adds nothing; the next hold adds to the first.
+        counters.success.store(57, AtomicOrdering::Relaxed);
+        processor.handle_command(MetricsCommand::EnterMaintain { seconds: 8.0 });
+        counters.success.store(67, AtomicOrdering::Relaxed);
+        processor.handle_command(MetricsCommand::LeaveMaintain { seconds: 10.0 });
+        assert_eq!(
+            shown(&processor),
+            "RpsWindow { seconds: 5.5, requests: {\"GET /\": 30}, open: None }"
+        );
 
-        // A reset restarts the clock and the counts.
+        // A reset restarts the clock and the counts, and a hold going starts
+        // again from it.
+        processor.handle_command(MetricsCommand::EnterMaintain { seconds: 11.0 });
         let (ack, _ack_rx) = tokio::sync::oneshot::channel();
         processor.handle_command(MetricsCommand::Reset {
-            duration: 9,
+            duration: 12,
             total_users: 1,
             maximum_users: 1,
             active_users: 1,
-            series_elapsed_secs: 9,
+            series_elapsed_secs: 12,
             ack,
         });
-        let window = processor.metrics.threshold_window.clone().unwrap();
         assert_eq!(
-            made(&window),
-            "ThresholdWindow { start: ThresholdMark { seconds: 0.0, requests: {} }, end: None }"
+            shown(&processor),
+            "RpsWindow { seconds: 0.0, requests: {}, open: Some(ThresholdMark { seconds: 0.0, requests: {} }) }"
         );
     }
 
