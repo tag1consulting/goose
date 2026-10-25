@@ -46,12 +46,15 @@ Reports:
       --pdf-timeout <SECS>     PDF timeout, 10 to 600 s [default: 60]
 
 Metrics:
-      --no-reset-metrics        Keep metrics from the ramp up
-      --no-metrics              Don't collect any metrics
-      --no-transaction-metrics  Don't collect transaction metrics
-      --no-scenario-metrics     Don't collect scenario metrics
-      --no-status-codes         Don't collect status code metrics
-      --co-mitigation <MODE>    Coordinated omission mitigation
+      --no-reset-metrics              Keep metrics from the ramp up
+      --no-metrics                    Don't collect any metrics
+      --no-transaction-metrics        Don't collect transaction metrics
+      --no-scenario-metrics           Don't collect scenario metrics
+      --no-status-codes               Don't collect status code metrics
+      --co-mitigation <MODE>          Coordinated omission mitigation
+      --threshold <RULE>              Pass/fail rule, such as p95<500ms
+      --no-threshold-abort            Judge thresholds only at the end
+      --threshold-abort-delay <TIME>  Wait before thresholds can stop the run
 
 Logs:
   -R, --request-log [<FILE>]      Log every request to FILE

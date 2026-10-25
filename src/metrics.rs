@@ -9,7 +9,7 @@
 //! [`GooseErrorMetrics`] are displayed in tables.
 
 pub(crate) mod buckets;
-mod common;
+pub(crate) mod common;
 pub mod coordinated_omission;
 pub(crate) mod dashboard_snapshot;
 mod delta;
@@ -41,6 +41,7 @@ use crate::metrics::common::ReportOptions;
 use crate::report;
 use crate::runs::RunRecord;
 use crate::test_plan::{TestPlanHistory, TestPlanStepAction};
+use crate::threshold::{self, ThresholdResult};
 use crate::util;
 use crate::{GooseAttack, GooseAttackRunState, GooseConfiguration, GooseError};
 use chrono::prelude::*;
@@ -326,6 +327,26 @@ pub(crate) enum MetricsCommand {
         total_users: usize,
         maximum_users: usize,
     },
+    /// Check the `--threshold` rules against the metrics so far (fire-and-forget),
+    /// triggering the killswitch on the first that fails.
+    ///
+    /// Like the dashboard commands, the processor drains at most
+    /// [`METRICS_DRAIN_LIMIT`] pending metrics first, so a busy run can not hold it.
+    CheckThresholds {
+        /// The run's duration in whole seconds.
+        duration: usize,
+        /// The run time in seconds, to the microsecond, for `rps` rules.
+        seconds: f64,
+    },
+    /// The run enters Maintain, holding its users steady, `seconds` into the run
+    /// (fire-and-forget): the hold `rps` rules count starts here. It drains at most
+    /// [`METRICS_DRAIN_LIMIT`] pending metrics first, as
+    /// [`MetricsCommand::CheckThresholds`] does.
+    EnterMaintain { seconds: f64 },
+    /// The run leaves Maintain `seconds` into the run (fire-and-forget): the hold
+    /// `rps` rules count ends here. It drains as [`MetricsCommand::EnterMaintain`]
+    /// does.
+    LeaveMaintain { seconds: f64 },
     /// Record the current user count for the users-per-second graph.
     RecordUsers {
         active_users: usize,
@@ -2005,6 +2026,20 @@ pub struct GooseMetrics {
     /// Tracks CO events, synthetic vs actual requests, and provides detailed
     /// analysis of coordinated omission impact on the load test.
     pub coordinated_omission_metrics: Option<CoordinatedOmissionMetrics>,
+    /// The result of each `--threshold` rule, in the order given, judged when the
+    /// run ended; empty without thresholds.
+    ///
+    /// Set with `--threshold` or
+    /// [GooseDefault::Threshold](../config/enum.GooseDefault.html#variant.Threshold).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub thresholds: Vec<ThresholdResult>,
+    /// The index of the threshold that stopped the run while it was going, and what
+    /// it observed then, if one did.
+    #[serde(skip)]
+    pub(crate) threshold_abort: Option<(usize, String)>,
+    /// What `rps` thresholds count: the time the run held its users steady.
+    #[serde(skip)]
+    pub(crate) rps_window: crate::threshold::RpsWindow,
     /// Flag indicating whether or not these are the final metrics, used to determine
     /// which metrics should be displayed. Defaults to false.
     pub(crate) final_metrics: bool,
@@ -2963,6 +2998,51 @@ impl GooseMetrics {
         Ok(())
     }
 
+    /// Optionally prepares a table of the thresholds and their results.
+    ///
+    /// This function is invoked by `GooseMetrics::print()`.
+    pub(crate) fn fmt_thresholds(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Thresholds are judged only when the run ends, so there are results only in
+        // the final metrics.
+        if self.thresholds.is_empty() {
+            return Ok(());
+        }
+
+        writeln!(
+            fmt,
+            "\n === THRESHOLDS ===\n ------------------------------------------------------------------------------"
+        )?;
+        // The Observed column widens for a long value, such as the two values of
+        // the rule that stopped the run.
+        let width = self
+            .thresholds
+            .iter()
+            .map(|result| result.observed.chars().count())
+            .max()
+            .unwrap_or(0)
+            .max(14);
+        writeln!(fmt, " {:<44} | {:>width$} | Result", "Rule", "Observed")?;
+        writeln!(
+            fmt,
+            " ------------------------------------------------------------------------------"
+        )?;
+        for result in &self.thresholds {
+            writeln!(
+                fmt,
+                " {:<44} | {:>width$} | {}",
+                util::truncate_string(&result.rule, 44),
+                result.observed,
+                result.verdict(),
+            )?;
+        }
+        writeln!(
+            fmt,
+            " ------------------------------------------------------------------------------"
+        )?;
+
+        Ok(())
+    }
+
     // Determine the seconds, minutes and hours between two chrono:DateTimes.
     pub(crate) fn get_seconds_minutes_hours(
         &self,
@@ -3115,6 +3195,7 @@ impl fmt::Display for GooseMetrics {
         self.fmt_percentiles(fmt)?;
         self.fmt_status_codes(fmt)?;
         self.fmt_errors(fmt)?;
+        self.fmt_thresholds(fmt)?;
 
         // Display enhanced coordinated omission metrics if available (before overview)
         if let Some(co_metrics) = &self.coordinated_omission_metrics {
@@ -3370,6 +3451,40 @@ impl MetricsProcessor {
                 self.metrics.print_running();
                 false
             }
+            MetricsCommand::CheckThresholds { duration, seconds } => {
+                // Once the killswitch is triggered, by a threshold or anything
+                // else, the run is stopping and there is nothing more to judge.
+                if self.metrics.threshold_abort.is_none() && !crate::is_killswitch_triggered() {
+                    // Capped, as for a dashboard snapshot: draining until empty
+                    // could take as long as a busy run keeps sending.
+                    self.drain_up_to(METRICS_DRAIN_LIMIT);
+                    self.sync_atomic_counters();
+                    self.metrics.duration = duration;
+                    if let Some(failure) = threshold::first_failure(
+                        &self.configuration.thresholds,
+                        &self.metrics,
+                        seconds,
+                    ) {
+                        crate::trigger_killswitch(&failure.reason);
+                        // Only the first reason is kept: the rule stopped the run
+                        // only if nothing else triggered the killswitch first.
+                        if crate::killswitch_reason().as_deref() == Some(failure.reason.as_str()) {
+                            self.metrics.threshold_abort = Some((failure.index, failure.observed));
+                        }
+                    }
+                }
+                false
+            }
+            MetricsCommand::EnterMaintain { seconds } => {
+                let mark = self.threshold_mark(seconds);
+                self.metrics.rps_window.enter(mark);
+                false
+            }
+            MetricsCommand::LeaveMaintain { seconds } => {
+                let mark = self.threshold_mark(seconds);
+                self.metrics.rps_window.leave(mark);
+                false
+            }
             MetricsCommand::RecordUsers {
                 active_users,
                 elapsed_secs,
@@ -3417,6 +3532,10 @@ impl MetricsProcessor {
                         counters.reset();
                     }
                 }
+                // A reset restarts the run's clock and its counts, so what `rps`
+                // rules count, as when a Controller changed the users before the
+                // ramp up ended, starts again with them.
+                self.metrics.rps_window.reset();
                 // Increment the batch epoch so user-side batches accumulated
                 // before the reset are discarded when they arrive.
                 self.metrics_epoch.fetch_add(1, AtomicOrdering::Relaxed);
@@ -3661,6 +3780,27 @@ impl MetricsProcessor {
             // The Shutdown handler always calls drain_pending() before sync_atomic_counters(),
             // so the final report is always accurate.
         }
+    }
+
+    /// The moment `seconds` into the run, with each request's count from its atomic
+    /// counters, which hold every request made even before its first metric is
+    /// drained. The capped drain first keeps the aggregates close to them.
+    fn threshold_mark(&mut self, seconds: f64) -> threshold::ThresholdMark {
+        self.drain_up_to(METRICS_DRAIN_LIMIT);
+        self.sync_atomic_counters();
+        let registry = self
+            .request_counter_registry
+            .lock()
+            .expect("request_counter_registry mutex poisoned");
+        let requests = registry
+            .iter()
+            .map(|(key, counters)| {
+                let made = counters.success.load(AtomicOrdering::Relaxed)
+                    + counters.failure.load(AtomicOrdering::Relaxed);
+                (key.clone(), made as usize)
+            })
+            .collect();
+        threshold::ThresholdMark::new(seconds, requests)
     }
 
     /// Store `GooseRequestMetric` in a `GooseRequestMetricAggregate`, merging if
@@ -4257,11 +4397,10 @@ impl GooseAttack {
     // Update metrics showing how long the load test has been running.
     // 1.2 seconds will round down to 1 second. 1.6 seconds will round up to 2 seconds.
     pub(crate) fn update_duration(&mut self) {
-        self.metrics.duration = if let Some(started) = self.started {
-            started.elapsed().as_secs_f32().round() as usize
-        } else {
-            0
-        };
+        self.elapsed = self
+            .started
+            .map_or(0.0, |started| started.elapsed().as_secs_f64());
+        self.metrics.duration = self.elapsed.round() as usize;
     }
 
     /// Process the `--report-file` reports.
@@ -4929,6 +5068,18 @@ impl ReportSource<'_> {
             })
             .unwrap_or_default();
 
+        let thresholds_template = if self.metrics.thresholds.is_empty() {
+            String::new()
+        } else {
+            let threshold_rows = self
+                .metrics
+                .thresholds
+                .iter()
+                .map(report::threshold_row)
+                .join("\n");
+            report::thresholds_template(&threshold_rows)
+        };
+
         // Compile and return the report template.
         Ok(report::build_report(
             &users,
@@ -4944,6 +5095,7 @@ impl ReportSource<'_> {
                 scenarios_template: &scenarios_template,
                 status_codes_template: &status_code_template,
                 errors_template: &errors_template,
+                thresholds_template: &thresholds_template,
                 graph_rps_template: &self
                     .graph_data
                     .get_requests_per_second_graph(!self.configuration.no_granular_report)
@@ -7418,6 +7570,134 @@ mod test {
         assert_eq!(metrics.requests["GET /"].status_code_counts[&200], queued);
         assert_eq!(metrics_tx.len(), 0);
         task.await.unwrap();
+    }
+
+    /// A threshold check drains at most one capped turn of metrics, triggers the
+    /// killswitch with the rule and what it observed, and after that judges
+    /// nothing more.
+    #[test]
+    #[serial_test::serial]
+    fn check_thresholds_drains_capped_and_triggers_the_killswitch() {
+        crate::reset_killswitch();
+        let queued = 2 * METRICS_DRAIN_LIMIT + 10;
+        let (mut processor, metrics_tx, _cmd_tx) = make_channel_processor(queued);
+        processor.configuration.thresholds = vec!["max<5ms".parse().unwrap()];
+
+        assert!(!processor.handle_command(MetricsCommand::CheckThresholds {
+            duration: 2,
+            seconds: 2.0
+        }));
+        assert_eq!(
+            processor.metrics.requests["GET /"].raw_data.counter,
+            METRICS_DRAIN_LIMIT
+        );
+        assert_eq!(
+            crate::killswitch_reason().as_deref(),
+            Some("threshold max<5ms failed: observed 10ms")
+        );
+        assert_eq!(
+            processor.metrics.threshold_abort,
+            Some((0, "10ms".to_string()))
+        );
+
+        // The run is stopping: a later check neither drains nor judges.
+        let waiting = metrics_tx.len();
+        assert!(!processor.handle_command(MetricsCommand::CheckThresholds {
+            duration: 3,
+            seconds: 3.0
+        }));
+        assert_eq!(metrics_tx.len(), waiting);
+
+        // A killswitch triggered first, by anything else, is not the threshold's.
+        crate::reset_killswitch();
+        let (mut processor, _metrics_tx, _cmd_tx) = make_channel_processor(1);
+        processor.configuration.thresholds = vec!["max<5ms".parse().unwrap()];
+        crate::trigger_killswitch("user code");
+        processor.handle_command(MetricsCommand::CheckThresholds {
+            duration: 2,
+            seconds: 2.0,
+        });
+        assert_eq!(processor.metrics.threshold_abort, None);
+        assert_eq!(crate::killswitch_reason().as_deref(), Some("user code"));
+
+        // A rule that passes, or has no samples yet, stops nothing.
+        crate::reset_killswitch();
+        let (mut processor, _metrics_tx, _cmd_tx) = make_channel_processor(1);
+        processor.configuration.thresholds = vec![
+            "max<1s".parse().unwrap(),
+            "max<5ms for GET /other".parse().unwrap(),
+        ];
+        processor.handle_command(MetricsCommand::CheckThresholds {
+            duration: 2,
+            seconds: 2.0,
+        });
+        assert!(!crate::is_killswitch_triggered());
+        assert_eq!(processor.metrics.threshold_abort, None);
+    }
+
+    /// The holds `rps` thresholds count: each entry to Maintain starts one, with
+    /// each request's count from its atomic counters, each exit ends it and adds
+    /// its seconds and requests to the holds before, and a metrics reset starts
+    /// over, reopening a hold that was going.
+    #[test]
+    fn rps_window_counts_holds_and_resets() {
+        let (mut processor, _metrics_tx, _cmd_tx) = make_channel_processor(0);
+        let counters = Arc::new(GooseRequestCounters::new());
+        processor
+            .request_counter_registry
+            .lock()
+            .unwrap()
+            .insert("GET /".to_string(), counters.clone());
+        let shown = |processor: &MetricsProcessor| format!("{:?}", processor.metrics.rps_window);
+
+        // Leaving Maintain before entering it counts nothing.
+        processor.handle_command(MetricsCommand::LeaveMaintain { seconds: 1.0 });
+        assert_eq!(
+            shown(&processor),
+            "RpsWindow { seconds: 0.0, requests: {}, open: None }"
+        );
+
+        counters.success.store(7, AtomicOrdering::Relaxed);
+        counters.failure.store(3, AtomicOrdering::Relaxed);
+        processor.handle_command(MetricsCommand::EnterMaintain { seconds: 2.5 });
+        assert_eq!(
+            shown(&processor),
+            "RpsWindow { seconds: 0.0, requests: {}, open: Some(ThresholdMark { seconds: 2.5, requests: {\"GET /\": 10} }) }"
+        );
+
+        counters.success.store(27, AtomicOrdering::Relaxed);
+        processor.handle_command(MetricsCommand::LeaveMaintain { seconds: 6.0 });
+        assert_eq!(
+            shown(&processor),
+            "RpsWindow { seconds: 3.5, requests: {\"GET /\": 20}, open: None }"
+        );
+
+        // A ramp between holds adds nothing; the next hold adds to the first.
+        counters.success.store(57, AtomicOrdering::Relaxed);
+        processor.handle_command(MetricsCommand::EnterMaintain { seconds: 8.0 });
+        counters.success.store(67, AtomicOrdering::Relaxed);
+        processor.handle_command(MetricsCommand::LeaveMaintain { seconds: 10.0 });
+        assert_eq!(
+            shown(&processor),
+            "RpsWindow { seconds: 5.5, requests: {\"GET /\": 30}, open: None }"
+        );
+
+        // A reset restarts the clock and the counts, and a hold going starts
+        // again from it.
+        processor.handle_command(MetricsCommand::EnterMaintain { seconds: 11.0 });
+        let (ack, _ack_rx) = tokio::sync::oneshot::channel();
+        processor.handle_command(MetricsCommand::Reset {
+            duration: 12,
+            total_users: 1,
+            maximum_users: 1,
+            active_users: 1,
+            series_elapsed_secs: 12,
+            ack,
+        });
+        assert_eq!(
+            shown(&processor),
+            "RpsWindow { seconds: 0.0, requests: {}, open: Some(ThresholdMark { seconds: 0.0, requests: {} }) }"
+        );
     }
 
     #[test]

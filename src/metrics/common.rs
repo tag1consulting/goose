@@ -1,6 +1,6 @@
 use super::{
     delta::*, per_second_calculations, prepare_status_codes, CoMetricsSummary, GooseMetrics,
-    GooseRequestMetricTimingData, Millis, MillisFloat, NullableFloat,
+    GooseRequestMetricAggregate, GooseRequestMetricTimingData, Millis, MillisFloat, NullableFloat,
 };
 
 use crate::{
@@ -67,6 +67,40 @@ pub fn prepare_data_with_baseline<'a>(
     result
 }
 
+/// Every request's measured times, requests and failures added together, as the
+/// report's Aggregated row shows them and thresholds judge them.
+#[derive(Default)]
+pub(crate) struct RequestTotals {
+    /// Every request's measured times together. Its count can be lower than
+    /// `requests`: with coordinated omission mitigation, those include the
+    /// synthetic requests, which have no measured time.
+    pub(crate) times: GooseRequestMetricTimingData,
+    /// Every request counted, successful or failed.
+    pub(crate) requests: usize,
+    /// Every failed request.
+    pub(crate) failures: usize,
+}
+
+impl RequestTotals {
+    /// Add one request's figures.
+    pub(crate) fn add(&mut self, request: &GooseRequestMetricAggregate) {
+        self.requests += request.success_count + request.fail_count;
+        self.failures += request.fail_count;
+        self.times.merge(&request.raw_data);
+    }
+
+    /// Every one of `requests` added together.
+    pub(crate) fn of<'a>(
+        requests: impl IntoIterator<Item = &'a GooseRequestMetricAggregate>,
+    ) -> Self {
+        let mut totals = RequestTotals::default();
+        for request in requests {
+            totals.add(request);
+        }
+        totals
+    }
+}
+
 struct RawIntermediate {
     /// Every request's measured times together.
     raw_aggregate: GooseRequestMetricTimingData,
@@ -120,12 +154,7 @@ impl<'m> Prepare<'m> {
         // Prepare requests and responses variables.
         let mut raw_request_metrics = vec![];
         let mut raw_response_metrics = vec![];
-        let mut raw_aggregate_total_count = 0;
-        let mut raw_aggregate_fail_count = 0;
-        // Every request's measured times together. Its count can be lower
-        // than the requests counted: with coordinated omission mitigation,
-        // those include the synthetic requests, which have no measured time.
-        let mut raw_aggregate = GooseRequestMetricTimingData::new(None);
+        let mut totals = RequestTotals::default();
 
         for (request_key, request) in self.metrics.requests.iter().sorted() {
             let method = request.method_label();
@@ -177,10 +206,13 @@ impl<'m> Prepare<'m> {
             raw_response_metrics.push(get_response_metric(method, &name, &request.raw_data));
 
             // Collect aggregated request and response metrics.
-            raw_aggregate_total_count += total_request_count;
-            raw_aggregate_fail_count += request.fail_count;
-            raw_aggregate.merge(&request.raw_data);
+            totals.add(request);
         }
+        let RequestTotals {
+            times: raw_aggregate,
+            requests: raw_aggregate_total_count,
+            failures: raw_aggregate_fail_count,
+        } = totals;
 
         // Prepare aggregate per-request metrics.
         let (raw_aggregate_requests_per_second, raw_aggregate_failures_per_second) =
@@ -859,6 +891,8 @@ struct BaselineGooseMetrics {
     pub display_status_codes: bool,
     #[serde(default)]
     pub display_metrics: bool,
+    #[serde(default)]
+    pub thresholds: Vec<crate::threshold::ThresholdResult>,
 }
 
 impl From<BaselineGooseMetrics> for GooseMetrics {
@@ -878,6 +912,9 @@ impl From<BaselineGooseMetrics> for GooseMetrics {
             final_metrics: baseline.final_metrics,
             display_status_codes: baseline.display_status_codes,
             display_metrics: baseline.display_metrics,
+            thresholds: baseline.thresholds,
+            threshold_abort: None,
+            rps_window: Default::default(),
         }
     }
 }

@@ -119,6 +119,13 @@ impl TestPlan {
         }
     }
 
+    /// Whether the run enters Maintain at some step: a step keeps the users of the
+    /// one before it, or the last step has users.
+    pub(crate) fn holds(&self) -> bool {
+        self.steps.windows(2).any(|pair| pair[0].0 == pair[1].0)
+            || self.steps.last().is_some_and(|step| step.0 > 0)
+    }
+
     // Determine the total number of users required by the test plan.
     pub fn total_users(&self) -> usize {
         self.checked_total_users().unwrap_or(usize::MAX)

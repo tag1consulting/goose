@@ -29,6 +29,7 @@ impl<W: Write> Markdown<'_, '_, W> {
     pub fn write(mut self) -> Result<(), GooseError> {
         self.write_header()?;
         self.write_plan_overview()?;
+        self.write_thresholds()?;
         self.write_request_metrics()?;
         self.write_response_metrics()?;
         self.write_status_code_metrics()?;
@@ -297,6 +298,43 @@ impl<W: Write> Markdown<'_, '_, W> {
         Ok(())
     }
 
+    fn write_thresholds(&mut self) -> Result<(), GooseError> {
+        let thresholds = &self.data.raw_metrics.thresholds;
+        if thresholds.is_empty() {
+            return Ok(());
+        }
+
+        write!(
+            self.w,
+            r#"
+## Thresholds
+
+| Rule | Observed | Result |
+| ---- | -------: | ------ |
+"#
+        )?;
+
+        for result in thresholds {
+            // A failing row is bold, as well as saying so.
+            let verdict = if result.passed {
+                result.verdict().to_string()
+            } else {
+                format!("**{}**", result.verdict())
+            };
+            // As request names are, the rule is plain text, escaped so a request
+            // name in it is never read as Markdown.
+            writeln!(
+                self.w,
+                "| {} | {} | {} |",
+                markdown_cell(&result.rule),
+                markdown_cell(&result.observed),
+                verdict
+            )?;
+        }
+
+        Ok(())
+    }
+
     fn write_error_metrics(&mut self) -> Result<(), GooseError> {
         let Some(errors) = &self.data.errors else {
             return Ok(());
@@ -412,6 +450,23 @@ fn markdown_paragraph(text: &str) -> String {
         .join("  \n")
 }
 
+/// `text` as the text of one table cell, with a backslash before every `\`, `<`,
+/// `>` and `|`, as [`escape_line`] adds, and every backtick, `*`, `_`, `[`, `]` and
+/// `&`, so it holds no HTML tag, cell break, code span, emphasis, link or entity.
+fn markdown_cell(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 8);
+    for c in text.chars() {
+        if matches!(
+            c,
+            '\\' | '<' | '>' | '|' | '`' | '*' | '_' | '[' | ']' | '&'
+        ) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// `line` without its indent, which could start a code block, and with a
 /// backslash before a leading `#`, `-`, `+`, `*` or `=`, the `.` or `)` after
 /// leading digits, and every `\`, `<`, `>` and `|`.
@@ -439,6 +494,17 @@ fn escape_line(line: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A threshold cell is plain text: a backtick, `|` or `<` in a request name
+    /// starts no code span, cell or tag.
+    #[test]
+    fn threshold_cells_are_escaped() {
+        assert_eq!(
+            markdown_cell("p95<1s for GET /a`b|c*d_e[f]\\g&lt;"),
+            "p95\\<1s for GET /a\\`b\\|c\\*d\\_e\\[f\\]\\\\g\\&lt;"
+        );
+        assert_eq!(markdown_cell("error-rate>=1%"), "error-rate\\>=1%");
+    }
 
     /// A note's lines read as text, never as Markdown blocks, HTML or table
     /// cells, and keep their line breaks.

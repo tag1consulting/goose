@@ -12,6 +12,8 @@
         - [Common Options](getting-started/common.md)
         - [Test Plan](getting-started/test-plan.md)
         - [Throttle](getting-started/throttle.md)
+        - [Thresholds](getting-started/thresholds.md)
+        - [Killswitch](getting-started/killswitch.md)
         - [Limiting Scenarios](getting-started/scenarios.md)
         - [Custom Options](getting-started/custom.md)
     - [Output Files](getting-started/output-files.md)
