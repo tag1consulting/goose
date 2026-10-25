@@ -1,6 +1,6 @@
 # Output files
 
-Goose writes reports and logs only when you ask for them. This page gives the rules for every file Goose writes, then three recipes.
+Goose writes reports and logs only when you ask for them. This page gives the rules for every file Goose writes, then three recipes. A relative path, and the `goose-runs` folder, are relative to the working directory, so the commands below, run with `cargo run` in a Goose checkout, write into the checkout.
 
 ## Files
 
@@ -20,7 +20,7 @@ cargo run --example simple -- --host http://localhost:8080 -t 30s --report-file 
 
 This writes `results.html`, as Goose 0.18 did.
 
-**3. An output flag given without a path writes into the run's folder.** `--report-file` writes `report.json` and `report.html`. `--goose-log`, `--request-log`, `--transaction-log`, `--scenario-log`, `--error-log` and `--debug-log` write `goose.log`, `requests`, `transactions`, `scenarios`, `errors` and `debug`, each with its format's extension (`.json`, `.csv`, or `.log` for raw and pretty), plus `.gz` under rule 15.
+**3. An output flag given without a path writes into the run's folder.** `--report-file` writes `report.json` and `report.html`. `--goose-log`, `--request-log`, `--transaction-log`, `--scenario-log`, `--error-log` and `--debug-log` write `goose.log`, `requests`, `transactions`, `scenarios`, `errors` and `debug`, each with its format's extension (`.json`, `.csv`, or `.log` for raw and pretty), plus `.gz` under rule 15. An output flag followed by another option, as `--report-file -R` below, is given without a path. A path that begins with a hyphen goes after `=`, as in `--goose-log=-run.log`: given as its own argument it is read as options, and when that does not parse, the error ends with a tip to use `=`.
 
 ```bash
 cargo run --example simple -- --host http://localhost:8080 -t 30s --report-file -R --request-format csv

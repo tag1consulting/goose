@@ -58,6 +58,8 @@ Both return an error, and record nothing, when `method` or `name` breaks the rul
 
 Coordinated Omission Mitigation applies to custom requests the same way it does to HTTP requests.
 
+Goose records a custom request with the method `GooseMethod::Custom` and keeps the label you passed in `raw.custom_method`. `GooseMethod::Custom` is new in 0.19, so a `match` on `GooseMethod` with no wildcard arm needs an arm for it. It is not an HTTP method: `get_request_builder(&GooseMethod::Custom, path)` returns `TransactionError::Custom` with the text `GooseMethod::Custom cannot be used with HTTP request builders; use record_custom_request() instead`.
+
 ## Running the example
 
 Start a local TCP echo server:

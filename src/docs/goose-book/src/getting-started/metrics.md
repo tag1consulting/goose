@@ -2,7 +2,7 @@
 
 Here's sample output generated when running a loadtest, in this case the [Umami example](../example/umami.html) that comes with Goose.
 
-In this case, the example ran against a local test server standing in for the [Drupal Umami demo](https://www.drupal.org/docs/umami-drupal-demonstration-installation-profile): it answers every page the example requests, with the titles, forms and static assets the example checks for. The following command was used to configure Goose and run the load test. The `-u9` tells Goose to spin up 9 users. The `-r3` option tells Goose to launch 3 users per second. The `-t1m` option tells Goose to run the load test for 1 minute, or 60 seconds. The `--no-reset-metrics` flag tells Goose to include all metrics, instead of the default which is to reset the metrics once every user has started. And finally, the two `--report-file` options tell Goose to write an HTML-formatted report named `report.html` and a Markdown-formatted report named `report.md` once the load test finishes.
+The example is written for a site built with the [Drupal Umami demo](https://www.drupal.org/docs/umami-drupal-demonstration-installation-profile) profile: against any other server its validations fail. This sample came from a local test server that answers every page the example requests, with the titles, forms and static assets the example checks for. The following command was used to configure Goose and run the load test. The `-u9` tells Goose to spin up 9 users. The `-r3` option tells Goose to launch 3 users per second. The `-t1m` option tells Goose to run the load test for 1 minute, or 60 seconds. The `--no-reset-metrics` flag tells Goose to include all metrics, instead of the default which is to reset the metrics once every user has started. And finally, the two `--report-file` options tell Goose to write an HTML-formatted report named `report.html` and a Markdown-formatted report named `report.md` in the working directory once the load test finishes.
 
 ## ASCII metrics
 
@@ -335,11 +335,11 @@ For example, the Scenario named `Anonymous English user` includes the above `ano
 
 It is followed by a table, shown in entirety here because this load test only has 3 Scenarios. The `# Users` column indicates how many `GooseUser` threads were assigned to run this Scenario during the load test. The `# Times Run` column indicates how many times in aggregate all `GooseUser` threads ran completely through the Scenario. From there you can see how long on average it took a `GooseUser` thread to run through all Transactions and make all contained Requests to completely run the Scenario, as well as the minimum and maximum amount of time. Finally, `Iterations` is how many times each assigned `GooseUser` thread ran through the entire Scenario (for each Scenario, Iterations times the # of Users equals the total # of times run).
 
-As this run lasted two minutes, and the `Admin user` Scenario takes 30 to 40 seconds to run once, its one user ran completely through it 3 times, while the 4 users of each anonymous Scenario ran through theirs 18 times in all:
+As this run lasted two minutes, and the `Admin user` Scenario took 31 to 42 seconds to run once, its one user ran completely through it 3 times, while the 4 users of each anonymous Scenario ran through theirs 18 times in all:
 ![Scenario metrics](metrics-scenarios.jpg)
 
 #### Users
-The final graph shows how many users were running at the various stages of the load test. As configured, Goose quickly ramped up to 9 users, then sustained that level of traffic for two minutes before shutting down:
+The final graph shows how many users were running at the various stages of the load test. The graph starts when the load test starts, so it shows the ramp up: as configured, Goose launched 3 users a second up to 9 users, then sustained that level of traffic for two minutes before shutting down:
 ![User metrics](metrics-users.jpg)
 
 ### Markdown report
@@ -504,7 +504,7 @@ async fn measure_full_download(user: &mut GooseUser) -> TransactionResult {
 }
 ```
 
-The `GET /large-file` row then holds the time to the first byte, and the `DOWNLOAD /large-file` row the time to the last. In this release the `# reqs`, `# fails`, `req/s` and `fail/s` columns read 0 for a custom request, and the Aggregated row does not count it, while its response times are recorded; with no status code given, the status code table shows it under `[0]`, as in the [TCP example](../example/tcp.md).
+The `GET /large-file` row then holds the time to the first byte, and the `DOWNLOAD /large-file` row the time to the last. In this release the `# reqs`, `# fails`, `req/s` and `fail/s` columns read 0 for a custom request, and the Aggregated row's counts leave it out, while its response times are recorded and the Aggregated response times and status codes include it; with no status code given, the status code table shows it under `[0]`, as in the [TCP example](../example/tcp.md).
 
 **Note:** Reading complete response bodies will consume more memory and may reduce the load generation capacity of your test.
 

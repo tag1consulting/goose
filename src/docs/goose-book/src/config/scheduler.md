@@ -55,7 +55,7 @@ async fn main() -> Result<(), GooseError> {
 
 This first example assumes the default of `.set_scheduler(GooseScheduler::RoundRobin)`.
 
-If Goose is told to launch only two users, one [`GooseUser`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html) will run `Scenario1` and the other will run `Scenario2`. Even though `Scenario1` has a weight of 2 [`GooseUser`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html) are allocated round-robin so with only two users the second instance of `Scenario1` is never launched. Goose launches the allocated users from the end of the list, so the first user launched, user 0 in the logs, runs `Scenario2` and the second runs `Scenario1`.
+If Goose is told to launch only two users, one [`GooseUser`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html) will run `Scenario1` and the other will run `Scenario2`. Even though `Scenario1` has a weight of 2 [`GooseUser`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html) are allocated round-robin so with only two users the second instance of `Scenario1` is never launched. Goose launches the allocated users from the end of the list, so the first user launched runs `Scenario2` and the second runs `Scenario1`. The first user launched is `"user":0` in the request, transaction and scenario logs, and `[user 1]: launching user` in the console.
 
 The [`GooseUser`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html) running `Scenario1` will then launch transactions repeatedly in the following order: `transaction1`, `transaction2`, `transaction1`. If it runs through twice, then it runs all of the following transactions in the following order: `transaction1`, `transaction2`, `transaction1`, `transaction1`, `transaction2`, `transaction1`.
 

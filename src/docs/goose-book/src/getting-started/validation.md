@@ -10,7 +10,7 @@ Goose supports several built-in error types that are automatically handled:
 
 - **`TransactionError::Custom`** - User-defined errors for business logic validation
 - **`TransactionError::InvalidMethod`** - Unsupported HTTP methods
-- **`TransactionError::LoggerFailed`** - Errors sending log messages to the logger thread
+- **`TransactionError::LoggerFailed`** - Errors sending log messages to the logger thread; `source` holds the `flume::SendError`, boxed
 - **`TransactionError::MetricsFailed`** - Errors sending metrics to the parent thread
 - **`TransactionError::RequestCanceled`** - Requests canceled when throttling is enabled and the test ends
 - **`TransactionError::RequestFailed`** - A request marked failed with `GooseUser::set_failure`, or a failed request built with `GooseRequest::builder().error_on_fail()`; `raw_request` holds the request's `GooseRequestMetric`, boxed
@@ -60,7 +60,7 @@ async fn business_logic_check(user: &mut GooseUser) -> TransactionResult {
 }
 ```
 
-Custom errors are tracked in Goose metrics and visible in error logs, making it easy to identify validation failures and other business logic issues in your load tests.
+A transaction that returns any error, a custom one included, is counted as failed in the transaction metrics, and the transaction log records it with `"success":false`. The error itself is not kept: its message is written to neither the error log nor any report. To record why a request failed, mark it failed with `GooseUser::set_failure`, which writes the reason you give to the error log and the reports' errors, or write the reason to the [debug log](../logging/debug.md) with `GooseUser::log_debug`.
 
 ## Goose Eggs
 [Goose-eggs](https://github.com/tag1consulting/goose-eggs) are helpful in writing Goose load tests.

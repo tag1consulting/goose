@@ -121,14 +121,14 @@ async fn main() -> Result<(), GooseError> {
 The program above can be invoked with a command such as:
 
 ```bash,ignore
-cargo run -- --host https://localhost:8080 --product-id 42
+cargo run -- --host http://localhost:8080 --product-id 42
 ```
 
 Your options must not reuse the names or short letters Goose's take; `--help` lists them.
 
 ### Building the configuration yourself
 
-You can also build a `GooseConfiguration` without reading the command line: `GooseConfiguration::default()` leaves every option unset, and `GooseConfiguration::parse_args_default(&["--host", "https://localhost:8080"])` parses a list of Goose options, leaving every option you do not pass unset, and returns a `Result`. `GooseConfiguration` also implements `clap::Parser`, so `GooseConfiguration::try_parse_from(["loadtest", "--host", "https://localhost:8080"])` parses the same options, with the program name first. Each option that takes a value is an `Option`, `None` when it is not set, so a value is set with `Some`. Goose then applies any `GooseDefault` and its own defaults to every option left unset, as it does for the command line.
+You can also build a `GooseConfiguration` without reading the command line: `GooseConfiguration::default()` leaves every option unset, and `GooseConfiguration::parse_args_default(&["--host", "http://localhost:8080"])` parses a list of Goose options, leaving every option you do not pass unset, and returns a `Result`. Given `-h` or `--help`, it prints nothing and returns `GooseError::InvalidOption`, with the flag as `option` and the detail `help was requested`. `GooseConfiguration` also implements `clap::Parser`, so `GooseConfiguration::try_parse_from(["loadtest", "--host", "http://localhost:8080"])` parses the same options, with the program name first. Each option that takes a value is an `Option`, `None` when it is not set, so a value is set with `Some`. Goose then applies any `GooseDefault` and its own defaults to every option left unset, as it does for the command line.
 
 Options you do not set this way are not read from the command line. In particular, a host is required, from the configuration, `GooseDefault::Host` or `Scenario::set_host`:
 
@@ -145,7 +145,7 @@ async fn loadtest_index(user: &mut GooseUser) -> TransactionResult {
 #[tokio::main]
 async fn main() -> Result<(), GooseError> {
     let mut config = GooseConfiguration::default();
-    config.host = Some("https://localhost:8080".to_string());
+    config.host = Some("http://localhost:8080".to_string());
     config.users = Some(10);
 
     GooseAttack::initialize_with_config(config)?
