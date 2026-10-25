@@ -21,7 +21,7 @@ A rule is `<metric><op><value>`, optionally followed by ` for <request>`.
 | `avg` | The average response time | A time |
 | `max` | The slowest response time | A time |
 | `error-rate` | Failed requests as a percent of all requests | A number with an optional `%`, at most 100 |
-| `rps` | Requests per second, from when checking starts | A number |
+| `rps` | Requests per second while the run holds its users steady | A number |
 
 The operator is `<`, `<=`, `>` or `>=`. A rule passes when the comparison holds for what Goose observed: `p95<500ms` passes at 499 ms and fails at 500 ms, while `p95<=500ms` passes at 500 ms too.
 
@@ -37,7 +37,7 @@ Some rules:
 - `p99.9<=2s`: 99.9% of all responses take at most 2 seconds.
 - `avg<150`: the average response is under 150 ms.
 - `error-rate<1%`: fewer than 1% of requests fail.
-- `rps>=200`: the run makes at least 200 requests a second.
+- `rps>=200`: the run makes at least 200 requests a second while it holds its users steady.
 - `max<5s for GET /checkout`: no `GET /checkout` takes 5 seconds or more.
 
 A rule that does not parse is refused before any user starts, with a `GooseError::InvalidOption` whose `detail` says what is wrong with it:
@@ -70,17 +70,17 @@ With `--no-threshold-abort`, Goose never stops the run for a threshold. It runs 
 
 ### When checking starts and stops
 
-Checking starts when the run first enters Maintain, the first time it holds its users steady, in every mode. A ramp up therefore never fails a rule while the run goes. A users ramp resets its metrics as it enters Maintain. Under `--test-plan`, `--iterations` or `--no-reset-metrics` they are not reset, so the ramp up's requests still count in the first check.
+Checking starts when the run first enters Maintain, the first time it holds its users steady, in every mode. A ramp up therefore never fails a rule while the run goes. A users ramp resets its metrics as it enters Maintain. Under `--test-plan`, `--iterations` or `--no-reset-metrics` they are not reset, so the ramp up's requests still count in the first check, except in `rps`, which counts only the hold.
 
-Once checking starts, every later Increase or Maintain step of a test plan is checked too. Checking pauses while the run stops users, in Decrease, and ends at Shutdown. The judgement at the end still covers the whole run.
+Once checking starts, every later Increase or Maintain step of a test plan is checked too. Checking pauses while the run stops users, in Decrease, and ends at Shutdown. The judgement at the end still covers the whole run, except for `rps`, below.
 
-A test plan that never holds its users steady, such as `10,1m;0,1m`, never enters Maintain, so its rules are judged only at the end. Goose warns about this at startup.
+A test plan that never holds its users steady, such as `10,1m;0,1m`, never enters Maintain, so its rules are judged only at the end, and its `rps` rules can not pass. Goose warns about this at startup, unless `--no-threshold-abort` is set and no rule is an `rps` rule.
 
 A rule whose metric has no samples yet, such as a rule for a request that has not run, is skipped while the run goes. The first check can judge only a few requests, so one early error can fail `error-rate`; `--threshold-abort-delay` gives the run time to make more.
 
-### `rps` counts from when checking starts
+### `rps` counts only the time users hold steady
 
-An `rps` rule counts the requests made since checking started, over the seconds since then, and its row reads as `213.5 from Maintain`. The count ends when checking pauses as the run stops its users, unless a later step checks again, so a ramp down does not pull the final value down either. The report's Aggregated requests per second can differ, as it covers the whole run: under `--test-plan`, the ramp up's lower rate would pull it down and fail an `rps>=` rule that the steady load meets. Before a whole second has passed there is no rate to judge. When checking never starts, under `--no-threshold-abort` or in a run that never enters Maintain, `rps` covers the whole run.
+An `rps` rule counts only the time the run spends holding its users steady, in Maintain, in every mode, with or without `--no-threshold-abort`, while the run goes and at the end. It counts the requests made while the run holds its users, over the seconds it holds them, added up over every hold of a test plan, and its row reads as `213.5 from Maintain`. A ramp up, a ramp down, and an Increase step between two holds add nothing, so none of them pulls the value down. The report's Aggregated requests per second can differ, as it covers the whole run: under `--test-plan`, the ramp up's lower rate would pull it down and fail an `rps>=` rule that the steady load meets. Until the run has held its users for a whole second there is no rate to judge. A run that never enters Maintain has no time to count, so its `rps` rules fail at the end as `no samples`.
 
 ### `--threshold-abort-delay`
 
