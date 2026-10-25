@@ -11,6 +11,8 @@ cargo run --release -- -H http://local.dev/ -u 50 -r 10 -t 10m \
 
 Quote each rule: `<` and `>` redirect in a shell.
 
+Thresholds give one verdict for the whole run. They fit a sustained test that ramps up, holds its users steady, and ramps down. A test plan with several holds gets that one verdict too, and no rule can judge one test plan step on its own. To judge each user count by itself, give each a load test of its own. See [`rps` counts only the time users hold steady](#rps-counts-only-the-time-users-hold-steady) for how several holds, a hold at 0 users, and `--iterations` change `rps`.
+
 ## Syntax
 
 A rule is `<metric><op><value>`, optionally followed by ` for <request>`.
@@ -76,11 +78,17 @@ Once checking starts, every later Increase or Maintain step of a test plan is ch
 
 A test plan that never holds its users steady, such as `10,1m;0,1m`, never enters Maintain, so its rules are judged only at the end, and its `rps` rules can not pass. Goose warns about this at startup, unless `--no-threshold-abort` is set and no rule is an `rps` rule.
 
-A rule whose metric has no samples yet, such as a rule for a request that has not run, is skipped while the run goes. The first check can judge only a few requests, so one early error can fail `error-rate`; `--threshold-abort-delay` gives the run time to make more.
+A rule whose metric has no samples yet, such as a rule for a request that has not run, is skipped while the run goes. The first check can judge only a few requests, so one early error can fail `error-rate`. The first seconds of the first hold can also fail an `rps>=` rule that the whole hold meets. `--threshold-abort-delay` gives the run time to make more requests before the first check.
 
 ### `rps` counts only the time users hold steady
 
-An `rps` rule counts only the time the run spends holding its users steady, in Maintain, in every mode, with or without `--no-threshold-abort`, while the run goes and at the end. It counts the requests made while the run holds its users, over the seconds it holds them, added up over every hold of a test plan, and its row reads as `213.5 from Maintain`. A ramp up, a ramp down, and an Increase step between two holds add nothing, so none of them pulls the value down. The report's Aggregated requests per second can differ, as it covers the whole run: under `--test-plan`, the ramp up's lower rate would pull it down and fail an `rps>=` rule that the steady load meets. Until the run has held its users for a whole second there is no rate to judge. A run that never enters Maintain has no time to count, so its `rps` rules fail at the end as `no samples`.
+An `rps` rule counts only the time the run spends holding its users steady, in Maintain, in every mode, with or without `--no-threshold-abort`, while the run goes and at the end. It counts the requests made while the run holds its users, over the seconds it holds them, added up over every hold of a test plan. Holds at different user counts therefore give one rate, and an `rps>=` rule judges that one rate. An `rps` rule's row reads as `213.5 from Maintain`. A ramp up, a ramp down, and an Increase step between two holds add nothing, so none of them pulls the rate down. The report's Aggregated requests per second can differ, as it covers the whole run: under `--test-plan`, the ramp up's lower rate would pull it down and fail an `rps>=` rule that the steady load meets.
+
+A test plan step that stays at 0 users after a ramp down and before a later ramp up is a hold too: it adds seconds and no requests, so it pulls the rate down. In `10,10s;10,20s;0,5s;0,20s;10,10s;10,20s;0,5s`, that step is `0,20s`. Leave such a step out of a test plan with an `rps` rule: without `0,20s`, the ramp down leads straight into the next ramp up, and the rate covers only the two holds at 10 users.
+
+With `--iterations` and `--decrease-rate` or `--decrease-time`, the run ramps down as soon as the ramp up ends, so it never enters Maintain. Without them, the run enters Maintain when the ramp up ends and stays there until the last user finishes its iterations. A run whose users all finish before the ramp up ends never enters Maintain. Once the first user finishes, the rest of the hold has fewer users making requests. That time still counts, so it pulls the rate down. A run with `--run-time` in place of `--iterations` keeps every user making requests until the hold ends, so use `--run-time` with an `rps` rule.
+
+Until the run has held its users for a whole second there is no rate to judge. A run that never enters Maintain has no time to count, so its `rps` rules fail at the end as `no samples`.
 
 ### `--threshold-abort-delay`
 
