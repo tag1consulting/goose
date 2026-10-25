@@ -2,7 +2,7 @@
 
 ## Error Handling
 
-Goose transactions can return various types of errors through the `TransactionError` enum. Understanding these error types helps with debugging and writing robust load tests.
+Goose transactions can return various types of errors through the `TransactionError` enum. A transaction function returns a `TransactionResult`, which is `Result<(), Box<TransactionError>>`: the `?` operator and `.into()` box the error for you. Understanding these error types helps with debugging and writing robust load tests.
 
 ### Transaction Error Types
 
@@ -13,7 +13,7 @@ Goose supports several built-in error types that are automatically handled:
 - **`TransactionError::LoggerFailed`** - Errors sending log messages to the logger thread
 - **`TransactionError::MetricsFailed`** - Errors sending metrics to the parent thread
 - **`TransactionError::RequestCanceled`** - Requests canceled when throttling is enabled and the test ends
-- **`TransactionError::RequestFailed`** - Requests that fail validation or return unexpected status codes
+- **`TransactionError::RequestFailed`** - A request marked failed with `GooseUser::set_failure`, or a failed request built with `GooseRequest::builder().error_on_fail()`; `raw_request` holds the request's `GooseRequestMetric`, boxed
 - **`TransactionError::Reqwest`** - Network and HTTP client errors (connection failures, timeouts, etc.)
 - **`TransactionError::Url`** - URL parsing errors when building requests
 
@@ -65,11 +65,12 @@ Custom errors are tracked in Goose metrics and visible in error logs, making it 
 ## Goose Eggs
 [Goose-eggs](https://github.com/tag1consulting/goose-eggs) are helpful in writing Goose load tests.
 
-To leverage Goose Eggs when writing your load test, include the crate in the dependency section of your `Cargo.toml.
+To leverage Goose Eggs when writing your load test, include the crate in the dependency section of your `Cargo.toml`. Each goose-eggs release is built for one Goose release and works only with it: goose-eggs 0.6 depends on Goose 0.18, so with Goose 0.19 use the goose-eggs release that depends on Goose 0.19, as [crates.io](https://crates.io/crates/goose-eggs) lists.
 
 ```toml
 [dependencies]
-goose-eggs = "0.4"
+goose = "^0.19"
+goose-eggs = "<the release that depends on Goose 0.19>"
 ```
 
 For example, to use the Goose Eggs validation functions, bring the `Validate` structure and either the `validate_page` or the `validate_and_load_static_assets` function into scope:
@@ -90,6 +91,6 @@ let validate = &Validate::builder()
 validate_and_load_static_assets(user, goose, &validate).await?;
 ```
 
-Whether or not validation passed or failed will be visible in the Goose metrics when the load test finishes. You can enable the [debug log](https://book.goose.rs/logging/debug.html) to gain more insight into failures.
+Whether or not validation passed or failed will be visible in the Goose metrics when the load test finishes. You can enable the [debug log](../logging/debug.md) to gain more insight into failures.
 
 Read [the goose-eggs documentation](https://docs.rs/goose-eggs/latest/goose_eggs) to learn about other helpful functions useful in writing load tests, as well as other validation helpers, such as [headers](https://docs.rs/goose-eggs/latest/goose_eggs/struct.ValidateBuilder.html#method.header), [header values](https://docs.rs/goose-eggs/latest/goose_eggs/struct.ValidateBuilder.html#method.header_value), [the page title](https://docs.rs/goose-eggs/latest/goose_eggs/struct.ValidateBuilder.html#method.title), and [whether the request was redirected](https://docs.rs/goose-eggs/latest/goose_eggs/struct.ValidateBuilder.html#method.redirect).

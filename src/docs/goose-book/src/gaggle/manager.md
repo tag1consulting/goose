@@ -1,6 +1,6 @@
 # Gaggle Manager
 
-**NOTE: Gaggle support was temporarily removed as of Goose 0.17.0 (see https://github.com/tag1consulting/goose/pull/529). Use Goose 0.16.4 if you need the functionality described in this section.**
+**NOTE: Goose 0.19 cannot run a Gaggle. Gaggle support was removed in Goose 0.17.0 and is planned for Goose 0.20. This page describes Goose 0.16.4, the last release with it; see the [Gaggle overview](overview.md).**
 
 To launch a Gaggle, you first must start a Goose application in Manager mode. All configuration happens in the Manager. To start, add the `--manager` flag and `--expect-workers` option, the latter necessary to tell the Manager process how many Worker processes it will be coordinating.
 
