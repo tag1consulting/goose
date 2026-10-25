@@ -17,15 +17,19 @@ A rule is `<metric><op><value>`, optionally followed by ` for <request>`.
 
 | Metric | Measures | Value |
 | ------ | -------- | ----- |
-| `pNN`, `pNN.N` | A response time percentile, such as `p50`, `p95` or `p99.9`, greater than 0 and less than 100 | A time: a number with `us`, `ms` or `s`; a bare number is milliseconds |
+| `pNN` | A response time percentile, with optional decimals, such as `p50`, `p95` or `p99.9`, greater than 0 and less than 100 | A time: a number with `us`, `ms` or `s`; a bare number is milliseconds |
 | `avg` | The average response time | A time |
 | `max` | The slowest response time | A time |
 | `error-rate` | Failed requests as a percent of all requests | A number with an optional `%`, at most 100 |
-| `rps` | Requests per second over the run so far | A number |
+| `rps` | Requests per second, from when checking starts | A number |
 
-The operator is `<`, `<=`, `>` or `>=`. A rule passes when what Goose observed compares so with the value: `p95<500ms` passes at 499 ms and fails at 500 ms, while `p95<=500ms` passes at 500 ms too.
+The operator is `<`, `<=`, `>` or `>=`. A rule passes when the comparison holds for what Goose observed: `p95<500ms` passes at 499 ms and fails at 500 ms, while `p95<=500ms` passes at 500 ms too.
 
-Without ` for <request>`, a rule judges all requests together, as the `Aggregated` row of the report's tables does. With it, the rule judges only the request the requests table names so, method and name together, such as `GET /login`, or a request's custom name, as in `POST login`.
+Without ` for <request>`, a rule judges all requests together, as the `Aggregated` row of the report's tables does. With it, the rule judges only the request with that name: its full name as the HTML or Markdown report shows it, method and name together, such as `GET /login`, or a request's custom name, as in `POST login`. The console's tables cut long names short, so copy a name from a report. A rule for a request the run never made fails at the end as `no samples`, and Goose warns about it, suggesting the name it most likely means:
+
+```
+threshold p95<1s for get /: no request named "get /"; did you mean "GET /"?
+```
 
 Some rules:
 
@@ -42,11 +46,15 @@ A rule that does not parse is refused before any user starts, with what is wrong
 threshold "p100<1s": the percentile must be greater than 0 and less than 100, such as p95 or p99.9.
 ```
 
+So is a rule that can never pass: any rule with `<0`, such as `p95<0` or `error-rate<0`, as well as `rps<=0` and `error-rate>100` (with or without `%`). With `--throttle-requests N`, which keeps the run at N requests a second or fewer, `rps>M` is refused when M is N or more, and `rps>=M` when M is more than N:
+
+```
+threshold "rps>=200": it can never pass; `configuration.throttle_requests` caps the run at 100 requests a second.
+```
+
 Thresholds judge metrics, so `--threshold` is not allowed with `--no-metrics`.
 
-### Precision
-
-Percentiles come from the same histogram buckets as every report's percentiles: each time under 128 µs has a bucket of its own, and from there a bucket reports the time at its middle, at most 1/128 (0.78%) away from any time it holds. A percentile rule close to its limit can therefore pass or fail by that much. The average and the slowest time are exact.
+A percentile comes from the same [histogram buckets](https://github.com/tag1consulting/goose/blob/main/src/metrics/buckets.rs) as every report's percentiles, so it can be up to 0.78% away from the exact time, while the average and the slowest time are exact.
 
 ## Stopping the run
 
@@ -62,18 +70,21 @@ With `--no-threshold-abort`, Goose never stops the run for a threshold. It runs 
 
 ### When checking starts and stops
 
-Checking starts once the metrics being collected are the ones the run keeps:
+Checking starts when the run first enters Maintain, the first time it holds its users steady, in every mode. A ramp up therefore never fails a rule while the run goes. A users ramp resets its metrics as it enters Maintain, unless `--no-reset-metrics` is set. Under `--test-plan`, `--iterations` and `--no-reset-metrics` the metrics are not reset, so the requests made during the ramp up still count in the first check.
 
-- A users ramp, the default, resets its metrics when every user has started and the run enters Maintain, unless `--no-reset-metrics` is set. Checking starts then, since judging metrics about to be thrown away could stop the run for nothing. A slow ramp up never fails a rule.
-- `--test-plan`, `--iterations` and `--no-reset-metrics` never reset the metrics, so checking starts in the first second.
+Once checking starts, a later Increase step of a test plan is checked too. Checking stops once the run starts to stop its users, in Decrease or Shutdown. The judgement at the end still covers the whole run.
 
-Checking stops once the run starts to stop its users, in Decrease or Shutdown. The judgement at the end still covers the whole run.
+A test plan that never holds its users steady, such as `10,1m;0,1m`, never enters Maintain, so its rules are judged only at the end. Goose warns about this at startup.
 
-A rule whose metric has no samples yet, such as a rule for a request that has not run, is skipped while the run goes.
+A rule whose metric has no samples yet, such as a rule for a request that has not run, is skipped while the run goes. The first check can judge only a few requests, so one early error can fail `error-rate`; `--threshold-abort-delay` gives the run time to make more.
+
+### `rps` counts from when checking starts
+
+An `rps` rule counts the requests made since checking started, over the seconds since then, and its row reads as `213.5 from Maintain`. The report's Aggregated requests per second can differ, as it covers the whole run: under `--test-plan`, the ramp up's lower rate would pull it down and fail an `rps>=` rule that the steady load meets. Before a whole second has passed there is no rate to judge. When checking never starts, under `--no-threshold-abort` or in a run that never enters Maintain, `rps` covers the whole run.
 
 ### `--threshold-abort-delay`
 
-`--threshold-abort-delay` holds the first check back by a time after checking would start, given as for `--run-time`: `30s`, `2m`, or a bare number of seconds. It never changes the judgement at the end of the run.
+`--threshold-abort-delay` holds the first check back by a time after the run first enters Maintain, given as for `--run-time`: `30s`, `2m`, or a bare number of seconds. It never changes the judgement at the end of the run.
 
 Use it when the first seconds of a run are slow for a reason you accept, such as a cold cache. With `--threshold-abort-delay 1m`, a warm up spike in the first minute can not stop the run, but it still counts in the final percentiles, so a rule it breaks for the whole run still fails at the end:
 
@@ -88,7 +99,9 @@ It needs a `--threshold`, and is not allowed with `--no-threshold-abort`, which 
 
 When the run ends, Goose judges every rule once more on the final metrics. Here a rule whose metric has no samples fails, observed as `no samples`: a rule for a request that never ran says nothing about that request, so it can not pass.
 
-When every rule passes, `execute()` returns `Ok(GooseMetrics)` as usual. When any fails, it returns `GooseError::ThresholdsFailed` once every report is written. The error holds the rules that failed and the run's metrics:
+The rule that stopped the run always fails. Requests still in flight when it stopped are counted afterwards, so by the end its value can be back inside the limit. Its row shows the value when it stopped the run and the value at the end, such as `100% at abort, 0.8% at end`, or one value when the two are the same.
+
+When every rule passes, `execute()` returns `Ok(GooseMetrics)` as usual. When any fails, it returns `GooseError::ThresholdsFailed` once every report is written. The error holds the rules that failed and the run's metrics, as a `ThresholdMetrics` that reads as the `GooseMetrics` it holds:
 
 ```rust,ignore
 match goose_attack.execute().await {
@@ -97,7 +110,7 @@ match goose_attack.execute().await {
         for result in &failed {
             eprintln!("{} failed: observed {}", result.rule, result.observed);
         }
-        eprintln!("the run made {} requests", metrics.requests.len());
+        eprintln!("the run lasted {} seconds", metrics.duration);
         std::process::exit(1);
     }
     Err(e) => return Err(e),
@@ -126,10 +139,10 @@ The console's final tables, and the HTML, Markdown and JSON reports, have a Thre
 ```
  === THRESHOLDS ===
  ------------------------------------------------------------------------------
- Rule                                         |       Observed | Result
+ Rule                                         |                   Observed | Result
  ------------------------------------------------------------------------------
- p95<500ms                                    |          812ms | FAIL, stopped the run
- error-rate<1%                                |             0% | PASS
+ error-rate<1%                                | 100% at abort, 0.8% at end | FAIL, stopped the run
+ p95<500ms                                    |                      312ms | PASS
  ------------------------------------------------------------------------------
 ```
 
@@ -156,12 +169,4 @@ Rules given with `--threshold` replace every rule set in code; they are not adde
 
 ## Overhead
 
-Thresholds add nothing per request. Goose checks the rules once a second, in the task that already collects the metrics. The check was measured with 32 users sending requests back to back to nginx on the same machine, an 18 core MacBook Pro. Each build had 5 runs of 10 minutes, alternating between builds, and the averages below are of the middle 3 runs by requests per second:
-
-| Build | Requests per second | p95 | CPU time |
-| ----- | ------------------: | --: | -------: |
-| Before thresholds | 127,536 | 0.367 ms | 2,398 s |
-| No thresholds | 127,454 (-0.06%) | 0.370 ms | 2,426 s (+1.2%) |
-| 3 thresholds | 127,273 (-0.21%) | 0.377 ms | 2,452 s (+2.3%) |
-
-The 3 thresholds were `p95<500ms`, `error-rate<1%` and `p99<1s for GET /about/`. The differences in throughput and latency are within run to run noise. The CPU time varied more from run to run than between builds, but may be 1% to 2% higher than before thresholds.
+Thresholds add nothing per request: over 5 runs of 10 minutes per build, alternating builds, with 32 users sending requests back to back to nginx on the same 18 core MacBook Pro, the averages of the middle 3 runs by requests per second put throughput and p95 within run to run noise, and CPU time 1% to 2% higher with 3 thresholds than before thresholds.
