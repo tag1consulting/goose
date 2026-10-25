@@ -451,12 +451,15 @@ fn markdown_paragraph(text: &str) -> String {
 }
 
 /// `text` as the text of one table cell, with a backslash before every `\`, `<`,
-/// `>` and `|`, as [`escape_line`] adds, and every backtick, `*`, `_`, `[` and `]`, so
-/// it holds no HTML tag, cell break, code span, emphasis or link.
+/// `>` and `|`, as [`escape_line`] adds, and every backtick, `*`, `_`, `[`, `]` and
+/// `&`, so it holds no HTML tag, cell break, code span, emphasis, link or entity.
 fn markdown_cell(text: &str) -> String {
     let mut out = String::with_capacity(text.len() + 8);
     for c in text.chars() {
-        if matches!(c, '\\' | '<' | '>' | '|' | '`' | '*' | '_' | '[' | ']') {
+        if matches!(
+            c,
+            '\\' | '<' | '>' | '|' | '`' | '*' | '_' | '[' | ']' | '&'
+        ) {
             out.push('\\');
         }
         out.push(c);
@@ -497,8 +500,8 @@ mod tests {
     #[test]
     fn threshold_cells_are_escaped() {
         assert_eq!(
-            markdown_cell("p95<1s for GET /a`b|c*d_e[f]\\g"),
-            "p95\\<1s for GET /a\\`b\\|c\\*d\\_e\\[f\\]\\\\g"
+            markdown_cell("p95<1s for GET /a`b|c*d_e[f]\\g&lt;"),
+            "p95\\<1s for GET /a\\`b\\|c\\*d\\_e\\[f\\]\\\\g\\&lt;"
         );
         assert_eq!(markdown_cell("error-rate>=1%"), "error-rate\\>=1%");
     }

@@ -80,7 +80,7 @@ pub(crate) enum Check {
 /// The text is `<metric><op><value>`, optionally followed by ` for <request>`:
 ///  - `<metric>` is `pNN`, with optional decimals (a response time percentile, such
 ///    as `p95` or `p99.9`), `avg`, `max`, `error-rate` (failed requests as a percent
-///    of all requests) or `rps` (requests per second);
+///    of all requests) or `rps` (requests per second, from when checking starts);
 ///  - `<op>` is `<`, `<=`, `>` or `>=`;
 ///  - `<value>` is, for a time, a number with `us`, `ms` or `s`, a bare number being
 ///    milliseconds; for `error-rate`, a number with an optional `%`; for `rps`, a
@@ -143,29 +143,38 @@ impl ThresholdResult {
     }
 }
 
-/// Where `rps` rules count from: the run time, and how many times each request had
-/// been made, when checking started.
+/// A moment in the run: the run time, and how many times each request had been
+/// made by then.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct ThresholdStart {
+pub(crate) struct ThresholdMark {
     /// The run time in seconds, to the microsecond.
     seconds: f64,
     /// How many times each request had been made, successful or failed.
     requests: HashMap<String, usize>,
 }
 
-impl ThresholdStart {
-    /// Where `rps` rules count from, when checking starts `seconds` into the run
-    /// with `metrics`.
-    pub(crate) fn of(metrics: &GooseMetrics, seconds: f64) -> Self {
-        ThresholdStart {
-            seconds,
-            requests: metrics
-                .requests
-                .iter()
-                .map(|(key, request)| (key.clone(), request.success_count + request.fail_count))
-                .collect(),
+impl ThresholdMark {
+    /// The moment `seconds` into the run, when each request had been made as often
+    /// as `requests` says.
+    pub(crate) fn new(seconds: f64, requests: HashMap<String, usize>) -> Self {
+        ThresholdMark { seconds, requests }
+    }
+
+    /// How many times `request` had been made, or every request together for `None`.
+    fn made(&self, request: Option<&str>) -> usize {
+        match request {
+            Some(key) => self.requests.get(key).copied().unwrap_or(0),
+            None => self.requests.values().sum(),
         }
     }
+}
+
+/// What `rps` rules count: from when checking started, to when it last paused as
+/// the run stopped its users, or to now while checking goes on.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ThresholdWindow {
+    pub(crate) start: ThresholdMark,
+    pub(crate) end: Option<ThresholdMark>,
 }
 
 /// What [`Threshold::observe`] shows for a rule whose metric has no samples.
@@ -180,7 +189,7 @@ const PERCENTILE_RANGE: &str =
 
 /// Why a rule with `for` and no request is refused.
 const NO_REQUEST: &str =
-    "\"for\" needs a request name as the HTML report shows it, such as GET /login.";
+    "\"for\" needs a request name as the HTML or Markdown report shows it, such as GET /login.";
 
 /// Why a time value that does not parse is refused, after the value.
 const NOT_A_TIME: &str =
@@ -473,40 +482,53 @@ impl<'m> Judge<'m> {
         }
     }
 
-    /// What `threshold` observes, or `None` without samples. An `rps` rule counts
-    /// from when checking started, if it has.
+    /// What `threshold` observes, or `None` without samples. Once checking has
+    /// started, an `rps` rule counts the requests in its window over the seconds in
+    /// it.
     fn observe(&mut self, threshold: &Threshold) -> Option<Observed> {
         let metrics = self.metrics;
-        let start = metrics
-            .threshold_start
+        let window = metrics
+            .threshold_window
             .as_ref()
             .filter(|_| threshold.metric == Metric::RequestsPerSecond);
-        let seconds = start.map_or(metrics.duration as f64, |start| {
-            self.seconds - start.seconds
-        });
-        match &threshold.request {
+        let request = threshold.request.as_deref();
+        let now = self.seconds;
+        // The requests made in the window, and its seconds, when there is one.
+        let in_window = |made: usize| {
+            window.map_or((made, metrics.duration as f64), |window| {
+                let (made, seconds) = match &window.end {
+                    Some(end) => (end.made(request), end.seconds),
+                    None => (made, now),
+                };
+                (
+                    made.saturating_sub(window.start.made(request)),
+                    seconds - window.start.seconds,
+                )
+            })
+        };
+        match request {
             Some(key) => {
-                let request = metrics.requests.get(key)?;
-                let made = start.map_or(0, |start| start.requests.get(key).copied().unwrap_or(0));
+                let aggregate = metrics.requests.get(key)?;
+                let (requests, seconds) = in_window(aggregate.success_count + aggregate.fail_count);
                 threshold.observe(&Figures {
-                    times: &request.raw_data,
-                    requests: (request.success_count + request.fail_count).saturating_sub(made),
-                    failures: request.fail_count,
+                    times: &aggregate.raw_data,
+                    requests,
+                    failures: aggregate.fail_count,
                     seconds,
-                    from_maintain: start.is_some(),
+                    from_maintain: window.is_some(),
                 })
             }
             None => {
                 let totals = self
                     .totals
                     .get_or_insert_with(|| RequestTotals::of(metrics.requests.values()));
-                let made = start.map_or(0, |start| start.requests.values().sum());
+                let (requests, seconds) = in_window(totals.requests);
                 threshold.observe(&Figures {
                     times: &totals.times,
-                    requests: totals.requests.saturating_sub(made),
+                    requests,
                     failures: totals.failures,
                     seconds,
-                    from_maintain: start.is_some(),
+                    from_maintain: window.is_some(),
                 })
             }
         }
@@ -967,10 +989,10 @@ mod tests {
         assert_eq!(judge("rps>=10", &metrics, Check::Final).observed, "10");
         // Checking started 4.5 seconds in, with 20 requests made: 80 in 5.5 seconds,
         // judged to the microsecond rather than the whole seconds of the duration.
-        metrics.threshold_start = Some(ThresholdStart::of(
-            &metrics_with(5, vec![request("/", &[10], 20, 0)]),
-            4.5,
-        ));
+        metrics.threshold_window = Some(ThresholdWindow {
+            start: mark(4.5, 20),
+            end: None,
+        });
         let result = judge("rps>=14.5", &metrics, Check::Final);
         assert_eq!(result.observed, "14.55 from Maintain");
         assert!(result.passed);
@@ -986,6 +1008,28 @@ mod tests {
         assert!(first_failure(&[parse("rps>1000")], &metrics, 5.4).is_none());
         let failure = first_failure(&[parse("rps>1000")], &metrics, 5.5).unwrap();
         assert_eq!(failure.observed, "80 from Maintain");
+
+        // Once checking paused as the run stopped its users, the window ends there:
+        // 60 requests in the 5 seconds to 9.5, whatever came after.
+        metrics.threshold_window = Some(ThresholdWindow {
+            start: mark(4.5, 20),
+            end: Some(mark(9.5, 80)),
+        });
+        let result = judge("rps>=12 for GET /", &metrics, Check::Final);
+        assert_eq!(result.observed, "12 from Maintain");
+        assert!(result.passed);
+        assert_eq!(
+            judge("rps<12", &metrics, Check::Final).observed,
+            "12 from Maintain"
+        );
+    }
+
+    /// `seconds` into the run, with `made` requests of `GET /`.
+    fn mark(seconds: f64, made: usize) -> ThresholdMark {
+        ThresholdMark::new(
+            seconds,
+            std::iter::once(("GET /".to_string(), made)).collect(),
+        )
     }
 
     #[test]

@@ -505,13 +505,13 @@ pub struct GooseConfiguration {
             pNN with optional decimals (a response time percentile, such as p95 or p99.9), \
             avg, max, error-rate (failed requests as a percent of all) or rps (requests per \
             second from when checking starts). The op is <, <=, > or >=. A time takes us, ms \
-            or s, a bare number being ms; an error-rate takes an optional %. A rule that ends \
-            \"for\" and a request, named as the HTML or Markdown report names it, judges only \
+            or s, a bare number being ms; an error-rate takes an optional %. A rule ending \
+            \" for <request>\", named as the HTML or Markdown report names it, judges only \
             that request, as in \"p99<2s for GET /checkout\"; the console cuts long names \
             short. Without it, the rule judges all requests together. A rule that can never \
             pass is refused. A failing rule stops the run, unless --no-threshold-abort is \
             set, and always fails it: execute() returns GooseError::ThresholdsFailed, so a \
-            main that returns Result<(), GooseError> exits nonzero. Repeat the option for \
+            main that passes it up with ? exits nonzero. Repeat the option for \
             several rules; they replace any set in code. Not allowed with --no-metrics.\n\n\
             Example: --threshold \"p95<500ms\" --threshold \"error-rate<1%\". Set in code \
             with GooseDefault::Threshold, once for each rule."
@@ -520,8 +520,8 @@ pub struct GooseConfiguration {
     /// Judge thresholds only at the end
     ///
     /// By default, Goose checks every --threshold once a second from when the run first
-    /// enters Maintain, and stops the run when one fails. This judges them only when
-    /// the run ends, which still fails it when a rule fails.
+    /// enters Maintain, and stops the run when one fails. With this set, Goose judges
+    /// them only when the run ends, and a failing rule still fails the run.
     ///
     /// Set in code with GooseDefault::NoThresholdAbort.
     #[arg(help_heading = "Metrics", long)]

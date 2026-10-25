@@ -545,8 +545,8 @@ struct GooseAttackRunState {
     /// Timer tracking when to display running metrics, if enabled.
     running_metrics_timer: std::time::Instant,
     /// When the next `--threshold` check is due, or `None` while the thresholds are
-    /// not checked: without any, under `--no-threshold-abort`, and before the metrics
-    /// being collected are the ones the run keeps.
+    /// not checked: without any, under `--no-threshold-abort`, and before the run
+    /// first enters Maintain.
     threshold_check_at: Option<std::time::Instant>,
     /// Boolean flag indicating if all [`GooseUser`](./goose/struct.GooseUser.html)s
     /// have been spawned.
@@ -1230,9 +1230,23 @@ impl GooseAttack {
         }
 
         // Thresholds are checked from when the run first holds its users steady,
-        // so a ramp up never fails a rule while the run goes.
-        if phase == AttackPhase::Maintain && goose_attack_run_state.threshold_check_at.is_none() {
-            self.start_threshold_checks(goose_attack_run_state);
+        // so a ramp up never fails a rule while the run goes. Checking pauses
+        // while users stop, and the window `rps` rules count pauses with it.
+        let checked = |phase| matches!(phase, AttackPhase::Increase | AttackPhase::Maintain);
+        if goose_attack_run_state.threshold_check_at.is_none() {
+            if phase == AttackPhase::Maintain {
+                self.start_threshold_checks(goose_attack_run_state);
+            }
+        } else if checked(phase) != checked(self.attack_phase) {
+            self.update_duration();
+            let seconds = self.elapsed;
+            let _ = goose_attack_run_state
+                .metrics_cmd_tx
+                .send(if checked(phase) {
+                    MetricsCommand::StartThresholdChecks { seconds }
+                } else {
+                    MetricsCommand::PauseThresholdChecks { seconds }
+                });
         }
 
         // Optional debug output.
@@ -3824,8 +3838,9 @@ mod tests {
     /// Checking starts when the run first enters Maintain, through
     /// `set_attack_phase`. From there the main loop sends `CheckThresholds` at most
     /// once a second, in Maintain and in a later Increase but never in Decrease or
-    /// Idle, once `--threshold-abort-delay` has passed since Maintain. Without a
-    /// threshold that can stop the run it sends nothing.
+    /// Idle, once `--threshold-abort-delay` has passed since Maintain. Leaving Increase
+    /// or Maintain pauses the window `rps` rules count, and coming back resumes it.
+    /// Without a threshold that can stop the run it sends nothing.
     #[tokio::test]
     #[serial_test::serial]
     async fn checks_start_when_the_run_first_enters_maintain() {
@@ -3857,17 +3872,19 @@ mod tests {
             run_state: &mut GooseAttackRunState,
             commands: &flume::Receiver<MetricsCommand>,
             phase: AttackPhase,
-        ) -> (usize, usize) {
+        ) -> (usize, usize, usize) {
             goose_attack.set_attack_phase(run_state, phase);
             goose_attack.check_thresholds(run_state);
             goose_attack.check_thresholds(run_state);
-            commands
-                .try_iter()
-                .fold((0, 0), |(checks, starts), command| match command {
-                    MetricsCommand::CheckThresholds { .. } => (checks + 1, starts),
-                    MetricsCommand::StartThresholdChecks { .. } => (checks, starts + 1),
-                    _ => (checks, starts),
-                })
+            commands.try_iter().fold(
+                (0, 0, 0),
+                |(checks, starts, pauses), command| match command {
+                    MetricsCommand::CheckThresholds { .. } => (checks + 1, starts, pauses),
+                    MetricsCommand::StartThresholdChecks { .. } => (checks, starts + 1, pauses),
+                    MetricsCommand::PauseThresholdChecks { .. } => (checks, starts, pauses + 1),
+                    _ => (checks, starts, pauses),
+                },
+            )
         }
 
         let (mut goose_attack, mut run_state, commands) =
@@ -3880,7 +3897,7 @@ mod tests {
                 &commands,
                 AttackPhase::Increase
             ),
-            (0, 0)
+            (0, 0, 0)
         );
         // Checking starts in Maintain, once.
         assert_eq!(
@@ -3890,9 +3907,9 @@ mod tests {
                 &commands,
                 AttackPhase::Maintain
             ),
-            (1, 1)
+            (1, 1, 0)
         );
-        // A second later, a later Increase is checked, and Decrease is not.
+        // A second later, a later Increase is checked, and Decrease pauses checking.
         run_state.threshold_check_at = Some(std::time::Instant::now());
         assert_eq!(
             enter(
@@ -3901,7 +3918,7 @@ mod tests {
                 &commands,
                 AttackPhase::Increase
             ),
-            (1, 0)
+            (1, 0, 0)
         );
         run_state.threshold_check_at = Some(std::time::Instant::now());
         assert_eq!(
@@ -3911,13 +3928,14 @@ mod tests {
                 &commands,
                 AttackPhase::Decrease
             ),
-            (0, 0)
+            (0, 0, 1)
         );
-        // Entering Maintain again does not start checking again.
+        // Entering Maintain again resumes checking without starting it again.
         let due = run_state.threshold_check_at;
         goose_attack.set_attack_phase(&mut run_state, AttackPhase::Maintain);
         assert_eq!(run_state.threshold_check_at, due);
         run_state.threshold_check_at = Some(std::time::Instant::now());
+        // The resume was sent, and Idle pauses checking again, sending no check.
         assert_eq!(
             enter(
                 &mut goose_attack,
@@ -3925,7 +3943,7 @@ mod tests {
                 &commands,
                 AttackPhase::Idle
             ),
-            (0, 0)
+            (0, 1, 1)
         );
 
         // The delay counts from Maintain.
@@ -3938,7 +3956,7 @@ mod tests {
                 &commands,
                 AttackPhase::Increase
             ),
-            (0, 0)
+            (0, 0, 0)
         );
         let entered = std::time::Instant::now();
         assert_eq!(
@@ -3948,7 +3966,7 @@ mod tests {
                 &commands,
                 AttackPhase::Maintain
             ),
-            (0, 1)
+            (0, 1, 0)
         );
         let due = run_state.threshold_check_at.expect("checking started");
         assert!(due >= entered + Duration::from_secs(3));
@@ -3963,7 +3981,7 @@ mod tests {
             for phase in [AttackPhase::Increase, AttackPhase::Maintain] {
                 assert_eq!(
                     enter(&mut goose_attack, &mut run_state, &commands, phase),
-                    (0, 0),
+                    (0, 0, 0),
                     "{args:?}"
                 );
             }

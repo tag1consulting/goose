@@ -6,12 +6,10 @@ To stop a run when a metric crosses a limit, such as a percentile response time 
 
 When the killswitch is triggered, Goose stops the run as for Ctrl-C: users stop, `test_stop` runs, every report is written, and the run is recorded as canceled with the reason given. Only the first reason is kept until the next run starts.
 
-A killswitch fired by your own code, as below, does not change what `execute()` returns: it returns `Ok` with the metrics of the run so far, so the process exits 0 unless your code fails it.
+A killswitch fired by your own code, as below, is not an error in itself: `execute()` returns `Ok` with the metrics of the run so far, unless a threshold fails when the run ends.
 
 ### Common Use Cases
 
-* **Error Rate Threshold**: Stop when error rate exceeds acceptable limits
-* **Response Time SLA Monitoring**: Halt testing when latency violates requirements
 * **Health Check Integration**: Monitor system health endpoints and stop on failure
 * **Resource Exhaustion Detection**: Stop when detecting connection pool or memory issues
 * **Sitemap Traversal Completion**: Stop after fully crawling a site's pages

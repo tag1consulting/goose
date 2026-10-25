@@ -556,7 +556,10 @@ async fn checks_wait_for_maintain_without_a_reset() {
         ];
         args.extend(mode.iter().copied());
         let goose_attack = bare_load_test(&server, args, vec![transaction!(get_fail)]);
-        let (elapsed, result) = run(goose_attack).await;
+        // Under --iterations a run checking never stopped would last for hours.
+        let (elapsed, result) = tokio::time::timeout(2 * ABORTED_WITHIN, run(goose_attack))
+            .await
+            .expect("the threshold stops the run");
         let (failed, metrics) = thresholds_failed(result);
 
         assert_eq!(metrics.maximum_users, 4, "{mode:?}");
@@ -583,11 +586,12 @@ async fn rps_counts_from_maintain() {
 
     // Each user makes at most about 3.3 requests a second to the 300 ms
     // endpoint, so 10 users hold about 33 a second. Over the whole run, a ramp
-    // up of 8 seconds to 10 users and a hold of 4 seconds make at most
-    // (5 * 8 + 10 * 4) * 3.3 / 12, about 22 a second.
+    // up of 16 seconds to 10 users, one every 1.6 seconds, is 88 user seconds,
+    // and a hold of 4 to 4.5 seconds is at most 45 more: at most
+    // 133 * 3.33 / 20, about 22 a second.
     let goose_attack = bare_load_test(
         &server,
-        vec!["--test-plan", "10,8s;10,4s;0,0", "--threshold", "rps>=24"],
+        vec!["--test-plan", "10,16s;10,4s;0,0", "--threshold", "rps>=25"],
         vec![transaction!(get_slow)],
     );
     let (_, result) = run(goose_attack).await;
@@ -604,7 +608,7 @@ async fn rps_counts_from_maintain() {
         .map(|request| request.success_count + request.fail_count)
         .sum();
     let whole_run = requests as f64 / metrics.duration as f64;
-    assert!(whole_run < 24.0, "{}", whole_run);
+    assert!(whole_run < 25.0, "{}", whole_run);
 }
 
 #[tokio::test]
