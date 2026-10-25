@@ -62,6 +62,23 @@ cargo run --example simple -- --host http://localhost:8080 -t 30s --report-file 
 cargo run --example simple -- --render-report results.json --report-file results.html --report-file results.md
 ```
 
+## Formats
+
+**A report's type comes from its extension.** `--report-file` writes HTML for `.html` or `.htm`, Markdown for `.md`, JSON for `.json`, and PDF for `.pdf` when the load test is built with the `pdf-reports` feature. Any other extension is refused before the load test starts, as in `Unknown report file type: docx`. Reports are written even with `--no-print-metrics`. [Metrics](metrics.md#report-formats) shows what each format holds.
+
+```bash
+cargo run --example simple -- --host http://localhost:8080 -t 30s \
+  --report-file results.html --report-file results.md --report-file results.json
+```
+
+The JSON report also holds the run's test plan history, so a Markdown report rendered from it with `--render-report` has its plan overview.
+
+**`--pdf-print-html FILE` writes the HTML report laid out for printing**, to turn into a PDF in any browser, without Chrome or the `pdf-reports` feature. `--pdf-scale` (0.1 to 2.0, default 0.8) and `--pdf-timeout` (10 to 600 seconds, default 60) apply to a `.pdf` report. See [PDF reports](metrics.md#pdf-reports).
+
+**`--baseline-file PATH` compares the run with an earlier one in every report.** PATH is a JSON report, plain or gzipped, or a run's folder that holds `report.json` or `report.json.gz`. See [Comparing against a baseline](common.md#comparing-against-a-baseline).
+
+**Each log has a format option**: `--request-format`, `--transaction-format`, `--scenario-format`, `--error-format` and `--debug-format` each take `json`, the default, `csv`, `raw` or `pretty`. A log given without a path is named with `.json`, `.csv`, or `.log` for raw and pretty (rule 3). [Logging](../logging/overview.md) describes each log.
+
 ## The dashboard
 
 [The live dashboard](../controller/dashboard.md) describes the report bar, the runs panel and the routes behind them.

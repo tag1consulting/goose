@@ -15,7 +15,7 @@ cargo run --release -- -H https://www.example.com
 
 ## How many users to simulate
 
-By default, Goose will launch one user per available CPU core. Often you will want to simulate considerably more users than this, and this can be done by setting the "--user" run time option.
+By default, Goose will launch one user per available CPU core. Often you will want to simulate considerably more users than this, and this can be done by setting the `--users` run time option.
 
 (_Alternatively, you can use [`--test-plan`](./test-plan.html) to build both simple and more complex traffic patterns that can include a varying number of users._)
 
@@ -28,11 +28,11 @@ cargo run --release -- -u 1000
 
 ## Controlling how long it takes Goose to launch all users
 
-There are several ways to configure how long Goose will take to launch all configured GooseUsers. For starters, you can use either `--increase-rate` or `--increase-time`, but not both together. Alternatively, you can use [`--test-plan`](./test-plan.html) to build both simple and more complex traffic patterns that can include varying launch rates.
+There are several ways to configure how long Goose will take to launch all configured GooseUsers. For starters, you can use either `--increase-rate` or `--increase-time`, but not both together. (_These replace `--hatch-rate` and `--startup-time` from Goose 0.18 and earlier, which no longer exist; see [Upgrading From 0.18](upgrading.md)._) Alternatively, you can use [`--test-plan`](./test-plan.html) to build both simple and more complex traffic patterns that can include varying launch rates.
 
 ### Specifying the increase rate
 
-By default, Goose starts one GooseUser per second. So if you configure `--users` to 10 it will take ten seconds to fully start the load test. If you set `--increase-rate 5` then Goose will start 5 users every second, taking two seconds to start up. If you set `--increase-rate 0.5` then Goose will start 1 user every 2 seconds, taking twenty seconds to start all 10 users.
+By default, Goose starts one GooseUser per second. So if you configure `--users` to 10 it will take ten seconds to fully start the load test. If you set `--increase-rate 5` then Goose will start 5 users every second, taking two seconds to start up. If you set `--increase-rate 0.5` then Goose will start 1 user every 2 seconds, taking twenty seconds to start all 10 users. The slowest rate Goose accepts is one user a day, about `0.0000116`; a slower rate is an error.
 
 (_The configured increase rate is a best effort limit, Goose will not start users faster than this but there is no guarantee that your load test server is capable of starting users as fast as you configure._)
 
@@ -58,7 +58,7 @@ cargo run --release -- -s 5
 
 ## Controlling the ramp-down rate
 
-Similarly, you can configure how quickly Goose stops users at the end of a load test using `--decrease-rate` or `--decrease-time`. These are mutually exclusive, just like their increase counterparts. If neither is set, Goose shuts down all users as quickly as possible.
+Similarly, you can configure how quickly Goose stops users at the end of a load test using `--decrease-rate` or `--decrease-time`. These are mutually exclusive, just like their increase counterparts, and `--decrease-rate` has the same slowest rate of one user a day. If neither is set, Goose shuts down all users as quickly as possible.
 
 ### Decrease rate example
 _Stop one user every two seconds._
@@ -102,11 +102,11 @@ cargo run --release -- --iterations 5
 
 By default, Goose displays [text-formatted metrics](metrics.md) when a load test finishes.
 
-It can also optionally write one or more reports in HTML, Markdown, or JSON format. For that, you need to provide one or more `--report-file <FILE>` run-time options. All requested reports will be written.
+It can also optionally write one or more reports in HTML, Markdown, or JSON format, or PDF when built with the `pdf-reports` feature. For that, you need to provide one or more `--report-file <FILE>` run-time options. All requested reports will be written, even with `--no-print-metrics`.
 
-The value of `<FILE>` is an absolute or relative path to the report file to generate. The file extension will evaluate the type of report to write. Any file that already exists at the specified path will be overwritten.
+The value of `<FILE>` is an absolute or relative path to the report file to generate. The file extension (`.html` or `.htm`, `.md`, `.json`, or `.pdf`) sets the type of report to write. Any file that already exists at the specified path will be overwritten. A `--report-file` given without a path writes `report.json` and `report.html` into the [run's folder](#run-folders).
 
-For more information, see [Metrics Reports](metrics.md#metrics-reports).
+For more information, see [Report Formats](metrics.md#report-formats).
 
 ![Requests per second graph](rps.png)
 
@@ -131,7 +131,20 @@ _Write a printer-friendly HTML report optimized for PDF conversion._
 cargo run --release -- --pdf-print-html print-report.html
 ```
 
-The `--pdf-print-html` option generates an HTML file with print-optimized CSS styling that displays all content on a single page without interactive elements. This is perfect for converting to PDF using your browser's "Print to PDF" function or for printing on paper. The print-optimized HTML contains the same comprehensive metrics data as the regular HTML report, but formatted for optimal readability when printed or converted to PDF.
+The `--pdf-print-html` option writes the HTML report with CSS laid out for printing, to convert to PDF with your browser's "Print to PDF" function or to print on paper. It needs neither Chrome nor the `pdf-reports` feature. Without a `--report-file`, the print-ready file has no requests per second graph, no average response time graph and no response time heatmap, so give one as well:
+
+```bash
+cargo run --release -- --report-file report.html --pdf-print-html print-report.html
+```
+
+### PDF report example
+_Build with the `pdf-reports` feature and write a PDF report, waiting up to two minutes for Chrome._
+
+```bash
+cargo run --release --features goose/pdf-reports -- --report-file report.pdf --pdf-timeout 120
+```
+
+A PDF report needs Chrome or Chromium; see [Requirements](../requirements.md#chrome-for-pdf-reports). `--pdf-timeout` is how many seconds Goose waits for Chrome to start and to render the PDF, from 10 to 600, default 60. `--pdf-scale`, from 0.1 to 2.0, default 0.8, sets how much Chrome scales the pages. Both exist only with the `pdf-reports` feature.
 
 ## Comparing Against A Baseline
 
@@ -183,9 +196,10 @@ The resulting `latest.json` can then be used as the baseline for the next compar
 
 You can configure a default baseline file programmatically using `GooseDefault::BaselineFile`:
 
-```rust
+```rust,ignore
 GooseAttack::initialize()?
     .set_default(GooseDefault::BaselineFile, "baseline.json")?
+    // ...register scenarios, then .execute().await?
 ```
 
 This default will be used unless overridden by `--baseline-file` on the command line.
