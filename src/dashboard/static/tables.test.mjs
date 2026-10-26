@@ -220,6 +220,32 @@ test("errors default to Occurrences descending and sort on click", async () => {
   ]);
 });
 
+function transactionErrorRow(transaction, occurrences) {
+  return { transaction, scenario: "LoadTest", name: "checkout", error: "boom", occurrences };
+}
+
+test("transaction errors default to Occurrences descending, and say when there are none", async () => {
+  let window = await load(snapshotWith({ transaction_errors: [] }));
+  assert.equal(emptyText(window, "transaction-errors-body"), "No transaction errors");
+  window = await load(
+    snapshotWith({
+      transaction_errors: [
+        transactionErrorRow("1.1", 2),
+        transactionErrorRow("1.2", 1500),
+        transactionErrorRow("1.3", 40),
+      ],
+    })
+  );
+  assert.deepEqual(column(window, "transaction-errors-body", 0), ["1.2", "1.3", "1.1"]);
+  assert.deepEqual(column(window, "transaction-errors-body", 4), [
+    int(1500),
+    int(40),
+    int(2),
+  ]);
+  header(window, "transaction-errors-table", "occurrences").click();
+  assert.deepEqual(column(window, "transaction-errors-body", 0), ["1.1", "1.3", "1.2"]);
+});
+
 // Scenarios and transactions.
 
 function scenarioRow(scenario_index, scenario_name, users, run_count, extra = {}) {
@@ -730,9 +756,9 @@ test("a header button press sorts and moves aria-sort", async () => {
 
 test("every table scroll area is a focusable, labelled region", async () => {
   const window = await load(snapshotWith({ requests: REQUESTS }));
-  // The five tables, and the three charts' "Show data" tables (#711).
+  // The six tables, and the three charts' "Show data" tables (#711).
   const wraps = window.document.querySelectorAll(".table-wrap");
-  assert.equal(wraps.length, 8);
+  assert.equal(wraps.length, 9);
   const labels = new Set();
   for (const wrap of wraps) {
     assert.equal(wrap.getAttribute("tabindex"), "0");
@@ -742,7 +768,7 @@ test("every table scroll area is a focusable, labelled region", async () => {
     assert.ok(label.trim().length > 0, "aria-label on .table-wrap");
     labels.add(label);
   }
-  assert.equal(labels.size, 8, "each region has its own label");
+  assert.equal(labels.size, 9, "each region has its own label");
 });
 
 test("rows and KPIs show the snapshot's microseconds under a millisecond", async () => {

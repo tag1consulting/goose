@@ -466,11 +466,13 @@ pub enum GooseScheduler {
 #[derive(Debug)]
 /// Internal global run state for load test.
 struct GooseAttackRunState {
-    /// A timestamp tracking when the previous [`GooseUser`](./goose/struct.GooseUser.html)
-    /// was increased or decreased.
+    /// When the next [`GooseUser`](./goose/struct.GooseUser.html) is due to be
+    /// increased or decreased: the time the first of the step was, plus one
+    /// interval for each since.
     adjust_user_timer: std::time::Instant,
-    /// How many milliseconds until the next [`GooseUser`](./goose/struct.GooseUser.html)
-    /// should be increased or decreased.
+    /// How many milliseconds apart [`GooseUser`](./goose/struct.GooseUser.html)s
+    /// are increased or decreased, at least 1 once a step has adjusted one; 0
+    /// until then, so the step's first user is adjusted at once.
     adjust_user_in_ms: usize,
     /// A counter tracking how many [`GooseUser`](./goose/struct.GooseUser.html)s are running.
     active_users: usize,
@@ -570,6 +572,43 @@ struct GooseAttackRunState {
     metrics_epoch: crate::metrics::MetricsEpoch,
 }
 
+impl GooseAttackRunState {
+    /// Schedule the next user increase or decrease one `interval` after the
+    /// last was due, or after now for the step's first, so a step adjusts its
+    /// users at a steady rate from a fixed origin: a late wake up is caught up,
+    /// never carried into every later user.
+    fn schedule_next_adjust(&mut self, interval: Duration) {
+        self.adjust_user_timer = if self.adjust_user_in_ms == 0 {
+            std::time::Instant::now() + interval
+        } else {
+            self.adjust_user_timer + interval
+        };
+        self.adjust_user_in_ms = (interval.as_millis() as usize).max(1);
+    }
+
+    /// Whether the next user increase or decrease is due.
+    fn adjust_due(&self) -> bool {
+        self.adjust_user_in_ms == 0 || std::time::Instant::now() >= self.adjust_user_timer
+    }
+
+    /// Sleep until the next user increase or decrease is due, but never more
+    /// than 500 ms, waking up at least twice a second to handle messages and
+    /// allow for a quick shutdown if the load test is canceled.
+    async fn sleep_until_adjust(&mut self) {
+        let maximum_sleep = Duration::from_millis(500);
+        let until_due = self
+            .adjust_user_timer
+            .saturating_duration_since(std::time::Instant::now());
+        if until_due >= maximum_sleep {
+            self.drift_timer = util::sleep_minus_drift(maximum_sleep, self.drift_timer).await;
+        } else {
+            debug!("sleeping {until_due:?}...");
+            tokio::time::sleep(until_due).await;
+            self.drift_timer = tokio::time::Instant::now();
+        }
+    }
+}
+
 /// Global internal state for the load test.
 pub struct GooseAttack {
     /// An optional transaction that is run one time before starting GooseUsers and running Scenarios.
@@ -622,6 +661,13 @@ pub struct GooseAttack {
     metrics: GooseMetrics,
     /// All data for report graphs.
     graph_data: GraphData,
+    /// The client builder from the last `set_client_builder_with_cookies` or
+    /// `set_client_builder_without_cookies` call; `None` builds each user's client
+    /// from the configuration alone.
+    client_builder: Option<client::ClientBuilderSettings>,
+    /// How users get their clients when a client builder is set, built once when
+    /// the load test starts, so a shared client is one client for the whole run.
+    client_strategy: Option<client::ClientStrategy>,
     /// Set when a run starts and cleared once its reports are written, so a
     /// shutdown with no run since the last one writes nothing.
     run_in_progress: bool,
@@ -701,6 +747,8 @@ impl GooseAttack {
             step_started: None,
             metrics: GooseMetrics::default(),
             graph_data: GraphData::new(),
+            client_builder: None,
+            client_strategy: None,
             run_in_progress: false,
             ended_by: None,
             output: runs::Output::default(),
@@ -746,6 +794,8 @@ impl GooseAttack {
             step_started: None,
             metrics: GooseMetrics::default(),
             graph_data: GraphData::new(),
+            client_builder: None,
+            client_strategy: None,
             run_in_progress: false,
             ended_by: None,
             output: runs::Output::default(),
@@ -933,42 +983,93 @@ impl GooseAttack {
         self
     }
 
-    /// Set a custom client builder for cookie-enabled clients.
+    /// Build every user's HTTP client from `builder`, each user with its own client
+    /// and its own cookie jar. The users that run the
+    /// [`test_start`](#method.test_start) and [`test_stop`](#method.test_stop)
+    /// transactions get one too.
     ///
-    /// This allows you to configure custom HTTP client settings for all users
-    /// in the load test when cookies are enabled.
+    /// The builder's user agent replaces Goose's `goose/<version>`. The timeout,
+    /// gzip and invalid certificate settings also have a configuration option
+    /// (`--timeout`, `--no-gzip`, `--accept-invalid-certs`), and each comes from the
+    /// first of:
+    ///
+    /// 1. the option, when it was given on the command line;
+    /// 2. the builder, when it was given that setting;
+    /// 3. a [`GooseDefault`](./config/enum.GooseDefault.html) for the option;
+    /// 4. Goose's built in default: a 60 second timeout, gzip on, certificates
+    ///    checked.
+    ///
+    /// A transaction can still give its user a different client with
+    /// [`GooseUser::set_client_builder`](./goose/struct.GooseUser.html#method.set_client_builder).
+    ///
+    /// This and
+    /// [`set_client_builder_without_cookies`](#method.set_client_builder_without_cookies)
+    /// replace each other: calling either one again, or the other, means the last call
+    /// wins.
+    ///
+    /// # Errors
+    ///
+    /// [`GooseError::FeatureNotEnabled`] when Goose is built without the `cookies`
+    /// feature, as the clients could not store cookies.
     ///
     /// # Example
     /// ```rust
+    /// # #[cfg(feature = "cookies")]
+    /// # {
     /// use goose::prelude::*;
     /// use goose::client::GooseClientBuilder;
     /// use std::time::Duration;
     ///
-    /// #[tokio::main]
-    /// async fn main() -> Result<(), GooseError> {
-    ///     let custom_client = GooseClientBuilder::new()
-    ///         .timeout(Duration::from_secs(30))
-    ///         .user_agent("custom-agent");
+    /// let custom_client = GooseClientBuilder::new()
+    ///     .timeout(Duration::from_secs(30))
+    ///     .user_agent("custom-agent");
     ///
-    ///     GooseAttack::initialize()?
-    ///         .set_client_builder_with_cookies(custom_client)?;
-    ///
-    ///     Ok(())
-    /// }
+    /// let _goose_attack = GooseAttack::initialize()?
+    ///     .set_client_builder_with_cookies(custom_client)?;
+    /// # }
+    /// # Ok::<(), goose::GooseError>(())
     /// ```
     pub fn set_client_builder_with_cookies(
-        self,
-        _client_builder: crate::client::GooseClientBuilder<crate::client::CookiesEnabled>,
+        mut self,
+        builder: client::GooseClientBuilder<client::CookiesEnabled>,
     ) -> Result<Self, GooseError> {
-        // For now, this is a placeholder that accepts the builder but doesn't use it
-        // In a future implementation, this would store the builder for use during client creation
+        if !cfg!(feature = "cookies") {
+            return Err(GooseError::FeatureNotEnabled {
+                feature: "cookies".to_string(),
+                detail: "`set_client_builder_with_cookies` needs the `cookies` feature to give each user a cookie jar (rebuild with `--features cookies`), or use `set_client_builder_without_cookies`".to_string(),
+            });
+        }
+        self.client_builder = Some(builder.into_settings());
         Ok(self)
     }
 
-    /// Set a custom client builder for cookie-disabled clients.
+    /// Build one HTTP client from `builder`, without a cookie store, and share it
+    /// across every user.
     ///
-    /// This allows you to configure custom HTTP client settings for all users
-    /// in the load test when cookies are disabled.
+    /// The client is built once, before any user starts, and each user gets a clone
+    /// of it; clones of a [`reqwest::Client`] share one connection pool, so this suits
+    /// a load test with many users that needs no cookies. Users a Controller adds
+    /// later, and the users that run the [`test_start`](#method.test_start) and
+    /// [`test_stop`](#method.test_stop) transactions, share it too. When building
+    /// the client fails, the load test fails before any user starts, with that error.
+    ///
+    /// The builder's settings, and the command line options that win over them, are
+    /// as for
+    /// [`set_client_builder_with_cookies`](#method.set_client_builder_with_cookies).
+    /// A transaction that calls
+    /// [`GooseUser::set_client_builder`](./goose/struct.GooseUser.html#method.set_client_builder)
+    /// moves its user off the shared client and onto a client of its own.
+    ///
+    /// This and
+    /// [`set_client_builder_with_cookies`](#method.set_client_builder_with_cookies)
+    /// replace each other: calling either one again, or the other, means the last call
+    /// wins.
+    ///
+    /// # Errors
+    ///
+    /// None at present: the client is built when the load test starts, and an error
+    /// building it is returned from
+    /// [`execute`](#method.execute).
     ///
     /// # Example
     /// ```rust
@@ -976,26 +1077,39 @@ impl GooseAttack {
     /// use goose::client::GooseClientBuilder;
     /// use std::time::Duration;
     ///
-    /// #[tokio::main]
-    /// async fn main() -> Result<(), GooseError> {
-    ///     let custom_client = GooseClientBuilder::new()
-    ///         .without_cookies()
-    ///         .timeout(Duration::from_secs(30))
-    ///         .user_agent("custom-agent");
+    /// let custom_client = GooseClientBuilder::new()
+    ///     .without_cookies()
+    ///     .timeout(Duration::from_secs(30))
+    ///     .user_agent("custom-agent");
     ///
-    ///     GooseAttack::initialize()?
-    ///         .set_client_builder_without_cookies(custom_client)?;
-    ///
-    ///     Ok(())
-    /// }
+    /// let _goose_attack = GooseAttack::initialize()?
+    ///     .set_client_builder_without_cookies(custom_client)?;
+    /// # Ok::<(), goose::GooseError>(())
     /// ```
     pub fn set_client_builder_without_cookies(
-        self,
-        _client_builder: crate::client::GooseClientBuilder<crate::client::CookiesDisabled>,
+        mut self,
+        builder: client::GooseClientBuilder<client::CookiesDisabled>,
     ) -> Result<Self, GooseError> {
-        // For now, this is a placeholder that accepts the builder but doesn't use it
-        // In a future implementation, this would store the builder for use during client creation
+        self.client_builder = Some(builder.into_settings());
         Ok(self)
+    }
+
+    /// Resolve the client builder's settings against the configured
+    /// configuration and build how users get their clients: a shared client is
+    /// built here.
+    fn build_client_strategy(
+        &mut self,
+        command_line_client_options: client::CommandLineClientOptions,
+    ) -> Result<(), GooseError> {
+        self.client_strategy = match &self.client_builder {
+            Some(builder) => Some(
+                builder
+                    .resolve(command_line_client_options, &self.configuration)
+                    .into_strategy()?,
+            ),
+            None => None,
+        };
+        Ok(())
     }
 
     /// Internal helper to determine if the scenario is currently active.
@@ -1157,9 +1271,11 @@ impl GooseAttack {
         }
 
         // Create GooseUser objects in parallel across available CPUs. Each user
-        // gets its own reqwest client, which is the expensive part. Chunks are
-        // collected back in order to preserve the scenario assignment sequence.
+        // gets its own reqwest client unless one is shared, and building it is
+        // the expensive part. Chunks are collected back in order to preserve the
+        // scenario assignment sequence.
         let configuration = &self.configuration;
+        let client_strategy = &self.client_strategy;
         let metrics_hash = self.metrics.hash;
         let num_cpus = std::thread::available_parallelism()
             .map(|n| n.get())
@@ -1174,13 +1290,17 @@ impl GooseAttack {
                     let mut users = Vec::with_capacity(chunk.len());
                     for (i, (scenarios_index, machine_name, base_url)) in chunk.iter().enumerate() {
                         debug!("creating user state: {} ({})", base + i, scenarios_index);
+                        let reqwest_client = match client_strategy {
+                            None => goose::create_reqwest_client(configuration)?,
+                            Some(strategy) => strategy.user_client()?,
+                        };
                         users.push(GooseUser::new(
                             *scenarios_index,
                             machine_name.clone(),
                             base_url.clone(),
                             configuration,
                             metrics_hash,
-                            Some(goose::create_reqwest_client(configuration)?),
+                            Some(reqwest_client),
                         )?);
                     }
                     Ok::<Vec<GooseUser>, GooseError>(users)
@@ -1356,6 +1476,11 @@ impl GooseAttack {
             std::process::exit(0);
         }
 
+        // Note which client options the command line gave before the defaults
+        // are merged in: those win over a client builder, the defaults do not.
+        let command_line_client_options =
+            client::CommandLineClientOptions::from_command_line(&self.configuration);
+
         // Configure GooseConfiguration.
         self.configuration.configure(&self.defaults)?;
 
@@ -1394,6 +1519,11 @@ impl GooseAttack {
         // Build TestPlan, and the shape of a users ramp.
         self.test_plan = TestPlan::build(&self.configuration)?;
         self.run_shape = run_shape::RunShape::for_configuration(&self.configuration);
+
+        // A client builder gives users clients built from its settings. Build
+        // them, or the one shared client, now: before any user starts, and once
+        // for the whole run, so users a Controller adds later share it too.
+        self.build_client_strategy(command_line_client_options)?;
 
         // With a validated GooseConfiguration, enter a run mode.
         self.attack_mode = AttackMode::StandAlone;
@@ -2058,7 +2188,14 @@ impl GooseAttack {
                 None,
                 self.defaults.host.clone(),
             )?;
-            let mut user = GooseUser::single(base_url, &self.configuration)?;
+            let mut user = GooseUser::single_with_client(
+                base_url,
+                &self.configuration,
+                self.client_strategy
+                    .as_ref()
+                    .map(client::ClientStrategy::user_client)
+                    .transpose()?,
+            )?;
             let function = &t.function;
             let _ = function(&mut user).await;
         }
@@ -2076,7 +2213,14 @@ impl GooseAttack {
                 None,
                 self.defaults.host.clone(),
             )?;
-            let mut user = GooseUser::single(base_url, &self.configuration)?;
+            let mut user = GooseUser::single_with_client(
+                base_url,
+                &self.configuration,
+                self.client_strategy
+                    .as_ref()
+                    .map(client::ClientStrategy::user_client)
+                    .transpose()?,
+            )?;
             let function = &t.function;
             let _ = function(&mut user).await;
         }
@@ -2316,22 +2460,15 @@ impl GooseAttack {
                 * 1_000.0;
 
             // Determine if it's time to spawn a GooseUser.
-            if goose_attack_run_state.adjust_user_in_ms == 0
-                || util::ms_timer_expired(
-                    goose_attack_run_state.adjust_user_timer,
-                    goose_attack_run_state.adjust_user_in_ms,
-                )
-            {
+            if goose_attack_run_state.adjust_due() {
                 let mut thread_user = self
                     .weighted_users
                     .pop()
                     .expect("insufficent weighted_users");
-                // Reset the spawn timer.
-                goose_attack_run_state.adjust_user_timer = std::time::Instant::now();
-
-                // To determine how long before we spawn the next GooseUser, start with 1,000.0
-                // milliseconds and divide by the increase_rate.
-                goose_attack_run_state.adjust_user_in_ms = (1_000.0 / increase_rate) as usize;
+                // The next GooseUser is due one interval, 1 second divided by the
+                // increase_rate, after this one was.
+                goose_attack_run_state
+                    .schedule_next_adjust(Duration::from_secs_f64(1.0 / f64::from(increase_rate)));
 
                 // Remember which task group this user is using.
                 thread_user.weighted_users_index = self.metrics.total_users;
@@ -2421,17 +2558,7 @@ impl GooseAttack {
                     }
                 }
             } else {
-                // Wake up twice a second to handle messages and allow for a quick shutdown if the
-                // load test is canceled during startup.
-                let sleep_duration = if goose_attack_run_state.adjust_user_in_ms > 500 {
-                    Duration::from_millis(500)
-                } else {
-                    Duration::from_millis(goose_attack_run_state.adjust_user_in_ms as u64)
-                };
-                debug!("sleeping {sleep_duration:?}...");
-                goose_attack_run_state.drift_timer =
-                    util::sleep_minus_drift(sleep_duration, goose_attack_run_state.drift_timer)
-                        .await;
+                goose_attack_run_state.sleep_until_adjust().await;
             }
         }
 
@@ -2559,6 +2686,7 @@ impl GooseAttack {
                     final_metrics.hash = self.metrics.hash;
                     final_metrics.display_metrics = self.metrics.display_metrics;
                     final_metrics.display_status_codes = self.metrics.display_status_codes;
+                    final_metrics.final_metrics = self.metrics.final_metrics;
                     self.metrics = final_metrics;
                     self.graph_data = final_graph_data;
                 }
@@ -2671,18 +2799,11 @@ impl GooseAttack {
                 * 1_000.0;
 
             // Determine if it's time to decrease a GooseUser.
-            if goose_attack_run_state.adjust_user_in_ms == 0
-                || util::ms_timer_expired(
-                    goose_attack_run_state.adjust_user_timer,
-                    goose_attack_run_state.adjust_user_in_ms,
-                )
-            {
-                // Reset the adjust timer.
-                goose_attack_run_state.adjust_user_timer = std::time::Instant::now();
-
-                // To determine how long before we decrease the next GooseUser, start with 1,000.0
-                // milliseconds and divide by the decrease_rate.
-                goose_attack_run_state.adjust_user_in_ms = (1_000.0 / decrease_rate) as usize;
+            if goose_attack_run_state.adjust_due() {
+                // The next GooseUser is due to stop one interval, 1 second divided
+                // by the decrease_rate, after this one was.
+                goose_attack_run_state
+                    .schedule_next_adjust(Duration::from_secs_f64(1.0 / f64::from(decrease_rate)));
 
                 if let Some(send_to_user) = goose_attack_run_state.user_channels.pop() {
                     match send_to_user.send(GooseUserCommand::Exit) {
@@ -2709,17 +2830,7 @@ impl GooseAttack {
                     goose_attack_run_state.active_users -= 1;
                 }
             } else {
-                // Wake up twice a second to handle messages and allow for a quick shutdown if the
-                // load test is canceled during decrease.
-                let sleep_duration = if goose_attack_run_state.adjust_user_in_ms > 500 {
-                    Duration::from_millis(500)
-                } else {
-                    Duration::from_millis(goose_attack_run_state.adjust_user_in_ms as u64)
-                };
-                debug!("sleeping {sleep_duration:?}...");
-                goose_attack_run_state.drift_timer =
-                    util::sleep_minus_drift(sleep_duration, goose_attack_run_state.drift_timer)
-                        .await;
+                goose_attack_run_state.sleep_until_adjust().await;
             }
         }
 
@@ -3595,19 +3706,30 @@ fn allocate_transactions(
     let (weighted_unsequenced_on_stop_transactions, total_unsequenced_on_stop_transactions) =
         weight_unsequenced_transactions(&unsequenced_on_stop_transactions, u);
 
+    // The Random scheduler shuffles only the transactions a user runs over and
+    // over; its on_start and on_stop transactions run in Serial order.
+    let start_stop_scheduler = match scheduler {
+        GooseScheduler::Random => &GooseScheduler::Serial,
+        _ => scheduler,
+    };
+
     // Schedule sequenced transactions.
-    let scheduled_sequenced_on_start_transactions =
-        schedule_sequenced_transactions(&weighted_sequenced_on_start_transactions, scheduler);
+    let scheduled_sequenced_on_start_transactions = schedule_sequenced_transactions(
+        &weighted_sequenced_on_start_transactions,
+        start_stop_scheduler,
+    );
     let scheduled_sequenced_transactions =
         schedule_sequenced_transactions(&weighted_sequenced_transactions, scheduler);
-    let scheduled_sequenced_on_stop_transactions =
-        schedule_sequenced_transactions(&weighted_sequenced_on_stop_transactions, scheduler);
+    let scheduled_sequenced_on_stop_transactions = schedule_sequenced_transactions(
+        &weighted_sequenced_on_stop_transactions,
+        start_stop_scheduler,
+    );
 
     // Schedule unsequenced transactions.
     let scheduled_unsequenced_on_start_transactions = schedule_unsequenced_transactions(
         &weighted_unsequenced_on_start_transactions,
         total_unsequenced_on_start_transactions,
-        scheduler,
+        start_stop_scheduler,
     );
     let scheduled_unsequenced_transactions = schedule_unsequenced_transactions(
         &weighted_unsequenced_transactions,
@@ -3617,7 +3739,7 @@ fn allocate_transactions(
     let scheduled_unsequenced_on_stop_transactions = schedule_unsequenced_transactions(
         &weighted_unsequenced_on_stop_transactions,
         total_unsequenced_on_stop_transactions,
-        scheduler,
+        start_stop_scheduler,
     );
 
     // Finally build a Vector of tuples: (transaction id, transaction name)
@@ -3761,8 +3883,7 @@ fn schedule_unsequenced_transactions(
             }
         }
         GooseScheduler::Serial | GooseScheduler::Random => {
-            // Allocate serially in the weighted order defined. If the Random scheduler is being used, they will get
-            // shuffled later.
+            // Allocate serially in the weighted order defined.
             for (transaction_index, transactions) in
                 available_unsequenced_transactions.iter().enumerate()
             {
@@ -3771,12 +3892,13 @@ fn schedule_unsequenced_transactions(
                     transactions.len(),
                     transaction_index
                 );
-
-                let mut transactions_clone = transactions.clone();
-                if scheduler == &GooseScheduler::Random {
-                    transactions_clone.shuffle(&mut rand::rng());
-                }
-                weighted_transactions.append(&mut transactions_clone);
+                weighted_transactions.extend_from_slice(transactions);
+            }
+            // The Random scheduler then shuffles the whole list once. Each
+            // Transaction's own vector holds only copies of its index, so
+            // shuffling those changes nothing.
+            if scheduler == &GooseScheduler::Random {
+                weighted_transactions.shuffle(&mut rand::rng());
             }
         }
     }
@@ -4294,6 +4416,30 @@ mod tests {
         assert_eq!(goose_attack.stage(&run_state), Stage::Stopping);
     }
 
+    /// A new step schedules its users from its own start: a ramp a Controller
+    /// left mid way leaves no due time behind, which the next ramp would catch
+    /// up on in a burst.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_new_step_forgets_the_last_due_time() {
+        let configuration = GooseConfiguration::parse_args_default(&[
+            "--no-telnet",
+            "--no-websocket",
+            "--users",
+            "4",
+        ])
+        .unwrap();
+        let mut goose_attack = GooseAttack::initialize_with_config(configuration).unwrap();
+        let mut run_state = goose_attack.initialize_attack().await.unwrap();
+        controller::tests::run_users_ramp(&mut goose_attack, &mut run_state, 4);
+        // Mid ramp, with the next user due a minute ago.
+        run_state.adjust_user_in_ms = 667;
+        run_state.adjust_user_timer = std::time::Instant::now() - Duration::from_secs(60);
+        goose_attack.advance_test_plan(&mut run_state);
+        assert_eq!(run_state.adjust_user_in_ms, 0);
+        assert!(run_state.adjust_due());
+    }
+
     /// A refused Start leaves the run settings and target users as they were.
     #[cfg(feature = "dashboard")]
     #[tokio::test]
@@ -4589,5 +4735,201 @@ mod tests {
             // No histograms are kept before the first test starts.
             assert_eq!(snapshot.series.heatmap, None);
         }
+    }
+
+    /// A real run's final metrics are marked final, so the summary printed
+    /// when it ends carries the percentile table.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_final_metrics_after_execute() {
+        async fn get_index(user: &mut GooseUser) -> crate::goose::TransactionResult {
+            let _goose = user.get("/").await?;
+            Ok(())
+        }
+        let server = httpmock::MockServer::start();
+        server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/");
+            then.status(200);
+        });
+        let configuration = GooseConfiguration::parse_args_default(&[
+            "--no-telnet",
+            "--no-websocket",
+            "--host",
+            &server.base_url(),
+            "--users",
+            "1",
+            "--run-time",
+            "2",
+        ])
+        .unwrap();
+        let goose_metrics = GooseAttack::initialize_with_config(configuration)
+            .unwrap()
+            .register_scenario(scenario!("Index").register_transaction(transaction!(get_index)))
+            .execute()
+            .await
+            .unwrap();
+        assert!(goose_metrics.final_metrics);
+        let printed = goose_metrics.to_string();
+        assert!(
+            printed.contains("Slowest page load within specified percentile of requests (in ms):"),
+            "{}",
+            printed
+        );
+    }
+
+    /// The transaction indexes `allocate_transactions` schedules for
+    /// `scenario`, ignoring on_start and on_stop.
+    fn scheduled(scenario: &Scenario, scheduler: &GooseScheduler) -> Vec<usize> {
+        let (_, transactions, _) = allocate_transactions(scenario, scheduler);
+        transactions.into_iter().map(|(index, _)| index).collect()
+    }
+
+    async fn noop_transaction(_user: &mut GooseUser) -> crate::goose::TransactionResult {
+        Ok(())
+    }
+
+    /// The Random scheduler runs the Serial list in a random order: the same
+    /// transactions, each as often, not in Serial order.
+    #[test]
+    fn test_random_scheduler_shuffles_transactions() {
+        // Weights of 10 each reduce by their greatest common divisor to one
+        // each, 3 orders of 6 being Serial in each run; weights of 10, 11 and
+        // 12 do not reduce, and one in more than 10^14 orders is Serial.
+        for weights in [[10, 10, 10], [10, 11, 12]] {
+            let scenario = weights
+                .iter()
+                .fold(scenario!("Random"), |scenario, weight| {
+                    scenario.register_transaction(
+                        transaction!(noop_transaction).set_weight(*weight).unwrap(),
+                    )
+                });
+            let serial = scheduled(&scenario, &GooseScheduler::Serial);
+            let mut differs = false;
+            for _ in 0..20 {
+                let random = scheduled(&scenario, &GooseScheduler::Random);
+                let mut sorted = random.clone();
+                sorted.sort_unstable();
+                assert_eq!(sorted, serial);
+                differs |= random != serial;
+            }
+            assert!(
+                differs,
+                "Random scheduled transactions weighted {:?} in Serial order: {:?}",
+                weights, serial
+            );
+        }
+    }
+
+    /// The Random scheduler shuffles within each sequence, and sequences keep
+    /// their order.
+    #[test]
+    fn test_random_scheduler_keeps_sequence_order() {
+        let scenario = scenario!("Sequenced")
+            .register_transaction(
+                transaction!(noop_transaction)
+                    .set_sequence(2)
+                    .set_weight(5)
+                    .unwrap(),
+            )
+            .register_transaction(
+                transaction!(noop_transaction)
+                    .set_sequence(1)
+                    .set_weight(5)
+                    .unwrap(),
+            )
+            .register_transaction(
+                transaction!(noop_transaction)
+                    .set_sequence(1)
+                    .set_weight(6)
+                    .unwrap(),
+            )
+            .register_transaction(
+                transaction!(noop_transaction)
+                    .set_sequence(2)
+                    .set_weight(6)
+                    .unwrap(),
+            );
+        let serial = scheduled(&scenario, &GooseScheduler::Serial);
+        assert_eq!(
+            serial,
+            [vec![1; 5], vec![2; 6], vec![0; 5], vec![3; 6]].concat()
+        );
+        let mut differs = false;
+        for _ in 0..10 {
+            let random = scheduled(&scenario, &GooseScheduler::Random);
+            // Sequence 1, transactions 1 and 2, comes first, then sequence 2.
+            let (first, second) = random.split_at(11);
+            let mut first_sorted = first.to_vec();
+            first_sorted.sort_unstable();
+            assert_eq!(first_sorted, [vec![1; 5], vec![2; 6]].concat());
+            let mut second_sorted = second.to_vec();
+            second_sorted.sort_unstable();
+            assert_eq!(second_sorted, [vec![0; 5], vec![3; 6]].concat());
+            differs |= random != serial;
+        }
+        assert!(differs, "Random scheduled each sequence in Serial order");
+    }
+
+    /// The Random scheduler leaves on_start and on_stop transactions in Serial
+    /// order.
+    #[test]
+    fn test_random_scheduler_keeps_on_start_and_on_stop_serial() {
+        let scenario = (0..3).fold(scenario!("StartStop"), |scenario, _| {
+            scenario.register_transaction(
+                transaction!(noop_transaction)
+                    .set_on_start()
+                    .set_on_stop()
+                    .set_weight(10)
+                    .unwrap(),
+            )
+        });
+        let scenario =
+            scenario.register_transaction(transaction!(noop_transaction).set_weight(11).unwrap());
+        let (serial_start, _, serial_stop) =
+            allocate_transactions(&scenario, &GooseScheduler::Serial);
+        let indexes = |list: WeightedTransactions| -> Vec<usize> {
+            list.into_iter().map(|(index, _)| index).collect()
+        };
+        let (serial_start, serial_stop) = (indexes(serial_start), indexes(serial_stop));
+        assert_eq!(serial_start.len(), 30);
+        for _ in 0..10 {
+            let (start, _, stop) = allocate_transactions(&scenario, &GooseScheduler::Random);
+            assert_eq!(indexes(start), serial_start);
+            assert_eq!(indexes(stop), serial_stop);
+        }
+    }
+
+    /// Users weighted after the shared client is built, as a Controller adds them
+    /// to a running load test, reuse that client: it is built once.
+    #[test]
+    fn test_shared_client_is_shared_by_users_added_later() {
+        let configuration =
+            GooseConfiguration::parse_args_default(&["--host", "http://127.0.0.1", "--quiet"])
+                .unwrap();
+        let mut goose_attack = GooseAttack::initialize_with_config(configuration)
+            .unwrap()
+            .register_scenario(
+                scenario!("Shared").register_transaction(transaction!(noop_transaction)),
+            )
+            .set_client_builder_without_cookies(client::GooseClientBuilder::new().without_cookies())
+            .unwrap();
+        goose_attack
+            .configuration
+            .configure(&goose_attack.defaults)
+            .unwrap();
+
+        let builds = || client::SHARED_CLIENT_BUILDS.with(|builds| builds.get());
+        let before = builds();
+        goose_attack
+            .build_client_strategy(client::CommandLineClientOptions::default())
+            .unwrap();
+        let mut users = goose_attack.weight_scenario_users(2).unwrap();
+        users.extend(goose_attack.weight_scenario_users(2).unwrap());
+        assert_eq!(users.len(), 4);
+        assert_eq!(
+            builds() - before,
+            1,
+            "users weighted later were given a newly built shared client"
+        );
     }
 }

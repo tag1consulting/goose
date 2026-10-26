@@ -239,9 +239,8 @@ async fn record_scenario(
                 thread_user.pending_request.take(),
                 thread_user.pending_transaction.take(),
             ) {
-                // Save fields needed for atomic counter before moving request.
-                let method = request.raw.method;
-                let name = request.name.clone();
+                // Save the atomic counter's key and the outcome before moving request.
+                thread_user.write_counter_key(request.raw.method_label(), &request.name);
                 let success = request.success;
                 let _ = metrics_channel.send(GooseMetric::All {
                     request: Box::new(request),
@@ -250,7 +249,7 @@ async fn record_scenario(
                 });
                 // Increment at actual send time so metrics reset can't zero the counter
                 // before the parent processes this request.
-                thread_user.increment_request_counter(&method, &name, success);
+                thread_user.increment_counter_at_key(success);
             } else {
                 // Fall back to individual sends when the pending metrics don't align.
                 let _ = thread_user.flush_pending_metrics();
@@ -297,8 +296,22 @@ async fn invoke_transaction_function(
     // The index is optional: `None` means no transaction, `Some(0)` is the first.
     thread_user.transaction_index = Some(thread_transaction_index);
 
-    let success = function(thread_user).await.is_ok();
-    raw_transaction.set_duration(started.elapsed(), success);
+    let result = function(thread_user).await;
+    raw_transaction.set_duration(started.elapsed(), result.is_ok());
+
+    // Only a failed transaction formats its error. A transaction error is
+    // recorded, as a request error is, whether or not transaction metrics are.
+    let error = match &result {
+        Err(error) => error.transaction_log_message(),
+        Ok(()) => String::new(),
+    };
+    if !thread_user.config.no_metrics
+        && result
+            .as_ref()
+            .is_err_and(|error| error.is_transaction_error())
+    {
+        thread_user.record_transaction_error(&raw_transaction, &error)?;
+    }
 
     // Exit if all metrics or transaction metrics are disabled.
     if thread_user.config.no_metrics || thread_user.config.no_transaction_metrics {
@@ -308,9 +321,17 @@ async fn invoke_transaction_function(
     }
 
     // If transaction-log is enabled, send a copy of the raw transaction metric to the logger thread.
+    // A failed transaction's line says why it failed.
     if thread_user.config.transaction_log().is_some() {
         if let Some(logger) = thread_user.logger.as_ref() {
-            logger.send(Some(GooseLog::Transaction(raw_transaction.clone())))?;
+            if error.is_empty() {
+                logger.send(Some(GooseLog::Transaction(raw_transaction.clone())))?;
+            } else {
+                logger.send(Some(GooseLog::FailedTransaction {
+                    transaction: raw_transaction.clone(),
+                    error,
+                }))?;
+            }
         }
     }
 

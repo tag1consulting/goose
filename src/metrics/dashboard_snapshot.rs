@@ -5,7 +5,8 @@
 
 use super::{
     per_second_calculations, GooseErrorMetricAggregate, GooseMetrics, GooseRequestMetricAggregate,
-    GooseRequestMetricTimingData, ScenarioMetricAggregate, TransactionMetricAggregate,
+    GooseRequestMetricTimingData, GooseTransactionErrorMetricAggregate, ScenarioMetricAggregate,
+    TransactionMetricAggregate,
 };
 use chrono::prelude::*;
 use serde::Serialize;
@@ -52,6 +53,9 @@ pub(crate) struct DashboardSnapshot {
     pub aggregate: AggregateMetrics,
     pub requests: Vec<RequestRow>,
     pub errors: Vec<ErrorRow>,
+    /// The errors transactions returned, most frequent first, capped at
+    /// [`MAX_ERROR_ROWS`].
+    pub transaction_errors: Vec<TransactionErrorRow>,
     /// One row per registered scenario, in registration order. Never truncated.
     pub scenarios: Vec<ScenarioRow>,
     /// One row per registered transaction, grouped by scenario, each group in
@@ -260,6 +264,20 @@ pub(crate) struct TransactionRow {
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub(crate) struct ErrorRow {
     pub method: String,
+    pub name: String,
+    pub error: String,
+    pub occurrences: u64,
+}
+
+/// One row of the transaction errors table: a transaction and an error it
+/// returned.
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub(crate) struct TransactionErrorRow {
+    /// The transaction's number, `scenario.transaction` counted from 1.
+    pub transaction: String,
+    pub scenario: String,
+    /// The transaction's name, empty when it has none.
     pub name: String,
     pub error: String,
     pub occurrences: u64,
@@ -474,6 +492,7 @@ pub(crate) struct SnapshotFlags {
     pub scenario_metrics_disabled: bool,
     pub requests_truncated: bool,
     pub errors_truncated: bool,
+    pub transaction_errors_truncated: bool,
     pub series_seconds: u32,
     /// True when the dashboard tracks response times by second for its
     /// heatmap: on with `--dashboard` unless `--no-percentiles-over-time` or
@@ -546,6 +565,7 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
             },
             requests: Vec::new(),
             errors: Vec::new(),
+            transaction_errors: Vec::new(),
             scenarios: Vec::new(),
             transactions: Vec::new(),
             series: SeriesWindow::empty(),
@@ -555,6 +575,7 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
                 scenario_metrics_disabled: true,
                 requests_truncated: false,
                 errors_truncated: false,
+                transaction_errors_truncated: false,
                 series_seconds: input.series_window_secs,
                 percentiles_over_time: false,
             },
@@ -640,6 +661,28 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
         .map(error_row_from_aggregate)
         .collect();
 
+    let mut transaction_error_rank: Vec<&GooseTransactionErrorMetricAggregate> =
+        input.metrics.transaction_errors.values().collect();
+    transaction_error_rank.sort_by(|a, b| {
+        b.occurrences
+            .cmp(&a.occurrences)
+            .then_with(|| a.scenario_index.cmp(&b.scenario_index))
+            .then_with(|| a.transaction_index.cmp(&b.transaction_index))
+            .then_with(|| a.error.cmp(&b.error))
+    });
+    let transaction_errors_truncated = transaction_error_rank.len() > MAX_ERROR_ROWS;
+    transaction_error_rank.truncate(MAX_ERROR_ROWS);
+    let transaction_error_rows: Vec<TransactionErrorRow> = transaction_error_rank
+        .into_iter()
+        .map(|error| TransactionErrorRow {
+            transaction: error.transaction_number(),
+            scenario: error.scenario_name.clone(),
+            name: error.transaction_name.clone(),
+            error: error.error.clone(),
+            occurrences: error.occurrences as u64,
+        })
+        .collect();
+
     // Every registered scenario and transaction gets a row: their number is
     // fixed by the load test's code, so there is no cap.
     let scenario_rows: Vec<ScenarioRow> = if input.no_scenario_metrics {
@@ -704,6 +747,7 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
         },
         requests: request_rows,
         errors: error_rows,
+        transaction_errors: transaction_error_rows,
         scenarios: scenario_rows,
         transactions: transaction_rows,
         series: input.series,
@@ -713,6 +757,7 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
             scenario_metrics_disabled: input.no_scenario_metrics,
             requests_truncated,
             errors_truncated,
+            transaction_errors_truncated,
             series_seconds: input.series_window_secs,
             percentiles_over_time: input.percentiles_over_time,
         },
