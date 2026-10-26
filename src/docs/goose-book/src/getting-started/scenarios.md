@@ -56,22 +56,38 @@ Or, to run only the "Anonymous Spanish user" and "Admin user" Scenarios using th
 
 You can also mix exact and wildcard matching: `--scenarios "adminuser,anon*"` would run the exact `adminuser` scenario plus all scenarios starting with `anon`.
 
-A name may hold only letters, digits and `*`. Anything else is refused before the load test starts, with the reason:
+A name may hold only letters, digits, `_` and `*`. Anything else is refused before the load test starts, with the reason:
 
 ```bash,ignore
-% cargo run --release --example umami -- --scenarios "admin_user"
-error: invalid value 'admin_user' for '--scenarios <LIST>': 'admin_user' is not a scenario name: use letters and digits, with * as a wildcard; --scenarios-list prints the names.
+% cargo run --release --example umami -- --scenarios "admin-user"
+error: invalid value 'admin-user' for '--scenarios <LIST>': 'admin-user' is not a scenario name: use letters, digits and _, with * as a wildcard; --scenarios-list prints the names.
 
 For more information, try '--help'.
 ```
 
-This also refuses a machine name with a `_` suffix, such as `loadtesttransactions_1` above, so match it with a wildcard instead, as in `loadtesttransactions*1`.
+A machine name with a `_` suffix, such as `loadtesttransactions_1` above, selects that one scenario. For example, a load test that registers two scenarios both named `Visitor` lists them as `visitor` and `visitor_1`, and `--scenarios visitor_1` runs only the second:
 
-A name that matches no scenario is ignored as long as another name in the list matches one. When nothing in the list matches any scenario, Goose prints the scenarios and stops with an error:
+```bash,ignore
+% cargo run --release -- --host http://127.0.0.1:8000 -u2 -r2 -t2s --scenarios visitor_1
+...
+ === PER SCENARIO METRICS ===
+ ------------------------------------------------------------------------------
+ Name                     |  # users |  # times run | scenarios/s | iterations
+ ------------------------------------------------------------------------------
+ 1: Visitor               |        0 |            0 |        0.00 |       0.00
+ 2: Visitor               |        2 |       115156 |       57578 |      57578
+ -------------------------+----------+--------------+-------------+------------
+ Aggregated               |        2 |       115156 |       57578 |      57578
+```
+
+The final summary still lists the first `Visitor` scenario, with no users.
+
+A name that matches no scenario logs a warning, as it is most likely mistyped, and is otherwise ignored as long as another name in the list matches one. When nothing in the list matches any scenario, Goose prints the scenarios and stops with an error:
 
 ```bash,ignore
 % cargo run --release --example umami -- --scenarios "nosuch"
-21:02:12 [INFO] scenarios = Scenarios { active: ["nosuch"] }
+19:55:15 [INFO] scenarios = Scenarios { active: ["nosuch"] }
+19:55:15 [WARN] --scenarios "nosuch" matches no scenario; --scenarios-list prints the names
 Scenarios:
  - adminuser: ("Admin user")
  - anonymousenglishuser: ("Anonymous English user")

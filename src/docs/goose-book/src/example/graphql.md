@@ -112,25 +112,27 @@ Both are fragments: they need `use goose::prelude::*;` and `use serde_json::json
 
 ## Sample Output
 
-Running the example for 30 seconds with 5 users, against a small local server that answers every POST to `/graphql` with a `200` and a JSON body:
+Running the example for 30 seconds with 5 users, against a small local server that answers every POST to `/graphql`, after 5 to 25 ms, with a `200` and a JSON body:
 
 ```bash
-$ cargo run --release --example graphql_loadtest -- --host http://localhost:8080 --users 5 --run-time 30s
+$ cargo run --release --example graphql_loadtest -- --host http://localhost:8006 --users 5 --run-time 30s
 
-20:58:15 [INFO] Output verbosity level: INFO
-20:58:15 [INFO] Logfile verbosity level: WARN
-20:58:15 [INFO] users = 5
-20:58:15 [INFO] run_time = 30
-20:58:15 [INFO] global host configured: http://localhost:8080
-20:58:15 [INFO] [scheduler]: allocating transactions and scenarios with RoundRobin scheduler
-20:58:15 [INFO] [scheduler]: initializing 5 user states...
-20:58:15 [INFO] entering GooseAttack phase: Increase
-20:58:15 [INFO] [user 1]: launching user from GraphQL Load Test
-20:58:16 [INFO] [user 2]: launching user from GraphQL Load Test
-20:58:17 [INFO] [user 3]: launching user from GraphQL Load Test
-20:58:18 [INFO] [user 4]: launching user from GraphQL Load Test
-20:58:19 [INFO] [user 5]: launching user from GraphQL Load Test
-20:58:20 [INFO] printing running metrics after 5 seconds...
+19:53:20 [INFO] Output verbosity level: INFO
+19:53:20 [INFO] Logfile verbosity level: WARN
+19:53:20 [INFO] users = 5
+19:53:20 [INFO] run_time = 30
+19:53:20 [INFO] global host configured: http://localhost:8006
+19:53:20 [INFO] [scheduler]: allocating transactions and scenarios with RoundRobin scheduler
+19:53:20 [INFO] [scheduler]: initializing 5 user states...
+19:53:20 [INFO] [controller]: Telnet listening on: 0.0.0.0:5116
+19:53:20 [INFO] [controller]: WebSocket listening on: 0.0.0.0:5117
+19:53:20 [INFO] entering GooseAttack phase: Increase
+19:53:20 [INFO] [user 1]: launching user from GraphQL Load Test
+19:53:21 [INFO] [user 2]: launching user from GraphQL Load Test
+19:53:22 [INFO] [user 3]: launching user from GraphQL Load Test
+19:53:23 [INFO] [user 4]: launching user from GraphQL Load Test
+19:53:24 [INFO] [user 5]: launching user from GraphQL Load Test
+19:53:25 [INFO] printing running metrics after 5 seconds...
 ```
 
 Goose starts one user a second, and when all 5 have launched it prints the metrics so far and resets them. Those tables are left out here. The rest of the output follows:
@@ -138,76 +140,99 @@ Goose starts one user a second, and when all 5 have launched it prints the metri
 ```bash
 All 5 users launched, resetting metrics (disable with --no-reset-metrics).
 
-20:58:20 [INFO] entering GooseAttack phase: Maintain
-20:58:50 [INFO] entering GooseAttack phase: Decrease
-20:58:50 [INFO] [user 4]: exiting from GraphQL Load Test
-20:58:50 [INFO] [user 2]: exiting from GraphQL Load Test
-20:58:50 [INFO] [user 3]: exiting from GraphQL Load Test
-20:58:50 [INFO] [user 5]: exiting from GraphQL Load Test
-20:58:50 [INFO] [user 1]: exiting from GraphQL Load Test
-20:58:50 [INFO] entering GooseAttack phase: Shutdown
-20:58:50 [INFO] printing final metrics after 30 seconds...
+19:53:25 [INFO] entering GooseAttack phase: Maintain
+19:53:55 [INFO] entering GooseAttack phase: Decrease
+19:53:55 [INFO] [user 2]: exiting from GraphQL Load Test
+19:53:55 [INFO] [user 4]: exiting from GraphQL Load Test
+19:53:55 [INFO] [user 1]: exiting from GraphQL Load Test
+19:53:55 [INFO] [user 5]: exiting from GraphQL Load Test
+19:53:55 [INFO] [user 3]: exiting from GraphQL Load Test
+19:53:55 [INFO] entering GooseAttack phase: Shutdown
+19:53:55 [INFO] printing final metrics after 30 seconds...
 
  === PER SCENARIO METRICS ===
  ------------------------------------------------------------------------------
  Name                     |  # users |  # times run | scenarios/s | iterations
  ------------------------------------------------------------------------------
- 1: GraphQL Load Test     |        5 |         5211 |      173.70 |       1042
+ 1: GraphQL Load Test     |        5 |         2254 |       75.13 |     450.80
  ------------------------------------------------------------------------------
  Name                     |    Avg (ms) |        Min |         Max |     Median
  ------------------------------------------------------------------------------
-   1: GraphQL Load Test   |          29 |       0.28 |         142 |         26
+   1: GraphQL Load Test   |          67 |         27 |         103 |         67
 
  === PER TRANSACTION METRICS ===
  ------------------------------------------------------------------------------
  Name                     |   # times run |        # fails |  trans/s |  fail/s
  ------------------------------------------------------------------------------
  1: GraphQL Load Test    
-   1: Simple Query        |         5,213 |         0 (0%) |   173.77 |    0.00
-   2: User Query          |         5,213 |         0 (0%) |   173.77 |    0.00
-   3: Complex Query       |         5,211 |         0 (0%) |   173.70 |    0.00
-   4: Mutation            |         5,211 |         0 (0%) |   173.70 |    0.00
+   1: Simple Query        |         2,256 |         0 (0%) |    75.20 |    0.00
+   2: User Query          |         2,256 |         0 (0%) |    75.20 |    0.00
+   3: Complex Query       |         2,256 |         0 (0%) |    75.20 |    0.00
+   4: Mutation            |         2,256 |         0 (0%) |    75.20 |    0.00
  -------------------------+---------------+----------------+----------+--------
- Aggregated               |        20,848 |         0 (0%) |   694.93 |    0.00
+ Aggregated               |         9,024 |         0 (0%) |   300.80 |    0.00
  ------------------------------------------------------------------------------
  Name                     |    Avg (ms) |        Min |         Max |     Median
  ------------------------------------------------------------------------------
  1: GraphQL Load Test    
-   1: Simple Query        |        7.21 |       0.06 |          66 |       6.56
-   2: User Query          |        7.25 |       0.07 |          98 |       6.62
-   3: Complex Query       |         7.2 |       0.06 |          95 |        6.5
-   4: Mutation            |        7.21 |       0.06 |          73 |        6.5
+   1: Simple Query        |          17 |       5.28 |          29 |         17
+   2: User Query          |          17 |       5.25 |          29 |         17
+   3: Complex Query       |          17 |       5.29 |          28 |         17
+   4: Mutation            |          17 |       5.41 |          31 |         17
  -------------------------+-------------+------------+-------------+-----------
- Aggregated               |        7.22 |       0.06 |          98 |       6.56
+ Aggregated               |          17 |       5.25 |          31 |         17
 
  === PER REQUEST METRICS ===
  ------------------------------------------------------------------------------
  Name                     |        # reqs |        # fails |    req/s |  fail/s
  ------------------------------------------------------------------------------
- POST /graphql            |         5,216 |         0 (0%) |   173.87 |    0.00
- POST complex user post.. |         5,211 |         0 (0%) |   173.70 |    0.00
- POST create post         |         5,211 |         0 (0%) |   173.70 |    0.00
- POST get user by id      |         5,213 |         0 (0%) |   173.77 |    0.00
+ POST /graphql            |         2,258 |         0 (0%) |    75.27 |    0.00
+ POST complex user post.. |         2,256 |         0 (0%) |    75.20 |    0.00
+ POST create post         |         2,256 |         0 (0%) |    75.20 |    0.00
+ POST get user by id      |         2,257 |         0 (0%) |    75.23 |    0.00
  -------------------------+---------------+----------------+----------+--------
- Aggregated               |        20,851 |         0 (0%) |   695.03 |    0.00
+ Aggregated               |         9,027 |         0 (0%) |   300.90 |    0.00
  ------------------------------------------------------------------------------
  Name                     |    Avg (ms) |        Min |         Max |     Median
  ------------------------------------------------------------------------------
- POST /graphql            |        7.15 |       0.05 |          66 |        6.5
- POST complex user post.. |        7.14 |       0.05 |          95 |       6.43
- POST create post         |        7.15 |       0.06 |          73 |        6.5
- POST get user by id      |         7.2 |       0.06 |          98 |       6.56
+ POST /graphql            |          17 |       5.28 |          29 |         17
+ POST complex user post.. |          17 |       5.27 |          28 |         17
+ POST create post         |          17 |       5.39 |          31 |         17
+ POST get user by id      |          17 |       5.24 |          29 |         17
  -------------------------+-------------+------------+-------------+-----------
- Aggregated               |        7.16 |       0.05 |          98 |        6.5
+ Aggregated               |          17 |       5.24 |          31 |         17
+ ------------------------------------------------------------------------------
+ Slowest page load within specified percentile of requests (in ms):
+ ------------------------------------------------------------------------------
+ Name                     |    50% |    75% |    98% |    99% |  99.9% | 99.99%
+ ------------------------------------------------------------------------------
+ POST /graphql            |     17 |     22 |     27 |     27 |     28 |     29
+ POST complex user post.. |     17 |     22 |     27 |     27 |     28 |     28
+ POST create post         |     17 |     22 |     27 |     27 |     28 |     31
+ POST get user by id      |     17 |     22 |     27 |     27 |     28 |     29
+ -------------------------+--------+--------+--------+--------+--------+-------
+ Aggregated               |     17 |     22 |     27 |     27 |     28 |     29
  ------------------------------------------------------------------------------
  Name                     |                                        Status codes 
  ------------------------------------------------------------------------------
- POST /graphql            |                                         5,216 [200]
- POST complex user post.. |                                         5,211 [200]
- POST create post         |                                         5,211 [200]
- POST get user by id      |                                         5,213 [200]
+ POST /graphql            |                                         2,258 [200]
+ POST complex user post.. |                                         2,256 [200]
+ POST create post         |                                         2,256 [200]
+ POST get user by id      |                                         2,257 [200]
  -------------------------+----------------------------------------------------
- Aggregated               |                                        20,851 [200] 
+ Aggregated               |                                         9,027 [200] 
+
+ === OVERVIEW ===
+ ------------------------------------------------------------------------------
+ Action       Started               Stopped             Elapsed    Users
+ ------------------------------------------------------------------------------
+ Increasing:  2026-10-26 20:53:20 - 2026-10-26 20:53:25 (00:00:05, 0 -> 5)
+ Maintaining: 2026-10-26 20:53:25 - 2026-10-26 20:53:55 (00:00:30, 5)
+ Decreasing:  2026-10-26 20:53:55 - 2026-10-26 20:53:55 (00:00:00, 0 <- 5)
+
+ Target host: http://localhost:8006/
+ goose v0.19.0-dev
+ ------------------------------------------------------------------------------
 ```
 
 ### Key Observations

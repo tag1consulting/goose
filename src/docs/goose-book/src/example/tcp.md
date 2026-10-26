@@ -28,20 +28,26 @@ Recorded metrics appear in all Goose reports under the method label you provide.
  ------------------------------------------------------------------------------
  Name                     |        # reqs |        # fails |    req/s |  fail/s
  ------------------------------------------------------------------------------
- TCP tcp_echo             |             0 |         0 (0%) |     0.00 |    0.00
+ TCP tcp_echo             |         1,194 |         0 (0%) |    29.85 |    0.00
  ------------------------------------------------------------------------------
  Name                     |    Avg (ms) |        Min |         Max |     Median
  ------------------------------------------------------------------------------
- TCP tcp_echo             |        2.17 |       0.52 |          14 |       1.62
+ TCP tcp_echo             |        0.95 |       0.29 |          15 |       0.91
+ ------------------------------------------------------------------------------
+ Slowest page load within specified percentile of requests (in ms):
+ ------------------------------------------------------------------------------
+ Name                     |    50% |    75% |    98% |    99% |  99.9% | 99.99%
+ ------------------------------------------------------------------------------
+ TCP tcp_echo             |   0.91 |   1.05 |   1.64 |    1.8 |    4.9 |     15
  ------------------------------------------------------------------------------
  Name                     |                                        Status codes 
  ------------------------------------------------------------------------------
- TCP tcp_echo             |                                           1,208 [0]
+ TCP tcp_echo             |                                           1,194 [0]
  -------------------------+----------------------------------------------------
- Aggregated               |                                           1,208 [0] 
+ Aggregated               |                                           1,194 [0] 
 ```
 
-In this release the `# reqs`, `# fails`, `req/s` and `fail/s` columns read 0 for a custom request, as above, while its response times and status codes are counted; the transaction tables count each `tcp_echo` transaction.
+A custom request is counted like an HTTP request: in the `# reqs`, `# fails`, `req/s` and `fail/s` columns, in the Aggregated row of a load test with more than one request, and in its response times and status codes.
 
 ### Parameters
 

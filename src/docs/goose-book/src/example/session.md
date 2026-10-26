@@ -16,7 +16,7 @@ The session data structure is created from json-formatted response data returned
 
 The session data is retrieved from the [`GooseUser`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html) object with each subsequent request. To keep the example simple no validation is done:
 ```rust,ignore
-{{#include ../../../../../examples/session.rs:75:95}}
+{{#include ../../../../../examples/session.rs:75:97}}
 ```
 
 _This example panics unless the server sets the JWT token it expects: if `/signup` does not return the JSON the example expects, the user has no session data, and `get_session_data_unchecked` panics with `Missing session data!`._

@@ -84,8 +84,10 @@ async fn send_authenticated_request(
         reqwest_request_builder = reqwest_request_builder.basic_auth(username, Some(password));
     }
 
-    // Build the GooseRequest and make the request
+    // Build the GooseRequest and make the request. The path names the request in
+    // the metrics, as the RequestBuilder already has its URL.
     let goose_request = GooseRequest::builder()
+        .path(path)
         .set_request_builder(reqwest_request_builder)
         .build();
 
@@ -104,7 +106,7 @@ async fn send_authenticated_request(
 - Doesn't automatically handle static assets
 - More verbose code
 
-The request is built from a Reqwest `RequestBuilder` without calling `.path()` or `.name()` on the `GooseRequest` builder, so Goose names it by its method alone: the metrics show these requests as `GET` and `POST` rather than `GET /basic-auth/user/passwd` and `POST /post`. Add `.name("...")` to the `GooseRequest` builder to give them a name.
+The request is built from a Reqwest `RequestBuilder`, which already holds the URL, so the helper also calls `.path(path)` on the `GooseRequest` builder: the path names the request in the metrics, as `GET /basic-auth/user/passwd` and `POST /post`. Without `.path()` or `.name("...")`, Goose would name it by its method alone, as `GET` or `POST`.
 
 ### 3. Manual Per-Request Authentication
 
@@ -119,6 +121,7 @@ async fn test_manual_basic_auth(user: &mut GooseUser) -> TransactionResult {
         .basic_auth(username, Some(password));
 
     let goose_request = GooseRequest::builder()
+        .path("/basic-auth/user/passwd")
         .set_request_builder(reqwest_request_builder)
         .build();
 
@@ -133,7 +136,7 @@ async fn test_manual_basic_auth(user: &mut GooseUser) -> TransactionResult {
 - Does NOT propagate to static asset requests
 - Lots of code duplication
 - This is the original problem described in [issue #608](https://github.com/tag1consulting/goose/issues/608)
-- Named by its method alone in the metrics, as in the helper function approach
+- Must name each request with `.path()` or `.name()`, as in the helper function approach, or it is named by its method alone in the metrics
 
 ## Configuration
 
