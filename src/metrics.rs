@@ -1825,6 +1825,13 @@ impl ScenarioMetricAggregate {
     }
 }
 
+/// The iterations a scenario's table shows: `count` scenario runs averaged
+/// over the `users` who ran them. The console and every report show this, for
+/// one scenario and for them all.
+pub(crate) fn iterations_per_user(count: usize, users: usize) -> f32 {
+    count as f32 / users as f32
+}
+
 /// [`ScenarioMetricAggregate`] as it is written.
 #[derive(Serialize)]
 struct ScenarioAggregateOut<'a> {
@@ -2559,7 +2566,7 @@ impl GooseMetrics {
             let (runs, _fails) =
                 per_second_calculations(self.duration, scenario.run_times.counter, 0);
             let runs_precision = determine_precision(runs);
-            let iterations = scenario.run_times.counter as f32 / scenario.users.len() as f32;
+            let iterations = iterations_per_user(scenario.run_times.counter, scenario.users.len());
             let iterations_precision = determine_precision(iterations);
             writeln!(
                 fmt,
@@ -2578,7 +2585,7 @@ impl GooseMetrics {
             let (aggregate_runs, _fails) =
                 per_second_calculations(self.duration, aggregate_counter, 0);
             let aggregate_runs_precision = determine_precision(aggregate_runs);
-            let aggregate_iterations = aggregate_counter as f32 / aggregate_users as f32;
+            let aggregate_iterations = iterations_per_user(aggregate_counter, aggregate_users);
             let aggregate_iterations_precision = determine_precision(aggregate_iterations);
             writeln!(
                 fmt,

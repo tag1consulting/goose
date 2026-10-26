@@ -1,6 +1,7 @@
 use super::{
-    delta::*, per_second_calculations, prepare_status_codes, CoMetricsSummary, GooseMetrics,
-    GooseRequestMetricAggregate, GooseRequestMetricTimingData, Millis, MillisFloat, NullableFloat,
+    delta::*, iterations_per_user, per_second_calculations, prepare_status_codes, CoMetricsSummary,
+    GooseMetrics, GooseRequestMetricAggregate, GooseRequestMetricTimingData, Millis, MillisFloat,
+    NullableFloat,
 };
 
 use crate::{
@@ -422,12 +423,11 @@ impl<'m> Prepare<'m> {
         let mut aggregate_users = 0;
         // Every scenario's run times together.
         let mut aggregate_times = GooseRequestMetricTimingData::default();
-        let mut aggregate_iterations = 0.0;
         for scenario in &self.metrics.scenarios {
             let times = &scenario.run_times;
             let (count_per_second, _failures_per_second) =
                 per_second_calculations(self.metrics.duration, times.counter, 0);
-            let iterations = times.counter as f32 / scenario.users.len() as f32;
+            let iterations = iterations_per_user(times.counter, scenario.users.len());
             scenario_metrics.push(ScenarioMetric {
                 name: scenario.name.to_string(),
                 users: scenario.users.len().into(),
@@ -441,7 +441,6 @@ impl<'m> Prepare<'m> {
 
             aggregate_users += scenario.users.len();
             aggregate_times.merge(times);
-            aggregate_iterations += iterations;
         }
 
         let (aggregate_count_per_second, _aggregate_failures_per_second) =
@@ -454,7 +453,7 @@ impl<'m> Prepare<'m> {
             response_time_minimum: Millis(aggregate_times.minimum_time_us).into(),
             response_time_maximum: Millis(aggregate_times.maximum_time_us).into(),
             count_per_second: aggregate_count_per_second.into(),
-            iterations: aggregate_iterations.into(),
+            iterations: iterations_per_user(aggregate_times.counter, aggregate_users).into(),
         });
 
         Some(scenario_metrics)
@@ -1327,6 +1326,78 @@ mod test {
     use super::*;
     use crate::metrics::millis::MillisDelta;
     use crate::report::RequestMetric;
+
+    /// Two scenarios with different iteration counts: one user ran the first
+    /// 10 times, three users ran the second twice.
+    fn two_scenario_metrics() -> GooseMetrics {
+        use crate::metrics::ScenarioMetricAggregate;
+        let mut metrics = GooseMetrics {
+            display_metrics: true,
+            duration: 10,
+            ..Default::default()
+        };
+        let mut first = ScenarioMetricAggregate::new(0, "First".into());
+        for _ in 0..10 {
+            first.update(10, 0);
+        }
+        let mut second = ScenarioMetricAggregate::new(1, "Second".into());
+        second.update(10, 1);
+        second.update(10, 2);
+        second.users.insert(3);
+        metrics.scenarios = vec![first, second];
+        metrics
+    }
+
+    #[test]
+    fn report_aggregated_iterations_match_the_console() {
+        let metrics = two_scenario_metrics();
+        let data = prepare_data_with_baseline(
+            ReportOptions {
+                no_transaction_metrics: false,
+                no_scenario_metrics: false,
+                no_status_codes: false,
+            },
+            &metrics,
+            None,
+        );
+        let scenarios = data.scenario_metrics.expect("scenario metrics");
+        let aggregated = scenarios.last().unwrap();
+        assert_eq!(aggregated.name, "Aggregated");
+        // 12 runs by 4 users.
+        assert_eq!(*aggregated.iterations.value(), 3.0);
+        // The console shows the same.
+        let console = metrics.to_string();
+        let row = console
+            .lines()
+            .find(|line| line.trim_start().starts_with("Aggregated") && line.contains(" 12 |"))
+            .unwrap_or_else(|| panic!("aggregated scenario row in {}", console));
+        assert_eq!(row.rsplit('|').next().unwrap().trim(), "3.00");
+
+        // As does the Markdown report, in a table of scenarios.
+        let mut markdown = Vec::new();
+        crate::report::write_markdown_report(
+            &mut markdown,
+            prepare_data_with_baseline(
+                ReportOptions {
+                    no_transaction_metrics: false,
+                    no_scenario_metrics: false,
+                    no_status_codes: false,
+                },
+                &metrics,
+                None,
+            ),
+            &[],
+        )
+        .unwrap();
+        let markdown = String::from_utf8(markdown).unwrap();
+        let table = &markdown[markdown.find("## Scenario Metrics").unwrap()..];
+        assert!(table.contains("\n| Scenario | # Users |"), "{}", table);
+        let row = table
+            .lines()
+            .find(|line| line.starts_with("| Aggregated |"))
+            .unwrap();
+        assert!(row.ends_with("| 3.00 |"), "{}", row);
+    }
 
     #[test]
     fn delta_value_usize() {
