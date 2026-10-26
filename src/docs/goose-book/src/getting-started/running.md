@@ -107,11 +107,11 @@ In real load tests, you'll most likely have multiple scenarios each with multipl
 
 Finally comes a chart showing how many users were running during the load test. You can see the users starting 1 per second at the start of the load test. The run was stopped with `ctrl-c`, and the line stays at 18 users to its last point.
 
-Some sections appear only when they have something to show: thresholds, when `--threshold` is set; request and response time metrics adjusted for coordinated omission, and coordinated omission events, when mitigation recorded any; errors, when any request failed; and transaction errors, when any transaction returned an error that is not a request error. The Transaction Errors section follows the Errors section and counts each transaction's errors by scenario, transaction and error, most frequent first. `--no-error-summary` leaves both out of the report, not out of the [error log](../logging/errors.md).
+Some sections appear only when they have something to show: thresholds, when `--threshold` is set; request and response time metrics adjusted for coordinated omission, when mitigation recorded any synthetic times; coordinated omission events, whenever mitigation is on; errors, when any request failed; and transaction errors, when any transaction returned an error that is not a request error. The Transaction Errors section follows the Errors section and counts each transaction's errors by scenario, transaction and error, most frequent first. `--no-error-summary` leaves both out of the report, not out of the [error log](../logging/errors.md).
 
 ## Comparing against a baseline
 
-When the load test is run with [`--baseline-file`](common.html#comparing-against-a-baseline), every number in the report is followed by its change from the earlier run, such as `21,137 (+933)` requests or `0.94 (-0.05)` milliseconds.
+When the load test is run with [`--baseline-file`](common.html#comparing-against-a-baseline), the numbers in the request, response time, transaction, scenario and error tables are followed by their change from the earlier run, such as `21,137 (+933)` requests or `0.94 (-0.05)` milliseconds.
 
 ## Printer-friendly HTML
 

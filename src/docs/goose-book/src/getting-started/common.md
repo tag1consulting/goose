@@ -36,7 +36,7 @@ By default, Goose starts one GooseUser per second. So if you configure `--users`
 
 (_The configured increase rate is a best effort limit, Goose will not start users faster than this but there is no guarantee that your load test server is capable of starting users as fast as you configure._)
 
-Goose starts each user one interval after the last was due, so a rate that is not a whole number is kept too: `--increase-rate 1.5` starts a user every 667 milliseconds, starting 9 users in about 5.3 seconds. The same applies to `--decrease-rate`, `--increase-time`, `--decrease-time` and the steps of a [test plan](./test-plan.html).
+Goose starts each user one interval after the last was due, so a rate that is not a whole number is kept too: `--increase-rate 1.5` starts a user every 667 milliseconds, so the 9th user starts about 5.3 seconds in, and the increase phase of 9 users lasts 6 seconds, as at any rate the phase lasts the users divided by the rate. The same applies to `--decrease-rate`, `--increase-time`, `--decrease-time` and the steps of a [test plan](./test-plan.html).
 
 ### Increase rate example
 _Launch one user every two seconds._

@@ -361,7 +361,7 @@ All status codes returned by the server are displayed in a table, per-request an
 #### Transactions
 The next graph summarizes all Transactions run during the load test. One or more requests are grouped logically inside Transactions. For example, the Transaction named `0.0 anon /` includes an anonymous (not-logged-in) request for the front page, as well as requests for all static assets found on the front page.
 
-Whereas a Request automatically fails based on the web server response code, the code that defines a Transaction must manually return an error for a Transaction to be considered failed. For example, the logic may be written to fail the Transaction if the html request fails, but not if one or more static asset requests fail. The error a Transaction returns is counted in the [Transaction Errors](#errors-and-transaction-errors) section and written to the [transaction log](../logging/transactions.md) and the [error log](../logging/errors.md); an error from a failed request is counted with the request errors instead.
+Whereas a Request automatically fails based on the web server response code, the code that defines a Transaction must manually return an error for a Transaction to be considered failed. For example, the logic may be written to fail the Transaction if the html request fails, but not if one or more static asset requests fail. Every error a Transaction returns is written to the [transaction log](../logging/transactions.md). A `TransactionError::Custom` or `Url` error, or a `Reqwest` error from reading the response body or building the request, is also counted in the [Transaction Errors](#errors-and-transaction-errors) section and written to the [error log](../logging/errors.md); an error from a failed request is counted with the request errors instead.
 
 This graph is also followed by a table showing details on all Transactions, partially shown here:
 ![Transaction metrics](metrics-transactions.jpg)
@@ -381,7 +381,7 @@ The final graph shows how many users were running at the various stages of the l
 ![User metrics](metrics-users.jpg)
 
 #### Errors and transaction errors
-When any request failed, an Errors section counts each request error, most frequent first, as the console's errors table does. When any transaction returned an error that is not a request error, a Transaction Errors section follows it, counting each error by scenario, transaction and error. The Markdown report has the same tables, under Error Metrics and Transaction Error Metrics, the PDF report has them too, and the JSON report holds them in `errors` and `transaction_errors`. `--no-error-summary` leaves them out of every report.
+When any request failed, an Errors section counts each request error, most frequent first, as the console's errors table does. When any transaction returned an error that is not a request error, a Transaction Errors section follows it, counting each error by scenario, transaction and error. It numbers each transaction from 1, as the console does, so a transaction the report's transaction table shows as `0.2` is `1.3` there. The Markdown report has the same tables, under Error Metrics and Transaction Error Metrics, the PDF report has them too, and the JSON report holds them in `errors` and `transaction_errors`. `--no-error-summary` leaves them out of every report.
 
 ### Markdown report
 

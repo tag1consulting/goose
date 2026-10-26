@@ -130,7 +130,7 @@ The console shows a "COORDINATED OMISSION METRICS" section after the other table
 - **Duration** is the time in whole seconds since the counts started, and **Events per minute** is the events over that time.
 - **Total CO Events** counts requests, not stalls: each request a user made in the run after a stall, and that added synthetic times, is one event. Here five users each ran into the one stall, and their next runs made 296 requests.
 - **Actual requests** are the requests Goose measured.
-- **Synthetic requests** are the synthetic times mitigation added to the adjusted tables. For each event they are the stalled run's length less the cadence, then less the cadence again and again, for as long as what is left is longer than the request's own response time. The percentage is the synthetic requests of all actual and synthetic requests.
+- **Synthetic requests** are the synthetic times mitigation added to the adjusted tables. For each event they are the stalled run's length less the cadence and the request's own response time, then less the cadence again and again, for as long as what is left is longer than the request's own response time. The percentage is the synthetic requests of all actual and synthetic requests.
 - Actual requests plus synthetic requests is the Aggregated `# reqs` of the "PER REQUEST METRICS".
 - All of these start again when Goose resets its metrics after the users start, as the other metrics do, so they leave out the ramp up. With `--no-reset-metrics` they cover the whole run.
 - **Severity Distribution** lists only the severities with at least one event, in no fixed order.
