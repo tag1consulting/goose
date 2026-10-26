@@ -502,8 +502,10 @@ pub(crate) struct MetricsProcessor {
 /// statistically relevant information as [`GooseUser`](../goose/struct.GooseUser.html)
 /// threads are unable to make additional requests while they are blocked by an upstream stall.
 /// Goose mitigates this by backfilling the requests that would have been made during that time.
-/// Backfilled requests show up in the `--request-file` if enabled, though they were not actually
-/// sent to the server.
+/// Backfilled requests are never sent to the server, and the `--request-log` does not hold
+/// them; it holds the request that ended a stall a second time, with
+/// [`coordinated_omission_elapsed`](struct.GooseRequestMetric.html#structfield.coordinated_omission_elapsed)
+/// and `user_cadence` set.
 ///
 /// Goose can be configured to backfill requests based on the expected
 /// [`user_cadence`](struct.GooseRequestMetric.html#structfield.user_cadence). The expected

@@ -1537,6 +1537,7 @@ pub enum GooseDefault {
 ///
 /// The following run-time options can be configured with a custom default using a
 /// borrowed string slice ([`&str`]):
+///  - [`GooseDefault::BaselineFile`]
 ///  - [`GooseDefault::DebugLog`]
 ///  - [`GooseDefault::ErrorLog`]
 ///  - [`GooseDefault::GooseLog`]
