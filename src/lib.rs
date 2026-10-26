@@ -2559,6 +2559,7 @@ impl GooseAttack {
                     final_metrics.hash = self.metrics.hash;
                     final_metrics.display_metrics = self.metrics.display_metrics;
                     final_metrics.display_status_codes = self.metrics.display_status_codes;
+                    final_metrics.final_metrics = self.metrics.final_metrics;
                     self.metrics = final_metrics;
                     self.graph_data = final_graph_data;
                 }
@@ -4589,5 +4590,45 @@ mod tests {
             // No histograms are kept before the first test starts.
             assert_eq!(snapshot.series.heatmap, None);
         }
+    }
+
+    /// A real run's final metrics are marked final, so the summary printed
+    /// when it ends carries the percentile table.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_final_metrics_after_execute() {
+        async fn get_index(user: &mut GooseUser) -> crate::goose::TransactionResult {
+            let _goose = user.get("/").await?;
+            Ok(())
+        }
+        let server = httpmock::MockServer::start();
+        server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/");
+            then.status(200);
+        });
+        let configuration = GooseConfiguration::parse_args_default(&[
+            "--no-telnet",
+            "--no-websocket",
+            "--host",
+            &server.base_url(),
+            "--users",
+            "1",
+            "--run-time",
+            "2",
+        ])
+        .unwrap();
+        let goose_metrics = GooseAttack::initialize_with_config(configuration)
+            .unwrap()
+            .register_scenario(scenario!("Index").register_transaction(transaction!(get_index)))
+            .execute()
+            .await
+            .unwrap();
+        assert!(goose_metrics.final_metrics);
+        let printed = goose_metrics.to_string();
+        assert!(
+            printed.contains("Slowest page load within specified percentile of requests (in ms):"),
+            "{}",
+            printed
+        );
     }
 }
