@@ -9,9 +9,9 @@ The example is written for a site built with the [Drupal Umami demo](https://www
 The example names its transactions, such as `anon /`, but not its requests, so each request is named by its path: the run made requests under 103 names. In the request tables and the errors table below, `...` marks the rows left out, and in the log, the lines left out.
 
 ```bash
-% cargo run --release --example umami -- --host http://127.0.0.1:8013/ -u9 -r3 -t1m --no-reset-metrics --report-file report.html --report-file report.md
+% cargo run --release --example umami -- --host http://127.0.0.1:8080/ -u9 -r3 -t1m --no-reset-metrics --report-file report.html --report-file report.md
     Finished `release` profile [optimized] target(s) in 0.19s
-     Running `target/release/examples/umami --host 'http://127.0.0.1:8013/' -u9 -r3 -t1m --no-reset-metrics --report-file report.html --report-file report.md`
+     Running `target/release/examples/umami --host 'http://127.0.0.1:8080/' -u9 -r3 -t1m --no-reset-metrics --report-file report.html --report-file report.md`
 19:46:37 [INFO] Output verbosity level: INFO
 19:46:37 [INFO] Logfile verbosity level: WARN
 19:46:37 [INFO] users = 9
@@ -19,7 +19,7 @@ The example names its transactions, such as `anon /`, but not its requests, so e
 19:46:37 [INFO] increase_rate = 3.0
 19:46:37 [INFO] no_reset_metrics = true
 19:46:37 [INFO] report_file = ["report.html", "report.md"]
-19:46:37 [INFO] global host configured: http://127.0.0.1:8013/
+19:46:37 [INFO] global host configured: http://127.0.0.1:8080/
 19:46:37 [INFO] [scheduler]: allocating transactions and scenarios with RoundRobin scheduler
 19:46:37 [INFO] [scheduler]: initializing 9 user states...
 19:46:37 [INFO] [controller]: Telnet listening on: 0.0.0.0:5116
@@ -37,8 +37,8 @@ The example names its transactions, such as `anon /`, but not its requests, so e
 All 9 users launched.
 
 19:46:40 [INFO] entering GooseAttack phase: Maintain
-19:46:47 [INFO] set_failure: http://127.0.0.1:8013/es/search/node: search terms (Percances Prueba negocio) not on page
-19:46:48 [INFO] set_failure: http://127.0.0.1:8013/es/search/node: search terms (de Un al) not on page
+19:46:47 [INFO] set_failure: http://127.0.0.1:8080/es/search/node: search terms (Percances Prueba negocio) not on page
+19:46:48 [INFO] set_failure: http://127.0.0.1:8080/es/search/node: search terms (de Un al) not on page
 ...
 19:47:41 [INFO] entering GooseAttack phase: Decrease
 19:47:41 [INFO] [user 2]: exiting from Anonymous English user
@@ -225,8 +225,8 @@ All 9 users launched.
  2             POST /en/contact: 500 Internal Server Error: /en/contact
  2             GET /en/recipes/: 500 Internal Server Error: /en/recipes/
  1             GET es/articles/percances-al-hornear-nuestros-consejos-para-solucionar-problemas: 500 Internal Server Error: es/articles/percances-al-hornear-nuestros-consejos-para-solucionar-problemas
- 1             GET /es/search/node: http://127.0.0.1:8013/es/search/node: search terms (sin hierbas Un) not on page
- 1             GET /es/search/node: http://127.0.0.1:8013/es/search/node: search terms (setas Prueba Bizcochos) not on page
+ 1             GET /es/search/node: http://127.0.0.1:8080/es/search/node: search terms (sin hierbas Un) not on page
+ 1             GET /es/search/node: http://127.0.0.1:8080/es/search/node: search terms (setas Prueba Bizcochos) not on page
  ...
  ------------------------------------------------------------------------------
 
@@ -238,7 +238,7 @@ All 9 users launched.
  Maintaining: 2026-10-26 20:46:40 - 2026-10-26 20:47:41 (00:01:01, 9)
  Decreasing:  2026-10-26 20:47:41 - 2026-10-26 20:47:41 (00:00:00, 0 <- 9)
 
- Target host: http://127.0.0.1:8013/
+ Target host: http://127.0.0.1:8080/
  goose v0.19.0-dev
  ------------------------------------------------------------------------------
 ```
