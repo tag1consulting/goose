@@ -78,7 +78,7 @@ To add command line arguments of your own, parse the command line yourself and g
 
 ### Adding options to Goose's
 
-`GooseConfiguration` derives `clap::Args`, so a load test can flatten it into a `clap::Parser` of its own and add its options beside Goose's. Every Goose option keeps working, `-h` and `--help` list both, and an option neither knows is still an error. Add `clap` to your `Cargo.toml` with its `derive` feature, such as `clap = { version = "4.5", features = ["derive"] }`:
+`GooseConfiguration` derives `clap::Args`, so a load test can flatten it into a `clap::Parser` of its own and add its options beside Goose's. Every Goose option keeps working, `-h` and `--help` list both, and an option neither knows is still an error. The command line is parsed with your parser's settings, not Goose's, so an option given twice, such as `--host a --host b`, is refused where Goose keeps the last, and a negative number such as `--users -1` gets no tip. Add `clap` to your `Cargo.toml` with its `derive` feature, such as `clap = { version = "4.5", features = ["derive"] }`:
 
 ```rust
 use clap::Parser;

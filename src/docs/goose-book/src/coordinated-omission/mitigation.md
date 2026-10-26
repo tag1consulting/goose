@@ -132,7 +132,10 @@ async fn slow_endpoint(user: &mut GooseUser) -> TransactionResult {
     let request_builder = user
         .get_request_builder(&GooseMethod::Get, "/endpoint")?
         .timeout(Duration::from_secs(30));
+    // The path names the request in the metrics, as the RequestBuilder
+    // already has its URL.
     let goose_request = GooseRequest::builder()
+        .path("/endpoint")
         .set_request_builder(request_builder)
         .build();
     let _goose = user.request(goose_request).await?;

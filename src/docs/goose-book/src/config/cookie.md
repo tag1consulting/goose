@@ -37,11 +37,11 @@ async fn load_homepage(user: &mut GooseUser) -> TransactionResult {
 }
 ```
 
-Goose builds each user's client with the user agent `goose/0.19.0`, the `--timeout`, gzip unless `--no-gzip`, invalid certificates accepted only with `--accept-invalid-certs`, and a cookie store when the `cookies` feature is enabled. Every user has a client of its own whether or not it keeps cookies. In a run of `examples/simple`, 1,000 users used about 57 MB more memory than 10 users.
+Goose builds each user's client with the user agent `goose/0.19.0`, the `--timeout`, gzip unless `--no-gzip`, invalid certificates accepted only with `--accept-invalid-certs`, and a cookie store when the `cookies` feature is enabled. Every user has a client of its own whether or not it keeps cookies. In a run of `examples/simple`, 1,000 users used about 65 MB more memory than 10 users.
 
 ## A Client Without Cookies
 
-To change the client of a user, build a [`reqwest::ClientBuilder`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html) and pass it to [`GooseUser::set_client_builder`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.set_client_builder), usually in a transaction run once with `set_on_start()`. A client built without `.cookie_store(true)` keeps no cookies:
+To change the client of a user, build a [`reqwest::ClientBuilder`](https://docs.rs/reqwest/*/reqwest/struct.ClientBuilder.html) and pass it to [`GooseUser::set_client_builder`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.set_client_builder), usually in a transaction run once with `set_on_start()`. Goose does not re-export Reqwest, so the load test needs its own `reqwest = { version = "0.13", default-features = false }` dependency. A client built without `.cookie_store(true)` keeps no cookies:
 
 ```rust
 use goose::prelude::*;
@@ -87,7 +87,7 @@ To leave cookie support out of the build, turn off Goose's default features:
 goose = { version = "^0.19", default-features = false }
 ```
 
-Reqwest is then built without its `cookies` feature, unless another dependency turns it on, and no user's client keeps cookies. `ClientBuilder::cookie_store` and `cookie_provider` only exist with Reqwest's `cookies` feature, so a load test that calls them needs it, for example through its own `reqwest = { version = "0.13", features = ["cookies"] }` dependency.
+Reqwest is then built without its `cookies` feature, unless another dependency turns it on, and no user's client keeps cookies. `ClientBuilder::cookie_store` and `cookie_provider` only exist with Reqwest's `cookies` feature, so a load test that calls them needs it, for example through its own `reqwest = { version = "0.13", default-features = false, features = ["cookies"] }` dependency. Leave Reqwest's default features off: they include `http2`, which would let HTTPS requests use HTTP/2 where Goose keeps to HTTP/1.1.
 
 ## The Type-Safe Client Builder
 
