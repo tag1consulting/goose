@@ -1175,8 +1175,12 @@ impl FromStr for Scenarios {
         for line in lines {
             // Ignore white space an case.
             let scenario = line.trim().to_lowercase();
-            // Valid scenario names are alphanumeric, with optional * wildcards.
-            if scenario.chars().all(|c| c.is_alphanumeric() || c == '*') {
+            // Valid scenario names are alphanumeric, with optional * wildcards,
+            // and the _ that tells apart scenarios registered with one name.
+            if scenario
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '*' || c == '_')
+            {
                 active.push(scenario);
             } else {
                 // The caller reports the error: clap for the command line, the
@@ -1185,8 +1189,8 @@ impl FromStr for Scenarios {
                     option: "`configuration.scenarios`".to_string(),
                     value: line.to_string(),
                     detail: format!(
-                        "'{}' is not a scenario name: use letters and digits, with * as a \
-                         wildcard; --scenarios-list prints the names.",
+                        "'{}' is not a scenario name: use letters, digits and _, with * as \
+                         a wildcard; --scenarios-list prints the names.",
                         line.trim()
                     ),
                 });
@@ -6033,7 +6037,7 @@ mod test {
                 &["--scenarios", "a-b"],
                 "--scenarios <LIST>",
                 "a-b",
-                "invalid value 'a-b' for '--scenarios <LIST>': 'a-b' is not a scenario name: use letters and digits, with * as a wildcard; --scenarios-list prints the names.",
+                "invalid value 'a-b' for '--scenarios <LIST>': 'a-b' is not a scenario name: use letters, digits and _, with * as a wildcard; --scenarios-list prints the names.",
             ),
             (&["-h"], "-h", "", "help was requested"),
             (&["--help"], "--help", "", "help was requested"),

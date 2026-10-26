@@ -683,6 +683,16 @@ pub struct GooseAttack {
     chrome: tokio::sync::OnceCell<report::chrome::ResolvedChrome>,
 }
 
+/// Whether `--scenarios` pattern `pattern` selects the scenario with machine
+/// name `machine_name`: exactly, or with `*` wildcards.
+fn scenario_pattern_matches(pattern: &str, machine_name: &str) -> bool {
+    if pattern.contains('*') {
+        wildcard_match(pattern, machine_name)
+    } else {
+        machine_name == pattern
+    }
+}
+
 /// Match a pattern containing `*` wildcards against text.
 /// Each `*` matches zero or more characters.
 fn wildcard_match(pattern: &str, text: &str) -> bool {
@@ -1114,19 +1124,30 @@ impl GooseAttack {
         Ok(())
     }
 
+    /// The `--scenarios` patterns that match no scenario's machine name.
+    fn unmatched_scenario_patterns(&self) -> Vec<&str> {
+        self.configuration
+            .scenarios()
+            .iter()
+            .filter(|pattern| {
+                !self
+                    .scenarios
+                    .iter()
+                    .any(|scenario| scenario_pattern_matches(pattern, &scenario.machine_name))
+            })
+            .map(String::as_str)
+            .collect()
+    }
+
     /// Internal helper to determine if the scenario is currently active.
     fn scenario_is_active(&self, scenario: &Scenario) -> bool {
         let patterns = self.configuration.scenarios();
         if patterns.is_empty() {
             return true;
         }
-        patterns.iter().any(|pattern| {
-            if pattern.contains('*') {
-                wildcard_match(pattern, &scenario.machine_name)
-            } else {
-                &*scenario.machine_name == pattern.as_str()
-            }
-        })
+        patterns
+            .iter()
+            .any(|pattern| scenario_pattern_matches(pattern, &scenario.machine_name))
     }
 
     /// Use configured GooseScheduler to build out a properly weighted list of
@@ -1385,15 +1406,22 @@ impl GooseAttack {
 
     // Display all scenarios (sorted by machine name).
     fn print_scenarios(&self) {
+        print!("{}", self.scenarios_list());
+    }
+
+    /// What `--scenarios-list` prints: each scenario's machine name, which
+    /// `--scenarios` selects it by, and its name.
+    fn scenarios_list(&self) -> String {
         let mut scenarios = BTreeMap::new();
-        println!("Scenarios:");
         for scenario in &self.scenarios {
-            scenarios.insert(scenario.machine_name.clone(), scenario.clone());
+            scenarios.insert(scenario.machine_name.clone(), scenario.name.clone());
         }
         // Display sorted by machine_name.
-        for (key, scenario) in scenarios {
-            println!(r#" - {}: ("{}")"#, key, scenario.name);
+        let mut list = "Scenarios:\n".to_string();
+        for (key, name) in scenarios {
+            list.push_str(&format!(" - {}: (\"{}\")\n", key, name));
         }
+        list
     }
 
     /// Execute the [`GooseAttack`](./struct.GooseAttack.html) load test.
@@ -1501,6 +1529,12 @@ impl GooseAttack {
             self.print_scenarios();
             logger::finish_goose_log();
             std::process::exit(0);
+        }
+
+        // A pattern that names no scenario is most likely a mistyped name, as
+        // `user_login` for the scenario `userlogin`.
+        for pattern in self.unmatched_scenario_patterns() {
+            warn!("--scenarios {pattern:?} matches no scenario; --scenarios-list prints the names");
         }
 
         // At least one scenario must be active.
@@ -4729,6 +4763,22 @@ mod tests {
         assert!(!controller::tests::control(&mut goose_attack, &mut run_state, "users 5").await);
     }
 
+    /// A `--scenarios` pattern that matches no machine name is reported, as
+    /// `load_test` is for the scenario `loadtest`.
+    #[test]
+    fn unmatched_scenario_patterns_are_named() {
+        let configuration =
+            GooseConfiguration::parse_args_default(&["--scenarios", "load_test,load*,nope*"])
+                .unwrap();
+        let goose_attack = GooseAttack::initialize_with_config(configuration)
+            .unwrap()
+            .register_scenario(Scenario::new("LoadTest"));
+        assert_eq!(
+            goose_attack.unmatched_scenario_patterns(),
+            ["load_test", "nope*"]
+        );
+    }
+
     /// A run started after another, as a Controller start after stop does,
     /// counts its requests from zero.
     #[tokio::test]
@@ -4781,6 +4831,31 @@ mod tests {
                 .metrics_epoch
                 .load(std::sync::atomic::Ordering::Relaxed)
                 > epoch
+        );
+    }
+
+    /// A duplicate scenario name, renamed `name_1`, selects only that
+    /// scenario, and `--scenarios-list` names both.
+    #[test]
+    fn duplicate_scenario_name_can_be_selected() {
+        let configuration =
+            GooseConfiguration::parse_args_default(&["--scenarios", "loadtest_1"]).unwrap();
+        let goose_attack = GooseAttack::initialize_with_config(configuration)
+            .unwrap()
+            .register_scenario(Scenario::new("LoadTest"))
+            .register_scenario(Scenario::new("LoadTest"));
+        let names: Vec<&str> = goose_attack
+            .scenarios
+            .iter()
+            .map(|scenario| &*scenario.machine_name)
+            .collect();
+        assert_eq!(names, ["loadtest", "loadtest_1"]);
+        assert!(!goose_attack.scenario_is_active(&goose_attack.scenarios[0]));
+        assert!(goose_attack.scenario_is_active(&goose_attack.scenarios[1]));
+        assert!(goose_attack.unmatched_scenario_patterns().is_empty());
+        assert_eq!(
+            goose_attack.scenarios_list(),
+            "Scenarios:\n - loadtest: (\"LoadTest\")\n - loadtest_1: (\"LoadTest\")\n"
         );
     }
 
