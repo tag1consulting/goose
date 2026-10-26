@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.19.0-dev
+ - [#775](https://github.com/tag1consulting/goose/pull/775) check the Goose Book against main for 0.19: correct options, samples, screenshots and API names, add upgrade notes for 0.18 users, and say Gaggle is not in 0.19
  - [#774](https://github.com/tag1consulting/goose/pull/774) say which request headers the request, debug and error logs omit: those Reqwest adds when it sends the request, namely the client's default headers, `User-Agent`, `Accept`, cookies, `Accept-Encoding`, `Host` and `Content-Length` (#336)
  - [#773](https://github.com/tag1consulting/goose/pull/773) add declarative thresholds: `--threshold` pass/fail rules such as `p95<500ms`, `error-rate<1%`, `rps>=200` and `p99<2s for GET /checkout`, that fire the killswitch when one fails while the run goes and always fail the run
     o a rule is `<metric><op><value>`, with an optional ` for <request>` naming a request as the HTML or Markdown report names it; the metrics are `pNN` percentiles, with optional decimals, `avg`, `max`, `error-rate` and `rps`, the operators `<`, `<=`, `>` and `>=`, and a time takes `us`, `ms` or `s`, a bare number being milliseconds. A rule that does not parse, or any rule with `--no-metrics`, is refused before any user starts, saying what is wrong with it
