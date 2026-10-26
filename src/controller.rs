@@ -432,7 +432,7 @@ lazy_static! {
     static ref RATE: Regex = Regex::new(r"^[0-9]*(\.[0-9]*)?$").unwrap();
     static ref TIME: Regex = Regex::new(r"(?i-u)^([0-9]+|([0-9]+h)?([0-9]+m)?([0-9]+s)?)$").unwrap();
     static ref PLAN: Regex = Regex::new(
-        r"(?-u)^(([0-9]+)\s*,\s*([0-9]+|([0-9]+h)?([0-9]+m)?([0-9]+s)?)*;*)+$"
+        r"(?i-u)^(([0-9]+)\s*,\s*([0-9]+|([0-9]+h)?([0-9]+m)?([0-9]+s)?)*;*)+$"
     )
     .unwrap();
     static ref HOST: Regex = Regex::new(r"(?i)^https?://.+$").unwrap();
@@ -1837,6 +1837,15 @@ pub(crate) mod tests {
                 "plan 50000,1s;100000,1s",
                 "TestPlan(TestPlan { steps: [(50000, 1000), (100000, 1000)], current: 0 })",
             ),
+            // A step's time units take either case, as every time span does.
+            (
+                "test-plan 2,1M;10,1H30M;5,10S",
+                "TestPlan(TestPlan { steps: [(2, 60000), (10, 5400000), (5, 10000)], current: 0 })",
+            ),
+            (
+                "testplan 0,5s;10,20s;10,",
+                "TestPlan(TestPlan { steps: [(0, 5000), (10, 20000), (10, 0)], current: 0 })",
+            ),
             // Main's grammar allows ASCII white space around the comma.
             (
                 "testplan 10 , 5s;0,\t1s",
@@ -1898,6 +1907,9 @@ pub(crate) mod tests {
             ("testplan 10,99999999999999999999h", TEST_PLAN),
             ("testplan 10,18446744073709552", TEST_PLAN),
             ("testplan 100001,1s", TEST_PLAN),
+            ("testplan 2,15mins", TEST_PLAN),
+            ("testplan 2,5 junk", TEST_PLAN),
+            ("testplan 2,15MINS", TEST_PLAN),
             ("testplan 60000,1s;0,1s;60000,1s", TEST_PLAN),
             // Only ASCII digits: a regex `\d` also matches other scripts' digits.
             ("testplan ١,1s", TEST_PLAN),

@@ -1,6 +1,8 @@
 # Changelog
 
 ## 0.19.0-dev
+ - [#779](https://github.com/tag1consulting/goose/pull/779) fix three defects found while documenting 0.19
+    o **behavior change**: test plan steps take `h`, `m` and `s` in either case, as every other time span does
  - [#775](https://github.com/tag1consulting/goose/pull/775) check the Goose Book against main for 0.19: correct options, samples, screenshots and API names, add upgrade notes for 0.18 users, and say Gaggle is not in 0.19
  - [#778](https://github.com/tag1consulting/goose/pull/778) fix the other twelve defects found while documenting 0.19
     o **behavior change**: with `--co-mitigation`, the Aggregated `# reqs` is "Actual requests" plus "Synthetic requests", and "Synthetic requests" is the synthetic requests recorded
