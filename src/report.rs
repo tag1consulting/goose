@@ -32,6 +32,7 @@ pub(crate) struct GooseReportTemplates<'a> {
     pub scenarios_template: &'a str,
     pub status_codes_template: &'a str,
     pub errors_template: &'a str,
+    pub transaction_errors_template: &'a str,
     /// The thresholds table, or nothing without thresholds.
     pub thresholds_template: &'a str,
     pub graph_rps_template: &'a str,
@@ -196,6 +197,25 @@ pub(crate) struct ErrorMetric {
 }
 
 impl DeltaTo for ErrorMetric {
+    fn delta_to(&mut self, other: &Self) {
+        self.occurrences.eval(other.occurrences);
+    }
+}
+
+/// Defines the metrics reported about the errors transactions return.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct TransactionErrorMetric {
+    /// The transaction's number, `scenario.transaction` counted from 1, as the
+    /// transactions table numbers it.
+    pub transaction: String,
+    pub scenario: String,
+    /// The transaction's name, empty when it has none.
+    pub name: String,
+    pub error: String,
+    pub occurrences: Value<usize>,
+}
+
+impl DeltaTo for TransactionErrorMetric {
     fn delta_to(&mut self, other: &Self) {
         self.occurrences.eval(other.occurrences);
     }
@@ -591,6 +611,49 @@ pub fn error_row(error: &ErrorMetric) -> String {
     )
 }
 
+/// If transactions returned errors, add a transaction errors table to the html
+/// report, after the errors table.
+pub(crate) fn transaction_errors_template(rows: &str) -> String {
+    format!(
+        r#"<div class="transaction-errors">
+        <h2>Transaction Errors</h2>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Transaction</th>
+                    <th>Scenario</th>
+                    <th>Name</th>
+                    <th>Error</th>
+                </tr>
+            </thead>
+            <tbody>
+                {rows}
+            </tbody>
+        </table>
+    </div>"#,
+    )
+}
+
+/// Build an individual transaction error row in the html report.
+pub fn transaction_error_row(error: &TransactionErrorMetric) -> String {
+    format!(
+        r#"<tr>
+        <td>{occurrences}</td>
+        <td>{transaction}</td>
+        <td>{scenario}</td>
+        <td>{name}</td>
+        <td>{error}</td>
+    </tr>"#,
+        occurrences = format_value(&error.occurrences),
+        transaction = escape_html(&error.transaction),
+        scenario = escape_html(&error.scenario),
+        name = escape_html(&error.name),
+        error = escape_html(&error.error),
+    )
+}
+
 /// The styles of the thresholds table, added to the html report only with it, so a
 /// report without thresholds is unchanged.
 const THRESHOLDS_STYLE: &str = r#"
@@ -919,6 +982,8 @@ pub(crate) fn build_report(
 
         {errors_template}
 
+        {transaction_errors_template}
+
         {co_metrics_template}
 
     </div>
@@ -938,6 +1003,7 @@ pub(crate) fn build_report(
         scenarios_template = templates.scenarios_template,
         status_codes_template = templates.status_codes_template,
         errors_template = templates.errors_template,
+        transaction_errors_template = templates.transaction_errors_template,
         thresholds_template = templates.thresholds_template,
         thresholds_style = if templates.thresholds_template.is_empty() {
             ""

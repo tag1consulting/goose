@@ -2,7 +2,7 @@ use crate::{
     metrics::{format_number, format_value, ReportData},
     report::{
         common::OrEmpty, ErrorMetric, ResponseMetric, ScenarioMetric, StatusCodeMetric,
-        TransactionMetric,
+        TransactionErrorMetric, TransactionMetric,
     },
     test_plan::TestPlanStepAction,
     GooseError,
@@ -36,6 +36,7 @@ impl<W: Write> Markdown<'_, '_, W> {
         self.write_transaction_metrics()?;
         self.write_scenario_metrics()?;
         self.write_error_metrics()?;
+        self.write_transaction_error_metrics()?;
         self.write_coordinated_omission_metrics()?;
 
         Ok(())
@@ -359,6 +360,44 @@ impl<W: Write> Markdown<'_, '_, W> {
         {
             let occurrences = format_value(occurrences);
             writeln!(self.w, r#"| {method} | {name} | {occurrences} | {error} |"#)?;
+        }
+
+        Ok(())
+    }
+
+    fn write_transaction_error_metrics(&mut self) -> Result<(), GooseError> {
+        let Some(errors) = &self.data.transaction_errors else {
+            return Ok(());
+        };
+
+        write!(
+            self.w,
+            r#"
+## Transaction Error Metrics
+
+| Transaction | Scenario | Name |  #  | Error |
+| ----------- | -------- | ---- | --: | ----- |
+"#
+        )?;
+
+        for TransactionErrorMetric {
+            transaction,
+            scenario,
+            name,
+            error,
+            occurrences,
+        } in errors
+        {
+            let occurrences = format_value(occurrences);
+            let cell = |text: &str| markdown_cell(&text.replace(['\r', '\n'], " "));
+            writeln!(
+                self.w,
+                "| {} | {} | {} | {occurrences} | {} |",
+                cell(transaction),
+                cell(scenario),
+                cell(name),
+                cell(error),
+            )?;
         }
 
         Ok(())

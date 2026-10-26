@@ -6,7 +6,7 @@ use super::{
 use crate::{
     report::{
         get_response_metric, CORequestMetric, ErrorMetric, RequestMetric, ResponseMetric,
-        ScenarioMetric, StatusCodeMetric, TransactionMetric,
+        ScenarioMetric, StatusCodeMetric, TransactionErrorMetric, TransactionMetric,
     },
     util, GooseError,
 };
@@ -56,6 +56,11 @@ pub(crate) struct ReportData<'m> {
     pub status_code_metrics: Option<Vec<StatusCodeMetric>>,
 
     pub errors: Option<Vec<ErrorMetric>>,
+
+    /// The errors transactions returned; left out of the JSON report when
+    /// there are none, as a report from before Goose recorded them has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transaction_errors: Option<Vec<TransactionErrorMetric>>,
 
     pub coordinated_omission_metrics: Option<CoMetricsSummary>,
 }
@@ -154,6 +159,7 @@ impl<'m> Prepare<'m> {
             transaction_metrics: self.build_transaction(),
             status_code_metrics: self.build_status_code(),
             errors: self.build_errors(),
+            transaction_errors: self.build_transaction_errors(),
             coordinated_omission_metrics: self
                 .metrics
                 .coordinated_omission_metrics
@@ -516,6 +522,34 @@ impl<'m> Prepare<'m> {
 
         Some(errors)
     }
+
+    fn build_transaction_errors(&self) -> Option<Vec<TransactionErrorMetric>> {
+        if self.metrics.transaction_errors.is_empty() {
+            return None;
+        }
+
+        // Most frequent first, as the console and the dashboard list them.
+        let mut errors: Vec<_> = self.metrics.transaction_errors.values().collect();
+        errors.sort_by(|a, b| {
+            b.occurrences
+                .cmp(&a.occurrences)
+                .then_with(|| a.scenario_index.cmp(&b.scenario_index))
+                .then_with(|| a.transaction_index.cmp(&b.transaction_index))
+                .then_with(|| a.error.cmp(&b.error))
+        });
+        Some(
+            errors
+                .into_iter()
+                .map(|error| TransactionErrorMetric {
+                    transaction: error.transaction_number(),
+                    scenario: error.scenario_name.clone(),
+                    name: error.transaction_name.clone(),
+                    error: error.error.clone(),
+                    occurrences: error.occurrences.into(),
+                })
+                .collect(),
+        )
+    }
 }
 
 /// Apply baseline deltas to the current report data
@@ -575,6 +609,21 @@ pub(crate) fn apply_baseline_deltas(current: &mut ReportData, baseline: &ReportD
     if let (Some(current_errors), Some(baseline_errors)) = (&mut current.errors, &baseline.errors) {
         correlate_deltas(current_errors, baseline_errors, |e| {
             (e.method.clone(), e.name.clone(), e.error.clone())
+        });
+    }
+
+    // Apply deltas to transaction error metrics if present
+    if let (Some(current_errors), Some(baseline_errors)) = (
+        &mut current.transaction_errors,
+        &baseline.transaction_errors,
+    ) {
+        correlate_deltas(current_errors, baseline_errors, |e| {
+            (
+                e.scenario.clone(),
+                e.transaction.clone(),
+                e.name.clone(),
+                e.error.clone(),
+            )
         });
     }
 }
@@ -915,6 +964,8 @@ struct BaselineReportData {
     pub transaction_metrics: Option<Vec<BaselineTransactionMetric>>,
     pub status_code_metrics: Option<Vec<StatusCodeMetric>>,
     pub errors: Option<Vec<BaselineErrorMetric>>,
+    #[serde(default)]
+    pub transaction_errors: Option<Vec<BaselineTransactionErrorMetric>>,
     pub coordinated_omission_metrics: Option<CoMetricsSummary>,
 }
 
@@ -932,6 +983,8 @@ struct BaselineGooseMetrics {
     #[serde(default)]
     pub scenarios: super::ScenarioMetrics,
     pub errors: super::GooseErrorMetrics,
+    #[serde(default)]
+    pub transaction_errors: super::GooseTransactionErrorMetrics,
     #[serde(default)]
     pub hosts: std::collections::HashSet<String>,
     pub coordinated_omission_metrics: Option<super::CoordinatedOmissionMetrics>,
@@ -957,6 +1010,7 @@ impl From<BaselineGooseMetrics> for GooseMetrics {
             transactions: baseline.transactions,
             scenarios: baseline.scenarios,
             errors: baseline.errors,
+            transaction_errors: baseline.transaction_errors,
             hosts: baseline.hosts,
             coordinated_omission_metrics: baseline.coordinated_omission_metrics,
             final_metrics: baseline.final_metrics,
@@ -998,6 +1052,9 @@ impl BaselineReportData {
             status_code_metrics: self.status_code_metrics,
             errors: self
                 .errors
+                .map(|errors| errors.into_iter().map(Into::into).collect()),
+            transaction_errors: self
+                .transaction_errors
                 .map(|errors| errors.into_iter().map(Into::into).collect()),
             coordinated_omission_metrics: self.coordinated_omission_metrics,
         }
@@ -1171,6 +1228,28 @@ struct BaselineErrorMetric {
     pub name: String,
     pub error: String,
     pub occurrences: usize,
+}
+
+/// Baseline transaction error metric with plain values
+#[derive(Debug, Deserialize)]
+struct BaselineTransactionErrorMetric {
+    pub transaction: String,
+    pub scenario: String,
+    pub name: String,
+    pub error: String,
+    pub occurrences: usize,
+}
+
+impl From<BaselineTransactionErrorMetric> for TransactionErrorMetric {
+    fn from(baseline: BaselineTransactionErrorMetric) -> Self {
+        TransactionErrorMetric {
+            transaction: baseline.transaction,
+            scenario: baseline.scenario,
+            name: baseline.name,
+            error: baseline.error,
+            occurrences: Value::Plain(baseline.occurrences),
+        }
+    }
 }
 
 impl From<BaselineErrorMetric> for ErrorMetric {
@@ -1463,6 +1542,7 @@ mod test {
                 error: "503 Service Unavailable".into(),
                 occurrences: 5usize.into(),
             }]),
+            transaction_errors: None,
             coordinated_omission_metrics: None,
         };
 
@@ -1541,6 +1621,7 @@ mod test {
                 error: "503 Service Unavailable".into(),
                 occurrences: 3usize.into(),
             }]),
+            transaction_errors: None,
             coordinated_omission_metrics: None,
         };
 
@@ -1645,6 +1726,7 @@ mod test {
             transaction_metrics: None,
             status_code_metrics: None,
             errors: None,
+            transaction_errors: None,
             coordinated_omission_metrics: None,
         };
 

@@ -647,6 +647,22 @@ const errorsTable = sortableTable<ErrorRow>({
   disabledText: () => null,
 });
 
+const transactionErrorsTable = sortableTable<TransactionErrorRow>({
+  tableId: "transaction-errors-table",
+  body: requireElement("transaction-errors-body", HTMLTableSectionElement),
+  columns: [
+    { key: "transaction", type: "str", format: (r) => r.transaction },
+    { key: "scenario", type: "str", format: (r) => r.scenario },
+    { key: "name", type: "str", format: (r) => r.name },
+    { key: "error", type: "str", format: (r) => r.error },
+    { key: "occurrences", type: "num", format: (r) => formatInt(r.occurrences) },
+  ],
+  sort: { key: "occurrences", type: "num", dir: "desc" },
+  rowKey: (r) => JSON.stringify([r.transaction, r.error]),
+  emptyText: "No transaction errors",
+  disabledText: () => null,
+});
+
 /** Stores a snapshot's rows and renders every table. */
 export function setTableData(snap: DashboardSnapshot): void {
   scenariosTable.setRows(snap.scenarios.map(flattenScenario), snap.flags);
@@ -656,6 +672,7 @@ export function setTableData(snap: DashboardSnapshot): void {
   );
   requestsTable.setRows(snap.requests.map(flattenRequest), snap.flags);
   errorsTable.setRows(snap.errors.slice(), snap.flags);
+  transactionErrorsTable.setRows(snap.transaction_errors.slice(), snap.flags);
 }
 
 /** Wires the sortable headers and the filters. */
@@ -664,4 +681,5 @@ export function initTables(): void {
   transactionsTable.init();
   requestsTable.init();
   errorsTable.init();
+  transactionErrorsTable.init();
 }

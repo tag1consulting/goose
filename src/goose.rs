@@ -308,9 +308,9 @@ use crate::logger::GooseLog;
 use crate::metrics::{
     GooseCoordinatedOmissionMitigation, GooseMetric, GooseMetricBatch, GooseRawRequest,
     GooseRequestCounterRegistry, GooseRequestCounters, GooseRequestMetric,
-    GooseRequestMetricTimingData, MetricsEpoch, RequestBatchEntry, ScenarioBatchEntry,
-    ScenarioMetric, StatusCodeTimingSummary, TransactionBatchEntry, TransactionDetail,
-    TransactionMetric, METRICS_BATCH_MAX_AGE, METRICS_BATCH_SIZE,
+    GooseRequestMetricTimingData, GooseTransactionErrorMetric, MetricsEpoch, RequestBatchEntry,
+    ScenarioBatchEntry, ScenarioMetric, StatusCodeTimingSummary, TransactionBatchEntry,
+    TransactionDetail, TransactionMetric, METRICS_BATCH_MAX_AGE, METRICS_BATCH_SIZE,
 };
 use crate::{GooseConfiguration, GooseError, WeightedTransactions};
 
@@ -360,6 +360,40 @@ macro_rules! scenario {
 pub type TransactionResult = Result<(), Box<TransactionError>>;
 
 /// An enumeration of all errors a [`Transaction`](./struct.Transaction.html) can return.
+///
+/// # Where each error is recorded
+///
+/// A transaction that returns any error is counted as failed, and the
+/// transaction log's `error` field says why:
+///
+/// - `Reqwest`, `Url` and `Custom` are transaction errors: the transaction
+///   log's `error` field and the error log's entry hold the error's `Display`,
+///   and the console summary and the HTML, Markdown, PDF and JSON reports count
+///   them in their transaction errors table, by scenario, transaction and
+///   error, as do the dashboard and
+///   [`GooseMetrics::transaction_errors`](../metrics/struct.GooseMetrics.html#structfield.transaction_errors).
+///   `--no-error-summary` leaves them out of the tables, not out of the logs.
+///   A `Reqwest` error from sending the request (`is_request()`, which
+///   includes connect errors and timeouts while sending), from redirects
+///   (`is_redirect()`) or from an error status (`is_status()`, as
+///   `error_for_status` returns) is the exception: the request path already
+///   recorded it as a request error, as for `RequestFailed`, so only the
+///   transaction log names it.
+/// - `RequestFailed` is already a request error, in the error log and the
+///   errors table, recorded when the request failed. The transaction log's
+///   `error` field names that request error; nothing else records it again.
+/// - `RequestCanceled` comes from the load test ending, and is no error: the
+///   transaction log's `error` field is empty, and nothing else records it.
+/// - `MetricsFailed`, `LoggerFailed` and `InvalidMethod` are written only to
+///   the transaction log's `error` field.
+///
+/// `--no-metrics` records no transaction errors; `--no-transaction-metrics`
+/// still records them, in the error log and the errors tables, though it
+/// writes no transaction log. The error log gets a transaction error when the
+/// transaction ends, from its user, and a request error when the metrics
+/// processor handles it, so the two kinds are not in time order with each
+/// other. `test_start` and `test_stop` transactions are not counted as
+/// transactions, and their errors are not recorded.
 #[derive(Debug)]
 pub enum TransactionError {
     /// Wraps a [`reqwest::Error`](https://docs.rs/reqwest/*/reqwest/struct.Error.html).
@@ -409,6 +443,43 @@ pub enum TransactionError {
         method: Method,
     },
 }
+impl TransactionError {
+    /// Whether a transaction that returned this error has a transaction error:
+    /// an entry in the error log and a row in the errors tables.
+    pub(crate) fn is_transaction_error(&self) -> bool {
+        match self {
+            // A request that could not be sent, was redirected too often, or
+            // got an error status (as `error_for_status` reports) is already a
+            // request error, recorded when the request was made: the
+            // transaction log names it, nothing counts it twice. A reqwest
+            // error reading or decoding the body, or building the request,
+            // happened after or before it.
+            TransactionError::Reqwest(error) => {
+                !(error.is_request() || error.is_redirect() || error.is_status())
+            }
+            TransactionError::Url(_) | TransactionError::Custom(_) => true,
+            _ => false,
+        }
+    }
+
+    /// What the transaction log's `error` field says about a transaction that
+    /// returned this error: its `Display`; for `RequestFailed`, the request
+    /// error the errors table already counts, as it names it; for
+    /// `RequestCanceled`, nothing, as the load test ending is no error.
+    pub(crate) fn transaction_log_message(&self) -> String {
+        match self {
+            TransactionError::RequestFailed { raw_request } => format!(
+                "request failed: {} {}: {}",
+                raw_request.raw.method_label(),
+                raw_request.name,
+                raw_request.error
+            ),
+            TransactionError::RequestCanceled { .. } => String::new(),
+            error => error.to_string(),
+        }
+    }
+}
+
 /// Implement a helper to provide a text description of all possible types of errors.
 impl TransactionError {
     fn describe(&self) -> &str {
@@ -2542,6 +2613,45 @@ impl GooseUser {
             batch.individual_requests.push(request_metric);
             self.batch_item_count += 1;
         }
+    }
+
+    /// Record that `transaction` returned the transaction error `error`: write
+    /// it to the error log, and send it to the metrics processor for the errors tables,
+    /// in the batch when there is one. Runs only for a failed transaction.
+    pub(crate) fn record_transaction_error(
+        &mut self,
+        transaction: &TransactionMetric,
+        error: &str,
+    ) -> Result<(), Box<flume::SendError<Option<GooseLog>>>> {
+        let transaction_error = GooseTransactionErrorMetric {
+            elapsed: transaction.elapsed,
+            scenario_index: transaction.scenario_index,
+            scenario_name: self.scenario_name.clone(),
+            transaction_index: transaction.transaction_index,
+            transaction_name: transaction.name.clone(),
+            run_time: transaction.run_time,
+            user: transaction.user,
+            error: error.to_string(),
+        };
+        if self.config.error_log().is_some() {
+            if let Some(logger) = self.logger.as_ref() {
+                logger.send(Some(GooseLog::TransactionError(transaction_error.clone())))?;
+            }
+        }
+        if self.config.no_error_summary {
+            return Ok(());
+        }
+        if self.metrics_batch.is_some() {
+            self.ensure_batch_current();
+            if let Some(batch) = self.metrics_batch.as_mut() {
+                batch.transaction_errors.push(transaction_error);
+                self.batch_item_count += 1;
+            }
+        } else if let Some(metrics_channel) = self.metrics_channel.as_ref() {
+            let _ =
+                metrics_channel.send(GooseMetric::TransactionError(Box::new(transaction_error)));
+        }
+        Ok(())
     }
 
     /// Accumulate a transaction metric into the local batch.

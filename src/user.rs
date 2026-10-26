@@ -296,8 +296,22 @@ async fn invoke_transaction_function(
     // The index is optional: `None` means no transaction, `Some(0)` is the first.
     thread_user.transaction_index = Some(thread_transaction_index);
 
-    let success = function(thread_user).await.is_ok();
-    raw_transaction.set_duration(started.elapsed(), success);
+    let result = function(thread_user).await;
+    raw_transaction.set_duration(started.elapsed(), result.is_ok());
+
+    // Only a failed transaction formats its error. A transaction error is
+    // recorded, as a request error is, whether or not transaction metrics are.
+    let error = match &result {
+        Err(error) => error.transaction_log_message(),
+        Ok(()) => String::new(),
+    };
+    if !thread_user.config.no_metrics
+        && result
+            .as_ref()
+            .is_err_and(|error| error.is_transaction_error())
+    {
+        thread_user.record_transaction_error(&raw_transaction, &error)?;
+    }
 
     // Exit if all metrics or transaction metrics are disabled.
     if thread_user.config.no_metrics || thread_user.config.no_transaction_metrics {
@@ -307,9 +321,17 @@ async fn invoke_transaction_function(
     }
 
     // If transaction-log is enabled, send a copy of the raw transaction metric to the logger thread.
+    // A failed transaction's line says why it failed.
     if thread_user.config.transaction_log().is_some() {
         if let Some(logger) = thread_user.logger.as_ref() {
-            logger.send(Some(GooseLog::Transaction(raw_transaction.clone())))?;
+            if error.is_empty() {
+                logger.send(Some(GooseLog::Transaction(raw_transaction.clone())))?;
+            } else {
+                logger.send(Some(GooseLog::FailedTransaction {
+                    transaction: raw_transaction.clone(),
+                    error,
+                }))?;
+            }
         }
     }
 

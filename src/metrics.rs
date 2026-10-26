@@ -118,6 +118,8 @@ pub enum GooseMetric {
     /// single channel message. The metrics processor merges batch entries
     /// into global aggregates using the same logic as individual metrics.
     Batch(Box<GooseMetricBatch>),
+    /// A transaction that returned an error, sent only when it fails.
+    TransactionError(Box<GooseTransactionErrorMetric>),
 }
 
 /// Maximum number of request metrics to accumulate before flushing a batch.
@@ -170,6 +172,9 @@ pub struct GooseMetricBatch {
     pub(crate) individual_requests: Vec<GooseRequestMetric>,
     /// Pre-aggregated transaction timing data, keyed by `(scenario_index, transaction_index)`.
     pub(crate) transactions: HashMap<(usize, usize), TransactionBatchEntry>,
+    /// The errors of transactions that failed, for the errors tables.
+    #[serde(default)]
+    pub(crate) transaction_errors: Vec<GooseTransactionErrorMetric>,
     /// Pre-aggregated scenario timing data, keyed by `scenario_index`.
     pub(crate) scenarios: HashMap<usize, ScenarioBatchEntry>,
     /// Per-second request graph data (RPS count and average response time),
@@ -203,6 +208,7 @@ impl GooseMetricBatch {
             requests: HashMap::new(),
             individual_requests: Vec::new(),
             transactions: HashMap::new(),
+            transaction_errors: Vec::new(),
             scenarios: HashMap::new(),
             graph_request_data: HashMap::new(),
             next_second: HashMap::new(),
@@ -2030,6 +2036,15 @@ pub struct GooseMetrics {
     /// [GooseDefault::NoErrorSummary](../config/enum.GooseDefault.html#variant.NoErrorSummary) or
     /// [GooseDefault::NoMetrics](../config/enum.GooseDefault.html#variant.NoMetrics).
     pub errors: GooseErrorMetrics,
+    /// Tracks and counts each time a transaction returns an error, by scenario,
+    /// transaction and error.
+    ///
+    /// Can be disabled with either the `--no-error-summary` or `--no-metrics`
+    /// run-time options, or with either the
+    /// [GooseDefault::NoErrorSummary](../config/enum.GooseDefault.html#variant.NoErrorSummary) or
+    /// [GooseDefault::NoMetrics](../config/enum.GooseDefault.html#variant.NoMetrics).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub transaction_errors: GooseTransactionErrorMetrics,
     /// Tracks all hosts that the load test is run against.
     pub hosts: HashSet<String>,
     /// Enhanced Coordinated Omission metrics tracking.
@@ -3009,6 +3024,46 @@ impl GooseMetrics {
         Ok(())
     }
 
+    /// Optionally prepares a table of the errors transactions returned, most
+    /// frequent first.
+    ///
+    /// This function is invoked by `GooseMetrics::print()`.
+    pub(crate) fn fmt_transaction_errors(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if !self.final_metrics || self.transaction_errors.is_empty() {
+            return Ok(());
+        }
+
+        let errors: Vec<(usize, String)> = self
+            .transaction_errors
+            .values()
+            .map(|error| {
+                (
+                    error.occurrences,
+                    format!("{}: {}", error.transaction_label(), error.error),
+                )
+            })
+            .collect();
+
+        writeln!(
+            fmt,
+            "\n === TRANSACTION ERRORS ===\n ------------------------------------------------------------------------------"
+        )?;
+        writeln!(fmt, " {:<11} | Transaction: error", "Count")?;
+        writeln!(
+            fmt,
+            " ------------------------------------------------------------------------------"
+        )?;
+        for (occurrences, error) in errors.iter().sorted().rev() {
+            writeln!(fmt, " {:<12}  {}", format_number(*occurrences), error)?;
+        }
+        writeln!(
+            fmt,
+            " ------------------------------------------------------------------------------"
+        )?;
+
+        Ok(())
+    }
+
     /// Optionally prepares a table of the thresholds and their results.
     ///
     /// This function is invoked by `GooseMetrics::print()`.
@@ -3206,6 +3261,7 @@ impl fmt::Display for GooseMetrics {
         self.fmt_percentiles(fmt)?;
         self.fmt_status_codes(fmt)?;
         self.fmt_errors(fmt)?;
+        self.fmt_transaction_errors(fmt)?;
         self.fmt_thresholds(fmt)?;
 
         // Display enhanced coordinated omission metrics if available (before overview)
@@ -3315,6 +3371,88 @@ impl GooseErrorMetricAggregate {
     }
 }
 
+/// A transaction that returned an error, as the error log records it.
+///
+/// A transaction that returns a
+/// [`TransactionError`](../goose/enum.TransactionError.html) of the variants
+/// `Reqwest`, `Url` or `Custom` is a transaction error: it gets one entry in
+/// the error log, and is counted in [`GooseMetrics::transaction_errors`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GooseTransactionErrorMetric {
+    /// How many milliseconds the load test had been running when the
+    /// transaction started.
+    pub elapsed: u64,
+    /// An index into [`GooseAttack`](../struct.GooseAttack.html)`.scenarios`,
+    /// indicating which scenario this is.
+    pub scenario_index: usize,
+    /// The scenario name.
+    #[serde(with = "arc_str_serde")]
+    pub scenario_name: Arc<str>,
+    /// An index into [`Scenario`](../goose/struct.Scenario.html)`.transaction`,
+    /// indicating which transaction this is.
+    pub transaction_index: usize,
+    /// The transaction name, empty when it has none.
+    #[serde(with = "arc_str_serde")]
+    pub transaction_name: Arc<str>,
+    /// How many milliseconds the transaction ran, truncated.
+    pub run_time: u64,
+    /// Which GooseUser thread ran the transaction.
+    pub user: usize,
+    /// The error the transaction returned, as its `Display` writes it.
+    pub error: String,
+}
+
+/// Every transaction error, aggregated by scenario, transaction and error,
+/// with a string key of `scenario_index.transaction_index.error`.
+pub type GooseTransactionErrorMetrics = BTreeMap<String, GooseTransactionErrorMetricAggregate>;
+
+/// For tracking and counting the errors transactions return.
+///
+/// Errors that share the same scenario, the same transaction and the same
+/// error text are counted in one `GooseTransactionErrorMetricAggregate`, with
+/// `occurrences` saying how many times the transaction returned it. They are
+/// stored in [`GooseMetrics::transaction_errors`].
+///
+/// Can be disabled with the `--no-error-summary` run-time option, or with
+/// [GooseDefault::NoErrorSummary](../config/enum.GooseDefault.html#variant.NoErrorSummary).
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+pub struct GooseTransactionErrorMetricAggregate {
+    /// An index into [`GooseAttack`](../struct.GooseAttack.html)`.scenarios`.
+    pub scenario_index: usize,
+    /// The scenario name.
+    pub scenario_name: String,
+    /// An index into [`Scenario`](../goose/struct.Scenario.html)`.transaction`.
+    pub transaction_index: usize,
+    /// The transaction name, empty when it has none.
+    pub transaction_name: String,
+    /// The error string.
+    pub error: String,
+    /// A counter reflecting how many times this error occurred.
+    pub occurrences: usize,
+}
+impl GooseTransactionErrorMetricAggregate {
+    /// The transaction's number, as the transactions tables number it:
+    /// `scenario.transaction`, both counted from 1.
+    pub fn transaction_number(&self) -> String {
+        format!("{}.{}", self.scenario_index + 1, self.transaction_index + 1)
+    }
+
+    /// The transaction as the errors tables name it: its number, its
+    /// scenario's name and its own name when it has one.
+    pub fn transaction_label(&self) -> String {
+        if self.transaction_name.is_empty() {
+            format!("{} {}", self.transaction_number(), self.scenario_name)
+        } else {
+            format!(
+                "{} {} {}",
+                self.transaction_number(),
+                self.scenario_name,
+                self.transaction_name
+            )
+        }
+    }
+}
+
 impl MetricsProcessor {
     /// Create a new MetricsProcessor.
     #[allow(clippy::too_many_arguments)]
@@ -3420,6 +3558,9 @@ impl MetricsProcessor {
             }
             GooseMetric::Batch(batch) => {
                 self.process_batch(*batch);
+            }
+            GooseMetric::TransactionError(transaction_error) => {
+                self.record_transaction_error(&transaction_error);
             }
         }
     }
@@ -4065,6 +4206,43 @@ impl MetricsProcessor {
         self.metrics.errors.insert(error_string, error_metrics);
     }
 
+    /// Count a transaction error in the errors tables. Its error log entry
+    /// was written by the user that ran the transaction.
+    fn record_transaction_error(&mut self, transaction_error: &GooseTransactionErrorMetric) {
+        if self.configuration.no_error_summary {
+            return;
+        }
+        let key = format!(
+            "{}.{}.{}",
+            transaction_error.scenario_index,
+            transaction_error.transaction_index,
+            transaction_error.error
+        );
+        // The tables name the scenario as the transactions table does; the
+        // error log, as the request log, by its machine name.
+        let scenario_name = self
+            .metrics
+            .transactions
+            .get(transaction_error.scenario_index)
+            .and_then(|transactions| transactions.get(transaction_error.transaction_index))
+            .map_or(&transaction_error.scenario_name, |transaction| {
+                &transaction.scenario_name
+            });
+        let scenario_name = scenario_name.to_string();
+        self.metrics
+            .transaction_errors
+            .entry(key)
+            .or_insert_with(|| GooseTransactionErrorMetricAggregate {
+                scenario_index: transaction_error.scenario_index,
+                scenario_name,
+                transaction_index: transaction_error.transaction_index,
+                transaction_name: transaction_error.transaction_name.to_string(),
+                error: transaction_error.error.clone(),
+                occurrences: 0,
+            })
+            .occurrences += 1;
+    }
+
     /// Process a pre-aggregated batch of metrics from a single GooseUser thread.
     ///
     /// Individual request metrics (failed / CO-affected) are processed one by one
@@ -4112,6 +4290,9 @@ impl MetricsProcessor {
         // 1. Process individual request metrics (errors, CO) normally.
         for request_metric in &batch.individual_requests {
             self.process_request_metric(request_metric);
+        }
+        for transaction_error in &batch.transaction_errors {
+            self.record_transaction_error(transaction_error);
         }
 
         // With response times kept by second, step 2 merges each request's
@@ -4972,6 +5153,7 @@ impl ReportSource<'_> {
             scenario_metrics,
             transaction_metrics,
             errors,
+            transaction_errors,
             status_code_metrics,
             coordinated_omission_metrics: _,
         } = self.data(baseline);
@@ -5066,6 +5248,13 @@ impl ReportSource<'_> {
             })
             .unwrap_or_default();
 
+        let transaction_errors_template = transaction_errors
+            .map(|errors| {
+                let rows = errors.iter().map(report::transaction_error_row).join("\n");
+                report::transaction_errors_template(&rows)
+            })
+            .unwrap_or_default();
+
         let status_code_template = status_code_metrics
             .map(|status_code_metrics| {
                 // Compile the status_code metrics rows.
@@ -5106,6 +5295,7 @@ impl ReportSource<'_> {
                 scenarios_template: &scenarios_template,
                 status_codes_template: &status_code_template,
                 errors_template: &errors_template,
+                transaction_errors_template: &transaction_errors_template,
                 thresholds_template: &thresholds_template,
                 graph_rps_template: &self
                     .graph_data
