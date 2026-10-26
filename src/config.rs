@@ -2456,8 +2456,8 @@ impl GooseConfiguration {
 }
 
 /// The seconds in time span option `option`, refused when the span is too long
-/// for a `usize` in milliseconds or has a digit of another script before a
-/// unit, naming which.
+/// for a `usize` in milliseconds, has a digit of another script before a unit,
+/// or is not a time span all the way through, naming which.
 pub(crate) fn timespan(option: &str, value: &str) -> Result<usize, GooseError> {
     util::timespan_seconds(value).map_err(|e| GooseError::InvalidOption {
         option: format!("`configuration.{option}`"),
@@ -2467,6 +2467,9 @@ pub(crate) fn timespan(option: &str, value: &str) -> Result<usize, GooseError> {
             util::SpanError::ForeignDigit => {
                 format!("`configuration.{option}` must use the ASCII digits 0 to 9.")
             }
+            util::SpanError::Invalid => format!(
+                "`configuration.{option}` must be whole seconds, or hours, minutes and seconds in that order, such as 90, 90s or 1h2m3s."
+            ),
         },
     })
 }
@@ -5436,6 +5439,42 @@ mod test {
                 }
                 other => panic!("{}: {:?}", value, other),
             }
+        }
+    }
+
+    /// A time span option, or a test plan step, that does not read as a time
+    /// span all the way through is refused, not read as the part before it.
+    #[test]
+    fn time_span_with_trailing_text_is_refused() {
+        for (flag, option) in [
+            ("--run-time", "run_time"),
+            ("--increase-time", "increase_time"),
+            ("--decrease-time", "decrease_time"),
+            ("--threshold-abort-delay", "threshold_abort_delay"),
+        ] {
+            for value in ["5 junk", "5s junk", "junk"] {
+                let mut config = GooseConfiguration::parse_args_default(&[flag, value]).unwrap();
+                match config.configure(&GooseDefaults::default()) {
+                    Err(GooseError::InvalidOption { detail, .. }) => assert_eq!(
+                        detail,
+                        format!(
+                            "`configuration.{}` must be whole seconds, or hours, minutes and seconds in that order, such as 90, 90s or 1h2m3s.",
+                            option
+                        ),
+                        "{} {}",
+                        flag,
+                        value
+                    ),
+                    other => panic!("{} {}: {:?}", flag, value, other),
+                }
+            }
+        }
+        for step in ["10,5 junk", "10,5s junk", "10,junk"] {
+            assert!(
+                crate::test_plan::TestPlan::parse(step).is_err(),
+                "{:?}",
+                step
+            );
         }
     }
 
