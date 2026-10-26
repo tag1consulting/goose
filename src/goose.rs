@@ -308,9 +308,9 @@ use crate::logger::GooseLog;
 use crate::metrics::{
     GooseCoordinatedOmissionMitigation, GooseMetric, GooseMetricBatch, GooseRawRequest,
     GooseRequestCounterRegistry, GooseRequestCounters, GooseRequestMetric,
-    GooseRequestMetricTimingData, MetricsEpoch, RequestBatchEntry, ScenarioBatchEntry,
-    ScenarioMetric, StatusCodeTimingSummary, TransactionBatchEntry, TransactionDetail,
-    TransactionMetric, METRICS_BATCH_MAX_AGE, METRICS_BATCH_SIZE,
+    GooseRequestMetricTimingData, GooseTransactionErrorMetric, MetricsEpoch, RequestBatchEntry,
+    ScenarioBatchEntry, ScenarioMetric, StatusCodeTimingSummary, TransactionBatchEntry,
+    TransactionDetail, TransactionMetric, METRICS_BATCH_MAX_AGE, METRICS_BATCH_SIZE,
 };
 use crate::{GooseConfiguration, GooseError, WeightedTransactions};
 
@@ -360,6 +360,40 @@ macro_rules! scenario {
 pub type TransactionResult = Result<(), Box<TransactionError>>;
 
 /// An enumeration of all errors a [`Transaction`](./struct.Transaction.html) can return.
+///
+/// # Where each error is recorded
+///
+/// A transaction that returns any error is counted as failed, and the
+/// transaction log's `error` field says why:
+///
+/// - `Reqwest`, `Url` and `Custom` are transaction errors: the transaction
+///   log's `error` field and the error log's entry hold the error's `Display`,
+///   and the console summary and the HTML, Markdown, PDF and JSON reports count
+///   them in their transaction errors table, by scenario, transaction and
+///   error, as do the dashboard and
+///   [`GooseMetrics::transaction_errors`](../metrics/struct.GooseMetrics.html#structfield.transaction_errors).
+///   `--no-error-summary` leaves them out of the tables, not out of the logs.
+///   A `Reqwest` error from sending the request (`is_request()`, which
+///   includes connect errors and timeouts while sending), from redirects
+///   (`is_redirect()`) or from an error status (`is_status()`, as
+///   `error_for_status` returns) is the exception: the request path already
+///   recorded it as a request error, as for `RequestFailed`, so only the
+///   transaction log names it.
+/// - `RequestFailed` is already a request error, in the error log and the
+///   errors table, recorded when the request failed. The transaction log's
+///   `error` field names that request error; nothing else records it again.
+/// - `RequestCanceled` comes from the load test ending, and is no error: the
+///   transaction log's `error` field is empty, and nothing else records it.
+/// - `MetricsFailed`, `LoggerFailed` and `InvalidMethod` are written only to
+///   the transaction log's `error` field.
+///
+/// `--no-metrics` records no transaction errors; `--no-transaction-metrics`
+/// still records them, in the error log and the errors tables, though it
+/// writes no transaction log. The error log gets a transaction error when the
+/// transaction ends, from its user, and a request error when the metrics
+/// processor handles it, so the two kinds are not in time order with each
+/// other. `test_start` and `test_stop` transactions are not counted as
+/// transactions, and their errors are not recorded.
 #[derive(Debug)]
 pub enum TransactionError {
     /// Wraps a [`reqwest::Error`](https://docs.rs/reqwest/*/reqwest/struct.Error.html).
@@ -409,6 +443,43 @@ pub enum TransactionError {
         method: Method,
     },
 }
+impl TransactionError {
+    /// Whether a transaction that returned this error has a transaction error:
+    /// an entry in the error log and a row in the errors tables.
+    pub(crate) fn is_transaction_error(&self) -> bool {
+        match self {
+            // A request that could not be sent, was redirected too often, or
+            // got an error status (as `error_for_status` reports) is already a
+            // request error, recorded when the request was made: the
+            // transaction log names it, nothing counts it twice. A reqwest
+            // error reading or decoding the body, or building the request,
+            // happened after or before it.
+            TransactionError::Reqwest(error) => {
+                !(error.is_request() || error.is_redirect() || error.is_status())
+            }
+            TransactionError::Url(_) | TransactionError::Custom(_) => true,
+            _ => false,
+        }
+    }
+
+    /// What the transaction log's `error` field says about a transaction that
+    /// returned this error: its `Display`; for `RequestFailed`, the request
+    /// error the errors table already counts, as it names it; for
+    /// `RequestCanceled`, nothing, as the load test ending is no error.
+    pub(crate) fn transaction_log_message(&self) -> String {
+        match self {
+            TransactionError::RequestFailed { raw_request } => format!(
+                "request failed: {} {}: {}",
+                raw_request.raw.method_label(),
+                raw_request.name,
+                raw_request.error
+            ),
+            TransactionError::RequestCanceled { .. } => String::new(),
+            error => error.to_string(),
+        }
+    }
+}
+
 /// Implement a helper to provide a text description of all possible types of errors.
 impl TransactionError {
     fn describe(&self) -> &str {
@@ -898,7 +969,7 @@ impl GooseRequestCadence {
 /// or [`GooseUser::get_session_data_unchecked_mut`].
 ///
 /// For an example, see
-/// [`examples/simple_with_session`](https://github.com/tag1consulting/goose/blob/main/examples/simple_with_session.rs).
+/// [`examples/session`](https://github.com/tag1consulting/goose/blob/main/examples/session.rs).
 pub trait GooseUserData: Downcast + Send + Sync + 'static {
     fn clone_goose_user_data(&self) -> Box<dyn GooseUserData>;
 }
@@ -1003,6 +1074,8 @@ pub struct GooseUser {
     request_counter_cache: HashMap<String, Arc<GooseRequestCounters>>,
     /// Reusable buffer for formatting counter keys, avoiding per-request heap allocation.
     counter_key_buf: String,
+    /// The request counter key [`write_counter_key`](Self::write_counter_key) wrote.
+    request_counter_key: String,
 }
 
 impl Clone for GooseUser {
@@ -1044,6 +1117,7 @@ impl Clone for GooseUser {
             request_counters: self.request_counters.clone(),
             request_counter_cache: HashMap::new(),
             counter_key_buf: String::new(),
+            request_counter_key: String::new(),
         }
     }
 }
@@ -1110,12 +1184,24 @@ impl GooseUser {
             request_counters: None,
             request_counter_cache: HashMap::new(),
             counter_key_buf: String::new(),
+            request_counter_key: String::new(),
         })
     }
 
     /// Create a new single-use user.
     pub fn single(base_url: Url, configuration: &GooseConfiguration) -> Result<Self, GooseError> {
-        let mut single_user = GooseUser::new(0, Arc::from(""), base_url, configuration, 0, None)?;
+        Self::single_with_client(base_url, configuration, None)
+    }
+
+    /// [`Self::single`], with `reqwest_client` as its client when given, as a
+    /// client builder set on the [`GooseAttack`](../struct.GooseAttack.html) gives.
+    pub(crate) fn single_with_client(
+        base_url: Url,
+        configuration: &GooseConfiguration,
+        reqwest_client: Option<Client>,
+    ) -> Result<Self, GooseError> {
+        let mut single_user =
+            GooseUser::new(0, Arc::from(""), base_url, configuration, 0, reqwest_client)?;
         // Only one user, so index is 0.
         single_user.weighted_users_index = 0;
         // Do not throttle [`test_start`](../struct.GooseAttack.html#method.test_start) (setup) and
@@ -2092,7 +2178,7 @@ impl GooseUser {
             }
         }
         // Without a setting, as for a user made outside a load test, there
-        // is no mitigation: a load test always sets one, Average by default.
+        // is no mitigation: a load test always sets one, Disabled by default.
     }
 
     /// If Coordinated Omission Mitigation is enabled, compares how long has passed since the last
@@ -2151,7 +2237,7 @@ impl GooseUser {
             Ok(self.request_cadence.user_cadence)
         } else {
             // Without a setting, as for a user made outside a load test, there
-            // is no mitigation: a load test always sets one, Average by default.
+            // is no mitigation: a load test always sets one, Disabled by default.
             Ok(0)
         }
     }
@@ -2170,10 +2256,10 @@ impl GooseUser {
     /// if batching is not active).
     pub(crate) fn flush_pending_request(&mut self) -> TransactionResult {
         if let Some(request) = self.pending_request.take() {
-            // Save fields needed for atomic counter before moving request.
-            let method = request.raw.method;
-            let name = request.name.clone();
+            // Save the atomic counter's key and the outcome before moving request.
+            self.write_counter_key(request.raw.method_label(), &request.name);
             let success = request.success;
+            let co_copy = request.coordinated_omission_elapsed > 0;
 
             if self.metrics_batch.is_some() {
                 // Discard stale batch if a metrics reset changed the epoch.
@@ -2196,8 +2282,12 @@ impl GooseUser {
                 self.send_request_metric_now(request)?;
             }
             // Increment at actual send/accumulate time so metrics reset can't zero
-            // the counter before the parent processes this request.
-            self.increment_request_counter(&method, &name, success);
+            // the counter before the parent processes this request. A
+            // coordinated omission copy repeats a request already counted: the
+            // processor counts the synthetic requests derived from it.
+            if !co_copy {
+                self.increment_counter_at_key(success);
+            }
         }
         Ok(())
     }
@@ -2248,37 +2338,56 @@ impl GooseUser {
         Ok(())
     }
 
-    /// Atomically increment the shared request counter for the given method/name.
-    ///
-    /// Uses the per-user cache to avoid repeated mutex lookups on the shared registry.
-    /// Formats the key into a reusable buffer to avoid per-request heap allocation.
+    /// Atomically increment the shared request counter for the given method
+    /// label and name.
+    #[cfg(test)]
     pub(crate) fn increment_request_counter(
         &mut self,
-        method: &GooseMethod,
+        method_label: &str,
         name: &str,
         success: bool,
     ) {
+        self.write_counter_key(method_label, name);
+        self.increment_counter_at_key(success);
+    }
+
+    /// Format a request's atomic counter key, "{method label} {name}", the key
+    /// its aggregate has in
+    /// [`GooseMetrics::requests`](crate::metrics::GooseMetrics::requests), into
+    /// a reusable buffer of its own, which the batch's keys never overwrite, to
+    /// avoid per-request heap allocation. A custom request's label is the one
+    /// it was recorded with, not `GooseMethod::Custom`'s `CUSTOM`.
+    pub(crate) fn write_counter_key(&mut self, method_label: &str, name: &str) {
+        if self.request_counters.is_some() {
+            self.request_counter_key.clear();
+            let _ = write!(self.request_counter_key, "{} {}", method_label, name);
+        }
+    }
+
+    /// Atomically increment the shared request counter at the key
+    /// [`write_counter_key`](Self::write_counter_key) wrote.
+    ///
+    /// Uses the per-user cache to avoid repeated mutex lookups on the shared registry.
+    pub(crate) fn increment_counter_at_key(&mut self, success: bool) {
         if let Some(registry) = &self.request_counters {
-            self.counter_key_buf.clear();
-            let _ = write!(self.counter_key_buf, "{} {}", method, name);
             // Fast path: check the local cache with a borrowed key (no allocation).
             if !self
                 .request_counter_cache
-                .contains_key(self.counter_key_buf.as_str())
+                .contains_key(self.request_counter_key.as_str())
             {
                 let mut map = registry
                     .lock()
                     .expect("request_counter_registry mutex poisoned");
                 let arc = map
-                    .entry(self.counter_key_buf.clone())
+                    .entry(self.request_counter_key.clone())
                     .or_insert_with(|| Arc::new(GooseRequestCounters::new()))
                     .clone();
                 self.request_counter_cache
-                    .insert(self.counter_key_buf.clone(), arc);
+                    .insert(self.request_counter_key.clone(), arc);
             }
             let counter = self
                 .request_counter_cache
-                .get(self.counter_key_buf.as_str())
+                .get(self.request_counter_key.as_str())
                 .unwrap();
             if success {
                 counter.success.fetch_add(1, AtomicOrdering::Relaxed);
@@ -2294,9 +2403,9 @@ impl GooseUser {
     /// Takes `&self` (no cache mutation) so it can be called from the non-mut
     /// `set_success()` / `set_failure()` methods. These update calls are rare,
     /// so the extra mutex lookup and key allocation are acceptable.
-    fn update_request_counter(&self, method: &GooseMethod, name: &str, success: bool) {
+    fn update_request_counter(&self, method_label: &str, name: &str, success: bool) {
         if let Some(registry) = &self.request_counters {
-            let key = format!("{} {}", method, name);
+            let key = format!("{} {}", method_label, name);
             let map = registry
                 .lock()
                 .expect("request_counter_registry mutex poisoned");
@@ -2520,6 +2629,45 @@ impl GooseUser {
             batch.individual_requests.push(request_metric);
             self.batch_item_count += 1;
         }
+    }
+
+    /// Record that `transaction` returned the transaction error `error`: write
+    /// it to the error log, and send it to the metrics processor for the errors tables,
+    /// in the batch when there is one. Runs only for a failed transaction.
+    pub(crate) fn record_transaction_error(
+        &mut self,
+        transaction: &TransactionMetric,
+        error: &str,
+    ) -> Result<(), Box<flume::SendError<Option<GooseLog>>>> {
+        let transaction_error = GooseTransactionErrorMetric {
+            elapsed: transaction.elapsed,
+            scenario_index: transaction.scenario_index,
+            scenario_name: self.scenario_name.clone(),
+            transaction_index: transaction.transaction_index,
+            transaction_name: transaction.name.clone(),
+            run_time: transaction.run_time,
+            user: transaction.user,
+            error: error.to_string(),
+        };
+        if self.config.error_log().is_some() {
+            if let Some(logger) = self.logger.as_ref() {
+                logger.send(Some(GooseLog::TransactionError(transaction_error.clone())))?;
+            }
+        }
+        if self.config.no_error_summary {
+            return Ok(());
+        }
+        if self.metrics_batch.is_some() {
+            self.ensure_batch_current();
+            if let Some(batch) = self.metrics_batch.as_mut() {
+                batch.transaction_errors.push(transaction_error);
+                self.batch_item_count += 1;
+            }
+        } else if let Some(metrics_channel) = self.metrics_channel.as_ref() {
+            let _ =
+                metrics_channel.send(GooseMetric::TransactionError(Box::new(transaction_error)));
+        }
+        Ok(())
     }
 
     /// Accumulate a transaction metric into the local batch.
@@ -2766,7 +2914,7 @@ impl GooseUser {
             self.send_request_metric_now(request.clone())?;
             // Atomically correct the shared counters (success +1, failure -1).
             // Done after the channel send so counts stay consistent if the send fails.
-            self.update_request_counter(&request.raw.method, &request.name, true);
+            self.update_request_counter(request.raw.method_label(), &request.name, true);
         }
 
         Ok(())
@@ -2845,7 +2993,7 @@ impl GooseUser {
             self.send_request_metric_now(request.clone())?;
             // Atomically correct the shared counters (success -1, failure +1).
             // Done after the channel send so counts stay consistent if the send fails.
-            self.update_request_counter(&request.raw.method, &request.name, false);
+            self.update_request_counter(request.raw.method_label(), &request.name, false);
         }
         // Write failure to log, converting `&mut request` to `&request` as needed by `log_debug()`.
         self.log_debug(tag, Some(&*request), headers, body)?;
@@ -3045,7 +3193,7 @@ impl GooseUser {
         Ok(())
     }
 
-    /// Write to [`debug_file`](../struct.GooseConfiguration.html#structfield.debug_file)
+    /// Write to [`debug_log`](../config/struct.GooseConfiguration.html#structfield.debug_log)
     /// if enabled.
     ///
     /// This function provides a mechanism for optional debug logging when a load test
@@ -3061,7 +3209,7 @@ impl GooseUser {
     ///
     /// Calls to [`GooseUser::set_failure`] automatically invoke `log_debug`.
     ///
-    /// To enable the debug log, a load test must be run with the `--debug-log-file=foo`
+    /// To enable the debug log, a load test must be run with the `--debug-log=foo`
     /// option set, where `foo` is either a relative or an absolute path of the log file
     /// to create. Any existing file will be overwritten.
     ///
@@ -3986,8 +4134,9 @@ impl Transaction {
 
     /// Sets a custom name for both the transaction and all its requests.
     ///
-    /// This name will be used as a prefix for all requests within the transaction,
-    /// allowing you to group related requests under a common namespace in metrics.
+    /// Every request the transaction makes takes this name in place of its
+    /// path, unless the request sets a name of its own, so the transaction's
+    /// requests are counted together in the metrics, as `GET Checkout`.
     ///
     /// # Example
     ///
@@ -3998,7 +4147,7 @@ impl Transaction {
     ///     .set_name_for_transaction_and_requests("Checkout");
     ///
     /// async fn checkout_flow(user: &mut GooseUser) -> TransactionResult {
-    ///     // All requests will be prefixed with "Checkout"
+    ///     // Every request is named "Checkout".
     ///     Ok(())
     /// }
     /// ```
@@ -6303,7 +6452,11 @@ mod tests {
                     metric: GooseRequestMetric,
                     limit: &mut usize,
                     rng: &mut AuditRng| {
-            let (method, name, success) = (metric.raw.method, metric.name.clone(), metric.success);
+            let (method, name, success) = (
+                metric.raw.method_label().to_string(),
+                metric.name.clone(),
+                metric.success,
+            );
             if metric.error.is_empty() && metric.coordinated_omission_elapsed == 0 {
                 if user.record_latency_series {
                     user.accumulate_request_by_second(&metric).unwrap();

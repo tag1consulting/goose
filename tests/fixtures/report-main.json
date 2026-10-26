@@ -190,7 +190,7 @@
       "http://127.0.0.1:18128/"
     ],
     "coordinated_omission_metrics": null,
-    "final_metrics": false,
+    "final_metrics": true,
     "display_status_codes": true,
     "display_metrics": false
   },

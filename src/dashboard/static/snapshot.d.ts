@@ -43,6 +43,11 @@ maximum_users: number,
  */
 target_users: number, total_users: number, hosts: Array<string>, aggregate: AggregateMetrics, requests: Array<RequestRow>, errors: Array<ErrorRow>,
 /**
+ * The errors transactions returned, most frequent first, capped at
+ * [`MAX_ERROR_ROWS`].
+ */
+transaction_errors: Array<TransactionErrorRow>,
+/**
  * One row per registered scenario, in registration order. Never truncated.
  */
 scenarios: Array<ScenarioRow>,
@@ -144,8 +149,8 @@ type ScenarioRow = {
  */
 scenario_index: number, scenario_name: string,
 /**
- * Distinct users that have finished at least one run of this scenario
- * since the last metrics reset; not the users running it now.
+ * Distinct users that ran this scenario since the last metrics reset,
+ * whether or not they finished a run; not only the users running it now.
  */
 users: number,
 /**
@@ -178,7 +183,7 @@ transaction_metrics_disabled: boolean,
  * True under `--no-scenario-metrics`, and under `--no-metrics` too;
  * `scenarios` is then empty.
  */
-scenario_metrics_disabled: boolean, requests_truncated: boolean, errors_truncated: boolean, series_seconds: number,
+scenario_metrics_disabled: boolean, requests_truncated: boolean, errors_truncated: boolean, transaction_errors_truncated: boolean, series_seconds: number,
 /**
  * True when the dashboard tracks response times by second for its
  * heatmap: on with `--dashboard` unless `--no-percentiles-over-time` or
@@ -269,6 +274,16 @@ hold_ends_in_secs: number | null,
  * `stopping` for a test plan.
  */
 stage: "idle" | "ramp_up" | "hold" | "hold_until_stopped" | "ramping_down" | "test_plan" | "stopping", };
+
+type TransactionErrorRow = {
+/**
+ * The transaction's number, `scenario.transaction` counted from 1.
+ */
+transaction: string, scenario: string,
+/**
+ * The transaction's name, empty when it has none.
+ */
+name: string, error: string, occurrences: number, };
 
 type TransactionRow = {
 /**

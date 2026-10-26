@@ -161,14 +161,14 @@
 //! [`log_debug`](../goose/struct.GooseUser.html#method.log_debug)
 //! results in a debug log message similar to:
 //! ```json
-//! {"body":null,"header":null,"request":null,"tag":"POSTing [(\"field_1\", \"foo\"), (\"field_2\", \"bar\"), (\"op\", \"Save\")] on /path/to/form"}
+//! {"tag":"POSTing [(\"field_1\", \"foo\"), (\"field_2\", \"bar\"), (\"op\", \"Save\")] on /path/to/form","request":null,"header":null,"body":null}
 //! ```
 //!
 //! The second call to
 //! [`log_debug`](../goose/struct.GooseUser.html#method.log_debug)
 //! results in a debug log message similar to:
 //! ```json
-//! {"body":null,"header":null,"request":{"elapsed":1,"final_url":"http://local.dev/path/to/form","method":"POST","name":"(Anon) post to form","redirected":false,"response_time":22,"status_code":404,"success":false,"update":false,"url":"http://local.dev/path/to/form","user":0},"tag":"POSTing [(\"field_1\", \"foo\"), (\"field_2\", \"bar\"), (\"op\", \"Save\")] on /path/to/form"}
+//! {"tag":"POSTing [\n    (\n        \"field_1\",\n        \"foo\",\n    ),\n    (\n        \"field_2\",\n        \"bar\",\n    ),\n    (\n        \"op\",\n        \"Save\",\n    ),\n] on /path/to/form","request":{"elapsed":0,"scenario_index":0,"scenario_name":"doc","transaction_index":0,"transaction_name":{"TransactionOnly":""},"raw":{"method":"Post","url":"http://local.dev/path/to/form","headers":["(\"content-type\", \"application/x-www-form-urlencoded\")"],"body":"","custom_method":""},"name":"/path/to/form","final_url":"http://local.dev/path/to/form","redirected":false,"response_time":1,"status_code":200,"success":true,"update":false,"user":0,"error":"","coordinated_omission_elapsed":0,"user_cadence":0,"response_time_fraction_us":372},"header":null,"body":null}
 //! ```
 //!
 //! For a more complex debug logging example, refer to the
@@ -215,7 +215,10 @@ use tokio::io::{AsyncWrite, AsyncWriteExt, BufWriter};
 
 use crate::config::{GooseValue, RUN_FOLDER};
 use crate::goose::GooseDebug;
-use crate::metrics::{GooseErrorMetric, GooseRequestMetric, ScenarioMetric, TransactionMetric};
+use crate::metrics::{
+    GooseErrorMetric, GooseRequestMetric, GooseTransactionErrorMetric, ScenarioMetric,
+    TransactionMetric,
+};
 use crate::runs::{log_file_name, without_gz, RunFolder, LOG_NAMES};
 use crate::{GooseConfiguration, GooseDefaults, GooseError};
 
@@ -549,8 +552,17 @@ pub use format_csv_row;
 pub enum GooseLog {
     Debug(GooseDebug),
     Error(GooseErrorMetric),
+    /// A transaction error, written to the error log.
+    TransactionError(GooseTransactionErrorMetric),
     Request(GooseRequestMetric),
     Transaction(TransactionMetric),
+    /// A transaction that failed, and why, written to the transaction log.
+    FailedTransaction {
+        transaction: TransactionMetric,
+        /// The transaction log's `error` field, as
+        /// [`TransactionError`](../goose/enum.TransactionError.html) describes.
+        error: String,
+    },
     Scenario(ScenarioMetric),
 }
 
@@ -589,7 +601,7 @@ impl FromStr for GooseLogFormat {
             Err(GooseError::InvalidOption {
                 option: format!("GooseLogFormat::{s:?}"),
                 value: s.to_string(),
-                detail: "Invalid log_format, expected: csv, json, or raw".to_string(),
+                detail: "Invalid log_format, expected: csv, json, raw, or pretty".to_string(),
             })
         }
     }
@@ -601,8 +613,14 @@ fn debug_csv_header() -> &'static str {
 }
 
 // @TODO this should be automatically derived from the structure.
+// A request error fills the first nine columns and leaves the last five empty;
+// a transaction error fills `elapsed`, `user` and `error`, and the last five.
+// Every row has every column, so a strict CSV reader reads both.
 fn error_csv_header() -> &'static str {
-    "elapsed,raw,name,final_url,redirected,response_time,status_code,user,error"
+    concat!(
+        "elapsed,raw,name,final_url,redirected,response_time,status_code,user,error,",
+        "scenario_index,scenario_name,transaction_index,transaction_name,run_time",
+    )
 }
 
 // @TODO this should be automatically derived from the structure.
@@ -616,7 +634,7 @@ fn requests_csv_header() -> &'static str {
 
 // @TODO this should be automatically derived from the structure.
 fn transactions_csv_header() -> &'static str {
-    "elapsed,scenario_index,transaction_index,name,run_time,success,user,run_time_us"
+    "elapsed,scenario_index,transaction_index,name,run_time,success,user,run_time_us,error"
 }
 
 // @TODO this should be automatically derived from the structure.
@@ -687,6 +705,53 @@ impl GooseLogger<GooseErrorMetric> for GooseConfiguration {
                         message.status_code,
                         message.user,
                         message.error,
+                        // The transaction error columns, empty for a request.
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                    )
+                }
+            }
+        } else {
+            // A log format is required.
+            unreachable!()
+        }
+    }
+}
+/// Traits for GooseTransactionErrorMetric logs, written to the error log.
+impl GooseLogger<GooseTransactionErrorMetric> for GooseConfiguration {
+    /// Converts a GooseTransactionErrorMetric structure to a formatted string.
+    fn format_message(&self, message: GooseTransactionErrorMetric) -> String {
+        if let Some(error_format) = self.error_format.as_ref() {
+            match error_format {
+                // Use serde_json to create JSON.
+                GooseLogFormat::Json => {
+                    serde_json::to_string(&message).expect("a log message serializes to JSON")
+                }
+                // Raw format is Debug output for GooseTransactionErrorMetric structure.
+                GooseLogFormat::Raw => format!("{message:?}"),
+                // Pretty format is Debug Pretty output for GooseTransactionErrorMetric structure.
+                GooseLogFormat::Pretty => format!("{message:#?}"),
+                // Csv format with `,` separator and `"` quotes: the request
+                // columns a transaction has no value for are left empty.
+                GooseLogFormat::Csv => {
+                    format_csv_row!(
+                        message.elapsed,
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        message.user,
+                        message.error,
+                        message.scenario_index,
+                        message.scenario_name,
+                        message.transaction_index,
+                        message.transaction_name,
+                        message.run_time,
                     )
                 }
             }
@@ -742,18 +807,47 @@ impl GooseLogger<GooseRequestMetric> for GooseConfiguration {
 }
 /// Traits for TransactionMetric logs.
 impl GooseLogger<TransactionMetric> for GooseConfiguration {
-    /// Converts a TransactionMetric structure to a formatted string.
+    /// Converts a TransactionMetric structure to a formatted string, with an
+    /// empty `error`.
     fn format_message(&self, message: TransactionMetric) -> String {
+        self.format_transaction(&message, "")
+    }
+}
+
+impl GooseConfiguration {
+    /// A transaction log line: the TransactionMetric's fields, then `error`,
+    /// why it failed, empty when it did not. The error is added to each
+    /// format's output of the TransactionMetric, so the line keeps every
+    /// field the TransactionMetric has, in its order.
+    fn format_transaction(&self, message: &TransactionMetric, error: &str) -> String {
         if let Some(transaction_format) = self.transaction_format.as_ref() {
             match transaction_format {
-                // Use serde_json to create JSON.
+                // Use serde_json to create JSON, the error the last key.
                 GooseLogFormat::Json => {
-                    serde_json::to_string(&message).expect("a log message serializes to JSON")
+                    let mut line =
+                        serde_json::to_string(message).expect("a log message serializes to JSON");
+                    line.pop();
+                    line.push_str(",\"error\":");
+                    line.push_str(
+                        &serde_json::to_string(error).expect("a string serializes to JSON"),
+                    );
+                    line.push('}');
+                    line
                 }
-                // Raw format is Debug output for TransactionMetric structure.
-                GooseLogFormat::Raw => format!("{message:?}"),
-                // Pretty format is Debug Pretty output for TransactionMetric structure.
-                GooseLogFormat::Pretty => format!("{message:#?}"),
+                // Raw format is Debug output for TransactionMetric structure,
+                // the error its last field.
+                GooseLogFormat::Raw => {
+                    let mut line = format!("{message:?}");
+                    line.truncate(line.len() - " }".len());
+                    format!("{line}, error: {error:?} }}")
+                }
+                // Pretty format is Debug Pretty output for TransactionMetric
+                // structure, the error its last field.
+                GooseLogFormat::Pretty => {
+                    let mut line = format!("{message:#?}");
+                    line.truncate(line.len() - "}".len());
+                    format!("{line}    error: {error:?},\n}}")
+                }
                 // Csv format with `,` separator and `"` quotes.
                 GooseLogFormat::Csv => {
                     format_csv_row!(
@@ -765,6 +859,7 @@ impl GooseLogger<TransactionMetric> for GooseConfiguration {
                         message.success,
                         message.user,
                         message.run_time_micros(),
+                        error,
                     )
                 }
             }
@@ -1264,6 +1359,12 @@ impl GooseConfiguration {
                             .as_mut()
                             .map(|file| (file, self.error_log().unwrap_or_default()))
                     }
+                    GooseLog::TransactionError(error_message) => {
+                        formatted_message = self.format_message(error_message);
+                        error_log
+                            .as_mut()
+                            .map(|file| (file, self.error_log().unwrap_or_default()))
+                    }
                     GooseLog::Request(request_message) => {
                         formatted_message = self.format_message(request_message);
                         request_log
@@ -1272,6 +1373,12 @@ impl GooseConfiguration {
                     }
                     GooseLog::Transaction(transaction_message) => {
                         formatted_message = self.format_message(transaction_message);
+                        transaction_log
+                            .as_mut()
+                            .map(|file| (file, self.transaction_log().unwrap_or_default()))
+                    }
+                    GooseLog::FailedTransaction { transaction, error } => {
+                        formatted_message = self.format_transaction(&transaction, &error);
                         transaction_log
                             .as_mut()
                             .map(|file| (file, self.transaction_log().unwrap_or_default()))
@@ -1406,15 +1513,28 @@ mod microsecond_tests {
         assert_eq!(json["response_time_fraction_us"], 345);
     }
 
+    /// The CSV cell before the last.
+    fn penultimate_csv_cell(line: &str) -> &str {
+        line.rsplit(',').nth(1).unwrap()
+    }
+
     #[test]
     fn transaction_and_scenario_logs_end_with_their_microseconds() {
-        assert_eq!(last_csv_cell(transactions_csv_header()), "run_time_us");
+        // The transaction log ends with run_time_us, then the error.
+        assert_eq!(
+            penultimate_csv_cell(transactions_csv_header()),
+            "run_time_us"
+        );
         let mut transaction = TransactionMetric::new(0, 0, 0, Arc::from("t"), 0);
         transaction.set_duration(Duration::from_micros(1_250), true);
         let csv = configuration(GooseLogFormat::Csv).format_message(transaction.clone());
-        assert_eq!(last_csv_cell(&csv), "1250");
+        assert_eq!(penultimate_csv_cell(&csv), "1250");
         let raw = configuration(GooseLogFormat::Raw).format_message(transaction.clone());
-        assert!(raw.ends_with("run_time_fraction_us: 250 }"), "{}", raw);
+        assert!(
+            raw.ends_with("run_time_fraction_us: 250, error: \"\" }"),
+            "{}",
+            raw
+        );
         let json: serde_json::Value =
             serde_json::from_str(&configuration(GooseLogFormat::Json).format_message(transaction))
                 .unwrap();
@@ -1427,6 +1547,111 @@ mod microsecond_tests {
         assert_eq!(last_csv_cell(&csv), "750");
         let raw = configuration(GooseLogFormat::Raw).format_message(scenario);
         assert!(raw.ends_with("run_time_fraction_us: 750 }"), "{}", raw);
+    }
+
+    /// The transaction log's CSV ends with the error, empty for a transaction
+    /// that succeeded.
+    #[test]
+    fn transaction_log_csv_ends_with_the_error() {
+        assert_eq!(last_csv_cell(transactions_csv_header()), "error");
+        let mut transaction = TransactionMetric::new(0, 0, 0, Arc::from("t"), 0);
+        transaction.set_duration(Duration::from_micros(1_250), true);
+        let csv = configuration(GooseLogFormat::Csv).format_message(transaction.clone());
+        assert_eq!(csv, "0,0,0,t,1,true,0,1250,");
+        transaction.success = false;
+        let error = "TransactionError: custom error (a, b)";
+        let csv = configuration(GooseLogFormat::Csv).format_transaction(&transaction, error);
+        assert_eq!(
+            csv,
+            r#"0,0,0,t,1,false,0,1250,"TransactionError: custom error (a, b)""#
+        );
+        let raw = configuration(GooseLogFormat::Raw).format_transaction(&transaction, error);
+        assert!(
+            raw.ends_with(
+                r#"run_time_fraction_us: 250, error: "TransactionError: custom error (a, b)" }"#
+            ),
+            "{}",
+            raw
+        );
+        let pretty = configuration(GooseLogFormat::Pretty).format_transaction(&transaction, error);
+        assert!(
+            pretty.ends_with(
+                "    run_time_fraction_us: 250,\n    error: \"TransactionError: custom error (a, b)\",\n}"
+            ),
+            "{}",
+            pretty
+        );
+        let json: serde_json::Value = serde_json::from_str(
+            &configuration(GooseLogFormat::Json).format_transaction(&transaction, error),
+        )
+        .unwrap();
+        assert_eq!(json["error"], error);
+        assert_eq!(json["run_time_fraction_us"], 250);
+    }
+
+    /// A request error fills the error log's first nine CSV columns, in the
+    /// order it always has, and leaves the last five empty; a transaction
+    /// error fills `elapsed`, `user` and `error`, and the last five.
+    #[test]
+    fn error_log_csv_holds_both_kinds_of_error() {
+        let header: Vec<&str> = error_csv_header().split(',').collect();
+        assert_eq!(
+            header,
+            [
+                "elapsed",
+                "raw",
+                "name",
+                "final_url",
+                "redirected",
+                "response_time",
+                "status_code",
+                "user",
+                "error",
+                "scenario_index",
+                "scenario_name",
+                "transaction_index",
+                "transaction_name",
+                "run_time",
+            ]
+        );
+        let mut configuration = configuration(GooseLogFormat::Csv);
+        configuration.error_format = Some(GooseLogFormat::Csv);
+        let error = GooseTransactionErrorMetric {
+            elapsed: 837,
+            scenario_index: 0,
+            scenario_name: Arc::from("websiteuser"),
+            transaction_index: 2,
+            transaction_name: Arc::from("log in"),
+            run_time: 1,
+            user: 5,
+            error: "boom".to_string(),
+        };
+        let csv = configuration.format_message(error);
+        assert_eq!(csv, "837,,,,,,,5,boom,0,websiteuser,2,log in,1");
+        assert_eq!(csv.split(',').count(), header.len());
+
+        let request_error = GooseErrorMetric {
+            elapsed: 9318,
+            raw: crate::metrics::GooseRawRequest::new(
+                crate::goose::GooseMethod::Get,
+                "http://example.com/",
+                vec![],
+                "",
+            ),
+            name: "front page".to_string(),
+            final_url: "http://example.com/".to_string(),
+            redirected: false,
+            response_time: 6,
+            status_code: 503,
+            user: 1,
+            error: "503 Service Unavailable: /".to_string(),
+        };
+        let csv = configuration.format_message(request_error);
+        assert!(
+            csv.ends_with(",http://example.com/,false,6,503,1,503 Service Unavailable: /,,,,,"),
+            "{}",
+            csv
+        );
     }
 }
 
@@ -1473,7 +1698,25 @@ mod json_line_tests {
         transaction.set_duration(Duration::from_micros(1_250), false);
         assert_eq!(
             configuration().format_message(transaction),
-            r#"{"elapsed":837,"scenario_index":0,"transaction_index":2,"name":"log in","run_time":1,"success":false,"user":5,"run_time_fraction_us":250}"#
+            r#"{"elapsed":837,"scenario_index":0,"transaction_index":2,"name":"log in","run_time":1,"success":false,"user":5,"run_time_fraction_us":250,"error":""}"#
+        );
+    }
+
+    #[test]
+    fn transaction_error_json_line() {
+        let error = GooseTransactionErrorMetric {
+            elapsed: 837,
+            scenario_index: 0,
+            scenario_name: Arc::from("websiteuser"),
+            transaction_index: 2,
+            transaction_name: Arc::from("log in"),
+            run_time: 1,
+            user: 5,
+            error: "TransactionError: custom error (boom)".to_string(),
+        };
+        assert_eq!(
+            configuration().format_message(error),
+            r#"{"elapsed":837,"scenario_index":0,"scenario_name":"websiteuser","transaction_index":2,"transaction_name":"log in","run_time":1,"user":5,"error":"TransactionError: custom error (boom)"}"#
         );
     }
 

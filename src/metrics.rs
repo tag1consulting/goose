@@ -118,6 +118,8 @@ pub enum GooseMetric {
     /// single channel message. The metrics processor merges batch entries
     /// into global aggregates using the same logic as individual metrics.
     Batch(Box<GooseMetricBatch>),
+    /// A transaction that returned an error, sent only when it fails.
+    TransactionError(Box<GooseTransactionErrorMetric>),
 }
 
 /// Maximum number of request metrics to accumulate before flushing a batch.
@@ -170,6 +172,9 @@ pub struct GooseMetricBatch {
     pub(crate) individual_requests: Vec<GooseRequestMetric>,
     /// Pre-aggregated transaction timing data, keyed by `(scenario_index, transaction_index)`.
     pub(crate) transactions: HashMap<(usize, usize), TransactionBatchEntry>,
+    /// The errors of transactions that failed, for the errors tables.
+    #[serde(default)]
+    pub(crate) transaction_errors: Vec<GooseTransactionErrorMetric>,
     /// Pre-aggregated scenario timing data, keyed by `scenario_index`.
     pub(crate) scenarios: HashMap<usize, ScenarioBatchEntry>,
     /// Per-second request graph data (RPS count and average response time),
@@ -203,6 +208,7 @@ impl GooseMetricBatch {
             requests: HashMap::new(),
             individual_requests: Vec::new(),
             transactions: HashMap::new(),
+            transaction_errors: Vec::new(),
             scenarios: HashMap::new(),
             graph_request_data: HashMap::new(),
             next_second: HashMap::new(),
@@ -347,6 +353,9 @@ pub(crate) enum MetricsCommand {
     /// `rps` rules count ends here. It drains as [`MetricsCommand::EnterMaintain`]
     /// does.
     LeaveMaintain { seconds: f64 },
+    /// A user started running scenario `scenario_index`: count it among the
+    /// scenario's users, though it may complete no iteration.
+    UserStarted { scenario_index: usize, user: usize },
     /// Record the current user count for the users-per-second graph.
     RecordUsers {
         active_users: usize,
@@ -366,6 +375,9 @@ pub(crate) enum MetricsCommand {
         /// Seconds on the continuous series clock at the reset, where the
         /// report heatmap's columns start again.
         series_elapsed_secs: usize,
+        /// The `(scenario index, user)` of each user still running, which
+        /// the scenarios count again after the reset.
+        running_users: Vec<(usize, usize)>,
         ack: tokio::sync::oneshot::Sender<()>,
     },
     /// Return a snapshot of the current metrics for the controller.
@@ -490,8 +502,10 @@ pub(crate) struct MetricsProcessor {
 /// statistically relevant information as [`GooseUser`](../goose/struct.GooseUser.html)
 /// threads are unable to make additional requests while they are blocked by an upstream stall.
 /// Goose mitigates this by backfilling the requests that would have been made during that time.
-/// Backfilled requests show up in the `--request-file` if enabled, though they were not actually
-/// sent to the server.
+/// Backfilled requests are never sent to the server, and the `--request-log` does not hold
+/// them; it holds the request that ended a stall a second time, with
+/// [`coordinated_omission_elapsed`](struct.GooseRequestMetric.html#structfield.coordinated_omission_elapsed)
+/// and `user_cadence` set.
 ///
 /// Goose can be configured to backfill requests based on the expected
 /// [`user_cadence`](struct.GooseRequestMetric.html#structfield.user_cadence). The expected
@@ -983,7 +997,10 @@ pub struct GooseRequestMetricAggregate {
     /// Only tracks aggregate statistics (count, total, min, max) rather than full
     /// distributions, keeping memory overhead minimal. Only populated for non-CO-mitigated
     /// requests when status code tracking is enabled.
-    #[serde(skip)]
+    ///
+    /// Written to the JSON report, so a report rendered from it with
+    /// `--render-report` rebuilds the per status code breakdown rows.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub status_code_timings: HashMap<u16, StatusCodeTimingSummary>,
     /// Total number of times this path-method request resulted in a successful (2xx) status code.
     ///
@@ -1816,6 +1833,17 @@ impl ScenarioMetricAggregate {
     }
 }
 
+/// The iterations a scenario's table shows: `count` scenario runs averaged
+/// over the `users` who ran them. The console and every report show this, for
+/// one scenario and for them all.
+pub(crate) fn iterations_per_user(count: usize, users: usize) -> f32 {
+    match users {
+        // No user ran the scenario.
+        0 => 0.0,
+        _ => count as f32 / users as f32,
+    }
+}
+
 /// [`ScenarioMetricAggregate`] as it is written.
 #[derive(Serialize)]
 struct ScenarioAggregateOut<'a> {
@@ -2027,6 +2055,15 @@ pub struct GooseMetrics {
     /// [GooseDefault::NoErrorSummary](../config/enum.GooseDefault.html#variant.NoErrorSummary) or
     /// [GooseDefault::NoMetrics](../config/enum.GooseDefault.html#variant.NoMetrics).
     pub errors: GooseErrorMetrics,
+    /// Tracks and counts each time a transaction returns an error, by scenario,
+    /// transaction and error.
+    ///
+    /// Can be disabled with either the `--no-error-summary` or `--no-metrics`
+    /// run-time options, or with either the
+    /// [GooseDefault::NoErrorSummary](../config/enum.GooseDefault.html#variant.NoErrorSummary) or
+    /// [GooseDefault::NoMetrics](../config/enum.GooseDefault.html#variant.NoMetrics).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub transaction_errors: GooseTransactionErrorMetrics,
     /// Tracks all hosts that the load test is run against.
     pub hosts: HashSet<String>,
     /// Enhanced Coordinated Omission metrics tracking.
@@ -2541,7 +2578,7 @@ impl GooseMetrics {
             let (runs, _fails) =
                 per_second_calculations(self.duration, scenario.run_times.counter, 0);
             let runs_precision = determine_precision(runs);
-            let iterations = scenario.run_times.counter as f32 / scenario.users.len() as f32;
+            let iterations = iterations_per_user(scenario.run_times.counter, scenario.users.len());
             let iterations_precision = determine_precision(iterations);
             writeln!(
                 fmt,
@@ -2560,7 +2597,7 @@ impl GooseMetrics {
             let (aggregate_runs, _fails) =
                 per_second_calculations(self.duration, aggregate_counter, 0);
             let aggregate_runs_precision = determine_precision(aggregate_runs);
-            let aggregate_iterations = aggregate_counter as f32 / aggregate_users as f32;
+            let aggregate_iterations = iterations_per_user(aggregate_counter, aggregate_users);
             let aggregate_iterations_precision = determine_precision(aggregate_iterations);
             writeln!(
                 fmt,
@@ -3006,6 +3043,46 @@ impl GooseMetrics {
         Ok(())
     }
 
+    /// Optionally prepares a table of the errors transactions returned, most
+    /// frequent first.
+    ///
+    /// This function is invoked by `GooseMetrics::print()`.
+    pub(crate) fn fmt_transaction_errors(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if !self.final_metrics || self.transaction_errors.is_empty() {
+            return Ok(());
+        }
+
+        let errors: Vec<(usize, String)> = self
+            .transaction_errors
+            .values()
+            .map(|error| {
+                (
+                    error.occurrences,
+                    format!("{}: {}", error.transaction_label(), error.error),
+                )
+            })
+            .collect();
+
+        writeln!(
+            fmt,
+            "\n === TRANSACTION ERRORS ===\n ------------------------------------------------------------------------------"
+        )?;
+        writeln!(fmt, " {:<11} | Transaction: error", "Count")?;
+        writeln!(
+            fmt,
+            " ------------------------------------------------------------------------------"
+        )?;
+        for (occurrences, error) in errors.iter().sorted().rev() {
+            writeln!(fmt, " {:<12}  {}", format_number(*occurrences), error)?;
+        }
+        writeln!(
+            fmt,
+            " ------------------------------------------------------------------------------"
+        )?;
+
+        Ok(())
+    }
+
     /// Optionally prepares a table of the thresholds and their results.
     ///
     /// This function is invoked by `GooseMetrics::print()`.
@@ -3203,6 +3280,7 @@ impl fmt::Display for GooseMetrics {
         self.fmt_percentiles(fmt)?;
         self.fmt_status_codes(fmt)?;
         self.fmt_errors(fmt)?;
+        self.fmt_transaction_errors(fmt)?;
         self.fmt_thresholds(fmt)?;
 
         // Display enhanced coordinated omission metrics if available (before overview)
@@ -3308,6 +3386,88 @@ impl GooseErrorMetricAggregate {
             &self.custom_method
         } else {
             http_method_str(self.method)
+        }
+    }
+}
+
+/// A transaction that returned an error, as the error log records it.
+///
+/// A transaction that returns a
+/// [`TransactionError`](../goose/enum.TransactionError.html) of the variants
+/// `Reqwest`, `Url` or `Custom` is a transaction error: it gets one entry in
+/// the error log, and is counted in [`GooseMetrics::transaction_errors`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GooseTransactionErrorMetric {
+    /// How many milliseconds the load test had been running when the
+    /// transaction started.
+    pub elapsed: u64,
+    /// An index into [`GooseAttack`](../struct.GooseAttack.html)`.scenarios`,
+    /// indicating which scenario this is.
+    pub scenario_index: usize,
+    /// The scenario name.
+    #[serde(with = "arc_str_serde")]
+    pub scenario_name: Arc<str>,
+    /// An index into [`Scenario`](../goose/struct.Scenario.html)`.transaction`,
+    /// indicating which transaction this is.
+    pub transaction_index: usize,
+    /// The transaction name, empty when it has none.
+    #[serde(with = "arc_str_serde")]
+    pub transaction_name: Arc<str>,
+    /// How many milliseconds the transaction ran, truncated.
+    pub run_time: u64,
+    /// Which GooseUser thread ran the transaction.
+    pub user: usize,
+    /// The error the transaction returned, as its `Display` writes it.
+    pub error: String,
+}
+
+/// Every transaction error, aggregated by scenario, transaction and error,
+/// with a string key of `scenario_index.transaction_index.error`.
+pub type GooseTransactionErrorMetrics = BTreeMap<String, GooseTransactionErrorMetricAggregate>;
+
+/// For tracking and counting the errors transactions return.
+///
+/// Errors that share the same scenario, the same transaction and the same
+/// error text are counted in one `GooseTransactionErrorMetricAggregate`, with
+/// `occurrences` saying how many times the transaction returned it. They are
+/// stored in [`GooseMetrics::transaction_errors`].
+///
+/// Can be disabled with the `--no-error-summary` run-time option, or with
+/// [GooseDefault::NoErrorSummary](../config/enum.GooseDefault.html#variant.NoErrorSummary).
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+pub struct GooseTransactionErrorMetricAggregate {
+    /// An index into [`GooseAttack`](../struct.GooseAttack.html)`.scenarios`.
+    pub scenario_index: usize,
+    /// The scenario name.
+    pub scenario_name: String,
+    /// An index into [`Scenario`](../goose/struct.Scenario.html)`.transaction`.
+    pub transaction_index: usize,
+    /// The transaction name, empty when it has none.
+    pub transaction_name: String,
+    /// The error string.
+    pub error: String,
+    /// A counter reflecting how many times this error occurred.
+    pub occurrences: usize,
+}
+impl GooseTransactionErrorMetricAggregate {
+    /// The transaction's number, as the transactions tables number it:
+    /// `scenario.transaction`, both counted from 1.
+    pub fn transaction_number(&self) -> String {
+        format!("{}.{}", self.scenario_index + 1, self.transaction_index + 1)
+    }
+
+    /// The transaction as the errors tables name it: its number, its
+    /// scenario's name and its own name when it has one.
+    pub fn transaction_label(&self) -> String {
+        if self.transaction_name.is_empty() {
+            format!("{} {}", self.transaction_number(), self.scenario_name)
+        } else {
+            format!(
+                "{} {} {}",
+                self.transaction_number(),
+                self.scenario_name,
+                self.transaction_name
+            )
         }
     }
 }
@@ -3418,6 +3578,9 @@ impl MetricsProcessor {
             GooseMetric::Batch(batch) => {
                 self.process_batch(*batch);
             }
+            GooseMetric::TransactionError(transaction_error) => {
+                self.record_transaction_error(&transaction_error);
+            }
         }
     }
 
@@ -3493,6 +3656,13 @@ impl MetricsProcessor {
                 self.metrics.rps_window.leave(mark);
                 false
             }
+            MetricsCommand::UserStarted {
+                scenario_index,
+                user,
+            } => {
+                self.record_scenario_user(scenario_index, user);
+                false
+            }
             MetricsCommand::RecordUsers {
                 active_users,
                 elapsed_secs,
@@ -3509,6 +3679,7 @@ impl MetricsProcessor {
                 maximum_users,
                 active_users,
                 series_elapsed_secs,
+                running_users,
                 ack,
             } => {
                 // Drain all pending metrics before reset.
@@ -3523,6 +3694,10 @@ impl MetricsProcessor {
                 self.metrics.requests = HashMap::new();
                 self.metrics
                     .initialize_scenario_metrics(&self.scenarios, &self.configuration);
+                // The users still running run their scenarios in the measured time.
+                for (scenario_index, user) in running_users {
+                    self.record_scenario_user(scenario_index, user);
+                }
                 self.metrics
                     .initialize_transaction_metrics(
                         &self.scenarios,
@@ -3544,6 +3719,12 @@ impl MetricsProcessor {
                 // rules count, as when a Controller changed the users before the
                 // ramp up ended, starts again with them.
                 self.metrics.rps_window.reset();
+                // Coordinated omission counts restart with the requests they
+                // add up to.
+                if let Some(co_metrics) = self.metrics.coordinated_omission_metrics.as_mut() {
+                    *co_metrics =
+                        CoordinatedOmissionMetrics::new(co_metrics.mitigation_strategy.clone());
+                }
                 // Increment the batch epoch so user-side batches accumulated
                 // before the reset are discarded when they arrive.
                 self.metrics_epoch.fetch_add(1, AtomicOrdering::Relaxed);
@@ -3721,6 +3902,14 @@ impl MetricsProcessor {
         &mut self.graph_data
     }
 
+    /// Count `user` among the users of scenario `scenario_index`, when
+    /// scenario metrics are kept.
+    fn record_scenario_user(&mut self, scenario_index: usize, user: usize) {
+        if let Some(scenario) = self.metrics.scenarios.get_mut(scenario_index) {
+            scenario.users.insert(user);
+        }
+    }
+
     /// Whether coordinated omission mitigation has recorded an event, so the
     /// dashboard shows adjusted values.
     fn co_active(&self) -> bool {
@@ -3865,47 +4054,26 @@ impl MetricsProcessor {
     /// Process a single request metric: record errors, handle CO backfill, update
     /// aggregates and graph data.
     fn process_request_metric(&mut self, request_metric: &GooseRequestMetric) {
-        if !request_metric.error.is_empty() {
+        // A coordinated omission copy repeats a request already sent, with
+        // its error: only the synthetic times derived from it are new.
+        if !request_metric.error.is_empty() && request_metric.coordinated_omission_elapsed == 0 {
             self.record_error(request_metric);
         }
 
-        if request_metric.coordinated_omission_elapsed > 0 && request_metric.user_cadence > 0 {
-            if let Some(co_metrics) = &mut self.metrics.coordinated_omission_metrics {
-                let synthetic_count = (request_metric.coordinated_omission_elapsed as i64
-                    - request_metric.user_cadence as i64
-                    - request_metric.response_time as i64)
-                    / request_metric.user_cadence as i64;
-
-                if synthetic_count > 0 {
-                    co_metrics.record_co_event(
-                        std::time::Duration::from_millis(request_metric.user_cadence),
-                        std::time::Duration::from_millis(
-                            request_metric.coordinated_omission_elapsed,
-                        ),
-                        synthetic_count as u32,
-                        request_metric.user,
-                        request_metric.scenario_name.to_string(),
-                    );
-                }
+        if request_metric.coordinated_omission_elapsed > 0 {
+            // Without a cadence there is nothing to backfill, and the request
+            // itself was already counted.
+            if request_metric.user_cadence == 0 {
+                return;
             }
-
             let mut co_metric = request_metric.clone();
             let mut response_time = request_metric.coordinated_omission_elapsed as i64
                 - request_metric.user_cadence as i64
                 - request_metric.response_time as i64;
+            // The synthetic requests the loop below records, the count the
+            // event reports.
+            let mut synthetic_count: u32 = 0;
 
-            // Synthetic times also go to the dashboard's heatmap, each in
-            // the second its synthetic request would have started. This copy
-            // was sent because the previous scenario iteration took
-            // `coordinated_omission_elapsed` (E) ms, more than twice the
-            // cadence (c). That iteration is the stall, and it ended at or
-            // just before this request started, at `elapsed` (s) ms since the
-            // start. The loop below records t_k = E - k*c - r for k = 1, 2, ...
-            // while t_k > r, where r is this request's own response time; a
-            // request that took t_k and ended at s started at s - t_k. This
-            // is exact for the first request of an iteration and slightly late
-            // for later ones, and with wait times the seconds compress toward
-            // the end of the stall.
             let latency_key = self.graph_data.records_synthetic_latency().then(|| {
                 format!(
                     "{} {}",
@@ -3932,20 +4100,39 @@ impl MetricsProcessor {
                             co_metric.response_time,
                         );
                     }
-                    let co_key = format!("{} {}", co_metric.raw.method, co_metric.name);
+                    let co_key = format!("{} {}", co_metric.raw.method_label(), co_metric.name);
                     Self::increment_registry_counter(
                         &self.request_counter_registry,
                         &co_key,
                         co_metric.success,
                     );
                     response_time -= request_metric.user_cadence as i64;
+                    synthetic_count += 1;
                 } else {
                     break;
                 }
             }
+
+            if synthetic_count > 0 {
+                if let Some(co_metrics) = &mut self.metrics.coordinated_omission_metrics {
+                    co_metrics.record_co_event(
+                        std::time::Duration::from_millis(request_metric.user_cadence),
+                        std::time::Duration::from_millis(
+                            request_metric.coordinated_omission_elapsed,
+                        ),
+                        synthetic_count,
+                        request_metric.user,
+                        request_metric.scenario_name.to_string(),
+                    );
+                }
+            }
         } else {
-            if let Some(co_metrics) = &mut self.metrics.coordinated_omission_metrics {
-                co_metrics.record_actual_request();
+            // An update from set_success() or set_failure() names a request
+            // already counted.
+            if !request_metric.update {
+                if let Some(co_metrics) = &mut self.metrics.coordinated_omission_metrics {
+                    co_metrics.record_actual_request();
+                }
             }
 
             self.record_request_metric(request_metric);
@@ -4062,6 +4249,43 @@ impl MetricsProcessor {
         self.metrics.errors.insert(error_string, error_metrics);
     }
 
+    /// Count a transaction error in the errors tables. Its error log entry
+    /// was written by the user that ran the transaction.
+    fn record_transaction_error(&mut self, transaction_error: &GooseTransactionErrorMetric) {
+        if self.configuration.no_error_summary {
+            return;
+        }
+        let key = format!(
+            "{}.{}.{}",
+            transaction_error.scenario_index,
+            transaction_error.transaction_index,
+            transaction_error.error
+        );
+        // The tables name the scenario as the transactions table does; the
+        // error log, as the request log, by its machine name.
+        let scenario_name = self
+            .metrics
+            .transactions
+            .get(transaction_error.scenario_index)
+            .and_then(|transactions| transactions.get(transaction_error.transaction_index))
+            .map_or(&transaction_error.scenario_name, |transaction| {
+                &transaction.scenario_name
+            });
+        let scenario_name = scenario_name.to_string();
+        self.metrics
+            .transaction_errors
+            .entry(key)
+            .or_insert_with(|| GooseTransactionErrorMetricAggregate {
+                scenario_index: transaction_error.scenario_index,
+                scenario_name,
+                transaction_index: transaction_error.transaction_index,
+                transaction_name: transaction_error.transaction_name.to_string(),
+                error: transaction_error.error.clone(),
+                occurrences: 0,
+            })
+            .occurrences += 1;
+    }
+
     /// Process a pre-aggregated batch of metrics from a single GooseUser thread.
     ///
     /// Individual request metrics (failed / CO-affected) are processed one by one
@@ -4109,6 +4333,9 @@ impl MetricsProcessor {
         // 1. Process individual request metrics (errors, CO) normally.
         for request_metric in &batch.individual_requests {
             self.process_request_metric(request_metric);
+        }
+        for transaction_error in &batch.transaction_errors {
+            self.record_transaction_error(transaction_error);
         }
 
         // With response times kept by second, step 2 merges each request's
@@ -4361,6 +4588,7 @@ impl GooseAttack {
                             maximum_users: self.metrics.maximum_users,
                             active_users: goose_attack_run_state.active_users,
                             series_elapsed_secs: self.series_elapsed_secs(),
+                            running_users: goose_attack_run_state.running_users.clone(),
                             ack: ack_tx,
                         })
                         .expect("metrics processor channel closed unexpectedly");
@@ -4676,7 +4904,6 @@ impl GooseAttack {
     ) -> Result<Vec<u8>, GooseError> {
         use crate::report::pdf::generate_pdf_from_html;
         use crate::report::print::generate_print_optimized_html_content;
-        use tokio::fs as async_fs;
 
         // Generate HTML report content using the shared function
         let html_report = source.html(baseline)?;
@@ -4684,17 +4911,8 @@ impl GooseAttack {
         // Add print-optimized CSS for better PDF output using the shared function
         let print_optimized_html = generate_print_optimized_html_content(&html_report);
 
-        // If pdf_print_html is configured, save the PDF-optimized HTML for debugging
-        if let Some(pdf_print_html) = self.configuration.pdf_print_html() {
-            if let Err(e) = async_fs::write(pdf_print_html, &print_optimized_html).await {
-                return Err(GooseError::InvalidOption {
-                    option: "--pdf-print-html".to_string(),
-                    value: pdf_print_html.to_string(),
-                    detail: format!("Failed to write PDF-optimized HTML: {e}"),
-                });
-            }
-            info!("PDF-optimized HTML saved to: {pdf_print_html}");
-        }
+        // A --pdf-print-html file is written by write_report_files, with or
+        // without a PDF report.
 
         // The Chrome found at startup, by create_reports, unless it was a
         // download that another Goose run's refresh has since removed.
@@ -4969,6 +5187,7 @@ impl ReportSource<'_> {
             scenario_metrics,
             transaction_metrics,
             errors,
+            transaction_errors,
             status_code_metrics,
             coordinated_omission_metrics: _,
         } = self.data(baseline);
@@ -5063,6 +5282,13 @@ impl ReportSource<'_> {
             })
             .unwrap_or_default();
 
+        let transaction_errors_template = transaction_errors
+            .map(|errors| {
+                let rows = errors.iter().map(report::transaction_error_row).join("\n");
+                report::transaction_errors_template(&rows)
+            })
+            .unwrap_or_default();
+
         let status_code_template = status_code_metrics
             .map(|status_code_metrics| {
                 // Compile the status_code metrics rows.
@@ -5103,6 +5329,7 @@ impl ReportSource<'_> {
                 scenarios_template: &scenarios_template,
                 status_codes_template: &status_code_template,
                 errors_template: &errors_template,
+                transaction_errors_template: &transaction_errors_template,
                 thresholds_template: &thresholds_template,
                 graph_rps_template: &self
                     .graph_data
@@ -6774,6 +7001,7 @@ mod test {
             maximum_users: 1,
             active_users: 1,
             series_elapsed_secs: 10,
+            running_users: Vec::new(),
             ack,
         });
         // In flight at the reset: started at 9.8 s, finished after it.
@@ -6796,6 +7024,54 @@ mod test {
                 key
             );
         }
+    }
+
+    /// A user counts among its scenario's users from when it starts, and
+    /// again after a metrics reset while it still runs, iteration or not.
+    #[test]
+    fn scenario_users_are_the_users_running_it() {
+        let mut processor = make_dashboard_test_processor(GooseConfiguration {
+            host: Some("http://localhost".to_string()),
+            ..Default::default()
+        });
+        let mut scenario = crate::goose::Scenario::new("Only");
+        scenario.scenarios_index = 0;
+        processor.scenarios = vec![scenario];
+        processor
+            .metrics
+            .initialize_scenario_metrics(&processor.scenarios, &processor.configuration);
+        for user in 0..3 {
+            processor.handle_command(MetricsCommand::UserStarted {
+                scenario_index: 0,
+                user,
+            });
+        }
+        assert_eq!(processor.metrics.scenarios[0].users.len(), 3);
+        // A scenario index that has no metrics is ignored.
+        processor.handle_command(MetricsCommand::UserStarted {
+            scenario_index: 7,
+            user: 9,
+        });
+
+        // User 2 stopped before the reset.
+        let (ack, _ack_rx) = tokio::sync::oneshot::channel();
+        processor.handle_command(MetricsCommand::Reset {
+            duration: 1,
+            total_users: 3,
+            maximum_users: 3,
+            active_users: 2,
+            series_elapsed_secs: 1,
+            running_users: vec![(0, 0), (0, 1)],
+            ack,
+        });
+        let scenario = &processor.metrics.scenarios[0];
+        assert_eq!(scenario.users, vec![0, 1].into_iter().collect());
+        assert_eq!(scenario.run_times.counter, 0);
+        assert_eq!(
+            iterations_per_user(scenario.run_times.counter, scenario.users.len()),
+            0.0
+        );
+        assert_eq!(iterations_per_user(0, 0), 0.0);
     }
 
     #[test]
@@ -6829,6 +7105,7 @@ mod test {
             maximum_users: 5,
             active_users: 5,
             series_elapsed_secs: 10,
+            running_users: Vec::new(),
             ack: ack_tx,
         });
         assert!(!shutdown);
@@ -7700,6 +7977,7 @@ mod test {
             maximum_users: 1,
             active_users: 1,
             series_elapsed_secs: 12,
+            running_users: Vec::new(),
             ack,
         });
         assert_eq!(
@@ -7871,6 +8149,73 @@ mod test {
             let series = request_series(&mut processor, "/fail", false).unwrap();
             assert_eq!(series.heatmap.counts(2), (1, 0), "cadence {user_cadence}");
         }
+    }
+
+    #[test]
+    fn co_copies_and_updates_are_counted_once() {
+        let mut processor =
+            make_latency_test_processor(GooseCoordinatedOmissionMitigation::Average);
+        let co = |p: &MetricsProcessor| {
+            let co = p.metrics.coordinated_omission_metrics.as_ref().unwrap();
+            (
+                co.actual_requests,
+                co.synthetic_requests,
+                co.co_events.len(),
+            )
+        };
+
+        // A request, then its update from set_success().
+        let request = make_request_metric("/ok", 20, 200, 1_000);
+        processor.process_request_metric(&request);
+        let mut update = request.clone();
+        update.update = true;
+        processor.process_request_metric(&update);
+        assert_eq!(co(&processor), (1, 0, 0));
+
+        // A failed request that ended a stall.
+        let mut failed = make_request_metric("/", 20, 500, 2_000);
+        failed.success = false;
+        failed.error = "500 Internal Server Error".to_string();
+        processor.process_request_metric(&failed);
+        assert_eq!(co(&processor), (2, 0, 0));
+
+        // Its copy, without a cadence: nothing to backfill and nothing new.
+        let mut copy = failed.clone();
+        copy.coordinated_omission_elapsed = 1_000;
+        processor.process_request_metric(&copy);
+        assert_eq!(co(&processor), (2, 0, 0));
+
+        // With a 100 ms cadence, a 1000 ms stall and a 20 ms request, the
+        // synthetic times are 880, 780, ... 80, 9 of them.
+        copy.user_cadence = 100;
+        processor.process_request_metric(&copy);
+        assert_eq!(co(&processor), (2, 9, 1));
+        let aggregate = &processor.metrics.requests["GET /"];
+        let co_data = aggregate.coordinated_omission_data.as_ref().unwrap();
+        assert_eq!(co_data.counter - aggregate.raw_data.counter, 9);
+        // The error is the request's, recorded once.
+        assert_eq!(
+            processor
+                .metrics
+                .errors
+                .values()
+                .map(|e| e.occurrences)
+                .sum::<usize>(),
+            1
+        );
+
+        // A metrics reset starts the counts again.
+        let (ack, _ack_rx) = tokio::sync::oneshot::channel();
+        processor.handle_command(MetricsCommand::Reset {
+            duration: 3,
+            total_users: 1,
+            maximum_users: 1,
+            active_users: 1,
+            series_elapsed_secs: 3,
+            running_users: Vec::new(),
+            ack,
+        });
+        assert_eq!(co(&processor), (0, 0, 0));
     }
 
     /// Send `original` through a user thread built from `configuration`, mark

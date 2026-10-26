@@ -1,12 +1,13 @@
 use super::{
-    delta::*, per_second_calculations, prepare_status_codes, CoMetricsSummary, GooseMetrics,
-    GooseRequestMetricAggregate, GooseRequestMetricTimingData, Millis, MillisFloat, NullableFloat,
+    delta::*, iterations_per_user, per_second_calculations, prepare_status_codes, CoMetricsSummary,
+    GooseMetrics, GooseRequestMetricAggregate, GooseRequestMetricTimingData, Millis, MillisFloat,
+    NullableFloat,
 };
 
 use crate::{
     report::{
         get_response_metric, CORequestMetric, ErrorMetric, RequestMetric, ResponseMetric,
-        ScenarioMetric, StatusCodeMetric, TransactionMetric,
+        ScenarioMetric, StatusCodeMetric, TransactionErrorMetric, TransactionMetric,
     },
     util, GooseError,
 };
@@ -28,10 +29,22 @@ where
     Ok(opt.unwrap_or(f64::NAN))
 }
 
+/// Write request rows without their per status code breakdown rows, which are
+/// rebuilt from the request's status codes whenever a report is rendered.
+fn serialize_without_breakdowns<S>(rows: &[RequestMetric], serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.collect_seq(rows.iter().filter(|row| !row.is_breakdown))
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ReportData<'m> {
     pub raw_metrics: Cow<'m, GooseMetrics>,
 
+    /// Each request's row, followed by its per status code breakdown rows,
+    /// then the Aggregated row. The JSON report holds no breakdown rows.
+    #[serde(serialize_with = "serialize_without_breakdowns")]
     pub raw_request_metrics: Vec<RequestMetric>,
     pub raw_response_metrics: Vec<ResponseMetric>,
 
@@ -44,6 +57,11 @@ pub(crate) struct ReportData<'m> {
     pub status_code_metrics: Option<Vec<StatusCodeMetric>>,
 
     pub errors: Option<Vec<ErrorMetric>>,
+
+    /// The errors transactions returned; left out of the JSON report when
+    /// there are none, as a report from before Goose recorded them has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transaction_errors: Option<Vec<TransactionErrorMetric>>,
 
     pub coordinated_omission_metrics: Option<CoMetricsSummary>,
 }
@@ -142,6 +160,7 @@ impl<'m> Prepare<'m> {
             transaction_metrics: self.build_transaction(),
             status_code_metrics: self.build_status_code(),
             errors: self.build_errors(),
+            transaction_errors: self.build_transaction_errors(),
             coordinated_omission_metrics: self
                 .metrics
                 .coordinated_omission_metrics
@@ -176,7 +195,7 @@ impl<'m> Prepare<'m> {
                 name: name.to_string(),
                 number_of_requests: total_request_count.into(),
                 number_of_failures: request.fail_count.into(),
-                response_time_average: request.raw_data.average_ms().into(),
+                response_time_average: request.raw_data.average_ms_or_zero().into(),
                 response_time_minimum: Millis(request.raw_data.minimum_time_us).into(),
                 response_time_maximum: Millis(request.raw_data.maximum_time_us).into(),
                 requests_per_second: requests_per_second.into(),
@@ -226,7 +245,7 @@ impl<'m> Prepare<'m> {
             name: "Aggregated".to_string(),
             number_of_requests: raw_aggregate_total_count.into(),
             number_of_failures: raw_aggregate_fail_count.into(),
-            response_time_average: raw_aggregate.average_ms().into(),
+            response_time_average: raw_aggregate.average_ms_or_zero().into(),
             response_time_minimum: Millis(raw_aggregate.minimum_time_us).into(),
             response_time_maximum: Millis(raw_aggregate.maximum_time_us).into(),
             requests_per_second: raw_aggregate_requests_per_second.into(),
@@ -274,8 +293,8 @@ impl<'m> Prepare<'m> {
                     .strip_prefix(&format!("{} ", method))
                     .unwrap()
                     .to_string();
-                let raw_average = request.raw_data.average_ms();
-                let co_average = coordinated_omission_data.average_ms();
+                let raw_average = request.raw_data.average_ms_or_zero();
+                let co_average = coordinated_omission_data.average_ms_or_zero();
                 // Prepare per-request metrics.
                 co_request_metrics.push(CORequestMetric {
                     method: method.to_string(),
@@ -297,8 +316,8 @@ impl<'m> Prepare<'m> {
                 ));
             }
         }
-        let co_average = co_aggregate.average_ms();
-        let raw_average = intermediate.raw_aggregate.average_ms();
+        let co_average = co_aggregate.average_ms_or_zero();
+        let raw_average = intermediate.raw_aggregate.average_ms_or_zero();
         co_request_metrics.push(CORequestMetric {
             method: "".to_string(),
             name: "Aggregated".to_string(),
@@ -404,12 +423,11 @@ impl<'m> Prepare<'m> {
         let mut aggregate_users = 0;
         // Every scenario's run times together.
         let mut aggregate_times = GooseRequestMetricTimingData::default();
-        let mut aggregate_iterations = 0.0;
         for scenario in &self.metrics.scenarios {
             let times = &scenario.run_times;
             let (count_per_second, _failures_per_second) =
                 per_second_calculations(self.metrics.duration, times.counter, 0);
-            let iterations = times.counter as f32 / scenario.users.len() as f32;
+            let iterations = iterations_per_user(times.counter, scenario.users.len());
             scenario_metrics.push(ScenarioMetric {
                 name: scenario.name.to_string(),
                 users: scenario.users.len().into(),
@@ -423,7 +441,6 @@ impl<'m> Prepare<'m> {
 
             aggregate_users += scenario.users.len();
             aggregate_times.merge(times);
-            aggregate_iterations += iterations;
         }
 
         let (aggregate_count_per_second, _aggregate_failures_per_second) =
@@ -432,11 +449,11 @@ impl<'m> Prepare<'m> {
             name: "Aggregated".to_string(),
             users: aggregate_users.into(),
             count: aggregate_times.counter.into(),
-            response_time_average: aggregate_times.average_ms().into(),
+            response_time_average: aggregate_times.average_ms_or_zero().into(),
             response_time_minimum: Millis(aggregate_times.minimum_time_us).into(),
             response_time_maximum: Millis(aggregate_times.maximum_time_us).into(),
             count_per_second: aggregate_count_per_second.into(),
-            iterations: aggregate_iterations.into(),
+            iterations: iterations_per_user(aggregate_times.counter, aggregate_users).into(),
         });
 
         Some(scenario_metrics)
@@ -504,6 +521,34 @@ impl<'m> Prepare<'m> {
 
         Some(errors)
     }
+
+    fn build_transaction_errors(&self) -> Option<Vec<TransactionErrorMetric>> {
+        if self.metrics.transaction_errors.is_empty() {
+            return None;
+        }
+
+        // Most frequent first, as the console and the dashboard list them.
+        let mut errors: Vec<_> = self.metrics.transaction_errors.values().collect();
+        errors.sort_by(|a, b| {
+            b.occurrences
+                .cmp(&a.occurrences)
+                .then_with(|| a.scenario_index.cmp(&b.scenario_index))
+                .then_with(|| a.transaction_index.cmp(&b.transaction_index))
+                .then_with(|| a.error.cmp(&b.error))
+        });
+        Some(
+            errors
+                .into_iter()
+                .map(|error| TransactionErrorMetric {
+                    transaction: error.transaction_number(),
+                    scenario: error.scenario_name.clone(),
+                    name: error.transaction_name.clone(),
+                    error: error.error.clone(),
+                    occurrences: error.occurrences.into(),
+                })
+                .collect(),
+        )
+    }
 }
 
 /// Apply baseline deltas to the current report data
@@ -563,6 +608,21 @@ pub(crate) fn apply_baseline_deltas(current: &mut ReportData, baseline: &ReportD
     if let (Some(current_errors), Some(baseline_errors)) = (&mut current.errors, &baseline.errors) {
         correlate_deltas(current_errors, baseline_errors, |e| {
             (e.method.clone(), e.name.clone(), e.error.clone())
+        });
+    }
+
+    // Apply deltas to transaction error metrics if present
+    if let (Some(current_errors), Some(baseline_errors)) = (
+        &mut current.transaction_errors,
+        &baseline.transaction_errors,
+    ) {
+        correlate_deltas(current_errors, baseline_errors, |e| {
+            (
+                e.scenario.clone(),
+                e.transaction.clone(),
+                e.name.clone(),
+                e.error.clone(),
+            )
         });
     }
 }
@@ -652,6 +712,7 @@ impl LoadedReport {
         }
         let mut data = read_report(text.as_bytes())?;
         data.raw_metrics = Cow::Owned(data.raw_metrics.into_owned());
+        restore_breakdown_rows(&mut data);
         Ok(LoadedReport {
             data,
             record: serde_json::from_str(text)?,
@@ -842,6 +903,43 @@ fn rebuild_timed_rows(report: &mut ReportData<'static>) {
     }
 }
 
+/// Put back the per status code breakdown rows a JSON report leaves out, each
+/// after its request's row, as a live report has them.
+fn restore_breakdown_rows(report: &mut ReportData<'static>) {
+    let (rebuilt, _, _) = Prepare::new(
+        ReportOptions {
+            no_transaction_metrics: true,
+            no_scenario_metrics: true,
+            no_status_codes: true,
+        },
+        &report.raw_metrics,
+    )
+    .build_raw();
+    // The breakdown rows that follow each request's row, by that row's key.
+    let mut breakdowns: HashMap<(String, String), Vec<RequestMetric>> = HashMap::new();
+    let mut parent = None;
+    for row in rebuilt {
+        if row.is_breakdown {
+            if let Some(key) = &parent {
+                breakdowns.entry(Clone::clone(key)).or_default().push(row);
+            }
+        } else {
+            parent = Some((row.method, row.name));
+        }
+    }
+    if breakdowns.is_empty() {
+        return;
+    }
+    let stored = std::mem::take(&mut report.raw_request_metrics);
+    for row in stored {
+        let following = breakdowns.remove(&(row.method.clone(), row.name.clone()));
+        report.raw_request_metrics.push(row);
+        report
+            .raw_request_metrics
+            .extend(following.into_iter().flatten());
+    }
+}
+
 /// Replace each row of `stored` with the row of `rebuilt` that has its key.
 fn replace_rows<T, K: Eq + Hash>(stored: &mut [T], rebuilt: Vec<T>, key: impl Fn(&T) -> K) {
     let mut rebuilt: HashMap<K, T> = rebuilt.into_iter().map(|row| (key(&row), row)).collect();
@@ -865,6 +963,8 @@ struct BaselineReportData {
     pub transaction_metrics: Option<Vec<BaselineTransactionMetric>>,
     pub status_code_metrics: Option<Vec<StatusCodeMetric>>,
     pub errors: Option<Vec<BaselineErrorMetric>>,
+    #[serde(default)]
+    pub transaction_errors: Option<Vec<BaselineTransactionErrorMetric>>,
     pub coordinated_omission_metrics: Option<CoMetricsSummary>,
 }
 
@@ -882,6 +982,8 @@ struct BaselineGooseMetrics {
     #[serde(default)]
     pub scenarios: super::ScenarioMetrics,
     pub errors: super::GooseErrorMetrics,
+    #[serde(default)]
+    pub transaction_errors: super::GooseTransactionErrorMetrics,
     #[serde(default)]
     pub hosts: std::collections::HashSet<String>,
     pub coordinated_omission_metrics: Option<super::CoordinatedOmissionMetrics>,
@@ -907,6 +1009,7 @@ impl From<BaselineGooseMetrics> for GooseMetrics {
             transactions: baseline.transactions,
             scenarios: baseline.scenarios,
             errors: baseline.errors,
+            transaction_errors: baseline.transaction_errors,
             hosts: baseline.hosts,
             coordinated_omission_metrics: baseline.coordinated_omission_metrics,
             final_metrics: baseline.final_metrics,
@@ -948,6 +1051,9 @@ impl BaselineReportData {
             status_code_metrics: self.status_code_metrics,
             errors: self
                 .errors
+                .map(|errors| errors.into_iter().map(Into::into).collect()),
+            transaction_errors: self
+                .transaction_errors
                 .map(|errors| errors.into_iter().map(Into::into).collect()),
             coordinated_omission_metrics: self.coordinated_omission_metrics,
         }
@@ -1123,6 +1229,28 @@ struct BaselineErrorMetric {
     pub occurrences: usize,
 }
 
+/// Baseline transaction error metric with plain values
+#[derive(Debug, Deserialize)]
+struct BaselineTransactionErrorMetric {
+    pub transaction: String,
+    pub scenario: String,
+    pub name: String,
+    pub error: String,
+    pub occurrences: usize,
+}
+
+impl From<BaselineTransactionErrorMetric> for TransactionErrorMetric {
+    fn from(baseline: BaselineTransactionErrorMetric) -> Self {
+        TransactionErrorMetric {
+            transaction: baseline.transaction,
+            scenario: baseline.scenario,
+            name: baseline.name,
+            error: baseline.error,
+            occurrences: Value::Plain(baseline.occurrences),
+        }
+    }
+}
+
 impl From<BaselineErrorMetric> for ErrorMetric {
     fn from(baseline: BaselineErrorMetric) -> Self {
         ErrorMetric {
@@ -1198,6 +1326,78 @@ mod test {
     use super::*;
     use crate::metrics::millis::MillisDelta;
     use crate::report::RequestMetric;
+
+    /// Two scenarios with different iteration counts: one user ran the first
+    /// 10 times, three users ran the second twice.
+    fn two_scenario_metrics() -> GooseMetrics {
+        use crate::metrics::ScenarioMetricAggregate;
+        let mut metrics = GooseMetrics {
+            display_metrics: true,
+            duration: 10,
+            ..Default::default()
+        };
+        let mut first = ScenarioMetricAggregate::new(0, "First".into());
+        for _ in 0..10 {
+            first.update(10, 0);
+        }
+        let mut second = ScenarioMetricAggregate::new(1, "Second".into());
+        second.update(10, 1);
+        second.update(10, 2);
+        second.users.insert(3);
+        metrics.scenarios = vec![first, second];
+        metrics
+    }
+
+    #[test]
+    fn report_aggregated_iterations_match_the_console() {
+        let metrics = two_scenario_metrics();
+        let data = prepare_data_with_baseline(
+            ReportOptions {
+                no_transaction_metrics: false,
+                no_scenario_metrics: false,
+                no_status_codes: false,
+            },
+            &metrics,
+            None,
+        );
+        let scenarios = data.scenario_metrics.expect("scenario metrics");
+        let aggregated = scenarios.last().unwrap();
+        assert_eq!(aggregated.name, "Aggregated");
+        // 12 runs by 4 users.
+        assert_eq!(*aggregated.iterations.value(), 3.0);
+        // The console shows the same.
+        let console = metrics.to_string();
+        let row = console
+            .lines()
+            .find(|line| line.trim_start().starts_with("Aggregated") && line.contains(" 12 |"))
+            .unwrap_or_else(|| panic!("aggregated scenario row in {}", console));
+        assert_eq!(row.rsplit('|').next().unwrap().trim(), "3.00");
+
+        // As does the Markdown report, in a table of scenarios.
+        let mut markdown = Vec::new();
+        crate::report::write_markdown_report(
+            &mut markdown,
+            prepare_data_with_baseline(
+                ReportOptions {
+                    no_transaction_metrics: false,
+                    no_scenario_metrics: false,
+                    no_status_codes: false,
+                },
+                &metrics,
+                None,
+            ),
+            &[],
+        )
+        .unwrap();
+        let markdown = String::from_utf8(markdown).unwrap();
+        let table = &markdown[markdown.find("## Scenario Metrics").unwrap()..];
+        assert!(table.contains("\n| Scenario | # Users |"), "{}", table);
+        let row = table
+            .lines()
+            .find(|line| line.starts_with("| Aggregated |"))
+            .unwrap();
+        assert!(row.ends_with("| 3.00 |"), "{}", row);
+    }
 
     #[test]
     fn delta_value_usize() {
@@ -1413,6 +1613,7 @@ mod test {
                 error: "503 Service Unavailable".into(),
                 occurrences: 5usize.into(),
             }]),
+            transaction_errors: None,
             coordinated_omission_metrics: None,
         };
 
@@ -1491,6 +1692,7 @@ mod test {
                 error: "503 Service Unavailable".into(),
                 occurrences: 3usize.into(),
             }]),
+            transaction_errors: None,
             coordinated_omission_metrics: None,
         };
 
@@ -1595,6 +1797,7 @@ mod test {
             transaction_metrics: None,
             status_code_metrics: None,
             errors: None,
+            transaction_errors: None,
             coordinated_omission_metrics: None,
         };
 

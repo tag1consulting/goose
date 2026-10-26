@@ -245,10 +245,15 @@ function renderSnapshot(
       "Metrics are disabled (--no-metrics). The dashboard shell is live, but request/series data is empty.",
       "warn"
     );
-  } else if (flags.requests_truncated || flags.errors_truncated) {
+  } else if (
+    flags.requests_truncated ||
+    flags.errors_truncated ||
+    flags.transaction_errors_truncated
+  ) {
     const parts: string[] = [];
     if (flags.requests_truncated) parts.push("request rows truncated");
     if (flags.errors_truncated) parts.push("error rows truncated");
+    if (flags.transaction_errors_truncated) parts.push("transaction error rows truncated");
     setBanner(parts.join("; ") + " (showing top rows only).", "info");
   } else if (isControlTokenMissing()) {
     setBanner(

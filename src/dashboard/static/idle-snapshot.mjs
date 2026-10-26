@@ -33,6 +33,7 @@ export const IDLE_SNAPSHOT = {
   },
   requests: [],
   errors: [],
+  transaction_errors: [],
   scenarios: [],
   transactions: [],
   series: {
@@ -49,6 +50,7 @@ export const IDLE_SNAPSHOT = {
     scenario_metrics_disabled: false,
     requests_truncated: false,
     errors_truncated: false,
+    transaction_errors_truncated: false,
     series_seconds: 0,
     percentiles_over_time: true,
   },
