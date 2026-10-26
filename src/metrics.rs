@@ -983,7 +983,10 @@ pub struct GooseRequestMetricAggregate {
     /// Only tracks aggregate statistics (count, total, min, max) rather than full
     /// distributions, keeping memory overhead minimal. Only populated for non-CO-mitigated
     /// requests when status code tracking is enabled.
-    #[serde(skip)]
+    ///
+    /// Written to the JSON report, so a report rendered from it with
+    /// `--render-report` rebuilds the per status code breakdown rows.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub status_code_timings: HashMap<u16, StatusCodeTimingSummary>,
     /// Total number of times this path-method request resulted in a successful (2xx) status code.
     ///

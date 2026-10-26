@@ -54,11 +54,13 @@ pub(crate) struct RequestMetric {
     pub requests_per_second: Value<NullableFloat>,
     pub failures_per_second: Value<NullableFloat>,
     /// True for per-status-code breakdown rows (added by PR #663), which render
-    /// differently in reports (indented, italic). Skipped during serialization so
-    /// breakdown rows never appear in JSON output; defaults to `false` on
-    /// deserialization so baseline files loaded from JSON contain only aggregate
-    /// metrics. This is intentional: breakdown rows are a presentation detail
-    /// regenerated from each run's status code distribution, not a metric to compare.
+    /// differently in reports (indented, italic). The JSON report leaves the
+    /// breakdown rows out (`ReportData::raw_request_metrics` is serialized
+    /// without them), so a JSON report, and a baseline loaded from one, holds
+    /// only each request's row and the Aggregated row. This is intentional:
+    /// breakdown rows are a presentation detail regenerated from each run's
+    /// status code distribution, not a metric to compare. A report rendered
+    /// from a JSON report with `--render-report` rebuilds them.
     #[serde(skip_serializing)]
     #[serde(default)]
     pub is_breakdown: bool,

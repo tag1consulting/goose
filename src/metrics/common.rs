@@ -28,10 +28,22 @@ where
     Ok(opt.unwrap_or(f64::NAN))
 }
 
+/// Write request rows without their per status code breakdown rows, which are
+/// rebuilt from the request's status codes whenever a report is rendered.
+fn serialize_without_breakdowns<S>(rows: &[RequestMetric], serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.collect_seq(rows.iter().filter(|row| !row.is_breakdown))
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ReportData<'m> {
     pub raw_metrics: Cow<'m, GooseMetrics>,
 
+    /// Each request's row, followed by its per status code breakdown rows,
+    /// then the Aggregated row. The JSON report holds no breakdown rows.
+    #[serde(serialize_with = "serialize_without_breakdowns")]
     pub raw_request_metrics: Vec<RequestMetric>,
     pub raw_response_metrics: Vec<ResponseMetric>,
 
@@ -652,6 +664,7 @@ impl LoadedReport {
         }
         let mut data = read_report(text.as_bytes())?;
         data.raw_metrics = Cow::Owned(data.raw_metrics.into_owned());
+        restore_breakdown_rows(&mut data);
         Ok(LoadedReport {
             data,
             record: serde_json::from_str(text)?,
@@ -839,6 +852,43 @@ fn rebuild_timed_rows(report: &mut ReportData<'static>) {
     }
     if let (Some(stored), Some(rebuilt)) = (&mut report.scenario_metrics, scenario_metrics) {
         replace_rows(stored, rebuilt, |s| s.name.clone());
+    }
+}
+
+/// Put back the per status code breakdown rows a JSON report leaves out, each
+/// after its request's row, as a live report has them.
+fn restore_breakdown_rows(report: &mut ReportData<'static>) {
+    let (rebuilt, _, _) = Prepare::new(
+        ReportOptions {
+            no_transaction_metrics: true,
+            no_scenario_metrics: true,
+            no_status_codes: true,
+        },
+        &report.raw_metrics,
+    )
+    .build_raw();
+    // The breakdown rows that follow each request's row, by that row's key.
+    let mut breakdowns: HashMap<(String, String), Vec<RequestMetric>> = HashMap::new();
+    let mut parent = None;
+    for row in rebuilt {
+        if row.is_breakdown {
+            if let Some(key) = &parent {
+                breakdowns.entry(Clone::clone(key)).or_default().push(row);
+            }
+        } else {
+            parent = Some((row.method, row.name));
+        }
+    }
+    if breakdowns.is_empty() {
+        return;
+    }
+    let stored = std::mem::take(&mut report.raw_request_metrics);
+    for row in stored {
+        let following = breakdowns.remove(&(row.method.clone(), row.name.clone()));
+        report.raw_request_metrics.push(row);
+        report
+            .raw_request_metrics
+            .extend(following.into_iter().flatten());
     }
 }
 
