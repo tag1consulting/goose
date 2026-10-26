@@ -4871,7 +4871,6 @@ impl GooseAttack {
     ) -> Result<Vec<u8>, GooseError> {
         use crate::report::pdf::generate_pdf_from_html;
         use crate::report::print::generate_print_optimized_html_content;
-        use tokio::fs as async_fs;
 
         // Generate HTML report content using the shared function
         let html_report = source.html(baseline)?;
@@ -4879,17 +4878,8 @@ impl GooseAttack {
         // Add print-optimized CSS for better PDF output using the shared function
         let print_optimized_html = generate_print_optimized_html_content(&html_report);
 
-        // If pdf_print_html is configured, save the PDF-optimized HTML for debugging
-        if let Some(pdf_print_html) = self.configuration.pdf_print_html() {
-            if let Err(e) = async_fs::write(pdf_print_html, &print_optimized_html).await {
-                return Err(GooseError::InvalidOption {
-                    option: "--pdf-print-html".to_string(),
-                    value: pdf_print_html.to_string(),
-                    detail: format!("Failed to write PDF-optimized HTML: {e}"),
-                });
-            }
-            info!("PDF-optimized HTML saved to: {pdf_print_html}");
-        }
+        // A --pdf-print-html file is written by write_report_files, with or
+        // without a PDF report.
 
         // The Chrome found at startup, by create_reports, unless it was a
         // download that another Goose run's refresh has since removed.

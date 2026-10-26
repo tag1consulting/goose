@@ -242,8 +242,8 @@ Reports:
           Label the run in its reports
 
           Stores TEXT in the JSON report and shows it at the top of the HTML and
-          Markdown reports and in the dashboard. Needs --report-file or
-          --dashboard.
+          Markdown reports and in the dashboard. Needs --report-file,
+          --pdf-print-html or --dashboard.
 
           Example: --notes "baseline before cache change". Set in code with
           GooseDefault::Notes.
@@ -280,7 +280,7 @@ Reports:
 
           Report graphs show a line for the total and, by default, one more for
           each request, transaction or scenario. This leaves out the extra
-          lines. Needs --report-file or --dashboard.
+          lines. Needs --report-file, --pdf-print-html or --dashboard.
 
           Set in code with GooseDefault::NoGranularData.
 
@@ -289,6 +289,7 @@ Reports:
 
           Writes the HTML report, laid out for printing, to FILE, to turn into a
           PDF in any browser. Needs neither Chrome nor the pdf-reports feature.
+          Not allowed with --no-metrics.
 
           Example: --pdf-print-html report-print.html.
 

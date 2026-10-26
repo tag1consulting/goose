@@ -367,7 +367,7 @@ pub struct GooseConfiguration {
     /// Label the run in its reports
     ///
     /// Stores TEXT in the JSON report and shows it at the top of the HTML and Markdown
-    /// reports and in the dashboard. Needs --report-file or --dashboard.
+    /// reports and in the dashboard. Needs --report-file, --pdf-print-html or --dashboard.
     ///
     /// Example: --notes "baseline before cache change". Set in code with
     /// GooseDefault::Notes.
@@ -402,8 +402,8 @@ pub struct GooseConfiguration {
     /// Graph only totals in reports
     ///
     /// Report graphs show a line for the total and, by default, one more for each request,
-    /// transaction or scenario. This leaves out the extra lines. Needs --report-file or
-    /// --dashboard.
+    /// transaction or scenario. This leaves out the extra lines. Needs --report-file,
+    /// --pdf-print-html or --dashboard.
     ///
     /// Set in code with GooseDefault::NoGranularData.
     #[arg(help_heading = "Reports", long)]
@@ -411,7 +411,8 @@ pub struct GooseConfiguration {
     /// Write print-ready HTML for PDF
     ///
     /// Writes the HTML report, laid out for printing, to FILE, to turn into a PDF in any
-    /// browser. Needs neither Chrome nor the pdf-reports feature.
+    /// browser. Needs neither Chrome nor the pdf-reports feature. Not allowed with
+    /// --no-metrics.
     ///
     /// Example: --pdf-print-html report-print.html.
     #[arg(help_heading = "Reports", long, value_name = "FILE")]
@@ -3788,9 +3789,9 @@ impl GooseConfiguration {
 
     /// Whether the graph data is kept for the whole run, with Save report set
     /// to `save_report`: true when a report will be written at the run's end,
-    /// to a `--report-file` path or by Save report.
+    /// to a `--report-file` or `--pdf-print-html` path, or by Save report.
     pub(crate) fn keeps_full_graph(&self, save_report: bool) -> bool {
-        !self.report_paths().is_empty() || save_report
+        !self.report_paths().is_empty() || self.pdf_print_html().is_some() || save_report
     }
 
     /// Whether only the dashboard asks for a run's folder: no output flag given
@@ -3866,10 +3867,16 @@ impl GooseConfiguration {
         self.pdf_timeout.unwrap_or(DEFAULT_PDF_TIMEOUT)
     }
 
-    /// Whether per second graph data is recorded: for a `--report-file`, or the
-    /// dashboard's charts and its Save report.
+    /// Whether a report may be written: to a `--report-file` or
+    /// `--pdf-print-html` path, or by the dashboard's Save report.
+    pub(crate) fn writes_report(&self) -> bool {
+        !self.report_file.is_empty() || self.pdf_print_html().is_some() || self.dashboard
+    }
+
+    /// Whether per second graph data is recorded: for a report
+    /// ([`Self::writes_report`]), or the dashboard's charts.
     pub(crate) fn records_graph_data(&self) -> bool {
-        !self.report_file.is_empty() || self.dashboard
+        self.writes_report()
     }
 
     /// Whether response time histograms are kept for each second, for the
@@ -4227,6 +4234,15 @@ impl GooseConfiguration {
                         "`configuration.report_file` can not be set with `configuration.no_metrics`."
                             .to_string(),
                 });
+            // Nor can the print ready HTML report.
+            } else if let Some(pdf_print_html) = self.pdf_print_html() {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.pdf_print_html`".to_string(),
+                    value: pdf_print_html.to_string(),
+                    detail:
+                        "`configuration.pdf_print_html` can not be set with `configuration.no_metrics`."
+                            .to_string(),
+                });
             // Coordinated Omission Mitigation can't be enabled if metrics are disabled.
             } else if self.co_mitigation.as_ref().unwrap()
                 != &GooseCoordinatedOmissionMitigation::Disabled
@@ -4240,15 +4256,16 @@ impl GooseConfiguration {
             }
         }
 
-        // A report is written at the end of the run to a --report-file path, or by
-        // Save report, which a bare --report-file or --dashboard turns on.
-        let has_report = !self.report_file.is_empty() || self.dashboard;
+        // A report is written at the end of the run to a --report-file or
+        // --pdf-print-html path, or by Save report, which a bare --report-file or
+        // --dashboard turns on.
+        let has_report = self.writes_report();
         if !has_report && self.no_granular_report {
             return Err(GooseError::InvalidOption {
                 option: "`configuration.no_granular_report`".to_string(),
                 value: true.to_string(),
                 detail:
-                    "`configuration.no_granular_report` (--no-granular-report) needs a report: add --report-file or --dashboard."
+                    "`configuration.no_granular_report` (--no-granular-report) needs a report: add --report-file, --pdf-print-html or --dashboard."
                         .to_string(),
             });
         }
@@ -4279,8 +4296,8 @@ impl GooseConfiguration {
             }
         }
 
-        // Graph data goes in a JSON report.
-        if self.report_graph_data && !has_report {
+        // Graph data goes in a JSON report, which --pdf-print-html does not write.
+        if self.report_graph_data && self.report_file.is_empty() && !self.dashboard {
             return Err(GooseError::InvalidOption {
                 option: "`configuration.report_graph_data`".to_string(),
                 value: true.to_string(),
@@ -4295,7 +4312,7 @@ impl GooseConfiguration {
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.notes`".to_string(),
                     value: notes.to_string(),
-                    detail: "`configuration.notes` (--notes) would be stored nowhere: add --report-file or --dashboard."
+                    detail: "`configuration.notes` (--notes) would be stored nowhere: add --report-file, --pdf-print-html or --dashboard."
                         .to_string(),
                 });
             }
@@ -6752,6 +6769,33 @@ mod test {
             Err(other) => panic!("{:?}", other),
             Ok(_) => panic!("p95 was taken"),
         }
+    }
+
+    /// `--pdf-print-html` is a report: the notes and `--no-granular-report`
+    /// apply to it, `--no-metrics` refuses it, and it writes no JSON for
+    /// `--report-graph-data`.
+    #[test]
+    fn pdf_print_html_is_a_report() {
+        let print = ["--pdf-print-html", "print.html"];
+        for extra in [&["--notes", "a note"][..], &["--no-granular-report"]] {
+            assert!(
+                validated(&[&print[..], extra].concat(), &Default::default()).is_ok(),
+                "{:?}",
+                extra
+            );
+        }
+        assert_eq!(
+            refused_detail(validated(
+                &[&print[..], &["--no-metrics"]].concat(),
+                &Default::default()
+            )),
+            "`configuration.pdf_print_html` can not be set with `configuration.no_metrics`."
+        );
+        assert!(refused_detail(validated(
+            &[&print[..], &["--report-graph-data"]].concat(),
+            &Default::default()
+        ))
+        .contains("needs a report"));
     }
 
     /// A rule that can never pass is refused before any user starts, from the
