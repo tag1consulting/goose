@@ -661,6 +661,13 @@ pub struct GooseAttack {
     metrics: GooseMetrics,
     /// All data for report graphs.
     graph_data: GraphData,
+    /// The client builder from the last `set_client_builder_with_cookies` or
+    /// `set_client_builder_without_cookies` call; `None` builds each user's client
+    /// from the configuration alone.
+    client_builder: Option<client::ClientBuilderSettings>,
+    /// How users get their clients when a client builder is set, built once when
+    /// the load test starts, so a shared client is one client for the whole run.
+    client_strategy: Option<client::ClientStrategy>,
     /// Set when a run starts and cleared once its reports are written, so a
     /// shutdown with no run since the last one writes nothing.
     run_in_progress: bool,
@@ -740,6 +747,8 @@ impl GooseAttack {
             step_started: None,
             metrics: GooseMetrics::default(),
             graph_data: GraphData::new(),
+            client_builder: None,
+            client_strategy: None,
             run_in_progress: false,
             ended_by: None,
             output: runs::Output::default(),
@@ -785,6 +794,8 @@ impl GooseAttack {
             step_started: None,
             metrics: GooseMetrics::default(),
             graph_data: GraphData::new(),
+            client_builder: None,
+            client_strategy: None,
             run_in_progress: false,
             ended_by: None,
             output: runs::Output::default(),
@@ -972,42 +983,93 @@ impl GooseAttack {
         self
     }
 
-    /// Set a custom client builder for cookie-enabled clients.
+    /// Build every user's HTTP client from `builder`, each user with its own client
+    /// and its own cookie jar. The users that run the
+    /// [`test_start`](#method.test_start) and [`test_stop`](#method.test_stop)
+    /// transactions get one too.
     ///
-    /// This allows you to configure custom HTTP client settings for all users
-    /// in the load test when cookies are enabled.
+    /// The builder's user agent replaces Goose's `goose/<version>`. The timeout,
+    /// gzip and invalid certificate settings also have a configuration option
+    /// (`--timeout`, `--no-gzip`, `--accept-invalid-certs`), and each comes from the
+    /// first of:
+    ///
+    /// 1. the option, when it was given on the command line;
+    /// 2. the builder, when it was given that setting;
+    /// 3. a [`GooseDefault`](./config/enum.GooseDefault.html) for the option;
+    /// 4. Goose's built in default: a 60 second timeout, gzip on, certificates
+    ///    checked.
+    ///
+    /// A transaction can still give its user a different client with
+    /// [`GooseUser::set_client_builder`](./goose/struct.GooseUser.html#method.set_client_builder).
+    ///
+    /// This and
+    /// [`set_client_builder_without_cookies`](#method.set_client_builder_without_cookies)
+    /// replace each other: calling either one again, or the other, means the last call
+    /// wins.
+    ///
+    /// # Errors
+    ///
+    /// [`GooseError::FeatureNotEnabled`] when Goose is built without the `cookies`
+    /// feature, as the clients could not store cookies.
     ///
     /// # Example
     /// ```rust
+    /// # #[cfg(feature = "cookies")]
+    /// # {
     /// use goose::prelude::*;
     /// use goose::client::GooseClientBuilder;
     /// use std::time::Duration;
     ///
-    /// #[tokio::main]
-    /// async fn main() -> Result<(), GooseError> {
-    ///     let custom_client = GooseClientBuilder::new()
-    ///         .timeout(Duration::from_secs(30))
-    ///         .user_agent("custom-agent");
+    /// let custom_client = GooseClientBuilder::new()
+    ///     .timeout(Duration::from_secs(30))
+    ///     .user_agent("custom-agent");
     ///
-    ///     GooseAttack::initialize()?
-    ///         .set_client_builder_with_cookies(custom_client)?;
-    ///
-    ///     Ok(())
-    /// }
+    /// let _goose_attack = GooseAttack::initialize()?
+    ///     .set_client_builder_with_cookies(custom_client)?;
+    /// # }
+    /// # Ok::<(), goose::GooseError>(())
     /// ```
     pub fn set_client_builder_with_cookies(
-        self,
-        _client_builder: crate::client::GooseClientBuilder<crate::client::CookiesEnabled>,
+        mut self,
+        builder: client::GooseClientBuilder<client::CookiesEnabled>,
     ) -> Result<Self, GooseError> {
-        // For now, this is a placeholder that accepts the builder but doesn't use it
-        // In a future implementation, this would store the builder for use during client creation
+        if !cfg!(feature = "cookies") {
+            return Err(GooseError::FeatureNotEnabled {
+                feature: "cookies".to_string(),
+                detail: "`set_client_builder_with_cookies` needs the `cookies` feature to give each user a cookie jar (rebuild with `--features cookies`), or use `set_client_builder_without_cookies`".to_string(),
+            });
+        }
+        self.client_builder = Some(builder.into_settings());
         Ok(self)
     }
 
-    /// Set a custom client builder for cookie-disabled clients.
+    /// Build one HTTP client from `builder`, without a cookie store, and share it
+    /// across every user.
     ///
-    /// This allows you to configure custom HTTP client settings for all users
-    /// in the load test when cookies are disabled.
+    /// The client is built once, before any user starts, and each user gets a clone
+    /// of it; clones of a [`reqwest::Client`] share one connection pool, so this suits
+    /// a load test with many users that needs no cookies. Users a Controller adds
+    /// later, and the users that run the [`test_start`](#method.test_start) and
+    /// [`test_stop`](#method.test_stop) transactions, share it too. When building
+    /// the client fails, the load test fails before any user starts, with that error.
+    ///
+    /// The builder's settings, and the command line options that win over them, are
+    /// as for
+    /// [`set_client_builder_with_cookies`](#method.set_client_builder_with_cookies).
+    /// A transaction that calls
+    /// [`GooseUser::set_client_builder`](./goose/struct.GooseUser.html#method.set_client_builder)
+    /// moves its user off the shared client and onto a client of its own.
+    ///
+    /// This and
+    /// [`set_client_builder_with_cookies`](#method.set_client_builder_with_cookies)
+    /// replace each other: calling either one again, or the other, means the last call
+    /// wins.
+    ///
+    /// # Errors
+    ///
+    /// None at present: the client is built when the load test starts, and an error
+    /// building it is returned from
+    /// [`execute`](#method.execute).
     ///
     /// # Example
     /// ```rust
@@ -1015,26 +1077,39 @@ impl GooseAttack {
     /// use goose::client::GooseClientBuilder;
     /// use std::time::Duration;
     ///
-    /// #[tokio::main]
-    /// async fn main() -> Result<(), GooseError> {
-    ///     let custom_client = GooseClientBuilder::new()
-    ///         .without_cookies()
-    ///         .timeout(Duration::from_secs(30))
-    ///         .user_agent("custom-agent");
+    /// let custom_client = GooseClientBuilder::new()
+    ///     .without_cookies()
+    ///     .timeout(Duration::from_secs(30))
+    ///     .user_agent("custom-agent");
     ///
-    ///     GooseAttack::initialize()?
-    ///         .set_client_builder_without_cookies(custom_client)?;
-    ///
-    ///     Ok(())
-    /// }
+    /// let _goose_attack = GooseAttack::initialize()?
+    ///     .set_client_builder_without_cookies(custom_client)?;
+    /// # Ok::<(), goose::GooseError>(())
     /// ```
     pub fn set_client_builder_without_cookies(
-        self,
-        _client_builder: crate::client::GooseClientBuilder<crate::client::CookiesDisabled>,
+        mut self,
+        builder: client::GooseClientBuilder<client::CookiesDisabled>,
     ) -> Result<Self, GooseError> {
-        // For now, this is a placeholder that accepts the builder but doesn't use it
-        // In a future implementation, this would store the builder for use during client creation
+        self.client_builder = Some(builder.into_settings());
         Ok(self)
+    }
+
+    /// Resolve the client builder's settings against the configured
+    /// configuration and build how users get their clients: a shared client is
+    /// built here.
+    fn build_client_strategy(
+        &mut self,
+        command_line_client_options: client::CommandLineClientOptions,
+    ) -> Result<(), GooseError> {
+        self.client_strategy = match &self.client_builder {
+            Some(builder) => Some(
+                builder
+                    .resolve(command_line_client_options, &self.configuration)
+                    .into_strategy()?,
+            ),
+            None => None,
+        };
+        Ok(())
     }
 
     /// Internal helper to determine if the scenario is currently active.
@@ -1196,9 +1271,11 @@ impl GooseAttack {
         }
 
         // Create GooseUser objects in parallel across available CPUs. Each user
-        // gets its own reqwest client, which is the expensive part. Chunks are
-        // collected back in order to preserve the scenario assignment sequence.
+        // gets its own reqwest client unless one is shared, and building it is
+        // the expensive part. Chunks are collected back in order to preserve the
+        // scenario assignment sequence.
         let configuration = &self.configuration;
+        let client_strategy = &self.client_strategy;
         let metrics_hash = self.metrics.hash;
         let num_cpus = std::thread::available_parallelism()
             .map(|n| n.get())
@@ -1213,13 +1290,17 @@ impl GooseAttack {
                     let mut users = Vec::with_capacity(chunk.len());
                     for (i, (scenarios_index, machine_name, base_url)) in chunk.iter().enumerate() {
                         debug!("creating user state: {} ({})", base + i, scenarios_index);
+                        let reqwest_client = match client_strategy {
+                            None => goose::create_reqwest_client(configuration)?,
+                            Some(strategy) => strategy.user_client()?,
+                        };
                         users.push(GooseUser::new(
                             *scenarios_index,
                             machine_name.clone(),
                             base_url.clone(),
                             configuration,
                             metrics_hash,
-                            Some(goose::create_reqwest_client(configuration)?),
+                            Some(reqwest_client),
                         )?);
                     }
                     Ok::<Vec<GooseUser>, GooseError>(users)
@@ -1395,6 +1476,11 @@ impl GooseAttack {
             std::process::exit(0);
         }
 
+        // Note which client options the command line gave before the defaults
+        // are merged in: those win over a client builder, the defaults do not.
+        let command_line_client_options =
+            client::CommandLineClientOptions::from_command_line(&self.configuration);
+
         // Configure GooseConfiguration.
         self.configuration.configure(&self.defaults)?;
 
@@ -1433,6 +1519,11 @@ impl GooseAttack {
         // Build TestPlan, and the shape of a users ramp.
         self.test_plan = TestPlan::build(&self.configuration)?;
         self.run_shape = run_shape::RunShape::for_configuration(&self.configuration);
+
+        // A client builder gives users clients built from its settings. Build
+        // them, or the one shared client, now: before any user starts, and once
+        // for the whole run, so users a Controller adds later share it too.
+        self.build_client_strategy(command_line_client_options)?;
 
         // With a validated GooseConfiguration, enter a run mode.
         self.attack_mode = AttackMode::StandAlone;
@@ -2097,7 +2188,14 @@ impl GooseAttack {
                 None,
                 self.defaults.host.clone(),
             )?;
-            let mut user = GooseUser::single(base_url, &self.configuration)?;
+            let mut user = GooseUser::single_with_client(
+                base_url,
+                &self.configuration,
+                self.client_strategy
+                    .as_ref()
+                    .map(client::ClientStrategy::user_client)
+                    .transpose()?,
+            )?;
             let function = &t.function;
             let _ = function(&mut user).await;
         }
@@ -2115,7 +2213,14 @@ impl GooseAttack {
                 None,
                 self.defaults.host.clone(),
             )?;
-            let mut user = GooseUser::single(base_url, &self.configuration)?;
+            let mut user = GooseUser::single_with_client(
+                base_url,
+                &self.configuration,
+                self.client_strategy
+                    .as_ref()
+                    .map(client::ClientStrategy::user_client)
+                    .transpose()?,
+            )?;
             let function = &t.function;
             let _ = function(&mut user).await;
         }
@@ -4792,5 +4897,39 @@ mod tests {
             assert_eq!(indexes(start), serial_start);
             assert_eq!(indexes(stop), serial_stop);
         }
+    }
+
+    /// Users weighted after the shared client is built, as a Controller adds them
+    /// to a running load test, reuse that client: it is built once.
+    #[test]
+    fn test_shared_client_is_shared_by_users_added_later() {
+        let configuration =
+            GooseConfiguration::parse_args_default(&["--host", "http://127.0.0.1", "--quiet"])
+                .unwrap();
+        let mut goose_attack = GooseAttack::initialize_with_config(configuration)
+            .unwrap()
+            .register_scenario(
+                scenario!("Shared").register_transaction(transaction!(noop_transaction)),
+            )
+            .set_client_builder_without_cookies(client::GooseClientBuilder::new().without_cookies())
+            .unwrap();
+        goose_attack
+            .configuration
+            .configure(&goose_attack.defaults)
+            .unwrap();
+
+        let builds = || client::SHARED_CLIENT_BUILDS.with(|builds| builds.get());
+        let before = builds();
+        goose_attack
+            .build_client_strategy(client::CommandLineClientOptions::default())
+            .unwrap();
+        let mut users = goose_attack.weight_scenario_users(2).unwrap();
+        users.extend(goose_attack.weight_scenario_users(2).unwrap());
+        assert_eq!(users.len(), 4);
+        assert_eq!(
+            builds() - before,
+            1,
+            "users weighted later were given a newly built shared client"
+        );
     }
 }

@@ -1190,7 +1190,18 @@ impl GooseUser {
 
     /// Create a new single-use user.
     pub fn single(base_url: Url, configuration: &GooseConfiguration) -> Result<Self, GooseError> {
-        let mut single_user = GooseUser::new(0, Arc::from(""), base_url, configuration, 0, None)?;
+        Self::single_with_client(base_url, configuration, None)
+    }
+
+    /// [`Self::single`], with `reqwest_client` as its client when given, as a
+    /// client builder set on the [`GooseAttack`](../struct.GooseAttack.html) gives.
+    pub(crate) fn single_with_client(
+        base_url: Url,
+        configuration: &GooseConfiguration,
+        reqwest_client: Option<Client>,
+    ) -> Result<Self, GooseError> {
+        let mut single_user =
+            GooseUser::new(0, Arc::from(""), base_url, configuration, 0, reqwest_client)?;
         // Only one user, so index is 0.
         single_user.weighted_users_index = 0;
         // Do not throttle [`test_start`](../struct.GooseAttack.html#method.test_start) (setup) and
