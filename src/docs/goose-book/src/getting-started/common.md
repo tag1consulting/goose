@@ -70,7 +70,7 @@ cargo run --release -- --decrease-rate .5
 ```
 
 ### Decrease time example
-_Stop all users over 30 seconds._
+_Stop all users over 30 seconds._ Goose stops the first user at once and the rest at even intervals, so with 4 users the last one stops after about 22.5 seconds.
 
 ```bash
 cargo run --release -- --decrease-time 30s
@@ -164,7 +164,7 @@ Later, run the same load test and pass the previous JSON report as a baseline:
 cargo run --release -- --report-file report.html --baseline-file baseline.json
 ```
 
-When a baseline file is provided, the numeric metrics in the HTML and Markdown reports include a delta showing the difference from the baseline. For example, instead of just showing `1,234` requests, the HTML report shows `1,234 (+200)` if the current run had 200 more requests than the baseline, or `1,234 (-50)` if it had 50 fewer; the Markdown report shows the same without thousands separators, `1234 (+200)`. The JSON report holds only the current run's values, so it can serve as the next run's baseline.
+When a baseline file is provided, the numeric metrics in the HTML and Markdown reports include a delta showing the difference from the baseline. For example, instead of just showing `1,234` requests, the HTML report shows `1,234 (+200)` if the current run had 200 more requests than the baseline, or `1,234 (-50)` if it had 50 fewer; the Markdown report shows its request counts without thousands separators, `1234 (+200)`. The JSON report holds only the current run's values, so it can serve as the next run's baseline.
 
 A time's delta is the difference of the two values shown. A 0.19 baseline's request, transaction and scenario times come from its microsecond timing data. A report from an older Goose holds whole milliseconds: its minimums and maximums are truncated, and its percentiles above 100 ms are rounded to 10 ms, 100 ms or whole seconds. So an unchanged time can read differently against it, such as `38 (+1)`.
 

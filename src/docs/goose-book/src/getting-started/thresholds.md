@@ -129,7 +129,7 @@ match goose_attack.execute().await {
 
 ### Exit code in CI
 
-A load test whose `main` returns `Result<(), GooseError>` and uses `?` on `execute()`, as every example does, exits with code 1 when a threshold fails, so a CI step fails with it:
+A load test whose `main` returns `Result<(), GooseError>` and uses `?` on `execute()`, as every example does, exits with code 1 when a threshold fails, so a CI step fails with it. This step runs the `simple` example from a Goose checkout; in your own load test crate, use `cargo run --release --` instead:
 
 ```yaml
 - name: Load test

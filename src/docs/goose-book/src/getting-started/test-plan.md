@@ -6,7 +6,7 @@ A test plan is defined as a series of numerical pairs that each defines a number
 
 The amount of time can be defined in seconds (e.g. `10,5s`), minutes (e.g. `10,15m`) or hours (e.g. `10,1h`), or a mix of them in that order (e.g. `10,1h30m`). A bare number is seconds (e.g. `10,90`). White space around each number is ignored.
 
-A test plan sets every user count and time itself, so `--test-plan` is not allowed with `--users`, `--increase-rate`, `--increase-time`, `--decrease-rate`, `--decrease-time`, `--run-time`, `--iterations` or `--no-reset-metrics`. Goose refuses a test plan before any user starts when a step does not parse, when the plan never starts a user (such as `0,10s`), when its users add up to more than fit in a `usize`, or when a time is too long to count in milliseconds:
+A test plan sets every user count and time itself, so `--test-plan` is not allowed with `--users`, `--increase-rate`, `--increase-time`, `--decrease-rate`, `--decrease-time`, `--run-time`, `--iterations` or `--no-reset-metrics`. Goose refuses a test plan before any user starts when a step does not parse, when the plan never starts a user (such as `0,10s`), when its users add up to more than fit in a `usize`, or when a time is too long to count in milliseconds. These samples run the `simple` example from a Goose checkout:
 
 ```bash
 % cargo run --release --example simple -- --test-plan "0,10s"

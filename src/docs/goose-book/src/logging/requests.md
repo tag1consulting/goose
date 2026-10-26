@@ -20,7 +20,7 @@ By default, logs are written in JSON Lines format. For example, from the [`simpl
 
 The `--request-format` option can be used to log in `csv`, `json` (default), `raw` or `pretty` format. The `raw` format is Rust's debug output of the entire [`GooseRequestMetric`](https://docs.rs/goose/*/goose/metrics/struct.GooseRequestMetric.html) object, one per line, and `pretty` is the same output spread over several indented lines per request.
 
-The `csv` format starts with a header row. Its `transaction_name` column holds the transaction's name, empty in this example, and its `raw` column holds the debug output of the `GooseRawRequest`. The first two requests of the same example look like:
+The `csv` format starts with a header row. Its `transaction_name` column holds the transaction's name only when it was set with `set_name_for_transaction_and_requests`; a name set with `set_name`, or no name as in this example, leaves it empty, and its `raw` column holds the debug output of the `GooseRawRequest`. The first two requests of the same example look like:
 
 ```csv
 elapsed,scenario_index,scenario_name,transaction_index,transaction_name,raw,name,final_url,redirected,response_time,status_code,success,update,user,error,coordinated_omission_elapsed,user_cadence,response_time_us
@@ -28,6 +28,6 @@ elapsed,scenario_index,scenario_name,transaction_index,transaction_name,raw,name
 0,0,websiteuser,1,,"GooseRawRequest { method: Get, url: ""http://127.0.0.1:19150/"", headers: [], body: """", custom_method: """" }",/,http://127.0.0.1:19150/,false,0,200,true,false,0,,0,0,188
 ```
 
-The `transaction_name` field is an object naming how the transaction was named: `{"TransactionOnly":"..."}` for a name set with `set_name`, which only the transaction carries, or `{"InheritNameByRequests":"..."}` for a name set with `set_name_for_transaction_and_requests`, which its requests take too. Goose 0.18 wrote it as a plain string.
+The `transaction_name` field is an object naming how the transaction was named: `{"TransactionOnly":"..."}` for a name set with `set_name`, which only the transaction carries, or `{"InheritNameByRequests":"..."}` for a name set with `set_name_for_transaction_and_requests`, which its requests take too. Goose 0.18 wrote it as a plain string, and wrote the transaction's name in the CSV column however it was set.
 
 `response_time` is in whole milliseconds, truncated. The `json`, `raw` and `pretty` formats also carry `response_time_fraction_us`, the microseconds past those milliseconds (0 to 999), and the `csv` format ends with a `response_time_us` column holding the whole time in microseconds. In the first JSON line above the `/login` request took 1.221 milliseconds, and in the third the `/about/` request took 632 microseconds. In the first CSV row the `/login` request took 756 microseconds.
