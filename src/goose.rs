@@ -1003,6 +1003,8 @@ pub struct GooseUser {
     request_counter_cache: HashMap<String, Arc<GooseRequestCounters>>,
     /// Reusable buffer for formatting counter keys, avoiding per-request heap allocation.
     counter_key_buf: String,
+    /// The request counter key [`write_counter_key`](Self::write_counter_key) wrote.
+    request_counter_key: String,
 }
 
 impl Clone for GooseUser {
@@ -1044,6 +1046,7 @@ impl Clone for GooseUser {
             request_counters: self.request_counters.clone(),
             request_counter_cache: HashMap::new(),
             counter_key_buf: String::new(),
+            request_counter_key: String::new(),
         }
     }
 }
@@ -1110,6 +1113,7 @@ impl GooseUser {
             request_counters: None,
             request_counter_cache: HashMap::new(),
             counter_key_buf: String::new(),
+            request_counter_key: String::new(),
         })
     }
 
@@ -2170,9 +2174,8 @@ impl GooseUser {
     /// if batching is not active).
     pub(crate) fn flush_pending_request(&mut self) -> TransactionResult {
         if let Some(request) = self.pending_request.take() {
-            // Save fields needed for atomic counter before moving request.
-            let method = request.raw.method;
-            let name = request.name.clone();
+            // Save the atomic counter's key and the outcome before moving request.
+            self.write_counter_key(request.raw.method_label(), &request.name);
             let success = request.success;
 
             if self.metrics_batch.is_some() {
@@ -2197,7 +2200,7 @@ impl GooseUser {
             }
             // Increment at actual send/accumulate time so metrics reset can't zero
             // the counter before the parent processes this request.
-            self.increment_request_counter(&method, &name, success);
+            self.increment_counter_at_key(success);
         }
         Ok(())
     }
@@ -2248,37 +2251,56 @@ impl GooseUser {
         Ok(())
     }
 
-    /// Atomically increment the shared request counter for the given method/name.
-    ///
-    /// Uses the per-user cache to avoid repeated mutex lookups on the shared registry.
-    /// Formats the key into a reusable buffer to avoid per-request heap allocation.
+    /// Atomically increment the shared request counter for the given method
+    /// label and name.
+    #[cfg(test)]
     pub(crate) fn increment_request_counter(
         &mut self,
-        method: &GooseMethod,
+        method_label: &str,
         name: &str,
         success: bool,
     ) {
+        self.write_counter_key(method_label, name);
+        self.increment_counter_at_key(success);
+    }
+
+    /// Format a request's atomic counter key, "{method label} {name}", the key
+    /// its aggregate has in
+    /// [`GooseMetrics::requests`](crate::metrics::GooseMetrics::requests), into
+    /// a reusable buffer of its own, which the batch's keys never overwrite, to
+    /// avoid per-request heap allocation. A custom request's label is the one
+    /// it was recorded with, not `GooseMethod::Custom`'s `CUSTOM`.
+    pub(crate) fn write_counter_key(&mut self, method_label: &str, name: &str) {
+        if self.request_counters.is_some() {
+            self.request_counter_key.clear();
+            let _ = write!(self.request_counter_key, "{} {}", method_label, name);
+        }
+    }
+
+    /// Atomically increment the shared request counter at the key
+    /// [`write_counter_key`](Self::write_counter_key) wrote.
+    ///
+    /// Uses the per-user cache to avoid repeated mutex lookups on the shared registry.
+    pub(crate) fn increment_counter_at_key(&mut self, success: bool) {
         if let Some(registry) = &self.request_counters {
-            self.counter_key_buf.clear();
-            let _ = write!(self.counter_key_buf, "{} {}", method, name);
             // Fast path: check the local cache with a borrowed key (no allocation).
             if !self
                 .request_counter_cache
-                .contains_key(self.counter_key_buf.as_str())
+                .contains_key(self.request_counter_key.as_str())
             {
                 let mut map = registry
                     .lock()
                     .expect("request_counter_registry mutex poisoned");
                 let arc = map
-                    .entry(self.counter_key_buf.clone())
+                    .entry(self.request_counter_key.clone())
                     .or_insert_with(|| Arc::new(GooseRequestCounters::new()))
                     .clone();
                 self.request_counter_cache
-                    .insert(self.counter_key_buf.clone(), arc);
+                    .insert(self.request_counter_key.clone(), arc);
             }
             let counter = self
                 .request_counter_cache
-                .get(self.counter_key_buf.as_str())
+                .get(self.request_counter_key.as_str())
                 .unwrap();
             if success {
                 counter.success.fetch_add(1, AtomicOrdering::Relaxed);
@@ -2294,9 +2316,9 @@ impl GooseUser {
     /// Takes `&self` (no cache mutation) so it can be called from the non-mut
     /// `set_success()` / `set_failure()` methods. These update calls are rare,
     /// so the extra mutex lookup and key allocation are acceptable.
-    fn update_request_counter(&self, method: &GooseMethod, name: &str, success: bool) {
+    fn update_request_counter(&self, method_label: &str, name: &str, success: bool) {
         if let Some(registry) = &self.request_counters {
-            let key = format!("{} {}", method, name);
+            let key = format!("{} {}", method_label, name);
             let map = registry
                 .lock()
                 .expect("request_counter_registry mutex poisoned");
@@ -2766,7 +2788,7 @@ impl GooseUser {
             self.send_request_metric_now(request.clone())?;
             // Atomically correct the shared counters (success +1, failure -1).
             // Done after the channel send so counts stay consistent if the send fails.
-            self.update_request_counter(&request.raw.method, &request.name, true);
+            self.update_request_counter(request.raw.method_label(), &request.name, true);
         }
 
         Ok(())
@@ -2845,7 +2867,7 @@ impl GooseUser {
             self.send_request_metric_now(request.clone())?;
             // Atomically correct the shared counters (success -1, failure +1).
             // Done after the channel send so counts stay consistent if the send fails.
-            self.update_request_counter(&request.raw.method, &request.name, false);
+            self.update_request_counter(request.raw.method_label(), &request.name, false);
         }
         // Write failure to log, converting `&mut request` to `&request` as needed by `log_debug()`.
         self.log_debug(tag, Some(&*request), headers, body)?;
@@ -6303,7 +6325,11 @@ mod tests {
                     metric: GooseRequestMetric,
                     limit: &mut usize,
                     rng: &mut AuditRng| {
-            let (method, name, success) = (metric.raw.method, metric.name.clone(), metric.success);
+            let (method, name, success) = (
+                metric.raw.method_label().to_string(),
+                metric.name.clone(),
+                metric.success,
+            );
             if metric.error.is_empty() && metric.coordinated_omission_elapsed == 0 {
                 if user.record_latency_series {
                     user.accumulate_request_by_second(&metric).unwrap();

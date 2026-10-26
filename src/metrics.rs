@@ -3935,7 +3935,7 @@ impl MetricsProcessor {
                             co_metric.response_time,
                         );
                     }
-                    let co_key = format!("{} {}", co_metric.raw.method, co_metric.name);
+                    let co_key = format!("{} {}", co_metric.raw.method_label(), co_metric.name);
                     Self::increment_registry_counter(
                         &self.request_counter_registry,
                         &co_key,
