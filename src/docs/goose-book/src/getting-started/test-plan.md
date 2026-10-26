@@ -4,7 +4,19 @@ A load test that ramps up to full strength and then runs for a set amount of tim
 
 A test plan is defined as a series of numerical pairs that each defines a number of users, and the amount of time to ramp to this number of users. For example, `10,60s` means "launch 10 users over 60 seconds". By stringing together multiple pairs separated by a semicolon you can define more complex test plans. For example, `10,1m;10,5m;0,0s` means "launch 10 users over 1 minute, continue with 10 users for 5 minutes, then shut down the load test as quickly as possible".
 
-The amount of time can be defined in seconds (e.g. `10,5s`), minutes (e.g. `10,15m`) or hours (e.g. `10,1h`). The "s/m/h" notation is optional and seconds will be assumed if omitted. However, the explicit notation is recommended, since Goose will be able to detect any mistakes if used.
+The amount of time can be defined in seconds (e.g. `10,5s`), minutes (e.g. `10,15m`) or hours (e.g. `10,1h`), or a mix of them in that order (e.g. `10,1h30m`). A bare number is seconds (e.g. `10,90`), and a step with no time (e.g. `0,`) takes 0 seconds. The units are lower case, and nothing else is allowed, so `10,15mins` and `10,1M` are refused. White space around each number is ignored.
+
+A test plan sets every user count and time itself, so `--test-plan` is not allowed with `--users`, `--increase-rate`, `--increase-time`, `--decrease-rate`, `--decrease-time`, `--run-time`, `--iterations` or `--no-reset-metrics`. Goose refuses a test plan before any user starts when a step does not parse, when the plan never starts a user (such as `0,10s`), when its users add up to more than fit in a `usize`, or when a time is too long to count in milliseconds. These samples run the `simple` example from a Goose checkout:
+
+```bash
+% cargo run --release --example simple -- --test-plan "0,10s"
+ERROR: invalid `configuration.test_plan` value: '0,10s': `configuration.test_plan` must start at least one user, and no more than fit in a usize.
+error: invalid value '0,10s' for '--test-plan <PLAN>': GooseError: invalid option or value specified
+
+For more information, try '--help'.
+```
+
+A test plan can also be set in code with `GooseDefault::TestPlan`, which refuses the same plans. [Thresholds](thresholds.md#when-checking-starts-and-stops) are checked only while a test plan holds its users steady.
 
 ## Simple Example
 
@@ -24,7 +36,7 @@ $ cargo run --release -- -H http://local.dev/ --test-plan "10,1m;10,5m;0,0s"
 
 ## Ramp Down Example
 
-Goose will stop a load test as quickly as it can when the specified `--run-time` completes. To instead configure a load test to ramp down slowly you can use a test plan. In the following example, Goose starts 1000 users in 2 minutes and then slowly stops them over 500 seconds (stopping 2 users per second):
+Unless `--decrease-rate` or `--decrease-time` is set, Goose stops a load test as quickly as it can when the specified `--run-time` completes. A test plan can also ramp down slowly. In the following example, Goose starts 1000 users in 2 minutes and then slowly stops them over 500 seconds (stopping 2 users per second):
 
 ```bash
 $ cargo run --release -- -H http://local.dev/ --test-plan "1000,2m;0,500s"
@@ -42,11 +54,13 @@ $ cargo run --release -- -H http://local.dev/ --test-plan "500,5m;500,5m;2500,45
 
 ![Load spike test plan](test-plan-load-spike.png)
 
+This graph comes from the `simple` example run with that test plan against a local server. Each step took the time it names: the first step started a user every 600 milliseconds and reached 500 users after 5 minutes (see [Specifying the increase rate](./common.html#specifying-the-increase-rate)).
+
 ## Internals
 
-Internally, Goose converts the test plan into a vector of usize tuples, `Vec<(usize, usize)>`, where the first integer reflects the number of users to be running and the second integer reflects the time in milliseconds. You can see the internal representation when you start a load test, for example:
+Internally, Goose converts the test plan into a vector of usize tuples, `Vec<(usize, usize)>`, where the first integer reflects the number of users to be running and the second integer reflects the time in milliseconds. You can see the internal representation when you start a load test, for example as follows. With `--no-autostart` the load test waits to be started, so press `ctrl-c` once the line is printed:
 
 ```bash
 % cargo run --release --example simple -- --no-autostart --test-plan "100,30s;100,1h" | grep test_plan
-13:54:35 [INFO] test_plan = GooseTestPlan { test_plan: [(100, 30000), (100, 3600000)] }
+21:00:10 [INFO] test_plan = TestPlan { steps: [(100, 30000), (100, 3600000)], current: 0 }
 ```

@@ -23,7 +23,7 @@ Responses will always be in the following format:
 {"response":String,"success":Boolean}
 ```
 
-For example:
+For example, from a load test built with the `pdf-reports` feature, so its configuration includes `pdf_scale` and `pdf_timeout`, which a build without that feature leaves out:
 ```bash
 % websocat ws://127.0.0.1:5117
 foo
@@ -31,10 +31,14 @@ foo
 {"request":"foo"}
 {"response":"unrecognized command, see Goose book https://book.goose.rs/controller/websocket.html","success":false}
 {"request":"config"}
-{"response":"{\"host\":null,\"users\":10,\"increase_rate\":null,\"increase_time\":null,\"run_time\":null,\"decrease_rate\":null,\"decrease_time\":null,\"iterations\":null,\"test_plan\":null,\"scenarios\":null,\"throttle_requests\":null,\"version\":false,\"list\":false,\"scenarios_list\":false,\"verbose\":0,\"quiet\":0,\"goose_log\":null,\"log_level\":0,\"running_metrics\":null,\"no_print_metrics\":false,\"no_error_summary\":false,\"report_file\":[],\"output_dir\":null,\"compress\":null,\"notes\":null,\"report_graph_data\":false,\"render_report\":null,\"baseline_file\":null,\"no_granular_report\":false,\"pdf_print_html\":null,\"no_reset_metrics\":false,\"no_metrics\":false,\"no_transaction_metrics\":false,\"no_scenario_metrics\":false,\"no_status_codes\":false,\"co_mitigation\":\"Disabled\",\"request_log\":null,\"request_format\":\"Json\",\"request_body\":false,\"transaction_log\":null,\"transaction_format\":\"Json\",\"scenario_log\":null,\"scenario_format\":\"Json\",\"error_log\":null,\"error_format\":\"Json\",\"debug_log\":null,\"debug_format\":\"Json\",\"no_debug_body\":false,\"dashboard\":false,\"dashboard_host\":null,\"dashboard_port\":null,\"dashboard_auth_token\":null,\"dashboard_control\":false,\"dashboard_max_clients\":null,\"no_percentiles_over_time\":false,\"no_autostart\":true,\"no_telnet\":false,\"telnet_host\":\"0.0.0.0\",\"telnet_port\":5116,\"no_websocket\":false,\"websocket_host\":\"0.0.0.0\",\"websocket_port\":5117,\"timeout\":null,\"no_gzip\":false,\"sticky_follow\":false,\"accept_invalid_certs\":false}","success":true}
+{"response":"{\"host\":null,\"users\":10,\"increase_rate\":null,\"increase_time\":null,\"run_time\":null,\"decrease_rate\":null,\"decrease_time\":null,\"iterations\":null,\"test_plan\":null,\"scenarios\":null,\"throttle_requests\":null,\"version\":false,\"list\":false,\"scenarios_list\":false,\"verbose\":0,\"quiet\":0,\"goose_log\":null,\"log_level\":0,\"running_metrics\":null,\"no_print_metrics\":false,\"no_error_summary\":false,\"report_file\":[],\"output_dir\":null,\"compress\":null,\"notes\":null,\"report_graph_data\":false,\"render_report\":null,\"baseline_file\":null,\"no_granular_report\":false,\"pdf_print_html\":null,\"pdf_scale\":0.8,\"pdf_timeout\":60,\"no_reset_metrics\":false,\"no_metrics\":false,\"no_transaction_metrics\":false,\"no_scenario_metrics\":false,\"no_status_codes\":false,\"co_mitigation\":\"Disabled\",\"threshold\":[],\"no_threshold_abort\":false,\"threshold_abort_delay\":null,\"request_log\":null,\"request_format\":\"Json\",\"request_body\":false,\"transaction_log\":null,\"transaction_format\":\"Json\",\"scenario_log\":null,\"scenario_format\":\"Json\",\"error_log\":null,\"error_format\":\"Json\",\"debug_log\":null,\"debug_format\":\"Json\",\"no_debug_body\":false,\"dashboard\":false,\"dashboard_host\":null,\"dashboard_port\":null,\"dashboard_auth_token\":null,\"dashboard_control\":false,\"dashboard_max_clients\":null,\"no_percentiles_over_time\":false,\"no_autostart\":true,\"no_telnet\":false,\"telnet_host\":\"0.0.0.0\",\"telnet_port\":5116,\"no_websocket\":false,\"websocket_host\":\"0.0.0.0\",\"websocket_port\":5117,\"timeout\":null,\"no_gzip\":false,\"sticky_follow\":false,\"accept_invalid_certs\":false}","success":true}
 {"request":"stop"}
 {"response":"load test not running, failed to stop","success":false}
 {"request":"shutdown"}
 {"response":"load test shut down","success":true}
 ```
+
+This session is Goose started with `--no-autostart -u 10`. `config` sends the configuration as JSON, with an option that is not set shown as `null`, as the telnet Controller's `config-json` does. `metrics` sends the metrics as the telnet Controller's `metrics-json` does, with each request's response times in microsecond buckets, `times_us`; see [Controller Commands](telnet.md#controller-commands).
+
+After `exit` (or `quit` or `q`) the Controller answers `goodbye!`, and after `shutdown` it answers `load test shut down`; either way it then sends a close frame, code 1000, and ends the connection. A request that gets no answer from Goose within 15 seconds is answered `{"response":"control timed out, it may still apply: check before retrying","success":false}`.
 

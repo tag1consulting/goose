@@ -1,6 +1,6 @@
 # Output files
 
-Goose writes reports and logs only when you ask for them. This page gives the rules for every file Goose writes, then three recipes.
+Goose writes reports and logs only when you ask for them. This page gives the rules for every file Goose writes, then three recipes. A relative path, and the `goose-runs` folder, are relative to the working directory, so the commands below, run with `cargo run` in a Goose checkout, write into the checkout.
 
 ## Files
 
@@ -20,7 +20,7 @@ cargo run --example simple -- --host http://localhost:8080 -t 30s --report-file 
 
 This writes `results.html`, as Goose 0.18 did.
 
-**3. An output flag given without a path writes into the run's folder.** `--report-file` writes `report.json` and `report.html`. `--goose-log`, `--request-log`, `--transaction-log`, `--scenario-log`, `--error-log` and `--debug-log` write `goose.log`, `requests`, `transactions`, `scenarios`, `errors` and `debug`, each with its format's extension (`.json`, `.csv`, or `.log` for raw and pretty), plus `.gz` under rule 15.
+**3. An output flag given without a path writes into the run's folder.** `--report-file` writes `report.json` and `report.html`. `--goose-log`, `--request-log`, `--transaction-log`, `--scenario-log`, `--error-log` and `--debug-log` write `goose.log`, `requests`, `transactions`, `scenarios`, `errors` and `debug`, each with its format's extension (`.json`, `.csv`, or `.log` for raw and pretty), plus `.gz` under rule 15. An output flag followed by another option, as `--report-file -R` below, is given without a path. A path that begins with a hyphen goes after `=`, as in `--goose-log=-run.log`: given as its own argument it is read as options, so `--goose-log -run.log` is read as `--goose-log -r un.log` and refused because `un.log` is not a number. When the command line itself does not parse, as with `--goose-log -x.log`, the error ends with a tip to use `=`.
 
 ```bash
 cargo run --example simple -- --host http://localhost:8080 -t 30s --report-file -R --request-format csv
@@ -44,7 +44,7 @@ The first run writes into `goose-runs/nightly`, the next into `goose-runs/nightl
 
 While Save report is off and no `--report-file` path is given, Goose keeps only the dashboard's last 10 minutes of graph data (rule 10). A report written later, after Save report is turned on or by Save report now, still has every request in its tables, and says when its graphs start and why.
 
-**6. `--notes "text"` is stored in the JSON report and shown at the top of the HTML and Markdown reports and in the dashboard.** It needs `--report-file` or `--dashboard`.
+**6. `--notes "text"` is stored in the JSON report and shown at the top of the HTML and Markdown reports and in the dashboard.** It needs `--report-file`, `--pdf-print-html` or `--dashboard`.
 
 ```bash
 cargo run --example simple -- --host http://localhost:8080 -t 30s --report-file --notes "baseline before cache change"
@@ -61,6 +61,23 @@ cargo run --example simple -- --host http://localhost:8080 -t 30s --report-file 
 ```bash
 cargo run --example simple -- --render-report results.json --report-file results.html --report-file results.md
 ```
+
+## Formats
+
+**A report's type comes from its extension.** `--report-file` writes HTML for `.html` or `.htm`, Markdown for `.md`, JSON for `.json`, and PDF for `.pdf` when the load test is built with the `pdf-reports` feature. Any other extension is refused before the load test starts, as in `Unknown report file type: docx`. Reports are written even with `--no-print-metrics`. [Metrics](metrics.md#report-formats) shows what each format holds.
+
+```bash
+cargo run --example simple -- --host http://localhost:8080 -t 30s \
+  --report-file results.html --report-file results.md --report-file results.json
+```
+
+The JSON report also holds the run's test plan history, so a Markdown report rendered from it with `--render-report` has its plan overview.
+
+**`--pdf-print-html FILE` writes the HTML report laid out for printing**, to turn into a PDF in any browser, without Chrome or the `pdf-reports` feature. It has the HTML report's graphs and heatmap, with or without a `--report-file`, counts as a report for `--notes` and `--no-granular-report`, and is refused with `--no-metrics`. `--pdf-scale` (0.1 to 2.0, default 0.8) and `--pdf-timeout` (10 to 600 seconds, default 60) apply to a `.pdf` report. See [PDF reports](metrics.md#pdf-reports).
+
+**`--baseline-file PATH` compares the run with an earlier one in every report.** PATH is a JSON report, plain or gzipped, or a run's folder that holds `report.json` or `report.json.gz`. See [Comparing against a baseline](common.md#comparing-against-a-baseline).
+
+**Each log has a format option**: `--request-format`, `--transaction-format`, `--scenario-format`, `--error-format` and `--debug-format` each take `json`, the default, `csv`, `raw` or `pretty`. A log given without a path is named with `.json`, `.csv`, or `.log` for raw and pretty (rule 3). [Logging](../logging/overview.md) describes each log.
 
 ## The dashboard
 
@@ -87,13 +104,14 @@ With `--output-dir goose-runs/nightly`, the panel lists the folders in `goose-ru
 **13. Save report now, Delete, and changing either switch need `--dashboard-control` and the control token, like Start and Stop.** Without control the switches are shown read only, so Save report stays on and every `--dashboard` run writes `report.json` and `report.html` into its folder, except under `--no-metrics`. Goose then also keeps the run's graph data for the whole run (rule 10).
 
 ```bash
+TOKEN=$(openssl rand -hex 16)
 cargo run --features dashboard --example simple -- --host http://localhost:8080 \
   --dashboard --dashboard-control --dashboard-auth-token "$TOKEN"
 ```
 
 ## Compression
 
-**14. Any report or log whose name ends in `.gz` is written gzipped.** A report's format comes from the name before `.gz`. A log keeps the format its `--request-format` or other format option sets. Goose reads a `.json.gz` report anywhere it reads a JSON report: `--baseline-file`, `--render-report` and the runs panel. `--pdf-print-html`, a debugging aid, writes plain HTML whatever its name.
+**14. Any report or log whose name ends in `.gz` is written gzipped.** A report's format comes from the name before `.gz`. A log keeps the format its `--request-format` or other format option sets. Goose reads a `.json.gz` report anywhere it reads a JSON report: `--baseline-file`, `--render-report` and the runs panel. `--pdf-print-html` writes plain HTML whatever its name.
 
 ```bash
 cargo run --example simple -- --host http://localhost:8080 -t 30s --report-file results.json.gz -R requests.csv.gz --request-format csv
@@ -126,7 +144,7 @@ cargo run --release --example simple -- --host http://localhost:8080 -t 5m \
   --output-dir goose-runs/nightly --report-file
 ```
 
-Later, start the dashboard from the same working directory. With `--no-autostart` it waits for Start instead of running a new load test, and its runs panel lists `nightly`:
+Later, start the dashboard from the same working directory. With `--no-autostart` it does not run a new load test until a [Controller](../controller/overview.md) starts one, as the dashboard has no Start button without `--dashboard-control`, and its runs panel lists `nightly`:
 
 ```bash
 cargo run --release --features dashboard --example simple -- --host http://localhost:8080 --dashboard --no-autostart

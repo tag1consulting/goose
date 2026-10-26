@@ -1,6 +1,6 @@
 # Common Run Time Options
 
-As seen on the previous page, Goose has a lot of run time options which can be overwhelming. The following are a few of the more common and more important options to be familiar with. In these examples we only demonstrate one option at a time, but it's generally useful to combine many options.
+Goose has many run time options. This page shows the most common ones, one at a time; combine them as you need. Each example other than the host example also needs `--host`, unless the load test sets a host itself with `GooseDefault::Host` or `Scenario::set_host`.
 
 ## Host to load test
 
@@ -15,7 +15,7 @@ cargo run --release -- -H https://www.example.com
 
 ## How many users to simulate
 
-By default, Goose will launch one user per available CPU core. Often you will want to simulate considerably more users than this, and this can be done by setting the "--user" run time option.
+By default, Goose will launch one user per available CPU core. Often you will want to simulate considerably more users than this, and this can be done by setting the `--users` run time option.
 
 (_Alternatively, you can use [`--test-plan`](./test-plan.html) to build both simple and more complex traffic patterns that can include a varying number of users._)
 
@@ -28,13 +28,15 @@ cargo run --release -- -u 1000
 
 ## Controlling how long it takes Goose to launch all users
 
-There are several ways to configure how long Goose will take to launch all configured GooseUsers. For starters, you can use either `--increase-rate` or `--increase-time`, but not both together. Alternatively, you can use [`--test-plan`](./test-plan.html) to build both simple and more complex traffic patterns that can include varying launch rates.
+There are several ways to configure how long Goose will take to launch all configured GooseUsers. For starters, you can use either `--increase-rate` or `--increase-time`, but not both together. (_These replace `--hatch-rate` and `--startup-time` from Goose 0.18 and earlier, which no longer exist; see [Upgrading From 0.18](upgrading.md)._) Alternatively, you can use [`--test-plan`](./test-plan.html) to build both simple and more complex traffic patterns that can include varying launch rates.
 
 ### Specifying the increase rate
 
-By default, Goose starts one GooseUser per second. So if you configure `--users` to 10 it will take ten seconds to fully start the load test. If you set `--increase-rate 5` then Goose will start 5 users every second, taking two seconds to start up. If you set `--increase-rate 0.5` then Goose will start 1 user every 2 seconds, taking twenty seconds to start all 10 users.
+By default, Goose starts one GooseUser per second. So if you configure `--users` to 10 it will take ten seconds to fully start the load test. If you set `--increase-rate 5` then Goose will start 5 users every second, taking two seconds to start up. If you set `--increase-rate 0.5` then Goose will start 1 user every 2 seconds, taking twenty seconds to start all 10 users. The slowest rate Goose accepts is one user a day, about `0.0000116`; a slower rate is an error.
 
 (_The configured increase rate is a best effort limit, Goose will not start users faster than this but there is no guarantee that your load test server is capable of starting users as fast as you configure._)
+
+Goose starts each user one interval after the last was due, so a rate that is not a whole number is kept too: `--increase-rate 1.5` starts a user every 667 milliseconds, so the 9th user starts about 5.3 seconds in, and the increase phase of 9 users lasts 6 seconds: an increase lasts the users divided by the rate. A decrease stops its first user at once, so it lasts one interval less. Rates that are not whole numbers are kept the same way by `--decrease-rate`, `--increase-time`, `--decrease-time` and the steps of a [test plan](./test-plan.html).
 
 ### Increase rate example
 _Launch one user every two seconds._
@@ -58,7 +60,7 @@ cargo run --release -- -s 5
 
 ## Controlling the ramp-down rate
 
-Similarly, you can configure how quickly Goose stops users at the end of a load test using `--decrease-rate` or `--decrease-time`. These are mutually exclusive, just like their increase counterparts. If neither is set, Goose shuts down all users as quickly as possible.
+Similarly, you can configure how quickly Goose stops users at the end of a load test using `--decrease-rate` or `--decrease-time`. These are mutually exclusive, just like their increase counterparts, and `--decrease-rate` has the same slowest rate of one user a day. If neither is set, Goose shuts down all users as quickly as possible.
 
 ### Decrease rate example
 _Stop one user every two seconds._
@@ -68,7 +70,7 @@ cargo run --release -- --decrease-rate .5
 ```
 
 ### Decrease time example
-_Stop all users over 30 seconds._
+_Stop all users over 30 seconds._ Goose stops the first user at once and the rest at even intervals, so with 4 users the last one stops after about 22.5 seconds.
 
 ```bash
 cargo run --release -- --decrease-time 30s
@@ -102,11 +104,11 @@ cargo run --release -- --iterations 5
 
 By default, Goose displays [text-formatted metrics](metrics.md) when a load test finishes.
 
-It can also optionally write one or more reports in HTML, Markdown, or JSON format. For that, you need to provide one or more `--report-file <FILE>` run-time options. All requested reports will be written.
+It can also optionally write one or more reports in HTML, Markdown, or JSON format, or PDF when built with the `pdf-reports` feature. For that, you need to provide one or more `--report-file <FILE>` run-time options. All requested reports will be written, even with `--no-print-metrics`.
 
-The value of `<FILE>` is an absolute or relative path to the report file to generate. The file extension will evaluate the type of report to write. Any file that already exists at the specified path will be overwritten.
+The value of `<FILE>` is an absolute or relative path to the report file to generate. The file extension (`.html` or `.htm`, `.md`, `.json`, or `.pdf`) sets the type of report to write. Any file that already exists at the specified path will be overwritten. A `--report-file` given without a path writes `report.json` and `report.html` into the [run's folder](#run-folders).
 
-For more information, see [Metrics Reports](metrics.md#metrics-reports).
+For more information, see [Report Formats](metrics.md#report-formats).
 
 ![Requests per second graph](rps.png)
 
@@ -131,7 +133,20 @@ _Write a printer-friendly HTML report optimized for PDF conversion._
 cargo run --release -- --pdf-print-html print-report.html
 ```
 
-The `--pdf-print-html` option generates an HTML file with print-optimized CSS styling that displays all content on a single page without interactive elements. This is perfect for converting to PDF using your browser's "Print to PDF" function or for printing on paper. The print-optimized HTML contains the same comprehensive metrics data as the regular HTML report, but formatted for optimal readability when printed or converted to PDF.
+The `--pdf-print-html` option writes the HTML report with CSS laid out for printing, to convert to PDF with your browser's "Print to PDF" function or to print on paper. It needs neither Chrome nor the `pdf-reports` feature. It has the same graphs and response time heatmap as the HTML report, with or without a `--report-file`, and is written once even when a `.pdf` report is written too. It counts as a report for `--notes` and `--no-granular-report`, and can't be used with `--no-metrics`. It can also be written beside an HTML report:
+
+```bash
+cargo run --release -- --report-file report.html --pdf-print-html print-report.html
+```
+
+### PDF report example
+_Build with the `pdf-reports` feature and write a PDF report, waiting up to two minutes for Chrome._
+
+```bash
+cargo run --release --features goose/pdf-reports -- --report-file report.pdf --pdf-timeout 120
+```
+
+A PDF report needs Chrome or Chromium; see [Requirements](../requirements.md#chrome-for-pdf-reports). `--pdf-timeout` is how many seconds Goose waits for Chrome to start and to render the PDF, from 10 to 600, default 60. `--pdf-scale`, from 0.1 to 2.0, default 0.8, sets how much Chrome scales the pages. Both exist only with the `pdf-reports` feature.
 
 ## Comparing Against A Baseline
 
@@ -149,7 +164,7 @@ Later, run the same load test and pass the previous JSON report as a baseline:
 cargo run --release -- --report-file report.html --baseline-file baseline.json
 ```
 
-When a baseline file is provided, all numeric metrics in every report format (HTML, JSON, Markdown) will include a delta showing the difference from the baseline. For example, instead of just showing `1,234` requests, the report will show `1,234 (+200)` if the current run had 200 more requests than the baseline, or `1,234 (-50)` if it had 50 fewer.
+When a baseline file is provided, the numeric metrics in the HTML and Markdown reports include a delta showing the difference from the baseline. For example, instead of just showing `1,234` requests, the HTML report shows `1,234 (+200)` if the current run had 200 more requests than the baseline, or `1,234 (-50)` if it had 50 fewer; the Markdown report shows its request counts without thousands separators, `1234 (+200)`. The JSON report holds only the current run's values, so it can serve as the next run's baseline.
 
 A time's delta is the difference of the two values shown. A 0.19 baseline's request, transaction and scenario times come from its microsecond timing data. A report from an older Goose holds whole milliseconds: its minimums and maximums are truncated, and its percentiles above 100 ms are rounded to 10 ms, 100 ms or whole seconds. So an unchanged time can read differently against it, such as `38 (+1)`.
 
@@ -160,11 +175,14 @@ Deltas are calculated for:
 - **Transactions**: request count, failures, response times, rates
 - **Scenarios**: user count, iteration count, response times, rates
 - **Errors**: occurrence count
+- **Transaction errors**: occurrence count
 - **Coordinated Omission**: adjusted response times and standard deviation
 
 Metrics are matched between runs by their key (HTTP method + endpoint name for requests, transaction + name for transactions, etc.). If an endpoint exists in the current run but not in the baseline (or vice versa), it is displayed normally without a delta.
 
-The baseline file must be a JSON report generated by Goose, plain or gzipped (`.json.gz`), or a [run's folder](#run-folders), whose `report.json` or `report.json.gz` is then used. If the file doesn't exist, contains invalid JSON, or has no request metrics, Goose will report an error. A JSON report from Goose 0.18.1 or later loads as a baseline.
+The baseline file must be a JSON report generated by Goose, plain or gzipped (`.json.gz`), or a [run's folder](#run-folders), whose `report.json` or `report.json.gz` is then used. If the file doesn't exist, contains invalid JSON, or has no request metrics, Goose will report an error. A JSON report from Goose 0.18.1 or later loads as a baseline, including one from a run that received more than one status code. A report with transaction errors gets a delta for each of them, and a report without them, such as one from Goose 0.18.1, still loads.
+
+A run's folder given as the baseline must already hold a report, such as one written by a run with `--output-dir goose-runs/nightly --report-file` (see [Run folders](#run-folders)):
 
 ```bash
 cargo run --release -- --report-file report.html --baseline-file goose-runs/nightly
@@ -183,9 +201,10 @@ The resulting `latest.json` can then be used as the baseline for the next compar
 
 You can configure a default baseline file programmatically using `GooseDefault::BaselineFile`:
 
-```rust
+```rust,ignore
 GooseAttack::initialize()?
     .set_default(GooseDefault::BaselineFile, "baseline.json")?
+    // ...register scenarios, then .execute().await?
 ```
 
 This default will be used unless overridden by `--baseline-file` on the command line.

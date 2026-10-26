@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.19.0-dev
+ - [#775](https://github.com/tag1consulting/goose/pull/775) check the Goose Book against main for 0.19: correct options, samples, screenshots and API names, add upgrade notes for 0.18 users, and say Gaggle is not in 0.19
  - [#778](https://github.com/tag1consulting/goose/pull/778) fix the other twelve defects found while documenting 0.19
     o **behavior change**: with `--co-mitigation`, the Aggregated `# reqs` is "Actual requests" plus "Synthetic requests", and "Synthetic requests" is the synthetic requests recorded
     o **behavior change**: the coordinated omission counts start again at the metrics reset after ramp up

@@ -4,7 +4,7 @@
 
 Goose can optionally serve a **live web dashboard** while a load test runs. The dashboard streams compact metric snapshots (including trailing RPS, users, and latency series) over Server-Sent Events (SSE), with a short poll fallback if SSE is unavailable.
 
-By default the dashboard is **observe-only**: start, stop, user counts, and other control remain on the [Telnet](telnet.md) and [WebSocket](websocket.md) Controllers. With an explicit opt-in (`--dashboard-control` plus a required auth token), the same browser can also **Start**, **Stop**, **set the target user count**, and edit the host, the ramps and the run time. Controllers remain the power-user path for test plan changes, `config` and `metrics`, and process **shutdown** (not available from the dashboard).
+By default the dashboard is **observe-only**: start, stop, user counts, and other control remain on the [Telnet](telnet.md) and [WebSocket](websocket.md) Controllers. With an explicit opt-in (`--dashboard-control` plus a required auth token), the same browser can also **Start**, **Stop**, **set the target user count**, and edit the host, the ramps and the run time. Its **Quit** shuts Goose down from Idle. The Controllers remain the path for `config` and `metrics`, a test plan typed at a prompt (the dashboard takes one only through `POST /api/v1/control/settings`), and **shutdown** from any phase.
 
 ## Enabling the dashboard
 
@@ -32,9 +32,9 @@ The dashboard port opens when the Controllers' ports do, once Goose has built a 
 | `--dashboard` | off | Enable the live dashboard HTTP server (observe) |
 | `--dashboard-control` | off | Enable Start/Stop/Users control endpoints and UI (requires `--dashboard`; does **not** auto-enable the dashboard) |
 | `--dashboard-host HOST` | `127.0.0.1` | Bind address |
-| `--dashboard-port PORT` | `5118` | Bind port. CLI value `0` means “unset” and is rewritten to `5118` when the dashboard is enabled (not an ephemeral OS port). |
+| `--dashboard-port PORT` | `5118` | Bind port. `0` picks a free port, which the startup log names: `[dashboard]: listening on http://127.0.0.1:60096 (read-only)`. |
 | `--dashboard-auth-token TOKEN` | empty | Shared secret for metric APIs when configured; **always required** when `--dashboard-control` is set (even on loopback). Visible in process listings (`ps`) like any CLI flag. |
-| `--dashboard-max-clients COUNT` | `32` | Max concurrent SSE clients (`GET /api/v1/events`); further clients receive HTTP 503. CLI value `0` means “unset” and becomes `32`. The server also holds at most twice this many connections plus 16 (80 by default); a connection beyond that is closed as soon as it is accepted. |
+| `--dashboard-max-clients COUNT` | `32` | Max concurrent SSE clients (`GET /api/v1/events`); further clients receive HTTP 503. `0` is refused at startup (`must be at least 1`). The server also holds at most twice this many connections plus 16 (80 by default); a connection beyond that is closed as soon as it is accepted. |
 | `--no-percentiles-over-time` | off | Turn off the response time heatmap and the histograms behind it; the card shows the average latency chart instead. It also turns off the HTML report's response time heatmap, and works without `--dashboard`. See [The response time heatmap](#the-response-time-heatmap). |
 
 Defaults can also be set programmatically with `GooseDefault::Dashboard`, `GooseDefault::DashboardControl`, `GooseDefault::DashboardHost`, `GooseDefault::DashboardPort`, `GooseDefault::DashboardAuthToken`, `GooseDefault::DashboardMaxClients`, and `GooseDefault::NoPercentilesOverTime`.
@@ -50,12 +50,14 @@ The server lives as long as the load test, with one exception: see [Waiting afte
 | Live rates, percentiles, errors | Yes | Yes | `metrics` / `metrics-json` |
 | Trailing RPS / users / latency charts | Yes | Yes | No |
 | Start / stop / set users | **No** | Yes | Yes |
-| Host / test plan / rates | No | No | Yes |
-| Process shutdown | No | No | Yes (`shutdown`) |
+| Host / ramps / run time | No | Yes | Yes |
+| Test plan | No | Through `POST /api/v1/control/settings` only | Yes (`test-plan`) |
+| `config` / `metrics` | No | No | Yes |
+| Process shutdown | No | Quit, from Idle only | Yes (`shutdown`, any phase) |
 | Default bind | `127.0.0.1:5118` | `127.0.0.1:5118` | `0.0.0.0:5116` / `:5117` |
 | Auth | Token on metric APIs when configured | Token **always** for control; metrics follow observe rules | None (see Controller docs) |
 
-When control is off, `POST /api/v1/control/*` returns **404** (routes are not registered). Prefer Controllers when you need advanced commands; use dashboard control for common browser-side Start/Stop/Users.
+When control is off, `POST /api/v1/control/*` returns **404** (routes are not registered). Prefer Controllers for `config`, `metrics` and shutting down a running test; use dashboard control for Start, Stop, users and the run settings from a browser.
 
 ## Loopback default and auth policy
 
@@ -67,11 +69,11 @@ Goose treats a bind host as loopback when it is:
 - any IPv4 address in `127.0.0.0/8` (for example `127.0.0.1`, `127.0.0.2`)
 - IPv6 loopback `::1` (with or without brackets: `[::1]`)
 
-**Non-loopback** binds — including unspecified addresses that listen on all interfaces (`0.0.0.0`, `::`) and LAN/hostnames — **require** `--dashboard-auth-token` at startup. Goose hard-fails with a clear error if the token is missing.
+**Non-loopback** binds, including unspecified addresses that listen on all interfaces (`0.0.0.0`, `::`) and LAN addresses and hostnames, **require** `--dashboard-auth-token` at startup. Goose refuses to start, with an error, if the token is missing.
 
 If a token **is** configured, it is enforced on metric APIs even on loopback.
 
-On a loopback bind every request must carry a loopback `Host` header (`localhost`, an address in `127.0.0.0/8` or `[::1]`, with any port), whatever the token setting; anything else, a missing `Host` included, gets **403**. This stops DNS rebinding: a web page that points its own domain at 127.0.0.1 sends its own domain as `Host`, so it cannot read snapshots from a dashboard that has no token. A reverse proxy in front of a loopback bind must pass a loopback `Host` (nginx `proxy_pass http://127.0.0.1:5118` does by default). Loopback here means the configured `--dashboard-host` name, as in the list above, so a hostname that resolves to a loopback address is not checked; it needs a token like any other non-loopback bind.
+On a loopback bind every request must carry a loopback `Host` header (`localhost`, an address in `127.0.0.0/8` or `[::1]`, with any port), whatever the token setting; anything else, a missing `Host` included, gets **403** with the plain text body `host not allowed`. This covers every route, the page, its static files and `/api/v1/health` included. This stops DNS rebinding: a web page that points its own domain at 127.0.0.1 sends its own domain as `Host`, so it cannot read snapshots from a dashboard that has no token. A reverse proxy in front of a loopback bind must pass a loopback `Host` (nginx `proxy_pass http://127.0.0.1:5118` does by default). Loopback here means the configured `--dashboard-host` name, as in the list above, so a hostname that resolves to a loopback address is not checked; it needs a token like any other non-loopback bind.
 
 ### Security matrix (observe vs control)
 
@@ -192,7 +194,7 @@ cargo run --release --features dashboard --example simple -- \
   -u 50
 ```
 
-Then Start from the UI or via `POST /api/v1/control/start`. Without Controllers **and** without dashboard control, `--no-autostart` is a startup hard-fail (there would be no way to leave Idle).
+Then Start from the UI or via `POST /api/v1/control/start`. Without Controllers **and** without dashboard control, `--no-autostart` is a startup hard-fail (there would be no way to leave Idle). The same goes when the Controllers are enabled but none could listen on its port.
 
 ### Control endpoints
 
@@ -201,7 +203,7 @@ Then Start from the UI or via `POST /api/v1/control/start`. Without Controllers 
 | `POST` | `/api/v1/control/start` | empty, `{}`, or run settings | Start an idle load test → enters **Increase**; with run settings, apply them and start in one step, all or none |
 | `POST` | `/api/v1/control/settings` | run settings | Apply run settings without starting, all or none; see [Run settings](#run-settings) |
 | `POST` | `/api/v1/control/stop` | empty or `{}` | Begin cancel → enters **Decrease** (eventual Idle) |
-| `POST` | `/api/v1/control/users` | `{"users": N}` | Set absolute target user count (`N` integer, 1–100_000) |
+| `POST` | `/api/v1/control/users` | `{"users": N}` | Set absolute target user count (`N` an integer from 1 to 100000) |
 | `POST` | `/api/v1/control/quit` | empty or `{}` | Shut Goose down; accepted only in **Idle** |
 | `POST` | `/api/v1/control/report` | `{"save": B, "graph_data": B}`, either or both | Set Save report and Include graph data; see [Saving the report](#saving-the-report) |
 | `POST` | `/api/v1/control/report/now` | empty or `{}` | Save report now; accepted only while a run is in progress, else `invalid_phase` (`invalid_report` under `--no-metrics`) |
@@ -215,14 +217,14 @@ Auth: `Authorization: Bearer <token>` only (query `?token=` → **401**). Missin
 export DASHBOARD_TOKEN="replace-me"
 BASE="http://127.0.0.1:5118"
 
-# Start (success means phase entered Increase — not that test_start finished)
+# Start (success means the phase entered Increase, not that test_start finished)
 curl -sS -X POST \
   -H "Authorization: Bearer $DASHBOARD_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{}' \
   "$BASE/api/v1/control/start"
 
-# Stop (success means cancel ramp began — phase is decrease, not idle)
+# Stop (success means the cancel began: the phase is decrease, not idle)
 curl -sS -X POST \
   -H "Authorization: Bearer $DASHBOARD_TOKEN" \
   -H "Content-Type: application/json" \
@@ -282,7 +284,7 @@ Example success bodies:
 }
 ```
 
-Logical rejections return **HTTP 200** with `"ok": false` and a stable `error` code: `invalid_phase` when the phase cannot take the command, `prepare_failed` when a Start cannot prepare the load test, `conflicting_settings` when the command conflicts with other settings, such as `users 1` while an increase time is set, and `no_host` when clearing the host would leave something with no host. The report control routes add three: `invalid_report` under `--no-metrics`, or when Save report is turned on during a run with no folder; `report_busy` while Save report now is still writing the report it was last asked for; and `report_failed` when Save report now can't start writing the report, as during a run with no folder or when its folder can't be written to, with the reason in `message`; a write that fails after an `ok: true` answer shows in the snapshot's `report.error`. When one setting is at fault the body also names it in `field` (for example `"field": "users"`, or `"field": "host"` for a Start with no host); `field` is left out otherwise. A malformed body returns **400** with `error` set to `bad_request`, and a `users` value that is not an integer from 1 to 100000 returns **400** with `invalid_users`; a 400 body has `"field": null`. A run settings body has 400 refusals of its own, which name the field; see [Run settings](#run-settings). A body larger than 16 KiB gets **413** with a plain text body, before the token is checked.
+Logical rejections return **HTTP 200** with `"ok": false` and a stable `error` code: `invalid_phase` when the phase cannot take the command, `prepare_failed` when a Start cannot prepare the load test, `conflicting_settings` when the command conflicts with other settings, such as `users 1` while an increase time is set, `no_host` when clearing the host would leave something with no host, and `internal` when applying the command fails inside Goose, which then ends the load test with that error. The report control routes add three: `invalid_report` under `--no-metrics`, or when Save report is turned on during a run with no folder; `report_busy` while Save report now is still writing the report it was last asked for; and `report_failed` when Save report now can't start writing the report, as during a run with no folder or when its folder can't be written to, with the reason in `message`; a write that fails after an `ok: true` answer shows in the snapshot's `report.error`. When one setting is at fault the body also names it in `field` (for example `"field": "users"`, or `"field": "host"` for a Start with no host); `field` is left out otherwise. A malformed body returns **400** with `error` set to `bad_request`, and a `users` value that is not an integer from 1 to 100000 returns **400** with `invalid_users`; a 400 body has `"field": null`. A run settings body has 400 refusals of its own, which name the field; see [Run settings](#run-settings). A body larger than 16 KiB gets **413** with a plain text body, before the token is checked.
 
 A Start is refused with `prepare_failed` and `"field": "host"` before it replies when some scenario has no host from `--host`, the scenario itself or the default host, and also when a `test_start` or `test_stop` transaction is registered and neither `--host` nor the default host is set, since those run with no scenario host. An autostarted run with the same configuration fails at launch instead.
 
@@ -474,18 +476,18 @@ TLS termination is not provided by Goose; use an SSH tunnel or reverse proxy whe
 | `build_count` | Successful hub snapshot builds since process start |
 | `active_sse_clients` | Concurrent SSE clients currently holding a slot |
 | `control_enabled` | Whether the Start/Stop/Users/Quit and Delete routes are registered (`--dashboard-control`) |
-| `controllers` | The `host:port` the telnet and WebSocket Controllers are configured to listen on, after defaults (`0.0.0.0:5116` and `0.0.0.0:5117` unless set), or `null` for one turned off with `--no-telnet` or `--no-websocket`; the page footer names them |
+| `controllers` | The `host:port` the telnet and WebSocket Controllers listen on, after defaults (`0.0.0.0:5116` and `0.0.0.0:5117` unless set), or `null` for one turned off with `--no-telnet` or `--no-websocket`, or one that couldn't listen on its port; the page footer names them |
 
 These counters are ops-safe (timing and client counts only). The response does **not** include rates, hosts under test, request names, or error strings. `controllers` names this process's own listeners, which take no authentication; it reveals only where they listen. `last_snapshot_ms` minus `last_build_ms` is time spent waiting on the main loop and the metrics processor's queue, plus serializing the JSON. The main loop answers the dashboard between steps and sleeps up to 500 ms between them, so this difference can reach about 500 ms by design; a large `last_build_ms` is the one that points at the metrics processor. Both durations are also logged at `debug` with a `[dashboard]` prefix when a build completes, and a late answer to a timed out request is logged with its round trip.
 
 ## What the UI shows
 
-- **Phase badge** — `idle` (gray), `increase` (blue), `maintain` (green), `decrease` (orange), `shutdown` (red)
-- **Connection indicator** — green for SSE, yellow for poll fallback, red when disconnected
+- **Phase badge**: `idle` (gray), `increase` (blue), `maintain` (green), `decrease` (orange), `shutdown` (red)
+- **Connection indicator**: green for SSE, yellow for poll fallback, red when disconnected, gray once Goose has exited
 - **KPI strip**: users, RPS, fail %, and the whole run p95 and average latency. The tiles share the row, and each value is sized to its tile, so it stays on one line. The users tile shows the active users, then the target, smaller. RPS shows whole requests a second at 100 and above, and two decimals below 100; hover the tile for the two decimals the tables show.
-- **Charts**: trailing series window (default 300 seconds) for RPS and failures per second and active users, and the response time heatmap; see [The response time heatmap](#the-response-time-heatmap). Their colours follow the system's light or dark theme, and change with it while the page is open.
+- **Charts**: trailing series window (default 300 seconds) for RPS and failures per second and active users, and the response time heatmap; see [The response time heatmap](#the-response-time-heatmap). The RPS and failures chart and the average latency chart, and their data tables, end at the last complete second: the newest second is still filling, so it is not drawn. Their colours follow the system's light or dark theme, and change with it while the page is open.
 - **Whole run** card: requests, failures, RPS, failures per second, fail %, average, p50, p95 and p99, and minimum and maximum response times
-- **Sortable tables**: Scenarios, Transactions, Requests and Errors. The scenario and transaction tables list every registered scenario and transaction and are never truncated; the request and error tables show the top rows (truncated server-side for large runs). The Transactions and Requests tables show failures per second and minimum and maximum response times, and the Requests table each request's status codes, most frequent first: the top three and how many more, such as `200 9,812 · 404 3 · +1`, with every code on hover (empty with `--no-status-codes`)
+- **Sortable tables**: Scenarios, Transactions, Requests, Errors and Transaction errors. The scenario and transaction tables list every registered scenario and transaction and are never truncated; the request, error and transaction error tables show the top rows (truncated server-side for large runs). The Transaction errors table counts each error a transaction returned that is not a request error, by transaction (numbered from 1), scenario, name and error. The Transactions and Requests tables show failures per second and minimum and maximum response times, and the Requests table each request's status codes, most frequent first: the top three and how many more, such as `200 9,812 · 404 3 · +1`, with every code on hover (empty with `--no-status-codes`)
 - **Hosts** in the header: the current or last run's hosts. In Idle, when the next Start would load test other hosts, they read `Last run: …`.
 - **Run settings** in the header, with control off: the same summary line the control panel shows, leaving out the hosts while running, and including the next Start's hosts in Idle when they differ from the last run's; see [Run settings in the snapshot](#run-settings-in-the-snapshot)
 - **Control panel** (only when `--dashboard-control`): the run settings summary, Start / Stop / Quit / target users; see [Controlling a load test from the dashboard](#controlling-a-load-test-from-the-dashboard)
@@ -641,7 +643,7 @@ Semver covers it: within 1.x no field, endpoint or error code is removed, rename
 
 ### The routes and the snapshot
 
-In 0.19 `/api/v1` serves `GET /api/v1/health`, `GET /api/v1/snapshot`, `GET /api/v1/events`, `GET /api/v1/series`, `GET /api/v1/reports`, `GET /api/v1/reports/{name}/{file}` and `GET /api/v1/reports/{name}/compare.md`, and with `--dashboard-control` `POST /api/v1/control/start`, `settings`, `stop`, `users`, `quit`, `report` and `report/now`, and `DELETE /api/v1/reports/{name}`. A snapshot's top level fields are `version`, `generated_at`, `goose_version`, `phase`, `stopping`, `duration_secs`, `active_users`, `maximum_users`, `target_users`, `total_users`, `hosts`, `aggregate`, `requests`, `errors`, `scenarios`, `transactions`, `series`, `flags`, `report` and `settings`. The SSE `closed` event's data is `1`.
+In 0.19 `/api/v1` serves `GET /api/v1/health`, `GET /api/v1/snapshot`, `GET /api/v1/events`, `GET /api/v1/series`, `GET /api/v1/reports`, `GET /api/v1/reports/{name}/{file}` and `GET /api/v1/reports/{name}/compare.md`, and with `--dashboard-control` `POST /api/v1/control/start`, `settings`, `stop`, `users`, `quit`, `report` and `report/now`, and `DELETE /api/v1/reports/{name}`. A snapshot's top level fields are `version`, `generated_at`, `goose_version`, `phase`, `stopping`, `duration_secs`, `active_users`, `maximum_users`, `target_users`, `total_users`, `hosts`, `aggregate`, `requests`, `errors`, `transaction_errors`, `scenarios`, `transactions`, `series`, `flags`, `report` and `settings`. The SSE `closed` event's data is `1`.
 
 ### What the contract is
 
@@ -655,17 +657,25 @@ The browser SPA lives under `src/dashboard/static/`. **Edit the TypeScript modul
 |------|------|
 | `src/main.ts` | Entry point: renders each snapshot and wires the modules together |
 | `src/connection.ts` | Access token handling, SSE stream, poll fallback, snapshot fetch and version check |
-| `src/control.ts` | Control panel, its POSTs, and the phase badge |
-| `src/charts.ts` | Chart.js setup and chart updates |
-| `src/tables.ts` | The shared sortable table (sorting, filtering, empty states) and the scenarios, transactions, requests and errors tables |
+| `src/control.ts` | Control panel, its POSTs, the phase badge and the run settings summary |
+| `src/settings-form.ts` | The Edit settings form: Host, Ramp up, Ramp down and Run time, and their pending edits |
+| `src/run-settings.ts` | The run settings summary line, worded from `settings.stage` |
+| `src/follow.ts` | Fields that follow the server unless being edited (Target and the settings form) |
+| `src/charts.ts` | Chart.js setup and the line charts: RPS and failures, active users, and average latency |
+| `src/chart-data.ts` | Each line chart's one sentence summary and its data table |
+| `src/heatmap.ts` | The response time heatmap: data shaping and drawing |
+| `src/heatmap-card.ts` | The response time card: its request select, the Adjusted and Measured toggle, and the average latency chart when percentiles over time are off |
+| `src/coadjust.ts` | Which response time to show: coordinated omission adjusted or measured |
+| `src/runs.ts` | The report bar, Save report now, the report banners and the runs panel |
+| `src/tables.ts` | The shared sortable table (sorting, filtering, empty states) and the scenarios, transactions, requests, errors and transaction errors tables |
 | `src/format.ts` | Number and duration formatting, and the small DOM builders the summary and tables share |
 | `src/status.ts` | Banner and connection indicator |
 | `src/dom.ts` | Element lookup that checks each element's type |
 | `snapshot.d.ts` | **Generated** types of the snapshot JSON, from the Rust structs in `src/metrics/dashboard_snapshot.rs` |
+| `idle-snapshot.mjs` | A complete idle snapshot for the client tests, type checked against `snapshot.d.ts` by `npm run check` |
 | `tsconfig.json` / `package.json` | TypeScript type check and esbuild bundle config |
-| `token.test.mjs` | Client tests of access token handling, run in jsdom against the bundled `app.js` (`npm test`) |
-| `tables.test.mjs` | Client tests of the four tables, run in jsdom against the bundled `app.js` (`npm test`) |
-| `test-harness.mjs` | The jsdom page loader and stub server both client test files share |
+| `*.test.mjs` | Client tests, run with `npm test`: `token`, `tables`, `runs`, `control`, `settings`, `coadjust`, `format`, `heatmap`, `a11y`, `chrome` and `monitor`. Most run in jsdom against the bundled `app.js`; `npm test` first builds `coadjust.ts`, `format.ts`, `heatmap.ts` and `charts.ts` into `test-build/` for the tests that load a module on its own |
+| `test-harness.mjs` | The jsdom page loader and stub server the client tests share |
 | `app.js` | **Bundled output** (the modules plus Chart.js), embedded by the Rust server via `include_str!` |
 | `index.html`, `app.css` | Shell and styles (not generated) |
 
@@ -706,7 +716,7 @@ cd src/dashboard/static
 npm run check
 ```
 
-`ts-rs` is a dev dependency used only by unit tests, so crates that depend on Goose never pull it in. Without the environment variable, `dashboard_types_match_rust` compares the committed file with the structs and fails when they differ (a reordered field counts as a difference), so a struct change without a regenerated `snapshot.d.ts` fails `cargo test` in CI, and a client that reads a removed or renamed field then fails `npm run check`. A second test fails on any serde attribute or hand-written `Serialize` in the snapshot module, because `ts-rs` cannot see either, so the JSON could change without the types changing.
+`ts-rs` is a dev dependency used only by unit tests, so crates that depend on Goose never pull it in. Without the environment variable, `dashboard_types_match_rust` compares the committed file with the structs and fails when they differ (a reordered field counts as a difference), so a struct change without a regenerated `snapshot.d.ts` fails `cargo test` in CI, and a client that reads a removed or renamed field then fails `npm run check`. A second test fails on any serde attribute other than `serde(skip)`, which `ts-rs` honours, or on a hand-written `Serialize` in the snapshot module, because `ts-rs` cannot see either, so the JSON could change without the types changing.
 
 `ts-rs` is pinned to an exact version in `Cargo.toml`. The committed file is compared byte for byte with its output, and Goose commits no `Cargo.lock`, so a new release that formats differently would otherwise fail CI with no change in Goose. Dependabot opens a pull request when a new `ts-rs` is released; if `dashboard_types_match_rust` fails on it, regenerate the file on that branch as above and review the diff.
 
@@ -729,7 +739,7 @@ npm run build
 npm test
 ```
 
-The tests load the bundled `app.js` into a jsdom page with a stubbed `fetch`, so rebuild it first.
+Most tests load the bundled `app.js` into a jsdom page with a stubbed `fetch`, so rebuild it first.
 
 ### Notes
 
@@ -744,7 +754,7 @@ Enabling `--dashboard` turns on the same per second **GraphData** series collect
 
 - Per-second counters for requests, errors, users, and average latency are kept for the whole run while a report will be written, and for the last 10 minutes otherwise.
 - While a report will be written, memory grows with unique request names × run length, the same cost as generating HTML graphs; otherwise it stays flat.
-- Request and error tables truncate to the top rows (`flags.requests_truncated` / `flags.errors_truncated` when capped); series charts use a fixed trailing window (default 5 minutes).
+- Request, error and transaction error tables truncate to the top rows (`flags.requests_truncated` / `flags.errors_truncated` / `flags.transaction_errors_truncated` when capped); series charts use a fixed trailing window (default 5 minutes).
 
 With no SSE client connected and no `GET /api/v1/snapshot` in the last two seconds (`/api/v1/health` does not count), the dashboard issues **no** snapshot builds (no extra metrics-processor work beyond GraphData recording). When clients are connected, snapshots are coalesced to about **1 Hz** for all viewers. Concurrent SSE clients are capped (default **32**, tunable with `--dashboard-max-clients`); further clients receive HTTP 503.
 
@@ -790,7 +800,8 @@ Both flags are also true under `--no-metrics`, where both tables say metrics are
 | Start / Stop / set users, host, ramps and run time from a browser | Dashboard control (`--dashboard-control` + token) |
 | Test plan from a script | Dashboard control (`/api/v1/control/settings`) or the Controllers |
 | Full command set, `config` and `metrics` | [Telnet](telnet.md) / [WebSocket](websocket.md) Controllers |
-| Process shutdown | Controllers only (`shutdown`) |
+| Shut Goose down from Idle | Dashboard control (Quit) or the Controllers (`shutdown`) |
+| Shut down a running test | Controllers (`shutdown`) |
 
 Dashboard control reuses the same phase-transition logic as Controllers (shared helpers), and Controllers remain available alongside the dashboard. One Controller command behaves differently since the settings form: `runtime` on a running users ramp changes this run, where it was refused unless idle; see [Run time on a running test](#run-time-on-a-running-test).
 

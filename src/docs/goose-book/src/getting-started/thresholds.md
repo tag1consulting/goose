@@ -54,6 +54,8 @@ So is a rule that can never pass: any rule with `<0`, such as `p95<0` or `error-
 threshold "rps>=200": it can never pass; `configuration.throttle_requests` caps the run at 100 requests a second.
 ```
 
+`--throttle-requests 0` means no throttle, so it refuses no `rps` rule.
+
 Thresholds judge metrics, so `--threshold` is not allowed with `--no-metrics`.
 
 A percentile comes from the same [histogram buckets](https://github.com/tag1consulting/goose/blob/main/src/metrics/buckets.rs) as every report's percentiles, so it can be up to 0.78% away from the exact time, while the average and the slowest time are exact.
@@ -129,7 +131,7 @@ match goose_attack.execute().await {
 
 ### Exit code in CI
 
-A load test whose `main` returns `Result<(), GooseError>` and uses `?` on `execute()`, as every example does, exits with code 1 when a threshold fails, so a CI step fails with it:
+A load test whose `main` returns `Result<(), GooseError>` and uses `?` on `execute()`, as every example does, exits with code 1 when a threshold fails, so a CI step fails with it. This step runs the `simple` example from a Goose checkout; in your own load test crate, use `cargo run --release --` instead:
 
 ```yaml
 - name: Load test

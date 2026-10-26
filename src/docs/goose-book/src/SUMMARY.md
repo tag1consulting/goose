@@ -5,6 +5,7 @@
 [Glossary](glossary.md)  
 
 - [Getting Started](getting-started/overview.md)
+    - [Upgrading From 0.18](getting-started/upgrading.md)
     - [Creating A Load test](getting-started/creating.md)
     - [Validating Requests](getting-started/validation.md)
     - [Running A Load Test](getting-started/running.md)
@@ -47,6 +48,7 @@
     - [Defaults](config/defaults.md)
     - [Scheduling Scenarios And Transactions](config/scheduler.md)
     - [Proxy](config/proxy.md)
+    - [Cookies](config/cookie.md)
 
 - [Examples](example/overview.md)
     - [Simple](example/simple.md)

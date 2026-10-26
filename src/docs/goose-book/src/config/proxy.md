@@ -6,7 +6,7 @@ Goose supports routing traffic through HTTP, HTTPS, and SOCKS proxies by leverag
 
 HTTP and HTTPS proxies work out of the box with Goose - **no compile-time changes needed**. Simply set environment variables:
 
-**Important**: `HTTP_PROXY` controls proxying for HTTP requests (port 80), `HTTPS_PROXY` controls proxying for HTTPS requests (port 443). The proxy server itself typically runs on HTTP regardless of which requests it proxies.
+**Important**: `HTTP_PROXY` controls proxying for `http://` URLs and `HTTPS_PROXY` for `https://` URLs, whatever port they use. `ALL_PROXY` covers both, and `HTTP_PROXY` or `HTTPS_PROXY` wins over it when both are set. The proxy server itself typically runs on HTTP regardless of which requests it proxies.
 
 ```bash
 # Set both to handle HTTP and HTTPS traffic
@@ -33,10 +33,10 @@ Add reqwest with the `socks` feature to your `Cargo.toml`:
 [dependencies]
 goose = "^0.19"
 tokio = "^1"
-reqwest = { version = "0.13", features = ["socks"] }
+reqwest = { version = "0.13", default-features = false, features = ["socks"] }
 ```
 
-**Note**: Cargo automatically unifies features across all dependencies. Since Goose already requires `gzip` and `json` features from reqwest, adding just `socks` will result in reqwest being compiled with `["gzip", "json", "socks"]`.
+**Note**: Cargo automatically unifies features across all dependencies. Goose turns off reqwest's default features and enables `default-tls`, `form`, `gzip` and `json` (and `cookies` with Goose's default `cookies` feature), so adding `socks` in your own dependency results in reqwest being compiled with those features plus `socks`. Keep `default-features = false` on your reqwest line if you don't want reqwest's own defaults, such as `http2` and `system-proxy`, added to the build.
 
 ### Environment Variables
 
@@ -145,8 +145,8 @@ edition = "2021"
 [dependencies]
 goose = "^0.19"
 tokio = { version = "^1", features = ["macros", "rt-multi-thread"] }
-# Add socks feature - Cargo will unify with Goose's gzip+json features
-reqwest = { version = "0.13", features = ["socks"] }
+# Add the socks feature; Cargo unifies it with the features Goose enables
+reqwest = { version = "0.13", default-features = false, features = ["socks"] }
 ```
 
 **src/main.rs (same as above):**
@@ -194,7 +194,7 @@ For proxies requiring authentication:
 
 ### Feature Not Available
 If you get compilation errors about SOCKS features:
-- Verify `reqwest = { version = "0.13", features = ["socks"] }` is in your Cargo.toml
+- Verify `reqwest = { version = "0.13", default-features = false, features = ["socks"] }` is in your Cargo.toml
 - Run `cargo clean` and rebuild your project
 
 ## Additional Resources
@@ -206,10 +206,10 @@ For more detailed proxy configuration options, see the official reqwest document
 
 ## Notes
 
-- All GooseUsers in your load test will route through the configured proxy
+- All GooseUsers in your load test will route through the configured proxy, including users given their own client with `GooseUser::set_client_builder`, unless that client calls `.no_proxy()` or sets its own `reqwest::Proxy`
 - The proxy configuration applies to the entire load test
 - Both HTTP and HTTPS requests will use the proxy when configured
 - Environment variables (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`) are **standard system proxy variables automatically recognized by reqwest**, the HTTP client library that Goose uses internally
 - **Goose does not define or manage these environment variables** - they are set by you in your shell environment and consumed by reqwest
-- **HTTP/HTTPS proxy support is enabled by default** in reqwest via the `system-proxy` feature _(enabled by default)_, so Goose automatically inherits this functionality
+- **Proxies from these environment variables need no reqwest feature**: reqwest reads them for every client unless the client calls `.no_proxy()`. Reqwest's separate `system-proxy` feature, which reads the macOS and Windows system proxy settings, is one of reqwest's default features and Goose turns it off, so those system settings are not used unless your own reqwest dependency enables `system-proxy`
 - **SOCKS proxy support requires** the `socks` feature to be explicitly enabled in your project's reqwest dependency

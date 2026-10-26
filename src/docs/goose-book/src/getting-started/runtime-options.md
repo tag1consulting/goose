@@ -1,6 +1,6 @@
 # Run-Time Options
 
-Every Goose load test takes the same run-time options. `-h` prints a summary of each one, and `--help` prints the full reference: what each option does, its default, the values it takes, the options it works with or excludes, an example, and the `GooseDefault` that sets it in code. For example, to see the summary for our example load test, run `cargo run --release -- -h`:
+Every Goose load test takes the same run-time options. `-h` prints a summary of each one, and `--help` prints the full reference: what each option does, its default, the values it takes, the options it works with or excludes, an example, and the `GooseDefault` that sets it in code. For example, to see the summary for our example load test, run `cargo run --release -- -h`. The output below comes from a build with the `pdf-reports` feature:
 
 ```text
 {{#include runtime-options-short.txt}}
