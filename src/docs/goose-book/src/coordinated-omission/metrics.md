@@ -99,7 +99,7 @@ The "raw" percentiles would suggest that well under 1% of requests for `GET /` a
 
 Adjusted metrics appear once mitigation has added a synthetic time to at least one request:
 
-- **Console**: an "Adjusted for Coordinated Omission" table follows the response time table and the percentile table of the "PER REQUEST METRICS", in the running metrics and the final summary.
+- **Console**: an "Adjusted for Coordinated Omission" table follows the response time table of the "PER REQUEST METRICS", in the running metrics and the final summary, and in the final summary another follows its percentile table.
 - **HTML report**: "Request Metrics With Coordinated Omission Mitigation" (average, standard deviation and maximum) and "Response Time Metrics With Coordinated Omission Mitigation" (percentiles) follow the raw tables. With `--baseline-file`, both show how each value changed. The response time heatmap's **Adjusted** and **Measured** buttons choose whether the synthetic times are counted.
 - **Markdown report**: no adjusted tables; it has the event summary described below.
 - **JSON report**: `co_request_metrics` and `co_response_metrics` hold the adjusted tables, and each request in `raw_metrics` holds its adjusted timing data in `coordinated_omission_data`.

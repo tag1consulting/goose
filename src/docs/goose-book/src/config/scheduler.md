@@ -71,7 +71,7 @@ Both [`GooseUser`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html) ru
 
 This third example assumes the manual configuration of `.set_scheduler(GooseScheduler::Random)`.
 
-If Goose is told to launch only two users, the first will be randomly assigned either `Scenario1` or `Scenario2`. Regardless of which is assigned to the first user, the second will again be randomly assigned either `Scenario1` or `Scenario2`. If the load test is stopped and run again, there users are randomly re-assigned, there is no consistency between load test runs.
+Goose fills its list of users by picking a Scenario at random and taking one of that Scenario's weighted places, until every place is taken. With weights of 2 and 1 the list holds `Scenario1` twice and `Scenario2` once, in a random order. If Goose is told to launch only two users, they may both run `Scenario1`, or one may run each, but never both `Scenario2`. If the load test is stopped and run again, the users are randomly re-assigned; there is no consistency between load test runs.
 
 Goose builds each Scenario's list of transactions as the Serial scheduler does, then shuffles the whole list once when the load test starts. Every [`GooseUser`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html) running that Scenario runs the same shuffled order, over and over, and the next run of the load test gets a new order. With `Scenario1` the order is one of `transaction1`, `transaction1`, `transaction2`; `transaction1`, `transaction2`, `transaction1`; or `transaction2`, `transaction1`, `transaction1`.
 

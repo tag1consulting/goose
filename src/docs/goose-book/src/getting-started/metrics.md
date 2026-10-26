@@ -385,7 +385,7 @@ When any request failed, an Errors section counts each request error, most frequ
 
 ### Markdown report
 
-The Markdown report follows the structure of the [HTML report](#html-report). However, it does not include the chart elements or the heatmap, and with coordinated omission mitigation it has the event summary but not the adjusted tables.
+The Markdown report follows the structure of the [HTML report](#html-report). However, it does not include the chart elements or the heatmap, and with coordinated omission mitigation it has the event summary but not the adjusted tables. The first column of its scenario table is headed Scenario.
 
 ### JSON report
 

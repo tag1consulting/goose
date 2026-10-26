@@ -487,7 +487,7 @@ These counters are ops-safe (timing and client counts only). The response does *
 - **KPI strip**: users, RPS, fail %, and the whole run p95 and average latency. The tiles share the row, and each value is sized to its tile, so it stays on one line. The users tile shows the active users, then the target, smaller. RPS shows whole requests a second at 100 and above, and two decimals below 100; hover the tile for the two decimals the tables show.
 - **Charts**: trailing series window (default 300 seconds) for RPS and failures per second and active users, and the response time heatmap; see [The response time heatmap](#the-response-time-heatmap). The RPS and failures chart and the average latency chart, and their data tables, end at the last complete second: the newest second is still filling, so it is not drawn. Their colours follow the system's light or dark theme, and change with it while the page is open.
 - **Whole run** card: requests, failures, RPS, failures per second, fail %, average, p50, p95 and p99, and minimum and maximum response times
-- **Sortable tables**: Scenarios, Transactions, Requests and Errors. The scenario and transaction tables list every registered scenario and transaction and are never truncated; the request and error tables show the top rows (truncated server-side for large runs). The Transactions and Requests tables show failures per second and minimum and maximum response times, and the Requests table each request's status codes, most frequent first: the top three and how many more, such as `200 9,812 · 404 3 · +1`, with every code on hover (empty with `--no-status-codes`)
+- **Sortable tables**: Scenarios, Transactions, Requests, Errors and Transaction errors. The scenario and transaction tables list every registered scenario and transaction and are never truncated; the request, error and transaction error tables show the top rows (truncated server-side for large runs). The Transaction errors table counts each error a transaction returned that is not a request error, by transaction (numbered from 1), scenario, name and error. The Transactions and Requests tables show failures per second and minimum and maximum response times, and the Requests table each request's status codes, most frequent first: the top three and how many more, such as `200 9,812 · 404 3 · +1`, with every code on hover (empty with `--no-status-codes`)
 - **Hosts** in the header: the current or last run's hosts. In Idle, when the next Start would load test other hosts, they read `Last run: …`.
 - **Run settings** in the header, with control off: the same summary line the control panel shows, leaving out the hosts while running, and including the next Start's hosts in Idle when they differ from the last run's; see [Run settings in the snapshot](#run-settings-in-the-snapshot)
 - **Control panel** (only when `--dashboard-control`): the run settings summary, Start / Stop / Quit / target users; see [Controlling a load test from the dashboard](#controlling-a-load-test-from-the-dashboard)
@@ -643,7 +643,7 @@ Semver covers it: within 1.x no field, endpoint or error code is removed, rename
 
 ### The routes and the snapshot
 
-In 0.19 `/api/v1` serves `GET /api/v1/health`, `GET /api/v1/snapshot`, `GET /api/v1/events`, `GET /api/v1/series`, `GET /api/v1/reports`, `GET /api/v1/reports/{name}/{file}` and `GET /api/v1/reports/{name}/compare.md`, and with `--dashboard-control` `POST /api/v1/control/start`, `settings`, `stop`, `users`, `quit`, `report` and `report/now`, and `DELETE /api/v1/reports/{name}`. A snapshot's top level fields are `version`, `generated_at`, `goose_version`, `phase`, `stopping`, `duration_secs`, `active_users`, `maximum_users`, `target_users`, `total_users`, `hosts`, `aggregate`, `requests`, `errors`, `scenarios`, `transactions`, `series`, `flags`, `report` and `settings`. The SSE `closed` event's data is `1`.
+In 0.19 `/api/v1` serves `GET /api/v1/health`, `GET /api/v1/snapshot`, `GET /api/v1/events`, `GET /api/v1/series`, `GET /api/v1/reports`, `GET /api/v1/reports/{name}/{file}` and `GET /api/v1/reports/{name}/compare.md`, and with `--dashboard-control` `POST /api/v1/control/start`, `settings`, `stop`, `users`, `quit`, `report` and `report/now`, and `DELETE /api/v1/reports/{name}`. A snapshot's top level fields are `version`, `generated_at`, `goose_version`, `phase`, `stopping`, `duration_secs`, `active_users`, `maximum_users`, `target_users`, `total_users`, `hosts`, `aggregate`, `requests`, `errors`, `transaction_errors`, `scenarios`, `transactions`, `series`, `flags`, `report` and `settings`. The SSE `closed` event's data is `1`.
 
 ### What the contract is
 
@@ -667,7 +667,7 @@ The browser SPA lives under `src/dashboard/static/`. **Edit the TypeScript modul
 | `src/heatmap-card.ts` | The response time card: its request select, the Adjusted and Measured toggle, and the average latency chart when percentiles over time are off |
 | `src/coadjust.ts` | Which response time to show: coordinated omission adjusted or measured |
 | `src/runs.ts` | The report bar, Save report now, the report banners and the runs panel |
-| `src/tables.ts` | The shared sortable table (sorting, filtering, empty states) and the scenarios, transactions, requests and errors tables |
+| `src/tables.ts` | The shared sortable table (sorting, filtering, empty states) and the scenarios, transactions, requests, errors and transaction errors tables |
 | `src/format.ts` | Number and duration formatting, and the small DOM builders the summary and tables share |
 | `src/status.ts` | Banner and connection indicator |
 | `src/dom.ts` | Element lookup that checks each element's type |
@@ -754,7 +754,7 @@ Enabling `--dashboard` turns on the same per second **GraphData** series collect
 
 - Per-second counters for requests, errors, users, and average latency are kept for the whole run while a report will be written, and for the last 10 minutes otherwise.
 - While a report will be written, memory grows with unique request names × run length, the same cost as generating HTML graphs; otherwise it stays flat.
-- Request and error tables truncate to the top rows (`flags.requests_truncated` / `flags.errors_truncated` when capped); series charts use a fixed trailing window (default 5 minutes).
+- Request, error and transaction error tables truncate to the top rows (`flags.requests_truncated` / `flags.errors_truncated` / `flags.transaction_errors_truncated` when capped); series charts use a fixed trailing window (default 5 minutes).
 
 With no SSE client connected and no `GET /api/v1/snapshot` in the last two seconds (`/api/v1/health` does not count), the dashboard issues **no** snapshot builds (no extra metrics-processor work beyond GraphData recording). When clients are connected, snapshots are coalesced to about **1 Hz** for all viewers. Concurrent SSE clients are capped (default **32**, tunable with `--dashboard-max-clients`); further clients receive HTTP 503.
 
