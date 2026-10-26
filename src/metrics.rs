@@ -3692,6 +3692,10 @@ impl MetricsProcessor {
                 self.metrics.print_running();
                 // Reset all metrics state.
                 self.metrics.requests = HashMap::new();
+                // The errors tables count the errors of the measured time,
+                // as every other table does; the error log keeps them all.
+                self.metrics.errors.clear();
+                self.metrics.transaction_errors.clear();
                 self.metrics
                     .initialize_scenario_metrics(&self.scenarios, &self.configuration);
                 // The users still running run their scenarios in the measured time.
@@ -7024,6 +7028,73 @@ mod test {
                 key
             );
         }
+    }
+
+    /// The metrics reset clears both errors tables, so the Controllers'
+    /// `metrics` reply and the dashboard snapshot read none from before it.
+    #[tokio::test]
+    async fn reset_clears_errors_tables() {
+        let mut processor = make_test_processor(0);
+        let mut failed = make_request_metric("/about/", 1, 404, 100);
+        failed.success = false;
+        failed.error = "404 Not Found: /about/".to_string();
+        processor.process_request_metric(&failed);
+        processor.record_transaction_error(&GooseTransactionErrorMetric {
+            elapsed: 100,
+            scenario_index: 0,
+            scenario_name: Arc::from("TestScenario"),
+            transaction_index: 0,
+            transaction_name: Arc::from("tx"),
+            run_time: 1,
+            user: 0,
+            error: "ramping up".to_string(),
+        });
+        assert_eq!(processor.metrics.errors.len(), 1);
+        assert_eq!(processor.metrics.transaction_errors.len(), 1);
+        let (ack, _ack_rx) = tokio::sync::oneshot::channel();
+        processor.handle_command(MetricsCommand::Reset {
+            duration: 1,
+            total_users: 1,
+            maximum_users: 1,
+            active_users: 1,
+            series_elapsed_secs: 1,
+            running_users: Vec::new(),
+            ack,
+        });
+        let (respond, respond_rx) = tokio::sync::oneshot::channel();
+        processor.handle_command(MetricsCommand::GetMetrics {
+            duration: 1,
+            total_users: 1,
+            maximum_users: 1,
+            history: Vec::new(),
+            respond,
+        });
+        let metrics = respond_rx.await.unwrap();
+        assert!(metrics.errors.is_empty(), "{:?}", metrics.errors);
+        assert!(
+            metrics.transaction_errors.is_empty(),
+            "{:?}",
+            metrics.transaction_errors
+        );
+        let (respond, respond_rx) = tokio::sync::oneshot::channel();
+        processor.handle_command(MetricsCommand::GetDashboardSnapshot {
+            duration: 1,
+            total_users: 1,
+            maximum_users: 1,
+            active_users: 1,
+            target_users: 1,
+            series_elapsed_secs: 1,
+            phase: "maintain".to_string(),
+            stopping: false,
+            series_window_secs: dashboard_snapshot::SERIES_WINDOW_SECS,
+            report: dashboard_snapshot::SnapshotReport::default(),
+            settings: Box::new(dashboard_snapshot::SnapshotSettings::idle()),
+            heatmap_since: None,
+            respond,
+        });
+        let snapshot = respond_rx.await.unwrap();
+        assert!(snapshot.errors.is_empty());
+        assert!(snapshot.transaction_errors.is_empty());
     }
 
     /// A user counts among its scenario's users from when it starts, and
