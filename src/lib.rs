@@ -544,6 +544,9 @@ struct GooseAttackRunState {
     /// All unbounded senders to allow communication with
     /// [`GooseUser`](./goose/struct.GooseUser.html) threads.
     user_channels: Vec<flume::Sender<GooseUserCommand>>,
+    /// The `(scenario index, user)` of the user each of `user_channels`
+    /// reaches, so a metrics reset counts the users still running.
+    running_users: Vec<(usize, usize)>,
     /// Timer tracking when to display running metrics, if enabled.
     running_metrics_timer: std::time::Instant,
     /// When the next `--threshold` check is due, or `None` while the thresholds are
@@ -2426,6 +2429,7 @@ impl GooseAttack {
             idle_status_displayed: false,
             users: Vec::new(),
             user_channels: Vec::new(),
+            running_users: Vec::new(),
             running_metrics_timer: std_now,
             threshold_check_at: None,
             users_shutdown: HashSet::new(),
@@ -2539,6 +2543,17 @@ impl GooseAttack {
                     flume::Receiver<GooseUserCommand>,
                 ) = flume::unbounded();
                 goose_attack_run_state.user_channels.push(parent_sender);
+                goose_attack_run_state.running_users.push((
+                    thread_user.scenarios_index,
+                    thread_user.weighted_users_index,
+                ));
+                // The user runs its scenario from now, iteration or not.
+                let _ = goose_attack_run_state
+                    .metrics_cmd_tx
+                    .send(MetricsCommand::UserStarted {
+                        scenario_index: thread_user.scenarios_index,
+                        user: thread_user.weighted_users_index,
+                    });
 
                 // Clone the logger_tx if enabled, otherwise is None.
                 thread_user
@@ -2865,6 +2880,7 @@ impl GooseAttack {
                 goose_attack_run_state
                     .schedule_next_adjust(Duration::from_secs_f64(1.0 / f64::from(decrease_rate)));
 
+                goose_attack_run_state.running_users.pop();
                 if let Some(send_to_user) = goose_attack_run_state.user_channels.pop() {
                     match send_to_user.send(GooseUserCommand::Exit) {
                         Ok(_) => {
@@ -3398,6 +3414,7 @@ impl GooseAttack {
         goose_attack_run_state.idle_status_displayed = false;
         goose_attack_run_state.users = Vec::new();
         goose_attack_run_state.user_channels = Vec::new();
+        goose_attack_run_state.running_users = Vec::new();
         goose_attack_run_state.running_metrics_timer = std_now;
         // The thresholds are checked from when the run first enters Maintain.
         goose_attack_run_state.threshold_check_at = None;

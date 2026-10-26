@@ -149,8 +149,8 @@ type ScenarioRow = {
  */
 scenario_index: number, scenario_name: string,
 /**
- * Distinct users that have finished at least one run of this scenario
- * since the last metrics reset; not the users running it now.
+ * Distinct users that ran this scenario since the last metrics reset,
+ * whether or not they finished a run; not only the users running it now.
  */
 users: number,
 /**

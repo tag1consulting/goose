@@ -220,8 +220,8 @@ pub(crate) struct ScenarioRow {
     /// dashboard shows it counted from 1.
     pub scenario_index: u64,
     pub scenario_name: String,
-    /// Distinct users that have finished at least one run of this scenario
-    /// since the last metrics reset; not the users running it now.
+    /// Distinct users that ran this scenario since the last metrics reset,
+    /// whether or not they finished a run; not only the users running it now.
     pub users: u64,
     /// Completed passes through the scenario's weighted transactions.
     pub run_count: u64,

@@ -353,6 +353,9 @@ pub(crate) enum MetricsCommand {
     /// `rps` rules count ends here. It drains as [`MetricsCommand::EnterMaintain`]
     /// does.
     LeaveMaintain { seconds: f64 },
+    /// A user started running scenario `scenario_index`: count it among the
+    /// scenario's users, though it may complete no iteration.
+    UserStarted { scenario_index: usize, user: usize },
     /// Record the current user count for the users-per-second graph.
     RecordUsers {
         active_users: usize,
@@ -372,6 +375,9 @@ pub(crate) enum MetricsCommand {
         /// Seconds on the continuous series clock at the reset, where the
         /// report heatmap's columns start again.
         series_elapsed_secs: usize,
+        /// The `(scenario index, user)` of each user still running, which
+        /// the scenarios count again after the reset.
+        running_users: Vec<(usize, usize)>,
         ack: tokio::sync::oneshot::Sender<()>,
     },
     /// Return a snapshot of the current metrics for the controller.
@@ -1829,7 +1835,11 @@ impl ScenarioMetricAggregate {
 /// over the `users` who ran them. The console and every report show this, for
 /// one scenario and for them all.
 pub(crate) fn iterations_per_user(count: usize, users: usize) -> f32 {
-    count as f32 / users as f32
+    match users {
+        // No user ran the scenario.
+        0 => 0.0,
+        _ => count as f32 / users as f32,
+    }
 }
 
 /// [`ScenarioMetricAggregate`] as it is written.
@@ -3644,6 +3654,13 @@ impl MetricsProcessor {
                 self.metrics.rps_window.leave(mark);
                 false
             }
+            MetricsCommand::UserStarted {
+                scenario_index,
+                user,
+            } => {
+                self.record_scenario_user(scenario_index, user);
+                false
+            }
             MetricsCommand::RecordUsers {
                 active_users,
                 elapsed_secs,
@@ -3660,6 +3677,7 @@ impl MetricsProcessor {
                 maximum_users,
                 active_users,
                 series_elapsed_secs,
+                running_users,
                 ack,
             } => {
                 // Drain all pending metrics before reset.
@@ -3674,6 +3692,10 @@ impl MetricsProcessor {
                 self.metrics.requests = HashMap::new();
                 self.metrics
                     .initialize_scenario_metrics(&self.scenarios, &self.configuration);
+                // The users still running run their scenarios in the measured time.
+                for (scenario_index, user) in running_users {
+                    self.record_scenario_user(scenario_index, user);
+                }
                 self.metrics
                     .initialize_transaction_metrics(
                         &self.scenarios,
@@ -3876,6 +3898,14 @@ impl MetricsProcessor {
     #[cfg(test)]
     pub(crate) fn graph_data_for_test(&mut self) -> &mut GraphData {
         &mut self.graph_data
+    }
+
+    /// Count `user` among the users of scenario `scenario_index`, when
+    /// scenario metrics are kept.
+    fn record_scenario_user(&mut self, scenario_index: usize, user: usize) {
+        if let Some(scenario) = self.metrics.scenarios.get_mut(scenario_index) {
+            scenario.users.insert(user);
+        }
     }
 
     /// Whether coordinated omission mitigation has recorded an event, so the
@@ -4556,6 +4586,7 @@ impl GooseAttack {
                             maximum_users: self.metrics.maximum_users,
                             active_users: goose_attack_run_state.active_users,
                             series_elapsed_secs: self.series_elapsed_secs(),
+                            running_users: goose_attack_run_state.running_users.clone(),
                             ack: ack_tx,
                         })
                         .expect("metrics processor channel closed unexpectedly");
@@ -6968,6 +6999,7 @@ mod test {
             maximum_users: 1,
             active_users: 1,
             series_elapsed_secs: 10,
+            running_users: Vec::new(),
             ack,
         });
         // In flight at the reset: started at 9.8 s, finished after it.
@@ -6990,6 +7022,54 @@ mod test {
                 key
             );
         }
+    }
+
+    /// A user counts among its scenario's users from when it starts, and
+    /// again after a metrics reset while it still runs, iteration or not.
+    #[test]
+    fn scenario_users_are_the_users_running_it() {
+        let mut processor = make_dashboard_test_processor(GooseConfiguration {
+            host: Some("http://localhost".to_string()),
+            ..Default::default()
+        });
+        let mut scenario = crate::goose::Scenario::new("Only");
+        scenario.scenarios_index = 0;
+        processor.scenarios = vec![scenario];
+        processor
+            .metrics
+            .initialize_scenario_metrics(&processor.scenarios, &processor.configuration);
+        for user in 0..3 {
+            processor.handle_command(MetricsCommand::UserStarted {
+                scenario_index: 0,
+                user,
+            });
+        }
+        assert_eq!(processor.metrics.scenarios[0].users.len(), 3);
+        // A scenario index that has no metrics is ignored.
+        processor.handle_command(MetricsCommand::UserStarted {
+            scenario_index: 7,
+            user: 9,
+        });
+
+        // User 2 stopped before the reset.
+        let (ack, _ack_rx) = tokio::sync::oneshot::channel();
+        processor.handle_command(MetricsCommand::Reset {
+            duration: 1,
+            total_users: 3,
+            maximum_users: 3,
+            active_users: 2,
+            series_elapsed_secs: 1,
+            running_users: vec![(0, 0), (0, 1)],
+            ack,
+        });
+        let scenario = &processor.metrics.scenarios[0];
+        assert_eq!(scenario.users, vec![0, 1].into_iter().collect());
+        assert_eq!(scenario.run_times.counter, 0);
+        assert_eq!(
+            iterations_per_user(scenario.run_times.counter, scenario.users.len()),
+            0.0
+        );
+        assert_eq!(iterations_per_user(0, 0), 0.0);
     }
 
     #[test]
@@ -7023,6 +7103,7 @@ mod test {
             maximum_users: 5,
             active_users: 5,
             series_elapsed_secs: 10,
+            running_users: Vec::new(),
             ack: ack_tx,
         });
         assert!(!shutdown);
@@ -7894,6 +7975,7 @@ mod test {
             maximum_users: 1,
             active_users: 1,
             series_elapsed_secs: 12,
+            running_users: Vec::new(),
             ack,
         });
         assert_eq!(
@@ -8128,6 +8210,7 @@ mod test {
             maximum_users: 1,
             active_users: 1,
             series_elapsed_secs: 3,
+            running_users: Vec::new(),
             ack,
         });
         assert_eq!(co(&processor), (0, 0, 0));
