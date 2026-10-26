@@ -2259,6 +2259,7 @@ impl GooseUser {
             // Save the atomic counter's key and the outcome before moving request.
             self.write_counter_key(request.raw.method_label(), &request.name);
             let success = request.success;
+            let co_copy = request.coordinated_omission_elapsed > 0;
 
             if self.metrics_batch.is_some() {
                 // Discard stale batch if a metrics reset changed the epoch.
@@ -2281,8 +2282,12 @@ impl GooseUser {
                 self.send_request_metric_now(request)?;
             }
             // Increment at actual send/accumulate time so metrics reset can't zero
-            // the counter before the parent processes this request.
-            self.increment_counter_at_key(success);
+            // the counter before the parent processes this request. A
+            // coordinated omission copy repeats a request already counted: the
+            // processor counts the synthetic requests derived from it.
+            if !co_copy {
+                self.increment_counter_at_key(success);
+            }
         }
         Ok(())
     }

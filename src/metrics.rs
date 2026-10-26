@@ -3688,6 +3688,12 @@ impl MetricsProcessor {
                 // rules count, as when a Controller changed the users before the
                 // ramp up ended, starts again with them.
                 self.metrics.rps_window.reset();
+                // Coordinated omission counts restart with the requests they
+                // add up to.
+                if let Some(co_metrics) = self.metrics.coordinated_omission_metrics.as_mut() {
+                    *co_metrics =
+                        CoordinatedOmissionMetrics::new(co_metrics.mitigation_strategy.clone());
+                }
                 // Increment the batch epoch so user-side batches accumulated
                 // before the reset are discarded when they arrive.
                 self.metrics_epoch.fetch_add(1, AtomicOrdering::Relaxed);
@@ -4009,47 +4015,26 @@ impl MetricsProcessor {
     /// Process a single request metric: record errors, handle CO backfill, update
     /// aggregates and graph data.
     fn process_request_metric(&mut self, request_metric: &GooseRequestMetric) {
-        if !request_metric.error.is_empty() {
+        // A coordinated omission copy repeats a request already sent, with
+        // its error: only the synthetic times derived from it are new.
+        if !request_metric.error.is_empty() && request_metric.coordinated_omission_elapsed == 0 {
             self.record_error(request_metric);
         }
 
-        if request_metric.coordinated_omission_elapsed > 0 && request_metric.user_cadence > 0 {
-            if let Some(co_metrics) = &mut self.metrics.coordinated_omission_metrics {
-                let synthetic_count = (request_metric.coordinated_omission_elapsed as i64
-                    - request_metric.user_cadence as i64
-                    - request_metric.response_time as i64)
-                    / request_metric.user_cadence as i64;
-
-                if synthetic_count > 0 {
-                    co_metrics.record_co_event(
-                        std::time::Duration::from_millis(request_metric.user_cadence),
-                        std::time::Duration::from_millis(
-                            request_metric.coordinated_omission_elapsed,
-                        ),
-                        synthetic_count as u32,
-                        request_metric.user,
-                        request_metric.scenario_name.to_string(),
-                    );
-                }
+        if request_metric.coordinated_omission_elapsed > 0 {
+            // Without a cadence there is nothing to backfill, and the request
+            // itself was already counted.
+            if request_metric.user_cadence == 0 {
+                return;
             }
-
             let mut co_metric = request_metric.clone();
             let mut response_time = request_metric.coordinated_omission_elapsed as i64
                 - request_metric.user_cadence as i64
                 - request_metric.response_time as i64;
+            // The synthetic requests the loop below records, the count the
+            // event reports.
+            let mut synthetic_count: u32 = 0;
 
-            // Synthetic times also go to the dashboard's heatmap, each in
-            // the second its synthetic request would have started. This copy
-            // was sent because the previous scenario iteration took
-            // `coordinated_omission_elapsed` (E) ms, more than twice the
-            // cadence (c). That iteration is the stall, and it ended at or
-            // just before this request started, at `elapsed` (s) ms since the
-            // start. The loop below records t_k = E - k*c - r for k = 1, 2, ...
-            // while t_k > r, where r is this request's own response time; a
-            // request that took t_k and ended at s started at s - t_k. This
-            // is exact for the first request of an iteration and slightly late
-            // for later ones, and with wait times the seconds compress toward
-            // the end of the stall.
             let latency_key = self.graph_data.records_synthetic_latency().then(|| {
                 format!(
                     "{} {}",
@@ -4083,13 +4068,32 @@ impl MetricsProcessor {
                         co_metric.success,
                     );
                     response_time -= request_metric.user_cadence as i64;
+                    synthetic_count += 1;
                 } else {
                     break;
                 }
             }
+
+            if synthetic_count > 0 {
+                if let Some(co_metrics) = &mut self.metrics.coordinated_omission_metrics {
+                    co_metrics.record_co_event(
+                        std::time::Duration::from_millis(request_metric.user_cadence),
+                        std::time::Duration::from_millis(
+                            request_metric.coordinated_omission_elapsed,
+                        ),
+                        synthetic_count,
+                        request_metric.user,
+                        request_metric.scenario_name.to_string(),
+                    );
+                }
+            }
         } else {
-            if let Some(co_metrics) = &mut self.metrics.coordinated_omission_metrics {
-                co_metrics.record_actual_request();
+            // An update from set_success() or set_failure() names a request
+            // already counted.
+            if !request_metric.update {
+                if let Some(co_metrics) = &mut self.metrics.coordinated_omission_metrics {
+                    co_metrics.record_actual_request();
+                }
             }
 
             self.record_request_metric(request_metric);
@@ -8064,6 +8068,72 @@ mod test {
             let series = request_series(&mut processor, "/fail", false).unwrap();
             assert_eq!(series.heatmap.counts(2), (1, 0), "cadence {user_cadence}");
         }
+    }
+
+    #[test]
+    fn co_copies_and_updates_are_counted_once() {
+        let mut processor =
+            make_latency_test_processor(GooseCoordinatedOmissionMitigation::Average);
+        let co = |p: &MetricsProcessor| {
+            let co = p.metrics.coordinated_omission_metrics.as_ref().unwrap();
+            (
+                co.actual_requests,
+                co.synthetic_requests,
+                co.co_events.len(),
+            )
+        };
+
+        // A request, then its update from set_success().
+        let request = make_request_metric("/ok", 20, 200, 1_000);
+        processor.process_request_metric(&request);
+        let mut update = request.clone();
+        update.update = true;
+        processor.process_request_metric(&update);
+        assert_eq!(co(&processor), (1, 0, 0));
+
+        // A failed request that ended a stall.
+        let mut failed = make_request_metric("/", 20, 500, 2_000);
+        failed.success = false;
+        failed.error = "500 Internal Server Error".to_string();
+        processor.process_request_metric(&failed);
+        assert_eq!(co(&processor), (2, 0, 0));
+
+        // Its copy, without a cadence: nothing to backfill and nothing new.
+        let mut copy = failed.clone();
+        copy.coordinated_omission_elapsed = 1_000;
+        processor.process_request_metric(&copy);
+        assert_eq!(co(&processor), (2, 0, 0));
+
+        // With a 100 ms cadence, a 1000 ms stall and a 20 ms request, the
+        // synthetic times are 880, 780, ... 80, 9 of them.
+        copy.user_cadence = 100;
+        processor.process_request_metric(&copy);
+        assert_eq!(co(&processor), (2, 9, 1));
+        let aggregate = &processor.metrics.requests["GET /"];
+        let co_data = aggregate.coordinated_omission_data.as_ref().unwrap();
+        assert_eq!(co_data.counter - aggregate.raw_data.counter, 9);
+        // The error is the request's, recorded once.
+        assert_eq!(
+            processor
+                .metrics
+                .errors
+                .values()
+                .map(|e| e.occurrences)
+                .sum::<usize>(),
+            1
+        );
+
+        // A metrics reset starts the counts again.
+        let (ack, _ack_rx) = tokio::sync::oneshot::channel();
+        processor.handle_command(MetricsCommand::Reset {
+            duration: 3,
+            total_users: 1,
+            maximum_users: 1,
+            active_users: 1,
+            series_elapsed_secs: 3,
+            ack,
+        });
+        assert_eq!(co(&processor), (0, 0, 0));
     }
 
     /// Send `original` through a user thread built from `configuration`, mark

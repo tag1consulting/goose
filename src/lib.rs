@@ -3382,6 +3382,22 @@ impl GooseAttack {
         goose_attack_run_state.throttle_threads_tx = throttle_threads_tx;
         goose_attack_run_state.parent_to_throttle_tx = parent_to_throttle_tx;
 
+        // A new run counts its requests from zero: the atomic counters
+        // outlive the processor, and batches from the last run's users are
+        // dropped.
+        {
+            let registry = goose_attack_run_state
+                .request_counter_registry
+                .lock()
+                .expect("request_counter_registry mutex poisoned");
+            for counters in registry.values() {
+                counters.reset();
+            }
+        }
+        goose_attack_run_state
+            .metrics_epoch
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
         // Re-create the metrics channel and spawn a fresh processor. It reads
         // Save report as start_run_folder left it, so start_run_folder runs
         // first.
@@ -4671,6 +4687,61 @@ mod tests {
             .unwrap();
         assert!(snapshot_rx.await.unwrap().stopping);
         assert!(!controller::tests::control(&mut goose_attack, &mut run_state, "users 5").await);
+    }
+
+    /// A run started after another, as a Controller start after stop does,
+    /// counts its requests from zero.
+    #[tokio::test]
+    async fn a_new_run_counts_requests_from_zero() {
+        let configuration = GooseConfiguration::parse_args_default(&[
+            "--no-telnet",
+            "--no-websocket",
+            "--host",
+            "http://localhost",
+        ])
+        .unwrap();
+        let mut goose_attack = GooseAttack::initialize_with_config(configuration)
+            .unwrap()
+            .register_scenario(
+                Scenario::new("LoadTest").register_transaction(Transaction::new(Arc::new(
+                    |user: &mut GooseUser| Box::pin(async move { user.get("/").await.map(|_| ()) }),
+                ))),
+            );
+        let defaults = goose_attack.defaults.clone();
+        goose_attack.configuration.configure(&defaults).unwrap();
+        let mut run_state = goose_attack.initialize_attack().await.unwrap();
+        let counters = Arc::new(metrics::GooseRequestCounters::new());
+        counters
+            .success
+            .fetch_add(5, std::sync::atomic::Ordering::Relaxed);
+        counters
+            .failure
+            .fetch_add(2, std::sync::atomic::Ordering::Relaxed);
+        run_state
+            .request_counter_registry
+            .lock()
+            .unwrap()
+            .insert("GET /".to_string(), counters.clone());
+        let epoch = run_state
+            .metrics_epoch
+            .load(std::sync::atomic::Ordering::Relaxed);
+
+        goose_attack.reset_run_state(&mut run_state).await.unwrap();
+
+        assert_eq!(
+            counters.success.load(std::sync::atomic::Ordering::Relaxed),
+            0
+        );
+        assert_eq!(
+            counters.failure.load(std::sync::atomic::Ordering::Relaxed),
+            0
+        );
+        assert!(
+            run_state
+                .metrics_epoch
+                .load(std::sync::atomic::Ordering::Relaxed)
+                > epoch
+        );
     }
 
     #[test]
