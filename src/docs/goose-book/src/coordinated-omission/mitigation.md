@@ -186,7 +186,7 @@ Look for these warning signs in the measured metrics:
 The following run is contrived. The [`drupal_memcache`](../example/drupal-memcache.md) example ran with five users for 20 seconds against a local test server that held every request for 3 seconds, 11 seconds into the run:
 
 ```bash
-cargo run --release --example drupal_memcache -- --host http://127.0.0.1:19133/ \
+cargo run --release --example drupal_memcache -- --host http://127.0.0.1:8080/ \
     -u5 -r5 -t20s --co-mitigation average --no-telnet --no-websocket \
     --request-log requests.json --request-format json \
     --report-file report.html --report-file report.json --report-file report.md
@@ -195,19 +195,19 @@ cargo run --release --example drupal_memcache -- --host http://127.0.0.1:19133/ 
 Requests that took longer than their user's cadence were logged:
 
 ```bash
-21:08:58 [INFO] 11.326s into goose attack: "GET http://127.0.0.1:19133/core/misc/drupal.js" [200] took abnormally long (3002 ms), transaction name: "(Anon) front page"
-21:08:58 [INFO] 11.326s into goose attack: "GET http://127.0.0.1:19133/core/misc/drupal.js" [200] took abnormally long (3005 ms), transaction name: "(Anon) front page"
-21:08:58 [INFO] 11.326s into goose attack: "GET http://127.0.0.1:19133/user/143" [200] took abnormally long (3009 ms), transaction name: "(Anon) user page"
-21:08:58 [INFO] 11.270s into goose attack: "POST http://127.0.0.1:19133/comment/reply/1609" [200] took abnormally long (3078 ms), transaction name: "(Auth) comment form"
-21:08:58 [INFO] 11.332s into goose attack: "GET http://127.0.0.1:19133/" [200] took abnormally long (3017 ms), transaction name: "(Anon) front page"
+21:08:58 [INFO] 11.326s into goose attack: "GET http://127.0.0.1:8080/core/misc/drupal.js" [200] took abnormally long (3002 ms), transaction name: "(Anon) front page"
+21:08:58 [INFO] 11.326s into goose attack: "GET http://127.0.0.1:8080/core/misc/drupal.js" [200] took abnormally long (3005 ms), transaction name: "(Anon) front page"
+21:08:58 [INFO] 11.326s into goose attack: "GET http://127.0.0.1:8080/user/143" [200] took abnormally long (3009 ms), transaction name: "(Anon) user page"
+21:08:58 [INFO] 11.270s into goose attack: "POST http://127.0.0.1:8080/comment/reply/1609" [200] took abnormally long (3078 ms), transaction name: "(Auth) comment form"
+21:08:58 [INFO] 11.332s into goose attack: "GET http://127.0.0.1:8080/" [200] took abnormally long (3017 ms), transaction name: "(Anon) front page"
 ```
 
 The time before each message is when the request started, in seconds since the load test started, and the number in parentheses is its response time. With `--request-log` enabled, you can find each of these requests in the request log by its `elapsed`, the same start time in milliseconds, and its `response_time`. The first three, which started 11,326 ms in and took 3,002, 3,005 and 3,009 ms:
 
 ```json
-{"elapsed":11326,"scenario_index":0,"scenario_name":"anonbrowsinguser","transaction_index":0,"transaction_name":{"TransactionOnly":"(Anon) front page"},"raw":{"method":"Get","url":"http://127.0.0.1:19133/core/misc/drupal.js","headers":[],"body":"","custom_method":""},"name":"static asset","final_url":"http://127.0.0.1:19133/core/misc/drupal.js","redirected":false,"response_time":3002,"status_code":200,"success":true,"update":false,"user":0,"error":"","coordinated_omission_elapsed":0,"user_cadence":651,"response_time_fraction_us":662}
-{"elapsed":11326,"scenario_index":0,"scenario_name":"anonbrowsinguser","transaction_index":0,"transaction_name":{"TransactionOnly":"(Anon) front page"},"raw":{"method":"Get","url":"http://127.0.0.1:19133/core/misc/drupal.js","headers":[],"body":"","custom_method":""},"name":"static asset","final_url":"http://127.0.0.1:19133/core/misc/drupal.js","redirected":false,"response_time":3005,"status_code":200,"success":true,"update":false,"user":1,"error":"","coordinated_omission_elapsed":0,"user_cadence":659,"response_time_fraction_us":390}
-{"elapsed":11326,"scenario_index":0,"scenario_name":"anonbrowsinguser","transaction_index":2,"transaction_name":{"TransactionOnly":"(Anon) user page"},"raw":{"method":"Get","url":"http://127.0.0.1:19133/user/143","headers":[],"body":"","custom_method":""},"name":"/user/143","final_url":"http://127.0.0.1:19133/user/143","redirected":false,"response_time":3009,"status_code":200,"success":true,"update":false,"user":2,"error":"","coordinated_omission_elapsed":0,"user_cadence":694,"response_time_fraction_us":895}
+{"elapsed":11326,"scenario_index":0,"scenario_name":"anonbrowsinguser","transaction_index":0,"transaction_name":{"TransactionOnly":"(Anon) front page"},"raw":{"method":"Get","url":"http://127.0.0.1:8080/core/misc/drupal.js","headers":[],"body":"","custom_method":""},"name":"static asset","final_url":"http://127.0.0.1:8080/core/misc/drupal.js","redirected":false,"response_time":3002,"status_code":200,"success":true,"update":false,"user":0,"error":"","coordinated_omission_elapsed":0,"user_cadence":651,"response_time_fraction_us":662}
+{"elapsed":11326,"scenario_index":0,"scenario_name":"anonbrowsinguser","transaction_index":0,"transaction_name":{"TransactionOnly":"(Anon) front page"},"raw":{"method":"Get","url":"http://127.0.0.1:8080/core/misc/drupal.js","headers":[],"body":"","custom_method":""},"name":"static asset","final_url":"http://127.0.0.1:8080/core/misc/drupal.js","redirected":false,"response_time":3005,"status_code":200,"success":true,"update":false,"user":1,"error":"","coordinated_omission_elapsed":0,"user_cadence":659,"response_time_fraction_us":390}
+{"elapsed":11326,"scenario_index":0,"scenario_name":"anonbrowsinguser","transaction_index":2,"transaction_name":{"TransactionOnly":"(Anon) user page"},"raw":{"method":"Get","url":"http://127.0.0.1:8080/user/143","headers":[],"body":"","custom_method":""},"name":"/user/143","final_url":"http://127.0.0.1:8080/user/143","redirected":false,"response_time":3009,"status_code":200,"success":true,"update":false,"user":2,"error":"","coordinated_omission_elapsed":0,"user_cadence":694,"response_time_fraction_us":895}
 ```
 
 Three different user threads, 0, 1 and 2, were held up by the same stall. Two were loading the front page's static assets and one a user page. The front page is the transaction each anonymous user runs most often, with a weight of 15 against the node page's 10 and the user page's 3, and each front page load also requests its static assets, so most requests caught by a stall belong to it. The `user_cadence` of each line is that user's expected cadence: user 0 took on average 651 ms to run through its transactions, user 1 659 ms and user 2 694 ms, so a 3 second stall is more than twice any of them.
@@ -215,7 +215,7 @@ Three different user threads, 0, 1 and 2, were held up by the same stall. Two we
 The request log also holds the requests that carry a backfill. During the run after a stall, each request a user makes appears twice: once as measured, with a [`coordinated_omission_elapsed`](https://docs.rs/goose/*/goose/metrics/struct.GooseRequestMetric.html#structfield.coordinated_omission_elapsed) of 0, and once more with `coordinated_omission_elapsed` set to how long the stalled run took, in milliseconds. Here is the line with the backfill for the first request of user 4's run after the stall, a front page request that took 22 ms, after a run that took 3,668 ms against a cadence of 906 ms:
 
 ```json
-{"elapsed":14513,"scenario_index":0,"scenario_name":"anonbrowsinguser","transaction_index":0,"transaction_name":{"TransactionOnly":"(Anon) front page"},"raw":{"method":"Get","url":"http://127.0.0.1:19133/","headers":[],"body":"","custom_method":""},"name":"/","final_url":"http://127.0.0.1:19133/","redirected":false,"response_time":22,"status_code":200,"success":true,"update":false,"user":4,"error":"","coordinated_omission_elapsed":3668,"user_cadence":906,"response_time_fraction_us":440}
+{"elapsed":14513,"scenario_index":0,"scenario_name":"anonbrowsinguser","transaction_index":0,"transaction_name":{"TransactionOnly":"(Anon) front page"},"raw":{"method":"Get","url":"http://127.0.0.1:8080/","headers":[],"body":"","custom_method":""},"name":"/","final_url":"http://127.0.0.1:8080/","redirected":false,"response_time":22,"status_code":200,"success":true,"update":false,"user":4,"error":"","coordinated_omission_elapsed":3668,"user_cadence":906,"response_time_fraction_us":440}
 ```
 
 From this line Goose recorded three synthetic times for `GET /`: 2,740 ms (3,668 less 906 less 22), then 1,834 and 928 ms, each 906 less than the one before, stopping before the next would fall to 22. The synthetic times themselves are not written to the request log; normal requests have a `coordinated_omission_elapsed` of 0.

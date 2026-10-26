@@ -21,7 +21,7 @@ user.record_custom_request(
 
 This is a fragment: it runs inside a transaction function, with the six values already set.
 
-Recorded metrics appear in all Goose reports under the method label you provide. These are the final request tables of the command under [Running the example](#running-the-example), run against a local echo server on port 19161 in place of 9000:
+Recorded metrics appear in all Goose reports under the method label you provide. These are the final request tables of the command under [Running the example](#running-the-example), run against a local echo server:
 
 ```
  === PER REQUEST METRICS ===

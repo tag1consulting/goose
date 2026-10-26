@@ -11,8 +11,8 @@ The `raw.headers` field follows the same rule as in the [request log](requests.m
 By default, logs are written in JSON Lines format. For example:
 
 ```json
-{"elapsed":1,"raw":{"method":"Get","url":"http://127.0.0.1:19150/node/3197","headers":[],"body":"","custom_method":""},"name":"/node/3197","final_url":"http://127.0.0.1:19150/node/3197","redirected":false,"response_time":0,"status_code":503,"user":0,"error":"503 Service Unavailable: /node/3197"}
-{"elapsed":2,"raw":{"method":"Get","url":"http://127.0.0.1:19150/node/8624","headers":[],"body":"","custom_method":""},"name":"/node/8624","final_url":"http://127.0.0.1:19150/node/8624","redirected":false,"response_time":0,"status_code":503,"user":0,"error":"503 Service Unavailable: /node/8624"}
+{"elapsed":1,"raw":{"method":"Get","url":"http://127.0.0.1:8080/node/3197","headers":[],"body":"","custom_method":""},"name":"/node/3197","final_url":"http://127.0.0.1:8080/node/3197","redirected":false,"response_time":0,"status_code":503,"user":0,"error":"503 Service Unavailable: /node/3197"}
+{"elapsed":2,"raw":{"method":"Get","url":"http://127.0.0.1:8080/node/8624","headers":[],"body":"","custom_method":""},"name":"/node/8624","final_url":"http://127.0.0.1:8080/node/8624","redirected":false,"response_time":0,"status_code":503,"user":0,"error":"503 Service Unavailable: /node/8624"}
 ```
 
 These lines are from the [`drupal_memcache`](https://github.com/tag1consulting/goose/blob/main/examples/drupal_memcache.rs) example run against a server that returned `503` for every node page.
@@ -23,6 +23,6 @@ The `csv` format starts with a header row, and its `raw` column holds the debug 
 
 ```csv
 elapsed,raw,name,final_url,redirected,response_time,status_code,user,error
-1,"GooseRawRequest { method: Get, url: ""http://127.0.0.1:19150/node/2956"", headers: [], body: """", custom_method: """" }",/node/2956,http://127.0.0.1:19150/node/2956,false,0,503,0,503 Service Unavailable: /node/2956
-2,"GooseRawRequest { method: Get, url: ""http://127.0.0.1:19150/node/8873"", headers: [], body: """", custom_method: """" }",/node/8873,http://127.0.0.1:19150/node/8873,false,0,503,0,503 Service Unavailable: /node/8873
+1,"GooseRawRequest { method: Get, url: ""http://127.0.0.1:8080/node/2956"", headers: [], body: """", custom_method: """" }",/node/2956,http://127.0.0.1:8080/node/2956,false,0,503,0,503 Service Unavailable: /node/2956
+2,"GooseRawRequest { method: Get, url: ""http://127.0.0.1:8080/node/8873"", headers: [], body: """", custom_method: """" }",/node/8873,http://127.0.0.1:8080/node/8873,false,0,503,0,503 Service Unavailable: /node/8873
 ```

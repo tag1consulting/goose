@@ -9,9 +9,9 @@ The example is written for a site built with the [Drupal Umami demo](https://www
 The example names its transactions, such as `anon /`, but not its requests, so each request is named by its path: the run made requests under 93 names. In the request tables below, `...` marks the rows left out.
 
 ```bash
-% cargo run --release --example umami -- --host http://127.0.0.1:19130/ -u9 -r3 -t1m --no-reset-metrics --report-file report.html --report-file report.md
+% cargo run --release --example umami -- --host http://127.0.0.1:8080/ -u9 -r3 -t1m --no-reset-metrics --report-file report.html --report-file report.md
     Finished `release` profile [optimized] target(s) in 0.23s
-     Running `target/release/examples/umami --host 'http://127.0.0.1:19130/' -u9 -r3 -t1m --no-reset-metrics --report-file report.html --report-file report.md`
+     Running `target/release/examples/umami --host 'http://127.0.0.1:8080/' -u9 -r3 -t1m --no-reset-metrics --report-file report.html --report-file report.md`
 21:10:43 [INFO] Output verbosity level: INFO
 21:10:43 [INFO] Logfile verbosity level: WARN
 21:10:43 [INFO] users = 9
@@ -19,7 +19,7 @@ The example names its transactions, such as `anon /`, but not its requests, so e
 21:10:43 [INFO] increase_rate = 3.0
 21:10:43 [INFO] no_reset_metrics = true
 21:10:43 [INFO] report_file = ["report.html", "report.md"]
-21:10:43 [INFO] global host configured: http://127.0.0.1:19130/
+21:10:43 [INFO] global host configured: http://127.0.0.1:8080/
 21:10:43 [INFO] [scheduler]: allocating transactions and scenarios with RoundRobin scheduler
 21:10:43 [INFO] [scheduler]: initializing 9 user states...
 21:10:43 [INFO] [controller]: Telnet listening on: 0.0.0.0:5116

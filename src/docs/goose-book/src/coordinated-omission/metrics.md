@@ -5,7 +5,7 @@ When Coordinated Omission Mitigation backfills a request, Goose keeps both the "
 The following example was "contrived". The [`drupal_memcache`](../example/drupal-memcache.md) example ran with five users for 20 seconds against a local test server, and 11 seconds into the run the server held every request for 3 seconds, forcing some abnormally slow responses:
 
 ```bash
-cargo run --release --example drupal_memcache -- --host http://127.0.0.1:19133/ \
+cargo run --release --example drupal_memcache -- --host http://127.0.0.1:8080/ \
     -u5 -r5 -t20s --co-mitigation average --no-telnet --no-websocket \
     --request-log requests.json --request-format json \
     --report-file report.html --report-file report.json --report-file report.md
