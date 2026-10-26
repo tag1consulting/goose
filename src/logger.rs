@@ -601,7 +601,7 @@ impl FromStr for GooseLogFormat {
             Err(GooseError::InvalidOption {
                 option: format!("GooseLogFormat::{s:?}"),
                 value: s.to_string(),
-                detail: "Invalid log_format, expected: csv, json, or raw".to_string(),
+                detail: "Invalid log_format, expected: csv, json, raw, or pretty".to_string(),
             })
         }
     }

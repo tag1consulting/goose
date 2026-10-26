@@ -1,4 +1,4 @@
-Goose: a distributed HTTP(S) load testing tool written in Rust
+Goose: an HTTP(S) load testing tool written in Rust
 
 Usage: loadtest [OPTIONS]
 
@@ -636,7 +636,7 @@ HTTP client:
           Request timeout in seconds [default: 60]
 
           How long each request may take before it fails. A decimal is allowed:
-          0.5 is half a second. At least 0.001, one millisecond.
+          0.5 is half a second. Rounded to the millisecond, so at least 0.0005.
 
           Example: --timeout 15. Set in code with GooseDefault::Timeout.
 

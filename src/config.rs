@@ -832,7 +832,7 @@ pub struct GooseConfiguration {
     /// Request timeout in seconds [default: 60]
     ///
     /// How long each request may take before it fails. A decimal is allowed: 0.5 is half
-    /// a second. At least 0.001, one millisecond.
+    /// a second. Rounded to the millisecond, so at least 0.0005.
     ///
     /// Example: --timeout 15. Set in code with GooseDefault::Timeout.
     #[arg(help_heading = "HTTP client", long, value_name = "SECS")]
@@ -945,7 +945,7 @@ fn command(name: &str, width: usize) -> clap::Command {
     );
     // Set after the derive, which would otherwise take the structure's documentation.
     let command = command
-        .about("Goose: a distributed HTTP(S) load testing tool written in Rust")
+        .about("Goose: an HTTP(S) load testing tool written in Rust")
         .long_about(None);
     // -h and --help lead the Information heading, ahead of -V.
     let order = command
@@ -1086,7 +1086,8 @@ fn tidy_help(help: &str) -> String {
 
 /// A tip for a command line that gives an option a value beginning with a hyphen as
 /// its own argument, as `--goose-log -run.log`: clap reads that value as another
-/// option, so the option has no value, or the value is an unknown option. The tip
+/// option, so the option has no value, or the value is an unknown option. A
+/// negative number, as `--users -1`, gets a tip that the option takes none. The tip
 /// names the option, never the value, which can be a `--dashboard-auth-token`.
 fn hyphen_value_tip(args: &[&str]) -> Option<String> {
     let command = command("loadtest", DEFAULT_HELP_WIDTH);
@@ -1108,7 +1109,17 @@ fn hyphen_value_tip(args: &[&str]) -> Option<String> {
             named && arg.get_action().takes_values()
         });
         takes_value.then(|| {
-            format!("tip: a value that begins with a hyphen goes after =, as in {option}=<value>")
+            // A negative number is refused whichever way it is given: clap
+            // takes one as the value of an option that takes text.
+            let negative = value[1..].starts_with(|c: char| c.is_ascii_digit() || c == '.')
+                && value.parse::<f64>().is_ok();
+            if negative {
+                format!("tip: {option} takes no negative number")
+            } else {
+                format!(
+                    "tip: a value that begins with a hyphen goes after =, as in {option}=<value>"
+                )
+            }
         })
     })
 }
@@ -1682,6 +1693,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::WebSocketPort
             | GooseDefault::DashboardPort
             | GooseDefault::DashboardMaxClients
+            | GooseDefault::RunningMetrics
             | GooseDefault::Compress => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
@@ -1691,8 +1703,7 @@ impl GooseDefaultType<&str> for GooseAttack {
                     ),
                 });
             }
-            GooseDefault::RunningMetrics
-            | GooseDefault::NoResetMetrics
+            GooseDefault::NoResetMetrics
             | GooseDefault::NoMetrics
             | GooseDefault::NoThresholdAbort
             | GooseDefault::NoTransactionMetrics
@@ -3963,13 +3974,13 @@ impl GooseConfiguration {
             }
         }
 
-        // If set, timeout must be a number of at least one millisecond.
+        // If set, timeout must be a number that rounds to at least one millisecond.
         if let Some(timeout) = self.timeout.as_ref() {
             if !timeout_millis(number("timeout", timeout)?).is_some_and(|ms| ms >= 1) {
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.timeout`".to_string(),
                     value: timeout.to_string(),
-                    detail: "`configuration.timeout` must be at least 0.001 (one millisecond)."
+                    detail: "`configuration.timeout` must round to at least one millisecond: 0.0005 or more."
                         .to_string(),
                 });
             }
@@ -4092,7 +4103,7 @@ impl GooseConfiguration {
             // The --no-reset-metrics option isn't compatible with --test-plan.
             if self.no_reset_metrics {
                 return Err(GooseError::InvalidOption {
-                    option: "`configuration.no_reset_metrics".to_string(),
+                    option: "`configuration.no_reset_metrics`".to_string(),
                     value: self.no_reset_metrics.to_string(),
                     detail: "`configuration.no_reset_metrics` can not be set with `configuration.test_plan` (metrics are not reset)."
                         .to_string(),
@@ -4118,14 +4129,14 @@ impl GooseConfiguration {
                     option: "`configuration.iterations`".to_string(),
                     value: self.iterations().to_string(),
                     detail:
-                        "`configuration.iteratoins` can not be set with `configuration.test_plan`."
+                        "`configuration.iterations` can not be set with `configuration.test_plan`."
                             .to_string(),
                 });
             }
             // The --no-reset-metrics option isn't compatible with --iterations.
             if self.no_reset_metrics {
                 return Err(GooseError::InvalidOption {
-                    option: "`configuration.no_reset_metrics".to_string(),
+                    option: "`configuration.no_reset_metrics`".to_string(),
                     value: self.no_reset_metrics.to_string(),
                     detail: "`configuration.no_reset_metrics` can not be set with `configuration.iterations` (metrics are not reset)."
                         .to_string(),
@@ -4255,7 +4266,7 @@ impl GooseConfiguration {
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.co_mitigation`".to_string(),
                     value: format!("{:?}", self.co_mitigation.as_ref().unwrap()),
-                    detail: "`configuration.co_mitigation` can not be set with `configuration.no_metrircs`."
+                    detail: "`configuration.co_mitigation` can not be set with `configuration.no_metrics`."
                         .to_string(),
                 });
             }
@@ -5868,6 +5879,96 @@ mod test {
         }
     }
 
+    /// Each refusal says what is wrong: the type a default takes, the timeout
+    /// rule the code applies, a negative number, the log formats, and the names
+    /// of the options involved; and the help names what Goose is.
+    #[test]
+    fn messages_name_the_rule() {
+        let detail = |result: Result<GooseConfiguration, GooseError>| match result {
+            Err(GooseError::InvalidOption { option, detail, .. }) => (option, detail),
+            other => panic!("{:?}", other),
+        };
+
+        // RunningMetrics takes a usize.
+        match GooseAttack::initialize_with_config(GooseConfiguration::default())
+            .unwrap()
+            .set_default(GooseDefault::RunningMetrics, "x")
+        {
+            Err(GooseError::InvalidOption { detail, .. }) => assert_eq!(
+                detail,
+                "set_default(GooseDefault::RunningMetrics, x) expected usize value, received &str"
+            ),
+            Err(other) => panic!("{:?}", other),
+            Ok(_) => panic!("RunningMetrics took a &str"),
+        }
+
+        // A timeout rounds to the millisecond, so 0.0005 is the least.
+        assert!(validated(&["--timeout", "0.0005"], &Default::default()).is_ok());
+        assert_eq!(
+            detail(validated(&["--timeout", "0.0004"], &Default::default())).1,
+            "`configuration.timeout` must round to at least one millisecond: 0.0005 or more."
+        );
+
+        // A negative number is not a value beginning with a hyphen.
+        for args in [
+            &["--users", "-1"][..],
+            &["-u", "-1"],
+            &["--iterations", "-2"],
+        ] {
+            let (_, detail) = detail(GooseConfiguration::parse_args_default(args));
+            assert!(
+                detail.ends_with(&format!("; tip: {} takes no negative number", args[0])),
+                "{:?}: {}",
+                args,
+                detail
+            );
+            assert!(!detail.contains("goes after ="), "{:?}: {}", args, detail);
+        }
+
+        // An option that takes text takes a negative number as its value.
+        let notes = GooseConfiguration::parse_args_default(&["--notes", "-20"]).unwrap();
+        assert_eq!(notes.notes.as_deref(), Some("-20"));
+
+        // Every log format the parser accepts is named.
+        match "x".parse::<GooseLogFormat>() {
+            Err(GooseError::InvalidOption { detail, .. }) => assert_eq!(
+                detail,
+                "Invalid log_format, expected: csv, json, raw, or pretty"
+            ),
+            other => panic!("{:?}", other),
+        }
+
+        // The options a refusal names are spelled as they are.
+        let plan = ["--test-plan", "1,1s"];
+        assert_eq!(
+            detail(validated(
+                &[&["--iterations", "1"][..], &plan].concat(),
+                &Default::default()
+            ))
+            .1,
+            "`configuration.iterations` can not be set with `configuration.test_plan`."
+        );
+        assert_eq!(
+            detail(validated(
+                &["--no-metrics", "--co-mitigation", "average"],
+                &Default::default()
+            ))
+            .1,
+            "`configuration.co_mitigation` can not be set with `configuration.no_metrics`."
+        );
+        for other in [&plan[..], &["--iterations", "1"]] {
+            let (option, _) = detail(validated(
+                &[&["--no-reset-metrics"][..], other].concat(),
+                &Default::default(),
+            ));
+            assert_eq!(option, "`configuration.no_reset_metrics`");
+        }
+
+        // 0.19 has no distributed mode.
+        assert!(help_for("--help", 80)
+            .starts_with("Goose: an HTTP(S) load testing tool written in Rust\n"));
+    }
+
     /// `--report-file` and the six log options take an optional value: given without
     /// a path they write into the run's folder, by short and long name alike, and
     /// `""` still means no file.
@@ -6391,7 +6492,7 @@ mod test {
                     assert_eq!(option, "`configuration.timeout`");
                     assert_eq!(
                         detail,
-                        "`configuration.timeout` must be at least 0.001 (one millisecond)."
+                        "`configuration.timeout` must round to at least one millisecond: 0.0005 or more."
                     );
                 }
                 other => panic!("{}: {:?}", timeout, other),

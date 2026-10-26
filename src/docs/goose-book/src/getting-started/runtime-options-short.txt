@@ -1,4 +1,4 @@
-Goose: a distributed HTTP(S) load testing tool written in Rust
+Goose: an HTTP(S) load testing tool written in Rust
 
 Usage: loadtest [OPTIONS]
 

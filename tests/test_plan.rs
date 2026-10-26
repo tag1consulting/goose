@@ -116,7 +116,7 @@ fn test_invalid_test_plan_formats() {
     let result = TestPlan::from_str("10 30s");
     assert!(result.is_err());
     if let Err(GooseError::InvalidOption { option, value, .. }) = result {
-        assert_eq!(option, "`configuration.test_plan");
+        assert_eq!(option, "`configuration.test_plan`");
         assert_eq!(value, "10 30s");
     } else {
         panic!("Expected InvalidOption error");

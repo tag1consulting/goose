@@ -163,7 +163,7 @@ impl TestPlan {
                 Some(step) => steps.push(step),
                 None => {
                     return Err(GooseError::InvalidOption {
-                        option: "`configuration.test_plan".to_string(),
+                        option: "`configuration.test_plan`".to_string(),
                         value: line.to_string(),
                         detail: INVALID_STEP.to_string(),
                     })
@@ -175,7 +175,7 @@ impl TestPlan {
         match test_plan.checked_total_users() {
             Some(total) if total > 0 => Ok(test_plan),
             _ => Err(GooseError::InvalidOption {
-                option: "`configuration.test_plan".to_string(),
+                option: "`configuration.test_plan`".to_string(),
                 value: s.to_string(),
                 detail: "`configuration.test_plan` must start at least one user, and no more than fit in a usize.".to_string(),
             }),
