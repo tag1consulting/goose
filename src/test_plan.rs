@@ -278,6 +278,10 @@ impl GooseAttack {
         let now = time::Instant::now();
         self.step_started = Some(now);
 
+        // Each step schedules its user changes from its own start, so a ramp
+        // left mid way, as by a Controller, never leaves a stale due time.
+        goose_attack_run_state.adjust_user_in_ms = 0;
+
         let action = if self.test_plan.current == self.test_plan.steps.len() - 1 {
             // If this is the last TestPlan step and there are 0 users, shut down.
             if self.test_plan.steps[self.test_plan.current].0 == 0 {

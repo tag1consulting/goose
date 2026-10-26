@@ -466,11 +466,13 @@ pub enum GooseScheduler {
 #[derive(Debug)]
 /// Internal global run state for load test.
 struct GooseAttackRunState {
-    /// A timestamp tracking when the previous [`GooseUser`](./goose/struct.GooseUser.html)
-    /// was increased or decreased.
+    /// When the next [`GooseUser`](./goose/struct.GooseUser.html) is due to be
+    /// increased or decreased: the time the first of the step was, plus one
+    /// interval for each since.
     adjust_user_timer: std::time::Instant,
-    /// How many milliseconds until the next [`GooseUser`](./goose/struct.GooseUser.html)
-    /// should be increased or decreased.
+    /// How many milliseconds apart [`GooseUser`](./goose/struct.GooseUser.html)s
+    /// are increased or decreased, at least 1 once a step has adjusted one; 0
+    /// until then, so the step's first user is adjusted at once.
     adjust_user_in_ms: usize,
     /// A counter tracking how many [`GooseUser`](./goose/struct.GooseUser.html)s are running.
     active_users: usize,
@@ -568,6 +570,43 @@ struct GooseAttackRunState {
     request_counter_registry: GooseRequestCounterRegistry,
     /// Shared epoch counter for coordinating batch validity across metrics resets.
     metrics_epoch: crate::metrics::MetricsEpoch,
+}
+
+impl GooseAttackRunState {
+    /// Schedule the next user increase or decrease one `interval` after the
+    /// last was due, or after now for the step's first, so a step adjusts its
+    /// users at a steady rate from a fixed origin: a late wake up is caught up,
+    /// never carried into every later user.
+    fn schedule_next_adjust(&mut self, interval: Duration) {
+        self.adjust_user_timer = if self.adjust_user_in_ms == 0 {
+            std::time::Instant::now() + interval
+        } else {
+            self.adjust_user_timer + interval
+        };
+        self.adjust_user_in_ms = (interval.as_millis() as usize).max(1);
+    }
+
+    /// Whether the next user increase or decrease is due.
+    fn adjust_due(&self) -> bool {
+        self.adjust_user_in_ms == 0 || std::time::Instant::now() >= self.adjust_user_timer
+    }
+
+    /// Sleep until the next user increase or decrease is due, but never more
+    /// than 500 ms, waking up at least twice a second to handle messages and
+    /// allow for a quick shutdown if the load test is canceled.
+    async fn sleep_until_adjust(&mut self) {
+        let maximum_sleep = Duration::from_millis(500);
+        let until_due = self
+            .adjust_user_timer
+            .saturating_duration_since(std::time::Instant::now());
+        if until_due >= maximum_sleep {
+            self.drift_timer = util::sleep_minus_drift(maximum_sleep, self.drift_timer).await;
+        } else {
+            debug!("sleeping {until_due:?}...");
+            tokio::time::sleep(until_due).await;
+            self.drift_timer = tokio::time::Instant::now();
+        }
+    }
 }
 
 /// Global internal state for the load test.
@@ -2316,22 +2355,15 @@ impl GooseAttack {
                 * 1_000.0;
 
             // Determine if it's time to spawn a GooseUser.
-            if goose_attack_run_state.adjust_user_in_ms == 0
-                || util::ms_timer_expired(
-                    goose_attack_run_state.adjust_user_timer,
-                    goose_attack_run_state.adjust_user_in_ms,
-                )
-            {
+            if goose_attack_run_state.adjust_due() {
                 let mut thread_user = self
                     .weighted_users
                     .pop()
                     .expect("insufficent weighted_users");
-                // Reset the spawn timer.
-                goose_attack_run_state.adjust_user_timer = std::time::Instant::now();
-
-                // To determine how long before we spawn the next GooseUser, start with 1,000.0
-                // milliseconds and divide by the increase_rate.
-                goose_attack_run_state.adjust_user_in_ms = (1_000.0 / increase_rate) as usize;
+                // The next GooseUser is due one interval, 1 second divided by the
+                // increase_rate, after this one was.
+                goose_attack_run_state
+                    .schedule_next_adjust(Duration::from_secs_f64(1.0 / f64::from(increase_rate)));
 
                 // Remember which task group this user is using.
                 thread_user.weighted_users_index = self.metrics.total_users;
@@ -2421,17 +2453,7 @@ impl GooseAttack {
                     }
                 }
             } else {
-                // Wake up twice a second to handle messages and allow for a quick shutdown if the
-                // load test is canceled during startup.
-                let sleep_duration = if goose_attack_run_state.adjust_user_in_ms > 500 {
-                    Duration::from_millis(500)
-                } else {
-                    Duration::from_millis(goose_attack_run_state.adjust_user_in_ms as u64)
-                };
-                debug!("sleeping {sleep_duration:?}...");
-                goose_attack_run_state.drift_timer =
-                    util::sleep_minus_drift(sleep_duration, goose_attack_run_state.drift_timer)
-                        .await;
+                goose_attack_run_state.sleep_until_adjust().await;
             }
         }
 
@@ -2672,18 +2694,11 @@ impl GooseAttack {
                 * 1_000.0;
 
             // Determine if it's time to decrease a GooseUser.
-            if goose_attack_run_state.adjust_user_in_ms == 0
-                || util::ms_timer_expired(
-                    goose_attack_run_state.adjust_user_timer,
-                    goose_attack_run_state.adjust_user_in_ms,
-                )
-            {
-                // Reset the adjust timer.
-                goose_attack_run_state.adjust_user_timer = std::time::Instant::now();
-
-                // To determine how long before we decrease the next GooseUser, start with 1,000.0
-                // milliseconds and divide by the decrease_rate.
-                goose_attack_run_state.adjust_user_in_ms = (1_000.0 / decrease_rate) as usize;
+            if goose_attack_run_state.adjust_due() {
+                // The next GooseUser is due to stop one interval, 1 second divided
+                // by the decrease_rate, after this one was.
+                goose_attack_run_state
+                    .schedule_next_adjust(Duration::from_secs_f64(1.0 / f64::from(decrease_rate)));
 
                 if let Some(send_to_user) = goose_attack_run_state.user_channels.pop() {
                     match send_to_user.send(GooseUserCommand::Exit) {
@@ -2710,17 +2725,7 @@ impl GooseAttack {
                     goose_attack_run_state.active_users -= 1;
                 }
             } else {
-                // Wake up twice a second to handle messages and allow for a quick shutdown if the
-                // load test is canceled during decrease.
-                let sleep_duration = if goose_attack_run_state.adjust_user_in_ms > 500 {
-                    Duration::from_millis(500)
-                } else {
-                    Duration::from_millis(goose_attack_run_state.adjust_user_in_ms as u64)
-                };
-                debug!("sleeping {sleep_duration:?}...");
-                goose_attack_run_state.drift_timer =
-                    util::sleep_minus_drift(sleep_duration, goose_attack_run_state.drift_timer)
-                        .await;
+                goose_attack_run_state.sleep_until_adjust().await;
             }
         }
 
@@ -4293,6 +4298,30 @@ mod tests {
         run_state.stopping = false;
         goose_attack.set_attack_phase(&mut run_state, AttackPhase::Shutdown);
         assert_eq!(goose_attack.stage(&run_state), Stage::Stopping);
+    }
+
+    /// A new step schedules its users from its own start: a ramp a Controller
+    /// left mid way leaves no due time behind, which the next ramp would catch
+    /// up on in a burst.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_new_step_forgets_the_last_due_time() {
+        let configuration = GooseConfiguration::parse_args_default(&[
+            "--no-telnet",
+            "--no-websocket",
+            "--users",
+            "4",
+        ])
+        .unwrap();
+        let mut goose_attack = GooseAttack::initialize_with_config(configuration).unwrap();
+        let mut run_state = goose_attack.initialize_attack().await.unwrap();
+        controller::tests::run_users_ramp(&mut goose_attack, &mut run_state, 4);
+        // Mid ramp, with the next user due a minute ago.
+        run_state.adjust_user_in_ms = 667;
+        run_state.adjust_user_timer = std::time::Instant::now() - Duration::from_secs(60);
+        goose_attack.advance_test_plan(&mut run_state);
+        assert_eq!(run_state.adjust_user_in_ms, 0);
+        assert!(run_state.adjust_due());
     }
 
     /// A refused Start leaves the run settings and target users as they were.
