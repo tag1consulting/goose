@@ -13,7 +13,6 @@ use futures::{SinkExt, StreamExt};
 use lazy_static::lazy_static;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::io;
 use std::str::{self, FromStr};
 use std::sync::Arc;
 use std::time::Duration;
@@ -1305,20 +1304,32 @@ impl GooseAttack {
     }
 }
 
-/// The control loop listens for connections on the configured TCP port. Each connection
-/// spawns a new thread so multiple clients can connect. Handles incoming connections for
-/// both telnet and WebSocket clients.
-///  -  @TODO: optionally limit how many controller connections are allowed
-///  -  @TODO: optionally require client authentication
-///  -  @TODO: optionally ssl-encrypt client communication
-pub(crate) async fn controller_main(
-    // Expose load test configuration to controller thread.
-    configuration: GooseConfiguration,
-    // For sending requests to the parent process.
-    channel_tx: flume::Sender<ControlRequest>,
-    // Which type of controller to launch.
+/// Which telnet and WebSocket Controllers are listening, after
+/// [`bind_controller`] for each one the configuration turns on.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ListeningControllers {
+    pub(crate) telnet: bool,
+    pub(crate) websocket: bool,
+}
+
+impl ListeningControllers {
+    /// Every Controller `configuration` turns on, as if each one bound.
+    #[cfg(all(test, feature = "dashboard"))]
+    pub(crate) fn configured(configuration: &GooseConfiguration) -> Self {
+        ListeningControllers {
+            telnet: !configuration.no_telnet,
+            websocket: !configuration.no_websocket,
+        }
+    }
+}
+
+/// Bind the TCP port a `protocol` Controller listens on. A port Goose can't
+/// bind is logged as an error, naming the Controller, its address and why,
+/// and the load test runs without that Controller.
+pub(crate) async fn bind_controller(
+    configuration: &GooseConfiguration,
     protocol: ControllerProtocol,
-) -> io::Result<()> {
+) -> Option<TcpListener> {
     // Build protocol-appropriate address.
     let address = match &protocol {
         ControllerProtocol::Telnet => format!(
@@ -1335,9 +1346,33 @@ pub(crate) async fn controller_main(
 
     // All controllers use a TcpListener port.
     debug!("[controller]: preparing to bind {protocol:?} to: {address}");
-    let listener = TcpListener::bind(&address).await?;
-    info!("[controller]: {protocol:?} listening on: {address}");
+    match TcpListener::bind(&address).await {
+        Ok(listener) => {
+            info!("[controller]: {protocol:?} listening on: {address}");
+            Some(listener)
+        }
+        Err(e) => {
+            error!(
+                "[controller]: the {protocol:?} Controller couldn't listen on {address}: {e}; the load test runs without it"
+            );
+            None
+        }
+    }
+}
 
+/// The control loop accepts connections on the `listener` [`bind_controller`]
+/// bound. Each connection spawns a new thread so multiple clients can connect.
+/// Handles incoming connections for both telnet and WebSocket clients.
+///  -  @TODO: optionally limit how many controller connections are allowed
+///  -  @TODO: optionally require client authentication
+///  -  @TODO: optionally ssl-encrypt client communication
+pub(crate) async fn controller_main(
+    listener: TcpListener,
+    // For sending requests to the parent process.
+    channel_tx: flume::Sender<ControlRequest>,
+    // Which type of controller to launch.
+    protocol: ControllerProtocol,
+) {
     // Counter increments each time a controller client connects with this protocol.
     let mut client_id: u32 = 0;
 
@@ -1363,8 +1398,6 @@ pub(crate) async fn controller_main(
             CONTROL_TIMEOUT,
         ));
     }
-
-    Ok(())
 }
 
 /// Goose supports two different Controller protocols: telnet and WebSocket.

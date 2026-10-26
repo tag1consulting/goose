@@ -1,6 +1,34 @@
 # Changelog
 
 ## 0.19.0-dev
+ - [#778](https://github.com/tag1consulting/goose/pull/778) fix the other twelve defects found while documenting 0.19
+    o **behavior change**: with `--co-mitigation`, the Aggregated `# reqs` is "Actual requests" plus "Synthetic requests", and "Synthetic requests" is the synthetic requests recorded
+    o **behavior change**: the coordinated omission counts start again at the metrics reset after ramp up
+    o **behavior change**: a run started by a Controller after another counts its requests from zero
+    o **behavior change**: the reports' Aggregated scenario Iterations is every run divided by every user, as on the console, not the sum of the scenarios' iterations
+    o the Markdown report's scenario table names its first column Scenario
+    o a telnet or WebSocket Controller that can't bind its port logs an error, and the dashboard no longer names its address
+    o **behavior change**: `--no-autostart` is refused when no Controller could bind its port and dashboard control is off, instead of waiting for a start nothing can send
+    o **behavior change**: a time span is only hours, minutes and seconds written as `h`, `m` and `s`, in either case; anything else is refused instead of read as 0 or as its leading part, so `-t "5 junk"`, `15mins`, `5hours` and `2h3min` (read by 0.18 as 15 minutes, 5 hours and 2 hours 3 minutes) are refused; `util::parse_timespan` returns `None` for them
+    o a time span's units may be upper case on the command line, as from the Controllers
+    o `--pdf-print-html` without a report has the graphs and heatmap
+    o `--pdf-print-html` with a PDF report is written once
+    o **behavior change**: `--pdf-print-html` counts as a report for `--notes` and `--no-granular-report`, and is refused with `--no-metrics`
+    o **behavior change**: `--scenarios` accepts `_`, so `name_1` selects a second scenario registered as `name`
+    o a `--scenarios` pattern that matches no scenario logs a warning
+    o **behavior change**: `--throttle-requests 0` no longer refuses `rps` thresholds
+    o `set_default(GooseDefault::RunningMetrics, <&str>)` says it expects a `usize`
+    o `--timeout`'s refusal and help say it must round to at least 1 ms (0.0005)
+    o a negative number, as in `--users -1`, gets a tip saying the option takes none, not the tip to put it after =
+    o `--help` no longer calls Goose distributed
+    o the log format refusal lists `pretty`
+    o the `iterations` and `no_metrics` option names, and four unclosed backticks, in refusals
+    o **behavior change**: a scenario counts every user that ran it in the measured time, not only those that completed an iteration
+    o Iterations is 0, not NaN, for a scenario no user ran
+    o **behavior change**: request and scenario averages with no measured times are 0, not NaN (`null` in JSON)
+    o rustdoc and comments that described old behavior
+    o `examples/basic_auth.rs` and `examples/session.rs` name each request by its path
+    o CHANGELOG entries for #578, #629, #636 and #669, and API changes since 0.18.1 that were not listed
  - [#776](https://github.com/tag1consulting/goose/pull/776) fix seven defects found while documenting 0.19
     o **bug fix**: the console summary printed when a run ended had no percentile, errors or overview tables, as the metrics returned at shutdown were never marked final; the final summary shows them again. Not in 0.18.1
     o **bug fix**: a JSON report from a run where a request received more than one status code was refused as a `--baseline-file` (`Inconsistent baseline data`), as its per status code breakdown rows were written to `raw_request_metrics` and read back as requests. The JSON report now leaves the breakdown rows out, as intended, and writes each request's `status_code_timings`, from which a report rendered with `--render-report` rebuilds them (the Controller's `metrics-json` and the WebSocket Controller's `metrics` replies carry `status_code_timings` too); the HTML, Markdown, PDF and console reports keep them. Baselines are new in 0.19, so no release is affected
@@ -306,15 +334,21 @@
     o request names remain descriptive (path-based or explicitly set)
     o users requiring the old behavior must switch to `set_name_for_transaction_and_requests()`
     o introduces `TransactionName` enum with `TransactionOnly` and `InheritNameByRequests` variants
+    o **API change**: `Transaction.name`, `TransactionMetricAggregate.transaction_name`, `GooseRequestMetric.transaction_name` and `TransactionDetail.transaction_name` are a `TransactionName` (were `String`, or `&str` in `TransactionDetail`)
+    o **API change**: `GooseRequestMetric.transaction_index` is a `usize` (was a `String`), `usize::MAX` for a request made outside a transaction; `TransactionDetail` has no lifetime parameter: its `scenario_name` is an `Arc<str>` and its `transaction_index` an `Option<usize>` (were `&str`)
+    o **API change**: `GooseRequestMetric.name` and `GooseRequestMetric.scenario_name` are an `Arc<str>` (were `String`)
+    o the request log and the debug log in JSON write `transaction_name` as an object naming its variant, such as `{"TransactionOnly":"login"}` (was a string), and `transaction_index` as a number (was a string)
  - [#656](https://github.com/tag1consulting/goose/pull/656) fix stack overflow when cloning `GooseUser` with session data
     o **breaking**: session data types must now implement `Clone` (add `#[derive(Clone)]` to your session structs)
  - [#655](https://github.com/tag1consulting/goose/pull/655) fix `--scenarios` to use exact matching instead of substring matching; add `*` wildcard support for pattern matching
  - [#578](https://github.com/tag1consulting/goose/pull/578) add type-safe client builder for cookie configuration, optimize startup with shared clients
- - [#629](https://github.com/tag1consulting/goose/pull/629) add `--pdf-print-html` option to generate printer-friendly HTML optimized for PDF conversion; provides two-step PDF workflow without requiring Chromium dependencies; add `--pdf-timeout` option for configurable Chrome timeout in direct PDF generation (10-300s, default: 60)
+ - [#629](https://github.com/tag1consulting/goose/pull/629) add optional PDF report generation with `pdf-reports` feature flag; supports configurable scale via `--pdf-scale` option; add `--pdf-print-html` option to generate printer-friendly HTML optimized for PDF conversion; provides two-step PDF workflow without requiring Chromium dependencies; add `--pdf-timeout` option for configurable Chrome timeout in direct PDF generation (10-600s, default: 60)
+ - [#636](https://github.com/tag1consulting/goose/pull/636) add GraphQL support: `GooseUser::post_graphql` and `post_graphql_named` POST a query as JSON; add `examples/graphql_loadtest.rs`
  - [#663](https://github.com/tag1consulting/goose/pull/663) add response time breakdowns grouped by HTTP status code in CLI and HTML/markdown reports; breakdowns only appear when a request returns multiple different status codes
  - [#657](https://github.com/tag1consulting/goose/pull/657) add comprehensive Basic Authentication example demonstrating three approaches: custom client with default headers (recommended), helper function per-request, and manual per-request; includes flexible credential configuration and complete documentation
- - [#669](https://github.com/tag1consulting/goose/pull/669) update reqwest to 0.13, switching the default TLS backend from native-tls to rustls. HTTP/2 and post-quantum cryptography are now advertised by default, which may increase connection handshake overhead when a computationally expensive cipher suite is negotiated.
-   **Breaking changes**: Certificate validation now uses bundled rustls/webpki roots instead of the OS-native certificate store, which may affect environments with custom system CAs. `--accept-invalid-certs` now works unconditionally (previously it was silently ignored unless the `rustls-tls` feature was enabled).
+ - [#669](https://github.com/tag1consulting/goose/pull/669) update reqwest to 0.13, switching the default TLS backend from native-tls to rustls. Post-quantum key exchange is now advertised by default, which may increase connection handshake overhead when a computationally expensive cipher suite is negotiated. Goose builds reqwest without its `http2` feature, so requests stay HTTP/1.1.
+   Certificates are verified by rustls with the platform verifier (`rustls-platform-verifier`), which uses the operating system's certificate store, as native-tls did, so custom system CAs are still trusted.
+   **Breaking changes**: `--accept-invalid-certs` now works unconditionally (previously it was silently ignored unless the `rustls-tls` feature was enabled).
  - [#672](https://github.com/tag1consulting/goose/pull/672) fix `--no-autostart` initializing user states twice when a host is configured (once at startup, again on controller Start command)
  - [#673](https://github.com/tag1consulting/goose/pull/673) parallelize user state initialization across available CPUs; significantly reduces startup time with large user counts (1000+)
  - [#678](https://github.com/tag1consulting/goose/pull/678) add support for non-HTTP protocol load testing (TCP, UDP, WebSocket, etc.)
@@ -361,7 +395,6 @@
  - [#574](https://github.com/tag1consulting/goose/pull/574) update [`http`](https://docs.rs/http), [`itertools`](https://docs.rs/itertools) [`nix`](https://docs.rs/nix), [`rustls`](https://docs.rs/rustls/), and [`serial_test`](https://docs.rs/serial_test)
  - [#575](https://github.com/tag1consulting/goose/pull/575) add test coverage for sessions and cookies, revert [#557](https://github.com/tag1consulting/goose/pull/557) to avoid sharing the CookieJar between all users
  - [#600](https://github.com/tag1consulting/goose/pull/600) Refactor reports/metrics, add JSON and markdown report
- - [#629](https://github.com/tag1consulting/goose/pull/629) add optional PDF report generation with `pdf-reports` feature flag; supports configurable scale via `--pdf-scale` option
 
 ## 0.17.2 August 28, 2023
  - [#557](https://github.com/tag1consulting/goose/pull/557) speed up user initialization on Linux

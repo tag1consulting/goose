@@ -434,3 +434,33 @@ async fn test_pdf_print_html_written_when_a_report_fails() {
     assert!(content.contains("@page"), "{}", content);
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// `--pdf-print-html` alone records the graph data its report draws: the
+/// requests per second and response time graphs, and the response time
+/// heatmap.
+#[tokio::test]
+#[serial]
+async fn test_pdf_print_html_alone_has_the_graphs() {
+    let html_file = "test-pdf-print-html-alone.html";
+
+    let server = MockServer::start();
+    let mock_endpoints = setup_mock_server_endpoints(&server);
+
+    let configuration = common::build_configuration(
+        &server,
+        vec!["--run-time", "2", "--pdf-print-html", html_file],
+    );
+    let goose_attack = common::build_load_test(configuration, vec![get_transactions()], None, None);
+    common::run_load_test(goose_attack, None).await;
+    assert!(mock_endpoints[0].calls() > 0);
+
+    let html = std::fs::read_to_string(html_file).expect("the print HTML");
+    common::cleanup_files(vec![html_file]);
+    for id in [
+        "id=\"graph-rps\"",
+        "id=\"graph-avg-response-time\"",
+        "id=\"graph-latency-heatmap\"",
+    ] {
+        assert!(html.contains(id), "{} missing", id);
+    }
+}

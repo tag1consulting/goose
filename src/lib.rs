@@ -544,6 +544,9 @@ struct GooseAttackRunState {
     /// All unbounded senders to allow communication with
     /// [`GooseUser`](./goose/struct.GooseUser.html) threads.
     user_channels: Vec<flume::Sender<GooseUserCommand>>,
+    /// The `(scenario index, user)` of the user each of `user_channels`
+    /// reaches, so a metrics reset counts the users still running.
+    running_users: Vec<(usize, usize)>,
     /// Timer tracking when to display running metrics, if enabled.
     running_metrics_timer: std::time::Instant,
     /// When the next `--threshold` check is due, or `None` while the thresholds are
@@ -555,6 +558,8 @@ struct GooseAttackRunState {
     all_users_spawned: bool,
     /// Set of users that have shut themselves down.
     users_shutdown: HashSet<usize>,
+    /// The telnet and WebSocket Controllers that bound their ports.
+    listening_controllers: controller::ListeningControllers,
     /// Boolean flag indicating of Goose should shutdown after stopping a running load test.
     shutdown_after_stop: bool,
     /// Whether Ctrl-C has already started a cancel, so the main loop starts
@@ -679,6 +684,16 @@ pub struct GooseAttack {
     /// The Chrome binary PDF reports run, found once at startup.
     #[cfg(feature = "pdf-reports")]
     chrome: tokio::sync::OnceCell<report::chrome::ResolvedChrome>,
+}
+
+/// Whether `--scenarios` pattern `pattern` selects the scenario with machine
+/// name `machine_name`: exactly, or with `*` wildcards.
+fn scenario_pattern_matches(pattern: &str, machine_name: &str) -> bool {
+    if pattern.contains('*') {
+        wildcard_match(pattern, machine_name)
+    } else {
+        machine_name == pattern
+    }
 }
 
 /// Match a pattern containing `*` wildcards against text.
@@ -1112,19 +1127,30 @@ impl GooseAttack {
         Ok(())
     }
 
+    /// The `--scenarios` patterns that match no scenario's machine name.
+    fn unmatched_scenario_patterns(&self) -> Vec<&str> {
+        self.configuration
+            .scenarios()
+            .iter()
+            .filter(|pattern| {
+                !self
+                    .scenarios
+                    .iter()
+                    .any(|scenario| scenario_pattern_matches(pattern, &scenario.machine_name))
+            })
+            .map(String::as_str)
+            .collect()
+    }
+
     /// Internal helper to determine if the scenario is currently active.
     fn scenario_is_active(&self, scenario: &Scenario) -> bool {
         let patterns = self.configuration.scenarios();
         if patterns.is_empty() {
             return true;
         }
-        patterns.iter().any(|pattern| {
-            if pattern.contains('*') {
-                wildcard_match(pattern, &scenario.machine_name)
-            } else {
-                &*scenario.machine_name == pattern.as_str()
-            }
-        })
+        patterns
+            .iter()
+            .any(|pattern| scenario_pattern_matches(pattern, &scenario.machine_name))
     }
 
     /// Use configured GooseScheduler to build out a properly weighted list of
@@ -1383,15 +1409,22 @@ impl GooseAttack {
 
     // Display all scenarios (sorted by machine name).
     fn print_scenarios(&self) {
+        print!("{}", self.scenarios_list());
+    }
+
+    /// What `--scenarios-list` prints: each scenario's machine name, which
+    /// `--scenarios` selects it by, and its name.
+    fn scenarios_list(&self) -> String {
         let mut scenarios = BTreeMap::new();
-        println!("Scenarios:");
         for scenario in &self.scenarios {
-            scenarios.insert(scenario.machine_name.clone(), scenario.clone());
+            scenarios.insert(scenario.machine_name.clone(), scenario.name.clone());
         }
         // Display sorted by machine_name.
-        for (key, scenario) in scenarios {
-            println!(r#" - {}: ("{}")"#, key, scenario.name);
+        let mut list = "Scenarios:\n".to_string();
+        for (key, name) in scenarios {
+            list.push_str(&format!(" - {}: (\"{}\")\n", key, name));
         }
+        list
     }
 
     /// Execute the [`GooseAttack`](./struct.GooseAttack.html) load test.
@@ -1499,6 +1532,12 @@ impl GooseAttack {
             self.print_scenarios();
             logger::finish_goose_log();
             std::process::exit(0);
+        }
+
+        // A pattern that names no scenario is most likely a mistyped name, as
+        // `user_login` for the scenario `userlogin`.
+        for pattern in self.unmatched_scenario_patterns() {
+            warn!("--scenarios {pattern:?} matches no scenario; --scenarios-list prints the names");
         }
 
         // At least one scenario must be active.
@@ -1781,28 +1820,44 @@ impl GooseAttack {
     // Helper to optionally spawn a telnet and/or WebSocket Controller thread. The Controller
     // threads send commands to the parent process on `control_tx`, each with a one-shot
     // channel for the reply.
-    async fn setup_controllers(&self, control_tx: &flume::Sender<ControlRequest>) {
+    async fn setup_controllers(
+        &self,
+        control_tx: &flume::Sender<ControlRequest>,
+    ) -> controller::ListeningControllers {
+        let mut listening = controller::ListeningControllers::default();
         // Configured telnet Controller if not disabled.
         if !self.configuration.no_telnet {
-            // Spawn the initial controller thread to allow real-time control of the load test.
-            // There is no need to rejoin this thread when the load test ends.
-            let _ = Some(tokio::spawn(controller::controller_main(
-                self.configuration.clone(),
-                control_tx.clone(),
-                ControllerProtocol::Telnet,
-            )));
+            if let Some(listener) =
+                controller::bind_controller(&self.configuration, ControllerProtocol::Telnet).await
+            {
+                // Spawn the initial controller thread to allow real-time control of the load test.
+                // There is no need to rejoin this thread when the load test ends.
+                tokio::spawn(controller::controller_main(
+                    listener,
+                    control_tx.clone(),
+                    ControllerProtocol::Telnet,
+                ));
+                listening.telnet = true;
+            }
         }
 
         // Configured WebSocket Controller if not disabled.
         if !self.configuration.no_websocket {
-            // Spawn the initial controller thread to allow real-time control of the load test.
-            // There is no need to rejoin this thread when the load test ends.
-            let _ = Some(tokio::spawn(controller::controller_main(
-                self.configuration.clone(),
-                control_tx.clone(),
-                ControllerProtocol::WebSocket,
-            )));
+            if let Some(listener) =
+                controller::bind_controller(&self.configuration, ControllerProtocol::WebSocket)
+                    .await
+            {
+                // Spawn the initial controller thread to allow real-time control of the load test.
+                // There is no need to rejoin this thread when the load test ends.
+                tokio::spawn(controller::controller_main(
+                    listener,
+                    control_tx.clone(),
+                    ControllerProtocol::WebSocket,
+                ));
+                listening.websocket = true;
+            }
         }
+        listening
     }
 
     /// After an autostarted run, whether to stay up for the dashboard: Save
@@ -2267,9 +2322,10 @@ impl GooseAttack {
         let dashboard_control_rx = None;
 
         // Optionally spawn a telnet and/or Websocket Controller thread.
-        if let Some(control_tx) = &control_tx {
-            self.setup_controllers(control_tx).await;
-        }
+        let listening_controllers = match &control_tx {
+            Some(control_tx) => self.setup_controllers(control_tx).await,
+            None => controller::ListeningControllers::default(),
+        };
 
         // Optionally spawn the read-only live dashboard HTTP server.
         // Bind failure aborts attack init when --dashboard is set.
@@ -2282,7 +2338,13 @@ impl GooseAttack {
             dashboard_log_folder,
             dashboard_url,
             dashboard_server,
-        ) = match dashboard::setup_dashboard(&self.configuration, dashboard_control_tx).await? {
+        ) = match dashboard::setup_dashboard(
+            &self.configuration,
+            dashboard_control_tx,
+            listening_controllers,
+        )
+        .await?
+        {
             Some(setup) => (
                 Some(setup.request_rx),
                 Some(setup.close_tx),
@@ -2367,9 +2429,11 @@ impl GooseAttack {
             idle_status_displayed: false,
             users: Vec::new(),
             user_channels: Vec::new(),
+            running_users: Vec::new(),
             running_metrics_timer: std_now,
             threshold_check_at: None,
             users_shutdown: HashSet::new(),
+            listening_controllers,
             all_users_spawned: false,
             shutdown_after_stop: !self.configuration.no_autostart,
             canceling: false,
@@ -2479,6 +2543,17 @@ impl GooseAttack {
                     flume::Receiver<GooseUserCommand>,
                 ) = flume::unbounded();
                 goose_attack_run_state.user_channels.push(parent_sender);
+                goose_attack_run_state.running_users.push((
+                    thread_user.scenarios_index,
+                    thread_user.weighted_users_index,
+                ));
+                // The user runs its scenario from now, iteration or not.
+                let _ = goose_attack_run_state
+                    .metrics_cmd_tx
+                    .send(MetricsCommand::UserStarted {
+                        scenario_index: thread_user.scenarios_index,
+                        user: thread_user.weighted_users_index,
+                    });
 
                 // Clone the logger_tx if enabled, otherwise is None.
                 thread_user
@@ -2805,6 +2880,7 @@ impl GooseAttack {
                 goose_attack_run_state
                     .schedule_next_adjust(Duration::from_secs_f64(1.0 / f64::from(decrease_rate)));
 
+                goose_attack_run_state.running_users.pop();
                 if let Some(send_to_user) = goose_attack_run_state.user_channels.pop() {
                     match send_to_user.send(GooseUserCommand::Exit) {
                         Ok(_) => {
@@ -3338,6 +3414,7 @@ impl GooseAttack {
         goose_attack_run_state.idle_status_displayed = false;
         goose_attack_run_state.users = Vec::new();
         goose_attack_run_state.user_channels = Vec::new();
+        goose_attack_run_state.running_users = Vec::new();
         goose_attack_run_state.running_metrics_timer = std_now;
         // The thresholds are checked from when the run first enters Maintain.
         goose_attack_run_state.threshold_check_at = None;
@@ -3381,6 +3458,22 @@ impl GooseAttack {
         let (throttle_threads_tx, parent_to_throttle_tx) = self.setup_throttle().await;
         goose_attack_run_state.throttle_threads_tx = throttle_threads_tx;
         goose_attack_run_state.parent_to_throttle_tx = parent_to_throttle_tx;
+
+        // A new run counts its requests from zero: the atomic counters
+        // outlive the processor, and batches from the last run's users are
+        // dropped.
+        {
+            let registry = goose_attack_run_state
+                .request_counter_registry
+                .lock()
+                .expect("request_counter_registry mutex poisoned");
+            for counters in registry.values() {
+                counters.reset();
+            }
+        }
+        goose_attack_run_state
+            .metrics_epoch
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         // Re-create the metrics channel and spawn a fresh processor. It reads
         // Save report as start_run_folder left it, so start_run_folder runs
@@ -3444,6 +3537,20 @@ impl GooseAttack {
         // `GooseError` rather than panicking — library callers of `execute()`
         // should get a structured Result.
         let mut goose_attack_run_state = self.initialize_attack().await?;
+
+        // Without autostart, something has to be able to start the load test.
+        if self.configuration.no_autostart
+            && !goose_attack_run_state.listening_controllers.telnet
+            && !goose_attack_run_state.listening_controllers.websocket
+            && !self.configuration.dashboard_control
+        {
+            return Err(GooseError::InvalidOption {
+                option: "`configuration.no_autostart`".to_string(),
+                value: true.to_string(),
+                detail: "`configuration.no_autostart` requires a Controller or dashboard control, and no Controller could listen on its port."
+                    .to_string(),
+            });
+        }
 
         let result = self.run_attack(&mut goose_attack_run_state).await;
 
@@ -4671,6 +4778,102 @@ mod tests {
             .unwrap();
         assert!(snapshot_rx.await.unwrap().stopping);
         assert!(!controller::tests::control(&mut goose_attack, &mut run_state, "users 5").await);
+    }
+
+    /// A `--scenarios` pattern that matches no machine name is reported, as
+    /// `load_test` is for the scenario `loadtest`.
+    #[test]
+    fn unmatched_scenario_patterns_are_named() {
+        let configuration =
+            GooseConfiguration::parse_args_default(&["--scenarios", "load_test,load*,nope*"])
+                .unwrap();
+        let goose_attack = GooseAttack::initialize_with_config(configuration)
+            .unwrap()
+            .register_scenario(Scenario::new("LoadTest"));
+        assert_eq!(
+            goose_attack.unmatched_scenario_patterns(),
+            ["load_test", "nope*"]
+        );
+    }
+
+    /// A run started after another, as a Controller start after stop does,
+    /// counts its requests from zero.
+    #[tokio::test]
+    async fn a_new_run_counts_requests_from_zero() {
+        let configuration = GooseConfiguration::parse_args_default(&[
+            "--no-telnet",
+            "--no-websocket",
+            "--host",
+            "http://localhost",
+        ])
+        .unwrap();
+        let mut goose_attack = GooseAttack::initialize_with_config(configuration)
+            .unwrap()
+            .register_scenario(
+                Scenario::new("LoadTest").register_transaction(Transaction::new(Arc::new(
+                    |user: &mut GooseUser| Box::pin(async move { user.get("/").await.map(|_| ()) }),
+                ))),
+            );
+        let defaults = goose_attack.defaults.clone();
+        goose_attack.configuration.configure(&defaults).unwrap();
+        let mut run_state = goose_attack.initialize_attack().await.unwrap();
+        let counters = Arc::new(metrics::GooseRequestCounters::new());
+        counters
+            .success
+            .fetch_add(5, std::sync::atomic::Ordering::Relaxed);
+        counters
+            .failure
+            .fetch_add(2, std::sync::atomic::Ordering::Relaxed);
+        run_state
+            .request_counter_registry
+            .lock()
+            .unwrap()
+            .insert("GET /".to_string(), counters.clone());
+        let epoch = run_state
+            .metrics_epoch
+            .load(std::sync::atomic::Ordering::Relaxed);
+
+        goose_attack.reset_run_state(&mut run_state).await.unwrap();
+
+        assert_eq!(
+            counters.success.load(std::sync::atomic::Ordering::Relaxed),
+            0
+        );
+        assert_eq!(
+            counters.failure.load(std::sync::atomic::Ordering::Relaxed),
+            0
+        );
+        assert!(
+            run_state
+                .metrics_epoch
+                .load(std::sync::atomic::Ordering::Relaxed)
+                > epoch
+        );
+    }
+
+    /// A duplicate scenario name, renamed `name_1`, selects only that
+    /// scenario, and `--scenarios-list` names both.
+    #[test]
+    fn duplicate_scenario_name_can_be_selected() {
+        let configuration =
+            GooseConfiguration::parse_args_default(&["--scenarios", "loadtest_1"]).unwrap();
+        let goose_attack = GooseAttack::initialize_with_config(configuration)
+            .unwrap()
+            .register_scenario(Scenario::new("LoadTest"))
+            .register_scenario(Scenario::new("LoadTest"));
+        let names: Vec<&str> = goose_attack
+            .scenarios
+            .iter()
+            .map(|scenario| &*scenario.machine_name)
+            .collect();
+        assert_eq!(names, ["loadtest", "loadtest_1"]);
+        assert!(!goose_attack.scenario_is_active(&goose_attack.scenarios[0]));
+        assert!(goose_attack.scenario_is_active(&goose_attack.scenarios[1]));
+        assert!(goose_attack.unmatched_scenario_patterns().is_empty());
+        assert_eq!(
+            goose_attack.scenarios_list(),
+            "Scenarios:\n - loadtest: (\"LoadTest\")\n - loadtest_1: (\"LoadTest\")\n"
+        );
     }
 
     #[test]

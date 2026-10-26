@@ -969,7 +969,7 @@ impl GooseRequestCadence {
 /// or [`GooseUser::get_session_data_unchecked_mut`].
 ///
 /// For an example, see
-/// [`examples/simple_with_session`](https://github.com/tag1consulting/goose/blob/main/examples/simple_with_session.rs).
+/// [`examples/session`](https://github.com/tag1consulting/goose/blob/main/examples/session.rs).
 pub trait GooseUserData: Downcast + Send + Sync + 'static {
     fn clone_goose_user_data(&self) -> Box<dyn GooseUserData>;
 }
@@ -2178,7 +2178,7 @@ impl GooseUser {
             }
         }
         // Without a setting, as for a user made outside a load test, there
-        // is no mitigation: a load test always sets one, Average by default.
+        // is no mitigation: a load test always sets one, Disabled by default.
     }
 
     /// If Coordinated Omission Mitigation is enabled, compares how long has passed since the last
@@ -2237,7 +2237,7 @@ impl GooseUser {
             Ok(self.request_cadence.user_cadence)
         } else {
             // Without a setting, as for a user made outside a load test, there
-            // is no mitigation: a load test always sets one, Average by default.
+            // is no mitigation: a load test always sets one, Disabled by default.
             Ok(0)
         }
     }
@@ -2259,6 +2259,7 @@ impl GooseUser {
             // Save the atomic counter's key and the outcome before moving request.
             self.write_counter_key(request.raw.method_label(), &request.name);
             let success = request.success;
+            let co_copy = request.coordinated_omission_elapsed > 0;
 
             if self.metrics_batch.is_some() {
                 // Discard stale batch if a metrics reset changed the epoch.
@@ -2281,8 +2282,12 @@ impl GooseUser {
                 self.send_request_metric_now(request)?;
             }
             // Increment at actual send/accumulate time so metrics reset can't zero
-            // the counter before the parent processes this request.
-            self.increment_counter_at_key(success);
+            // the counter before the parent processes this request. A
+            // coordinated omission copy repeats a request already counted: the
+            // processor counts the synthetic requests derived from it.
+            if !co_copy {
+                self.increment_counter_at_key(success);
+            }
         }
         Ok(())
     }
@@ -3188,7 +3193,7 @@ impl GooseUser {
         Ok(())
     }
 
-    /// Write to [`debug_file`](../struct.GooseConfiguration.html#structfield.debug_file)
+    /// Write to [`debug_log`](../config/struct.GooseConfiguration.html#structfield.debug_log)
     /// if enabled.
     ///
     /// This function provides a mechanism for optional debug logging when a load test
@@ -3204,7 +3209,7 @@ impl GooseUser {
     ///
     /// Calls to [`GooseUser::set_failure`] automatically invoke `log_debug`.
     ///
-    /// To enable the debug log, a load test must be run with the `--debug-log-file=foo`
+    /// To enable the debug log, a load test must be run with the `--debug-log=foo`
     /// option set, where `foo` is either a relative or an absolute path of the log file
     /// to create. Any existing file will be overwritten.
     ///
@@ -4129,8 +4134,9 @@ impl Transaction {
 
     /// Sets a custom name for both the transaction and all its requests.
     ///
-    /// This name will be used as a prefix for all requests within the transaction,
-    /// allowing you to group related requests under a common namespace in metrics.
+    /// Every request the transaction makes takes this name in place of its
+    /// path, unless the request sets a name of its own, so the transaction's
+    /// requests are counted together in the metrics, as `GET Checkout`.
     ///
     /// # Example
     ///
@@ -4141,7 +4147,7 @@ impl Transaction {
     ///     .set_name_for_transaction_and_requests("Checkout");
     ///
     /// async fn checkout_flow(user: &mut GooseUser) -> TransactionResult {
-    ///     // All requests will be prefixed with "Checkout"
+    ///     // Every request is named "Checkout".
     ///     Ok(())
     /// }
     /// ```

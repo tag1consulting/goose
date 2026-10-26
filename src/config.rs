@@ -367,7 +367,7 @@ pub struct GooseConfiguration {
     /// Label the run in its reports
     ///
     /// Stores TEXT in the JSON report and shows it at the top of the HTML and Markdown
-    /// reports and in the dashboard. Needs --report-file or --dashboard.
+    /// reports and in the dashboard. Needs --report-file, --pdf-print-html or --dashboard.
     ///
     /// Example: --notes "baseline before cache change". Set in code with
     /// GooseDefault::Notes.
@@ -402,8 +402,8 @@ pub struct GooseConfiguration {
     /// Graph only totals in reports
     ///
     /// Report graphs show a line for the total and, by default, one more for each request,
-    /// transaction or scenario. This leaves out the extra lines. Needs --report-file or
-    /// --dashboard.
+    /// transaction or scenario. This leaves out the extra lines. Needs --report-file,
+    /// --pdf-print-html or --dashboard.
     ///
     /// Set in code with GooseDefault::NoGranularData.
     #[arg(help_heading = "Reports", long)]
@@ -411,7 +411,8 @@ pub struct GooseConfiguration {
     /// Write print-ready HTML for PDF
     ///
     /// Writes the HTML report, laid out for printing, to FILE, to turn into a PDF in any
-    /// browser. Needs neither Chrome nor the pdf-reports feature.
+    /// browser. Needs neither Chrome nor the pdf-reports feature. Not allowed with
+    /// --no-metrics.
     ///
     /// Example: --pdf-print-html report-print.html.
     #[arg(help_heading = "Reports", long, value_name = "FILE")]
@@ -831,7 +832,7 @@ pub struct GooseConfiguration {
     /// Request timeout in seconds [default: 60]
     ///
     /// How long each request may take before it fails. A decimal is allowed: 0.5 is half
-    /// a second. At least 0.001, one millisecond.
+    /// a second. Rounded to the millisecond, so at least 0.0005.
     ///
     /// Example: --timeout 15. Set in code with GooseDefault::Timeout.
     #[arg(help_heading = "HTTP client", long, value_name = "SECS")]
@@ -944,7 +945,7 @@ fn command(name: &str, width: usize) -> clap::Command {
     );
     // Set after the derive, which would otherwise take the structure's documentation.
     let command = command
-        .about("Goose: a distributed HTTP(S) load testing tool written in Rust")
+        .about("Goose: an HTTP(S) load testing tool written in Rust")
         .long_about(None);
     // -h and --help lead the Information heading, ahead of -V.
     let order = command
@@ -1085,7 +1086,8 @@ fn tidy_help(help: &str) -> String {
 
 /// A tip for a command line that gives an option a value beginning with a hyphen as
 /// its own argument, as `--goose-log -run.log`: clap reads that value as another
-/// option, so the option has no value, or the value is an unknown option. The tip
+/// option, so the option has no value, or the value is an unknown option. A
+/// negative number, as `--users -1`, gets a tip that the option takes none. The tip
 /// names the option, never the value, which can be a `--dashboard-auth-token`.
 fn hyphen_value_tip(args: &[&str]) -> Option<String> {
     let command = command("loadtest", DEFAULT_HELP_WIDTH);
@@ -1107,7 +1109,17 @@ fn hyphen_value_tip(args: &[&str]) -> Option<String> {
             named && arg.get_action().takes_values()
         });
         takes_value.then(|| {
-            format!("tip: a value that begins with a hyphen goes after =, as in {option}=<value>")
+            // A negative number is refused whichever way it is given: clap
+            // takes one as the value of an option that takes text.
+            let negative = value[1..].starts_with(|c: char| c.is_ascii_digit() || c == '.')
+                && value.parse::<f64>().is_ok();
+            if negative {
+                format!("tip: {option} takes no negative number")
+            } else {
+                format!(
+                    "tip: a value that begins with a hyphen goes after =, as in {option}=<value>"
+                )
+            }
         })
     })
 }
@@ -1174,8 +1186,12 @@ impl FromStr for Scenarios {
         for line in lines {
             // Ignore white space an case.
             let scenario = line.trim().to_lowercase();
-            // Valid scenario names are alphanumeric, with optional * wildcards.
-            if scenario.chars().all(|c| c.is_alphanumeric() || c == '*') {
+            // Valid scenario names are alphanumeric, with optional * wildcards,
+            // and the _ that tells apart scenarios registered with one name.
+            if scenario
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '*' || c == '_')
+            {
                 active.push(scenario);
             } else {
                 // The caller reports the error: clap for the command line, the
@@ -1184,8 +1200,8 @@ impl FromStr for Scenarios {
                     option: "`configuration.scenarios`".to_string(),
                     value: line.to_string(),
                     detail: format!(
-                        "'{}' is not a scenario name: use letters and digits, with * as a \
-                         wildcard; --scenarios-list prints the names.",
+                        "'{}' is not a scenario name: use letters, digits and _, with * as \
+                         a wildcard; --scenarios-list prints the names.",
                         line.trim()
                     ),
                 });
@@ -1521,6 +1537,7 @@ pub enum GooseDefault {
 ///
 /// The following run-time options can be configured with a custom default using a
 /// borrowed string slice ([`&str`]):
+///  - [`GooseDefault::BaselineFile`]
 ///  - [`GooseDefault::DebugLog`]
 ///  - [`GooseDefault::ErrorLog`]
 ///  - [`GooseDefault::GooseLog`]
@@ -1677,6 +1694,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::WebSocketPort
             | GooseDefault::DashboardPort
             | GooseDefault::DashboardMaxClients
+            | GooseDefault::RunningMetrics
             | GooseDefault::Compress => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
@@ -1686,8 +1704,7 @@ impl GooseDefaultType<&str> for GooseAttack {
                     ),
                 });
             }
-            GooseDefault::RunningMetrics
-            | GooseDefault::NoResetMetrics
+            GooseDefault::NoResetMetrics
             | GooseDefault::NoMetrics
             | GooseDefault::NoThresholdAbort
             | GooseDefault::NoTransactionMetrics
@@ -2456,8 +2473,8 @@ impl GooseConfiguration {
 }
 
 /// The seconds in time span option `option`, refused when the span is too long
-/// for a `usize` in milliseconds or has a digit of another script before a
-/// unit, naming which.
+/// for a `usize` in milliseconds, has a digit of another script before a unit,
+/// or is not a time span all the way through, naming which.
 pub(crate) fn timespan(option: &str, value: &str) -> Result<usize, GooseError> {
     util::timespan_seconds(value).map_err(|e| GooseError::InvalidOption {
         option: format!("`configuration.{option}`"),
@@ -2467,6 +2484,9 @@ pub(crate) fn timespan(option: &str, value: &str) -> Result<usize, GooseError> {
             util::SpanError::ForeignDigit => {
                 format!("`configuration.{option}` must use the ASCII digits 0 to 9.")
             }
+            util::SpanError::Invalid => format!(
+                "`configuration.{option}` must be whole seconds, or hours, minutes and seconds in that order, such as 90, 90s or 1h2m3s."
+            ),
         },
     })
 }
@@ -3785,9 +3805,9 @@ impl GooseConfiguration {
 
     /// Whether the graph data is kept for the whole run, with Save report set
     /// to `save_report`: true when a report will be written at the run's end,
-    /// to a `--report-file` path or by Save report.
+    /// to a `--report-file` or `--pdf-print-html` path, or by Save report.
     pub(crate) fn keeps_full_graph(&self, save_report: bool) -> bool {
-        !self.report_paths().is_empty() || save_report
+        !self.report_paths().is_empty() || self.pdf_print_html().is_some() || save_report
     }
 
     /// Whether only the dashboard asks for a run's folder: no output flag given
@@ -3863,10 +3883,16 @@ impl GooseConfiguration {
         self.pdf_timeout.unwrap_or(DEFAULT_PDF_TIMEOUT)
     }
 
-    /// Whether per second graph data is recorded: for a `--report-file`, or the
-    /// dashboard's charts and its Save report.
+    /// Whether a report may be written: to a `--report-file` or
+    /// `--pdf-print-html` path, or by the dashboard's Save report.
+    pub(crate) fn writes_report(&self) -> bool {
+        !self.report_file.is_empty() || self.pdf_print_html().is_some() || self.dashboard
+    }
+
+    /// Whether per second graph data is recorded: for a report
+    /// ([`Self::writes_report`]), or the dashboard's charts.
     pub(crate) fn records_graph_data(&self) -> bool {
-        !self.report_file.is_empty() || self.dashboard
+        self.writes_report()
     }
 
     /// Whether response time histograms are kept for each second, for the
@@ -3949,13 +3975,13 @@ impl GooseConfiguration {
             }
         }
 
-        // If set, timeout must be a number of at least one millisecond.
+        // If set, timeout must be a number that rounds to at least one millisecond.
         if let Some(timeout) = self.timeout.as_ref() {
             if !timeout_millis(number("timeout", timeout)?).is_some_and(|ms| ms >= 1) {
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.timeout`".to_string(),
                     value: timeout.to_string(),
-                    detail: "`configuration.timeout` must be at least 0.001 (one millisecond)."
+                    detail: "`configuration.timeout` must round to at least one millisecond: 0.0005 or more."
                         .to_string(),
                 });
             }
@@ -4078,7 +4104,7 @@ impl GooseConfiguration {
             // The --no-reset-metrics option isn't compatible with --test-plan.
             if self.no_reset_metrics {
                 return Err(GooseError::InvalidOption {
-                    option: "`configuration.no_reset_metrics".to_string(),
+                    option: "`configuration.no_reset_metrics`".to_string(),
                     value: self.no_reset_metrics.to_string(),
                     detail: "`configuration.no_reset_metrics` can not be set with `configuration.test_plan` (metrics are not reset)."
                         .to_string(),
@@ -4104,14 +4130,14 @@ impl GooseConfiguration {
                     option: "`configuration.iterations`".to_string(),
                     value: self.iterations().to_string(),
                     detail:
-                        "`configuration.iteratoins` can not be set with `configuration.test_plan`."
+                        "`configuration.iterations` can not be set with `configuration.test_plan`."
                             .to_string(),
                 });
             }
             // The --no-reset-metrics option isn't compatible with --iterations.
             if self.no_reset_metrics {
                 return Err(GooseError::InvalidOption {
-                    option: "`configuration.no_reset_metrics".to_string(),
+                    option: "`configuration.no_reset_metrics`".to_string(),
                     value: self.no_reset_metrics.to_string(),
                     detail: "`configuration.no_reset_metrics` can not be set with `configuration.iterations` (metrics are not reset)."
                         .to_string(),
@@ -4151,7 +4177,8 @@ impl GooseConfiguration {
         }
 
         // An `rps` rule the throttle keeps the run from reaching can never pass.
-        if let Some(throttle) = self.throttle_requests {
+        // A throttle of 0 is no throttle.
+        if let Some(throttle) = self.throttle_requests.filter(|&throttle| throttle > 0) {
             for threshold in &self.thresholds {
                 let Some((floor, inclusive)) = threshold.rate_floor() else {
                     continue;
@@ -4224,6 +4251,15 @@ impl GooseConfiguration {
                         "`configuration.report_file` can not be set with `configuration.no_metrics`."
                             .to_string(),
                 });
+            // Nor can the print ready HTML report.
+            } else if let Some(pdf_print_html) = self.pdf_print_html() {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.pdf_print_html`".to_string(),
+                    value: pdf_print_html.to_string(),
+                    detail:
+                        "`configuration.pdf_print_html` can not be set with `configuration.no_metrics`."
+                            .to_string(),
+                });
             // Coordinated Omission Mitigation can't be enabled if metrics are disabled.
             } else if self.co_mitigation.as_ref().unwrap()
                 != &GooseCoordinatedOmissionMitigation::Disabled
@@ -4231,21 +4267,22 @@ impl GooseConfiguration {
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.co_mitigation`".to_string(),
                     value: format!("{:?}", self.co_mitigation.as_ref().unwrap()),
-                    detail: "`configuration.co_mitigation` can not be set with `configuration.no_metrircs`."
+                    detail: "`configuration.co_mitigation` can not be set with `configuration.no_metrics`."
                         .to_string(),
                 });
             }
         }
 
-        // A report is written at the end of the run to a --report-file path, or by
-        // Save report, which a bare --report-file or --dashboard turns on.
-        let has_report = !self.report_file.is_empty() || self.dashboard;
+        // A report is written at the end of the run to a --report-file or
+        // --pdf-print-html path, or by Save report, which a bare --report-file or
+        // --dashboard turns on.
+        let has_report = self.writes_report();
         if !has_report && self.no_granular_report {
             return Err(GooseError::InvalidOption {
                 option: "`configuration.no_granular_report`".to_string(),
                 value: true.to_string(),
                 detail:
-                    "`configuration.no_granular_report` (--no-granular-report) needs a report: add --report-file or --dashboard."
+                    "`configuration.no_granular_report` (--no-granular-report) needs a report: add --report-file, --pdf-print-html or --dashboard."
                         .to_string(),
             });
         }
@@ -4276,8 +4313,8 @@ impl GooseConfiguration {
             }
         }
 
-        // Graph data goes in a JSON report.
-        if self.report_graph_data && !has_report {
+        // Graph data goes in a JSON report, which --pdf-print-html does not write.
+        if self.report_graph_data && self.report_file.is_empty() && !self.dashboard {
             return Err(GooseError::InvalidOption {
                 option: "`configuration.report_graph_data`".to_string(),
                 value: true.to_string(),
@@ -4292,7 +4329,7 @@ impl GooseConfiguration {
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.notes`".to_string(),
                     value: notes.to_string(),
-                    detail: "`configuration.notes` (--notes) would be stored nowhere: add --report-file or --dashboard."
+                    detail: "`configuration.notes` (--notes) would be stored nowhere: add --report-file, --pdf-print-html or --dashboard."
                         .to_string(),
                 });
             }
@@ -5439,6 +5476,42 @@ mod test {
         }
     }
 
+    /// A time span option, or a test plan step, that does not read as a time
+    /// span all the way through is refused, not read as the part before it.
+    #[test]
+    fn time_span_with_trailing_text_is_refused() {
+        for (flag, option) in [
+            ("--run-time", "run_time"),
+            ("--increase-time", "increase_time"),
+            ("--decrease-time", "decrease_time"),
+            ("--threshold-abort-delay", "threshold_abort_delay"),
+        ] {
+            for value in ["5 junk", "5s junk", "junk"] {
+                let mut config = GooseConfiguration::parse_args_default(&[flag, value]).unwrap();
+                match config.configure(&GooseDefaults::default()) {
+                    Err(GooseError::InvalidOption { detail, .. }) => assert_eq!(
+                        detail,
+                        format!(
+                            "`configuration.{}` must be whole seconds, or hours, minutes and seconds in that order, such as 90, 90s or 1h2m3s.",
+                            option
+                        ),
+                        "{} {}",
+                        flag,
+                        value
+                    ),
+                    other => panic!("{} {}: {:?}", flag, value, other),
+                }
+            }
+        }
+        for step in ["10,5 junk", "10,5s junk", "10,junk"] {
+            assert!(
+                crate::test_plan::TestPlan::parse(step).is_err(),
+                "{:?}",
+                step
+            );
+        }
+    }
+
     /// Serializes a configuration so two can be compared field by field.
     fn as_json(configuration: &GooseConfiguration) -> serde_json::Value {
         serde_json::to_value(configuration).unwrap()
@@ -5807,6 +5880,96 @@ mod test {
         }
     }
 
+    /// Each refusal says what is wrong: the type a default takes, the timeout
+    /// rule the code applies, a negative number, the log formats, and the names
+    /// of the options involved; and the help names what Goose is.
+    #[test]
+    fn messages_name_the_rule() {
+        let detail = |result: Result<GooseConfiguration, GooseError>| match result {
+            Err(GooseError::InvalidOption { option, detail, .. }) => (option, detail),
+            other => panic!("{:?}", other),
+        };
+
+        // RunningMetrics takes a usize.
+        match GooseAttack::initialize_with_config(GooseConfiguration::default())
+            .unwrap()
+            .set_default(GooseDefault::RunningMetrics, "x")
+        {
+            Err(GooseError::InvalidOption { detail, .. }) => assert_eq!(
+                detail,
+                "set_default(GooseDefault::RunningMetrics, x) expected usize value, received &str"
+            ),
+            Err(other) => panic!("{:?}", other),
+            Ok(_) => panic!("RunningMetrics took a &str"),
+        }
+
+        // A timeout rounds to the millisecond, so 0.0005 is the least.
+        assert!(validated(&["--timeout", "0.0005"], &Default::default()).is_ok());
+        assert_eq!(
+            detail(validated(&["--timeout", "0.0004"], &Default::default())).1,
+            "`configuration.timeout` must round to at least one millisecond: 0.0005 or more."
+        );
+
+        // A negative number is not a value beginning with a hyphen.
+        for args in [
+            &["--users", "-1"][..],
+            &["-u", "-1"],
+            &["--iterations", "-2"],
+        ] {
+            let (_, detail) = detail(GooseConfiguration::parse_args_default(args));
+            assert!(
+                detail.ends_with(&format!("; tip: {} takes no negative number", args[0])),
+                "{:?}: {}",
+                args,
+                detail
+            );
+            assert!(!detail.contains("goes after ="), "{:?}: {}", args, detail);
+        }
+
+        // An option that takes text takes a negative number as its value.
+        let notes = GooseConfiguration::parse_args_default(&["--notes", "-20"]).unwrap();
+        assert_eq!(notes.notes.as_deref(), Some("-20"));
+
+        // Every log format the parser accepts is named.
+        match "x".parse::<GooseLogFormat>() {
+            Err(GooseError::InvalidOption { detail, .. }) => assert_eq!(
+                detail,
+                "Invalid log_format, expected: csv, json, raw, or pretty"
+            ),
+            other => panic!("{:?}", other),
+        }
+
+        // The options a refusal names are spelled as they are.
+        let plan = ["--test-plan", "1,1s"];
+        assert_eq!(
+            detail(validated(
+                &[&["--iterations", "1"][..], &plan].concat(),
+                &Default::default()
+            ))
+            .1,
+            "`configuration.iterations` can not be set with `configuration.test_plan`."
+        );
+        assert_eq!(
+            detail(validated(
+                &["--no-metrics", "--co-mitigation", "average"],
+                &Default::default()
+            ))
+            .1,
+            "`configuration.co_mitigation` can not be set with `configuration.no_metrics`."
+        );
+        for other in [&plan[..], &["--iterations", "1"]] {
+            let (option, _) = detail(validated(
+                &[&["--no-reset-metrics"][..], other].concat(),
+                &Default::default(),
+            ));
+            assert_eq!(option, "`configuration.no_reset_metrics`");
+        }
+
+        // 0.19 has no distributed mode.
+        assert!(help_for("--help", 80)
+            .starts_with("Goose: an HTTP(S) load testing tool written in Rust\n"));
+    }
+
     /// `--report-file` and the six log options take an optional value: given without
     /// a path they write into the run's folder, by short and long name alike, and
     /// `""` still means no file.
@@ -5977,7 +6140,7 @@ mod test {
                 &["--scenarios", "a-b"],
                 "--scenarios <LIST>",
                 "a-b",
-                "invalid value 'a-b' for '--scenarios <LIST>': 'a-b' is not a scenario name: use letters and digits, with * as a wildcard; --scenarios-list prints the names.",
+                "invalid value 'a-b' for '--scenarios <LIST>': 'a-b' is not a scenario name: use letters, digits and _, with * as a wildcard; --scenarios-list prints the names.",
             ),
             (&["-h"], "-h", "", "help was requested"),
             (&["--help"], "--help", "", "help was requested"),
@@ -6330,7 +6493,7 @@ mod test {
                     assert_eq!(option, "`configuration.timeout`");
                     assert_eq!(
                         detail,
-                        "`configuration.timeout` must be at least 0.001 (one millisecond)."
+                        "`configuration.timeout` must round to at least one millisecond: 0.0005 or more."
                     );
                 }
                 other => panic!("{}: {:?}", timeout, other),
@@ -6713,6 +6876,60 @@ mod test {
             Err(other) => panic!("{:?}", other),
             Ok(_) => panic!("p95 was taken"),
         }
+    }
+
+    /// `--pdf-print-html` is a report: the notes and `--no-granular-report`
+    /// apply to it, `--no-metrics` refuses it, and it writes no JSON for
+    /// `--report-graph-data`.
+    #[test]
+    fn pdf_print_html_is_a_report() {
+        let print = ["--pdf-print-html", "print.html"];
+        for extra in [&["--notes", "a note"][..], &["--no-granular-report"]] {
+            assert!(
+                validated(&[&print[..], extra].concat(), &Default::default()).is_ok(),
+                "{:?}",
+                extra
+            );
+        }
+        assert_eq!(
+            refused_detail(validated(
+                &[&print[..], &["--no-metrics"]].concat(),
+                &Default::default()
+            )),
+            "`configuration.pdf_print_html` can not be set with `configuration.no_metrics`."
+        );
+        assert!(refused_detail(validated(
+            &[&print[..], &["--report-graph-data"]].concat(),
+            &Default::default()
+        ))
+        .contains("needs a report"));
+    }
+
+    /// `--throttle-requests 0` is no throttle, so it leaves every `rps` rule
+    /// reachable, from the command line and in code; a throttle still refuses
+    /// the rules above it.
+    #[test]
+    fn throttle_of_zero_refuses_no_rps_rule() {
+        assert!(validated(
+            &["--throttle-requests", "0", "--threshold", "rps>=1000"],
+            &Default::default()
+        )
+        .is_ok());
+        let defaults = defaults_from(|attack| {
+            attack
+                .set_default(GooseDefault::ThrottleRequests, 0)?
+                .set_default(GooseDefault::Threshold, "rps>=1000")
+        });
+        assert!(validated(&[], &defaults).is_ok());
+        let refused = refused_detail(validated(
+            &["--throttle-requests", "100", "--threshold", "rps>=200"],
+            &Default::default(),
+        ));
+        assert!(
+            refused.contains("`configuration.throttle_requests`"),
+            "{}",
+            refused
+        );
     }
 
     /// A rule that can never pass is refused before any user starts, from the
