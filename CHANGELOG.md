@@ -9,7 +9,7 @@
     o the Markdown report's scenario table names its first column Scenario
     o a telnet or WebSocket Controller that can't bind its port logs an error, and the dashboard no longer names its address
     o **behavior change**: `--no-autostart` is refused when no Controller could bind its port and dashboard control is off, instead of waiting for a start nothing can send
-    o **behavior change**: a time span with other text, such as `-t "5 junk"`, is refused instead of read as 0 or as the part before the text; `util::parse_timespan` returns `None` for it
+    o **behavior change**: a time span is only hours, minutes and seconds written as `h`, `m` and `s`, in either case; anything else is refused instead of read as 0 or as its leading part, so `-t "5 junk"`, `15mins`, `5hours` and `2h3min` (read by 0.18 as 15 minutes, 5 hours and 2 hours 3 minutes) are refused; `util::parse_timespan` returns `None` for them
     o a time span's units may be upper case on the command line, as from the Controllers
     o `--pdf-print-html` without a report has the graphs and heatmap
     o `--pdf-print-html` with a PDF report is written once
