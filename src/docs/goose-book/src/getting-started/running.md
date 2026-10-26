@@ -107,7 +107,7 @@ In real load tests, you'll most likely have multiple scenarios each with multipl
 
 Finally comes a chart showing how many users were running during the load test. You can see the users starting 1 per second at the start of the load test. The run was stopped with `ctrl-c`, and the line stays at 18 users to its last point.
 
-Some sections appear only when they have something to show: thresholds, when `--threshold` is set; request and response time metrics adjusted for coordinated omission, and coordinated omission events, when mitigation recorded any; and errors, when any request failed.
+Some sections appear only when they have something to show: thresholds, when `--threshold` is set; request and response time metrics adjusted for coordinated omission, and coordinated omission events, when mitigation recorded any; errors, when any request failed; and transaction errors, when any transaction returned an error. The Transaction Errors section follows the Errors section and counts each transaction's errors by scenario, transaction and error, most frequent first. `--no-error-summary` leaves both out of the report, not out of the [error log](../logging/errors.md).
 
 ## Comparing against a baseline
 
@@ -121,6 +121,6 @@ If you want a printer-friendly version of your HTML report for PDF conversion, u
 % cargo run --release -- --host http://localhost:8080 --report-file=report.html --pdf-print-html=print-report.html --no-reset-metrics
 ```
 
-This writes the HTML report with CSS laid out for printing, which you can convert to PDF with your browser's "Print to PDF" function or print on paper. It needs neither Chrome nor the `pdf-reports` feature. Give `--report-file` as well, as above: without it, the print-ready file has no requests per second graph, no average response time graph and no heatmap.
+This writes the HTML report with CSS laid out for printing, which you can convert to PDF with your browser's "Print to PDF" function or print on paper. It needs neither Chrome nor the `pdf-reports` feature, nor a `--report-file`: the print-ready file has the same graphs and heatmap either way.
 
 Refer to the [examples](../example/overview.html) included with Goose for more complicated and useful load test examples.

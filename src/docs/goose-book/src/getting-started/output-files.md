@@ -44,7 +44,7 @@ The first run writes into `goose-runs/nightly`, the next into `goose-runs/nightl
 
 While Save report is off and no `--report-file` path is given, Goose keeps only the dashboard's last 10 minutes of graph data (rule 10). A report written later, after Save report is turned on or by Save report now, still has every request in its tables, and says when its graphs start and why.
 
-**6. `--notes "text"` is stored in the JSON report and shown at the top of the HTML and Markdown reports and in the dashboard.** It needs `--report-file` or `--dashboard`.
+**6. `--notes "text"` is stored in the JSON report and shown at the top of the HTML and Markdown reports and in the dashboard.** It needs `--report-file`, `--pdf-print-html` or `--dashboard`.
 
 ```bash
 cargo run --example simple -- --host http://localhost:8080 -t 30s --report-file --notes "baseline before cache change"
@@ -73,7 +73,7 @@ cargo run --example simple -- --host http://localhost:8080 -t 30s \
 
 The JSON report also holds the run's test plan history, so a Markdown report rendered from it with `--render-report` has its plan overview.
 
-**`--pdf-print-html FILE` writes the HTML report laid out for printing**, to turn into a PDF in any browser, without Chrome or the `pdf-reports` feature. `--pdf-scale` (0.1 to 2.0, default 0.8) and `--pdf-timeout` (10 to 600 seconds, default 60) apply to a `.pdf` report. See [PDF reports](metrics.md#pdf-reports).
+**`--pdf-print-html FILE` writes the HTML report laid out for printing**, to turn into a PDF in any browser, without Chrome or the `pdf-reports` feature. It has the HTML report's graphs and heatmap, with or without a `--report-file`, counts as a report for `--notes` and `--no-granular-report`, and is refused with `--no-metrics`. `--pdf-scale` (0.1 to 2.0, default 0.8) and `--pdf-timeout` (10 to 600 seconds, default 60) apply to a `.pdf` report. See [PDF reports](metrics.md#pdf-reports).
 
 **`--baseline-file PATH` compares the run with an earlier one in every report.** PATH is a JSON report, plain or gzipped, or a run's folder that holds `report.json` or `report.json.gz`. See [Comparing against a baseline](common.md#comparing-against-a-baseline).
 

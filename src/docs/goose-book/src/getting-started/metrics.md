@@ -2,225 +2,263 @@
 
 Here's sample output generated when running a loadtest, in this case the [Umami example](../example/umami.html) that comes with Goose.
 
-The example is written for a site built with the [Drupal Umami demo](https://www.drupal.org/docs/umami-drupal-demonstration-installation-profile) profile: against any other server its validations fail. This sample came from a local test server that answers every page the example requests, with the titles, forms and static assets the example checks for. The following command was used to configure Goose and run the load test. The `-u9` tells Goose to spin up 9 users. The `-r3` option tells Goose to launch 3 users per second. The `-t1m` option tells Goose to run the load test for 1 minute, or 60 seconds. The `--no-reset-metrics` flag tells Goose to include all metrics, instead of the default which is to reset the metrics once every user has started. The two `--report-file` options tell Goose to write an HTML-formatted report named `report.html` and a Markdown-formatted report named `report.md` in the working directory once the load test finishes.
+The example is written for a site built with the [Drupal Umami demo](https://www.drupal.org/docs/umami-drupal-demonstration-installation-profile) profile: against any other server its validations fail. This sample came from a local nginx server that answers every page the example requests with one page holding the titles, forms and static assets the example checks for, redirects every form the example sends, as Drupal does, and answers about 1 request in 100 with a `500 Internal Server Error`. It can't show the terms a search was for, so every search fails. The following command was used to configure Goose and run the load test. The `-u9` tells Goose to spin up 9 users. The `-r3` option tells Goose to launch 3 users per second. The `-t1m` option tells Goose to run the load test for 1 minute, or 60 seconds. The `--no-reset-metrics` flag tells Goose to include all metrics, instead of the default which is to reset the metrics once every user has started. The two `--report-file` options tell Goose to write an HTML-formatted report named `report.html` and a Markdown-formatted report named `report.md` in the working directory once the load test finishes.
 
 ## ASCII metrics
 
-The example names its transactions, such as `anon /`, but not its requests, so each request is named by its path: the run made requests under 93 names. In the request tables below, `...` marks the rows left out.
+The example names its transactions, such as `anon /`, but not its requests, so each request is named by its path: the run made requests under 103 names. In the request tables and the errors table below, `...` marks the rows left out, and in the log, the lines left out.
 
 ```bash
-% cargo run --release --example umami -- --host http://127.0.0.1:8080/ -u9 -r3 -t1m --no-reset-metrics --report-file report.html --report-file report.md
-    Finished `release` profile [optimized] target(s) in 0.23s
-     Running `target/release/examples/umami --host 'http://127.0.0.1:8080/' -u9 -r3 -t1m --no-reset-metrics --report-file report.html --report-file report.md`
-21:10:43 [INFO] Output verbosity level: INFO
-21:10:43 [INFO] Logfile verbosity level: WARN
-21:10:43 [INFO] users = 9
-21:10:43 [INFO] run_time = 60
-21:10:43 [INFO] increase_rate = 3.0
-21:10:43 [INFO] no_reset_metrics = true
-21:10:43 [INFO] report_file = ["report.html", "report.md"]
-21:10:43 [INFO] global host configured: http://127.0.0.1:8080/
-21:10:43 [INFO] [scheduler]: allocating transactions and scenarios with RoundRobin scheduler
-21:10:43 [INFO] [scheduler]: initializing 9 user states...
-21:10:43 [INFO] [controller]: Telnet listening on: 0.0.0.0:5116
-21:10:43 [INFO] [controller]: WebSocket listening on: 0.0.0.0:5117
-21:10:43 [INFO] entering GooseAttack phase: Increase
-21:10:43 [INFO] [user 1]: launching user from Anonymous Spanish user
-21:10:43 [INFO] [user 2]: launching user from Anonymous English user
-21:10:43 [INFO] [user 3]: launching user from Anonymous Spanish user
-21:10:44 [INFO] [user 4]: launching user from Anonymous English user
-21:10:44 [INFO] [user 5]: launching user from Anonymous Spanish user
-21:10:44 [INFO] [user 6]: launching user from Anonymous English user
-21:10:45 [INFO] [user 7]: launching user from Admin user
-21:10:45 [INFO] [user 8]: launching user from Anonymous Spanish user
-21:10:45 [INFO] [user 9]: launching user from Anonymous English user
+% cargo run --release --example umami -- --host http://127.0.0.1:8013/ -u9 -r3 -t1m --no-reset-metrics --report-file report.html --report-file report.md
+    Finished `release` profile [optimized] target(s) in 0.19s
+     Running `target/release/examples/umami --host 'http://127.0.0.1:8013/' -u9 -r3 -t1m --no-reset-metrics --report-file report.html --report-file report.md`
+19:46:37 [INFO] Output verbosity level: INFO
+19:46:37 [INFO] Logfile verbosity level: WARN
+19:46:37 [INFO] users = 9
+19:46:37 [INFO] run_time = 60
+19:46:37 [INFO] increase_rate = 3.0
+19:46:37 [INFO] no_reset_metrics = true
+19:46:37 [INFO] report_file = ["report.html", "report.md"]
+19:46:37 [INFO] global host configured: http://127.0.0.1:8013/
+19:46:37 [INFO] [scheduler]: allocating transactions and scenarios with RoundRobin scheduler
+19:46:37 [INFO] [scheduler]: initializing 9 user states...
+19:46:37 [INFO] [controller]: Telnet listening on: 0.0.0.0:5116
+19:46:37 [INFO] [controller]: WebSocket listening on: 0.0.0.0:5117
+19:46:37 [INFO] entering GooseAttack phase: Increase
+19:46:37 [INFO] [user 1]: launching user from Anonymous Spanish user
+19:46:38 [INFO] [user 2]: launching user from Anonymous English user
+19:46:38 [INFO] [user 3]: launching user from Anonymous Spanish user
+19:46:38 [INFO] [user 4]: launching user from Anonymous English user
+19:46:39 [INFO] [user 5]: launching user from Anonymous Spanish user
+19:46:39 [INFO] [user 6]: launching user from Anonymous English user
+19:46:39 [INFO] [user 7]: launching user from Admin user
+19:46:40 [INFO] [user 8]: launching user from Anonymous Spanish user
+19:46:40 [INFO] [user 9]: launching user from Anonymous English user
 All 9 users launched.
 
-21:10:46 [INFO] entering GooseAttack phase: Maintain
-21:11:46 [INFO] entering GooseAttack phase: Decrease
-21:11:46 [INFO] [user 5]: exiting from Anonymous Spanish user
-21:11:46 [INFO] [user 8]: exiting from Anonymous Spanish user
-21:11:46 [INFO] [user 6]: exiting from Anonymous English user
-21:11:46 [INFO] [user 7]: exiting from Admin user
-21:11:46 [INFO] [user 2]: exiting from Anonymous English user
-21:11:46 [INFO] [user 4]: exiting from Anonymous English user
-21:11:46 [INFO] [user 1]: exiting from Anonymous Spanish user
-21:11:46 [INFO] [user 9]: exiting from Anonymous English user
-21:11:46 [INFO] [user 3]: exiting from Anonymous Spanish user
-21:11:46 [INFO] html report file written to: report.html
-21:11:46 [INFO] markdown report file written to: report.md
-21:11:46 [INFO] entering GooseAttack phase: Shutdown
-21:11:46 [INFO] printing final metrics after 63 seconds...
+19:46:40 [INFO] entering GooseAttack phase: Maintain
+19:46:47 [INFO] set_failure: http://127.0.0.1:8013/es/search/node: search terms (Percances Prueba negocio) not on page
+19:46:48 [INFO] set_failure: http://127.0.0.1:8013/es/search/node: search terms (de Un al) not on page
+...
+19:47:41 [INFO] entering GooseAttack phase: Decrease
+19:47:41 [INFO] [user 2]: exiting from Anonymous English user
+19:47:41 [INFO] [user 9]: exiting from Anonymous English user
+19:47:41 [INFO] [user 3]: exiting from Anonymous Spanish user
+19:47:41 [INFO] [user 8]: exiting from Anonymous Spanish user
+19:47:41 [INFO] [user 7]: exiting from Admin user
+19:47:41 [INFO] [user 1]: exiting from Anonymous Spanish user
+19:47:41 [INFO] [user 5]: exiting from Anonymous Spanish user
+19:47:41 [INFO] [user 4]: exiting from Anonymous English user
+19:47:41 [INFO] [user 6]: exiting from Anonymous English user
+19:47:41 [INFO] html report file written to: report.html
+19:47:41 [INFO] markdown report file written to: report.md
+19:47:41 [INFO] entering GooseAttack phase: Shutdown
+19:47:41 [INFO] printing final metrics after 63 seconds...
 
  === PER SCENARIO METRICS ===
  ------------------------------------------------------------------------------
  Name                     |  # users |  # times run | scenarios/s | iterations
  ------------------------------------------------------------------------------
- 1: Anonymous English u.. |        4 |            8 |        0.13 |       2.00
- 2: Anonymous Spanish u.. |        4 |            8 |        0.13 |       2.00
+ 1: Anonymous English u.. |        4 |            9 |        0.14 |       2.25
+ 2: Anonymous Spanish u.. |        4 |           10 |        0.16 |       2.50
  3: Admin user            |        1 |            2 |        0.03 |       2.00
  -------------------------+----------+--------------+-------------+------------
- Aggregated               |        9 |           18 |        0.29 |       2.00
+ Aggregated               |        9 |           21 |        0.33 |       2.33
  ------------------------------------------------------------------------------
  Name                     |    Avg (ms) |        Min |         Max |     Median
  ------------------------------------------------------------------------------
-   1: Anonymous English.. |      26,437 |     21,959 |      31,240 |     26,608
-   2: Anonymous Spanish.. |      24,977 |     19,969 |      30,105 |     23,724
-   3: Admin user          |      29,412 |     28,898 |      29,927 |     28,898
+   1: Anonymous English.. |      21,890 |     13,456 |      25,509 |     22,413
+   2: Anonymous Spanish.. |      21,297 |     15,457 |      30,714 |     21,365
+   3: Admin user          |      30,279 |     28,957 |      31,602 |     28,957
  -------------------------+-------------+------------+-------------+-----------
- Aggregated               |      26,119 |     19,969 |      31,240 |     26,608
+ Aggregated               |      22,407 |     13,456 |      31,602 |     22,413
 
  === PER TRANSACTION METRICS ===
  ------------------------------------------------------------------------------
  Name                     |   # times run |        # fails |  trans/s |  fail/s
  ------------------------------------------------------------------------------
  1: Anonymous English user
-   1: anon /              |            20 |         0 (0%) |     0.32 |    0.00
-   2: anon /en/basicpage  |            11 |         0 (0%) |     0.17 |    0.00
-   3: anon /en/articles/  |            11 |         0 (0%) |     0.17 |    0.00
-   4: anon /en/articles/% |            19 |         0 (0%) |     0.30 |    0.00
-   5: anon /en/recipes/   |            11 |         0 (0%) |     0.17 |    0.00
-   6: anon /en/recipes/%  |            35 |         0 (0%) |     0.56 |    0.00
-   7: anon /node/%nid     |            10 |         0 (0%) |     0.16 |    0.00
-   8: anon /en term       |            17 |         0 (0%) |     0.27 |    0.00
-   9: anon /en/search     |             8 |         0 (0%) |     0.13 |    0.00
-   10: anon /en/contact   |             8 |         0 (0%) |     0.13 |    0.00
+   1: anon /              |            24 |         0 (0%) |     0.38 |    0.00
+   2: anon /en/basicpage  |            13 |         0 (0%) |     0.21 |    0.00
+   3: anon /en/articles/  |            12 |         0 (0%) |     0.19 |    0.00
+   4: anon /en/articles/% |            23 |         0 (0%) |     0.37 |    0.00
+   5: anon /en/recipes/   |            12 |      2 (16.7%) |     0.19 |    0.03
+   6: anon /en/recipes/%  |            43 |         0 (0%) |     0.68 |    0.00
+   7: anon /node/%nid     |            12 |         0 (0%) |     0.19 |    0.00
+   8: anon /en term       |            23 |         0 (0%) |     0.37 |    0.00
+   9: anon /en/search     |            12 |      12 (100%) |     0.19 |    0.19
+   10: anon /en/contact   |            12 |         0 (0%) |     0.19 |    0.00
  2: Anonymous Spanish user
-   1: anon /es/           |            20 |         0 (0%) |     0.32 |    0.00
-   2: anon /es/basicpage  |            12 |         0 (0%) |     0.19 |    0.00
-   3: anon /es/articles/  |            12 |         0 (0%) |     0.19 |    0.00
-   4: anon /es/articles/% |            20 |         0 (0%) |     0.32 |    0.00
-   5: anon /es/recipes/   |            12 |         0 (0%) |     0.19 |    0.00
-   6: anon /es/recipes/%  |            36 |         0 (0%) |     0.57 |    0.00
-   7: anon /es term       |            18 |         0 (0%) |     0.29 |    0.00
-   8: anon /es/search     |            10 |         0 (0%) |     0.16 |    0.00
-   9: anon /es/contact    |             8 |         0 (0%) |     0.13 |    0.00
+   1: anon /es/           |            25 |         0 (0%) |     0.40 |    0.00
+   2: anon /es/basicpage  |            14 |         0 (0%) |     0.22 |    0.00
+   3: anon /es/articles/  |            14 |         0 (0%) |     0.22 |    0.00
+   4: anon /es/articles/% |            24 |       1 (4.2%) |     0.38 |    0.02
+   5: anon /es/recipes/   |            13 |         0 (0%) |     0.21 |    0.00
+   6: anon /es/recipes/%  |            44 |         0 (0%) |     0.70 |    0.00
+   7: anon /es term       |            23 |         0 (0%) |     0.37 |    0.00
+   8: anon /es/search     |            11 |      11 (100%) |     0.17 |    0.17
+   9: anon /es/contact    |            11 |         0 (0%) |     0.17 |    0.00
  3: Admin user           
    1: auth /en/user/login |             1 |         0 (0%) |     0.02 |    0.00
    2: auth /              |             5 |         0 (0%) |     0.08 |    0.00
    3: auth /en/articles/  |             2 |         0 (0%) |     0.03 |    0.00
    4: auth /en/node/%/e.. |             4 |         0 (0%) |     0.06 |    0.00
  -------------------------+---------------+----------------+----------+--------
- Aggregated               |           310 |         0 (0%) |     4.92 |    0.00
+ Aggregated               |           377 |      26 (6.9%) |     5.98 |    0.41
  ------------------------------------------------------------------------------
  Name                     |    Avg (ms) |        Min |         Max |     Median
  ------------------------------------------------------------------------------
  1: Anonymous English user
-   1: anon /              |         136 |         84 |         181 |        130
-   2: anon /en/basicpage  |         115 |         80 |         170 |        114
-   3: anon /en/articles/  |         124 |         79 |         168 |        123
-   4: anon /en/articles/% |         122 |         67 |         171 |        122
-   5: anon /en/recipes/   |         121 |         81 |         165 |        121
-   6: anon /en/recipes/%  |         124 |         69 |         173 |        125
-   7: anon /node/%nid     |         137 |         84 |         175 |        131
-   8: anon /en term       |         131 |         81 |         162 |        131
-   9: anon /en/search     |         426 |        383 |         485 |        408
-   10: anon /en/contact   |         386 |        312 |         463 |        346
+   1: anon /              |        1.01 |        0.4 |        1.53 |       1.05
+   2: anon /en/basicpage  |        0.87 |       0.39 |        1.83 |       0.83
+   3: anon /en/articles/  |        0.89 |       0.52 |        1.33 |       0.85
+   4: anon /en/articles/% |        0.96 |       0.53 |        1.52 |       0.98
+   5: anon /en/recipes/   |        0.77 |       0.33 |        1.14 |       0.74
+   6: anon /en/recipes/%  |           1 |       0.52 |        1.57 |       0.95
+   7: anon /node/%nid     |        0.92 |       0.45 |        1.52 |        0.8
+   8: anon /en term       |        0.95 |       0.45 |        1.53 |          1
+   9: anon /en/search     |        2.01 |       0.67 |        8.75 |       1.54
+   10: anon /en/contact   |        1.82 |       0.77 |         2.6 |       1.91
  2: Anonymous Spanish user
-   1: anon /es/           |         128 |         75 |         181 |        125
-   2: anon /es/basicpage  |         136 |         94 |         176 |        131
-   3: anon /es/articles/  |         122 |         86 |         164 |        111
-   4: anon /es/articles/% |         124 |         83 |         162 |        116
-   5: anon /es/recipes/   |         135 |         77 |         177 |        140
-   6: anon /es/recipes/%  |         125 |         71 |         181 |        117
-   7: anon /es term       |         127 |         78 |         184 |        117
-   8: anon /es/search     |         414 |        351 |         485 |        416
-   9: anon /es/contact    |         406 |        312 |         488 |        395
+   1: anon /es/           |        0.99 |       0.39 |        1.59 |       0.96
+   2: anon /es/basicpage  |         0.9 |       0.45 |        1.47 |       0.89
+   3: anon /es/articles/  |        0.84 |       0.51 |        1.46 |       0.71
+   4: anon /es/articles/% |        0.91 |       0.45 |        1.61 |       0.87
+   5: anon /es/recipes/   |        0.86 |       0.42 |        1.44 |       0.68
+   6: anon /es/recipes/%  |        1.02 |       0.44 |        1.95 |       1.02
+   7: anon /es term       |        1.21 |       0.44 |        7.93 |       0.87
+   8: anon /es/search     |        1.28 |        0.7 |        2.38 |        1.1
+   9: anon /es/contact    |        1.77 |       0.82 |        2.75 |        1.7
  3: Admin user           
-   1: auth /en/user/login |         452 |        452 |         452 |        452
-   2: auth /              |         114 |         76 |         163 |        109
-   3: auth /en/articles/  |         117 |        100 |         134 |        100
-   4: auth /en/node/%/e.. |         582 |        514 |         639 |        578
+   1: auth /en/user/login |        1.16 |       1.16 |        1.16 |       1.16
+   2: auth /              |        0.91 |       0.32 |        1.41 |        1.1
+   3: auth /en/articles/  |        0.47 |       0.46 |        0.49 |       0.46
+   4: auth /en/node/%/e.. |        2.39 |       1.43 |        3.13 |       1.93
  -------------------------+-------------+------------+-------------+-----------
- Aggregated               |         164 |         67 |         639 |        131
+ Aggregated               |        1.07 |       0.32 |        8.75 |       0.99
 
  === PER REQUEST METRICS ===
  ------------------------------------------------------------------------------
  Name                     |        # reqs |        # fails |    req/s |  fail/s
  ------------------------------------------------------------------------------
- GET /                    |            25 |         0 (0%) |     0.40 |    0.00
- GET /en/about-umami      |            11 |         0 (0%) |     0.17 |    0.00
- GET /en/articles/        |            13 |         0 (0%) |     0.21 |    0.00
+ GET /                    |            29 |         0 (0%) |     0.46 |    0.00
+ GET /en/about-umami      |            13 |         0 (0%) |     0.21 |    0.00
+ GET /en/articles/        |            14 |         0 (0%) |     0.22 |    0.00
  ...
- GET static asset         |         3,530 |         0 (0%) |    56.03 |    0.00
- POST /en/contact         |             8 |         0 (0%) |     0.13 |    0.00
- POST /en/node/12/edit    |             1 |         0 (0%) |     0.02 |    0.00
- POST /en/node/15/edit    |             1 |         0 (0%) |     0.02 |    0.00
- POST /en/node/16/edit    |             2 |         0 (0%) |     0.03 |    0.00
- POST /en/search/node     |             8 |         0 (0%) |     0.13 |    0.00
+ GET static asset         |           808 |         7 (0%) |    12.83 |    0.11
+ POST /en/contact         |            12 |      2 (16.7%) |     0.19 |    0.03
+ POST /en/node/11/edit    |             2 |         0 (0%) |     0.03 |    0.00
+ POST /en/node/13/edit    |             1 |         0 (0%) |     0.02 |    0.00
+ POST /en/node/16/edit    |             1 |         0 (0%) |     0.02 |    0.00
+ POST /en/search/node     |            12 |         0 (0%) |     0.19 |    0.00
  POST /en/user/login      |             1 |         0 (0%) |     0.02 |    0.00
- POST /es/contact         |             8 |         0 (0%) |     0.13 |    0.00
- POST /es/search/node     |            10 |         0 (0%) |     0.16 |    0.00
+ POST /es/contact         |            11 |         0 (0%) |     0.17 |    0.00
+ POST /es/search/node     |            11 |         0 (0%) |     0.17 |    0.00
  -------------------------+---------------+----------------+----------+--------
- Aggregated               |         3,883 |         0 (0%) |    61.63 |    0.00
+ Aggregated               |         1,240 |      35 (2.8%) |    19.68 |    0.56
  ------------------------------------------------------------------------------
  Name                     |    Avg (ms) |        Min |         Max |     Median
  ------------------------------------------------------------------------------
- GET /                    |          76 |         28 |         124 |         74
- GET /en/about-umami      |          61 |         22 |         116 |         52
- GET /en/articles/        |          67 |         24 |         116 |         68
+ GET /                    |        0.39 |        0.1 |        0.77 |       0.35
+ GET /en/about-umami      |        0.29 |       0.13 |        0.78 |       0.25
+ GET /en/articles/        |        0.31 |       0.17 |         0.7 |       0.29
  ...
- GET static asset         |        5.51 |       1.17 |          14 |       5.41
- POST /en/contact         |         211 |        126 |         282 |        214
- POST /en/node/12/edit    |         235 |        235 |         235 |        235
- POST /en/node/15/edit    |         252 |        252 |         252 |        252
- POST /en/node/16/edit    |         252 |        247 |         258 |        247
- POST /en/search/node     |         230 |        185 |         266 |        224
- POST /en/user/login      |         238 |        238 |         238 |        238
- POST /es/contact         |         218 |        154 |         274 |        237
- POST /es/search/node     |         223 |        152 |         287 |        216
+ GET static asset         |        0.16 |       0.05 |        0.69 |       0.15
+   └─ 200 (99.1%)         |        0.16 |       0.05 |        0.69 |          -
+   └─ 500 (0.9%)          |        0.14 |       0.08 |        0.19 |          -
+ POST /en/contact         |        0.24 |       0.11 |         0.4 |       0.24
+   └─ 200 (83.3%)         |        0.25 |       0.11 |         0.4 |          -
+   └─ 500 (16.7%)         |        0.23 |       0.14 |        0.31 |          -
+ POST /en/node/11/edit    |        0.25 |       0.21 |        0.28 |       0.21
+ POST /en/node/13/edit    |        0.27 |       0.27 |        0.27 |       0.27
+ POST /en/node/16/edit    |        0.14 |       0.14 |        0.14 |       0.14
+ POST /en/search/node     |        0.25 |       0.13 |        0.38 |       0.25
+ POST /en/user/login      |        0.16 |       0.16 |        0.16 |       0.16
+ POST /es/contact         |        0.23 |       0.12 |        0.33 |       0.25
+ POST /es/search/node     |        0.24 |       0.12 |        0.53 |       0.19
  -------------------------+-------------+------------+-------------+-----------
- Aggregated               |          13 |       1.17 |         287 |       5.86
+ Aggregated               |        0.22 |       0.05 |        7.41 |       0.19
+ ------------------------------------------------------------------------------
+ Slowest page load within specified percentile of requests (in ms):
+ ------------------------------------------------------------------------------
+ Name                     |    50% |    75% |    98% |    99% |  99.9% | 99.99%
+ ------------------------------------------------------------------------------
+ GET /                    |   0.35 |   0.41 |   0.73 |   0.77 |   0.77 |   0.77
+ GET /en/about-umami      |   0.25 |   0.38 |   0.78 |   0.78 |   0.78 |   0.78
+ GET /en/articles/        |   0.29 |   0.33 |    0.7 |    0.7 |    0.7 |    0.7
+ ...
+ GET static asset         |   0.15 |    0.2 |   0.31 |    0.4 |   0.59 |   0.69
+ POST /en/contact         |   0.24 |   0.31 |    0.4 |    0.4 |    0.4 |    0.4
+ POST /en/node/11/edit    |   0.21 |   0.28 |   0.28 |   0.28 |   0.28 |   0.28
+ POST /en/node/13/edit    |   0.27 |   0.27 |   0.27 |   0.27 |   0.27 |   0.27
+ POST /en/node/16/edit    |   0.14 |   0.14 |   0.14 |   0.14 |   0.14 |   0.14
+ POST /en/search/node     |   0.25 |   0.31 |   0.38 |   0.38 |   0.38 |   0.38
+ POST /en/user/login      |   0.16 |   0.16 |   0.16 |   0.16 |   0.16 |   0.16
+ POST /es/contact         |   0.25 |   0.27 |   0.33 |   0.33 |   0.33 |   0.33
+ POST /es/search/node     |   0.19 |   0.28 |   0.53 |   0.53 |   0.53 |   0.53
+ -------------------------+--------+--------+--------+--------+--------+-------
+ Aggregated               |   0.19 |   0.26 |   0.66 |   0.69 |    0.8 |   7.41
  ------------------------------------------------------------------------------
  Name                     |                                        Status codes 
  ------------------------------------------------------------------------------
- GET /                    |                                            25 [200]
- GET /en/about-umami      |                                            11 [200]
- GET /en/articles/        |                                            13 [200]
+ GET /                    |                                            29 [200]
+ GET /en/about-umami      |                                            13 [200]
+ GET /en/articles/        |                                            14 [200]
  ...
- GET static asset         |                                         3,530 [200]
- POST /en/contact         |                                             8 [200]
- POST /en/node/12/edit    |                                             1 [200]
- POST /en/node/15/edit    |                                             1 [200]
- POST /en/node/16/edit    |                                             2 [200]
- POST /en/search/node     |                                             8 [200]
+ GET static asset         |                                  801 [200], 7 [500]
+ POST /en/contact         |                                   10 [200], 2 [500]
+ POST /en/node/11/edit    |                                             2 [200]
+ POST /en/node/13/edit    |                                             1 [200]
+ POST /en/node/16/edit    |                                             1 [200]
+ POST /en/search/node     |                                            12 [200]
  POST /en/user/login      |                                             1 [200]
- POST /es/contact         |                                             8 [200]
- POST /es/search/node     |                                            10 [200]
+ POST /es/contact         |                                            11 [200]
+ POST /es/search/node     |                                            11 [200]
  -------------------------+----------------------------------------------------
- Aggregated               |                                         3,883 [200]
+ Aggregated               |                               12 [500], 1,228 [200] 
+
+ === ERRORS ===
+ ------------------------------------------------------------------------------
+ Count       | Error
+ ------------------------------------------------------------------------------
+ 7             GET static asset: 500 Internal Server Error: static asset
+ 2             POST /en/contact: 500 Internal Server Error: /en/contact
+ 2             GET /en/recipes/: 500 Internal Server Error: /en/recipes/
+ 1             GET es/articles/percances-al-hornear-nuestros-consejos-para-solucionar-problemas: 500 Internal Server Error: es/articles/percances-al-hornear-nuestros-consejos-para-solucionar-problemas
+ 1             GET /es/search/node: http://127.0.0.1:8013/es/search/node: search terms (sin hierbas Un) not on page
+ 1             GET /es/search/node: http://127.0.0.1:8013/es/search/node: search terms (setas Prueba Bizcochos) not on page
+ ...
+ ------------------------------------------------------------------------------
+
+ === OVERVIEW ===
+ ------------------------------------------------------------------------------
+ Action       Started               Stopped             Elapsed    Users
+ ------------------------------------------------------------------------------
+ Increasing:  2026-10-26 20:46:37 - 2026-10-26 20:46:40 (00:00:03, 0 -> 9)
+ Maintaining: 2026-10-26 20:46:40 - 2026-10-26 20:47:41 (00:01:01, 9)
+ Decreasing:  2026-10-26 20:47:41 - 2026-10-26 20:47:41 (00:00:00, 0 <- 9)
+
+ Target host: http://127.0.0.1:8013/
+ goose v0.19.0-dev
+ ------------------------------------------------------------------------------
 ```
 
-The final summary ends with the status codes. Its percentile tables, the errors table and the overview of the test plan are not printed in this release; the HTML and Markdown reports hold them. From the `report.md` of the same run:
+When a check fails, the example says why with `set_failure`, as in the `search terms ... not on page` lines. The final summary shows the scenarios, the transactions and then the requests: how many there were, their response times, the slowest response time within each percentile, and their status codes. A request that received more than one status code, as `GET static asset` did here, has a row for each status code under its response times; see [response time breakdowns by status code](#response-time-breakdowns-by-status-code). The errors table counts each request error, most frequent first. `set_failure` marks a request as failed, so the failed searches are counted there too.
 
-```markdown
-## Plan Overview
+When a transaction returns an error, a `=== TRANSACTION ERRORS ===` table follows the errors table. It counts the errors by scenario, transaction and error, most frequent first. Each row names the scenario and transaction by number, counted from 1 as in the transaction tables, then by name, as in `1.3 ErrUser flaky`. This run has none, because `set_failure` fails a transaction with a request error, which the errors table already counts. This table is from a 3 second run, with 2 users, of a load test whose `flaky` transaction returns `TransactionError::Custom("every third call fails")` one time in three:
 
-| Action | Started | Stopped | Elapsed | Users |
-| ------ | ------- | ------- | ------- | ----: |
-| Increasing | 26-10-25 22:10:43 | 26-10-25 22:10:46 | 00:00:03 | 0 &rarr; 9 |
-| Maintaining | 26-10-25 22:10:46 | 26-10-25 22:11:46 | 00:01:00 | 9 |
-| Decreasing | 26-10-25 22:11:46 | 26-10-25 22:11:46 | 00:00:00 | 0 &larr; 9 |
-
-## Response Time Metrics
-
-| Method | Name | 50%ile (ms) | 60%ile (ms) | 70%ile (ms) | 80%ile (ms) | 90%ile (ms) | 95%ile (ms) | 99%ile (ms) | 100%ile (ms) |
-| ------ | ---- | ----------: | ----------: | ----------: | ----------: | ----------: | ----------: | ----------: | -----------: |
-| GET | / | 74 | 80 | 98 | 109 | 116 | 119 | 124 | 124 |
-| GET | /en/about-umami | 52 | 66 | 73 | 75 | 113 | 113 | 116 | 116 |
-| GET | /en/articles/ | 68 | 72 | 75 | 82 | 102 | 102 | 116 | 116 |
-| ... |
-| GET | static asset | 5.41 | 6.18 | 6.94 | 7.78 | 8.64 | 9.66 | 11 | 14 |
-| POST | /en/contact | 214 | 241 | 245 | 245 | 276 | 282 | 282 | 282 |
-| POST | /en/node/12/edit | 235 | 235 | 235 | 235 | 235 | 235 | 235 | 235 |
-| POST | /en/node/15/edit | 252 | 252 | 252 | 252 | 252 | 252 | 252 | 252 |
-| POST | /en/node/16/edit | 247 | 247 | 247 | 258 | 258 | 258 | 258 | 258 |
-| POST | /en/search/node | 224 | 234 | 253 | 253 | 257 | 266 | 266 | 266 |
-| POST | /en/user/login | 238 | 238 | 238 | 238 | 238 | 238 | 238 | 238 |
-| POST | /es/contact | 237 | 243 | 245 | 245 | 268 | 274 | 274 | 274 |
-| POST | /es/search/node | 216 | 218 | 237 | 251 | 272 | 287 | 287 | 287 |
-|  | Aggregated | 5.86 | 6.62 | 7.52 | 8.38 | 11 | 70 | 124 | 287 |
+```text
+ === TRANSACTION ERRORS ===
+ ------------------------------------------------------------------------------
+ Count       | Transaction: error
+ ------------------------------------------------------------------------------
+ 20,663        1.3 ErrUser flaky: TransactionError: custom error (every third call fails)
+ ------------------------------------------------------------------------------
 ```
+
+The summary ends with the overview of the test plan: each phase, when it started and stopped, how long it took, and how many users were running.
+
+The errors and transaction errors tables count every error from the start of the run: the metrics reset after the ramp up does not clear them. In the run above, `flaky` failed 16,231 times after the reset, as its `# fails` column shows, and 20,663 times in all. `--no-error-summary` leaves both tables out of the summary and the reports; the [error log](../logging/errors.md) and the [transaction log](../logging/transactions.md) still record every error.
 
 ## Report Formats
 
@@ -246,7 +284,7 @@ The following subsections describe each report format in detail.
 
 ### HTML report
 
-The screenshots in this section come from another run of the Umami example, with `-u9 -r3 -t2m`, against a local test server that answered a few requests with errors.
+The screenshots in this section come from another run of the Umami example, with `-u9 -r3 -t2m`, against a local test server that answered a few requests with errors, except the [Scenarios](#scenarios) screenshot, which comes from a separate run.
 
 #### Overview
 The HTML report starts with a brief overview table of the test plan, the same table the Markdown report starts with, as [shown above](#ascii-metrics):
@@ -284,7 +322,7 @@ The next graph shows the response times measured for each request made. Goose me
 - **Resource efficiency**: Not downloading complete responses allows Goose to generate more load with fewer resources
 - **Real-world relevance**: Many applications stream responses or use chunked encoding where TTFB is the critical performance metric
 
-Goose measures request, transaction and scenario times to the microsecond. The console, HTML, Markdown and PDF reports and the dashboard show times under 10 ms to the hundredth of a millisecond and times from 10 ms in whole milliseconds, rounded half up, so a 0.418 ms response reads `0.42` where whole milliseconds showed `0`. Averages follow the same rule, and a baseline delta is the difference of the two values shown. Percentiles come from buckets that are never more than 1% off the times they hold, so 2.2 ms and 2.5 ms, or 1.4 s and 1.6 s, are told apart. The fastest and slowest times are kept exactly. The JSON report's minimums, maximums and percentiles keep whole milliseconds, truncated, so a 37.999 ms time shown as `38` is `37` there. Its averages are means of the microseconds. Its raw timing data holds each bucket once, in `times_us`, with `minimum_time_us`, `maximum_time_us` and `total_time_us`. A JSON report from Goose 0.18.1 or later loads as a baseline, except one from a run that received more than one status code; see [Comparing against a baseline](common.md#comparing-against-a-baseline).
+Goose measures request, transaction and scenario times to the microsecond. The console, HTML, Markdown and PDF reports and the dashboard show times under 10 ms to the hundredth of a millisecond and times from 10 ms in whole milliseconds, rounded half up, so a 0.418 ms response reads `0.42` where whole milliseconds showed `0`. Averages follow the same rule, and a baseline delta is the difference of the two values shown. Percentiles come from buckets that are never more than 1% off the times they hold, so 2.2 ms and 2.5 ms, or 1.4 s and 1.6 s, are told apart. The fastest and slowest times are kept exactly. The JSON report's minimums, maximums and percentiles keep whole milliseconds, truncated, so a 37.999 ms time shown as `38` is `37` there. Its averages are means of the microseconds. Its raw timing data holds each bucket once, in `times_us`, with `minimum_time_us`, `maximum_time_us` and `total_time_us`. A JSON report from Goose 0.18.1 or later loads as a baseline; see [Comparing against a baseline](common.md#comparing-against-a-baseline).
 
 If your load test needs to measure total download time including the response body, see [Measuring Complete Download Time](#measuring-complete-download-time) below.
 
@@ -314,7 +352,7 @@ Each breakdown row shows the status code, the percentage of total requests with 
 
 Breakdowns only appear when a request returns two or more distinct status codes. If all requests for an endpoint return the same status code, no breakdown row is shown since it would be identical to the aggregate. This keeps the output clean for the common case while providing additional detail where it matters.
 
-This feature is available in CLI output, HTML reports, and Markdown reports.
+The breakdowns are in the console output and the HTML, Markdown and PDF reports. The JSON report keeps their data in each request's `status_code_timings`, not as rows.
 
 #### Status codes
 All status codes returned by the server are displayed in a table, per-request and in aggregate. In this run most responses were `200 OK`, but the test server answered a few requests with `500 Internal Server Error`, such as one of the 19 requests for `/en/about-umami`.
@@ -323,7 +361,7 @@ All status codes returned by the server are displayed in a table, per-request an
 #### Transactions
 The next graph summarizes all Transactions run during the load test. One or more requests are grouped logically inside Transactions. For example, the Transaction named `0.0 anon /` includes an anonymous (not-logged-in) request for the front page, as well as requests for all static assets found on the front page.
 
-Whereas a Request automatically fails based on the web server response code, the code that defines a Transaction must manually return an error for a Transaction to be considered failed. For example, the logic may be written to fail the Transaction if the html request fails, but not if one or more static asset requests fail.
+Whereas a Request automatically fails based on the web server response code, the code that defines a Transaction must manually return an error for a Transaction to be considered failed. For example, the logic may be written to fail the Transaction if the html request fails, but not if one or more static asset requests fail. The error a Transaction returns is counted in the [Transaction Errors](#errors-and-transaction-errors) section and written to the [transaction log](../logging/transactions.md) and the [error log](../logging/errors.md); an error from a failed request is counted with the request errors instead.
 
 This graph is also followed by a table showing details on all Transactions, partially shown here:
 ![Transaction metrics](metrics-transactions.jpg)
@@ -333,14 +371,17 @@ The next graph summarizes all Scenarios run during the load test. One or more Tr
 
 For example, the Scenario named `Anonymous English user` includes the above `anon /` Transaction, the `anon /en/basicpage`, and all the rest of the Transactions requesting pages in English.
 
-It is followed by a table, shown in entirety here because this load test only has 3 Scenarios. The `# Users` column indicates how many `GooseUser` threads were assigned to run this Scenario during the load test. The `# Times Run` column indicates how many times in aggregate all `GooseUser` threads ran completely through the Scenario. From there you can see how long on average it took a `GooseUser` thread to run through all Transactions and make all contained Requests to completely run the Scenario, as well as the minimum and maximum amount of time. Finally, `Iterations` is how many times each assigned `GooseUser` thread ran through the entire Scenario (for each Scenario, Iterations times the # of Users equals the total # of times run).
+It is followed by a table, shown in entirety here because this load test only has 3 Scenarios. The `# Users` column indicates how many `GooseUser` threads ran this Scenario during the measured time, whether or not they completed it. The `# Times Run` column indicates how many times in aggregate all `GooseUser` threads ran completely through the Scenario. From there you can see how long on average it took a `GooseUser` thread to run through all Transactions and make all contained Requests to completely run the Scenario, as well as the minimum and maximum amount of time. Finally, `Iterations` is how many times each of those `GooseUser` threads ran through the entire Scenario on average: the `# Times Run` divided by the `# Users`, or 0 for a Scenario no user ran. The Aggregated row divides every run by every user in the same way.
 
-As this run lasted two minutes, and the `Admin user` Scenario took 31 to 42 seconds to run once, its one user ran completely through it 3 times, while the 4 users of each anonymous Scenario ran through theirs 18 times in all:
+This screenshot comes from a separate run of the same command, against a local nginx server that answers every page the example requests with one page holding the titles and forms the example checks for, and answers 2% of requests with a `500 Internal Server Error`. As this run lasted two minutes, and the `Admin user` Scenario took 35 to 40 seconds to run once, its one user ran completely through it 3 times, while the 4 users of each anonymous Scenario ran through theirs 19 times in all, 4.75 times each. The Aggregated row's Iterations is all 41 runs divided by all 9 users, 4.56:
 ![Scenario metrics](metrics-scenarios.jpg)
 
 #### Users
 The final graph shows how many users were running at the various stages of the load test. The graph starts when the load test starts, so it shows the ramp up: as configured, Goose launched 3 users a second up to 9 users, then sustained that level of traffic for two minutes before shutting down:
 ![User metrics](metrics-users.jpg)
+
+#### Errors and transaction errors
+When any request failed, an Errors section counts each request error, most frequent first, as the console's errors table does. When any transaction returned an error, a Transaction Errors section follows it, counting each error by scenario, transaction and error. The Markdown report has the same tables, under Error Metrics and Transaction Error Metrics, the PDF report has them too, and the JSON report holds them in `errors` and `transaction_errors`. `--no-error-summary` leaves them out of every report.
 
 ### Markdown report
 
@@ -348,11 +389,11 @@ The Markdown report follows the structure of the [HTML report](#html-report). Ho
 
 ### JSON report
 
-The JSON report is a dump of the internal metrics collection. Its `raw_metrics` field carries the content of [`GooseMetrics`](https://docs.rs/goose/latest/goose/metrics/struct.GooseMetrics.html), including `history`, the test plan steps the run went through, and `thresholds`, the result of each `--threshold` rule (left out when there are none). Beside it are `goose_version`, `test`, `started`, `ended`, `ended_by` and `in_progress`, which describe the run, `notes` when the run had `--notes`, `canceled_reason`, why a canceled run was canceled, `graphs_start` when the graphs do not cover the whole run, the tables the other reports show (`raw_request_metrics`, `raw_response_metrics`, `co_request_metrics`, `co_response_metrics`, `scenario_metrics`, `transaction_metrics`, `status_code_metrics` and `errors`), and `coordinated_omission_metrics`, the [coordinated omission](../coordinated-omission/metrics.md) event summary. A JSON report can be loaded as a baseline with `--baseline-file`, or turned into the other reports with `--render-report`; see [Output files](output-files.md). With `--report-graph-data` it also has a `graphs` key holding the per second data the HTML report graphs and its heatmap.
+The JSON report is a dump of the internal metrics collection. Its `raw_metrics` field carries the content of [`GooseMetrics`](https://docs.rs/goose/latest/goose/metrics/struct.GooseMetrics.html), including `history`, the test plan steps the run went through, and `thresholds`, the result of each `--threshold` rule (left out when there are none). Beside it are `goose_version`, `test`, `started`, `ended`, `ended_by` and `in_progress`, which describe the run, `notes` when the run had `--notes`, `canceled_reason`, why a canceled run was canceled, `graphs_start` when the graphs do not cover the whole run, the tables the other reports show (`raw_request_metrics`, `raw_response_metrics`, `co_request_metrics`, `co_response_metrics`, `scenario_metrics`, `transaction_metrics`, `status_code_metrics`, `errors` and, when a transaction returned an error, `transaction_errors`), and `coordinated_omission_metrics`, the [coordinated omission](../coordinated-omission/metrics.md) event summary. A JSON report can be loaded as a baseline with `--baseline-file`, or turned into the other reports with `--render-report`; see [Output files](output-files.md). With `--report-graph-data` it also has a `graphs` key holding the per second data the HTML report graphs and its heatmap.
 
 Each transaction's `transaction_name` is an object naming how it was named, such as `{"TransactionOnly":"login"}` or `{"InheritNameByRequests":"login"}`.
 
-Each request in `raw_metrics.requests` keeps its timing data in `raw_data`, and, with coordinated omission mitigation, in `coordinated_omission_data` (`null` without it). Each holds `counter`, the number of times recorded; `minimum_time`, `maximum_time` and `total_time` in whole milliseconds; and the same three in microseconds, `minimum_time_us`, `maximum_time_us` and `total_time_us`, with `times_us`, which maps each bucket's time in microseconds to how many times fell in it. Each transaction and scenario holds `counter`, `min_time`, `max_time` and `total_time` in whole milliseconds and `times_us`, `min_time_us`, `max_time_us` and `total_time_us` in microseconds. In the tables beside `raw_metrics`, minimums, maximums and percentiles are whole milliseconds, truncated, and averages are means of the microseconds.
+Each request in `raw_metrics.requests` keeps its timing data in `raw_data`, and, with coordinated omission mitigation, in `coordinated_omission_data` (`null` without it). Each holds `counter`, the number of times recorded; `minimum_time`, `maximum_time` and `total_time` in whole milliseconds; and the same three in microseconds, `minimum_time_us`, `maximum_time_us` and `total_time_us`, with `times_us`, which maps each bucket's time in microseconds to how many times fell in it. Each transaction and scenario holds `counter`, `min_time`, `max_time` and `total_time` in whole milliseconds and `times_us`, `min_time_us`, `max_time_us` and `total_time_us` in microseconds. Each request also holds `status_code_counts`, how many responses got each status code, and `status_code_timings`, the `count`, `total_time_us`, `min_time_us` and `max_time_us` of each status code's responses. In the tables beside `raw_metrics`, minimums, maximums and percentiles are whole milliseconds, truncated, and averages are means of the microseconds; an average with no times to average is `0`. `raw_request_metrics` holds one row for each request and the `Aggregated` row. It leaves out the [rows for each status code](#response-time-breakdowns-by-status-code) the other reports show: a report rendered from the JSON report with `--render-report` rebuilds them from `status_code_timings`.
 
 ### PDF Reports
 
@@ -376,14 +417,14 @@ cargo run --example simple -- --host http://localhost:8080 --pdf-print-html prin
 # - Chrome headless: chrome --headless --print-to-pdf=report.pdf print-ready.html
 ```
 
-The `--pdf-print-html` option creates HTML with specialized CSS optimizations:
+The `--pdf-print-html` option writes the HTML report, with its graphs and heatmap, once, with specialized CSS optimizations:
 - Single-page layout optimized for printing
 - Print-specific styling for clean presentation
 - Proper page break handling for tables and sections
 - Enhanced typography for improved readability
 - All content consolidated on a single page
 
-This approach is always available and doesn't require any additional feature flags or dependencies.
+This approach is always available and doesn't require any additional feature flags or dependencies. Like a `--report-file`, it counts as a report for `--notes` and `--no-granular-report`, and it can't be used with `--no-metrics`.
 
 #### Direct PDF Generation (Integrated Approach)
 
@@ -506,7 +547,7 @@ async fn measure_full_download(user: &mut GooseUser) -> TransactionResult {
 }
 ```
 
-The `GET /large-file` row then holds the time to the first byte, and the `DOWNLOAD /large-file` row the time to the last. In this release the `# reqs`, `# fails`, `req/s` and `fail/s` columns read 0 for a custom request, and the Aggregated row's counts leave it out, while its response times are recorded and the Aggregated response times and status codes include it; with no status code given, the status code table shows it under `[0]`, as in the [TCP example](../example/tcp.md).
+The `GET /large-file` row then holds the time to the first byte, and the `DOWNLOAD /large-file` row the time to the last. A custom request is counted like any other request, in its own row and in the Aggregated row; with no status code given, the status code table shows it under `[0]`, as in the [TCP example](../example/tcp.md).
 
 **Note:** Reading complete response bodies will consume more memory and may reduce the load generation capacity of your test.
 
