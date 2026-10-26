@@ -3601,19 +3601,30 @@ fn allocate_transactions(
     let (weighted_unsequenced_on_stop_transactions, total_unsequenced_on_stop_transactions) =
         weight_unsequenced_transactions(&unsequenced_on_stop_transactions, u);
 
+    // The Random scheduler shuffles only the transactions a user runs over and
+    // over; its on_start and on_stop transactions run in Serial order.
+    let start_stop_scheduler = match scheduler {
+        GooseScheduler::Random => &GooseScheduler::Serial,
+        _ => scheduler,
+    };
+
     // Schedule sequenced transactions.
-    let scheduled_sequenced_on_start_transactions =
-        schedule_sequenced_transactions(&weighted_sequenced_on_start_transactions, scheduler);
+    let scheduled_sequenced_on_start_transactions = schedule_sequenced_transactions(
+        &weighted_sequenced_on_start_transactions,
+        start_stop_scheduler,
+    );
     let scheduled_sequenced_transactions =
         schedule_sequenced_transactions(&weighted_sequenced_transactions, scheduler);
-    let scheduled_sequenced_on_stop_transactions =
-        schedule_sequenced_transactions(&weighted_sequenced_on_stop_transactions, scheduler);
+    let scheduled_sequenced_on_stop_transactions = schedule_sequenced_transactions(
+        &weighted_sequenced_on_stop_transactions,
+        start_stop_scheduler,
+    );
 
     // Schedule unsequenced transactions.
     let scheduled_unsequenced_on_start_transactions = schedule_unsequenced_transactions(
         &weighted_unsequenced_on_start_transactions,
         total_unsequenced_on_start_transactions,
-        scheduler,
+        start_stop_scheduler,
     );
     let scheduled_unsequenced_transactions = schedule_unsequenced_transactions(
         &weighted_unsequenced_transactions,
@@ -3623,7 +3634,7 @@ fn allocate_transactions(
     let scheduled_unsequenced_on_stop_transactions = schedule_unsequenced_transactions(
         &weighted_unsequenced_on_stop_transactions,
         total_unsequenced_on_stop_transactions,
-        scheduler,
+        start_stop_scheduler,
     );
 
     // Finally build a Vector of tuples: (transaction id, transaction name)
@@ -3767,8 +3778,7 @@ fn schedule_unsequenced_transactions(
             }
         }
         GooseScheduler::Serial | GooseScheduler::Random => {
-            // Allocate serially in the weighted order defined. If the Random scheduler is being used, they will get
-            // shuffled later.
+            // Allocate serially in the weighted order defined.
             for (transaction_index, transactions) in
                 available_unsequenced_transactions.iter().enumerate()
             {
@@ -3777,12 +3787,13 @@ fn schedule_unsequenced_transactions(
                     transactions.len(),
                     transaction_index
                 );
-
-                let mut transactions_clone = transactions.clone();
-                if scheduler == &GooseScheduler::Random {
-                    transactions_clone.shuffle(&mut rand::rng());
-                }
-                weighted_transactions.append(&mut transactions_clone);
+                weighted_transactions.extend_from_slice(transactions);
+            }
+            // The Random scheduler then shuffles the whole list once. Each
+            // Transaction's own vector holds only copies of its index, so
+            // shuffling those changes nothing.
+            if scheduler == &GooseScheduler::Random {
+                weighted_transactions.shuffle(&mut rand::rng());
             }
         }
     }
@@ -4659,5 +4670,127 @@ mod tests {
             "{}",
             printed
         );
+    }
+
+    /// The transaction indexes `allocate_transactions` schedules for
+    /// `scenario`, ignoring on_start and on_stop.
+    fn scheduled(scenario: &Scenario, scheduler: &GooseScheduler) -> Vec<usize> {
+        let (_, transactions, _) = allocate_transactions(scenario, scheduler);
+        transactions.into_iter().map(|(index, _)| index).collect()
+    }
+
+    async fn noop_transaction(_user: &mut GooseUser) -> crate::goose::TransactionResult {
+        Ok(())
+    }
+
+    /// The Random scheduler runs the Serial list in a random order: the same
+    /// transactions, each as often, not in Serial order.
+    #[test]
+    fn test_random_scheduler_shuffles_transactions() {
+        // Weights of 10 each reduce by their greatest common divisor to one
+        // each, 3 orders of 6 being Serial in each run; weights of 10, 11 and
+        // 12 do not reduce, and one in more than 10^14 orders is Serial.
+        for weights in [[10, 10, 10], [10, 11, 12]] {
+            let scenario = weights
+                .iter()
+                .fold(scenario!("Random"), |scenario, weight| {
+                    scenario.register_transaction(
+                        transaction!(noop_transaction).set_weight(*weight).unwrap(),
+                    )
+                });
+            let serial = scheduled(&scenario, &GooseScheduler::Serial);
+            let mut differs = false;
+            for _ in 0..20 {
+                let random = scheduled(&scenario, &GooseScheduler::Random);
+                let mut sorted = random.clone();
+                sorted.sort_unstable();
+                assert_eq!(sorted, serial);
+                differs |= random != serial;
+            }
+            assert!(
+                differs,
+                "Random scheduled transactions weighted {:?} in Serial order: {:?}",
+                weights, serial
+            );
+        }
+    }
+
+    /// The Random scheduler shuffles within each sequence, and sequences keep
+    /// their order.
+    #[test]
+    fn test_random_scheduler_keeps_sequence_order() {
+        let scenario = scenario!("Sequenced")
+            .register_transaction(
+                transaction!(noop_transaction)
+                    .set_sequence(2)
+                    .set_weight(5)
+                    .unwrap(),
+            )
+            .register_transaction(
+                transaction!(noop_transaction)
+                    .set_sequence(1)
+                    .set_weight(5)
+                    .unwrap(),
+            )
+            .register_transaction(
+                transaction!(noop_transaction)
+                    .set_sequence(1)
+                    .set_weight(6)
+                    .unwrap(),
+            )
+            .register_transaction(
+                transaction!(noop_transaction)
+                    .set_sequence(2)
+                    .set_weight(6)
+                    .unwrap(),
+            );
+        let serial = scheduled(&scenario, &GooseScheduler::Serial);
+        assert_eq!(
+            serial,
+            [vec![1; 5], vec![2; 6], vec![0; 5], vec![3; 6]].concat()
+        );
+        let mut differs = false;
+        for _ in 0..10 {
+            let random = scheduled(&scenario, &GooseScheduler::Random);
+            // Sequence 1, transactions 1 and 2, comes first, then sequence 2.
+            let (first, second) = random.split_at(11);
+            let mut first_sorted = first.to_vec();
+            first_sorted.sort_unstable();
+            assert_eq!(first_sorted, [vec![1; 5], vec![2; 6]].concat());
+            let mut second_sorted = second.to_vec();
+            second_sorted.sort_unstable();
+            assert_eq!(second_sorted, [vec![0; 5], vec![3; 6]].concat());
+            differs |= random != serial;
+        }
+        assert!(differs, "Random scheduled each sequence in Serial order");
+    }
+
+    /// The Random scheduler leaves on_start and on_stop transactions in Serial
+    /// order.
+    #[test]
+    fn test_random_scheduler_keeps_on_start_and_on_stop_serial() {
+        let scenario = (0..3).fold(scenario!("StartStop"), |scenario, _| {
+            scenario.register_transaction(
+                transaction!(noop_transaction)
+                    .set_on_start()
+                    .set_on_stop()
+                    .set_weight(10)
+                    .unwrap(),
+            )
+        });
+        let scenario =
+            scenario.register_transaction(transaction!(noop_transaction).set_weight(11).unwrap());
+        let (serial_start, _, serial_stop) =
+            allocate_transactions(&scenario, &GooseScheduler::Serial);
+        let indexes = |list: WeightedTransactions| -> Vec<usize> {
+            list.into_iter().map(|(index, _)| index).collect()
+        };
+        let (serial_start, serial_stop) = (indexes(serial_start), indexes(serial_stop));
+        assert_eq!(serial_start.len(), 30);
+        for _ in 0..10 {
+            let (start, _, stop) = allocate_transactions(&scenario, &GooseScheduler::Random);
+            assert_eq!(indexes(start), serial_start);
+            assert_eq!(indexes(stop), serial_stop);
+        }
     }
 }
