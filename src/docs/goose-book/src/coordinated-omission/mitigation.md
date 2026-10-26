@@ -117,7 +117,7 @@ cargo run --release -- --users 10 --increase-rate 10
 
 ### 2. Monitor Response Time Distributions
 
-Always review the full distribution, not just averages. The percentile tables of the HTML and Markdown reports show where the long tail starts: a median that looks good can sit beside a 99th percentile many times higher.
+Read the full distribution as well as the averages. The percentile tables of the HTML and Markdown reports show where the long tail starts: a median that looks good can sit beside a 99th percentile many times higher.
 
 ### 3. Set Appropriate Timeouts
 
@@ -270,11 +270,11 @@ For detailed analysis, consider:
 
 ## Summary
 
-Goose helps you account for coordinated omission through:
+Goose accounts for coordinated omission with:
 
 1. **Every request timed**: Goose times every request it makes
-2. **Accurate percentile calculations**: Buckets never more than 1% off
+2. **Percentiles within 1%**: no bucket is more than 1% off the times it holds
 3. **Configuration**: a request timeout and three mitigation modes
-4. **Real-time visibility**: Monitor and detect issues during tests
+4. **Live metrics**: the Controllers and the dashboard show the metrics while the test runs
 
 Enable mitigation where stalls are likely, so the results show how the system behaves under load.

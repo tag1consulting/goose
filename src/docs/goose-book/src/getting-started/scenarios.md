@@ -18,7 +18,7 @@ Scenarios:
  - anonymousspanishuser: ("Anonymous Spanish user")
  ```
 
-> **What Is A Machine Name:** It is possible to name your Scenarios pretty much anything you want in your load test, including even using the same identical name for multiple Scenarios. A machine name ensures that you can still identify each Scenario uniquely, and without any special characters that can be difficult or insecure to pass through the command line. A machine name is made up of only the ASCII letters and digits found in your Scenario's full name, in lower case, and optionally with `_` and a number appended to differentiate between multiple Scenarios that would otherwise have the same name.
+> **What Is A Machine Name:** A Scenario can have any name, and several Scenarios can share one. A machine name ensures that you can still identify each Scenario uniquely, and without any special characters that can be difficult or insecure to pass through the command line. A machine name is made up of only the ASCII letters and digits found in your Scenario's full name, in lower case, and optionally with `_` and a number appended to differentiate between multiple Scenarios that would otherwise have the same name.
 >
 > In the following example, we have three very similarly named Scenarios. One simply has an extra white space between words. The second has an airplane emoticon in the name. Both the extra space and the airplane symbol are stripped away from the machine name as they are not alphanumerics, and instead `_1` and `_2` are appended to the end to differentiate:
 >
@@ -32,7 +32,7 @@ Scenarios:
 
 ## Running Scenarios By Machine Name
 
-It is now possible to run any subset of the above scenarios by passing a comma separated list of machine names with the `--scenarios` run time option. Goose uses **exact matching** by default: `admin` does not run `adminuser`. To match multiple scenarios with a single pattern, use the `*` wildcard character which matches zero or more characters. Matching ignores case and the white space around each name, so `AdminUser` runs `adminuser`. Set the list in code with `GooseDefault::Scenarios`.
+To run a subset of the above scenarios, pass a comma separated list of machine names with the `--scenarios` run time option. Goose uses **exact matching** by default: `admin` does not run `adminuser`. To match multiple scenarios with a single pattern, use the `*` wildcard character which matches zero or more characters. Matching ignores case and the white space around each name, so `AdminUser` runs `adminuser`. Set the list in code with `GooseDefault::Scenarios`.
 
 For example, to run only the two anonymous Scenarios, you could add `--scenarios "anon*"`:
 

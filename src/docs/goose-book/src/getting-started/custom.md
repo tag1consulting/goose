@@ -1,6 +1,6 @@
 # Custom Run Time Options
 
-It can sometimes be necessary to add custom run-time options to your load test. `GooseAttack::initialize()` parses the command line itself, with [clap](https://docs.rs/clap), and exits with an error when it receives an option it does not know. There are two alternatives here: environment variables, or parsing the command line yourself and handing Goose its part.
+A load test can add run-time options of its own. `GooseAttack::initialize()` parses the command line itself, with [clap](https://docs.rs/clap), and exits with an error when it receives an option it does not know. There are two alternatives here: environment variables, or parsing the command line yourself and handing Goose its part.
 
 ## Environment Variables
 
