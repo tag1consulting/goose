@@ -21,7 +21,7 @@
 
 use crate::controller::{
     self, send_command, ControlCommand, ControlReply, ControlRequest, ControllerCommand,
-    RunSettings, SendError, CONTROL_TIMEOUT,
+    ListeningControllers, RunSettings, SendError, CONTROL_TIMEOUT,
 };
 use crate::metrics::dashboard_snapshot::{
     Heatmap, HeatmapColumn, HeatmapCursor, RequestSeries, SnapshotSettings,
@@ -961,8 +961,8 @@ struct HealthResponse {
     controllers: HealthControllers,
 }
 
-/// The `host:port` each Controller is configured to listen on, or `None` when
-/// it is off (`--no-telnet`, `--no-websocket`).
+/// The `host:port` each Controller listens on, or `None` when it is off
+/// (`--no-telnet`, `--no-websocket`) or couldn't bind its port.
 #[derive(Debug, Clone, Serialize)]
 struct HealthControllers {
     telnet: Option<String>,
@@ -995,6 +995,7 @@ fn format_bind_address(host: &str, port: u16) -> String {
 pub(crate) async fn setup_dashboard(
     configuration: &GooseConfiguration,
     control_tx: Option<flume::Sender<ControlRequest>>,
+    listening: ListeningControllers,
 ) -> Result<Option<DashboardSetup>, GooseError> {
     if !configuration.dashboard {
         return Ok(None);
@@ -1050,10 +1051,10 @@ pub(crate) async fn setup_dashboard(
         running_folder: running_folder.clone(),
         log_folder: log_folder.clone(),
         controllers: HealthControllers {
-            telnet: (!configuration.no_telnet).then(|| {
+            telnet: listening.telnet.then(|| {
                 format_bind_address(configuration.telnet_host(), configuration.telnet_port())
             }),
-            websocket: (!configuration.no_websocket).then(|| {
+            websocket: listening.websocket.then(|| {
                 format_bind_address(
                     configuration.websocket_host(),
                     configuration.websocket_port(),
@@ -2910,7 +2911,7 @@ mod tests {
             dashboard_max_clients: (max_clients > 0).then_some(max_clients),
             ..Default::default()
         };
-        let setup = setup_dashboard(&config, control)
+        let setup = setup_dashboard(&config, control, ListeningControllers::configured(&config))
             .await
             .expect("bind")
             .expect("enabled");
@@ -3406,7 +3407,7 @@ mod tests {
             dashboard_auth_token: None,
             ..Default::default()
         };
-        let setup = setup_dashboard(&config, None)
+        let setup = setup_dashboard(&config, None, ListeningControllers::configured(&config))
             .await
             .expect("localhost bind should succeed")
             .expect("dashboard enabled");
@@ -3424,7 +3425,7 @@ mod tests {
         };
         // ::1 may be unavailable in some CI network namespaces; treat bind errors
         // as soft-skip only when the OS reports address-family issues.
-        match setup_dashboard(&config, None).await {
+        match setup_dashboard(&config, None, ListeningControllers::configured(&config)).await {
             Ok(Some(setup)) => {
                 assert!(setup.bound_port > 0);
             }
@@ -3452,7 +3453,7 @@ mod tests {
             dashboard_auth_token: None,
             ..Default::default()
         };
-        let err = setup_dashboard(&config, None)
+        let err = setup_dashboard(&config, None, ListeningControllers::configured(&config))
             .await
             .expect_err("second bind on same port must fail hard");
         match err {
@@ -3801,27 +3802,38 @@ mod tests {
 
     #[tokio::test]
     async fn health_reports_controller_addresses() {
-        // (no_telnet, no_websocket, expected controllers). Hosts and ports are
-        // set as setup_controllers leaves them; an IPv6 host is bracketed.
+        // (no_telnet, no_websocket, whether telnet bound, expected
+        // controllers). Hosts and ports are set as setup_controllers leaves
+        // them; an IPv6 host is bracketed.
         let cases = [
             (
                 false,
                 false,
+                true,
                 serde_json::json!({"telnet": "0.0.0.0:5116", "websocket": "[::1]:6117"}),
             ),
             (
                 true,
                 false,
+                true,
                 serde_json::json!({"telnet": null, "websocket": "[::1]:6117"}),
             ),
             (
                 true,
                 true,
+                true,
                 serde_json::json!({"telnet": null, "websocket": null}),
+            ),
+            // A Controller that couldn't bind its port is not named.
+            (
+                false,
+                false,
+                false,
+                serde_json::json!({"telnet": null, "websocket": "[::1]:6117"}),
             ),
         ];
         let client = reqwest::Client::new();
-        for (no_telnet, no_websocket, expected) in cases {
+        for (no_telnet, no_websocket, telnet_bound, expected) in cases {
             let config = GooseConfiguration {
                 dashboard: true,
                 dashboard_host: Some("127.0.0.1".to_string()),
@@ -3834,7 +3846,9 @@ mod tests {
                 websocket_port: Some(6117),
                 ..Default::default()
             };
-            let setup = setup_dashboard(&config, None)
+            let mut listening = ListeningControllers::configured(&config);
+            listening.telnet &= telnet_bound;
+            let setup = setup_dashboard(&config, None, listening)
                 .await
                 .expect("bind")
                 .expect("enabled");
@@ -3851,8 +3865,8 @@ mod tests {
                 .expect("json");
             assert_eq!(
                 health["controllers"], expected,
-                "no_telnet {}, no_websocket {}",
-                no_telnet, no_websocket
+                "no_telnet {}, no_websocket {}, telnet bound {}",
+                no_telnet, no_websocket, telnet_bound
             );
             // The fields health had before stay.
             assert_eq!(health["ok"], true);
@@ -5024,7 +5038,7 @@ mod tests {
                 dashboard_auth_token: Some("secret".to_string()),
                 ..Default::default()
             };
-            let setup = setup_dashboard(&config, None)
+            let setup = setup_dashboard(&config, None, ListeningControllers::configured(&config))
                 .await
                 .expect("bind")
                 .expect("enabled");

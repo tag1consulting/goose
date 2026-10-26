@@ -555,6 +555,8 @@ struct GooseAttackRunState {
     all_users_spawned: bool,
     /// Set of users that have shut themselves down.
     users_shutdown: HashSet<usize>,
+    /// The telnet and WebSocket Controllers that bound their ports.
+    listening_controllers: controller::ListeningControllers,
     /// Boolean flag indicating of Goose should shutdown after stopping a running load test.
     shutdown_after_stop: bool,
     /// Whether Ctrl-C has already started a cancel, so the main loop starts
@@ -1781,28 +1783,44 @@ impl GooseAttack {
     // Helper to optionally spawn a telnet and/or WebSocket Controller thread. The Controller
     // threads send commands to the parent process on `control_tx`, each with a one-shot
     // channel for the reply.
-    async fn setup_controllers(&self, control_tx: &flume::Sender<ControlRequest>) {
+    async fn setup_controllers(
+        &self,
+        control_tx: &flume::Sender<ControlRequest>,
+    ) -> controller::ListeningControllers {
+        let mut listening = controller::ListeningControllers::default();
         // Configured telnet Controller if not disabled.
         if !self.configuration.no_telnet {
-            // Spawn the initial controller thread to allow real-time control of the load test.
-            // There is no need to rejoin this thread when the load test ends.
-            let _ = Some(tokio::spawn(controller::controller_main(
-                self.configuration.clone(),
-                control_tx.clone(),
-                ControllerProtocol::Telnet,
-            )));
+            if let Some(listener) =
+                controller::bind_controller(&self.configuration, ControllerProtocol::Telnet).await
+            {
+                // Spawn the initial controller thread to allow real-time control of the load test.
+                // There is no need to rejoin this thread when the load test ends.
+                tokio::spawn(controller::controller_main(
+                    listener,
+                    control_tx.clone(),
+                    ControllerProtocol::Telnet,
+                ));
+                listening.telnet = true;
+            }
         }
 
         // Configured WebSocket Controller if not disabled.
         if !self.configuration.no_websocket {
-            // Spawn the initial controller thread to allow real-time control of the load test.
-            // There is no need to rejoin this thread when the load test ends.
-            let _ = Some(tokio::spawn(controller::controller_main(
-                self.configuration.clone(),
-                control_tx.clone(),
-                ControllerProtocol::WebSocket,
-            )));
+            if let Some(listener) =
+                controller::bind_controller(&self.configuration, ControllerProtocol::WebSocket)
+                    .await
+            {
+                // Spawn the initial controller thread to allow real-time control of the load test.
+                // There is no need to rejoin this thread when the load test ends.
+                tokio::spawn(controller::controller_main(
+                    listener,
+                    control_tx.clone(),
+                    ControllerProtocol::WebSocket,
+                ));
+                listening.websocket = true;
+            }
         }
+        listening
     }
 
     /// After an autostarted run, whether to stay up for the dashboard: Save
@@ -2267,9 +2285,10 @@ impl GooseAttack {
         let dashboard_control_rx = None;
 
         // Optionally spawn a telnet and/or Websocket Controller thread.
-        if let Some(control_tx) = &control_tx {
-            self.setup_controllers(control_tx).await;
-        }
+        let listening_controllers = match &control_tx {
+            Some(control_tx) => self.setup_controllers(control_tx).await,
+            None => controller::ListeningControllers::default(),
+        };
 
         // Optionally spawn the read-only live dashboard HTTP server.
         // Bind failure aborts attack init when --dashboard is set.
@@ -2282,7 +2301,13 @@ impl GooseAttack {
             dashboard_log_folder,
             dashboard_url,
             dashboard_server,
-        ) = match dashboard::setup_dashboard(&self.configuration, dashboard_control_tx).await? {
+        ) = match dashboard::setup_dashboard(
+            &self.configuration,
+            dashboard_control_tx,
+            listening_controllers,
+        )
+        .await?
+        {
             Some(setup) => (
                 Some(setup.request_rx),
                 Some(setup.close_tx),
@@ -2370,6 +2395,7 @@ impl GooseAttack {
             running_metrics_timer: std_now,
             threshold_check_at: None,
             users_shutdown: HashSet::new(),
+            listening_controllers,
             all_users_spawned: false,
             shutdown_after_stop: !self.configuration.no_autostart,
             canceling: false,
@@ -3460,6 +3486,20 @@ impl GooseAttack {
         // `GooseError` rather than panicking — library callers of `execute()`
         // should get a structured Result.
         let mut goose_attack_run_state = self.initialize_attack().await?;
+
+        // Without autostart, something has to be able to start the load test.
+        if self.configuration.no_autostart
+            && !goose_attack_run_state.listening_controllers.telnet
+            && !goose_attack_run_state.listening_controllers.websocket
+            && !self.configuration.dashboard_control
+        {
+            return Err(GooseError::InvalidOption {
+                option: "`configuration.no_autostart`".to_string(),
+                value: true.to_string(),
+                detail: "`configuration.no_autostart` requires a Controller or dashboard control, and no Controller could listen on its port."
+                    .to_string(),
+            });
+        }
 
         let result = self.run_attack(&mut goose_attack_run_state).await;
 
