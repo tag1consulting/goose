@@ -2202,60 +2202,25 @@ impl GooseMetrics {
         let mut aggregate_total_count = 0;
         for (request_key, request) in self.requests.iter().sorted() {
             let total_count = request.success_count + request.fail_count;
-            let fail_percent = if request.fail_count > 0 {
-                request.fail_count as f32 / total_count as f32 * 100.0
-            } else {
-                0.0
-            };
             let (reqs, fails) =
                 per_second_calculations(self.duration, total_count, request.fail_count);
             let reqs_precision = determine_precision(reqs);
             let fails_precision = determine_precision(fails);
-            // Compress 100.0 and 0.0 to 100 and 0 respectively to save width.
-            if fail_percent as usize == 100 || fail_percent as usize == 0 {
-                let fail_and_percent = format!(
-                    "{} ({}%)",
-                    request.fail_count.to_formatted_string(&Locale::en),
-                    fail_percent as usize
-                );
-                writeln!(
-                    fmt,
-                    " {:<24} | {:>13} | {:>14} | {:>8.reqs_p$} | {:>7.fails_p$}",
-                    util::truncate_string(request_key, 24),
-                    total_count.to_formatted_string(&Locale::en),
-                    fail_and_percent,
-                    reqs,
-                    fails,
-                    reqs_p = reqs_precision,
-                    fails_p = fails_precision,
-                )?;
-            } else {
-                let fail_and_percent = format!(
-                    "{} ({:.1}%)",
-                    request.fail_count.to_formatted_string(&Locale::en),
-                    fail_percent
-                );
-                writeln!(
-                    fmt,
-                    " {:<24} | {:>13} | {:>14} | {:>8.reqs_p$} | {:>7.fails_p$}",
-                    util::truncate_string(request_key, 24),
-                    total_count.to_formatted_string(&Locale::en),
-                    fail_and_percent,
-                    reqs,
-                    fails,
-                    reqs_p = reqs_precision,
-                    fails_p = fails_precision,
-                )?;
-            }
+            writeln!(
+                fmt,
+                " {:<24} | {:>13} | {:>14} | {:>8.reqs_p$} | {:>7.fails_p$}",
+                util::truncate_string(request_key, 24),
+                total_count.to_formatted_string(&Locale::en),
+                fail_and_percent(request.fail_count, total_count),
+                reqs,
+                fails,
+                reqs_p = reqs_precision,
+                fails_p = fails_precision,
+            )?;
             aggregate_total_count += total_count;
             aggregate_fail_count += request.fail_count;
         }
         if self.requests.len() > 1 {
-            let aggregate_fail_percent = if aggregate_fail_count > 0 {
-                aggregate_fail_count as f32 / aggregate_total_count as f32 * 100.0
-            } else {
-                0.0
-            };
             writeln!(
                 fmt,
                 " -------------------------+---------------+----------------+----------+--------"
@@ -2264,42 +2229,17 @@ impl GooseMetrics {
                 per_second_calculations(self.duration, aggregate_total_count, aggregate_fail_count);
             let reqs_precision = determine_precision(reqs);
             let fails_precision = determine_precision(fails);
-            // Compress 100.0 and 0.0 to 100 and 0 respectively to save width.
-            if aggregate_fail_percent as usize == 100 || aggregate_fail_percent as usize == 0 {
-                let fail_and_percent = format!(
-                    "{} ({}%)",
-                    aggregate_fail_count.to_formatted_string(&Locale::en),
-                    aggregate_fail_percent as usize
-                );
-                writeln!(
-                    fmt,
-                    " {:<24} | {:>13} | {:>14} | {:>8.reqs_p$} | {:>7.fails_p$}",
-                    "Aggregated",
-                    aggregate_total_count.to_formatted_string(&Locale::en),
-                    fail_and_percent,
-                    reqs,
-                    fails,
-                    reqs_p = reqs_precision,
-                    fails_p = fails_precision,
-                )?;
-            } else {
-                let fail_and_percent = format!(
-                    "{} ({:.1}%)",
-                    aggregate_fail_count.to_formatted_string(&Locale::en),
-                    aggregate_fail_percent
-                );
-                writeln!(
-                    fmt,
-                    " {:<24} | {:>13} | {:>14} | {:>8.reqs_p$} | {:>7.fails_p$}",
-                    "Aggregated",
-                    aggregate_total_count.to_formatted_string(&Locale::en),
-                    fail_and_percent,
-                    reqs,
-                    fails,
-                    reqs_p = reqs_precision,
-                    fails_p = fails_precision,
-                )?;
-            }
+            writeln!(
+                fmt,
+                " {:<24} | {:>13} | {:>14} | {:>8.reqs_p$} | {:>7.fails_p$}",
+                "Aggregated",
+                aggregate_total_count.to_formatted_string(&Locale::en),
+                fail_and_percent(aggregate_fail_count, aggregate_total_count),
+                reqs,
+                fails,
+                reqs_p = reqs_precision,
+                fails_p = fails_precision,
+            )?;
         }
 
         Ok(())
@@ -2337,11 +2277,6 @@ impl GooseMetrics {
             for transaction in scenario {
                 transaction_count += 1;
                 let total_count = transaction.success_count + transaction.fail_count;
-                let fail_percent = if transaction.fail_count > 0 {
-                    transaction.fail_count as f32 / total_count as f32 * 100.0
-                } else {
-                    0.0
-                };
                 let (runs, fails) =
                     per_second_calculations(self.duration, total_count, transaction.fail_count);
                 let runs_precision = determine_precision(runs);
@@ -2364,65 +2299,29 @@ impl GooseMetrics {
                     displayed_scenario = true;
                 }
 
-                if fail_percent as usize == 100 || fail_percent as usize == 0 {
-                    let fail_and_percent = format!(
-                        "{} ({}%)",
-                        transaction.fail_count.to_formatted_string(&Locale::en),
-                        fail_percent as usize
-                    );
-                    writeln!(
-                        fmt,
-                        " {:<24} | {:>13} | {:>14} | {:>8.runs_p$} | {:>7.fails_p$}",
-                        util::truncate_string(
-                            &format!(
-                                "  {}: {}",
-                                transaction.transaction_index + 1,
-                                transaction.transaction_name.name_for_transaction()
-                            ),
-                            24
+                writeln!(
+                    fmt,
+                    " {:<24} | {:>13} | {:>14} | {:>8.runs_p$} | {:>7.fails_p$}",
+                    util::truncate_string(
+                        &format!(
+                            "  {}: {}",
+                            transaction.transaction_index + 1,
+                            transaction.transaction_name.name_for_transaction()
                         ),
-                        total_count.to_formatted_string(&Locale::en),
-                        fail_and_percent,
-                        runs,
-                        fails,
-                        runs_p = runs_precision,
-                        fails_p = fails_precision,
-                    )?;
-                } else {
-                    let fail_and_percent = format!(
-                        "{} ({:.1}%)",
-                        transaction.fail_count.to_formatted_string(&Locale::en),
-                        fail_percent
-                    );
-                    writeln!(
-                        fmt,
-                        " {:<24} | {:>13} | {:>14} | {:>8.runs_p$} | {:>7.fails_p$}",
-                        util::truncate_string(
-                            &format!(
-                                "  {}: {}",
-                                transaction.transaction_index + 1,
-                                transaction.transaction_name.name_for_transaction()
-                            ),
-                            24
-                        ),
-                        total_count.to_formatted_string(&Locale::en),
-                        fail_and_percent,
-                        runs,
-                        fails,
-                        runs_p = runs_precision,
-                        fails_p = fails_precision,
-                    )?;
-                }
+                        24
+                    ),
+                    total_count.to_formatted_string(&Locale::en),
+                    fail_and_percent(transaction.fail_count, total_count),
+                    runs,
+                    fails,
+                    runs_p = runs_precision,
+                    fails_p = fails_precision,
+                )?;
                 aggregate_total_count += total_count;
                 aggregate_fail_count += transaction.fail_count;
             }
         }
         if transaction_count > 1 {
-            let aggregate_fail_percent = if aggregate_fail_count > 0 {
-                aggregate_fail_count as f32 / aggregate_total_count as f32 * 100.0
-            } else {
-                0.0
-            };
             writeln!(
                 fmt,
                 " -------------------------+---------------+----------------+----------+--------"
@@ -2431,43 +2330,17 @@ impl GooseMetrics {
                 per_second_calculations(self.duration, aggregate_total_count, aggregate_fail_count);
             let runs_precision = determine_precision(runs);
             let fails_precision = determine_precision(fails);
-
-            // Compress 100.0 and 0.0 to 100 and 0 respectively to save width.
-            if aggregate_fail_percent as usize == 100 || aggregate_fail_percent as usize == 0 {
-                let fail_and_percent = format!(
-                    "{} ({}%)",
-                    aggregate_fail_count.to_formatted_string(&Locale::en),
-                    aggregate_fail_percent as usize
-                );
-                writeln!(
-                    fmt,
-                    " {:<24} | {:>13} | {:>14} | {:>8.runs_p$} | {:>7.fails_p$}",
-                    "Aggregated",
-                    aggregate_total_count.to_formatted_string(&Locale::en),
-                    fail_and_percent,
-                    runs,
-                    fails,
-                    runs_p = runs_precision,
-                    fails_p = fails_precision,
-                )?;
-            } else {
-                let fail_and_percent = format!(
-                    "{} ({:.1}%)",
-                    aggregate_fail_count.to_formatted_string(&Locale::en),
-                    aggregate_fail_percent
-                );
-                writeln!(
-                    fmt,
-                    " {:<24} | {:>13} | {:>14} | {:>8.runs_p$} | {:>7.fails_p$}",
-                    "Aggregated",
-                    aggregate_total_count.to_formatted_string(&Locale::en),
-                    fail_and_percent,
-                    runs,
-                    fails,
-                    runs_p = runs_precision,
-                    fails_p = fails_precision,
-                )?;
-            }
+            writeln!(
+                fmt,
+                " {:<24} | {:>13} | {:>14} | {:>8.runs_p$} | {:>7.fails_p$}",
+                "Aggregated",
+                aggregate_total_count.to_formatted_string(&Locale::en),
+                fail_and_percent(aggregate_fail_count, aggregate_total_count),
+                runs,
+                fails,
+                runs_p = runs_precision,
+                fails_p = fails_precision,
+            )?;
         }
 
         Ok(())
@@ -5493,6 +5366,31 @@ fn first_error(
     }
 }
 
+/// The `# fails` cell of a console table: the failure count, then its
+/// share of `total`. 0% and 100% print without a decimal; a share under 1%
+/// prints with one, or as `<0.1%` when that one would be 0, so failures
+/// never show as 0%.
+fn fail_and_percent(fail_count: usize, total: usize) -> String {
+    let fail_percent = if fail_count > 0 {
+        fail_count as f32 / total as f32 * 100.0
+    } else {
+        0.0
+    };
+    let percent = if fail_count == 0 || fail_percent as usize == 100 {
+        // Compress 100.0 and 0.0 to 100 and 0 respectively to save width.
+        format!("{}%", fail_percent as usize)
+    } else {
+        match format!("{fail_percent:.1}") {
+            tenths if tenths == "0.0" => "<0.1%".to_string(),
+            tenths => format!("{tenths}%"),
+        }
+    };
+    format!(
+        "{} ({percent})",
+        fail_count.to_formatted_string(&Locale::en)
+    )
+}
+
 /// Helper to calculate requests and fails per seconds.
 pub(crate) fn per_second_calculations(duration: usize, total: usize, fail: usize) -> (f32, f32) {
     let (requests_per_second, fails_per_second) = if duration == 0 {
@@ -5779,6 +5677,70 @@ mod test {
                     .collect()
             })
             .collect()
+    }
+
+    /// The console's requests and transactions tables, as printed.
+    struct FailTables<'a>(&'a GooseMetrics);
+
+    impl fmt::Display for FailTables<'_> {
+        fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+            self.0.fmt_transactions(fmt)?;
+            self.0.fmt_requests(fmt)
+        }
+    }
+
+    /// A failure rate under 1% shows as one, never as 0%, in the `# fails`
+    /// column of every console table and its Aggregated row; 0 failures
+    /// and rates of 1% or more print as they did.
+    #[test]
+    fn fails_column_under_one_percent() {
+        // Each row's failures of its total, its cell, and the Aggregated
+        // cell of two such rows.
+        for (fails, total, expected, aggregate) in [
+            (0, 1_000, "0 (0%)", "0 (0%)"),
+            (3, 1_000, "3 (0.3%)", "6 (0.3%)"),
+            (1, 100_000, "1 (<0.1%)", "2 (<0.1%)"),
+            (10, 1_000, "10 (1.0%)", "20 (1.0%)"),
+            (999, 1_000, "999 (99.9%)", "1,998 (99.9%)"),
+            (1_000, 1_000, "1,000 (100%)", "2,000 (100%)"),
+        ] {
+            let mut metrics = GooseMetrics {
+                display_metrics: true,
+                ..Default::default()
+            };
+            for path in ["/a", "/b"] {
+                let mut request = GooseRequestMetricAggregate::new(path, GooseMethod::Get, 0, "");
+                request.success_count = total - fails;
+                request.fail_count = fails;
+                metrics.requests.insert(format!("GET {path}"), request);
+            }
+            metrics.transactions = vec![(0..2)
+                .map(|index| {
+                    let mut transaction = TransactionMetricAggregate::new(
+                        0,
+                        "S".into(),
+                        index,
+                        TransactionName::TransactionOnly(Arc::from(format!("t{index}"))),
+                    );
+                    transaction.success_count = total - fails;
+                    transaction.fail_count = fails;
+                    transaction
+                })
+                .collect()];
+            let printed = FailTables(&metrics).to_string();
+            for name in ["GET /a", "GET /b", "1: t0", "2: t1"] {
+                assert_eq!(
+                    printed_rows(&printed, name)[0][1],
+                    expected,
+                    "{name}\n{printed}"
+                );
+            }
+            let aggregated = printed_rows(&printed, "Aggregated");
+            assert_eq!(aggregated.len(), 2, "{printed}");
+            for row in aggregated {
+                assert_eq!(row[1], aggregate, "{printed}");
+            }
+        }
     }
 
     /// The minimum over several requests counts a 0 ms minimum.

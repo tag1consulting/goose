@@ -33,3 +33,21 @@ test("formatMs rounds half up and shows whole milliseconds plainly", () => {
   assert.equal(formatMs(undefined), "—");
   assert.equal(formatMs(NaN), "—");
 });
+
+test("formatFailPct never shows a failure rate under 1% as 0", async () => {
+  const { formatFailPct } = await import("./test-build/format.mjs");
+  const pct = (n, digits) =>
+    n.toLocaleString(undefined, {
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
+    }) + "%";
+  assert.equal(formatFailPct(0), pct(0, 2));
+  assert.equal(formatFailPct(3 / 1000), pct(0.3, 1));
+  assert.equal(formatFailPct(4 / 1000), pct(0.4, 1));
+  assert.equal(formatFailPct(1 / 100000), "<0.1%");
+  assert.equal(formatFailPct(4 / 10000), "<0.1%");
+  assert.equal(formatFailPct(5 / 10000), pct(0.1, 1));
+  assert.equal(formatFailPct(10 / 1000), pct(1, 2));
+  assert.equal(formatFailPct(999 / 1000), pct(99.9, 2));
+  assert.equal(formatFailPct(undefined), "—");
+});
