@@ -98,27 +98,59 @@ use goose::client::GooseClientBuilder;
 use goose::prelude::*;
 use std::time::Duration;
 
-fn main() -> Result<(), GooseError> {
-    // Starts in the CookiesEnabled state.
-    let with_cookies = GooseClientBuilder::new().timeout(Duration::from_secs(30));
+#[tokio::main]
+async fn main() -> Result<(), GooseError> {
+    // Starts in the CookiesEnabled state: each user gets its own client and cookie jar.
+    let builder = GooseClientBuilder::new()
+        .timeout(Duration::from_secs(30))
+        .user_agent("my-loadtest/1.0");
 
-    // without_cookies() moves to the CookiesDisabled state, with_cookies() back.
-    let without_cookies = GooseClientBuilder::new()
+    GooseAttack::initialize()?
+        .set_client_builder_with_cookies(builder)?
+        .register_scenario(
+            scenario!("WebsiteUser").register_transaction(transaction!(load_homepage)),
+        )
+        .execute()
+        .await?;
+
+    Ok(())
+}
+
+async fn load_homepage(user: &mut GooseUser) -> TransactionResult {
+    let _goose = user.get("/").await?;
+    Ok(())
+}
+```
+
+`set_client_builder_with_cookies` gives every user a client of its own, built from the builder, with its own cookie jar. Without the `cookies` feature it returns `GooseError::FeatureNotEnabled`, as the clients could not keep cookies.
+
+`set_client_builder_without_cookies` builds one client without a cookie store before any user starts, and every user shares it. Clones of a Reqwest client share one connection pool, so this suits a load test with many users that needs no cookies. If the client can't be built, the load test fails before any user starts.
+
+```rust
+use goose::client::GooseClientBuilder;
+use goose::prelude::*;
+use std::time::Duration;
+
+fn main() -> Result<(), GooseError> {
+    // without_cookies() moves the builder to the CookiesDisabled state.
+    let builder = GooseClientBuilder::new()
         .without_cookies()
         .timeout(Duration::from_secs(15))
         .user_agent("my-loadtest/1.0");
 
-    // Each setter only accepts a builder in its own state. In this release
-    // neither changes the clients Goose builds for its users.
-    let _attack = GooseAttack::initialize()?
-        .set_client_builder_with_cookies(with_cookies)?
-        .set_client_builder_without_cookies(without_cookies)?;
+    let _attack = GooseAttack::initialize()?.set_client_builder_without_cookies(builder)?;
 
     Ok(())
 }
 ```
 
-In this release both setters accept the builder and then discard it: every user still gets the default client described above, with the default user agent, timeout and cookie store, and no client is shared between users. To change a user's client, use `GooseUser::set_client_builder` as shown above.
+With either setter:
+
+- The builder's user agent replaces `goose/0.19.0`.
+- The timeout, gzip and invalid certificate settings each come from the first of: the option given on the command line (`--timeout`, `--no-gzip`, `--accept-invalid-certs`), the builder, a `GooseDefault` for the option, and Goose's built in default. A setting the builder was not given keeps its `GooseDefault` or built in default.
+- The users that run the `test_start` and `test_stop` transactions, and users a Controller adds, get the builder's clients too.
+- The two setters replace each other, so the last call wins.
+- A transaction can still give its user a different client with `GooseUser::set_client_builder`, as shown above. Under `set_client_builder_without_cookies` that moves the user off the shared client.
 
 ## Creating a GooseUser Directly
 

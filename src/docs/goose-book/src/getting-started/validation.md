@@ -60,7 +60,20 @@ async fn business_logic_check(user: &mut GooseUser) -> TransactionResult {
 }
 ```
 
-A transaction that returns any error, a custom one included, is counted as failed in the transaction metrics, and the transaction log records it with `"success":false`. The error itself is not kept: its message is written to neither the error log nor any report. To record why a request failed, mark it failed with `GooseUser::set_failure`, which writes the reason you give to the error log and the reports' errors, or write the reason to the [debug log](../logging/debug.md) with `GooseUser::log_debug`.
+A transaction that returns any error is counted as failed in the transaction metrics, and the transaction log records it with `"success":false` and the error's message in its `error` field.
+
+A `TransactionError::Custom` or `Url` error, or a `Reqwest` error from reading or decoding the response body or from building the request, is also a transaction error. Goose writes each one to the [error log](../logging/errors.md), and the console summary, the HTML, Markdown, PDF and JSON reports and the dashboard count them in a Transaction Errors table, by scenario, transaction and message, most frequent first. For example, a transaction that returns `Err("every third call fails".into())` one time in three shows in the console summary as:
+
+```text
+ === TRANSACTION ERRORS ===
+ ------------------------------------------------------------------------------
+ Count       | Transaction: error
+ ------------------------------------------------------------------------------
+ 85,004        1.3 ErrUser flaky: TransactionError: custom error (every third call fails)
+ ------------------------------------------------------------------------------
+```
+
+A request that failed is already counted as a request error, in the error log and the reports' errors, when it is made. So a transaction that returns `RequestFailed`, or a `Reqwest` error from sending the request, a redirect or an error status, is not counted again: only its transaction log line names the error. A `RequestCanceled` transaction, canceled as the run ended, has no error. `--no-error-summary` leaves the Transaction Errors table out of the console summary and the reports, not out of the logs.
 
 ## Goose Eggs
 [Goose-eggs](https://github.com/tag1consulting/goose-eggs) are helpful in writing Goose load tests.

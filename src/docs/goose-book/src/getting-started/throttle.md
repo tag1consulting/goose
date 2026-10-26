@@ -4,7 +4,7 @@ By default, Goose will generate as much load as it can. If this is not desirable
 
 The throttle is specified as an integer and imposes a maximum number of requests, not a minimum number of requests. `0`, the default, means no throttle. Set it in code with `GooseDefault::ThrottleRequests`.
 
-An `rps` [threshold](thresholds.md) that the throttle keeps the run from reaching is refused before the load test starts.
+An `rps` [threshold](thresholds.md) that the throttle keeps the run from reaching is refused before the load test starts. `--throttle-requests 0` turns the throttle off, so it refuses none.
 
 ## Example
 

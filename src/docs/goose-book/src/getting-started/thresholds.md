@@ -54,6 +54,8 @@ So is a rule that can never pass: any rule with `<0`, such as `p95<0` or `error-
 threshold "rps>=200": it can never pass; `configuration.throttle_requests` caps the run at 100 requests a second.
 ```
 
+`--throttle-requests 0` means no throttle, so it refuses no `rps` rule.
+
 Thresholds judge metrics, so `--threshold` is not allowed with `--no-metrics`.
 
 A percentile comes from the same [histogram buckets](https://github.com/tag1consulting/goose/blob/main/src/metrics/buckets.rs) as every report's percentiles, so it can be up to 0.78% away from the exact time, while the average and the slowest time are exact.
