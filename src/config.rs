@@ -4165,7 +4165,8 @@ impl GooseConfiguration {
         }
 
         // An `rps` rule the throttle keeps the run from reaching can never pass.
-        if let Some(throttle) = self.throttle_requests {
+        // A throttle of 0 is no throttle.
+        if let Some(throttle) = self.throttle_requests.filter(|&throttle| throttle > 0) {
             for threshold in &self.thresholds {
                 let Some((floor, inclusive)) = threshold.rate_floor() else {
                     continue;
@@ -6800,6 +6801,33 @@ mod test {
             &Default::default()
         ))
         .contains("needs a report"));
+    }
+
+    /// `--throttle-requests 0` is no throttle, so it leaves every `rps` rule
+    /// reachable, from the command line and in code; a throttle still refuses
+    /// the rules above it.
+    #[test]
+    fn throttle_of_zero_refuses_no_rps_rule() {
+        assert!(validated(
+            &["--throttle-requests", "0", "--threshold", "rps>=1000"],
+            &Default::default()
+        )
+        .is_ok());
+        let defaults = defaults_from(|attack| {
+            attack
+                .set_default(GooseDefault::ThrottleRequests, 0)?
+                .set_default(GooseDefault::Threshold, "rps>=1000")
+        });
+        assert!(validated(&[], &defaults).is_ok());
+        let refused = refused_detail(validated(
+            &["--throttle-requests", "100", "--threshold", "rps>=200"],
+            &Default::default(),
+        ));
+        assert!(
+            refused.contains("`configuration.throttle_requests`"),
+            "{}",
+            refused
+        );
     }
 
     /// A rule that can never pass is refused before any user starts, from the
