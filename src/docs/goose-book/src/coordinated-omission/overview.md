@@ -55,23 +55,27 @@ Goose tracks how long each user takes to run through all of its transactions. Wh
 Goose adds "synthetic requests" to represent the requests that **would have been made** if the server hadn't frozen, giving you a complete picture of impact.
 
 ### 3. Clear Reporting
-Goose shows the measured and the adjusted response times side by side, and sums up the events. For the freeze above, the summary would read something like:
+Goose shows the measured and the adjusted response times side by side, and sums up the events. Here is a real run like the freeze above: one user of a load test whose only transaction requests `/`, against a local server that answers in 1 second, with `--co-mitigation minimum` so the cadence is the user's fastest run. 3.5 seconds into the run the server froze for 30 seconds:
+
+```bash
+cargo run --release -- --host http://127.0.0.1:8005/ -u1 -r1 -t36s --co-mitigation minimum --no-telnet --no-websocket
+```
 
 ```
  === COORDINATED OMISSION METRICS ===
- Duration: 34 seconds
+ Duration: 37 seconds
  Total CO Events: 1
- Events per minute: 1.76
+ Events per minute: 1.62
 
  Request Breakdown:
-   Actual requests: 4
-   Synthetic requests: 29 (87.9%)
+   Actual requests: 8
+   Synthetic requests: 28 (77.8%)
 
  Severity Distribution:
    Critical: 1
 ```
 
-This tells you: "87.9% of your expected traffic was affected by server problems!"
+The user measured 8 requests, one of them held for 30 seconds, and Goose added 28 synthetic requests for those it could not send during the freeze, so the `GET /` row counts 36 requests. This tells you: "77.8% of your expected traffic was affected by server problems!"
 
 ## Visual Comparison
 
@@ -86,8 +90,8 @@ Result: "4 requests, looks mostly fine" ❌ MISLEADING
 ```
 Timeline: |--1s--|--1s--|--------30s--------|--1s--|  
 Real:        ✅     ✅          ❌           ✅
-Synthetic:              ❌❌❌❌❌...❌❌❌    (29 more)
-Result: "33 total requests, 30-second freeze affected 87.9% of traffic" ✅ ACCURATE
+Synthetic:              ❌❌❌❌❌...❌❌❌    (about one for each second of the freeze)
+Result: "30-second freeze affected most of the traffic" ✅ ACCURATE
 ```
 
 ## The Key Insight

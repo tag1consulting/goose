@@ -2,91 +2,104 @@
 
 When Coordinated Omission Mitigation backfills a request, Goose keeps both the "raw" metrics, the response times it measured, and the "adjusted" metrics, the measured times together with the synthetic ones. Wherever it shows both, the "raw" metrics come first, followed by the "adjusted" metrics. As the minimum response time is never changed by Coordinated Omission Mitigation, the adjusted table replaces that column with a "Std Dev" column: the standard deviation of just two numbers, the "raw" average and the "adjusted" average, which works out to their difference divided by the square root of 2.
 
-The following example was "contrived". The [`drupal_memcache`](../example/drupal-memcache.md) example ran with five users for 20 seconds against a local test server, and 11 seconds into the run the server held every request for 3 seconds, forcing some abnormally slow responses:
+The following example was "contrived". The [`drupal_memcache`](../example/drupal-memcache.md) example ran with five users for 20 seconds against a local test server that answers each request in 5 to 25 ms, and 11 seconds into the run the server held every request for 3 seconds, forcing some abnormally slow responses:
 
 ```bash
-cargo run --release --example drupal_memcache -- --host http://127.0.0.1:8080/ \
+cargo run --release --example drupal_memcache -- --host http://127.0.0.1:8004/ \
     -u5 -r5 -t20s --co-mitigation average --no-telnet --no-websocket \
     --request-log requests.json --request-format json \
     --report-file report.html --report-file report.json --report-file report.md
 ```
 
-The example names each node and user page request by its path, so the run made requests under about 1,400 names; the tables below keep a few of them and the static assets, and `...` marks the rows left out. In the "PER REQUEST METRICS" Goose shows first the "raw" metrics, followed by the "adjusted" metrics:
+The example names each node and user page request by its path, so the run made requests under about 1,150 names; the tables below keep a few of them and the static assets, and `...` marks the rows left out. In the "PER REQUEST METRICS" Goose shows first the "raw" metrics, followed by the "adjusted" metrics:
 
 ```bash
  ------------------------------------------------------------------------------
  Name                     |    Avg (ms) |        Min |         Max |     Median
  ------------------------------------------------------------------------------
- GET /                    |          21 |       5.48 |       3,017 |         19
- GET /node/103            |         6.1 |        6.1 |         6.1 |        6.1
- GET /node/1377           |          25 |         25 |          25 |         25
- GET /node/1461           |          11 |         11 |          11 |         11
+ GET /                    |          19 |       5.85 |       3,026 |         17
+ GET /node/101            |        8.83 |       8.83 |        8.83 |       8.83
  ...
- GET /user/143            |       3,010 |      3,010 |       3,010 |      3,010
+ GET /node/1568           |          25 |         25 |          25 |         25
  ...
- GET static asset         |        7.09 |       1.14 |       3,005 |       5.22
+ GET /node/1814           |          28 |         28 |          28 |         28
  ...
- POST /comment/reply/1609 |       3,078 |      3,078 |       3,078 |      3,078
+ GET static asset         |          22 |       5.27 |       3,046 |         17
+ POST /comment/reply/1088 |          14 |         14 |          14 |         14
  ...
  -------------------------+-------------+------------+-------------+-----------
- Aggregated               |          16 |       1.14 |       3,078 |       8.26
+ Aggregated               |          20 |       5.27 |       3,046 |         17
  ------------------------------------------------------------------------------
  Adjusted for Coordinated Omission:
  ------------------------------------------------------------------------------
  Name                     |    Avg (ms) |    Std Dev |         Max |     Median
  ------------------------------------------------------------------------------
- GET /                    |         244 |        157 |       3,017 |         22
- GET /node/103            |       1,350 |        950 |       2,920 |      1,270
- GET /node/1377           |       1,380 |        958 |       2,737 |        922
- GET /node/1461           |       1,347 |        945 |       2,916 |      1,270
+ GET /                    |         254 |        166 |       3,026 |         19
+ GET /node/101            |           - |          - |           - |          -
  ...
- GET /user/143            |           - |          - |           - |          -
+ GET /node/1568           |       1,322 |        917 |       2,894 |        610
  ...
- GET static asset         |         232 |        159 |       3,005 |       5.86
+ GET /node/1814           |       1,073 |        739 |       2,744 |         98
  ...
- POST /comment/reply/1609 |           - |          - |           - |          -
+ GET static asset         |         255 |        165 |       3,046 |         19
+ POST /comment/reply/1088 |           - |          - |           - |          -
  ...
  -------------------------+-------------+------------+-------------+-----------
- Aggregated               |         239 |        158 |       3,078 |         10
+ Aggregated               |         254 |        166 |       3,046 |         19
 ```
 
-`GET /node/103` was requested once, by a user just after the stall, and took 6.1 ms, but the user would have requested it while the server was stalled, so its adjusted times run up to 2,920 ms. A request with no synthetic times, such as the two that were themselves held up by the stall, shows `-` in the adjusted table. The adjusted aggregate covers every request, using the measured times of those without synthetic ones.
+`GET /node/1568` was requested once, by a user just after the stall, and took 25 ms, but the user would have requested it while the server was stalled, so its adjusted times run up to 2,894 ms. A request with no synthetic times, such as `GET /node/101`, requested before the stall, shows `-` in the adjusted table. The `GET /` and static asset requests held up by the stall itself took about 3 seconds. The adjusted aggregate covers every request, using the measured times of those without synthetic ones.
 
-The `# reqs` and `req/s` columns of the same section count the synthetic requests too. `GET /node/103` shows 6 requests: the one it measured, four synthetic ones, and the measured request counted a second time because it carried the backfill.
+The `# reqs` and `req/s` columns of the same section count the synthetic requests too. `GET /node/1568` shows 4 requests: the one it measured and three synthetic ones. The Aggregated `# reqs`, 5,930, is the 5,042 actual requests and the 888 synthetic requests counted in the summary below.
 
 **Note**: It is beyond the scope of Goose to test for statistically significant changes in the right-tail, or other locations, of the distribution of response times. Goose produces the raw data you need to conduct these tests. For detailed statistical analysis, consider using tools like the Kolmogorov-Smirnov or Anderson-Darling tests to compare distributions. Keep in mind that CO-adjusted data is derived from raw data and thus not statistically independent.
 
-Goose also shows percentiles, again first the "raw" metrics followed by the "adjusted" metrics. The console's percentile tables are not part of the final summary in this release, so these come from the HTML report of the same run, written with `--report-file report.html`, rows left out as above:
+Goose also shows percentiles, again first the "raw" metrics followed by the "adjusted" metrics. From the same run's final summary, rows left out as above:
 
-```text
- Response Time Metrics
- Method | Name                | 50%ile | 60%ile | 70%ile | 80%ile | 90%ile | 95%ile | 99%ile | 100%ile
- GET    | /                   |     19 |     22 |     25 |     28 |     30 |     33 |     36 |   3,017
- GET    | /node/103           |    6.1 |    6.1 |    6.1 |    6.1 |    6.1 |    6.1 |    6.1 |     6.1
- GET    | /node/1377          |     25 |     25 |     25 |     25 |     25 |     25 |     25 |      25
- GET    | /node/1461          |     11 |     11 |     11 |     11 |     11 |     11 |     11 |      11
- GET    | /user/143           |  3,010 |  3,010 |  3,010 |  3,010 |  3,010 |  3,010 |  3,010 |   3,010
- GET    | static asset        |   5.22 |   5.98 |   6.75 |   7.52 |   8.26 |    8.9 |     10 |   3,005
- POST   | /comment/reply/1609 |  3,078 |  3,078 |  3,078 |  3,078 |  3,078 |  3,078 |  3,078 |   3,078
-        | Aggregated          |   8.26 |     11 |     17 |     22 |     28 |     31 |     37 |   3,078
-
- Response Time Metrics With Coordinated Omission Mitigation
- Method | Name                | 50%ile | 60%ile | 70%ile | 80%ile | 90%ile | 95%ile | 99%ile | 100%ile
- GET    | /                   |     22 |     25 |     28 |     31 |  1,090 |  2,040 |  2,867 |   3,017
- GET    | /node/103           |  1,270 |  1,270 |  2,089 |  2,089 |  2,920 |  2,920 |  2,920 |   2,920
- GET    | /node/1377          |    922 |    922 |  1,827 |  1,827 |  2,737 |  2,737 |  2,737 |   2,737
- GET    | /node/1461          |  1,270 |  1,270 |  2,089 |  2,089 |  2,916 |  2,916 |  2,916 |   2,916
- GET    | static asset        |   5.86 |   6.75 |   7.65 |   8.51 |  1,106 |  2,056 |  2,867 |   3,005
-        | Aggregated          |     10 |     16 |     23 |     29 |  1,106 |  2,056 |  2,867 |   3,078
+```bash
+ ------------------------------------------------------------------------------
+ Slowest page load within specified percentile of requests (in ms):
+ ------------------------------------------------------------------------------
+ Name                     |    50% |    75% |    98% |    99% |  99.9% | 99.99%
+ ------------------------------------------------------------------------------
+ GET /                    |     17 |     22 |     27 |     27 |     29 |   3026
+ GET /node/101            |   8.83 |   8.83 |   8.83 |   8.83 |   8.83 |   8.83
+ ...
+ GET /node/1568           |     25 |     25 |     25 |     25 |     25 |     25
+ ...
+ GET /node/1814           |     28 |     28 |     28 |     28 |     28 |     28
+ ...
+ GET static asset         |     17 |     22 |     27 |     27 |   3031 |   3046
+ POST /comment/reply/1088 |     14 |     14 |     14 |     14 |     14 |     14
+ ...
+ -------------------------+--------+--------+--------+--------+--------+-------
+ Aggregated               |     17 |     22 |     27 |     28 |     29 |   3031
+ ------------------------------------------------------------------------------
+ Adjusted for Coordinated Omission:
+ ------------------------------------------------------------------------------
+ Name                     |    50% |    75% |    98% |    99% |  99.9% | 99.99%
+ ------------------------------------------------------------------------------
+ GET /                    |     19 |     25 |   2867 |   2900 |   2900 |   3026
+ GET /node/101            |      - |      - |      - |      - |      - |      -
+ ...
+ GET /node/1568           |    610 |   1761 |   2894 |   2894 |   2894 |   2894
+ ...
+ GET /node/1814           |     98 |   1417 |   2744 |   2744 |   2744 |   2744
+ ...
+ GET static asset         |     19 |     25 |   2867 |   2900 |   3031 |   3046
+ POST /comment/reply/1088 |      - |      - |      - |      - |      - |      -
+ ...
+ -------------------------+--------+--------+--------+--------+--------+-------
+ Aggregated               |     19 |     25 |   2867 |   2900 |   2900 |   3031
 ```
 
-The "raw" percentiles would suggest that only the slowest 1% of requests for `GET /` and the static assets were slow. Through Coordinated Omission Mitigation we can see that statistically more than 5% of them would have been affected, with the 90th percentile above a second. The HTML report's adjusted table lists only the requests that have synthetic times, followed by the aggregate.
+The "raw" percentiles would suggest that well under 1% of requests for `GET /` and the static assets were slow. Through Coordinated Omission Mitigation we can see that statistically more than 2% of them would have been affected, with the 98th percentile near 3 seconds. The HTML report's adjusted table lists only the requests that have synthetic times, followed by the aggregate.
 
 ## Where Adjusted Metrics Appear
 
 Adjusted metrics appear once mitigation has added a synthetic time to at least one request:
 
-- **Console**: an "Adjusted for Coordinated Omission" table follows the response time table of the "PER REQUEST METRICS", in the running metrics and the final summary.
+- **Console**: an "Adjusted for Coordinated Omission" table follows the response time table and the percentile table of the "PER REQUEST METRICS", in the running metrics and the final summary.
 - **HTML report**: "Request Metrics With Coordinated Omission Mitigation" (average, standard deviation and maximum) and "Response Time Metrics With Coordinated Omission Mitigation" (percentiles) follow the raw tables. With `--baseline-file`, both show how each value changed. The response time heatmap's **Adjusted** and **Measured** buttons choose whether the synthetic times are counted.
 - **Markdown report**: no adjusted tables; it has the event summary described below.
 - **JSON report**: `co_request_metrics` and `co_response_metrics` hold the adjusted tables, and each request in `raw_metrics` holds its adjusted timing data in `coordinated_omission_data`.
@@ -102,22 +115,24 @@ The console shows a "COORDINATED OMISSION METRICS" section after the other table
 
 ```bash
  === COORDINATED OMISSION METRICS ===
- Duration: 21 seconds
+ Duration: 20 seconds
  Total CO Events: 296
- Events per minute: 845.71
+ Events per minute: 888.00
 
  Request Breakdown:
-   Actual requests: 6620
-   Synthetic requests: 760 (10.3%)
+   Actual requests: 5042
+   Synthetic requests: 888 (15.0%)
 
  Severity Distribution:
    Minor: 296
 ```
 
-- **Duration** is the time since the load test started, in whole seconds, and **Events per minute** is the events over that time. Neither restarts when Goose resets its metrics after the users start.
+- **Duration** is the time in whole seconds since the counts started, and **Events per minute** is the events over that time.
 - **Total CO Events** counts requests, not stalls: each request a user made in the run after a stall, and that added synthetic times, is one event. Here five users each ran into the one stall, and their next runs made 296 requests.
-- **Actual requests** are the measured requests since the load test started, including those made before the metrics were reset.
-- **Synthetic requests** adds up, for each event, the stalled run's length less the cadence and the request's own response time, divided by the cadence and rounded down; the adjusted tables can hold about one more synthetic time per event than this. The percentage is the synthetic requests of all actual and synthetic requests.
+- **Actual requests** are the requests Goose measured.
+- **Synthetic requests** are the synthetic times mitigation added to the adjusted tables. For each event they are the stalled run's length less the cadence, then less the cadence again and again, for as long as what is left is longer than the request's own response time. The percentage is the synthetic requests of all actual and synthetic requests.
+- Actual requests plus synthetic requests is the Aggregated `# reqs` of the "PER REQUEST METRICS".
+- All of these start again when Goose resets its metrics after the users start, as the other metrics do, so they leave out the ramp up. With `--no-reset-metrics` they cover the whole run.
 - **Severity Distribution** lists only the severities with at least one event, in no fixed order.
 
 The HTML report ends with a "Coordinated Omission Event Metrics" section: a summary table of the total events, events per minute, actual requests and synthetic requests, and a table of the severities with at least one event. The Markdown report has a "Coordinated Omission Metrics" section with the same figures, all four severities, and tables of events by user and by scenario:
@@ -127,9 +142,9 @@ The HTML report ends with a "Coordinated Omission Event Metrics" section: a summ
 
 **Overall Metrics:**
 - Total CO Events: 296
-- Synthetic Requests Generated: 760
-- Actual Requests: 6,620
-- Synthetic Percentage: 10.3%
+- Synthetic Requests Generated: 888
+- Actual Requests: 5,042
+- Synthetic Percentage: 15.0%
 
 **Severity Breakdown:**
 - Minor (2-5x): 296
