@@ -34,4 +34,4 @@ Before diving into Goose, you should have:
 - **HTTP Understanding**: Knowledge of HTTP methods, status codes, and web application architecture
 - **Testing Mindset**: Understanding of what you want to test and what constitutes success
 
-Don't worry if you're new to load testing: Goose's approach will guide you toward writing realistic and valuable tests.
+If you are new to load testing, start with [Creating a Load Test](creating.md).

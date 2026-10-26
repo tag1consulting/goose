@@ -177,9 +177,9 @@ Against another site the example still requests the httpbin.org paths in the tab
 
 ## Key Takeaways
 
-1. **Use the custom client approach** for most Basic Auth scenarios: it's the most robust solution
+1. **Use the custom client approach** for most Basic Auth scenarios: it sends credentials with every request the user makes
 2. **Set up authentication once per user** rather than per request for better performance and cleaner code
-3. **Consider static assets**: only the custom client approach properly handles authentication for CSS, JS, and image requests
+3. **Consider static assets**: only the custom client approach sends credentials with CSS, JS, and image requests
 4. **Use environment variables** for credentials to keep them out of your code
 5. **Test your approach** with a simple example like httpbin.org before applying to your actual load test
 

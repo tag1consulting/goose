@@ -2,7 +2,7 @@
 
 Here's sample output generated when running a loadtest, in this case the [Umami example](../example/umami.html) that comes with Goose.
 
-The example is written for a site built with the [Drupal Umami demo](https://www.drupal.org/docs/umami-drupal-demonstration-installation-profile) profile: against any other server its validations fail. This sample came from a local test server that answers every page the example requests, with the titles, forms and static assets the example checks for. The following command was used to configure Goose and run the load test. The `-u9` tells Goose to spin up 9 users. The `-r3` option tells Goose to launch 3 users per second. The `-t1m` option tells Goose to run the load test for 1 minute, or 60 seconds. The `--no-reset-metrics` flag tells Goose to include all metrics, instead of the default which is to reset the metrics once every user has started. And finally, the two `--report-file` options tell Goose to write an HTML-formatted report named `report.html` and a Markdown-formatted report named `report.md` in the working directory once the load test finishes.
+The example is written for a site built with the [Drupal Umami demo](https://www.drupal.org/docs/umami-drupal-demonstration-installation-profile) profile: against any other server its validations fail. This sample came from a local test server that answers every page the example requests, with the titles, forms and static assets the example checks for. The following command was used to configure Goose and run the load test. The `-u9` tells Goose to spin up 9 users. The `-r3` option tells Goose to launch 3 users per second. The `-t1m` option tells Goose to run the load test for 1 minute, or 60 seconds. The `--no-reset-metrics` flag tells Goose to include all metrics, instead of the default which is to reset the metrics once every user has started. The two `--report-file` options tell Goose to write an HTML-formatted report named `report.html` and a Markdown-formatted report named `report.md` in the working directory once the load test finishes.
 
 ## ASCII metrics
 
@@ -226,10 +226,10 @@ The final summary ends with the status codes. Its percentile tables, the errors 
 
 In addition to the metrics displayed on the CLI, Goose can generate detailed reports in multiple formats. Each format serves different use cases:
 
-- **HTML**: Interactive reports with charts and detailed visualizations
+- **HTML**: interactive reports with graphs and a response time heatmap
 - **JSON**: Machine-readable data for automated analysis and integration
 - **Markdown**: Text-based reports suitable for documentation and version control
-- **PDF**: Portable reports optimized for printing and sharing (requires `pdf-reports` feature)
+- **PDF**: the HTML report rendered for printing (requires the `pdf-reports` feature)
 
 You can generate multiple report formats simultaneously by using multiple `--report-file` arguments. The report type is determined by the file extension:
 

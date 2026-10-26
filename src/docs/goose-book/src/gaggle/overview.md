@@ -8,7 +8,7 @@ It is strongly recommended that the same load test application be copied to all 
 
 ## Load Testing At Scale
 
-Experimenting with running Goose load tests from AWS, Goose has proven to make fantastic use of all available system resources, so that it is only generally limited by network speeds. A smaller server instance was able to simulate 2,000 users generating over 6,500 requests per second and saturating a 2.6 Gbps uplink. As more uplink speed was added, Goose was able to scale linearly: by distributing the test across two servers with faster uplinks, it comfortably simulated 12,000 active users generating over 41,000 requests per second and saturating 16 Gbps.
+Experimenting with running Goose load tests from AWS, Goose used all available system resources, so it was generally limited only by network speed. A smaller server instance was able to simulate 2,000 users generating over 6,500 requests per second and saturating a 2.6 Gbps uplink. As more uplink speed was added, Goose was able to scale linearly: by distributing the test across two servers with faster uplinks, it simulated 12,000 active users generating over 41,000 requests per second and saturating 16 Gbps.
 
 Generating this much traffic in and of itself is not fundamentally difficult, but with Goose each request is fully analyzed and validated. It not only confirms the response code for each response the server returns, but also inspects the returned HTML to confirm it contains all expected elements. Links to static elements such as images and CSS are extracted from each response and also loaded, with each simulated user behaving similar to how a real user would. Goose excels at providing consistent and repeatable load testing.
 

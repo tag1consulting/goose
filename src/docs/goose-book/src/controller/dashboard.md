@@ -69,7 +69,7 @@ Goose treats a bind host as loopback when it is:
 - any IPv4 address in `127.0.0.0/8` (for example `127.0.0.1`, `127.0.0.2`)
 - IPv6 loopback `::1` (with or without brackets: `[::1]`)
 
-**Non-loopback** binds, including unspecified addresses that listen on all interfaces (`0.0.0.0`, `::`) and LAN addresses and hostnames, **require** `--dashboard-auth-token` at startup. Goose hard-fails with a clear error if the token is missing.
+**Non-loopback** binds, including unspecified addresses that listen on all interfaces (`0.0.0.0`, `::`) and LAN addresses and hostnames, **require** `--dashboard-auth-token` at startup. Goose refuses to start, with an error, if the token is missing.
 
 If a token **is** configured, it is enforced on metric APIs even on loopback.
 

@@ -92,4 +92,4 @@ Result: "33 total requests, 30-second freeze affected 87.9% of traffic" ✅ ACCU
 
 ## The Key Insight
 
-Server problems don't just affect one request, they affect ALL the requests that should have happened during the problem period. With mitigation enabled, Goose captures this reality, giving you honest data about your system's behavior under load.
+A server problem affects every request that should have been sent while it lasted, not only the one that was slow. With mitigation enabled, Goose counts those requests too.

@@ -108,7 +108,7 @@ load test shut down
 goose> Connection closed by foreign host.
 ```
 
-Initially the load test is configured with an increase rate of 50, so goose increases and decreases the user count by 50 user threads per second: with no decrease rate set, Goose lowers the user count at the increase rate. Later we reconfigure the increase rate to 5, slowing down the rate that goose alters the number of user threads. The result is more clearly illustrated in the following graph generated at the end of the above example load test:
+Initially the load test is configured with an increase rate of 50, so goose increases and decreases the user count by 50 user threads per second: with no decrease rate set, Goose lowers the user count at the increase rate. Later we reconfigure the increase rate to 5, slowing down the rate that goose alters the number of user threads. This graph, from the end of that load test, shows the result:
 
 ![Controller dynamic users and increase rate](controller-users.png)
 

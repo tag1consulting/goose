@@ -74,7 +74,7 @@ Error: InvalidOption { option: "--host", value: "", detail: "A host must be defi
 
 ## Command Line Arguments
 
-If you really need custom command line arguments, parse the command line yourself and give Goose its options with `GooseAttack::initialize_with_config` in place of `GooseAttack::initialize()`. `initialize_with_config` does not read the command line; it takes a `GooseConfiguration`.
+To add command line arguments of your own, parse the command line yourself and give Goose its options with `GooseAttack::initialize_with_config` in place of `GooseAttack::initialize()`. `initialize_with_config` does not read the command line; it takes a `GooseConfiguration`.
 
 ### Adding options to Goose's
 

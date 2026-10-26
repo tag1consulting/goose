@@ -58,7 +58,7 @@ A [**scenario**](./getting-started/metrics.html#scenarios) is a collection of [*
 The `version` field at the top of every snapshot the [live dashboard](./controller/dashboard.html) serves under `/api/v1`. It numbers the snapshot's format, not the Goose release, which is the snapshot's `goose_version`. It is `1` in Goose 0.19, and goes up only when a change to the snapshot is not additive, such as a field removed or renamed. The bundled dashboard refuses a snapshot of any other version.
 
 ## Test Plan
-A flexible approach to scheduling load test phases, allowing you to define complex load patterns like gradual ramp-up, sustained load periods, spike testing, and graceful ramp-down. Test plans use the format `users,duration;users,duration` to specify multiple phases. See [Test Plan](./getting-started/test-plan.html).
+A list of steps, each a user count and a time, that sets how many users run over a load test, such as a ramp up, a steady load, a spike or a ramp down. Test plans use the format `users,duration;users,duration` to specify multiple phases. See [Test Plan](./getting-started/test-plan.html).
 
 ## Threshold
 A pass/fail rule on a load test's metrics, such as `p95<500ms` or `error-rate<1%`, given with `--threshold`. A rule that fails stops the run by default and always makes it fail. See [Thresholds](./getting-started/thresholds.html).

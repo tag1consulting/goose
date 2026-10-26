@@ -1,6 +1,6 @@
 # Practical Examples
 
-This chapter provides real-world examples of when and how to use different Coordinated Omission mitigation strategies. Each example includes the command to run against a load test of your own, an illustration of the summary Goose prints when mitigation is enabled, and interpretation guidance. The figures are illustrations, not results of real runs; the [Metrics](metrics.md) page explains each line.
+Each example shows when to use a Coordinated Omission mitigation strategy. Each example includes the command to run against a load test of your own, an illustration of the summary Goose prints when mitigation is enabled, and interpretation guidance. The figures are illustrations, not results of real runs; the [Metrics](metrics.md) page explains each line.
 
 ## Example 1: Microservice SLA Validation
 

@@ -66,7 +66,7 @@ With mitigation enabled and once it has backfilled a request, Goose shows two se
 - **Raw Metrics**: the response times Goose measured
 - **Adjusted Metrics**: the measured times together with the synthetic ones
 
-Significant differences between these metrics indicate that a stall held users back during your test. The [Metrics](metrics.md) page shows where each appears.
+A large gap between these metrics means a stall held users back during your test. The [Metrics](metrics.md) page shows where each appears.
 
 ## Choosing Your Mitigation Strategy
 
@@ -156,7 +156,7 @@ cargo run --release -- --test-plan "100,30s;100,30s;200,1m30s;200,2m30s;0,1m"
 
 Each time a [`GooseUser`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html) starts another run through all the [`Transaction`](https://docs.rs/goose/*/goose/goose/struct.Transaction.html)s of its [`Scenario`](https://docs.rs/goose/*/goose/goose/struct.Scenario.html), Goose measures how long the previous run took, leaving out the time the user slept between transactions because of `set_wait_time`. It keeps each user's fastest, slowest and average run. From the user's fourth run on, the expected cadence is the average, slowest or fastest run, as `--co-mitigation` says; the average includes the run just measured. When the previous run took more than twice the expected cadence, Goose treats it as a stall.
 
-Every request the user then makes during the run that follows backfills the stall. For each one, Goose records synthetic response times: the length of the stalled run, minus the cadence, minus the request's own response time, then that value minus the cadence again, and so on for as long as the value is greater than the request's own response time. These are the [`response_time`](https://docs.rs/goose/*/goose/metrics/struct.GooseRequestMetric.html#structfield.response_time)s the requests the user would have sent during the stall would have seen. In this way, Goose is able to estimate the actual effect of a slowdown.
+Every request the user then makes during the run that follows backfills the stall. For each one, Goose records synthetic response times: the length of the stalled run, minus the cadence, minus the request's own response time, then that value minus the cadence again, and so on for as long as the value is greater than the request's own response time. These are the [`response_time`](https://docs.rs/goose/*/goose/metrics/struct.GooseRequestMetric.html#structfield.response_time)s the requests the user would have sent during the stall would have seen. These synthetic times estimate the effect of the slowdown.
 
 Independently, from a user's fourth run on, Goose logs an INFO message for each request whose response time is longer than the user's expected cadence, its [`user_cadence`](https://docs.rs/goose/*/goose/metrics/struct.GooseRequestMetric.html#structfield.user_cadence). Such a request will likely trigger mitigation. INFO messages are shown on the console by default (`-q` hides them), and are written to the Goose log when it is configured with `--goose-log` and the log level is raised with `-g`.
 
@@ -272,9 +272,9 @@ For detailed analysis, consider:
 
 Goose helps you account for coordinated omission through:
 
-1. **Comprehensive data collection**: Every request made is timed
+1. **Every request timed**: Goose times every request it makes
 2. **Accurate percentile calculations**: Buckets never more than 1% off
-3. **Flexible configuration**: Timeouts and mitigation modes for various scenarios
+3. **Configuration**: a request timeout and three mitigation modes
 4. **Real-time visibility**: Monitor and detect issues during tests
 
-By following these practices and enabling mitigation where stalls are likely, you can make your load test results reflect real-world system behavior under load more closely.
+Enable mitigation where stalls are likely, so the results show how the system behaves under load.

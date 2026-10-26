@@ -2,7 +2,7 @@
 
 ## Error Handling
 
-Goose transactions can return various types of errors through the `TransactionError` enum. A transaction function returns a `TransactionResult`, which is `Result<(), Box<TransactionError>>`: the `?` operator and `.into()` box the error for you. Understanding these error types helps with debugging and writing robust load tests.
+Goose transactions can return various types of errors through the `TransactionError` enum. A transaction function returns a `TransactionResult`, which is `Result<(), Box<TransactionError>>`: the `?` operator and `.into()` box the error for you.
 
 ### Transaction Error Types
 
@@ -10,10 +10,10 @@ Goose supports several built-in error types that are automatically handled:
 
 - **`TransactionError::Custom`** - User-defined errors for business logic validation
 - **`TransactionError::InvalidMethod`** - Unsupported HTTP methods
-- **`TransactionError::LoggerFailed`** - Errors sending log messages to the logger thread; `source` holds the `flume::SendError`, boxed
+- **`TransactionError::LoggerFailed`**: Errors sending log messages to the logger thread; `source` holds the `flume::SendError`, boxed
 - **`TransactionError::MetricsFailed`** - Errors sending metrics to the parent thread
 - **`TransactionError::RequestCanceled`** - Requests canceled when throttling is enabled and the test ends
-- **`TransactionError::RequestFailed`** - A request marked failed with `GooseUser::set_failure`, or a failed request built with `GooseRequest::builder().error_on_fail()`; `raw_request` holds the request's `GooseRequestMetric`, boxed
+- **`TransactionError::RequestFailed`**: A request marked failed with `GooseUser::set_failure`, or a failed request built with `GooseRequest::builder().error_on_fail()`; `raw_request` holds the request's `GooseRequestMetric`, boxed
 - **`TransactionError::Reqwest`** - Network and HTTP client errors (connection failures, timeouts, etc.)
 - **`TransactionError::Url`** - URL parsing errors when building requests
 

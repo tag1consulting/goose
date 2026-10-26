@@ -4,7 +4,7 @@ The [`examples/tcp_loadtest.rs`](https://github.com/tag1consulting/goose/blob/ma
 
 ## Why non-HTTP load testing?
 
-Some services communicate over raw TCP, UDP, WebSocket, gRPC, or other protocols rather than HTTP. Previously, the only way to record metrics for these operations was to construct fake HTTP `GooseRequest` objects, which produced misleading results (spurious 404 errors). `record_custom_request` provides a direct path: time the operation yourself and hand the result to Goose.
+Some services communicate over raw TCP, UDP, WebSocket, gRPC, or other protocols rather than HTTP. Previously, the only way to record metrics for these operations was to construct fake HTTP `GooseRequest` objects, which produced misleading results (spurious 404 errors). With `record_custom_request`, you time the operation yourself and hand the result to Goose.
 
 ## The API
 

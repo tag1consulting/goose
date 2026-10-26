@@ -1,6 +1,6 @@
 # GraphQL
 
-Goose provides helper methods for load testing GraphQL APIs, new in 0.19, that simplify sending GraphQL queries and mutations.
+Goose provides helper methods for load testing GraphQL APIs, new in 0.19, for sending GraphQL queries and mutations.
 
 ## GraphQL Helper Methods
 

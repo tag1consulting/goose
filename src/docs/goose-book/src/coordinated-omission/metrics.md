@@ -50,7 +50,7 @@ The example names each node and user page request by its path, so the run made r
  Aggregated               |         239 |        158 |       3,078 |         10
 ```
 
-From these two tables, we can observe a notable difference between the raw and adjusted metrics. `GET /node/103` was requested once, by a user just after the stall, and took 6.1 ms, but the user would have requested it while the server was stalled, so its adjusted times run up to 2,920 ms. A request with no synthetic times, such as the two that were themselves held up by the stall, shows `-` in the adjusted table. The adjusted aggregate covers every request, using the measured times of those without synthetic ones. Whether this indicates a "valid" load test depends on your specific goals and testing context.
+`GET /node/103` was requested once, by a user just after the stall, and took 6.1 ms, but the user would have requested it while the server was stalled, so its adjusted times run up to 2,920 ms. A request with no synthetic times, such as the two that were themselves held up by the stall, shows `-` in the adjusted table. The adjusted aggregate covers every request, using the measured times of those without synthetic ones.
 
 The `# reqs` and `req/s` columns of the same section count the synthetic requests too. `GET /node/103` shows 6 requests: the one it measured, four synthetic ones, and the measured request counted a second time because it carried the backfill.
 
@@ -241,4 +241,4 @@ CO event tracking helps with capacity planning:
 3. **Performance Regression**: Compare CO metrics across test runs to detect degradation
 4. **Resource Scaling**: CO events often indicate when additional resources are needed
 
-The CO metrics show not just that performance issues occurred, but their frequency, severity, and impact on your test results.
+The CO metrics show how often stalls occurred, how severe they were, and how much they changed the results.

@@ -19,7 +19,7 @@ The session data is retrieved from the [`GooseUser`](https://docs.rs/goose/*/goo
 {{#include ../../../../../examples/session.rs:75:95}}
 ```
 
-_This example will panic if you run it without setting up a proper load test environment that actually sets the expected JWT token: if `/signup` does not return the JSON the example expects, the user has no session data, and `get_session_data_unchecked` panics with `Missing session data!`._
+_This example panics unless the server sets the JWT token it expects: if `/signup` does not return the JSON the example expects, the user has no session data, and `get_session_data_unchecked` panics with `Missing session data!`._
 
 ## Complete Source Code
 

@@ -1,6 +1,6 @@
 # Common Run Time Options
 
-As seen on the previous page, Goose has a lot of run time options which can be overwhelming. The following are a few of the more common and more important options to be familiar with. In these examples we only demonstrate one option at a time, but it's generally useful to combine many options. Each example other than the host example also needs `--host`, unless the load test sets a host itself with `GooseDefault::Host` or `Scenario::set_host`.
+Goose has many run time options. This page shows the most common ones, one at a time; combine them as you need. Each example other than the host example also needs `--host`, unless the load test sets a host itself with `GooseDefault::Host` or `Scenario::set_host`.
 
 ## Host to load test
 
