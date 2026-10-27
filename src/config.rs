@@ -905,8 +905,8 @@ fn serialize_token<S: serde::Serializer>(
     shown_token(token).serialize(serializer)
 }
 
-/// The derived `Debug`, except that the dashboard auth token reads as
-/// [`shown_token`] shows it: a Controller's `config` is this `Debug`, and a
+/// The derived `Debug`, except that a set dashboard auth token reads `(set)`, never
+/// the token: a Controller's `config` is this `Debug`, and a
 /// [`GooseUser`](crate::goose::GooseUser)'s configuration is public. Listing every
 /// field by name makes a new field a compile error here until it is added.
 impl std::fmt::Debug for GooseConfiguration {
