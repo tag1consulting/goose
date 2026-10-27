@@ -1483,8 +1483,13 @@ impl Transport {
                     Message::Text(text) => {
                         serde_json::from_str::<ControllerWebSocketRequest>(&text).ok()
                     }
-                    // The client is closing: there is nothing to answer.
-                    Message::Close(_) => return None,
+                    // The client is closing: there is nothing to answer, but
+                    // the close tungstenite queued in reply is only written
+                    // on a flush, so flush it to complete the handshake.
+                    Message::Close(_) => {
+                        let _ = stream.flush().await;
+                        return None;
+                    }
                     _ => None,
                 };
                 Some(request.map(|r| r.request).ok_or(INVALID_JSON))
@@ -4332,6 +4337,26 @@ pub(crate) mod tests {
             .await
             .expect("the WebSocket Controller must answer or end the connection")
             .and_then(Result::ok)
+    }
+
+    /// A client that closes the connection gets the close echoed, so the
+    /// closing handshake completes and the client sees a normal close, not
+    /// a dropped connection (1006).
+    #[tokio::test]
+    async fn websocket_client_close_echoed() {
+        let (mut client, _channel_rx) = websocket_client().await;
+        client
+            .send(Message::Close(Some(CloseFrame {
+                code: CloseCode::Normal,
+                reason: "bye".into(),
+            })))
+            .await
+            .unwrap();
+        match next_frame(&mut client).await {
+            Some(Message::Close(Some(frame))) => assert_eq!(frame.code, CloseCode::Normal),
+            other => panic!("expected the close echoed, got {:?}", other),
+        }
+        assert!(next_frame(&mut client).await.is_none());
     }
 
     /// A WebSocket text or binary message longer than [`MAX_CONTROLLER_MESSAGE`]
