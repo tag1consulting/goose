@@ -35,6 +35,7 @@ async fn test_controller_bind_failure_is_logged() {
             "127.0.0.1",
             "--telnet-port",
             &telnet_port,
+            "--websocket",
             "--websocket-host",
             "127.0.0.1",
             "--websocket-port",

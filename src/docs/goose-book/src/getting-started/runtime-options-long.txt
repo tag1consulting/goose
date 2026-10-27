@@ -592,9 +592,9 @@ Controllers:
       --no-autostart
           Wait for a Controller to start the test
 
-          Starts idle and waits for a start command from the telnet or WebSocket
-          Controller, or from the dashboard with --dashboard-control. Needs one
-          of them enabled.
+          Starts idle and waits for a start command from the telnet Controller,
+          the WebSocket Controller with --websocket, or the dashboard with
+          --dashboard-control. Needs one of them enabled.
 
           Set in code with GooseDefault::NoAutoStart.
 
@@ -607,11 +607,14 @@ Controllers:
           Set in code with GooseDefault::NoTelnet.
 
       --telnet-host <HOST>
-          Telnet host [default: 0.0.0.0]
+          Telnet host [default: 127.0.0.1]
 
-          The address the telnet Controller listens on.
+          The address the telnet Controller listens on. It has no
+          authentication: any other address, such as 0.0.0.0, prints a warning
+          at startup, as anyone who can reach the port can start, stop and
+          reconfigure the load test.
 
-          Example: --telnet-host 127.0.0.1. Set in code with
+          Example: --telnet-host 0.0.0.0. Set in code with
           GooseDefault::TelnetHost.
 
       --telnet-port <PORT>
@@ -622,26 +625,31 @@ Controllers:
           Example: --telnet-port 6116. Set in code with
           GooseDefault::TelnetPort.
 
-      --no-websocket
-          Disable the WebSocket Controller
+      --websocket
+          Enable the WebSocket Controller
 
-          By default, Goose accepts Controller commands over WebSocket, on
-          --websocket-host and --websocket-port.
+          Accepts Controller commands over WebSocket, on --websocket-host and
+          --websocket-port. Off by default: the WebSocket Controller has no
+          authentication and accepts a connection from any web page, so any
+          browser that can reach the port can drive the test.
 
-          Set in code with GooseDefault::NoWebSocket.
+          Set in code with GooseDefault::WebSocket.
 
       --websocket-host <HOST>
-          WebSocket host [default: 0.0.0.0]
+          WebSocket host [default: 127.0.0.1]
 
-          The address the WebSocket Controller listens on.
+          The address the WebSocket Controller listens on, with --websocket. It
+          has no authentication: any other address, such as 0.0.0.0, prints a
+          warning at startup, as anyone who can reach the port can start, stop
+          and reconfigure the load test.
 
-          Example: --websocket-host 127.0.0.1. Set in code with
+          Example: --websocket-host 0.0.0.0. Set in code with
           GooseDefault::WebSocketHost.
 
       --websocket-port <PORT>
           WebSocket port [default: 5117]
 
-          The TCP port the WebSocket Controller listens on.
+          The TCP port the WebSocket Controller listens on, with --websocket.
 
           Example: --websocket-port 6117. Set in code with
           GooseDefault::WebSocketPort.

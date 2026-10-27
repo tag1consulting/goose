@@ -1,7 +1,9 @@
 //! Optional telnet and WebSocket Controller threads.
 //!
-//! By default, Goose launches both a telnet Controller and a WebSocket Controller, allowing
-//! real-time control of the running load test.
+//! By default, Goose launches a telnet Controller on 127.0.0.1:5116, allowing real-time
+//! control of the running load test; `--websocket` adds a WebSocket Controller on
+//! 127.0.0.1:5117. Neither has authentication, so one bound off loopback, with
+//! `--telnet-host` or `--websocket-host`, prints a warning at startup.
 
 use crate::config::GooseConfiguration;
 use crate::metrics::{GooseMetrics, MetricsCommand};
@@ -1332,14 +1334,15 @@ impl ListeningControllers {
     pub(crate) fn configured(configuration: &GooseConfiguration) -> Self {
         ListeningControllers {
             telnet: !configuration.no_telnet,
-            websocket: !configuration.no_websocket,
+            websocket: configuration.websocket,
         }
     }
 }
 
 /// Bind the TCP port a `protocol` Controller listens on. A port Goose can't
 /// bind is logged as an error, naming the Controller, its address and why,
-/// and the load test runs without that Controller.
+/// and the load test runs without that Controller. One bound off loopback
+/// prints [`unauthenticated_warning`].
 pub(crate) async fn bind_controller(
     configuration: &GooseConfiguration,
     protocol: ControllerProtocol,
@@ -1363,6 +1366,13 @@ pub(crate) async fn bind_controller(
     match TcpListener::bind(&address).await {
         Ok(listener) => {
             info!("[controller]: {protocol:?} listening on: {address}");
+            let warning = listener
+                .local_addr()
+                .ok()
+                .and_then(|bound| unauthenticated_warning(protocol, bound));
+            if let Some(warning) = warning {
+                crate::util::warning_block("[controller]", &warning);
+            }
             Some(listener)
         }
         Err(e) => {
@@ -1372,6 +1382,29 @@ pub(crate) async fn bind_controller(
             None
         }
     }
+}
+
+/// The warning a Controller listening on `bound` prints at startup when that
+/// is not a loopback address: it has no authentication, so anyone who can
+/// reach it controls the load test. `None` on loopback, the default.
+pub(crate) fn unauthenticated_warning(
+    protocol: ControllerProtocol,
+    bound: std::net::SocketAddr,
+) -> Option<String> {
+    if bound.ip().is_loopback() {
+        return None;
+    }
+    let option = match protocol {
+        ControllerProtocol::Telnet => "--telnet-host",
+        ControllerProtocol::WebSocket => "--websocket-host",
+    };
+    let port = bound.port();
+    Some(format!(
+        "WARNING: the {protocol:?} Controller on {bound} has no authentication.\n\
+         Anyone who can reach this port can start, stop and reconfigure the load test.\n\
+         Safer: leave {option} unset to listen on 127.0.0.1 only, and use an\n\
+         ssh forward (ssh -L {port}:127.0.0.1:{port} host)."
+    ))
 }
 
 /// The control loop accepts connections on the `listener` [`bind_controller`]
@@ -1483,8 +1516,13 @@ impl Transport {
                     Message::Text(text) => {
                         serde_json::from_str::<ControllerWebSocketRequest>(&text).ok()
                     }
-                    // The client is closing: there is nothing to answer.
-                    Message::Close(_) => return None,
+                    // The client is closing: there is nothing to answer, but
+                    // the close tungstenite queued in reply is only written
+                    // on a flush, so flush it to complete the handshake.
+                    Message::Close(_) => {
+                        let _ = stream.flush().await;
+                        return None;
+                    }
                     _ => None,
                 };
                 Some(request.map(|r| r.request).ok_or(INVALID_JSON))
@@ -2473,6 +2511,40 @@ pub(crate) mod tests {
                     text
                 );
             }
+        });
+    }
+
+    /// `config` and `config-json` show that a dashboard auth token is set,
+    /// never the token itself.
+    #[test]
+    #[serial_test::serial]
+    fn test_control_config_hides_the_dashboard_auth_token() {
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) =
+                idle_attack(&["--no-autostart", "--dashboard-auth-token", "s3cret-token"]).await;
+            for (line, json) in [("config-json", true), ("config", false)] {
+                let (controller_tx, controller_rx) = flume::unbounded();
+                run_state.controller_channel_rx = Some(controller_rx);
+                let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+                let command = line.parse::<ControllerCommand>().unwrap();
+                controller_tx.send((command.into(), response_tx)).unwrap();
+                goose_attack
+                    .handle_control_requests(&mut run_state)
+                    .await
+                    .unwrap();
+                let text = match response_rx.await.unwrap() {
+                    ControlReply::Config(config) if json => to_json(&config),
+                    ControlReply::Config(config) => format!("{config:#?}"),
+                    _ => panic!("{} answered no configuration", line),
+                };
+                assert!(!text.contains("s3cret-token"), "{}: {}", line, text);
+                assert!(text.contains("(set)"), "{}: {}", line, text);
+            }
+            // The token the dashboard checks is still the real one.
+            assert_eq!(
+                goose_attack.configuration.dashboard_auth_token(),
+                Some("s3cret-token")
+            );
         });
     }
 
@@ -4298,6 +4370,83 @@ pub(crate) mod tests {
             .await
             .expect("the WebSocket Controller must answer or end the connection")
             .and_then(Result::ok)
+    }
+
+    /// A Controller listening off loopback warns that it has no
+    /// authentication; one on loopback, the default, doesn't.
+    #[test]
+    fn controller_off_loopback_warns() {
+        let bound = |args: &[&str], protocol| {
+            let c = GooseConfiguration::parse_args_default(args).unwrap();
+            let (host, port) = match protocol {
+                ControllerProtocol::Telnet => (c.telnet_host(), c.telnet_port()),
+                ControllerProtocol::WebSocket => (c.websocket_host(), c.websocket_port()),
+            };
+            std::net::SocketAddr::new(host.parse().unwrap(), port)
+        };
+        assert_eq!(
+            unauthenticated_warning(
+                ControllerProtocol::Telnet,
+                bound(&["--telnet-host", "0.0.0.0"], ControllerProtocol::Telnet)
+            )
+            .as_deref(),
+            Some(
+                "WARNING: the Telnet Controller on 0.0.0.0:5116 has no authentication.\n\
+                 Anyone who can reach this port can start, stop and reconfigure the load test.\n\
+                 Safer: leave --telnet-host unset to listen on 127.0.0.1 only, and use an\n\
+                 ssh forward (ssh -L 5116:127.0.0.1:5116 host)."
+            )
+        );
+        assert_eq!(
+            unauthenticated_warning(
+                ControllerProtocol::WebSocket,
+                bound(&["--websocket-host", "::"], ControllerProtocol::WebSocket)
+            )
+            .as_deref(),
+            Some(
+                "WARNING: the WebSocket Controller on [::]:5117 has no authentication.\n\
+                 Anyone who can reach this port can start, stop and reconfigure the load test.\n\
+                 Safer: leave --websocket-host unset to listen on 127.0.0.1 only, and use an\n\
+                 ssh forward (ssh -L 5117:127.0.0.1:5117 host)."
+            )
+        );
+        // The default warns about neither.
+        for protocol in [ControllerProtocol::Telnet, ControllerProtocol::WebSocket] {
+            assert_eq!(
+                unauthenticated_warning(protocol, bound(&[], protocol)),
+                None
+            );
+        }
+        for (address, warns) in [
+            ("127.0.0.2:5116", false),
+            ("[::1]:5116", false),
+            ("10.1.2.3:5116", true),
+            ("[fe80::1]:5116", true),
+        ] {
+            let warning =
+                unauthenticated_warning(ControllerProtocol::Telnet, address.parse().unwrap());
+            assert_eq!(warning.is_some(), warns, "{}", address);
+        }
+    }
+
+    /// A client that closes the connection gets the close echoed, so the
+    /// closing handshake completes and the client sees a normal close, not
+    /// a dropped connection (1006).
+    #[tokio::test]
+    async fn websocket_client_close_echoed() {
+        let (mut client, _channel_rx) = websocket_client().await;
+        client
+            .send(Message::Close(Some(CloseFrame {
+                code: CloseCode::Normal,
+                reason: "bye".into(),
+            })))
+            .await
+            .unwrap();
+        match next_frame(&mut client).await {
+            Some(Message::Close(Some(frame))) => assert_eq!(frame.code, CloseCode::Normal),
+            other => panic!("expected the close echoed, got {:?}", other),
+        }
+        assert!(next_frame(&mut client).await.is_none());
     }
 
     /// A WebSocket text or binary message longer than [`MAX_CONTROLLER_MESSAGE`]

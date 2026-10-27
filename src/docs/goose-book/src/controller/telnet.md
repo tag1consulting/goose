@@ -1,5 +1,7 @@
 # Telnet Controller
 
+The telnet Controller listens on `127.0.0.1:5116` by default, so only this machine can reach it. It has no authentication: anyone who can reach its port can start, stop and reconfigure the load test. To reach it from another machine, either forward the port over ssh to the default bind (`ssh -L 5116:127.0.0.1:5116 loadtest`, then `telnet localhost 5116`), or start Goose with an explicit host such as `--telnet-host 0.0.0.0`, which prints a warning at startup that the Controller has no authentication.
+
 The host and port that the telnet Controller listens on can be configured at start time with `--telnet-host` and `--telnet-port`. The telnet Controller can be completely disabled with the `--no-telnet` command line option. The defaults can be changed with [`GooseDefault::TelnetHost`](https://docs.rs/goose/*/goose/config/enum.GooseDefault.html#variant.TelnetHost),[`GooseDefault::TelnetPort`](https://docs.rs/goose/*/goose/config/enum.GooseDefault.html#variant.TelnetPort), and [`GooseDefault::NoTelnet`](https://docs.rs/goose/*/goose/config/enum.GooseDefault.html#variant.NoTelnet).
 
 ## Controller Commands
@@ -39,7 +41,7 @@ goose> Connection closed by foreign host.
 
 `exit`, `quit` and `q` end the session, and `help` and `?` print this list. Commands and values are not case sensitive, and most commands take aliases: `increase_rate` and `increase-rate` for `increaserate`, `increasetime` for `increase-time`, `run_time` for `runtime`, `testplan` and `plan` for `test-plan`, `stats` for `metrics`, and the like. A command takes its value after one space.
 
-`config` prints the configuration, and `config-json` prints it as JSON, with an option that is not set shown as `null` and an output flag given without a path shown as `(the run's folder)`. `metrics` prints the metrics tables, and `metrics-json` prints the metrics as JSON. In that JSON each request's `raw_data` holds its response times in microsecond buckets, `times_us`, beside `minimum_time_us`, `maximum_time_us` and `total_time_us`, and the whole millisecond `minimum_time`, `maximum_time`, `total_time` and `counter`; each transaction and scenario holds the same as `times_us`, `min_time_us`, `max_time_us` and `total_time_us`, beside `min_time`, `max_time`, `total_time` and `counter`. Each request also holds `status_code_counts`, how many responses got each status code, and `status_code_timings`, each status code's `count`, `total_time_us`, `min_time_us` and `max_time_us`.
+`config` prints the configuration, and `config-json` prints it as JSON, with an option that is not set shown as `null` and an output flag given without a path shown as `(the run's folder)`. Neither shows the dashboard auth token: one that is set reads `(set)`. `metrics` prints the metrics tables, and `metrics-json` prints the metrics as JSON. In that JSON each request's `raw_data` holds its response times in microsecond buckets, `times_us`, beside `minimum_time_us`, `maximum_time_us` and `total_time_us`, and the whole millisecond `minimum_time`, `maximum_time`, `total_time` and `counter`; each transaction and scenario holds the same as `times_us`, `min_time_us`, `max_time_us` and `total_time_us`, beside `min_time`, `max_time`, `total_time` and `counter`. Each request also holds `status_code_counts`, how many responses got each status code, and `status_code_timings`, each status code's `count`, `total_time_us`, `min_time_us` and `max_time_us`.
 
 A command whose value can't be used is refused with what the value must be, and changes nothing:
 ```bash
@@ -72,8 +74,10 @@ A test plan sets users, so while one is configured a rate or a time is refused w
 One possible use-case for the controller is to dynamically reconfigure the number of users being simulated by the load test. In the following example, the load test was launched with the following parameters:
 
 ```bash
-% cargo run --release --example umami -- --no-autostart --host https://umami.ddev.site/ --increase-rate 50 --report-file report.html --report-file report.md
+% cargo run --release --example umami -- --no-autostart --telnet-host 0.0.0.0 --host https://umami.ddev.site/ --increase-rate 50 --report-file report.html --report-file report.md
 ```
+
+The `--telnet-host 0.0.0.0` lets the telnet Controller be reached from another machine, here one that reaches the load test as `loadtest`, and prints the warning that it has no authentication.
 
 Then the telnet controller is invoked as follows:
 ```bash

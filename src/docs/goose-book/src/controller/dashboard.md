@@ -4,7 +4,7 @@
 
 Goose can optionally serve a **live web dashboard** while a load test runs. The dashboard streams compact metric snapshots (including trailing RPS, users, and latency series) over Server-Sent Events (SSE), with a short poll fallback if SSE is unavailable.
 
-By default the dashboard is **observe-only**: start, stop, user counts, and other control remain on the [Telnet](telnet.md) and [WebSocket](websocket.md) Controllers. With an explicit opt-in (`--dashboard-control` plus an auth token, or `--dashboard-no-auth` for [control without a token](#control-without-a-token)), the same browser can also **Start**, **Stop**, **set the target user count**, and edit the host, the ramps and the run time. Its **Quit** shuts Goose down from Idle. The Controllers remain the path for `config` and `metrics`, a test plan typed at a prompt (the dashboard takes one only through `POST /api/v1/control/settings`), and **shutdown** from any phase.
+By default the dashboard is **observe-only**: start, stop, user counts, and other control remain on the [Telnet](telnet.md) Controller, and the [WebSocket](websocket.md) Controller when `--websocket` turns it on. With an explicit opt-in (`--dashboard-control` plus an auth token, or `--dashboard-no-auth` for [control without a token](#control-without-a-token)), the same browser can also **Start**, **Stop**, **set the target user count**, and edit the host, the ramps and the run time. Its **Quit** shuts Goose down from Idle. The Controllers remain the path for `config` and `metrics`, a test plan typed at a prompt (the dashboard takes one only through `POST /api/v1/control/settings`), and **shutdown** from any phase.
 
 ## Enabling the dashboard
 
@@ -55,7 +55,7 @@ The server lives as long as the load test, with one exception: see [Waiting afte
 | Test plan | No | Through `POST /api/v1/control/settings` only | Yes (`test-plan`) |
 | `config` / `metrics` | No | No | Yes |
 | Process shutdown | No | Quit, from Idle only | Yes (`shutdown`, any phase) |
-| Default bind | `127.0.0.1:5118` | `127.0.0.1:5118` | `0.0.0.0:5116` / `:5117` |
+| Default bind | `127.0.0.1:5118` | `127.0.0.1:5118` | `127.0.0.1:5116` / `:5117`, WebSocket only with `--websocket` |
 | Auth | Token on metric APIs when configured | Token for control unless `--dashboard-no-auth`; metrics follow observe rules | None (see Controller docs) |
 
 When control is off, `POST /api/v1/control/*` returns **404** (routes are not registered). Prefer Controllers for `config`, `metrics` and shutting down a running test; use dashboard control for Start, Stop, users and the run settings from a browser.
@@ -258,14 +258,14 @@ Open `http://127.0.0.1:5118/?token=$DASHBOARD_TOKEN`. The header shows `Live das
 
 ### `--no-autostart` recipe
 
-`--no-autostart` keeps Goose in **Idle** until something starts the test. It is allowed when any Controller is enabled **or** when `--dashboard-control` is set (with dashboard, and a token or `--dashboard-no-auth`):
+`--no-autostart` keeps Goose in **Idle** until something starts the test. It is allowed when any Controller is enabled (the telnet Controller is on by default, the WebSocket Controller only with `--websocket`) **or** when `--dashboard-control` is set (with dashboard, and a token or `--dashboard-no-auth`):
 
 ```bash
 export DASHBOARD_TOKEN="replace-me"
 
 cargo run --release --features dashboard --example simple -- \
   --no-autostart \
-  --no-telnet --no-websocket \
+  --no-telnet \
   --dashboard \
   --dashboard-control \
   --dashboard-auth-token "$DASHBOARD_TOKEN" \
@@ -525,7 +525,7 @@ Without `--dashboard-control` the Control card stays, and says in place of its c
 ```text
 Read-only: this dashboard can't start, stop or change the test.
 To control it from here, restart Goose with --dashboard-control --dashboard-no-auth (no token), or with --dashboard-control --dashboard-auth-token <token> and open http://127.0.0.1:5118/?token=<token>.
-Control this test via the telnet controller listening on 0.0.0.0:5116 or the WebSocket controller listening on 0.0.0.0:5117.
+Control this test via the telnet controller listening on 127.0.0.1:5116.
 ```
 
 The address is the one the page was opened at. When the page has a token, or the dashboard runs with `--dashboard-no-auth`, only control is missing, and the second sentence reads `To control it from here, restart Goose with --dashboard-control added.` The last sentence names the telnet and WebSocket Controllers that listen, and is left out when neither does. The notice is a note, named `Read-only dashboard` for screen readers, and holds nothing that takes focus. When `GET /api/v1/health` fails, the card says `Couldn't check whether control is on (/api/v1/health failed). Reload to retry.` instead.
@@ -561,7 +561,7 @@ TLS termination is not provided by Goose; use an SSH tunnel or reverse proxy whe
   "control_enabled": false,
   "auth_required": true,
   "loopback": true,
-  "controllers": { "telnet": "0.0.0.0:5116", "websocket": null }
+  "controllers": { "telnet": "127.0.0.1:5116", "websocket": null }
 }
 ```
 
@@ -577,7 +577,7 @@ TLS termination is not provided by Goose; use an SSH tunnel or reverse proxy whe
 | `control_enabled` | Whether the Start/Stop/Users/Quit and Delete routes are registered (`--dashboard-control`) |
 | `auth_required` | `false` only under `--dashboard-no-auth`, when the page sends no token; `true` otherwise, including a loopback dashboard with no token, which serves metrics without one but has no control without a token |
 | `loopback` | Whether the dashboard is bound to a loopback address; with `auth_required` false and this false, the page shows the no token warning |
-| `controllers` | The `host:port` the telnet and WebSocket Controllers listen on, after defaults (`0.0.0.0:5116` and `0.0.0.0:5117` unless set), or `null` for one turned off with `--no-telnet` or `--no-websocket`, or one that couldn't listen on its port; the page footer names them |
+| `controllers` | The `host:port` the telnet and WebSocket Controllers listen on, after defaults (`127.0.0.1:5116` and `127.0.0.1:5117` unless set), or `null` for one turned off, the telnet Controller with `--no-telnet` and the WebSocket Controller unless `--websocket` turns it on, or one that couldn't listen on its port; the page footer names them |
 
 These counters are ops-safe (timing and client counts only). The response does **not** include rates, hosts under test, request names, or error strings. `controllers` names this process's own listeners, which take no authentication; it reveals only where they listen. `last_snapshot_ms` minus `last_build_ms` is time spent waiting on the main loop and the metrics processor's queue, plus serializing the JSON. The main loop answers the dashboard between steps and sleeps up to 500 ms between them, so this difference can reach about 500 ms by design; a large `last_build_ms` is the one that points at the metrics processor. Both durations are also logged at `debug` with a `[dashboard]` prefix when a build completes, and a late answer to a timed out request is logged with its round trip.
 

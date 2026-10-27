@@ -124,8 +124,7 @@ $ cargo run --release --example graphql_loadtest -- --host http://localhost:8080
 19:53:20 [INFO] global host configured: http://localhost:8080
 19:53:20 [INFO] [scheduler]: allocating transactions and scenarios with RoundRobin scheduler
 19:53:20 [INFO] [scheduler]: initializing 5 user states...
-19:53:20 [INFO] [controller]: Telnet listening on: 0.0.0.0:5116
-19:53:20 [INFO] [controller]: WebSocket listening on: 0.0.0.0:5117
+19:53:20 [INFO] [controller]: Telnet listening on: 127.0.0.1:5116
 19:53:20 [INFO] entering GooseAttack phase: Increase
 19:53:20 [INFO] [user 1]: launching user from GraphQL Load Test
 19:53:21 [INFO] [user 2]: launching user from GraphQL Load Test

@@ -27,6 +27,7 @@ async fn test_no_autostart_without_a_listening_controller_is_refused() {
             "127.0.0.1",
             "--telnet-port",
             &telnet_port,
+            "--websocket",
             "--websocket-host",
             "127.0.0.1",
             "--websocket-port",

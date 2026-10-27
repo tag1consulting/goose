@@ -857,7 +857,7 @@ async fn build_once(inner: &Arc<HubInner>, timeout: Duration) -> BuildOutcome {
 }
 
 /// Shared state for axum handlers.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct DashboardState {
     /// Coalescing snapshot hub (owns a clone of the parent request channel sender).
     hub: SnapshotHub,
@@ -972,7 +972,7 @@ struct HealthResponse {
 }
 
 /// The `host:port` each Controller listens on, or `None` when it is off
-/// (`--no-telnet`, `--no-websocket`) or couldn't bind its port.
+/// (`--no-telnet`, or no `--websocket`) or couldn't bind its port.
 #[derive(Debug, Clone, Serialize)]
 struct HealthControllers {
     telnet: Option<String>,
@@ -1099,13 +1099,7 @@ pub(crate) async fn setup_dashboard(
         match line {
             StartupLine::Info(text) => info!("{text}"),
             StartupLine::Warn(text) => warn!("{text}"),
-            StartupLine::Block(text) => {
-                // Straight to stderr, so neither -q nor the log level hides
-                // it; the Goose log gets it at warn level too.
-                let rule = "=".repeat(78);
-                eprintln!("{rule}\n{text}\n{rule}");
-                warn!("[dashboard]: {}", text.replace('\n', " "));
-            }
+            StartupLine::Block(text) => crate::util::warning_block("[dashboard]", &text),
         }
     }
 
@@ -4111,46 +4105,67 @@ mod tests {
 
     #[tokio::test]
     async fn health_reports_controller_addresses() {
-        // (no_telnet, no_websocket, whether telnet bound, expected
+        // (no_telnet, websocket, whether telnet bound, telnet host, expected
         // controllers). Hosts and ports are set as setup_controllers leaves
-        // them; an IPv6 host is bracketed.
+        // them, with no telnet host the default 127.0.0.1; an IPv6 host is
+        // bracketed.
         let cases = [
             (
                 false,
-                false,
                 true,
-                serde_json::json!({"telnet": "0.0.0.0:5116", "websocket": "[::1]:6117"}),
+                true,
+                None,
+                serde_json::json!({"telnet": "127.0.0.1:5116", "websocket": "[::1]:6117"}),
             ),
             (
                 true,
-                false,
                 true,
+                true,
+                None,
                 serde_json::json!({"telnet": null, "websocket": "[::1]:6117"}),
             ),
             (
                 true,
+                false,
                 true,
-                true,
+                None,
                 serde_json::json!({"telnet": null, "websocket": null}),
+            ),
+            // The default: telnet on, the WebSocket Controller off.
+            (
+                false,
+                false,
+                true,
+                None,
+                serde_json::json!({"telnet": "127.0.0.1:5116", "websocket": null}),
+            ),
+            // An explicit host is kept: here every address.
+            (
+                false,
+                false,
+                true,
+                Some("0.0.0.0"),
+                serde_json::json!({"telnet": "0.0.0.0:5116", "websocket": null}),
             ),
             // A Controller that couldn't bind its port is not named.
             (
                 false,
+                true,
                 false,
-                false,
+                None,
                 serde_json::json!({"telnet": null, "websocket": "[::1]:6117"}),
             ),
         ];
         let client = reqwest::Client::new();
-        for (no_telnet, no_websocket, telnet_bound, expected) in cases {
+        for (no_telnet, websocket, telnet_bound, telnet_host, expected) in cases {
             let config = GooseConfiguration {
                 dashboard: true,
                 dashboard_host: Some("127.0.0.1".to_string()),
                 dashboard_port: Some(0),
                 no_telnet,
-                telnet_host: Some("0.0.0.0".to_string()),
+                telnet_host: telnet_host.map(str::to_string),
                 telnet_port: Some(5116),
-                no_websocket,
+                websocket,
                 websocket_host: Some("::1".to_string()),
                 websocket_port: Some(6117),
                 ..Default::default()
@@ -4174,8 +4189,8 @@ mod tests {
                 .expect("json");
             assert_eq!(
                 health["controllers"], expected,
-                "no_telnet {}, no_websocket {}, telnet bound {}",
-                no_telnet, no_websocket, telnet_bound
+                "no_telnet {}, websocket {}, telnet bound {}, telnet host {:?}",
+                no_telnet, websocket, telnet_bound, telnet_host
             );
             // The fields health had before stay.
             assert_eq!(health["ok"], true);

@@ -485,6 +485,15 @@ pub(crate) fn setup_ctrlc_handler() {
     }
 }
 
+/// Print a warning that must be seen: straight to stderr between two rules,
+/// so neither `-q` nor the log level hides it, and to the Goose log at warn
+/// level on one line after `tag`.
+pub(crate) fn warning_block(tag: &str, text: &str) {
+    let rule = "=".repeat(78);
+    eprintln!("{rule}\n{text}\n{rule}");
+    warn!("{tag}: {}", text.replace('\n', " "));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

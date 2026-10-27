@@ -58,7 +58,7 @@ const DEFAULT_DASHBOARD_MAX_CLIENTS: u32 = 32;
 
 /// The address a Controller listens on when neither its `--telnet-host` or
 /// `--websocket-host` option nor its [`GooseDefault`] sets one.
-const DEFAULT_CONTROLLER_HOST: &str = "0.0.0.0";
+const DEFAULT_CONTROLLER_HOST: &str = "127.0.0.1";
 
 /// The port the telnet Controller listens on when neither `--telnet-port` nor
 /// [`GooseDefault::TelnetPort`] sets one.
@@ -101,7 +101,7 @@ const DEFAULT_PDF_TIMEOUT: u64 = 60;
 /// option was not given, so any value a user types, `0` and `""` among them, is kept.
 /// When the load test starts, Goose resolves each `None` against any [`GooseDefault`]
 /// before falling back to its built in default.
-#[derive(Args, Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Args, Clone, Default, Serialize, Deserialize)]
 pub struct GooseConfiguration {
     /// Target host, such as http://10.21.32.33
     ///
@@ -750,6 +750,7 @@ pub struct GooseConfiguration {
     ///
     /// Set in code with GooseDefault::DashboardAuthToken.
     #[arg(help_heading = "Dashboard", long, value_name = "TOKEN")]
+    #[serde(serialize_with = "serialize_token")]
     pub dashboard_auth_token: Option<String>,
     /// Allow control from the dashboard
     ///
@@ -788,8 +789,9 @@ pub struct GooseConfiguration {
 
     /// Wait for a Controller to start the test
     ///
-    /// Starts idle and waits for a start command from the telnet or WebSocket Controller,
-    /// or from the dashboard with --dashboard-control. Needs one of them enabled.
+    /// Starts idle and waits for a start command from the telnet Controller, the WebSocket
+    /// Controller with --websocket, or the dashboard with --dashboard-control. Needs one of
+    /// them enabled.
     ///
     /// Set in code with GooseDefault::NoAutoStart.
     #[arg(help_heading = "Controllers", long)]
@@ -802,11 +804,13 @@ pub struct GooseConfiguration {
     /// Set in code with GooseDefault::NoTelnet.
     #[arg(help_heading = "Controllers", long)]
     pub no_telnet: bool,
-    /// Telnet host [default: 0.0.0.0]
+    /// Telnet host [default: 127.0.0.1]
     ///
-    /// The address the telnet Controller listens on.
+    /// The address the telnet Controller listens on. It has no authentication: any other
+    /// address, such as 0.0.0.0, prints a warning at startup, as anyone who can reach the
+    /// port can start, stop and reconfigure the load test.
     ///
-    /// Example: --telnet-host 127.0.0.1. Set in code with GooseDefault::TelnetHost.
+    /// Example: --telnet-host 0.0.0.0. Set in code with GooseDefault::TelnetHost.
     #[arg(help_heading = "Controllers", long, value_name = "HOST")]
     pub telnet_host: Option<String>,
     /// Telnet port [default: 5116]
@@ -816,24 +820,37 @@ pub struct GooseConfiguration {
     /// Example: --telnet-port 6116. Set in code with GooseDefault::TelnetPort.
     #[arg(help_heading = "Controllers", long, value_name = "PORT")]
     pub telnet_port: Option<u16>,
+    /// Enable the WebSocket Controller
+    ///
+    /// Accepts Controller commands over WebSocket, on --websocket-host and
+    /// --websocket-port. Off by default: the WebSocket Controller has no authentication
+    /// and accepts a connection from any web page, so any browser that can reach the port
+    /// can drive the test.
+    ///
+    /// Set in code with GooseDefault::WebSocket.
+    #[arg(help_heading = "Controllers", long)]
+    pub websocket: bool,
     /// Disable the WebSocket Controller
     ///
-    /// By default, Goose accepts Controller commands over WebSocket, on --websocket-host
-    /// and --websocket-port.
+    /// The WebSocket Controller is off unless --websocket is given. Still accepted, with a
+    /// warning, so command lines written for Goose 0.18 run; can't be used with
+    /// --websocket.
     ///
     /// Set in code with GooseDefault::NoWebSocket.
-    #[arg(help_heading = "Controllers", long)]
+    #[arg(help_heading = "Controllers", long, hide = true)]
     pub no_websocket: bool,
-    /// WebSocket host [default: 0.0.0.0]
+    /// WebSocket host [default: 127.0.0.1]
     ///
-    /// The address the WebSocket Controller listens on.
+    /// The address the WebSocket Controller listens on, with --websocket. It has no
+    /// authentication: any other address, such as 0.0.0.0, prints a warning at startup, as
+    /// anyone who can reach the port can start, stop and reconfigure the load test.
     ///
-    /// Example: --websocket-host 127.0.0.1. Set in code with GooseDefault::WebSocketHost.
+    /// Example: --websocket-host 0.0.0.0. Set in code with GooseDefault::WebSocketHost.
     #[arg(help_heading = "Controllers", long, value_name = "HOST")]
     pub websocket_host: Option<String>,
     /// WebSocket port [default: 5117]
     ///
-    /// The TCP port the WebSocket Controller listens on.
+    /// The TCP port the WebSocket Controller listens on, with --websocket.
     ///
     /// Example: --websocket-port 6117. Set in code with GooseDefault::WebSocketPort.
     #[arg(help_heading = "Controllers", long, value_name = "PORT")]
@@ -870,6 +887,193 @@ pub struct GooseConfiguration {
     /// Set in code with GooseDefault::AcceptInvalidCerts.
     #[arg(help_heading = "HTTP client", long)]
     pub accept_invalid_certs: bool,
+}
+
+/// How output shows the dashboard auth token: a set token reads [`TOKEN_SHOWN`], and an
+/// empty one, which sets no token, reads as it is.
+const TOKEN_SHOWN: &str = "(set)";
+
+/// The dashboard auth token as output shows it: never the token itself.
+fn shown_token(token: &Option<String>) -> Option<&str> {
+    token
+        .as_deref()
+        .map(|token| if token.is_empty() { token } else { TOKEN_SHOWN })
+}
+
+/// Serializes the dashboard auth token as [`shown_token`] shows it, so no JSON Goose
+/// writes, such as a Controller's `config-json`, holds the token.
+fn serialize_token<S: serde::Serializer>(
+    token: &Option<String>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    shown_token(token).serialize(serializer)
+}
+
+/// The derived `Debug`, except that a set dashboard auth token reads `(set)`, never
+/// the token: a Controller's `config` is this `Debug`, and a
+/// [`GooseUser`](crate::goose::GooseUser)'s configuration is public. Listing every
+/// field by name makes a new field a compile error here until it is added.
+impl std::fmt::Debug for GooseConfiguration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let GooseConfiguration {
+            host,
+            users,
+            increase_rate,
+            increase_time,
+            run_time,
+            decrease_rate,
+            decrease_time,
+            iterations,
+            test_plan,
+            scenarios,
+            throttle_requests,
+            version,
+            list,
+            scenarios_list,
+            verbose,
+            quiet,
+            goose_log,
+            log_level,
+            running_metrics,
+            no_print_metrics,
+            no_error_summary,
+            report_file,
+            output_dir,
+            compress,
+            notes,
+            report_graph_data,
+            render_report,
+            baseline_file,
+            no_granular_report,
+            pdf_print_html,
+            #[cfg(feature = "pdf-reports")]
+            pdf_scale,
+            #[cfg(feature = "pdf-reports")]
+            pdf_timeout,
+            no_reset_metrics,
+            no_metrics,
+            no_transaction_metrics,
+            no_scenario_metrics,
+            no_status_codes,
+            co_mitigation,
+            threshold,
+            no_threshold_abort,
+            threshold_abort_delay,
+            thresholds,
+            request_log,
+            request_format,
+            request_body,
+            transaction_log,
+            transaction_format,
+            scenario_log,
+            scenario_format,
+            error_log,
+            error_format,
+            debug_log,
+            debug_format,
+            no_debug_body,
+            dashboard,
+            dashboard_host,
+            dashboard_port,
+            dashboard_auth_token,
+            dashboard_control,
+            dashboard_no_auth,
+            dashboard_max_clients,
+            no_percentiles_over_time,
+            no_autostart,
+            no_telnet,
+            telnet_host,
+            telnet_port,
+            websocket,
+            no_websocket,
+            websocket_host,
+            websocket_port,
+            timeout,
+            no_gzip,
+            sticky_follow,
+            accept_invalid_certs,
+        } = self;
+        let mut debug = f.debug_struct("GooseConfiguration");
+        debug
+            .field("host", host)
+            .field("users", users)
+            .field("increase_rate", increase_rate)
+            .field("increase_time", increase_time)
+            .field("run_time", run_time)
+            .field("decrease_rate", decrease_rate)
+            .field("decrease_time", decrease_time)
+            .field("iterations", iterations)
+            .field("test_plan", test_plan)
+            .field("scenarios", scenarios)
+            .field("throttle_requests", throttle_requests)
+            .field("version", version)
+            .field("list", list)
+            .field("scenarios_list", scenarios_list)
+            .field("verbose", verbose)
+            .field("quiet", quiet)
+            .field("goose_log", goose_log)
+            .field("log_level", log_level)
+            .field("running_metrics", running_metrics)
+            .field("no_print_metrics", no_print_metrics)
+            .field("no_error_summary", no_error_summary)
+            .field("report_file", report_file)
+            .field("output_dir", output_dir)
+            .field("compress", compress)
+            .field("notes", notes)
+            .field("report_graph_data", report_graph_data)
+            .field("render_report", render_report)
+            .field("baseline_file", baseline_file)
+            .field("no_granular_report", no_granular_report)
+            .field("pdf_print_html", pdf_print_html);
+        #[cfg(feature = "pdf-reports")]
+        debug
+            .field("pdf_scale", pdf_scale)
+            .field("pdf_timeout", pdf_timeout);
+        debug
+            .field("no_reset_metrics", no_reset_metrics)
+            .field("no_metrics", no_metrics)
+            .field("no_transaction_metrics", no_transaction_metrics)
+            .field("no_scenario_metrics", no_scenario_metrics)
+            .field("no_status_codes", no_status_codes)
+            .field("co_mitigation", co_mitigation)
+            .field("threshold", threshold)
+            .field("no_threshold_abort", no_threshold_abort)
+            .field("threshold_abort_delay", threshold_abort_delay)
+            .field("thresholds", thresholds)
+            .field("request_log", request_log)
+            .field("request_format", request_format)
+            .field("request_body", request_body)
+            .field("transaction_log", transaction_log)
+            .field("transaction_format", transaction_format)
+            .field("scenario_log", scenario_log)
+            .field("scenario_format", scenario_format)
+            .field("error_log", error_log)
+            .field("error_format", error_format)
+            .field("debug_log", debug_log)
+            .field("debug_format", debug_format)
+            .field("no_debug_body", no_debug_body)
+            .field("dashboard", dashboard)
+            .field("dashboard_host", dashboard_host)
+            .field("dashboard_port", dashboard_port)
+            .field("dashboard_auth_token", &shown_token(dashboard_auth_token))
+            .field("dashboard_control", dashboard_control)
+            .field("dashboard_no_auth", dashboard_no_auth)
+            .field("dashboard_max_clients", dashboard_max_clients)
+            .field("no_percentiles_over_time", no_percentiles_over_time)
+            .field("no_autostart", no_autostart)
+            .field("no_telnet", no_telnet)
+            .field("telnet_host", telnet_host)
+            .field("telnet_port", telnet_port)
+            .field("websocket", websocket)
+            .field("no_websocket", no_websocket)
+            .field("websocket_host", websocket_host)
+            .field("websocket_port", websocket_port)
+            .field("timeout", timeout)
+            .field("no_gzip", no_gzip)
+            .field("sticky_follow", sticky_follow)
+            .field("accept_invalid_certs", accept_invalid_certs)
+            .finish()
+    }
 }
 
 /// The book page that documents every runtime option.
@@ -1234,7 +1438,7 @@ fn scenarios_parser(value: &str) -> Result<Scenarios, String> {
 /// Optional default values for Goose run-time options.
 ///
 /// These custom defaults can be configured using [`GooseDefaultType::set_default()`].
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub(crate) struct GooseDefaults {
     /// An optional default host to run this load test against.
     pub host: Option<String>,
@@ -1319,7 +1523,10 @@ pub(crate) struct GooseDefaults {
     pub no_debug_body: Option<bool>,
     /// An optional default for not enabling telnet Controller thread.
     pub no_telnet: Option<bool>,
-    /// An optional default for not enabling WebSocket Controller thread.
+    /// An optional default for enabling the WebSocket Controller.
+    pub websocket: Option<bool>,
+    /// An optional default for not enabling WebSocket Controller thread, which is now
+    /// off unless enabled.
     pub no_websocket: Option<bool>,
     /// An optional default for not auto-starting the load test.
     pub no_autostart: Option<bool>,
@@ -1463,7 +1670,10 @@ pub enum GooseDefault {
     NoDebugBody,
     /// An optional default for not enabling telnet Controller thread.
     NoTelnet,
-    /// An optional default for not enabling WebSocket Controller thread.
+    /// An optional default for enabling the WebSocket Controller, which is off by default.
+    WebSocket,
+    /// An optional default for not enabling the WebSocket Controller. It is now off by
+    /// default, so this only warns; it can't be used with [`GooseDefault::WebSocket`].
     NoWebSocket,
     /// An optional default for coordinated omission mitigation.
     CoordinatedOmissionMitigation,
@@ -1486,11 +1696,14 @@ pub enum GooseDefault {
     ThrottleRequests,
     /// An optional default to follows base_url redirect with subsequent request.
     StickyFollow,
-    /// An optional default for host telnet Controller listens on.
+    /// An optional default for host telnet Controller listens on, 127.0.0.1 if unset; any
+    /// other address prints a warning at startup, as the Controller has no authentication.
     TelnetHost,
     /// An optional default for port telnet Controller listens on.
     TelnetPort,
-    /// An optional default for host Websocket Controller listens on.
+    /// An optional default for host WebSocket Controller listens on, 127.0.0.1 if unset;
+    /// any other address prints a warning at startup, as the Controller has no
+    /// authentication.
     WebSocketHost,
     /// An optional default for port WebSocket Controller listens on.
     WebSocketPort,
@@ -1609,6 +1822,7 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::NoErrorSummary`]
 ///  - [`GooseDefault::NoDebugBody`]
 ///  - [`GooseDefault::NoTelnet`]
+///  - [`GooseDefault::WebSocket`]
 ///  - [`GooseDefault::NoWebSocket`]
 ///  - [`GooseDefault::NoAutoStart`]
 ///  - [`GooseDefault::NoGzip`]
@@ -1729,6 +1943,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::NoErrorSummary
             | GooseDefault::NoDebugBody
             | GooseDefault::NoTelnet
+            | GooseDefault::WebSocket
             | GooseDefault::NoWebSocket
             | GooseDefault::NoAutoStart
             | GooseDefault::NoGzip
@@ -1864,6 +2079,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::NoErrorSummary
             | GooseDefault::NoDebugBody
             | GooseDefault::NoTelnet
+            | GooseDefault::WebSocket
             | GooseDefault::NoWebSocket
             | GooseDefault::NoAutoStart
             | GooseDefault::NoGzip
@@ -1936,6 +2152,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             GooseDefault::NoErrorSummary => self.defaults.no_error_summary = Some(value),
             GooseDefault::NoDebugBody => self.defaults.no_debug_body = Some(value),
             GooseDefault::NoTelnet => self.defaults.no_telnet = Some(value),
+            GooseDefault::WebSocket => self.defaults.websocket = Some(value),
             GooseDefault::NoWebSocket => self.defaults.no_websocket = Some(value),
             GooseDefault::NoAutoStart => self.defaults.no_autostart = Some(value),
             GooseDefault::NoGzip => self.defaults.no_gzip = Some(value),
@@ -2071,6 +2288,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::NoErrorSummary
             | GooseDefault::NoDebugBody
             | GooseDefault::NoTelnet
+            | GooseDefault::WebSocket
             | GooseDefault::NoWebSocket
             | GooseDefault::NoAutoStart
             | GooseDefault::NoGzip
@@ -2208,6 +2426,7 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::NoErrorSummary
             | GooseDefault::NoDebugBody
             | GooseDefault::NoTelnet
+            | GooseDefault::WebSocket
             | GooseDefault::NoWebSocket
             | GooseDefault::NoAutoStart
             | GooseDefault::NoGzip
@@ -2388,6 +2607,7 @@ impl GooseDefaultType<f64> for GooseAttack {
             | GooseDefault::NoErrorSummary
             | GooseDefault::NoDebugBody
             | GooseDefault::NoTelnet
+            | GooseDefault::WebSocket
             | GooseDefault::NoWebSocket
             | GooseDefault::NoAutoStart
             | GooseDefault::NoGzip
@@ -3265,7 +3485,26 @@ impl GooseConfiguration {
             ])
             .unwrap_or(false);
 
-        // Configure `no_websocket`.
+        // Configure `websocket`.
+        self.websocket = self
+            .get_value(vec![
+                // Use --websocket if set.
+                GooseValue {
+                    value: Some(self.websocket),
+                    filter: !self.websocket,
+                    message: "websocket",
+                },
+                // Use default if --websocket hasn't been set.
+                GooseValue {
+                    value: defaults.websocket,
+                    filter: defaults.websocket.is_none(),
+                    message: "",
+                },
+            ])
+            .unwrap_or(false);
+
+        // Configure `no_websocket`, which only warns now the WebSocket Controller is
+        // off by default.
         self.no_websocket = self
             .get_value(vec![
                 // Use --no-websocket if set.
@@ -3344,7 +3583,7 @@ impl GooseConfiguration {
             // Otherwise use the built in default.
             GooseValue {
                 value: Some(DEFAULT_CONTROLLER_HOST.to_string()),
-                filter: self.no_websocket,
+                filter: !self.websocket,
                 message: "",
             },
         ]);
@@ -3364,7 +3603,7 @@ impl GooseConfiguration {
             // Otherwise use the built in default.
             GooseValue {
                 value: Some(DEFAULT_WEBSOCKET_PORT),
-                filter: self.no_websocket,
+                filter: !self.websocket,
                 message: "",
             },
         ]);
@@ -3929,7 +4168,8 @@ impl GooseConfiguration {
 
     /// This configuration as a Controller's `config` and `config-json` show it:
     /// an output flag given without a path reads `(the run's folder)`, not
-    /// [`RUN_FOLDER`].
+    /// [`RUN_FOLDER`]. The dashboard auth token needs nothing here: its `Debug` and
+    /// its JSON never hold it.
     pub(crate) fn shown(&self) -> GooseConfiguration {
         let mut shown = self.clone();
         for log in [
@@ -4528,12 +4768,25 @@ impl GooseConfiguration {
             }
         }
 
+        // The WebSocket Controller is on with --websocket and off without it, so
+        // --no-websocket says nothing, and with --websocket contradicts it.
+        if self.websocket && self.no_websocket {
+            return Err(GooseError::InvalidOption {
+                option: "`configuration.no_websocket`".to_string(),
+                value: true.to_string(),
+                detail: "`configuration.no_websocket` (--no-websocket) can't be used with `configuration.websocket` (--websocket): give one or the other".to_string(),
+            });
+        }
+        if let Some(warning) = self.no_websocket_warning() {
+            warn!("{warning}");
+        }
+
         // Can't disable autostart unless a Controller or dashboard control can start the test.
-        if self.no_autostart && self.no_telnet && self.no_websocket && !self.dashboard_control {
+        if self.no_autostart && self.no_telnet && !self.websocket && !self.dashboard_control {
             return Err(GooseError::InvalidOption {
                 option: "`configuration.no_autostart`".to_string(),
                 value: true.to_string(),
-                detail: "`configuration.no_autostart` requires at least one Controller or dashboard control be enabled"
+                detail: "`configuration.no_autostart` (--no-autostart) requires a Controller or dashboard control to start the test: leave the telnet Controller on, or add `configuration.websocket` (--websocket) or `configuration.dashboard_control` (--dashboard-control)"
                     .to_string(),
             });
         }
@@ -4573,7 +4826,7 @@ impl GooseConfiguration {
         // the Controllers' own log name the configured port.
         for (enabled, port, option) in [
             (!self.no_telnet, self.telnet_port(), "telnet_port"),
-            (!self.no_websocket, self.websocket_port(), "websocket_port"),
+            (self.websocket, self.websocket_port(), "websocket_port"),
         ] {
             if enabled && port == 0 {
                 return Err(GooseError::InvalidOption {
@@ -4690,6 +4943,14 @@ impl GooseConfiguration {
         }
 
         Ok(())
+    }
+
+    /// The warning for `--no-websocket`, which Goose 0.18 command lines give and
+    /// which now changes nothing.
+    pub(crate) fn no_websocket_warning(&self) -> Option<&'static str> {
+        self.no_websocket.then_some(
+            "--no-websocket is no longer needed: the WebSocket Controller is off unless --websocket is given",
+        )
     }
 
     /// Simplified PDF configuration validation.
@@ -4822,6 +5083,46 @@ impl GooseConfiguration {
 mod test {
     use super::*;
     use std::time::Duration;
+
+    /// Neither a configuration's JSON nor its `Debug`, plain or pretty, holds
+    /// the dashboard auth token: a set token reads `(set)`, and no token
+    /// still reads as none. A `GooseUser`, whose configuration is public, is
+    /// no way around it.
+    #[test]
+    fn output_never_holds_the_dashboard_auth_token() {
+        let token = "s3cret-token";
+        let configuration =
+            GooseConfiguration::parse_args_default(&["--dashboard-auth-token", token]).unwrap();
+        let user = crate::goose::GooseUser::single(
+            url::Url::parse("http://127.0.0.1/").unwrap(),
+            &configuration,
+        )
+        .unwrap();
+        for (path, text) in [
+            ("json", serde_json::to_string(&configuration).unwrap()),
+            ("debug", format!("{:?}", configuration)),
+            ("pretty debug", format!("{:#?}", configuration)),
+            (
+                "shown json",
+                serde_json::to_string(&configuration.shown()).unwrap(),
+            ),
+            ("shown debug", format!("{:#?}", configuration.shown())),
+            ("user debug", format!("{:?}", user)),
+        ] {
+            assert!(!text.contains(token), "{}: {}", path, text);
+            assert!(text.contains("(set)"), "{}: {}", path, text);
+        }
+        // The token Goose checks is still the real one.
+        assert_eq!(configuration.dashboard_auth_token(), Some(token));
+        assert_eq!(configuration.dashboard_auth_token.as_deref(), Some(token));
+
+        let unset = GooseConfiguration::parse_args_default::<&str>(&[]).unwrap();
+        assert_eq!(
+            serde_json::to_value(&unset).unwrap()["dashboard_auth_token"],
+            serde_json::Value::Null
+        );
+        assert!(format!("{:?}", unset).contains("dashboard_auth_token: None"));
+    }
 
     #[test]
     fn set_defaults() {
@@ -5822,6 +6123,7 @@ mod test {
             "127.0.0.2",
             "--telnet-port",
             "6000",
+            "--websocket",
             "--no-websocket",
             "--websocket-host",
             "127.0.0.3",
@@ -5912,6 +6214,7 @@ mod test {
         assert!(c.no_telnet);
         assert_eq!(c.telnet_host.as_deref(), Some("127.0.0.2"));
         assert_eq!(c.telnet_port, Some(6000));
+        assert!(c.websocket);
         assert!(c.no_websocket);
         assert_eq!(c.websocket_host.as_deref(), Some("127.0.0.3"));
         assert_eq!(c.websocket_port, Some(6001));
@@ -6491,7 +6794,11 @@ mod test {
                 assert!(line.chars().count() <= 80, "{}: {:?}", flag, line);
             }
         }
-        for arg in command("loadtest", 80).get_arguments() {
+        // A hidden option, such as `--no-websocket`, is in neither help.
+        for arg in command("loadtest", 80)
+            .get_arguments()
+            .filter(|arg| !arg.is_hide_set())
+        {
             let summary = arg
                 .get_help()
                 .expect("every option has a summary")
@@ -6771,7 +7078,10 @@ mod test {
     /// `--websocket-port 0` is refused, not replaced with port 5117.
     #[test]
     fn explicit_websocket_port_zero_is_refused() {
-        let config = resolve(&["--websocket-port", "0"], &GooseDefaults::default());
+        let config = resolve(
+            &["--websocket", "--websocket-port", "0"],
+            &GooseDefaults::default(),
+        );
         assert_eq!(refused_option(&config), "`configuration.websocket_port`");
     }
 
@@ -6959,6 +7269,118 @@ mod test {
     ) -> GooseDefaults {
         let attack = GooseAttack::initialize_with_config(GooseConfiguration::default()).unwrap();
         set(attack).unwrap().defaults.clone()
+    }
+
+    /// The WebSocket Controller is off unless `--websocket` or
+    /// `GooseDefault::WebSocket` turns it on, and only then gets its built in
+    /// host and port.
+    #[test]
+    fn websocket_controller_is_off_unless_asked_for() {
+        let off = validated(&[], &GooseDefaults::default()).unwrap();
+        assert!(!off.websocket);
+        assert_eq!(off.websocket_host, None);
+        assert_eq!(off.websocket_port, None);
+        assert!(off.no_websocket_warning().is_none());
+
+        let defaults = defaults_from(|attack| attack.set_default(GooseDefault::WebSocket, true));
+        for (args, defaults) in [
+            (&["--websocket"][..], GooseDefaults::default()),
+            (&[][..], defaults),
+        ] {
+            let on = validated(args, &defaults).unwrap();
+            assert!(on.websocket, "{:?}", args);
+            assert_eq!(on.websocket_host.as_deref(), Some(DEFAULT_CONTROLLER_HOST));
+            assert_eq!(on.websocket_port, Some(DEFAULT_WEBSOCKET_PORT));
+            assert!(on.no_websocket_warning().is_none());
+        }
+    }
+
+    /// With no host given both Controllers listen on 127.0.0.1; a host from
+    /// the command line or a `GooseDefault`, unspecified ones included, is
+    /// kept.
+    #[test]
+    fn controllers_listen_on_loopback_unless_a_host_is_given() {
+        assert_eq!(GooseConfiguration::default().telnet_host(), "127.0.0.1");
+        assert_eq!(GooseConfiguration::default().websocket_host(), "127.0.0.1");
+        let c = validated(&["--websocket"], &GooseDefaults::default()).unwrap();
+        assert_eq!(c.telnet_host.as_deref(), Some("127.0.0.1"));
+        assert_eq!(c.websocket_host.as_deref(), Some("127.0.0.1"));
+
+        let c = validated(
+            &[
+                "--websocket",
+                "--telnet-host",
+                "0.0.0.0",
+                "--websocket-host",
+                "::",
+            ],
+            &GooseDefaults::default(),
+        )
+        .unwrap();
+        assert_eq!(c.telnet_host.as_deref(), Some("0.0.0.0"));
+        assert_eq!(c.websocket_host.as_deref(), Some("::"));
+
+        let defaults = defaults_from(|attack| {
+            attack
+                .set_default(GooseDefault::TelnetHost, "0.0.0.0")?
+                .set_default(GooseDefault::WebSocketHost, "10.1.2.3")
+        });
+        let c = validated(&["--websocket"], &defaults).unwrap();
+        assert_eq!(c.telnet_host.as_deref(), Some("0.0.0.0"));
+        assert_eq!(c.websocket_host.as_deref(), Some("10.1.2.3"));
+    }
+
+    /// `--no-websocket` and `GooseDefault::NoWebSocket`, from Goose 0.18, still
+    /// parse and leave the WebSocket Controller off, with a warning.
+    #[test]
+    fn no_websocket_still_parses_and_warns() {
+        let defaults = defaults_from(|attack| attack.set_default(GooseDefault::NoWebSocket, true));
+        for (args, defaults) in [
+            (&["--no-websocket"][..], GooseDefaults::default()),
+            (&[][..], defaults),
+        ] {
+            let configuration = validated(args, &defaults).unwrap();
+            assert!(!configuration.websocket, "{:?}", args);
+            let warning = configuration.no_websocket_warning().unwrap();
+            assert!(warning.contains("--websocket"), "{}", warning);
+        }
+    }
+
+    /// Turning the WebSocket Controller on and off at once is refused, from the
+    /// command line or from defaults.
+    #[test]
+    fn websocket_and_no_websocket_conflict() {
+        let websocket = defaults_from(|attack| attack.set_default(GooseDefault::WebSocket, true));
+        let no_websocket =
+            defaults_from(|attack| attack.set_default(GooseDefault::NoWebSocket, true));
+        for (args, defaults) in [
+            (
+                &["--websocket", "--no-websocket"][..],
+                GooseDefaults::default(),
+            ),
+            (&["--no-websocket"][..], websocket),
+            (&["--websocket"][..], no_websocket),
+        ] {
+            let detail = refused_detail(validated(args, &defaults));
+            assert!(
+                detail.contains("--no-websocket") && detail.contains("--websocket"),
+                "{:?}: {}",
+                args,
+                detail
+            );
+        }
+    }
+
+    /// `--no-autostart` needs something to start the test; with telnet off,
+    /// the refusal names `--websocket`, which is now off by default.
+    #[test]
+    fn no_autostart_without_a_controller_names_websocket() {
+        let defaults = GooseDefaults::default();
+        let detail = refused_detail(validated(&["--no-autostart", "--no-telnet"], &defaults));
+        assert!(detail.contains("--websocket"), "{}", detail);
+        assert!(detail.contains("--dashboard-control"), "{}", detail);
+        validated(&["--no-autostart", "--no-telnet", "--websocket"], &defaults).unwrap();
+        validated(&["--no-autostart"], &defaults).unwrap();
     }
 
     #[test]

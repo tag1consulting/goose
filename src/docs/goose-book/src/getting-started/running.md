@@ -28,8 +28,7 @@ So, let's try again, this time passing in the `--host` flag. We will also add th
 21:07:31 [INFO] global host configured: http://localhost:8080
 21:07:31 [INFO] [scheduler]: allocating transactions and scenarios with RoundRobin scheduler
 21:07:31 [INFO] [scheduler]: initializing 18 user states...
-21:07:31 [INFO] [controller]: WebSocket listening on: 0.0.0.0:5117
-21:07:31 [INFO] [controller]: Telnet listening on: 0.0.0.0:5116
+21:07:31 [INFO] [controller]: Telnet listening on: 127.0.0.1:5116
 21:07:31 [INFO] entering GooseAttack phase: Increase
 21:07:31 [INFO] [user 1]: launching user from LoadtestTransactions
 21:07:32 [INFO] [user 2]: launching user from LoadtestTransactions
