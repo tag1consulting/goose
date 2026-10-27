@@ -37,9 +37,12 @@ function fileResponse(status, body, filename) {
 }
 
 // A stub of the dashboard server, as in src/dashboard.rs: metric GETs need
-// `?token=` (or Bearer) equal to `token`; control POSTs need a Bearer token and
-// no `?token=`. Options: `controlEnabled` and `controllers` (left out when
-// undefined) for /api/v1/health, `controlToken`
+// `?token=` (or Bearer) equal to `token`, unless `token` is ""; control POSTs
+// need a Bearer token and no `?token=`, unless `authRequired` is false, as
+// under --dashboard-no-auth. Options: `controlEnabled`, `controllers`,
+// `authRequired` and `loopback` (each left out when undefined) for
+// /api/v1/health, `healthStatus` to answer health with that status instead
+// of 200 ("reject" fails it as on a network error), `controlToken`
 // (default `token`; the real server has one token, this lets a test produce a
 // control 401 alone), and `controlStatus` / `snapshotStatus` to force an
 // authorized request to answer with that status instead of 200 (`snapshotStatus`
@@ -70,6 +73,9 @@ export function stubServer(token, options = {}) {
   const {
     controlEnabled = false,
     controllers,
+    authRequired,
+    loopback,
+    healthStatus = 200,
     controlToken = token,
     controlStatus = 200,
     controlBody = { error: "busy", message: "busy" },
@@ -89,17 +95,23 @@ export function stubServer(token, options = {}) {
     const headers = (init && init.headers) || {};
     const method = (init && init.method) || "GET";
     const bearer = headers["Authorization"] || "";
+    const contentType = headers["Content-Type"] || "";
     const body = init && typeof init.body === "string" ? init.body : undefined;
-    requests.push({ method, path: url.pathname, url: url.href, bearer, body });
+    requests.push({ method, path: url.pathname, url: url.href, bearer, contentType, body });
+    // With no token, the server takes any request (the token rows), or any
+    // control request (--dashboard-no-auth).
+    const open = token === "";
+    const controlOpen = authRequired === false;
     if (url.pathname.startsWith("/api/v1/reports") && method === "DELETE") {
       // Deletes are control: a Bearer token and no `?token=`.
       const ok =
-        !url.searchParams.has("token") && bearer === "Bearer " + controlToken;
+        controlOpen ||
+        (!url.searchParams.has("token") && bearer === "Bearer " + controlToken);
       return Promise.resolve(fileResponse(ok ? 204 : 401, ""));
     }
     if (url.pathname.startsWith("/api/v1/reports")) {
       const ok =
-        url.searchParams.get("token") === token || bearer === "Bearer " + token;
+        open || url.searchParams.get("token") === token || bearer === "Bearer " + token;
       if (!ok) return Promise.resolve(fileResponse(401, "unauthorized"));
       if (url.pathname === "/api/v1/reports") {
         return Promise.resolve(jsonResponse(200, reports));
@@ -112,17 +124,23 @@ export function stubServer(token, options = {}) {
       return Promise.resolve(fileResponse(200, "report body", name));
     }
     if (url.pathname === "/api/v1/health") {
+      if (healthStatus === "reject") {
+        return Promise.reject(new TypeError("network error"));
+      }
       return Promise.resolve(
-        jsonResponse(200, {
+        jsonResponse(healthStatus, {
           status: "ok",
           control_enabled: controlEnabled,
           ...(controllers === undefined ? {} : { controllers }),
+          ...(authRequired === undefined ? {} : { auth_required: authRequired }),
+          ...(loopback === undefined ? {} : { loopback }),
         })
       );
     }
     if (url.pathname.startsWith("/api/v1/control/")) {
       const ok =
-        !url.searchParams.has("token") && bearer === "Bearer " + controlToken;
+        controlOpen ||
+        (!url.searchParams.has("token") && bearer === "Bearer " + controlToken);
       if (!ok) {
         return Promise.resolve(jsonResponse(401, { error: "unauthorized" }));
       }
@@ -151,7 +169,7 @@ export function stubServer(token, options = {}) {
       return Promise.resolve(answer);
     }
     const ok =
-      url.searchParams.get("token") === token || bearer === "Bearer " + token;
+      open || url.searchParams.get("token") === token || bearer === "Bearer " + token;
     if (!ok) return Promise.resolve(jsonResponse(401, {}));
     if (url.pathname === "/api/v1/series") {
       if (seriesStatus !== 200) {

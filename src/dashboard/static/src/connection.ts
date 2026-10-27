@@ -122,6 +122,21 @@ export function getToken(): string {
   return token;
 }
 
+// False once health says the dashboard takes no token
+// (--dashboard-no-auth): the page then sends none.
+let tokenNeeded = true;
+
+/** Health said whether the dashboard takes a token; without one, none is sent. */
+export function setTokenNeeded(needed: boolean): void {
+  tokenNeeded = needed;
+  if (!needed) token = "";
+}
+
+/** False when the dashboard takes no token (--dashboard-no-auth). */
+export function isTokenNeeded(): boolean {
+  return tokenNeeded;
+}
+
 /** True after a metrics 401, until a snapshot renders. */
 export function isAuthRequired(): boolean {
   return authRequired;

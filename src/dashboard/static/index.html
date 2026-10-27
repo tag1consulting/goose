@@ -35,12 +35,14 @@
     <span id="report-paths" class="report-paths" hidden></span>
   </section>
   <section id="banner" class="banner hidden" role="status"></section>
+  <section id="no-auth-banner" class="banner hidden" role="alert"></section>
   <p id="announce" class="visually-hidden" role="status"></p>
 
   <div id="run-banner" class="run-banner" aria-live="polite"></div>
 
   <section id="control-panel" class="card control-panel hidden" aria-label="Load test control">
     <h2>Control</h2>
+    <div id="ctrl-notice" class="control-notice" role="note" aria-label="Read-only dashboard" hidden></div>
     <p id="ctrl-summary" class="control-summary"></p>
     <details id="ctrl-settings" class="control-settings">
       <summary id="ctrl-settings-label">Edit settings</summary>
