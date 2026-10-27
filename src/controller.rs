@@ -1087,16 +1087,30 @@ impl GooseAttack {
             }
         }
 
-        // The command line's cross field rules: run time and a test plan
-        // are refused with --iterations, a test plan with
+        // The command line's cross field rules: run time, a ramp down and a
+        // test plan are refused with --iterations, a test plan with
         // --no-reset-metrics, in every phase; and a time needs at least 2
         // users in Idle, where it shapes the next Start.
-        if matches!(settings.run_time, Some(Some(_))) && candidate.iterations() > 0 {
-            return refuse(
-                "conflicting_settings",
-                "run_time",
-                "failed to configure run_time, it can not be set with --iterations".to_string(),
-            );
+        if candidate.iterations() > 0 {
+            for (field, set) in [
+                ("run_time", matches!(settings.run_time, Some(Some(_)))),
+                (
+                    "decrease_rate",
+                    matches!(settings.decrease_rate, Some(Some(_))),
+                ),
+                (
+                    "decrease_time",
+                    matches!(settings.decrease_time, Some(Some(_))),
+                ),
+            ] {
+                if set {
+                    return refuse(
+                        "conflicting_settings",
+                        field,
+                        format!("failed to configure {field}, it can not be set with --iterations"),
+                    );
+                }
+            }
         }
         if settings.sets_test_plan() {
             let flag = if candidate.iterations() > 0 {
@@ -4043,6 +4057,20 @@ pub(crate) mod tests {
                     r#"{"run_time_secs":10}"#,
                     "conflicting_settings",
                     "run_time",
+                ),
+                (
+                    &["--users", "2", "--iterations", "1"],
+                    false,
+                    r#"{"decrease_rate":2}"#,
+                    "conflicting_settings",
+                    "decrease_rate",
+                ),
+                (
+                    &["--users", "2", "--iterations", "1"],
+                    false,
+                    r#"{"decrease_time_secs":5}"#,
+                    "conflicting_settings",
+                    "decrease_time",
                 ),
                 (
                     &["--users", "2", "--iterations", "1"],

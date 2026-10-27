@@ -154,7 +154,7 @@ pub struct GooseConfiguration {
     ///
     /// How fast to stop users at the end of the load test. A decimal is allowed, as for
     /// --increase-rate. Without it or --decrease-time, every user stops at once. Not
-    /// allowed with --decrease-time or --test-plan.
+    /// allowed with --decrease-time, --iterations or --test-plan.
     ///
     /// Example: --decrease-rate 5. Set in code with GooseDefault::DecreaseRate.
     #[arg(help_heading = "Load test", long, value_name = "RATE")]
@@ -163,7 +163,7 @@ pub struct GooseConfiguration {
     ///
     /// Stops the users evenly over this time at the end of the load test, in place of
     /// --decrease-rate. TIME is as for --increase-time. Needs at least 2 users. Not allowed
-    /// with --decrease-rate or --test-plan.
+    /// with --decrease-rate, --iterations or --test-plan.
     ///
     /// Example: --decrease-time 1m. Set in code with GooseDefault::DecreaseTime, in seconds.
     #[arg(help_heading = "Load test", long, value_name = "TIME")]
@@ -172,7 +172,7 @@ pub struct GooseConfiguration {
     ///
     /// Each user stops after running its scenario N times, and the load test ends once
     /// every user has stopped. 0, the default, means no limit. Not allowed with
-    /// --run-time, --test-plan or --no-reset-metrics.
+    /// --run-time, --decrease-rate, --decrease-time, --test-plan or --no-reset-metrics.
     ///
     /// Example: --iterations 5. Set in code with GooseDefault::Iterations.
     #[arg(help_heading = "Load test", long, value_name = "N")]
@@ -4269,6 +4269,23 @@ impl GooseConfiguration {
                     detail:
                         "`configuration.run_time` can not be set with `configuration.iterations`."
                             .to_string(),
+                });
+            }
+            // A ramp down starts once the ramp up ends and stops users whatever
+            // iterations they have left, so neither --decrease-time nor
+            // --decrease-rate is compatible with --iterations.
+            if self.decrease_time_secs() > 0 {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.decrease_time`".to_string(),
+                    value: self.decrease_time_secs().to_string(),
+                    detail: "`configuration.decrease_time` can not be set with `configuration.iterations`.".to_string(),
+                });
+            }
+            if let Some(decrease_rate) = self.decrease_rate.as_ref() {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.decrease_rate`".to_string(),
+                    value: decrease_rate.to_string(),
+                    detail: "`configuration.decrease_rate` can not be set with `configuration.iterations`.".to_string(),
                 });
             }
             // The --test-plan option isn't compatible with --iterations.

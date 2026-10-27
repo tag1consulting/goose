@@ -63,7 +63,8 @@ Load test:
 
           How fast to stop users at the end of the load test. A decimal is
           allowed, as for --increase-rate. Without it or --decrease-time, every
-          user stops at once. Not allowed with --decrease-time or --test-plan.
+          user stops at once. Not allowed with --decrease-time, --iterations or
+          --test-plan.
 
           Example: --decrease-rate 5. Set in code with
           GooseDefault::DecreaseRate.
@@ -73,7 +74,8 @@ Load test:
 
           Stops the users evenly over this time at the end of the load test, in
           place of --decrease-rate. TIME is as for --increase-time. Needs at
-          least 2 users. Not allowed with --decrease-rate or --test-plan.
+          least 2 users. Not allowed with --decrease-rate, --iterations or
+          --test-plan.
 
           Example: --decrease-time 1m. Set in code with
           GooseDefault::DecreaseTime, in seconds.
@@ -83,7 +85,8 @@ Load test:
 
           Each user stops after running its scenario N times, and the load test
           ends once every user has stopped. 0, the default, means no limit. Not
-          allowed with --run-time, --test-plan or --no-reset-metrics.
+          allowed with --run-time, --decrease-rate, --decrease-time, --test-plan
+          or --no-reset-metrics.
 
           Example: --iterations 5. Set in code with GooseDefault::Iterations.
 
