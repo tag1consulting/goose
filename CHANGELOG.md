@@ -1,8 +1,8 @@
 # Changelog
 
 ## 0.19.0-dev
- - [#PRNUM](https://github.com/tag1consulting/goose/pull/PRNUM) **behavior change**: a Controller's `config` and `config-json`, and `{:?}` of a `GooseConfiguration` or `GooseUser`, show a set dashboard auth token as `(set)`, never the token; the dashboard still checks the real one
- - [#PRNUM](https://github.com/tag1consulting/goose/pull/PRNUM) **behavior change**: the WebSocket Controller, which has no authentication and accepts any Origin, is off by default; `--websocket` (`GooseDefault::WebSocket`) turns it on, and `--no-websocket` (`GooseDefault::NoWebSocket`) still runs with a warning and is refused with `--websocket`
+ - [#782](https://github.com/tag1consulting/goose/pull/782) **behavior change**: a Controller's `config` and `config-json`, and `{:?}` of a `GooseConfiguration` or `GooseUser`, show a set dashboard auth token as `(set)`, never the token; the dashboard still checks the real one
+ - [#782](https://github.com/tag1consulting/goose/pull/782) **behavior change**: the WebSocket Controller, which has no authentication and accepts any Origin, is off by default; `--websocket` (`GooseDefault::WebSocket`) turns it on, and `--no-websocket` (`GooseDefault::NoWebSocket`) still runs with a warning and is refused with `--websocket`
  - [#781](https://github.com/tag1consulting/goose/pull/781) keep metrics and judge thresholds when a test plan ends on a 0 user hold, instead of exiting 0 with every metric 0, no thresholds judged and an empty report
  - [#781](https://github.com/tag1consulting/goose/pull/781) **behavior change**: `--iterations` is refused with `--decrease-rate` or `--decrease-time`, by the command line and by the Controllers, as the ramp down started when the ramp up ended and stopped users before they finished, and the run exited 0; both options are new in 0.19, so no release is affected
  - [#780](https://github.com/tag1consulting/goose/pull/780) allow dashboard control without a token behind a flag, and say when the dashboard is read-only
