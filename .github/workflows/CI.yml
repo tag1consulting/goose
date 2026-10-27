@@ -75,6 +75,34 @@ jobs:
     - name: Client tests (jsdom)
       run: npm test
 
+  # The Goose Book. mdBook is pinned to 0.5.4, the newest 0.5 release (2026-07-06), the version
+  # the Book is written against: 0.5 refuses book.toml fields 0.4 took, such as `multilingual`.
+  # mdBook has no setting that turns warnings into errors, so the step fails on any WARN or ERROR
+  # line in its log.
+  book:
+    name: build the Goose Book (mdBook)
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Install mdBook 0.5.4
+      run: |
+        curl -sSfL https://github.com/rust-lang/mdBook/releases/download/v0.5.4/mdbook-v0.5.4-x86_64-unknown-linux-gnu.tar.gz \
+          | sudo tar -xz -C /usr/local/bin mdbook
+        mdbook --version
+
+    - name: 🔎 Build the Book with no warnings
+      shell: bash
+      run: |
+        # Pass: mdbook exits 0 and logs no WARN or ERROR line. Fail: either.
+        mdbook build src/docs/goose-book 2>&1 | tee mdbook.log
+        if grep -E '^\s*(WARN|ERROR)' mdbook.log; then
+          echo "::error::mdbook build logged a warning or an error"
+          exit 1
+        fi
+
   build:
     name: build and run tests
     runs-on: ubuntu-latest
