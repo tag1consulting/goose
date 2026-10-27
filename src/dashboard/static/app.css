@@ -234,6 +234,31 @@ body {
   display: none;
 }
 
+.control-panel > [hidden] {
+  display: none;
+}
+
+/* Said in place of the controls when the dashboard is read-only, or when
+   health could not say. */
+.control-notice p {
+  margin: 0 0 0.5rem;
+  color: var(--text);
+}
+
+.control-notice p:last-child {
+  margin-bottom: 0;
+}
+
+.control-notice code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9em;
+  overflow-wrap: anywhere;
+}
+
+.control-notice code.nowrap {
+  white-space: nowrap;
+}
+
 .control-panel.disabled {
   opacity: 0.65;
 }

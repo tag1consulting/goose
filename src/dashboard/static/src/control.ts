@@ -2,7 +2,7 @@
 // settings form, sent as authenticated POSTs, plus the phase badge whose
 // phase gates them and the run settings summary.
 
-import { forgetStoredToken, getToken } from "./connection";
+import { forgetStoredToken, getToken, isTokenNeeded, setTokenNeeded } from "./connection";
 import { optionalElement, requireElement } from "./dom";
 import {
   addDescribedBy,
@@ -29,6 +29,8 @@ interface ControlResultBody {
   field?: string | null;
   /** The run settings after a settings request or a Start with settings. */
   settings?: SnapshotSettings;
+  /** Why a request was refused as cross site or from another host name. */
+  reason?: string;
 }
 
 /** Where each Controller listens, or null when it is off. */
@@ -39,6 +41,10 @@ interface HealthControllers {
 
 interface HealthBody {
   control_enabled?: boolean;
+  /** False only under --dashboard-no-auth. */
+  auth_required?: boolean;
+  /** Whether the dashboard is bound to a loopback address. */
+  loopback?: boolean;
   controllers?: HealthControllers;
 }
 
@@ -46,6 +52,8 @@ const phaseBadge = requireElement("phase-badge", HTMLElement);
 const subtitleEl = optionalElement("subtitle", HTMLElement);
 const footerNoteEl = optionalElement("footer-note", HTMLElement);
 const controlPanel = optionalElement("control-panel", HTMLElement);
+const ctrlNotice = optionalElement("ctrl-notice", HTMLElement);
+const noAuthBanner = optionalElement("no-auth-banner", HTMLElement);
 const ctrlStart = optionalElement("ctrl-start", HTMLButtonElement);
 const ctrlStop = optionalElement("ctrl-stop", HTMLButtonElement);
 const ctrlQuit = optionalElement("ctrl-quit", HTMLButtonElement);
@@ -80,6 +88,10 @@ const NO_TOKEN = "Enter the control token to change settings";
 
 // Control panel state
 let controlEnabled = false;
+// Health said the dashboard takes no token (--dashboard-no-auth).
+let noAuth = false;
+// The health probe failed, so whether control is on is unknown.
+let probeFailed = false;
 // The Target field: follows the server unless being edited.
 const targetField = ctrlTarget
   ? new FollowedField(ctrlTarget, "Target", (text) => {
@@ -124,6 +136,12 @@ interface HostConfirmation {
 /** True while control is on and the page has no token. */
 export function isControlTokenMissing(): boolean {
   return controlTokenMissing;
+}
+
+/** Whether this page may send control requests: it has the token, or the
+ * dashboard takes none. */
+function hasAccess(): boolean {
+  return !isTokenNeeded() || !!getToken();
 }
 
 /** True once health says control is on. */
@@ -250,7 +268,7 @@ function pendingCount(): number {
 function updateControlEnablement(): void {
   if (!controlPanel || !controlEnabled) return;
 
-  const hasToken = !!getToken();
+  const hasToken = hasAccess();
   const phase = currentPhase || "idle";
   const canStart = hasToken && !inFlight && phase === "idle";
   const pending = pendingCount();
@@ -455,7 +473,7 @@ function handleControlBody(res: Response): Promise<ControlResultBody | null> {
         updateControlEnablement();
         return data;
       }
-      setControlStatus(data.message || "Control rejected", "error");
+      setControlStatus(data.message || refusalText(data.reason), "error");
       if (data.field === "users") setTargetInvalid(true);
       if (data.phase) {
         setPhase(data.phase, false);
@@ -470,13 +488,24 @@ function handleControlBody(res: Response): Promise<ControlResultBody | null> {
   );
 }
 
+/** What a refusal without a message says, by its reason. */
+function refusalText(reason: string | undefined): string {
+  if (reason === "cross_origin") {
+    return "Refused: the request's Origin doesn't match this dashboard's address (another site, or a proxy)";
+  }
+  if (reason === "host_not_allowed") {
+    return "Refused: open the dashboard by its IP address or its --dashboard-host name";
+  }
+  return "Control rejected";
+}
+
 function runControl(
   path: string,
   body?: { users: number } | SettingsBody,
   appliedUsers?: number,
   settled?: (data: ControlResultBody | null) => void
 ): void {
-  if (inFlight || !getToken()) return;
+  if (inFlight || !controlEnabled || !hasAccess()) return;
   inFlight = true;
   updateControlEnablement();
   // The status line is about to stop describing an invalid Target.
@@ -720,13 +749,19 @@ function controllersText(lead: string): string {
 function applyControlChrome(): void {
   if (subtitleEl) {
     subtitleEl.textContent = controlEnabled
-      ? "Live dashboard · control"
-      : "Live dashboard";
+      ? noAuth
+        ? "Live dashboard · control, no token"
+        : "Live dashboard · control"
+      : probeFailed
+        ? "Live dashboard"
+        : "Live dashboard · read-only";
   }
   if (footerNoteEl) {
     const sentences = controlEnabled
       ? [
-          "Start, stop, and adjust users from this panel (authenticated). Stop begins a cancel ramp (decrease) before idle, and users cannot be changed until then.",
+          "Start, stop, and adjust users from this panel" +
+            (noAuth ? "" : " (authenticated)") +
+            ". Stop begins a cancel ramp (decrease) before idle, and users cannot be changed until then.",
           controllersText("Advanced control remains on "),
         ]
       : [
@@ -735,6 +770,109 @@ function applyControlChrome(): void {
         ];
     footerNoteEl.textContent = sentences.filter((s) => s !== "").join(" ");
   }
+}
+
+/** `text` as inline code. */
+function code(text: string): HTMLElement {
+  const el = document.createElement("code");
+  el.textContent = text;
+  return el;
+}
+
+/** A command line as inline code, a word each, so no flag breaks across lines. */
+function command(text: string): DocumentFragment {
+  const fragment = document.createDocumentFragment();
+  text.split(" ").forEach((word, i) => {
+    if (i > 0) fragment.appendChild(document.createTextNode(" "));
+    const el = code(word);
+    el.className = "nowrap";
+    fragment.appendChild(el);
+  });
+  return fragment;
+}
+
+/** A paragraph of text and inline code. */
+function paragraph(...parts: (string | Node)[]): HTMLParagraphElement {
+  const p = document.createElement("p");
+  for (const part of parts) {
+    p.appendChild(typeof part === "string" ? document.createTextNode(part) : part);
+  }
+  return p;
+}
+
+/**
+ * Show the card with `paragraphs` in place of the summary, the settings and
+ * the buttons, which stay in the page, hidden.
+ */
+function showNotice(label: string, paragraphs: HTMLParagraphElement[]): void {
+  if (!controlPanel || !ctrlNotice) return;
+  for (const child of Array.from(controlPanel.children)) {
+    if (child !== ctrlNotice && child.tagName !== "H2") (child as HTMLElement).hidden = true;
+  }
+  ctrlNotice.setAttribute("aria-label", label);
+  ctrlNotice.replaceChildren(...paragraphs);
+  ctrlNotice.hidden = false;
+  controlPanel.classList.remove("hidden");
+}
+
+/** The read-only card: what it can't do, and how to get control. */
+function showReadOnly(): void {
+  // With a token, or --dashboard-no-auth, already given, only control is
+  // missing: the other way would be refused.
+  const howTo =
+    noAuth || getToken()
+      ? paragraph(
+          "To control it from here, restart Goose with ",
+          command("--dashboard-control"),
+          " added."
+        )
+      : paragraph(
+      "To control it from here, restart Goose with ",
+      command("--dashboard-control --dashboard-no-auth"),
+      " (no token), or with ",
+      command("--dashboard-control --dashboard-auth-token <token>"),
+      " and open ",
+      code("http://" + window.location.host + "/?token=<token>"),
+      "."
+    );
+  const paragraphs = [
+    paragraph("Read-only: this dashboard can't start, stop or change the test."),
+    howTo,
+  ];
+  if (controllers && (controllers.telnet || controllers.websocket)) {
+    paragraphs.push(paragraph(controllersText("Control this test via ")));
+  }
+  showNotice("Read-only dashboard", paragraphs);
+}
+
+/** The card when health did not answer. */
+function showProbeFailed(): void {
+  showNotice("Control status unknown", [
+    paragraph(
+      "Couldn't check whether control is on (",
+      code("/api/v1/health"),
+      " failed). Reload to retry."
+    ),
+  ]);
+}
+
+/** The warning a dashboard with no token off loopback carries, always shown. */
+function showNoAuthWarning(): void {
+  if (!noAuthBanner) return;
+  const banner = noAuthBanner;
+  // Shown first, then filled in a later task, so screen readers announce
+  // the alert.
+  banner.className = "banner warn";
+  const text =
+    "WARNING: the dashboard on http://" +
+    window.location.host +
+    " has no token (--dashboard-no-auth). " +
+    (controlEnabled
+      ? "Anyone who can reach this port can watch the test, start and stop it, and point the load at any host."
+      : "Anyone who can reach this port can watch the test.");
+  setTimeout(() => {
+    banner.textContent = text;
+  }, 0);
 }
 
 /** Set up the panel; resolves to whether control is on. */
@@ -748,14 +886,19 @@ export function initControlPanel(): Promise<boolean> {
     })
     .then((health) => {
       controlEnabled = !!(health && health.control_enabled);
+      noAuth = !!health && health.auth_required === false;
+      setTokenNeeded(!noAuth);
+      // A token kept from an earlier run is never needed again here.
+      if (noAuth) forgetStoredToken();
       controllers = (health && health.controllers) || null;
+      if (noAuth && health.loopback === false) showNoAuthWarning();
       applyControlChrome();
       if (!controlEnabled) {
-        controlPanel.classList.add("hidden");
+        showReadOnly();
         return false;
       }
       controlPanel.classList.remove("hidden");
-      if (!getToken()) {
+      if (!hasAccess()) {
         controlTokenMissing = true;
         setBanner(
           "Open this dashboard as http://host:port/?token=… (token required for control).",
@@ -766,10 +909,11 @@ export function initControlPanel(): Promise<boolean> {
       return true;
     })
     .catch(() => {
-      // Health probe failed — leave panel hidden (observe-only fallback).
+      // Health probe failed: say so in the card (observe-only fallback).
       controlEnabled = false;
+      probeFailed = true;
       applyControlChrome();
-      controlPanel.classList.add("hidden");
+      showProbeFailed();
       return false;
     });
 

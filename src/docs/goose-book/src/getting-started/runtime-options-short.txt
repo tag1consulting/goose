@@ -76,6 +76,7 @@ Dashboard:
       --dashboard-port <PORT>         Bind port [default: 5118]
       --dashboard-auth-token <TOKEN>  Auth token
       --dashboard-control             Allow control from the dashboard
+      --dashboard-no-auth             Dashboard without a token
       --dashboard-max-clients <N>     Max live clients [default: 32]
       --no-percentiles-over-time      Don't track per-second response times
 

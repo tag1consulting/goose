@@ -22,7 +22,7 @@ You may find the following resources helpful:
 
 * [**The Goose Book**](https://book.goose.rs/) A comprehensive guide to getting started with Goose.
 
-* [**Live Dashboard**](https://book.goose.rs/controller/dashboard.html) Observe (and optionally control) a running load test from the browser (`--features dashboard`, `--dashboard`, `--dashboard-control`).
+* [**Live Dashboard**](https://book.goose.rs/controller/dashboard.html) Observe (and optionally control) a running load test from the browser (`--features dashboard`, `--dashboard`, `--dashboard-control` with a token or [`--dashboard-no-auth`](https://book.goose.rs/controller/dashboard.html#control-without-a-token)).
 
 * [**Developer Documentation**](https://docs.rs/goose/) Detailed API information and tutorials.
 
