@@ -85,7 +85,7 @@ Controllers:
       --no-telnet              Disable the telnet Controller
       --telnet-host <HOST>     Telnet host [default: 0.0.0.0]
       --telnet-port <PORT>     Telnet port [default: 5116]
-      --no-websocket           Disable the WebSocket Controller
+      --websocket              Enable the WebSocket Controller
       --websocket-host <HOST>  WebSocket host [default: 0.0.0.0]
       --websocket-port <PORT>  WebSocket port [default: 5117]
 

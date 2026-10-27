@@ -1841,8 +1841,8 @@ impl GooseAttack {
             }
         }
 
-        // Configured WebSocket Controller if not disabled.
-        if !self.configuration.no_websocket {
+        // Configured WebSocket Controller if enabled with --websocket.
+        if self.configuration.websocket {
             if let Some(listener) =
                 controller::bind_controller(&self.configuration, ControllerProtocol::WebSocket)
                     .await
@@ -2309,7 +2309,7 @@ impl GooseAttack {
         // Telnet and WebSocket send commands to the parent on one channel, and
         // dashboard control on another, which the parent answers first.
         let (control_tx, controller_channel_rx) = (!self.configuration.no_telnet
-            || !self.configuration.no_websocket)
+            || self.configuration.websocket)
             .then(flume::unbounded)
             .unzip();
         #[cfg(feature = "dashboard")]
@@ -4016,6 +4016,54 @@ fn schedule_unsequenced_transactions(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The telnet Controller listens by default and the WebSocket Controller
+    /// only with `--websocket`.
+    #[tokio::test]
+    async fn websocket_controller_listens_only_when_asked_for() {
+        /// A port nothing listens on, for now.
+        fn free_port() -> String {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.local_addr().unwrap().port().to_string()
+        }
+        for websocket in [false, true] {
+            let (telnet_port, websocket_port) = (free_port(), free_port());
+            let mut args = vec![
+                "--telnet-host",
+                "127.0.0.1",
+                "--telnet-port",
+                &telnet_port,
+                "--websocket-host",
+                "127.0.0.1",
+                "--websocket-port",
+                &websocket_port,
+            ];
+            if websocket {
+                args.push("--websocket");
+            }
+            let configuration = GooseConfiguration::parse_args_default(&args).unwrap();
+            let mut goose_attack = GooseAttack::initialize_with_config(configuration).unwrap();
+            let defaults = goose_attack.defaults.clone();
+            goose_attack.configuration.configure(&defaults).unwrap();
+            goose_attack.configuration.validate().unwrap();
+            let (control_tx, _control_rx) = flume::unbounded();
+            let listening = goose_attack.setup_controllers(&control_tx).await;
+            assert!(listening.telnet);
+            assert_eq!(listening.websocket, websocket);
+            let connects = |port: String| async move {
+                tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
+                    .await
+                    .is_ok()
+            };
+            assert!(connects(telnet_port).await);
+            assert_eq!(
+                connects(websocket_port).await,
+                websocket,
+                "--websocket {}",
+                websocket
+            );
+        }
+    }
 
     // Serial with every test that calls `initialize_attack`: installing the
     // Ctrl-C handler a second time resets the killswitch this test reads.

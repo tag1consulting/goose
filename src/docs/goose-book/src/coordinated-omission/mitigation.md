@@ -190,7 +190,7 @@ The following run is contrived. The [`drupal_memcache`](../example/drupal-memcac
 
 ```bash
 cargo run --release --example drupal_memcache -- --host http://127.0.0.1:8080/ \
-    -u5 -r5 -t20s --co-mitigation average --no-telnet --no-websocket \
+    -u5 -r5 -t20s --co-mitigation average --no-telnet \
     --request-log requests.json --request-format json \
     --report-file report.html --report-file report.json --report-file report.md
 ```
@@ -251,11 +251,11 @@ async fn monitored_request(user: &mut GooseUser) -> TransactionResult {
 
 ### Real-time Monitoring
 
-Use Goose's controllers or the [live dashboard](../controller/dashboard.md) to watch a test while it runs. The Telnet and WebSocket controllers are on by default, and their `metrics` command returns the metrics so far:
+Use Goose's controllers or the [live dashboard](../controller/dashboard.md) to watch a test while it runs. The Telnet controller is on by default, the WebSocket controller with `--websocket`, and their `metrics` command returns the metrics so far:
 
 ```bash
-# The WebSocket controller listens on 0.0.0.0:5117 by default; keep it on this machine
-cargo run --release -- --websocket-host 127.0.0.1 --websocket-port 5117
+# Turn the WebSocket controller on, and keep it on this machine
+cargo run --release -- --websocket --websocket-host 127.0.0.1 --websocket-port 5117
 
 # Monitor for:
 # - Sudden drops in request rate

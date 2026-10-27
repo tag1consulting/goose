@@ -23,7 +23,6 @@ The example names its transactions, such as `anon /`, but not its requests, so e
 05:34:53 [INFO] [scheduler]: allocating transactions and scenarios with RoundRobin scheduler
 05:34:53 [INFO] [scheduler]: initializing 9 user states...
 05:34:53 [INFO] [controller]: Telnet listening on: 0.0.0.0:5116
-05:34:53 [INFO] [controller]: WebSocket listening on: 0.0.0.0:5117
 05:34:53 [INFO] entering GooseAttack phase: Increase
 05:34:53 [INFO] [user 1]: launching user from Anonymous Spanish user
 05:34:54 [INFO] [user 2]: launching user from Anonymous English user

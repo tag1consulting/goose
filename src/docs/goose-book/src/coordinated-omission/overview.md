@@ -58,7 +58,7 @@ Goose adds "synthetic requests" to represent the requests that **would have been
 Goose shows the measured and the adjusted response times side by side, and sums up the events. Here is a real run like the freeze above: one user of a load test whose only transaction requests `/`, against a local server that answers in 1 second, with `--co-mitigation minimum` so the cadence is the user's fastest run. 3.5 seconds into the run the server froze for 30 seconds:
 
 ```bash
-cargo run --release -- --host http://127.0.0.1:8080/ -u1 -r1 -t36s --co-mitigation minimum --no-telnet --no-websocket
+cargo run --release -- --host http://127.0.0.1:8080/ -u1 -r1 -t36s --co-mitigation minimum --no-telnet
 ```
 
 ```

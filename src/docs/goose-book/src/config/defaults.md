@@ -71,7 +71,8 @@ The following defaults can be configured with a `bool`:
  - add request bodies to the request log: `GooseDefault::RequestBody`
  - do not log the response body in the debug log: `GooseDefault::NoDebugBody`
  - do not start telnet Controller thread: `GooseDefault::NoTelnet`
- - do not start WebSocket Controller thread: `GooseDefault::NoWebSocket`
+ - start the WebSocket Controller thread, which is off by default: `GooseDefault::WebSocket`
+ - do not start WebSocket Controller thread, which only warns now that it is off by default, and is refused with `GooseDefault::WebSocket`: `GooseDefault::NoWebSocket`
  - do not autostart load test, wait instead for a Controller to start: `GooseDefault::NoAutoStart`
  - do not ask for gzip compressed responses: `GooseDefault::NoGzip`
  - follow redirect of base_url: `GooseDefault::StickyFollow`

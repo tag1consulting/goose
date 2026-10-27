@@ -6,7 +6,7 @@ The following example was "contrived". The [`drupal_memcache`](../example/drupal
 
 ```bash
 cargo run --release --example drupal_memcache -- --host http://127.0.0.1:8080/ \
-    -u5 -r5 -t20s --co-mitigation average --no-telnet --no-websocket \
+    -u5 -r5 -t20s --co-mitigation average --no-telnet \
     --request-log requests.json --request-format json \
     --report-file report.html --report-file report.json --report-file report.md
 ```

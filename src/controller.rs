@@ -1332,7 +1332,7 @@ impl ListeningControllers {
     pub(crate) fn configured(configuration: &GooseConfiguration) -> Self {
         ListeningControllers {
             telnet: !configuration.no_telnet,
-            websocket: !configuration.no_websocket,
+            websocket: configuration.websocket,
         }
     }
 }
@@ -2473,6 +2473,40 @@ pub(crate) mod tests {
                     text
                 );
             }
+        });
+    }
+
+    /// `config` and `config-json` show that a dashboard auth token is set,
+    /// never the token itself.
+    #[test]
+    #[serial_test::serial]
+    fn test_control_config_hides_the_dashboard_auth_token() {
+        finishes(|| async {
+            let (mut goose_attack, mut run_state) =
+                idle_attack(&["--no-autostart", "--dashboard-auth-token", "s3cret-token"]).await;
+            for (line, json) in [("config-json", true), ("config", false)] {
+                let (controller_tx, controller_rx) = flume::unbounded();
+                run_state.controller_channel_rx = Some(controller_rx);
+                let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+                let command = line.parse::<ControllerCommand>().unwrap();
+                controller_tx.send((command.into(), response_tx)).unwrap();
+                goose_attack
+                    .handle_control_requests(&mut run_state)
+                    .await
+                    .unwrap();
+                let text = match response_rx.await.unwrap() {
+                    ControlReply::Config(config) if json => to_json(&config),
+                    ControlReply::Config(config) => format!("{config:#?}"),
+                    _ => panic!("{} answered no configuration", line),
+                };
+                assert!(!text.contains("s3cret-token"), "{}: {}", line, text);
+                assert!(text.contains("(set)"), "{}: {}", line, text);
+            }
+            // The token the dashboard checks is still the real one.
+            assert_eq!(
+                goose_attack.configuration.dashboard_auth_token(),
+                Some("s3cret-token")
+            );
         });
     }
 
