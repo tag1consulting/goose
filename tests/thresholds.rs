@@ -789,6 +789,62 @@ async fn rps_without_a_hold_has_no_samples() {
 
 #[tokio::test]
 #[serial]
+/// A test plan whose last step holds 0 users stops the run as a ramp down to 0
+/// does: it keeps its metrics, writes its report and judges every rule, so a
+/// passing rule returns Ok and a failing one returns ThresholdsFailed.
+async fn a_plan_ending_on_a_0_user_hold_judges_its_rules() {
+    // Hold 2 users, ramp down to 0, then hold 0 users to the end.
+    const PLAN: &str = "2,1s;2,2s;0,1s;0,2s";
+
+    // A passing rule, which never stops the run, so the run reaches the 0 user hold.
+    let server = MockServer::start();
+    let _mocks = setup_mock_server_endpoints(&server);
+    let json = report_path("zero-hold.json");
+    let goose_attack = bare_load_test(
+        &server,
+        vec![
+            "--test-plan",
+            PLAN,
+            "--threshold",
+            "p95<5s",
+            "--report-file",
+            json.to_str().unwrap(),
+        ],
+        vec![transaction!(get_ok)],
+    );
+    let (_, result) = run(goose_attack).await;
+    let json_text = std::fs::read_to_string(&json).unwrap_or_default();
+    let _ = std::fs::remove_file(&json);
+    let metrics = result.expect("the rule passes");
+    assert!(requests_made(&metrics) > 0);
+    assert_eq!(metrics.thresholds.len(), 1, "{:?}", metrics.thresholds);
+    assert!(metrics.thresholds[0].passed, "{:?}", metrics.thresholds[0]);
+    assert!(json_text.contains("\"thresholds\""), "{}", json_text);
+
+    // A failing rule, judged only at the end, so the run reaches the 0 user hold.
+    let server = MockServer::start();
+    let _mocks = setup_mock_server_endpoints(&server);
+    let goose_attack = bare_load_test(
+        &server,
+        vec![
+            "--test-plan",
+            PLAN,
+            "--threshold",
+            "p95<1us",
+            "--no-threshold-abort",
+        ],
+        vec![transaction!(get_ok)],
+    );
+    let (_, result) = run(goose_attack).await;
+    let (failed, metrics) = thresholds_failed(result);
+    assert!(requests_made(&metrics) > 0);
+    assert_eq!(failed.len(), 1);
+    assert_eq!(failed[0].rule, "p95<1us");
+    assert!(!failed[0].aborted);
+}
+
+#[tokio::test]
+#[serial]
 /// The rule that stopped the run says so in the console's Thresholds table and in
 /// every report, and a JSON report rendered again says the same.
 async fn reports_show_the_rule_that_stopped_the_run() {
