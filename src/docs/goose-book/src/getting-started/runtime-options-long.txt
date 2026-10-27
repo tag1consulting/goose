@@ -524,7 +524,8 @@ Dashboard:
           Bind host [default: 127.0.0.1]
 
           The address the dashboard listens on, with --dashboard. An address
-          that is not a loopback address needs --dashboard-auth-token.
+          that is not a loopback address needs --dashboard-auth-token or
+          --dashboard-no-auth.
 
           Example: --dashboard-host 0.0.0.0. Set in code with
           GooseDefault::DashboardHost.
@@ -543,7 +544,8 @@ Dashboard:
 
           The token a dashboard client must send, as an Authorization: Bearer
           header or a token query parameter. Needed when --dashboard-host is not
-          a loopback address, and always with --dashboard-control.
+          a loopback address, and with --dashboard-control, unless
+          --dashboard-no-auth is set.
 
           Set in code with GooseDefault::DashboardAuthToken.
 
@@ -551,10 +553,20 @@ Dashboard:
           Allow control from the dashboard
 
           Lets the dashboard start, stop and quit the load test and change its
-          users. Needs --dashboard and --dashboard-auth-token, even on a
-          loopback address.
+          users. Needs --dashboard, and --dashboard-auth-token or
+          --dashboard-no-auth.
 
           Set in code with GooseDefault::DashboardControl.
+
+      --dashboard-no-auth
+          Dashboard without a token
+
+          Allow dashboard access and control without a token. Anyone who can
+          reach the port can start, stop and redirect the test; on anything but
+          loopback Goose warns at startup. Needs --dashboard, and can't be used
+          with --dashboard-auth-token.
+
+          Set in code with GooseDefault::DashboardNoAuth.
 
       --dashboard-max-clients <N>
           Max live clients [default: 32]

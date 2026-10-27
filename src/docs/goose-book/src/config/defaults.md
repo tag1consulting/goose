@@ -80,6 +80,7 @@ The following defaults can be configured with a `bool`:
  - add graph data to the JSON report: `GooseDefault::ReportGraphData`
  - serve the live web dashboard: `GooseDefault::Dashboard`
  - allow control from the dashboard: `GooseDefault::DashboardControl`
+ - allow dashboard access and control without a token: `GooseDefault::DashboardNoAuth`
  - do not track per-second response times: `GooseDefault::NoPercentilesOverTime`
 
 A default names a path, never the run's folder. `GooseDefault::OutputDir` needs the dashboard, or an output flag given without a path on the command line. Without either, Goose refuses it with an error before the load test starts.

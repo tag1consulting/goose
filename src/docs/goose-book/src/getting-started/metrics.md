@@ -554,7 +554,7 @@ The `GET /large-file` row then holds the time to the first byte, and the `DOWNLO
 
 ### Live dashboard
 
-For **live** metrics while a load test is running (RPS, users, latency charts, request/error tables), enable the optional [Live Dashboard](../controller/dashboard.md): compile with `--features dashboard` and run with `--dashboard`. By default it is observe-only; with `--dashboard-control` and a required auth token the browser can also Start, Stop, and set users. Controllers remain the power-user path for host/test-plan changes, rate tuning, and process shutdown. Enabling the dashboard records the same per-second GraphData series used for HTML report graphs, and the per second response time histograms behind both heatmaps.
+For **live** metrics while a load test is running (RPS, users, latency charts, request/error tables), enable the optional [Live Dashboard](../controller/dashboard.md): compile with `--features dashboard` and run with `--dashboard`. By default it is observe-only; with `--dashboard-control` and an auth token, or `--dashboard-no-auth` for [control without a token](../controller/dashboard.md#control-without-a-token), the browser can also Start, Stop, and set users. Controllers remain the power-user path for host/test-plan changes, rate tuning, and process shutdown. Enabling the dashboard records the same per-second GraphData series used for HTML report graphs, and the per second response time histograms behind both heatmaps.
 
 ### Developer documentation
 Additional details about how metrics are collected, stored, and displayed can be found [in the developer documentation](https://docs.rs/goose/*/goose/metrics/index.html).

@@ -101,7 +101,7 @@ On a long soak test with `--dashboard-control` and no `--report-file` path, turn
 
 With `--output-dir goose-runs/nightly`, the panel lists the folders in `goose-runs`. It lists only folders whose name is a letter or digit followed by any mix of letters, digits, `.`, `_` and `-`, so a run written to `goose-runs/my run` is not listed. For such a folder, the banner at the end of the run says where the report was saved and offers no downloads.
 
-**13. Save report now, Delete, and changing either switch need `--dashboard-control` and the control token, like Start and Stop.** Without control the switches are shown read only, so Save report stays on and every `--dashboard` run writes `report.json` and `report.html` into its folder, except under `--no-metrics`. Goose then also keeps the run's graph data for the whole run (rule 10).
+**13. Save report now, Delete, and changing either switch need `--dashboard-control` and the control token, or `--dashboard-no-auth` (see [control without a token](../controller/dashboard.md#control-without-a-token)), like Start and Stop.** Without control the switches are shown read only, so Save report stays on and every `--dashboard` run writes `report.json` and `report.html` into its folder, except under `--no-metrics`. Goose then also keeps the run's graph data for the whole run (rule 10).
 
 ```bash
 TOKEN=$(openssl rand -hex 16)
