@@ -69,7 +69,7 @@ A `TransactionError::Custom` or `Url` error, or a `Reqwest` error from reading o
  ------------------------------------------------------------------------------
  Count       | Transaction: error
  ------------------------------------------------------------------------------
- 85,004        1.3 ErrUser flaky: TransactionError: custom error (every third call fails)
+ 27,621        1.3 ErrUser flaky: TransactionError: custom error (every third call fails)
  ------------------------------------------------------------------------------
 ```
 
