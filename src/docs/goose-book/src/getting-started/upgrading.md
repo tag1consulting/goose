@@ -15,7 +15,7 @@ Change the dependency to `goose = "^0.19"`. The changes below can break a load t
 | Controller commands `hatchrate` and `startuptime` | `increaserate` and `increasetime`, see [Controller commands](../controller/telnet.md#controller-commands) |
 | Crate feature `gaggle` | None: Gaggle is still not available in 0.19 and is planned for 0.20, see [Gaggle](../gaggle/overview.md) |
 
-The new `--decrease-rate` and `--decrease-time` control the ramp down; without them Goose stops all users at once, as 0.18 did. See [the ramp down rate](common.md#controlling-the-ramp-down-rate).
+The new `--decrease-rate` and `--decrease-time` control the ramp down; without them Goose stops all users at once, as 0.18 did. See [the ramp down rate](common.md#controlling-the-ramp-down-rate). Neither is allowed with `--iterations`: the run fails at startup with ``` `configuration.decrease_rate` can not be set with `configuration.iterations`. ```, or the same for `decrease_time`. Drop the decrease option, as each user stops after its iterations anyway.
 
 ## API changes
 
