@@ -868,8 +868,14 @@ struct DashboardState {
     /// `Some` only with dashboard control, when the control routes are
     /// registered and require a non-empty token.
     control_tx: Option<flume::Sender<ControlRequest>>,
-    /// Auth token; empty means observe auth is disabled (loopback-only runs).
+    /// Auth token; empty means observe auth is disabled (loopback-only runs,
+    /// and every run under `--dashboard-no-auth`).
     auth_token: String,
+    /// `--dashboard-no-auth`: control needs no token, and the control routes
+    /// refuse a cross site request instead.
+    no_auth: bool,
+    /// Whether the dashboard is bound to a loopback address.
+    loopback: bool,
     /// Concurrent control POSTs currently waiting on the main loop.
     control_in_flight: Arc<AtomicUsize>,
     /// Concurrent `GET /api/v1/series` requests waiting on the main loop.
@@ -957,6 +963,10 @@ struct HealthResponse {
     active_sse_clients: usize,
     /// Whether the Start/Stop/Users/Quit control and Delete endpoints are registered.
     control_enabled: bool,
+    /// Whether a request needs the token: false only under `--dashboard-no-auth`.
+    auth_required: bool,
+    /// Whether the dashboard is bound to a loopback address.
+    loopback: bool,
     /// Where the telnet and WebSocket Controllers listen.
     controllers: HealthControllers,
 }
@@ -1035,14 +1045,26 @@ pub(crate) async fn setup_dashboard(
         Arc::clone(&active_sse),
     );
     let control_enabled = control_tx.is_some();
+    let no_auth = configuration.dashboard_no_auth;
+    // Loopback by the configured name, the same rule that lets the dashboard
+    // run without a token. Any other name needs a token, and a hostname that
+    // resolves to 127.0.1.1 must still accept its own name as `Host`.
+    let loopback = crate::config::is_loopback_bind(host);
     let state = DashboardState {
         hub,
         request_tx,
         control_tx,
-        auth_token: configuration
-            .dashboard_auth_token()
-            .unwrap_or_default()
-            .to_string(),
+        // Validation refuses a token with --dashboard-no-auth; never keep one.
+        auth_token: if no_auth {
+            String::new()
+        } else {
+            configuration
+                .dashboard_auth_token()
+                .unwrap_or_default()
+                .to_string()
+        },
+        no_auth,
+        loopback,
         control_in_flight: Arc::new(AtomicUsize::new(0)),
         series_in_flight: Arc::new(AtomicUsize::new(0)),
         series_cache: Arc::new(Mutex::new(HashMap::new())),
@@ -1063,17 +1085,28 @@ pub(crate) async fn setup_dashboard(
         },
     };
 
-    // Loopback by the configured name, the same rule that lets the dashboard
-    // run without a token. Any other name needs a token, and a hostname that
-    // resolves to 127.0.1.1 must still accept its own name as `Host`.
-    let app = build_router(state, crate::config::is_loopback_bind(host));
+    let app = build_router(state, host);
     let max_connections = connection_cap(max_sse_clients);
 
-    if control_enabled {
-        info!("[dashboard]: listening on http://{bound} (control enabled)");
-        info!("[dashboard]: control POST /api/v1/control/* requires Authorization: Bearer <token>");
-    } else {
-        info!("[dashboard]: listening on http://{bound} (read-only)");
+    let token = !no_auth && configuration.dashboard_auth_token().is_some();
+    for line in startup_lines(
+        &bound.to_string(),
+        control_enabled,
+        no_auth,
+        token,
+        loopback,
+    ) {
+        match line {
+            StartupLine::Info(text) => info!("{text}"),
+            StartupLine::Warn(text) => warn!("{text}"),
+            StartupLine::Block(text) => {
+                // Straight to stderr, so neither -q nor the log level hides
+                // it; the Goose log gets it at warn level too.
+                let rule = "=".repeat(78);
+                eprintln!("{rule}\n{text}\n{rule}");
+                warn!("[dashboard]: {}", text.replace('\n', " "));
+            }
+        }
     }
 
     let (stop_tx, stop_rx) = watch::channel(false);
@@ -1095,6 +1128,84 @@ pub(crate) async fn setup_dashboard(
         close_tx,
         server,
     }))
+}
+
+/// One line, or block, Goose prints when the dashboard starts.
+#[derive(Debug, PartialEq)]
+enum StartupLine {
+    Info(String),
+    Warn(String),
+    /// Written straight to stderr, and to the Goose log at warn level.
+    Block(String),
+}
+
+/// What Goose says when the dashboard binds `bound`: where it listens, and
+/// how to get control, or the warning a dashboard with no token earns. The
+/// token is never printed, only the `<token>` placeholder.
+fn startup_lines(
+    bound: &str,
+    control: bool,
+    no_auth: bool,
+    token: bool,
+    loopback: bool,
+) -> Vec<StartupLine> {
+    let mut lines = Vec::new();
+    let listening = |mode: &str| {
+        StartupLine::Info(format!("[dashboard]: listening on http://{bound} ({mode})"))
+    };
+    match (control, no_auth) {
+        // With a token already set, --dashboard-no-auth would be refused.
+        (false, false) if token => {
+            lines.push(listening("read-only"));
+            lines.push(StartupLine::Info(
+                "[dashboard]: read-only; for control add --dashboard-control".to_string(),
+            ));
+        }
+        (false, false) => {
+            lines.push(listening("read-only"));
+            lines.push(StartupLine::Info(
+                "[dashboard]: read-only; for control add --dashboard-control and either --dashboard-no-auth (no token) or --dashboard-auth-token <token>".to_string(),
+            ));
+        }
+        (false, true) => {
+            lines.push(listening("read-only, no token"));
+            lines.push(StartupLine::Info(
+                "[dashboard]: read-only; for control add --dashboard-control".to_string(),
+            ));
+        }
+        (true, false) => {
+            lines.push(listening("control enabled"));
+            lines.push(StartupLine::Info(format!(
+                "[dashboard]: open http://{bound}/?token=<token> to control the test"
+            )));
+        }
+        (true, true) => {
+            lines.push(listening("control enabled, no token"));
+            if loopback {
+                lines.push(StartupLine::Warn(
+                    "[dashboard]: --dashboard-no-auth: anyone on this machine can start, stop and redirect the test".to_string(),
+                ));
+            }
+        }
+    }
+    if no_auth && !loopback {
+        let port = bound.rsplit(':').next().unwrap_or("5118");
+        let who = if control {
+            "Anyone who can reach this port can watch the test, start and stop it,\n\
+             and point the load at any host."
+        } else {
+            "Anyone who can reach this port can watch the test."
+        };
+        lines.push(StartupLine::Block(format!(
+            "WARNING: the dashboard on http://{bound} has no token (--dashboard-no-auth).\n\
+             {who}\n\
+             Safer: bind 127.0.0.1 and use an ssh forward (ssh -L {port}:127.0.0.1:{port} host),\n\
+             or use --dashboard-auth-token in place of --dashboard-no-auth. Only IP addresses,\n\
+             localhost and the --dashboard-host name are accepted as Host; set --dashboard-host\n\
+             to the DNS name you browse to."
+        )));
+    }
+    lines
 }
 
 /// Handle on the running dashboard HTTP server.
@@ -1257,9 +1368,14 @@ fn is_connection_error(e: &std::io::Error) -> bool {
 /// Control routes are registered only when `state.control_tx` is set
 /// (otherwise POST /api/v1/control/* and DELETE /api/v1/reports/{name} → 404). On a loopback bind every request
 /// must carry a loopback `Host`, so a page that rebinds its own domain to
-/// 127.0.0.1 cannot read the API.
-fn build_router(state: DashboardState, loopback_bind: bool) -> Router {
+/// 127.0.0.1 cannot read the API. Under `--dashboard-no-auth` the control
+/// routes refuse a cross site request, and on any other bind every request
+/// must carry an IP literal or `host`, the configured `--dashboard-host`, as
+/// its `Host`.
+fn build_router(state: DashboardState, host: &str) -> Router {
     let control_enabled = state.control_tx.is_some();
+    let loopback_bind = state.loopback;
+    let no_auth = state.no_auth;
     let mut router = Router::new()
         .route("/", get(index_handler))
         .route("/static/app.js", get(app_js_handler))
@@ -1287,12 +1403,23 @@ fn build_router(state: DashboardState, loopback_bind: bool) -> Router {
                 post(control_report_now_handler),
             )
             .layer(axum::extract::DefaultBodyLimit::max(CONTROL_BODY_LIMIT));
+        // With no token, nothing else stops another site's page posting here.
+        let control_routes = if no_auth {
+            control_routes.route_layer(axum::middleware::from_fn(require_same_origin_json))
+        } else {
+            control_routes
+        };
         router = router.merge(control_routes);
     }
 
     if loopback_bind {
         // Added before the header layers so a refusal carries them too.
         router = router.layer(axum::middleware::from_fn(require_loopback_host));
+    } else if no_auth {
+        router = router.layer(axum::middleware::from_fn_with_state(
+            Arc::<str>::from(host),
+            require_ip_or_configured_host,
+        ));
     }
 
     router
@@ -1340,6 +1467,106 @@ async fn require_loopback_host(
     }
 }
 
+/// A refusal of the no token guards: 403 with `{ "ok": false, "reason": ... }`.
+fn guard_refusal(reason: &'static str) -> Response<Body> {
+    (
+        StatusCode::FORBIDDEN,
+        Json(serde_json::json!({ "ok": false, "reason": reason })),
+    )
+        .into_response()
+}
+
+/// Refuse a control request another site's page could send (403
+/// `cross_origin`): one with an `Origin` other than `http://` and its own
+/// `Host`, or without `Content-Type: application/json`, which a form or a
+/// simple `fetch` can't send. Used under `--dashboard-no-auth` only, where no
+/// token stands in the way.
+async fn require_same_origin_json(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response<Body> {
+    let headers = request.headers();
+    let host = headers
+        .get(header::HOST)
+        .and_then(|host| host.to_str().ok());
+    let same_origin = match headers.get(header::ORIGIN) {
+        None => true,
+        Some(origin) => match (origin.to_str().ok(), host) {
+            (Some(origin), Some(host)) => origin
+                .strip_prefix("http://")
+                .is_some_and(|rest| rest.eq_ignore_ascii_case(host)),
+            _ => false,
+        },
+    };
+    let json = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(is_json_content_type);
+    if same_origin && json {
+        next.run(request).await
+    } else {
+        guard_refusal("cross_origin")
+    }
+}
+
+/// True for `application/json`, with or without parameters.
+fn is_json_content_type(value: &str) -> bool {
+    value
+        .split(';')
+        .next()
+        .is_some_and(|media| media.trim().eq_ignore_ascii_case("application/json"))
+}
+
+/// Refuse a request whose `Host` is neither an IP literal, a loopback name
+/// nor the configured `--dashboard-host` (403 `host_not_allowed`). Used under
+/// `--dashboard-no-auth` on a non-loopback bind, against DNS rebinding: a
+/// rebinding page arrives with its own domain as both `Host` and `Origin`.
+async fn require_ip_or_configured_host(
+    State(configured): State<Arc<str>>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response<Body> {
+    let allowed = request
+        .headers()
+        .get(header::HOST)
+        .and_then(|host| host.to_str().ok())
+        .is_some_and(|host| is_ip_or_configured_host(host, &configured));
+    if allowed {
+        next.run(request).await
+    } else {
+        guard_refusal("host_not_allowed")
+    }
+}
+
+/// True when a `Host` header value is an IP literal (v4, or bracketed v6),
+/// `localhost`, or the configured host name, with or without a port.
+fn is_ip_or_configured_host(value: &str, configured: &str) -> bool {
+    // An authority also parses `user@host`, which is no valid `Host`.
+    if value.contains('@') {
+        return false;
+    }
+    let Ok(authority) = value.parse::<axum::http::uri::Authority>() else {
+        return false;
+    };
+    let host = authority.host();
+    let unbracketed = |h: &str| -> String {
+        h.strip_prefix('[')
+            .and_then(|h| h.strip_suffix(']'))
+            .unwrap_or(h)
+            .to_string()
+    };
+    // A bare IPv6 address is not a valid `Host`; it needs its brackets.
+    let ip = if host.starts_with('[') {
+        unbracketed(host).parse::<std::net::Ipv6Addr>().is_ok()
+    } else {
+        host.parse::<std::net::Ipv4Addr>().is_ok()
+    };
+    // A rebinding page never carries a loopback name, and an ssh forward to
+    // this machine sends one.
+    ip || crate::config::is_loopback_bind(host)
+        || unbracketed(host).eq_ignore_ascii_case(&unbracketed(configured.trim()))
+}
+
 /// True when a `Host` header value names a loopback host: `localhost`, an
 /// address in `127.0.0.0/8` or `[::1]`, with or without a port.
 fn is_loopback_host(value: &str) -> bool {
@@ -1379,6 +1606,8 @@ async fn health_handler(State(state): State<Arc<DashboardState>>) -> impl IntoRe
         build_count: state.hub.build_count(),
         active_sse_clients: state.hub.active_sse_clients(),
         control_enabled: state.control_tx.is_some(),
+        auth_required: !state.no_auth,
+        loopback: state.loopback,
         controllers: state.controllers.clone(),
     })
 }
@@ -2094,6 +2323,15 @@ fn authorize_control(
     false
 }
 
+impl DashboardState {
+    /// Authorize a control request: under `--dashboard-no-auth` every one,
+    /// as the cross site guard in front of the control routes has passed it;
+    /// otherwise [`authorize_control`] with the configured token.
+    fn authorize_control(&self, headers: &HeaderMap, query_token: Option<&str>) -> bool {
+        self.no_auth || authorize_control(&self.auth_token, headers, query_token)
+    }
+}
+
 /// Extract a Bearer token from `Authorization`. Scheme match is case-insensitive
 /// (RFC 7235); the token itself is compared separately with constant-time eq.
 ///
@@ -2447,7 +2685,7 @@ async fn control_without_body(
     command: ControllerCommand,
     name: &str,
 ) -> Response<Body> {
-    if !authorize_control(&state.auth_token, headers, query.token.as_deref()) {
+    if !state.authorize_control(headers, query.token.as_deref()) {
         warn!("[dashboard]: control {name} auth failure");
         return StatusCode::UNAUTHORIZED.into_response();
     }
@@ -2498,7 +2736,7 @@ async fn control_with_settings(
     body: &[u8],
     name: &str,
 ) -> Response<Body> {
-    if !authorize_control(&state.auth_token, headers, query.token.as_deref()) {
+    if !state.authorize_control(headers, query.token.as_deref()) {
         warn!("[dashboard]: control {name} auth failure");
         return StatusCode::UNAUTHORIZED.into_response();
     }
@@ -2576,7 +2814,7 @@ async fn delete_report_handler(
     path: Result<axum::extract::Path<String>, axum::extract::rejection::PathRejection>,
     Query(query): Query<TokenQuery>,
 ) -> Response<Body> {
-    if !authorize_control(&state.auth_token, &headers, query.token.as_deref()) {
+    if !state.authorize_control(&headers, query.token.as_deref()) {
         warn!("[dashboard]: delete report auth failure");
         return StatusCode::UNAUTHORIZED.into_response();
     }
@@ -2642,7 +2880,7 @@ async fn control_users_handler(
     Query(query): Query<TokenQuery>,
     body: Bytes,
 ) -> Response<Body> {
-    if !authorize_control(&state.auth_token, &headers, query.token.as_deref()) {
+    if !state.authorize_control(&headers, query.token.as_deref()) {
         warn!("[dashboard]: control users auth failure");
         return StatusCode::UNAUTHORIZED.into_response();
     }
@@ -2687,7 +2925,7 @@ async fn control_report_handler(
     Query(query): Query<TokenQuery>,
     body: Bytes,
 ) -> Response<Body> {
-    if !authorize_control(&state.auth_token, &headers, query.token.as_deref()) {
+    if !state.authorize_control(&headers, query.token.as_deref()) {
         warn!("[dashboard]: control report auth failure");
         return StatusCode::UNAUTHORIZED.into_response();
     }
@@ -2704,7 +2942,7 @@ async fn control_report_now_handler(
     Query(query): Query<TokenQuery>,
     body: Bytes,
 ) -> Response<Body> {
-    if !authorize_control(&state.auth_token, &headers, query.token.as_deref()) {
+    if !state.authorize_control(&headers, query.token.as_deref()) {
         warn!("[dashboard]: control report now auth failure");
         return StatusCode::UNAUTHORIZED.into_response();
     }
@@ -2893,28 +3131,79 @@ mod tests {
     }
 
     async fn bind_dashboard(token: &str) -> (DashboardSetup, String) {
-        bind_dashboard_with(token, 0, None).await
+        bind_dashboard_with(TestBind::token(token)).await
     }
 
-    async fn bind_dashboard_with(
-        token: &str,
+    /// How a test binds the dashboard: the token, `--dashboard-no-auth`, the
+    /// bind host, the live client cap, and the control channel, given only
+    /// with control on. Always on port 0.
+    struct TestBind {
+        token: String,
+        no_auth: bool,
+        host: String,
         max_clients: u32,
         control: Option<flume::Sender<ControlRequest>>,
-    ) -> (DashboardSetup, String) {
+    }
+
+    impl TestBind {
+        /// Loopback, read-only, with `token` ("" for none).
+        fn token(token: &str) -> Self {
+            TestBind {
+                token: token.to_string(),
+                no_auth: false,
+                host: "127.0.0.1".to_string(),
+                max_clients: 0,
+                control: None,
+            }
+        }
+
+        /// A row of the shared configuration matrix, with `control` given
+        /// when the row turns control on.
+        fn row(row: &crate::config::DashboardRow, control: flume::Sender<ControlRequest>) -> Self {
+            let configuration = crate::config::dashboard_row_configuration(row);
+            TestBind {
+                token: configuration
+                    .dashboard_auth_token()
+                    .unwrap_or_default()
+                    .to_string(),
+                no_auth: configuration.dashboard_no_auth,
+                host: configuration.dashboard_host().to_string(),
+                max_clients: 0,
+                control: configuration.dashboard_control.then_some(control),
+            }
+        }
+
+        fn control(mut self, control: flume::Sender<ControlRequest>) -> Self {
+            self.control = Some(control);
+            self
+        }
+
+        /// 0 leaves the cap at its default.
+        fn max_clients(mut self, max_clients: u32) -> Self {
+            self.max_clients = max_clients;
+            self
+        }
+    }
+
+    async fn bind_dashboard_with(bind: TestBind) -> (DashboardSetup, String) {
         let config = GooseConfiguration {
             dashboard: true,
-            dashboard_control: control.is_some(),
-            dashboard_host: Some("127.0.0.1".to_string()),
+            dashboard_control: bind.control.is_some(),
+            dashboard_no_auth: bind.no_auth,
+            dashboard_host: Some(bind.host),
             dashboard_port: Some(0),
-            dashboard_auth_token: Some(token.to_string()),
-            // 0 leaves the cap at its default.
-            dashboard_max_clients: (max_clients > 0).then_some(max_clients),
+            dashboard_auth_token: Some(bind.token),
+            dashboard_max_clients: (bind.max_clients > 0).then_some(bind.max_clients),
             ..Default::default()
         };
-        let setup = setup_dashboard(&config, control, ListeningControllers::configured(&config))
-            .await
-            .expect("bind")
-            .expect("enabled");
+        let setup = setup_dashboard(
+            &config,
+            bind.control,
+            ListeningControllers::configured(&config),
+        )
+        .await
+        .expect("bind")
+        .expect("enabled");
         let base = format!("http://127.0.0.1:{}", setup.bound_port);
         let client = reqwest::Client::new();
         for _ in 0..50 {
@@ -2953,7 +3242,8 @@ mod tests {
         String,
         DashboardServer,
     ) {
-        let (setup, base) = bind_dashboard_with(token, max_clients, None).await;
+        let (setup, base) =
+            bind_dashboard_with(TestBind::token(token).max_clients(max_clients)).await;
         let hub_builds = Arc::clone(&setup.build_count);
         let parent_builds = Arc::new(AtomicU64::new(0));
         let parent = spawn_mock_parent(setup.request_rx, Arc::clone(&parent_builds));
@@ -3307,7 +3597,8 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn settings_routes_require_token_and_check_body() {
         let (control_tx, control_rx) = flume::unbounded();
-        let (setup, base) = bind_dashboard_with("s3cret", 0, Some(control_tx)).await;
+        let (setup, base) =
+            bind_dashboard_with(TestBind::token("s3cret").control(control_tx)).await;
         let parent = spawn_mock_parent(setup.request_rx, Arc::new(AtomicU64::new(0)));
         let control = spawn_control_parent(control_rx, answer_ok);
         drop(setup.close_tx);
@@ -4192,49 +4483,458 @@ mod tests {
         parent.abort();
     }
 
+    /// The requests the HTTP matrix sends every accepting row: method, path
+    /// and a valid JSON body.
+    const MATRIX_REQUESTS: [(&str, &str, &str); 10] = [
+        ("GET", "/api/v1/health", ""),
+        ("GET", "/api/v1/snapshot", ""),
+        ("POST", "/api/v1/control/start", "{}"),
+        ("POST", "/api/v1/control/stop", "{}"),
+        ("POST", "/api/v1/control/users", "{\"users\":3}"),
+        ("POST", "/api/v1/control/settings", "{}"),
+        ("POST", "/api/v1/control/report", "{\"save\":true}"),
+        ("POST", "/api/v1/control/report/now", "{}"),
+        ("POST", "/api/v1/control/quit", "{}"),
+        ("DELETE", "/api/v1/reports/no-such-run", ""),
+    ];
+
+    /// The status each accepting row answers each of [`MATRIX_REQUESTS`],
+    /// sent with no token, the right token and a wrong one, all as the page
+    /// sends them: JSON, no `Origin`, a loopback IP `Host`. A missing report
+    /// is a 404 once a Delete is authorized.
+    const MATRIX_STATUS: [(&str, [[u16; 3]; 10]); 6] = [
+        (
+            "R1",
+            [
+                [200; 3], [200; 3], [404; 3], [404; 3], [404; 3], [404; 3], [404; 3], [404; 3],
+                [404; 3], [404; 3],
+            ],
+        ),
+        (
+            "R2",
+            [
+                [200; 3],
+                [401, 200, 401],
+                [404; 3],
+                [404; 3],
+                [404; 3],
+                [404; 3],
+                [404; 3],
+                [404; 3],
+                [404; 3],
+                [404; 3],
+            ],
+        ),
+        (
+            "R3",
+            [
+                [200; 3],
+                [401, 200, 401],
+                [401, 200, 401],
+                [401, 200, 401],
+                [401, 200, 401],
+                [401, 200, 401],
+                [401, 200, 401],
+                [401, 200, 401],
+                [401, 200, 401],
+                [401, 404, 401],
+            ],
+        ),
+        (
+            "R4",
+            [
+                [200; 3], [200; 3], [200; 3], [200; 3], [200; 3], [200; 3], [200; 3], [200; 3],
+                [200; 3], [404; 3],
+            ],
+        ),
+        (
+            "R5",
+            [
+                [200; 3], [200; 3], [404; 3], [404; 3], [404; 3], [404; 3], [404; 3], [404; 3],
+                [404; 3], [404; 3],
+            ],
+        ),
+        (
+            "R6",
+            [
+                [200; 3], [200; 3], [200; 3], [200; 3], [200; 3], [200; 3], [200; 3], [200; 3],
+                [200; 3], [404; 3],
+            ],
+        ),
+    ];
+
+    /// What `GET /api/v1/health` says for each accepting row:
+    /// `control_enabled`, `auth_required` and `loopback`.
+    const MATRIX_HEALTH: [(&str, [bool; 3]); 6] = [
+        ("R1", [false, true, true]),
+        ("R2", [false, true, true]),
+        ("R3", [true, true, true]),
+        ("R4", [true, false, true]),
+        ("R5", [false, false, true]),
+        ("R6", [true, false, false]),
+    ];
+
+    /// The cross site probes, for the rows with control and no token, on
+    /// each request of [`MATRIX_REQUESTS`] that changes something: a form
+    /// post, a body-less request with no JSON content type, JSON with a
+    /// foreign `Origin`, and JSON with the page's own `Origin`.
+    const MATRIX_PROBES: [(&str, [u16; 4]); 8] = [
+        ("/api/v1/control/start", [403, 403, 403, 200]),
+        ("/api/v1/control/stop", [403, 403, 403, 200]),
+        ("/api/v1/control/users", [403, 403, 403, 200]),
+        ("/api/v1/control/settings", [403, 403, 403, 200]),
+        ("/api/v1/control/report", [403, 403, 403, 200]),
+        ("/api/v1/control/report/now", [403, 403, 403, 200]),
+        ("/api/v1/control/quit", [403, 403, 403, 200]),
+        ("/api/v1/reports/no-such-run", [403, 403, 403, 404]),
+    ];
+
+    /// What a page at another name gets, for each accepting row, as `Host`
+    /// (and as `Origin` on the Start): `[snapshot as rebind.example,
+    /// Start as rebind.example, snapshot as the configured host,
+    /// snapshot as an IPv6 literal]`.
+    const MATRIX_HOSTS: [(&str, [u16; 4]); 6] = [
+        ("R1", [403, 403, 200, 200]),
+        ("R2", [403, 403, 401, 401]),
+        ("R3", [403, 403, 401, 401]),
+        ("R4", [403, 403, 200, 200]),
+        ("R5", [403, 403, 200, 200]),
+        ("R6", [403, 403, 200, 200]),
+    ];
+
+    /// Request headers, by name and value.
+    type Headers<'a> = Vec<(&'a str, &'a str)>;
+
+    /// Send `method path` on a fresh connection with `Host: host`, the
+    /// headers and the body; answers the status and the body.
+    async fn raw_call(
+        port: u16,
+        method: &str,
+        path: &str,
+        host: &str,
+        headers: &[(&str, &str)],
+        body: &str,
+    ) -> (u16, String) {
+        let mut request = format!(
+            "{method} {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\nContent-Length: {}\r\n",
+            body.len()
+        );
+        for (name, value) in headers {
+            request.push_str(&format!("{name}: {value}\r\n"));
+        }
+        request.push_str("\r\n");
+        request.push_str(body);
+        let reply = raw_exchange(port, &request).await;
+        let status = reply.get(9..12).and_then(|s| s.parse().ok()).unwrap_or(0);
+        let body = reply
+            .split_once("\r\n\r\n")
+            .map(|(_, body)| body.to_string())
+            .unwrap_or_default();
+        (status, body)
+    }
+
+    /// Every accepting row of the shared configuration matrix, bound through
+    /// the one helper, answers every request of the fixed list as its table
+    /// says: with no token, the right one and a wrong one; under the cross
+    /// site probes when it has control and no token; and as another `Host`.
+    /// Replaces `control_disabled_returns_404_and_health_false`.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn control_disabled_returns_404_and_health_false() {
-        let (setup, base) = bind_dashboard_with("s3cret", 0, None).await;
-        drop(setup.close_tx);
-        drop(setup.request_rx);
-        let client = reqwest::Client::new();
+    async fn dashboard_matrix_answers_every_request() {
+        let token = crate::config::DASHBOARD_ROW_TOKEN;
+        let right = format!("Bearer {token}");
+        let ways: [Option<&str>; 3] = [None, Some(&right), Some("Bearer wrong")];
+        let mut failed: Vec<String> = Vec::new();
+        fn check(failed: &mut Vec<String>, cell: String, got: u16, want: u16, body: &str) {
+            if got != want {
+                failed.push(format!("{cell}: {got}, want {want} {body:?}"));
+            }
+        }
+        for row in crate::config::DASHBOARD_ROWS
+            .iter()
+            .filter(|r| r.refusal.is_none())
+        {
+            let (control_tx, control_rx) = flume::unbounded();
+            let (setup, base) = bind_dashboard_with(TestBind::row(row, control_tx)).await;
+            let parent = spawn_mock_parent(setup.request_rx, Arc::new(AtomicU64::new(0)));
+            let control = spawn_control_parent(control_rx, answer_ok);
+            let port = port_of(&base);
+            let own_host = format!("127.0.0.1:{port}");
+            let name = row.name;
 
-        let health: serde_json::Value = client
-            .get(format!("{base}/api/v1/health"))
-            .send()
-            .await
-            .expect("health")
-            .json()
-            .await
-            .expect("json");
-        assert_eq!(health["control_enabled"], false);
+            let health = MATRIX_HEALTH
+                .iter()
+                .find(|(r, _)| *r == name)
+                .expect("health row")
+                .1;
+            let (_, body) = raw_call(port, "GET", "/api/v1/health", &own_host, &[], "").await;
+            let json: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+            for (field, want) in ["control_enabled", "auth_required", "loopback"]
+                .iter()
+                .zip(health)
+            {
+                if json[field] != want {
+                    failed.push(format!(
+                        "{name} health {field}: {}, want {want}",
+                        json[field]
+                    ));
+                }
+            }
 
-        for path in [
-            "/api/v1/control/start",
-            "/api/v1/control/stop",
-            "/api/v1/control/users",
+            let statuses = MATRIX_STATUS
+                .iter()
+                .find(|(r, _)| *r == name)
+                .expect("status row")
+                .1;
+            for ((method, path, body), want) in MATRIX_REQUESTS.iter().zip(statuses) {
+                for (way, want) in ways.iter().zip(want) {
+                    let mut headers = vec![("Content-Type", "application/json")];
+                    if let Some(bearer) = way {
+                        headers.push(("Authorization", bearer));
+                    }
+                    let (got, reply) =
+                        raw_call(port, method, path, &own_host, &headers, body).await;
+                    let way = match way {
+                        None => "no token",
+                        Some(b) if *b == right => "right token",
+                        Some(_) => "wrong token",
+                    };
+                    check(
+                        &mut failed,
+                        format!("{name} {method} {path} {way}"),
+                        got,
+                        want,
+                        &reply,
+                    );
+                }
+            }
+
+            if row.args.contains(&"--dashboard-no-auth")
+                && row.args.contains(&"--dashboard-control")
+            {
+                let own_origin = format!("http://{own_host}");
+                for (path, want) in MATRIX_PROBES {
+                    let (method, _, body) = MATRIX_REQUESTS
+                        .iter()
+                        .find(|(_, p, _)| *p == path)
+                        .expect("probed request");
+                    let probes: [(&str, Headers, &str); 4] = [
+                        (
+                            "form",
+                            vec![("Content-Type", "application/x-www-form-urlencoded")],
+                            "a=b",
+                        ),
+                        ("body-less", vec![], ""),
+                        (
+                            "foreign Origin",
+                            vec![
+                                ("Content-Type", "application/json"),
+                                ("Origin", "http://evil.example"),
+                            ],
+                            body,
+                        ),
+                        (
+                            "own Origin",
+                            vec![
+                                ("Content-Type", "application/json"),
+                                ("Origin", &own_origin),
+                            ],
+                            body,
+                        ),
+                    ];
+                    for ((probe, headers, body), want) in probes.iter().zip(want) {
+                        let (got, reply) =
+                            raw_call(port, method, path, &own_host, headers, body).await;
+                        if want == 403 && !reply.contains("\"reason\":\"cross_origin\"") {
+                            failed.push(format!(
+                                "{name} {method} {path} {probe}: no cross_origin reason {reply:?}"
+                            ));
+                        }
+                        check(
+                            &mut failed,
+                            format!("{name} {method} {path} {probe}"),
+                            got,
+                            want,
+                            &reply,
+                        );
+                    }
+                }
+            }
+
+            let hosts = MATRIX_HOSTS
+                .iter()
+                .find(|(r, _)| *r == name)
+                .expect("host row")
+                .1;
+            let rebind = format!("rebind.example:{port}");
+            let rebind_origin = format!("http://{rebind}");
+            let configured = format!(
+                "{}:{port}",
+                crate::config::dashboard_row_configuration(row).dashboard_host()
+            );
+            let ipv6 = format!("[::1]:{port}");
+            let json = [("Content-Type", "application/json")];
+            let cells: [(&str, &str, &str, Headers, &str); 4] = [
+                ("GET", "/api/v1/snapshot", &rebind, vec![], ""),
+                (
+                    "POST",
+                    "/api/v1/control/start",
+                    &rebind,
+                    vec![json[0], ("Origin", &rebind_origin)],
+                    "{}",
+                ),
+                ("GET", "/api/v1/snapshot", &configured, vec![], ""),
+                ("GET", "/api/v1/snapshot", &ipv6, vec![], ""),
+            ];
+            for ((method, path, host, headers, body), want) in cells.iter().zip(hosts) {
+                let (got, reply) = raw_call(port, method, path, host, headers, body).await;
+                if name == "R6" && want == 403 && !reply.contains("\"reason\":\"host_not_allowed\"")
+                {
+                    failed.push(format!(
+                        "{name} {method} {path} as {host}: no host_not_allowed reason {reply:?}"
+                    ));
+                }
+                check(
+                    &mut failed,
+                    format!("{name} {method} {path} as {host}"),
+                    got,
+                    want,
+                    &reply,
+                );
+            }
+
+            parent.abort();
+            control.abort();
+            drop(setup.close_tx);
+        }
+        assert!(failed.is_empty(), "{:#?}", failed);
+    }
+
+    /// What each accepting row prints at startup, bound to port 5118. The
+    /// token is never printed.
+    #[test]
+    fn dashboard_matrix_startup_lines() {
+        let read_only_hint = "[dashboard]: read-only; for control add --dashboard-control and either --dashboard-no-auth (no token) or --dashboard-auth-token <token>";
+        let expected: [(&str, Vec<StartupLine>); 6] = [
+            (
+                "R1",
+                vec![
+                    StartupLine::Info("[dashboard]: listening on http://127.0.0.1:5118 (read-only)".into()),
+                    StartupLine::Info(read_only_hint.into()),
+                ],
+            ),
+            (
+                "R2",
+                vec![
+                    StartupLine::Info("[dashboard]: listening on http://127.0.0.1:5118 (read-only)".into()),
+                    StartupLine::Info("[dashboard]: read-only; for control add --dashboard-control".into()),
+                ],
+            ),
+            (
+                "R3",
+                vec![
+                    StartupLine::Info("[dashboard]: listening on http://127.0.0.1:5118 (control enabled)".into()),
+                    StartupLine::Info("[dashboard]: open http://127.0.0.1:5118/?token=<token> to control the test".into()),
+                ],
+            ),
+            (
+                "R4",
+                vec![
+                    StartupLine::Info("[dashboard]: listening on http://127.0.0.1:5118 (control enabled, no token)".into()),
+                    StartupLine::Warn("[dashboard]: --dashboard-no-auth: anyone on this machine can start, stop and redirect the test".into()),
+                ],
+            ),
+            (
+                "R5",
+                vec![
+                    StartupLine::Info("[dashboard]: listening on http://127.0.0.1:5118 (read-only, no token)".into()),
+                    StartupLine::Info("[dashboard]: read-only; for control add --dashboard-control".into()),
+                ],
+            ),
+            (
+                "R6",
+                vec![
+                    StartupLine::Info("[dashboard]: listening on http://0.0.0.0:5118 (control enabled, no token)".into()),
+                    StartupLine::Block(
+                        "WARNING: the dashboard on http://0.0.0.0:5118 has no token (--dashboard-no-auth).\n\
+                         Anyone who can reach this port can watch the test, start and stop it,\n\
+                         and point the load at any host.\n\
+                         Safer: bind 127.0.0.1 and use an ssh forward (ssh -L 5118:127.0.0.1:5118 host),\n\
+                         or use --dashboard-auth-token in place of --dashboard-no-auth. Only IP addresses,\n\
+                         localhost and the --dashboard-host name are accepted as Host; set --dashboard-host\n\
+                         to the DNS name you browse to."
+                            .into(),
+                    ),
+                ],
+            ),
+        ];
+        for row in crate::config::DASHBOARD_ROWS
+            .iter()
+            .filter(|r| r.refusal.is_none())
+        {
+            let configuration = crate::config::dashboard_row_configuration(row);
+            let host = configuration.dashboard_host();
+            let bound = format!("{host}:5118");
+            let lines = startup_lines(
+                &bound,
+                configuration.dashboard_control,
+                configuration.dashboard_no_auth,
+                configuration.dashboard_auth_token().is_some(),
+                crate::config::is_loopback_bind(host),
+            );
+            let want = &expected
+                .iter()
+                .find(|(r, _)| *r == row.name)
+                .expect("row")
+                .1;
+            assert_eq!(&lines, want, "{}", row.name);
+            for line in &lines {
+                let text = format!("{line:?}");
+                assert!(
+                    !text.contains(crate::config::DASHBOARD_ROW_TOKEN),
+                    "{}",
+                    text
+                );
+            }
+        }
+    }
+
+    /// The no token Host rule: IP literals, and the configured name, with or
+    /// without a port; no other name.
+    #[test]
+    fn ip_or_configured_host_rules() {
+        for (host, configured, allowed) in [
+            ("10.1.2.3:5118", "0.0.0.0", true),
+            ("10.1.2.3", "0.0.0.0", true),
+            ("[fe80::1]:5118", "0.0.0.0", true),
+            ("[::1]", "::", true),
+            ("loadgen.example:5118", "loadgen.example", true),
+            ("LOADGEN.example", "loadgen.example", true),
+            ("rebind.example:5118", "0.0.0.0", false),
+            ("rebind.example:5118", "loadgen.example", false),
+            ("localhost:5118", "0.0.0.0", true),
+            ("localhost.example:5118", "0.0.0.0", false),
+            ("fe80::1", "0.0.0.0", false),
+            ("user@10.1.2.3", "0.0.0.0", false),
+            ("", "0.0.0.0", false),
         ] {
-            let resp = client
-                .post(format!("{base}{path}"))
-                .header(header::AUTHORIZATION, "Bearer s3cret")
-                .header(header::CONTENT_TYPE, "application/json")
-                .body("{}")
-                .send()
-                .await
-                .expect("post");
             assert_eq!(
-                resp.status(),
-                404,
-                "control off must 404 {path}, got {}",
-                resp.status()
+                is_ip_or_configured_host(host, configured),
+                allowed,
+                "{host} with --dashboard-host {configured}"
             );
         }
+        assert!(is_json_content_type("application/json"));
+        assert!(is_json_content_type("Application/JSON; charset=utf-8"));
+        assert!(!is_json_content_type("text/plain"));
+        assert!(!is_json_content_type("application/x-www-form-urlencoded"));
+        assert!(!is_json_content_type("application/jsonp"));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn control_requires_auth_and_validates_body() {
         let (control_tx, control_rx) = flume::unbounded();
-        let (setup, base) = bind_dashboard_with("s3cret", 0, Some(control_tx)).await;
+        let (setup, base) =
+            bind_dashboard_with(TestBind::token("s3cret").control(control_tx)).await;
         let parent = spawn_mock_parent(setup.request_rx, Arc::new(AtomicU64::new(0)));
         let control = spawn_control_parent(control_rx, answer_ok);
         drop(setup.close_tx);
@@ -4450,7 +5150,8 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn series_admission_caps_in_flight() {
         let (control_tx, control_rx) = flume::unbounded();
-        let (setup, base) = bind_dashboard_with("s3cret", 0, Some(control_tx)).await;
+        let (setup, base) =
+            bind_dashboard_with(TestBind::token("s3cret").control(control_tx)).await;
         // Nobody drains the request channel: admitted requests wait in it.
         let request_rx = setup.request_rx;
         let client = reqwest::Client::new();
@@ -4515,7 +5216,8 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn control_admission_caps_in_flight() {
         let (control_tx, control_rx) = flume::unbounded();
-        let (_setup, base) = bind_dashboard_with("s3cret", 0, Some(control_tx)).await;
+        let (_setup, base) =
+            bind_dashboard_with(TestBind::token("s3cret").control(control_tx)).await;
         let client = reqwest::Client::new();
         let start = |client: reqwest::Client, url: String| async move {
             client
@@ -4576,7 +5278,8 @@ mod tests {
     #[tokio::test]
     async fn control_body_limit_is_exact() {
         let (control_tx, _control_rx) = flume::unbounded();
-        let (_setup, base) = bind_dashboard_with("s3cret", 0, Some(control_tx)).await;
+        let (_setup, base) =
+            bind_dashboard_with(TestBind::token("s3cret").control(control_tx)).await;
         let client = reqwest::Client::new();
         let post = |path: &'static str, len: usize| {
             client
@@ -4617,7 +5320,8 @@ mod tests {
         // --- disconnect: no parent consuming the control channel ---
         {
             let (control_tx, control_rx) = flume::unbounded();
-            let (setup, base) = bind_dashboard_with("s3cret", 0, Some(control_tx)).await;
+            let (setup, base) =
+                bind_dashboard_with(TestBind::token("s3cret").control(control_tx)).await;
             drop(setup.close_tx);
             drop(control_rx);
             let resp = client
@@ -4638,7 +5342,8 @@ mod tests {
         // --- oneshot drop: parent receives then drops respond ---
         {
             let (control_tx, control_rx) = flume::unbounded();
-            let (setup, base) = bind_dashboard_with("s3cret", 0, Some(control_tx)).await;
+            let (setup, base) =
+                bind_dashboard_with(TestBind::token("s3cret").control(control_tx)).await;
             let parent = spawn_control_parent(control_rx, |_| None);
             drop(setup.close_tx);
             let resp = client
@@ -4660,7 +5365,8 @@ mod tests {
         // --- internal soft mapping: 200 + error=internal ---
         {
             let (control_tx, control_rx) = flume::unbounded();
-            let (setup, base) = bind_dashboard_with("s3cret", 0, Some(control_tx)).await;
+            let (setup, base) =
+                bind_dashboard_with(TestBind::token("s3cret").control(control_tx)).await;
             let parent = spawn_control_parent(control_rx, |_| {
                 outcome(
                     false,
@@ -4692,7 +5398,8 @@ mod tests {
         // --- oneshot timeout: parent never replies → 503 after CONTROL_TIMEOUT ---
         {
             let (control_tx, control_rx) = flume::unbounded();
-            let (setup, base) = bind_dashboard_with("s3cret", 0, Some(control_tx)).await;
+            let (setup, base) =
+                bind_dashboard_with(TestBind::token("s3cret").control(control_tx)).await;
             // Hold every oneshot so the client hits CONTROL_TIMEOUT rather
             // than an immediate oneshot-drop 503.
             let parent = tokio::spawn(async move {
@@ -4841,7 +5548,8 @@ mod tests {
     async fn shutdown_drain_is_bounded() {
         use tokio::io::AsyncWriteExt;
         let (control_tx, control_rx) = flume::unbounded();
-        let (setup, _base) = bind_dashboard_with("s3cret", 0, Some(control_tx)).await;
+        let (setup, _base) =
+            bind_dashboard_with(TestBind::token("s3cret").control(control_tx)).await;
         let port = setup.bound_port;
         let mut stalled = tokio::net::TcpStream::connect(("127.0.0.1", port))
             .await
@@ -5307,7 +6015,7 @@ mod tests {
         let cap = 2u32;
         // Nothing reads `request_rx`, like a main loop busy in a long
         // `test_start`, so no snapshot is ever published.
-        let (_setup, base) = bind_dashboard_with("", cap, None).await;
+        let (_setup, base) = bind_dashboard_with(TestBind::token("").max_clients(cap)).await;
         let client = reqwest::Client::new();
 
         let mut held = Vec::new();

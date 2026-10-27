@@ -729,7 +729,7 @@ pub struct GooseConfiguration {
     /// Bind host [default: 127.0.0.1]
     ///
     /// The address the dashboard listens on, with --dashboard. An address that is not a
-    /// loopback address needs --dashboard-auth-token.
+    /// loopback address needs --dashboard-auth-token or --dashboard-no-auth.
     ///
     /// Example: --dashboard-host 0.0.0.0. Set in code with GooseDefault::DashboardHost.
     #[arg(help_heading = "Dashboard", long, value_name = "HOST")]
@@ -746,7 +746,7 @@ pub struct GooseConfiguration {
     ///
     /// The token a dashboard client must send, as an Authorization: Bearer header or a
     /// token query parameter. Needed when --dashboard-host is not a loopback address, and
-    /// always with --dashboard-control.
+    /// with --dashboard-control, unless --dashboard-no-auth is set.
     ///
     /// Set in code with GooseDefault::DashboardAuthToken.
     #[arg(help_heading = "Dashboard", long, value_name = "TOKEN")]
@@ -754,11 +754,20 @@ pub struct GooseConfiguration {
     /// Allow control from the dashboard
     ///
     /// Lets the dashboard start, stop and quit the load test and change its users. Needs
-    /// --dashboard and --dashboard-auth-token, even on a loopback address.
+    /// --dashboard, and --dashboard-auth-token or --dashboard-no-auth.
     ///
     /// Set in code with GooseDefault::DashboardControl.
     #[arg(help_heading = "Dashboard", long)]
     pub dashboard_control: bool,
+    /// Dashboard without a token
+    ///
+    /// Allow dashboard access and control without a token. Anyone who can reach the port
+    /// can start, stop and redirect the test; on anything but loopback Goose warns at
+    /// startup. Needs --dashboard, and can't be used with --dashboard-auth-token.
+    ///
+    /// Set in code with GooseDefault::DashboardNoAuth.
+    #[arg(help_heading = "Dashboard", long)]
+    pub dashboard_no_auth: bool,
     /// Max live clients [default: 32]
     ///
     /// The most dashboard pages that may follow the live stream at once.
@@ -1343,6 +1352,8 @@ pub(crate) struct GooseDefaults {
     pub dashboard: Option<bool>,
     /// An optional default for enabling dashboard control endpoints.
     pub dashboard_control: Option<bool>,
+    /// An optional default for allowing dashboard access and control without a token.
+    pub dashboard_no_auth: Option<bool>,
     /// An optional default for host the dashboard listens on.
     pub dashboard_host: Option<String>,
     /// An optional default for port the dashboard listens on.
@@ -1486,6 +1497,8 @@ pub enum GooseDefault {
     Dashboard,
     /// An optional default for enabling dashboard control endpoints.
     DashboardControl,
+    /// An optional default for allowing dashboard access and control without a token.
+    DashboardNoAuth,
     /// An optional default for host the dashboard listens on.
     DashboardHost,
     /// An optional default for port the dashboard listens on.
@@ -1604,6 +1617,7 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::ReportGraphData`]
 ///  - [`GooseDefault::Dashboard`]
 ///  - [`GooseDefault::DashboardControl`]
+///  - [`GooseDefault::DashboardNoAuth`]
 ///  - [`GooseDefault::NoPercentilesOverTime`]
 ///  - [`GooseDefault::AcceptInvalidCerts`]
 ///
@@ -1723,6 +1737,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::ReportGraphData
             | GooseDefault::Dashboard
             | GooseDefault::DashboardControl
+            | GooseDefault::DashboardNoAuth
             | GooseDefault::NoPercentilesOverTime
             | GooseDefault::AcceptInvalidCerts => {
                 return Err(GooseError::InvalidOption {
@@ -1857,6 +1872,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::ReportGraphData
             | GooseDefault::Dashboard
             | GooseDefault::DashboardControl
+            | GooseDefault::DashboardNoAuth
             | GooseDefault::NoPercentilesOverTime
             | GooseDefault::AcceptInvalidCerts => {
                 return Err(GooseError::InvalidOption {
@@ -1929,6 +1945,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             GooseDefault::ReportGraphData => self.defaults.report_graph_data = Some(value),
             GooseDefault::Dashboard => self.defaults.dashboard = Some(value),
             GooseDefault::DashboardControl => self.defaults.dashboard_control = Some(value),
+            GooseDefault::DashboardNoAuth => self.defaults.dashboard_no_auth = Some(value),
             GooseDefault::NoPercentilesOverTime => {
                 self.defaults.no_percentiles_over_time = Some(value)
             }
@@ -2062,6 +2079,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::ReportGraphData
             | GooseDefault::Dashboard
             | GooseDefault::DashboardControl
+            | GooseDefault::DashboardNoAuth
             | GooseDefault::NoPercentilesOverTime
             | GooseDefault::AcceptInvalidCerts
             => {
@@ -2198,6 +2216,7 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::ReportGraphData
             | GooseDefault::Dashboard
             | GooseDefault::DashboardControl
+            | GooseDefault::DashboardNoAuth
             | GooseDefault::NoPercentilesOverTime
             | GooseDefault::AcceptInvalidCerts
             => {
@@ -2377,6 +2396,7 @@ impl GooseDefaultType<f64> for GooseAttack {
             | GooseDefault::ReportGraphData
             | GooseDefault::Dashboard
             | GooseDefault::DashboardControl
+            | GooseDefault::DashboardNoAuth
             | GooseDefault::NoPercentilesOverTime
             | GooseDefault::AcceptInvalidCerts => {
                 return Err(GooseError::InvalidOption {
@@ -2412,6 +2432,102 @@ impl GooseDefaultType<f64> for GooseAttack {
         }
         Ok(Box::new(self))
     }
+}
+
+/// One dashboard configuration the tests run every layer over: its flags, and
+/// the words its startup refusal names, `None` when it starts.
+#[cfg(test)]
+pub(crate) struct DashboardRow {
+    pub(crate) name: &'static str,
+    pub(crate) args: &'static [&'static str],
+    pub(crate) refusal: Option<&'static [&'static str]>,
+}
+
+/// The token the token rows set.
+#[cfg(test)]
+pub(crate) const DASHBOARD_ROW_TOKEN: &str = "s3cret";
+
+/// The dashboard configuration matrix, shared by the configuration tests and
+/// the HTTP tests in `src/dashboard.rs`.
+#[cfg(test)]
+pub(crate) const DASHBOARD_ROWS: &[DashboardRow] = &[
+    DashboardRow {
+        name: "R1",
+        args: &["--dashboard"],
+        refusal: None,
+    },
+    DashboardRow {
+        name: "R2",
+        args: &["--dashboard", "--dashboard-auth-token", DASHBOARD_ROW_TOKEN],
+        refusal: None,
+    },
+    DashboardRow {
+        name: "R3",
+        args: &[
+            "--dashboard",
+            "--dashboard-control",
+            "--dashboard-auth-token",
+            DASHBOARD_ROW_TOKEN,
+        ],
+        refusal: None,
+    },
+    DashboardRow {
+        name: "R4",
+        args: &["--dashboard", "--dashboard-control", "--dashboard-no-auth"],
+        refusal: None,
+    },
+    DashboardRow {
+        name: "R5",
+        args: &["--dashboard", "--dashboard-no-auth"],
+        refusal: None,
+    },
+    DashboardRow {
+        name: "R6",
+        args: &[
+            "--dashboard",
+            "--dashboard-control",
+            "--dashboard-no-auth",
+            "--dashboard-host",
+            "0.0.0.0",
+        ],
+        refusal: None,
+    },
+    DashboardRow {
+        name: "R7",
+        args: &[
+            "--dashboard",
+            "--dashboard-no-auth",
+            "--dashboard-auth-token",
+            DASHBOARD_ROW_TOKEN,
+        ],
+        refusal: Some(&["--dashboard-no-auth", "--dashboard-auth-token"]),
+    },
+    DashboardRow {
+        name: "R8",
+        args: &["--dashboard-no-auth"],
+        refusal: Some(&["--dashboard-no-auth", "requires", "--dashboard)"]),
+    },
+    DashboardRow {
+        name: "R9",
+        args: &["--dashboard", "--dashboard-control"],
+        refusal: Some(&["--dashboard-control", "--dashboard-auth-token"]),
+    },
+    DashboardRow {
+        name: "R10",
+        args: &["--dashboard", "--dashboard-host", "0.0.0.0"],
+        refusal: Some(&["0.0.0.0", "--dashboard-auth-token"]),
+    },
+];
+
+/// A row's configuration, parsed from its flags and configured as a run does.
+#[cfg(test)]
+pub(crate) fn dashboard_row_configuration(row: &DashboardRow) -> GooseConfiguration {
+    let mut configuration = GooseConfiguration::parse_args_default(row.args)
+        .unwrap_or_else(|e| panic!("{}: {:?}", row.name, e));
+    configuration
+        .configure(&GooseDefaults::default())
+        .unwrap_or_else(|e| panic!("{}: {:?}", row.name, e));
+    configuration
 }
 
 /// Returns true if `host` is a loopback bind address for dashboard auth policy.
@@ -3272,6 +3388,24 @@ impl GooseConfiguration {
                     value: defaults.dashboard_control,
                     filter: defaults.dashboard_control.is_none(),
                     message: "dashboard_control",
+                },
+            ])
+            .unwrap_or(false);
+
+        // Configure `dashboard_no_auth`.
+        self.dashboard_no_auth = self
+            .get_value(vec![
+                // Use --dashboard-no-auth if set.
+                GooseValue {
+                    value: Some(self.dashboard_no_auth),
+                    filter: !self.dashboard_no_auth,
+                    message: "dashboard_no_auth",
+                },
+                // Use GooseDefault if not already set.
+                GooseValue {
+                    value: defaults.dashboard_no_auth,
+                    filter: defaults.dashboard_no_auth.is_none(),
+                    message: "dashboard_no_auth",
                 },
             ])
             .unwrap_or(false);
@@ -4443,6 +4577,9 @@ impl GooseConfiguration {
     /// `--dashboard-control` requires `--dashboard` (does not auto-enable) and a
     /// non-empty auth token even on loopback.
     ///
+    /// `--dashboard-no-auth` lifts both token rules, needs `--dashboard`, and
+    /// can't be given with a token.
+    ///
     /// If `--dashboard` is set but the crate was built without the `dashboard`
     /// feature, returns a compile-time feature error.
     pub(crate) fn validate_dashboard_config(&self) -> Result<(), GooseError> {
@@ -4452,6 +4589,15 @@ impl GooseConfiguration {
                 option: "`configuration.dashboard_control`".to_string(),
                 value: "true".to_string(),
                 detail: "`configuration.dashboard_control` (--dashboard-control) requires `configuration.dashboard` (--dashboard); control does not auto-enable the dashboard".to_string(),
+            });
+        }
+
+        // No auth requires --dashboard too: alone it would serve nothing.
+        if self.dashboard_no_auth && !self.dashboard {
+            return Err(GooseError::InvalidOption {
+                option: "`configuration.dashboard_no_auth`".to_string(),
+                value: "true".to_string(),
+                detail: "`configuration.dashboard_no_auth` (--dashboard-no-auth) requires `configuration.dashboard` (--dashboard); it does not enable the dashboard".to_string(),
             });
         }
 
@@ -4477,22 +4623,38 @@ impl GooseConfiguration {
             });
         }
 
-        // Control endpoints always require a configured auth token, even on loopback.
-        if self.dashboard_control && self.dashboard_auth_token().is_none() {
+        // A token and no token at once is a contradiction.
+        if self.dashboard_no_auth && self.dashboard_auth_token().is_some() {
+            return Err(GooseError::InvalidOption {
+                option: "`configuration.dashboard_no_auth`".to_string(),
+                value: "true".to_string(),
+                detail: "`configuration.dashboard_no_auth` (--dashboard-no-auth) can't be used with `configuration.dashboard_auth_token` (--dashboard-auth-token): give one or the other".to_string(),
+            });
+        }
+
+        // Without --dashboard-no-auth, control endpoints always require a
+        // configured auth token, even on loopback.
+        if self.dashboard_control
+            && !self.dashboard_no_auth
+            && self.dashboard_auth_token().is_none()
+        {
             return Err(GooseError::InvalidOption {
                 option: "`configuration.dashboard_control`".to_string(),
                 value: "true".to_string(),
-                detail: "`configuration.dashboard_control` (--dashboard-control) requires a non-empty `configuration.dashboard_auth_token` (--dashboard-auth-token), even on loopback".to_string(),
+                detail: "`configuration.dashboard_control` (--dashboard-control) requires a non-empty `configuration.dashboard_auth_token` (--dashboard-auth-token), even on loopback, unless `configuration.dashboard_no_auth` (--dashboard-no-auth) is set".to_string(),
             });
         }
 
         let host = self.dashboard_host();
-        if !is_loopback_bind(host) && self.dashboard_auth_token().is_none() {
+        if !is_loopback_bind(host)
+            && !self.dashboard_no_auth
+            && self.dashboard_auth_token().is_none()
+        {
             return Err(GooseError::InvalidOption {
                 option: "`configuration.dashboard_host`".to_string(),
                 value: host.to_string(),
                 detail: format!(
-                    "`configuration.dashboard` is enabled with non-loopback host `{host}`; set `configuration.dashboard_auth_token` (--dashboard-auth-token) when binding outside loopback"
+                    "`configuration.dashboard` is enabled with non-loopback host `{host}`; set `configuration.dashboard_auth_token` (--dashboard-auth-token) when binding outside loopback, or `configuration.dashboard_no_auth` (--dashboard-no-auth) to run without a token"
                 ),
             });
         }
@@ -4884,6 +5046,34 @@ mod test {
         // Control with dashboard and token on non-loopback: ok.
         config.dashboard_host = Some("0.0.0.0".to_string());
         assert!(config.validate_dashboard_config().is_ok());
+    }
+
+    /// Every row of the dashboard matrix starts or is refused, a refusal
+    /// naming the options at fault.
+    #[test]
+    #[cfg(feature = "dashboard")]
+    fn dashboard_matrix_starts_or_names_the_refusal() {
+        let mut failed = Vec::new();
+        for row in DASHBOARD_ROWS {
+            let result = GooseConfiguration::parse_args_default(row.args).and_then(|mut c| {
+                c.configure(&GooseDefaults::default())?;
+                c.validate_dashboard_config()
+            });
+            match (row.refusal, result) {
+                (None, Ok(())) => {}
+                (None, Err(e)) => failed.push(format!("{} must start: {e:?}", row.name)),
+                (Some(_), Ok(())) => failed.push(format!("{} must be refused", row.name)),
+                (Some(needles), Err(GooseError::InvalidOption { detail, .. })) => {
+                    for needle in needles {
+                        if !detail.contains(needle) {
+                            failed.push(format!("{}: {needle:?} not in {detail:?}", row.name));
+                        }
+                    }
+                }
+                (Some(_), Err(e)) => failed.push(format!("{}: refused as {e:?}", row.name)),
+            }
+        }
+        assert!(failed.is_empty(), "{:#?}", failed);
     }
 
     #[test]
