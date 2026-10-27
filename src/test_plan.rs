@@ -284,16 +284,18 @@ impl GooseAttack {
         goose_attack_run_state.adjust_user_in_ms = 0;
 
         let action = if self.test_plan.current == self.test_plan.steps.len() - 1 {
-            // If this is the last TestPlan step and there are 0 users, shut down.
+            // If this is the last TestPlan step and there are 0 users, stop the run
+            // as a ramp down to 0 does: Decrease finds 0 users on the last step, so
+            // it runs test_stop, keeps the metrics, judges the thresholds, writes the
+            // reports and records the run as finished.
             if self.test_plan.steps[self.test_plan.current].0 == 0 {
-                // @TODO: don't shut down if stopped by a controller...
-                self.set_attack_phase(goose_attack_run_state, AttackPhase::Shutdown);
-                TestPlanStepAction::Finished
+                self.set_attack_phase(goose_attack_run_state, AttackPhase::Decrease);
+                None
             }
             // Otherwise maintain the number of GooseUser threads until canceled.
             else {
                 self.set_attack_phase(goose_attack_run_state, AttackPhase::Maintain);
-                TestPlanStepAction::Maintaining
+                Some(TestPlanStepAction::Maintaining)
             }
         // If this is not the last TestPlan step, determine what happens next.
         } else if self.test_plan.current < self.test_plan.steps.len() {
@@ -303,15 +305,15 @@ impl GooseAttack {
             {
                 Ordering::Less => {
                     self.set_attack_phase(goose_attack_run_state, AttackPhase::Increase);
-                    TestPlanStepAction::Increasing
+                    Some(TestPlanStepAction::Increasing)
                 }
                 Ordering::Greater => {
                     self.set_attack_phase(goose_attack_run_state, AttackPhase::Decrease);
-                    TestPlanStepAction::Decreasing
+                    Some(TestPlanStepAction::Decreasing)
                 }
                 Ordering::Equal => {
                     self.set_attack_phase(goose_attack_run_state, AttackPhase::Maintain);
-                    TestPlanStepAction::Maintaining
+                    Some(TestPlanStepAction::Maintaining)
                 }
             }
         } else {
@@ -319,10 +321,12 @@ impl GooseAttack {
         };
 
         // Record details about new new TestPlan step that is starting.
-        self.metrics.history.push(TestPlanHistory::step(
-            action,
-            self.test_plan.steps[self.test_plan.current].0,
-        ));
+        if let Some(action) = action {
+            self.metrics.history.push(TestPlanHistory::step(
+                action,
+                self.test_plan.steps[self.test_plan.current].0,
+            ));
+        }
 
         // Always advance the TestPlan step
         self.test_plan.current += 1;

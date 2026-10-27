@@ -431,7 +431,7 @@ Refusals are checked in this order, and the first one is answered:
 | 400 | `invalid_value` | A value of the wrong type or out of bounds, and `users: null` |
 | 400 | `conflicting_settings` | Settings that never go together, whatever the state |
 | 200 | `invalid_phase` | A setting the phase can not change, set or cleared |
-| 200 | `conflicting_settings` | A ramp setting while a test plan is configured (`"field": "users"`); a rate on a running test while its own time is set; clearing the decrease rate or the run time on a running test where that is refused; the command line's rules (run time and a test plan under `--iterations`, a test plan under `--no-reset-metrics`, and in Idle a time with fewer than 2 users) |
+| 200 | `conflicting_settings` | A ramp setting while a test plan is configured (`"field": "users"`); a rate on a running test while its own time is set; clearing the decrease rate or the run time on a running test where that is refused; the command line's rules (run time, a decrease rate or time, and a test plan under `--iterations`, a test plan under `--no-reset-metrics`, and in Idle a time with fewer than 2 users) |
 | 200 | `no_host` | `host: null` would leave a scenario, or a `test_start` or `test_stop` transaction, with no host |
 | 200 | `prepare_failed` | A Start that can not prepare the load test, as without settings |
 

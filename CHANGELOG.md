@@ -1,6 +1,8 @@
 # Changelog
 
 ## 0.19.0-dev
+ - [#781](https://github.com/tag1consulting/goose/pull/781) keep metrics and judge thresholds when a test plan ends on a 0 user hold, instead of exiting 0 with every metric 0, no thresholds judged and an empty report
+ - [#781](https://github.com/tag1consulting/goose/pull/781) **behavior change**: `--iterations` is refused with `--decrease-rate` or `--decrease-time`, by the command line and by the Controllers, as the ramp down started when the ramp up ended and stopped users before they finished, and the run exited 0; both options are new in 0.19, so no release is affected
  - [#780](https://github.com/tag1consulting/goose/pull/780) allow dashboard control without a token behind a flag, and say when the dashboard is read-only
     o `--dashboard-no-auth` (`GooseDefault::DashboardNoAuth`) lets `--dashboard-control` start, stop, quit and change users with no token and no `?token=` URL; it needs `--dashboard` and is refused with `--dashboard-auth-token`
     o under `--dashboard-no-auth` the control routes refuse a cross site request, one whose `Origin` is not the dashboard's own or whose `Content-Type` is not `application/json`, with 403 `cross_origin`; Goose sends no CORS headers
