@@ -55,7 +55,7 @@ The server lives as long as the load test, with one exception: see [Waiting afte
 | Test plan | No | Through `POST /api/v1/control/settings` only | Yes (`test-plan`) |
 | `config` / `metrics` | No | No | Yes |
 | Process shutdown | No | Quit, from Idle only | Yes (`shutdown`, any phase) |
-| Default bind | `127.0.0.1:5118` | `127.0.0.1:5118` | `0.0.0.0:5116` / `:5117`, WebSocket only with `--websocket` |
+| Default bind | `127.0.0.1:5118` | `127.0.0.1:5118` | `127.0.0.1:5116` / `:5117`, WebSocket only with `--websocket` |
 | Auth | Token on metric APIs when configured | Token for control unless `--dashboard-no-auth`; metrics follow observe rules | None (see Controller docs) |
 
 When control is off, `POST /api/v1/control/*` returns **404** (routes are not registered). Prefer Controllers for `config`, `metrics` and shutting down a running test; use dashboard control for Start, Stop, users and the run settings from a browser.
@@ -525,7 +525,7 @@ Without `--dashboard-control` the Control card stays, and says in place of its c
 ```text
 Read-only: this dashboard can't start, stop or change the test.
 To control it from here, restart Goose with --dashboard-control --dashboard-no-auth (no token), or with --dashboard-control --dashboard-auth-token <token> and open http://127.0.0.1:5118/?token=<token>.
-Control this test via the telnet controller listening on 0.0.0.0:5116 or the WebSocket controller listening on 0.0.0.0:5117.
+Control this test via the telnet controller listening on 127.0.0.1:5116.
 ```
 
 The address is the one the page was opened at. When the page has a token, or the dashboard runs with `--dashboard-no-auth`, only control is missing, and the second sentence reads `To control it from here, restart Goose with --dashboard-control added.` The last sentence names the telnet and WebSocket Controllers that listen, and is left out when neither does. The notice is a note, named `Read-only dashboard` for screen readers, and holds nothing that takes focus. When `GET /api/v1/health` fails, the card says `Couldn't check whether control is on (/api/v1/health failed). Reload to retry.` instead.
@@ -561,7 +561,7 @@ TLS termination is not provided by Goose; use an SSH tunnel or reverse proxy whe
   "control_enabled": false,
   "auth_required": true,
   "loopback": true,
-  "controllers": { "telnet": "0.0.0.0:5116", "websocket": null }
+  "controllers": { "telnet": "127.0.0.1:5116", "websocket": null }
 }
 ```
 
@@ -577,7 +577,7 @@ TLS termination is not provided by Goose; use an SSH tunnel or reverse proxy whe
 | `control_enabled` | Whether the Start/Stop/Users/Quit and Delete routes are registered (`--dashboard-control`) |
 | `auth_required` | `false` only under `--dashboard-no-auth`, when the page sends no token; `true` otherwise, including a loopback dashboard with no token, which serves metrics without one but has no control without a token |
 | `loopback` | Whether the dashboard is bound to a loopback address; with `auth_required` false and this false, the page shows the no token warning |
-| `controllers` | The `host:port` the telnet and WebSocket Controllers listen on, after defaults (`0.0.0.0:5116` and `0.0.0.0:5117` unless set), or `null` for one turned off, the telnet Controller with `--no-telnet` and the WebSocket Controller unless `--websocket` turns it on, or one that couldn't listen on its port; the page footer names them |
+| `controllers` | The `host:port` the telnet and WebSocket Controllers listen on, after defaults (`127.0.0.1:5116` and `127.0.0.1:5117` unless set), or `null` for one turned off, the telnet Controller with `--no-telnet` and the WebSocket Controller unless `--websocket` turns it on, or one that couldn't listen on its port; the page footer names them |
 
 These counters are ops-safe (timing and client counts only). The response does **not** include rates, hosts under test, request names, or error strings. `controllers` names this process's own listeners, which take no authentication; it reveals only where they listen. `last_snapshot_ms` minus `last_build_ms` is time spent waiting on the main loop and the metrics processor's queue, plus serializing the JSON. The main loop answers the dashboard between steps and sleeps up to 500 ms between them, so this difference can reach about 500 ms by design; a large `last_build_ms` is the one that points at the metrics processor. Both durations are also logged at `debug` with a `[dashboard]` prefix when a build completes, and a late answer to a timed out request is logged with its round trip.
 

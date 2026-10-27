@@ -1,5 +1,7 @@
 # Telnet Controller
 
+The telnet Controller listens on `127.0.0.1:5116` by default, so only this machine can reach it. It has no authentication: anyone who can reach its port can start, stop and reconfigure the load test. To reach it from another machine, either forward the port over ssh to the default bind (`ssh -L 5116:127.0.0.1:5116 loadtest`, then `telnet localhost 5116`), or start Goose with an explicit host such as `--telnet-host 0.0.0.0`, which prints a warning at startup that the Controller has no authentication.
+
 The host and port that the telnet Controller listens on can be configured at start time with `--telnet-host` and `--telnet-port`. The telnet Controller can be completely disabled with the `--no-telnet` command line option. The defaults can be changed with [`GooseDefault::TelnetHost`](https://docs.rs/goose/*/goose/config/enum.GooseDefault.html#variant.TelnetHost),[`GooseDefault::TelnetPort`](https://docs.rs/goose/*/goose/config/enum.GooseDefault.html#variant.TelnetPort), and [`GooseDefault::NoTelnet`](https://docs.rs/goose/*/goose/config/enum.GooseDefault.html#variant.NoTelnet).
 
 ## Controller Commands
@@ -72,8 +74,10 @@ A test plan sets users, so while one is configured a rate or a time is refused w
 One possible use-case for the controller is to dynamically reconfigure the number of users being simulated by the load test. In the following example, the load test was launched with the following parameters:
 
 ```bash
-% cargo run --release --example umami -- --no-autostart --host https://umami.ddev.site/ --increase-rate 50 --report-file report.html --report-file report.md
+% cargo run --release --example umami -- --no-autostart --telnet-host 0.0.0.0 --host https://umami.ddev.site/ --increase-rate 50 --report-file report.html --report-file report.md
 ```
+
+The `--telnet-host 0.0.0.0` lets the telnet Controller be reached from another machine, here one that reaches the load test as `loadtest`, and prints the warning that it has no authentication.
 
 Then the telnet controller is invoked as follows:
 ```bash

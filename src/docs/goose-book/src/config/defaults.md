@@ -32,8 +32,8 @@ The following defaults can be configured with a `&str`:
  - scenario log file name: `GooseDefault::ScenarioLog`
  - error log file name: `GooseDefault::ErrorLog`
  - debug log file name: `GooseDefault::DebugLog`
- - host to bind telnet Controller to: `GooseDefault::TelnetHost`
- - host to bind WebSocket Controller to: `GooseDefault::WebSocketHost`
+ - host to bind telnet Controller to, `127.0.0.1` unless set: `GooseDefault::TelnetHost`
+ - host to bind WebSocket Controller to, `127.0.0.1` unless set: `GooseDefault::WebSocketHost`
  - host to bind the dashboard to: `GooseDefault::DashboardHost`
  - dashboard auth token: `GooseDefault::DashboardAuthToken`
 
