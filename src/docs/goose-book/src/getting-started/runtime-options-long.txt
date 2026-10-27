@@ -562,9 +562,9 @@ Dashboard:
           Dashboard without a token
 
           Allow dashboard access and control without a token. Anyone who can
-          reach the port can start, stop and redirect the test; on anything but
-          loopback Goose warns at startup. Needs --dashboard, and can't be used
-          with --dashboard-auth-token.
+          reach the port can watch the test, and with --dashboard-control start,
+          stop and redirect it; on anything but loopback Goose warns at startup.
+          Needs --dashboard, and can't be used with --dashboard-auth-token.
 
           Set in code with GooseDefault::DashboardNoAuth.
 

@@ -762,8 +762,9 @@ pub struct GooseConfiguration {
     /// Dashboard without a token
     ///
     /// Allow dashboard access and control without a token. Anyone who can reach the port
-    /// can start, stop and redirect the test; on anything but loopback Goose warns at
-    /// startup. Needs --dashboard, and can't be used with --dashboard-auth-token.
+    /// can watch the test, and with --dashboard-control start, stop and redirect it; on
+    /// anything but loopback Goose warns at startup. Needs --dashboard, and can't be used
+    /// with --dashboard-auth-token.
     ///
     /// Set in code with GooseDefault::DashboardNoAuth.
     #[arg(help_heading = "Dashboard", long)]
@@ -2516,6 +2517,18 @@ pub(crate) const DASHBOARD_ROWS: &[DashboardRow] = &[
         name: "R10",
         args: &["--dashboard", "--dashboard-host", "0.0.0.0"],
         refusal: Some(&["0.0.0.0", "--dashboard-auth-token"]),
+    },
+    DashboardRow {
+        name: "R11",
+        args: &[
+            "--dashboard",
+            "--dashboard-control",
+            "--dashboard-auth-token",
+            DASHBOARD_ROW_TOKEN,
+            "--dashboard-host",
+            "0.0.0.0",
+        ],
+        refusal: None,
     },
 ];
 

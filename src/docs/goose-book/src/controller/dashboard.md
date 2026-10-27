@@ -34,7 +34,7 @@ The dashboard port opens when the Controllers' ports do, once Goose has built a 
 | `--dashboard-host HOST` | `127.0.0.1` | Bind address |
 | `--dashboard-port PORT` | `5118` | Bind port. `0` picks a free port, which the startup log names: `[dashboard]: listening on http://127.0.0.1:60096 (read-only)`. |
 | `--dashboard-auth-token TOKEN` | empty | Shared secret for metric APIs when configured; required when `--dashboard-control` is set (even on loopback) unless `--dashboard-no-auth` is. Visible in process listings (`ps`) like any CLI flag. |
-| `--dashboard-no-auth` | off | Allow dashboard access and control without a token. Anyone who can reach the port can start, stop and redirect the test; on anything but loopback Goose warns at startup. Needs `--dashboard`; refused with `--dashboard-auth-token`. See [Control without a token](#control-without-a-token). |
+| `--dashboard-no-auth` | off | Allow dashboard access and control without a token. Anyone who can reach the port can watch the test, and with `--dashboard-control` start, stop and redirect it; on anything but loopback Goose warns at startup. Needs `--dashboard`; refused with `--dashboard-auth-token`. See [Control without a token](#control-without-a-token). |
 | `--dashboard-max-clients COUNT` | `32` | Max concurrent SSE clients (`GET /api/v1/events`); further clients receive HTTP 503. `0` is refused at startup (`must be at least 1`). The server also holds at most twice this many connections plus 16 (80 by default); a connection beyond that is closed as soon as it is accepted. |
 | `--no-percentiles-over-time` | off | Turn off the response time heatmap and the histograms behind it; the card shows the average latency chart instead. It also turns off the HTML report's response time heatmap, and works without `--dashboard`. See [The response time heatmap](#the-response-time-heatmap). |
 
@@ -111,6 +111,8 @@ Control with a token, which is never printed; `<token>` is the literal placehold
 [dashboard]: listening on http://127.0.0.1:5118 (control enabled)
 [dashboard]: open http://127.0.0.1:5118/?token=<token> to control the test
 ```
+
+On an unspecified bind, `--dashboard-host 0.0.0.0` or `::`, the listening line names the bind address, and the line to open names `127.0.0.1` or `[::1]`, which a browser on the same machine can open: `open http://127.0.0.1:5118/?token=<token> to control the test`. From another machine, use this machine's address instead.
 
 Control with `--dashboard-no-auth` on loopback, the second line at warn level:
 

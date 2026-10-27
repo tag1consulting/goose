@@ -1130,6 +1130,23 @@ pub(crate) async fn setup_dashboard(
     }))
 }
 
+/// The address to open the dashboard bound to `bound` at: the bind address,
+/// or on an unspecified one (`0.0.0.0`, `::`) loopback of the same family,
+/// as a browser can't open an unspecified address.
+fn open_address(bound: &str) -> String {
+    match bound.parse::<std::net::SocketAddr>() {
+        Ok(addr) if addr.ip().is_unspecified() => {
+            let ip: std::net::IpAddr = if addr.is_ipv4() {
+                std::net::Ipv4Addr::LOCALHOST.into()
+            } else {
+                std::net::Ipv6Addr::LOCALHOST.into()
+            };
+            std::net::SocketAddr::new(ip, addr.port()).to_string()
+        }
+        _ => bound.to_string(),
+    }
+}
+
 /// One line, or block, Goose prints when the dashboard starts.
 #[derive(Debug, PartialEq)]
 enum StartupLine {
@@ -1175,8 +1192,9 @@ fn startup_lines(
         }
         (true, false) => {
             lines.push(listening("control enabled"));
+            let open = open_address(bound);
             lines.push(StartupLine::Info(format!(
-                "[dashboard]: open http://{bound}/?token=<token> to control the test"
+                "[dashboard]: open http://{open}/?token=<token> to control the test"
             )));
         }
         (true, true) => {
@@ -4502,7 +4520,7 @@ mod tests {
     /// sent with no token, the right token and a wrong one, all as the page
     /// sends them: JSON, no `Origin`, a loopback IP `Host`. A missing report
     /// is a 404 once a Delete is authorized.
-    const MATRIX_STATUS: [(&str, [[u16; 3]; 10]); 6] = [
+    const MATRIX_STATUS: [(&str, [[u16; 3]; 10]); 7] = [
         (
             "R1",
             [
@@ -4561,17 +4579,33 @@ mod tests {
                 [200; 3], [404; 3],
             ],
         ),
+        (
+            "R11",
+            [
+                [200; 3],
+                [401, 200, 401],
+                [401, 200, 401],
+                [401, 200, 401],
+                [401, 200, 401],
+                [401, 200, 401],
+                [401, 200, 401],
+                [401, 200, 401],
+                [401, 200, 401],
+                [401, 404, 401],
+            ],
+        ),
     ];
 
     /// What `GET /api/v1/health` says for each accepting row:
     /// `control_enabled`, `auth_required` and `loopback`.
-    const MATRIX_HEALTH: [(&str, [bool; 3]); 6] = [
+    const MATRIX_HEALTH: [(&str, [bool; 3]); 7] = [
         ("R1", [false, true, true]),
         ("R2", [false, true, true]),
         ("R3", [true, true, true]),
         ("R4", [true, false, true]),
         ("R5", [false, false, true]),
         ("R6", [true, false, false]),
+        ("R11", [true, true, false]),
     ];
 
     /// The cross site probes, for the rows with control and no token, on
@@ -4593,13 +4627,15 @@ mod tests {
     /// (and as `Origin` on the Start): `[snapshot as rebind.example,
     /// Start as rebind.example, snapshot as the configured host,
     /// snapshot as an IPv6 literal]`.
-    const MATRIX_HOSTS: [(&str, [u16; 4]); 6] = [
+    const MATRIX_HOSTS: [(&str, [u16; 4]); 7] = [
         ("R1", [403, 403, 200, 200]),
         ("R2", [403, 403, 401, 401]),
         ("R3", [403, 403, 401, 401]),
         ("R4", [403, 403, 200, 200]),
         ("R5", [403, 403, 200, 200]),
         ("R6", [403, 403, 200, 200]),
+        // A token bind off loopback checks no Host; every cell lacks the token.
+        ("R11", [401, 401, 401, 401]),
     ];
 
     /// Request headers, by name and value.
@@ -4814,7 +4850,7 @@ mod tests {
     #[test]
     fn dashboard_matrix_startup_lines() {
         let read_only_hint = "[dashboard]: read-only; for control add --dashboard-control and either --dashboard-no-auth (no token) or --dashboard-auth-token <token>";
-        let expected: [(&str, Vec<StartupLine>); 6] = [
+        let expected: [(&str, Vec<StartupLine>); 7] = [
             (
                 "R1",
                 vec![
@@ -4851,6 +4887,14 @@ mod tests {
                 ],
             ),
             (
+                "R11",
+                vec![
+                    StartupLine::Info("[dashboard]: listening on http://0.0.0.0:5118 (control enabled)".into()),
+                    // A browser can't open 0.0.0.0: the line to open names loopback.
+                    StartupLine::Info("[dashboard]: open http://127.0.0.1:5118/?token=<token> to control the test".into()),
+                ],
+            ),
+            (
                 "R6",
                 vec![
                     StartupLine::Info("[dashboard]: listening on http://0.0.0.0:5118 (control enabled, no token)".into()),
@@ -4873,7 +4917,7 @@ mod tests {
         {
             let configuration = crate::config::dashboard_row_configuration(row);
             let host = configuration.dashboard_host();
-            let bound = format!("{host}:5118");
+            let bound = format_bind_address(host, 5118);
             let lines = startup_lines(
                 &bound,
                 configuration.dashboard_control,
@@ -4896,6 +4940,18 @@ mod tests {
                 );
             }
         }
+        // An unspecified IPv6 bind, as R11 with --dashboard-host ::, opens on [::1].
+        assert_eq!(
+            startup_lines("[::]:5118", true, false, true, false),
+            vec![
+                StartupLine::Info(
+                    "[dashboard]: listening on http://[::]:5118 (control enabled)".into()
+                ),
+                StartupLine::Info(
+                    "[dashboard]: open http://[::1]:5118/?token=<token> to control the test".into()
+                ),
+            ]
+        );
     }
 
     /// The no token Host rule: IP literals, and the configured name, with or

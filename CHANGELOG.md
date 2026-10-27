@@ -6,7 +6,7 @@
     o under `--dashboard-no-auth` the control routes refuse a cross site request, one whose `Origin` is not the dashboard's own or whose `Content-Type` is not `application/json`, with 403 `cross_origin`; Goose sends no CORS headers
     o off loopback, `--dashboard-no-auth` starts with a warning written straight to stderr and to the Goose log, the page shows a warning banner, and only an IP address, `localhost` or the `--dashboard-host` name is accepted as `Host` (403 `host_not_allowed`), against DNS rebinding
     o read-only, the Control card stays and says the dashboard can't start, stop or change the test and how to get control; a failed health probe says so; the subtitle reads `Live dashboard · read-only`, or `Live dashboard · control, no token` under the flag
-    o the startup lines say how to get control: `open http://host:port/?token=<token> to control the test` replaces the Bearer line, and a read-only dashboard names the flags to add
+    o the startup lines say how to get control: `open http://host:port/?token=<token> to control the test` replaces the Bearer line, naming `127.0.0.1` or `[::1]` on a `0.0.0.0` or `::` bind, and a read-only dashboard names the flags to add
     o `GET /api/v1/health` adds `auth_required` and `loopback`
  - [#779](https://github.com/tag1consulting/goose/pull/779) fix three defects found while documenting 0.19
     o **behavior change**: test plan steps take `h`, `m` and `s` in either case, as every other time span does
