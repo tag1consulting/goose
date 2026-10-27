@@ -54,6 +54,26 @@ export function formatRate(n: number | undefined): string {
   });
 }
 
+/**
+ * A failure rate as a percent, by the console's `# fails` column's rule: a
+ * rate under 1% with one decimal, rounded half up, or as `<0.1%` when that
+ * decimal would be 0, so failures never show as 0. No failures, and 1% or
+ * more, as {@link formatPct}.
+ */
+export function formatFailPct(n: number | undefined): string {
+  if (typeof n !== "number" || !isFinite(n) || n <= 0 || n >= 0.01) {
+    return formatPct(n);
+  }
+  const tenths = Math.round(n * 1000);
+  if (tenths === 0) return "<0.1%";
+  return (
+    (tenths / 10).toLocaleString(undefined, {
+      minimumFractionDigits: 1,
+      maximumFractionDigits: 1,
+    }) + "%"
+  );
+}
+
 export function formatPct(n: number | undefined): string {
   if (typeof n !== "number" || !isFinite(n)) return "—";
   return (

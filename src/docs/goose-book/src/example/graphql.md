@@ -115,13 +115,13 @@ Both are fragments: they need `use goose::prelude::*;` and `use serde_json::json
 Running the example for 30 seconds with 5 users, against a small local server that answers every POST to `/graphql`, after 5 to 25 ms, with a `200` and a JSON body:
 
 ```bash
-$ cargo run --release --example graphql_loadtest -- --host http://localhost:8006 --users 5 --run-time 30s
+$ cargo run --release --example graphql_loadtest -- --host http://localhost:8080 --users 5 --run-time 30s
 
 19:53:20 [INFO] Output verbosity level: INFO
 19:53:20 [INFO] Logfile verbosity level: WARN
 19:53:20 [INFO] users = 5
 19:53:20 [INFO] run_time = 30
-19:53:20 [INFO] global host configured: http://localhost:8006
+19:53:20 [INFO] global host configured: http://localhost:8080
 19:53:20 [INFO] [scheduler]: allocating transactions and scenarios with RoundRobin scheduler
 19:53:20 [INFO] [scheduler]: initializing 5 user states...
 19:53:20 [INFO] [controller]: Telnet listening on: 0.0.0.0:5116
@@ -230,7 +230,7 @@ All 5 users launched, resetting metrics (disable with --no-reset-metrics).
  Maintaining: 2026-10-26 20:53:25 - 2026-10-26 20:53:55 (00:00:30, 5)
  Decreasing:  2026-10-26 20:53:55 - 2026-10-26 20:53:55 (00:00:00, 0 <- 5)
 
- Target host: http://localhost:8006/
+ Target host: http://localhost:8080/
  goose v0.19.0-dev
  ------------------------------------------------------------------------------
 ```

@@ -6,239 +6,240 @@ The example is written for a site built with the [Drupal Umami demo](https://www
 
 ## ASCII metrics
 
-The example names its transactions, such as `anon /`, but not its requests, so each request is named by its path: the run made requests under 103 names. In the request tables and the errors table below, `...` marks the rows left out, and in the log, the lines left out.
+The example names its transactions, such as `anon /`, but not its requests, so each request is named by its path: the run made requests under 98 names. In the request tables and the errors table below, `...` marks the rows left out, and in the log, the lines left out.
 
 ```bash
-% cargo run --release --example umami -- --host http://127.0.0.1:8013/ -u9 -r3 -t1m --no-reset-metrics --report-file report.html --report-file report.md
-    Finished `release` profile [optimized] target(s) in 0.19s
-     Running `target/release/examples/umami --host 'http://127.0.0.1:8013/' -u9 -r3 -t1m --no-reset-metrics --report-file report.html --report-file report.md`
-19:46:37 [INFO] Output verbosity level: INFO
-19:46:37 [INFO] Logfile verbosity level: WARN
-19:46:37 [INFO] users = 9
-19:46:37 [INFO] run_time = 60
-19:46:37 [INFO] increase_rate = 3.0
-19:46:37 [INFO] no_reset_metrics = true
-19:46:37 [INFO] report_file = ["report.html", "report.md"]
-19:46:37 [INFO] global host configured: http://127.0.0.1:8013/
-19:46:37 [INFO] [scheduler]: allocating transactions and scenarios with RoundRobin scheduler
-19:46:37 [INFO] [scheduler]: initializing 9 user states...
-19:46:37 [INFO] [controller]: Telnet listening on: 0.0.0.0:5116
-19:46:37 [INFO] [controller]: WebSocket listening on: 0.0.0.0:5117
-19:46:37 [INFO] entering GooseAttack phase: Increase
-19:46:37 [INFO] [user 1]: launching user from Anonymous Spanish user
-19:46:38 [INFO] [user 2]: launching user from Anonymous English user
-19:46:38 [INFO] [user 3]: launching user from Anonymous Spanish user
-19:46:38 [INFO] [user 4]: launching user from Anonymous English user
-19:46:39 [INFO] [user 5]: launching user from Anonymous Spanish user
-19:46:39 [INFO] [user 6]: launching user from Anonymous English user
-19:46:39 [INFO] [user 7]: launching user from Admin user
-19:46:40 [INFO] [user 8]: launching user from Anonymous Spanish user
-19:46:40 [INFO] [user 9]: launching user from Anonymous English user
+% cargo run --release --example umami -- --host http://127.0.0.1:8080/ -u9 -r3 -t1m --no-reset-metrics --report-file report.html --report-file report.md
+    Finished `release` profile [optimized] target(s) in 0.14s
+     Running `target/release/examples/umami --host 'http://127.0.0.1:8080/' -u9 -r3 -t1m --no-reset-metrics --report-file report.html --report-file report.md`
+05:34:53 [INFO] Output verbosity level: INFO
+05:34:53 [INFO] Logfile verbosity level: WARN
+05:34:53 [INFO] users = 9
+05:34:53 [INFO] run_time = 60
+05:34:53 [INFO] increase_rate = 3.0
+05:34:53 [INFO] no_reset_metrics = true
+05:34:53 [INFO] report_file = ["report.html", "report.md"]
+05:34:53 [INFO] global host configured: http://127.0.0.1:8080/
+05:34:53 [INFO] [scheduler]: allocating transactions and scenarios with RoundRobin scheduler
+05:34:53 [INFO] [scheduler]: initializing 9 user states...
+05:34:53 [INFO] [controller]: Telnet listening on: 0.0.0.0:5116
+05:34:53 [INFO] [controller]: WebSocket listening on: 0.0.0.0:5117
+05:34:53 [INFO] entering GooseAttack phase: Increase
+05:34:53 [INFO] [user 1]: launching user from Anonymous Spanish user
+05:34:54 [INFO] [user 2]: launching user from Anonymous English user
+05:34:54 [INFO] [user 3]: launching user from Anonymous Spanish user
+05:34:54 [INFO] [user 4]: launching user from Anonymous English user
+05:34:55 [INFO] [user 5]: launching user from Anonymous Spanish user
+05:34:55 [INFO] [user 6]: launching user from Anonymous English user
+05:34:55 [INFO] [user 7]: launching user from Admin user
+05:34:56 [INFO] [user 8]: launching user from Anonymous Spanish user
+05:34:56 [INFO] [user 9]: launching user from Anonymous English user
 All 9 users launched.
 
-19:46:40 [INFO] entering GooseAttack phase: Maintain
-19:46:47 [INFO] set_failure: http://127.0.0.1:8013/es/search/node: search terms (Percances Prueba negocio) not on page
-19:46:48 [INFO] set_failure: http://127.0.0.1:8013/es/search/node: search terms (de Un al) not on page
+05:34:56 [INFO] entering GooseAttack phase: Maintain
+05:35:02 [INFO] set_failure: http://127.0.0.1:8080/en/recipes/vegan-chocolate-and-nut-brownies: title not found: Vegan chocolate and nut brownies
+05:35:02 [INFO] set_failure: http://127.0.0.1:8080/es/search/node: search terms (Quiche Victoria sin) not on page
 ...
-19:47:41 [INFO] entering GooseAttack phase: Decrease
-19:47:41 [INFO] [user 2]: exiting from Anonymous English user
-19:47:41 [INFO] [user 9]: exiting from Anonymous English user
-19:47:41 [INFO] [user 3]: exiting from Anonymous Spanish user
-19:47:41 [INFO] [user 8]: exiting from Anonymous Spanish user
-19:47:41 [INFO] [user 7]: exiting from Admin user
-19:47:41 [INFO] [user 1]: exiting from Anonymous Spanish user
-19:47:41 [INFO] [user 5]: exiting from Anonymous Spanish user
-19:47:41 [INFO] [user 4]: exiting from Anonymous English user
-19:47:41 [INFO] [user 6]: exiting from Anonymous English user
-19:47:41 [INFO] html report file written to: report.html
-19:47:41 [INFO] markdown report file written to: report.md
-19:47:41 [INFO] entering GooseAttack phase: Shutdown
-19:47:41 [INFO] printing final metrics after 63 seconds...
+05:35:57 [INFO] entering GooseAttack phase: Decrease
+05:35:57 [INFO] [user 1]: exiting from Anonymous Spanish user
+05:35:57 [INFO] [user 8]: exiting from Anonymous Spanish user
+05:35:57 [INFO] [user 5]: exiting from Anonymous Spanish user
+05:35:57 [INFO] [user 3]: exiting from Anonymous Spanish user
+05:35:57 [INFO] [user 9]: exiting from Anonymous English user
+05:35:57 [INFO] [user 7]: exiting from Admin user
+05:35:57 [INFO] [user 6]: exiting from Anonymous English user
+05:35:57 [INFO] [user 2]: exiting from Anonymous English user
+05:35:57 [INFO] [user 4]: exiting from Anonymous English user
+05:35:57 [INFO] html report file written to: report.html
+05:35:57 [INFO] markdown report file written to: report.md
+05:35:57 [INFO] entering GooseAttack phase: Shutdown
+05:35:57 [INFO] printing final metrics after 63 seconds...
 
  === PER SCENARIO METRICS ===
  ------------------------------------------------------------------------------
  Name                     |  # users |  # times run | scenarios/s | iterations
  ------------------------------------------------------------------------------
- 1: Anonymous English u.. |        4 |            9 |        0.14 |       2.25
- 2: Anonymous Spanish u.. |        4 |           10 |        0.16 |       2.50
+ 1: Anonymous English u.. |        4 |            8 |        0.13 |       2.00
+ 2: Anonymous Spanish u.. |        4 |            8 |        0.13 |       2.00
  3: Admin user            |        1 |            2 |        0.03 |       2.00
  -------------------------+----------+--------------+-------------+------------
- Aggregated               |        9 |           21 |        0.33 |       2.33
+ Aggregated               |        9 |           18 |        0.29 |       2.00
  ------------------------------------------------------------------------------
  Name                     |    Avg (ms) |        Min |         Max |     Median
  ------------------------------------------------------------------------------
-   1: Anonymous English.. |      21,890 |     13,456 |      25,509 |     22,413
-   2: Anonymous Spanish.. |      21,297 |     15,457 |      30,714 |     21,365
-   3: Admin user          |      30,279 |     28,957 |      31,602 |     28,957
+   1: Anonymous English.. |      24,799 |     18,725 |      33,500 |     23,200
+   2: Anonymous Spanish.. |      24,008 |     20,715 |      32,232 |     22,413
+   3: Admin user          |      29,455 |     21,141 |      37,769 |     21,141
  -------------------------+-------------+------------+-------------+-----------
- Aggregated               |      22,407 |     13,456 |      31,602 |     22,413
+ Aggregated               |      24,965 |     18,725 |      37,769 |     22,675
 
  === PER TRANSACTION METRICS ===
  ------------------------------------------------------------------------------
  Name                     |   # times run |        # fails |  trans/s |  fail/s
  ------------------------------------------------------------------------------
  1: Anonymous English user
-   1: anon /              |            24 |         0 (0%) |     0.38 |    0.00
-   2: anon /en/basicpage  |            13 |         0 (0%) |     0.21 |    0.00
+   1: anon /              |            22 |         0 (0%) |     0.35 |    0.00
+   2: anon /en/basicpage  |            12 |         0 (0%) |     0.19 |    0.00
    3: anon /en/articles/  |            12 |         0 (0%) |     0.19 |    0.00
-   4: anon /en/articles/% |            23 |         0 (0%) |     0.37 |    0.00
-   5: anon /en/recipes/   |            12 |      2 (16.7%) |     0.19 |    0.03
-   6: anon /en/recipes/%  |            43 |         0 (0%) |     0.68 |    0.00
-   7: anon /node/%nid     |            12 |         0 (0%) |     0.19 |    0.00
-   8: anon /en term       |            23 |         0 (0%) |     0.37 |    0.00
-   9: anon /en/search     |            12 |      12 (100%) |     0.19 |    0.19
-   10: anon /en/contact   |            12 |         0 (0%) |     0.19 |    0.00
+   4: anon /en/articles/% |            22 |         0 (0%) |     0.35 |    0.00
+   5: anon /en/recipes/   |            12 |         0 (0%) |     0.19 |    0.00
+   6: anon /en/recipes/%  |            37 |       1 (2.7%) |     0.59 |    0.02
+   7: anon /node/%nid     |            10 |         0 (0%) |     0.16 |    0.00
+   8: anon /en term       |            19 |       1 (5.3%) |     0.30 |    0.02
+   9: anon /en/search     |            10 |      10 (100%) |     0.16 |    0.16
+   10: anon /en/contact   |            10 |         0 (0%) |     0.16 |    0.00
  2: Anonymous Spanish user
-   1: anon /es/           |            25 |         0 (0%) |     0.40 |    0.00
-   2: anon /es/basicpage  |            14 |         0 (0%) |     0.22 |    0.00
-   3: anon /es/articles/  |            14 |         0 (0%) |     0.22 |    0.00
-   4: anon /es/articles/% |            24 |       1 (4.2%) |     0.38 |    0.02
-   5: anon /es/recipes/   |            13 |         0 (0%) |     0.21 |    0.00
-   6: anon /es/recipes/%  |            44 |         0 (0%) |     0.70 |    0.00
-   7: anon /es term       |            23 |         0 (0%) |     0.37 |    0.00
+   1: anon /es/           |            21 |         0 (0%) |     0.33 |    0.00
+   2: anon /es/basicpage  |            12 |       1 (8.3%) |     0.19 |    0.02
+   3: anon /es/articles/  |            12 |         0 (0%) |     0.19 |    0.00
+   4: anon /es/articles/% |            21 |       1 (4.8%) |     0.33 |    0.02
+   5: anon /es/recipes/   |            12 |         0 (0%) |     0.19 |    0.00
+   6: anon /es/recipes/%  |            37 |       1 (2.7%) |     0.59 |    0.02
+   7: anon /es term       |            21 |         0 (0%) |     0.33 |    0.00
    8: anon /es/search     |            11 |      11 (100%) |     0.17 |    0.17
-   9: anon /es/contact    |            11 |         0 (0%) |     0.17 |    0.00
+   9: anon /es/contact    |            10 |         0 (0%) |     0.16 |    0.00
  3: Admin user           
    1: auth /en/user/login |             1 |         0 (0%) |     0.02 |    0.00
    2: auth /              |             5 |         0 (0%) |     0.08 |    0.00
    3: auth /en/articles/  |             2 |         0 (0%) |     0.03 |    0.00
    4: auth /en/node/%/e.. |             4 |         0 (0%) |     0.06 |    0.00
  -------------------------+---------------+----------------+----------+--------
- Aggregated               |           377 |      26 (6.9%) |     5.98 |    0.41
+ Aggregated               |           335 |      26 (7.8%) |     5.32 |    0.41
  ------------------------------------------------------------------------------
  Name                     |    Avg (ms) |        Min |         Max |     Median
  ------------------------------------------------------------------------------
  1: Anonymous English user
-   1: anon /              |        1.01 |        0.4 |        1.53 |       1.05
-   2: anon /en/basicpage  |        0.87 |       0.39 |        1.83 |       0.83
-   3: anon /en/articles/  |        0.89 |       0.52 |        1.33 |       0.85
-   4: anon /en/articles/% |        0.96 |       0.53 |        1.52 |       0.98
-   5: anon /en/recipes/   |        0.77 |       0.33 |        1.14 |       0.74
-   6: anon /en/recipes/%  |           1 |       0.52 |        1.57 |       0.95
-   7: anon /node/%nid     |        0.92 |       0.45 |        1.52 |        0.8
-   8: anon /en term       |        0.95 |       0.45 |        1.53 |          1
-   9: anon /en/search     |        2.01 |       0.67 |        8.75 |       1.54
-   10: anon /en/contact   |        1.82 |       0.77 |         2.6 |       1.91
+   1: anon /              |        1.35 |       0.52 |        2.23 |       1.22
+   2: anon /en/basicpage  |        1.34 |        0.9 |        2.32 |       1.18
+   3: anon /en/articles/  |        1.25 |        0.7 |        1.75 |       1.21
+   4: anon /en/articles/% |        1.26 |       0.47 |        1.93 |       1.22
+   5: anon /en/recipes/   |        1.37 |       1.08 |        2.06 |       1.29
+   6: anon /en/recipes/%  |        1.27 |       0.81 |        2.12 |       1.19
+   7: anon /node/%nid     |        1.17 |       0.62 |        1.53 |       1.22
+   8: anon /en term       |        1.41 |       0.82 |        2.79 |        1.3
+   9: anon /en/search     |        2.04 |       1.43 |        3.11 |       1.98
+   10: anon /en/contact   |         2.4 |       1.51 |        3.24 |       2.26
  2: Anonymous Spanish user
-   1: anon /es/           |        0.99 |       0.39 |        1.59 |       0.96
-   2: anon /es/basicpage  |         0.9 |       0.45 |        1.47 |       0.89
-   3: anon /es/articles/  |        0.84 |       0.51 |        1.46 |       0.71
-   4: anon /es/articles/% |        0.91 |       0.45 |        1.61 |       0.87
-   5: anon /es/recipes/   |        0.86 |       0.42 |        1.44 |       0.68
-   6: anon /es/recipes/%  |        1.02 |       0.44 |        1.95 |       1.02
-   7: anon /es term       |        1.21 |       0.44 |        7.93 |       0.87
-   8: anon /es/search     |        1.28 |        0.7 |        2.38 |        1.1
-   9: anon /es/contact    |        1.77 |       0.82 |        2.75 |        1.7
+   1: anon /es/           |        1.38 |       0.73 |        1.93 |       1.43
+   2: anon /es/basicpage  |        1.45 |       0.62 |        3.66 |       1.24
+   3: anon /es/articles/  |        1.23 |       0.72 |        1.95 |       1.26
+   4: anon /es/articles/% |        1.22 |       0.44 |        1.81 |       1.19
+   5: anon /es/recipes/   |        1.21 |       0.79 |        1.64 |       1.22
+   6: anon /es/recipes/%  |        1.32 |       0.39 |        2.14 |        1.3
+   7: anon /es term       |        1.68 |       0.86 |        3.04 |       1.59
+   8: anon /es/search     |        2.18 |       1.56 |        2.79 |       2.13
+   9: anon /es/contact    |        2.54 |       1.56 |        3.17 |       2.42
  3: Admin user           
-   1: auth /en/user/login |        1.16 |       1.16 |        1.16 |       1.16
-   2: auth /              |        0.91 |       0.32 |        1.41 |        1.1
-   3: auth /en/articles/  |        0.47 |       0.46 |        0.49 |       0.46
-   4: auth /en/node/%/e.. |        2.39 |       1.43 |        3.13 |       1.93
+   1: auth /en/user/login |        1.78 |       1.78 |        1.78 |       1.78
+   2: auth /              |        0.74 |       0.46 |         1.1 |       0.56
+   3: auth /en/articles/  |        1.49 |       1.39 |        1.58 |       1.39
+   4: auth /en/node/%/e.. |        3.38 |       1.96 |        4.06 |        3.5
  -------------------------+-------------+------------+-------------+-----------
- Aggregated               |        1.07 |       0.32 |        8.75 |       0.99
+ Aggregated               |        1.47 |       0.39 |        4.06 |       1.35
 
  === PER REQUEST METRICS ===
  ------------------------------------------------------------------------------
  Name                     |        # reqs |        # fails |    req/s |  fail/s
  ------------------------------------------------------------------------------
- GET /                    |            29 |         0 (0%) |     0.46 |    0.00
- GET /en/about-umami      |            13 |         0 (0%) |     0.21 |    0.00
+ GET /                    |            27 |         0 (0%) |     0.43 |    0.00
+ GET /en/about-umami      |            12 |         0 (0%) |     0.19 |    0.00
  GET /en/articles/        |            14 |         0 (0%) |     0.22 |    0.00
  ...
- GET static asset         |           808 |         7 (0%) |    12.83 |    0.11
- POST /en/contact         |            12 |      2 (16.7%) |     0.19 |    0.03
+ GET static asset         |           718 |      14 (1.9%) |    11.40 |    0.22
+ POST /en/contact         |            10 |         0 (0%) |     0.16 |    0.00
  POST /en/node/11/edit    |             2 |         0 (0%) |     0.03 |    0.00
- POST /en/node/13/edit    |             1 |         0 (0%) |     0.02 |    0.00
+ POST /en/node/12/edit    |             1 |         0 (0%) |     0.02 |    0.00
  POST /en/node/16/edit    |             1 |         0 (0%) |     0.02 |    0.00
- POST /en/search/node     |            12 |         0 (0%) |     0.19 |    0.00
+ POST /en/search/node     |            10 |         0 (0%) |     0.16 |    0.00
  POST /en/user/login      |             1 |         0 (0%) |     0.02 |    0.00
- POST /es/contact         |            11 |         0 (0%) |     0.17 |    0.00
+ POST /es/contact         |            10 |         0 (0%) |     0.16 |    0.00
  POST /es/search/node     |            11 |         0 (0%) |     0.17 |    0.00
  -------------------------+---------------+----------------+----------+--------
- Aggregated               |         1,240 |      35 (2.8%) |    19.68 |    0.56
+ Aggregated               |         1,103 |      40 (3.6%) |    17.51 |    0.63
  ------------------------------------------------------------------------------
  Name                     |    Avg (ms) |        Min |         Max |     Median
  ------------------------------------------------------------------------------
- GET /                    |        0.39 |        0.1 |        0.77 |       0.35
- GET /en/about-umami      |        0.29 |       0.13 |        0.78 |       0.25
- GET /en/articles/        |        0.31 |       0.17 |         0.7 |       0.29
+ GET /                    |        0.53 |       0.09 |        1.23 |       0.51
+ GET /en/about-umami      |        0.55 |        0.3 |        1.17 |       0.47
+ GET /en/articles/        |        0.55 |       0.17 |        0.96 |       0.53
  ...
- GET static asset         |        0.16 |       0.05 |        0.69 |       0.15
-   └─ 200 (99.1%)         |        0.16 |       0.05 |        0.69 |          -
-   └─ 500 (0.9%)          |        0.14 |       0.08 |        0.19 |          -
- POST /en/contact         |        0.24 |       0.11 |         0.4 |       0.24
-   └─ 200 (83.3%)         |        0.25 |       0.11 |         0.4 |          -
-   └─ 500 (16.7%)         |        0.23 |       0.14 |        0.31 |          -
- POST /en/node/11/edit    |        0.25 |       0.21 |        0.28 |       0.21
- POST /en/node/13/edit    |        0.27 |       0.27 |        0.27 |       0.27
- POST /en/node/16/edit    |        0.14 |       0.14 |        0.14 |       0.14
- POST /en/search/node     |        0.25 |       0.13 |        0.38 |       0.25
- POST /en/user/login      |        0.16 |       0.16 |        0.16 |       0.16
- POST /es/contact         |        0.23 |       0.12 |        0.33 |       0.25
- POST /es/search/node     |        0.24 |       0.12 |        0.53 |       0.19
+ GET static asset         |         0.2 |       0.07 |        1.32 |       0.19
+   └─ 200 (98.1%)         |         0.2 |       0.07 |        1.32 |          -
+   └─ 500 (1.9%)          |        0.17 |        0.1 |        0.25 |          -
+ POST /en/contact         |        0.34 |        0.2 |        0.63 |       0.32
+ POST /en/node/11/edit    |        0.33 |       0.25 |         0.4 |       0.25
+ POST /en/node/12/edit    |         0.3 |        0.3 |         0.3 |        0.3
+ POST /en/node/16/edit    |         0.4 |        0.4 |         0.4 |        0.4
+ POST /en/search/node     |        0.32 |        0.2 |        0.51 |       0.31
+ POST /en/user/login      |        0.22 |       0.22 |        0.22 |       0.22
+ POST /es/contact         |        0.36 |       0.19 |        0.72 |       0.31
+ POST /es/search/node     |         0.4 |       0.25 |        0.54 |        0.4
  -------------------------+-------------+------------+-------------+-----------
- Aggregated               |        0.22 |       0.05 |        7.41 |       0.19
+ Aggregated               |        0.31 |       0.07 |        1.39 |       0.24
  ------------------------------------------------------------------------------
  Slowest page load within specified percentile of requests (in ms):
  ------------------------------------------------------------------------------
  Name                     |    50% |    75% |    98% |    99% |  99.9% | 99.99%
  ------------------------------------------------------------------------------
- GET /                    |   0.35 |   0.41 |   0.73 |   0.77 |   0.77 |   0.77
- GET /en/about-umami      |   0.25 |   0.38 |   0.78 |   0.78 |   0.78 |   0.78
- GET /en/articles/        |   0.29 |   0.33 |    0.7 |    0.7 |    0.7 |    0.7
+ GET /                    |   0.51 |   0.63 |   1.06 |   1.23 |   1.23 |   1.23
+ GET /en/about-umami      |   0.47 |   0.58 |   1.17 |   1.17 |   1.17 |   1.17
+ GET /en/articles/        |   0.53 |   0.59 |   0.96 |   0.96 |   0.96 |   0.96
  ...
- GET static asset         |   0.15 |    0.2 |   0.31 |    0.4 |   0.59 |   0.69
- POST /en/contact         |   0.24 |   0.31 |    0.4 |    0.4 |    0.4 |    0.4
- POST /en/node/11/edit    |   0.21 |   0.28 |   0.28 |   0.28 |   0.28 |   0.28
- POST /en/node/13/edit    |   0.27 |   0.27 |   0.27 |   0.27 |   0.27 |   0.27
- POST /en/node/16/edit    |   0.14 |   0.14 |   0.14 |   0.14 |   0.14 |   0.14
- POST /en/search/node     |   0.25 |   0.31 |   0.38 |   0.38 |   0.38 |   0.38
- POST /en/user/login      |   0.16 |   0.16 |   0.16 |   0.16 |   0.16 |   0.16
- POST /es/contact         |   0.25 |   0.27 |   0.33 |   0.33 |   0.33 |   0.33
- POST /es/search/node     |   0.19 |   0.28 |   0.53 |   0.53 |   0.53 |   0.53
+ GET static asset         |   0.19 |   0.24 |   0.39 |   0.46 |   0.75 |   1.32
+ POST /en/contact         |   0.32 |   0.37 |   0.63 |   0.63 |   0.63 |   0.63
+ POST /en/node/11/edit    |   0.25 |    0.4 |    0.4 |    0.4 |    0.4 |    0.4
+ POST /en/node/12/edit    |    0.3 |    0.3 |    0.3 |    0.3 |    0.3 |    0.3
+ POST /en/node/16/edit    |    0.4 |    0.4 |    0.4 |    0.4 |    0.4 |    0.4
+ POST /en/search/node     |   0.31 |   0.35 |   0.51 |   0.51 |   0.51 |   0.51
+ POST /en/user/login      |   0.22 |   0.22 |   0.22 |   0.22 |   0.22 |   0.22
+ POST /es/contact         |   0.31 |   0.41 |   0.72 |   0.72 |   0.72 |   0.72
+ POST /es/search/node     |    0.4 |   0.45 |   0.54 |   0.54 |   0.54 |   0.54
  -------------------------+--------+--------+--------+--------+--------+-------
- Aggregated               |   0.19 |   0.26 |   0.66 |   0.69 |    0.8 |   7.41
+ Aggregated               |   0.24 |    0.4 |   0.96 |   1.03 |   1.32 |   1.39
  ------------------------------------------------------------------------------
  Name                     |                                        Status codes 
  ------------------------------------------------------------------------------
- GET /                    |                                            29 [200]
- GET /en/about-umami      |                                            13 [200]
+ GET /                    |                                            27 [200]
+ GET /en/about-umami      |                                            12 [200]
  GET /en/articles/        |                                            14 [200]
  ...
- GET static asset         |                                  801 [200], 7 [500]
- POST /en/contact         |                                   10 [200], 2 [500]
+ GET static asset         |                                 14 [500], 704 [200]
+ POST /en/contact         |                                            10 [200]
  POST /en/node/11/edit    |                                             2 [200]
- POST /en/node/13/edit    |                                             1 [200]
+ POST /en/node/12/edit    |                                             1 [200]
  POST /en/node/16/edit    |                                             1 [200]
- POST /en/search/node     |                                            12 [200]
+ POST /en/search/node     |                                            10 [200]
  POST /en/user/login      |                                             1 [200]
- POST /es/contact         |                                            11 [200]
+ POST /es/contact         |                                            10 [200]
  POST /es/search/node     |                                            11 [200]
  -------------------------+----------------------------------------------------
- Aggregated               |                               12 [500], 1,228 [200] 
+ Aggregated               |                               19 [500], 1,084 [200] 
 
  === ERRORS ===
  ------------------------------------------------------------------------------
  Count       | Error
  ------------------------------------------------------------------------------
- 7             GET static asset: 500 Internal Server Error: static asset
- 2             POST /en/contact: 500 Internal Server Error: /en/contact
- 2             GET /en/recipes/: 500 Internal Server Error: /en/recipes/
- 1             GET es/articles/percances-al-hornear-nuestros-consejos-para-solucionar-problemas: 500 Internal Server Error: es/articles/percances-al-hornear-nuestros-consejos-para-solucionar-problemas
- 1             GET /es/search/node: http://127.0.0.1:8013/es/search/node: search terms (sin hierbas Un) not on page
- 1             GET /es/search/node: http://127.0.0.1:8013/es/search/node: search terms (setas Prueba Bizcochos) not on page
+ 14            GET static asset: 500 Internal Server Error: static asset
+ 1             GET /es/search/node: http://127.0.0.1:8080/es/search/node: search terms (vegetariana gluten Acerca) not on page
+ 1             GET /es/search/node: http://127.0.0.1:8080/es/search/node: search terms (veganos aplauso Umami) not on page
  ...
+ 1             GET /es/recipes/crema-catalana: 500 Internal Server Error: /es/recipes/crema-catalana
+ 1             GET /es/articles/guia-umami-de-nuestras-setas-preferidas: 500 Internal Server Error: /es/articles/guia-umami-de-nuestras-setas-preferidas
+ 1             GET /es/acerca-de-umami: 500 Internal Server Error: /es/acerca-de-umami
+ 1             GET /en/tags/alcohol-free: 500 Internal Server Error: /en/tags/alcohol-free
+ ...
+ 1             GET /en/recipes/vegan-chocolate-and-nut-brownies: 500 Internal Server Error: /en/recipes/vegan-chocolate-and-nut-brownies
  ------------------------------------------------------------------------------
 
  === OVERVIEW ===
  ------------------------------------------------------------------------------
  Action       Started               Stopped             Elapsed    Users
  ------------------------------------------------------------------------------
- Increasing:  2026-10-26 20:46:37 - 2026-10-26 20:46:40 (00:00:03, 0 -> 9)
- Maintaining: 2026-10-26 20:46:40 - 2026-10-26 20:47:41 (00:01:01, 9)
- Decreasing:  2026-10-26 20:47:41 - 2026-10-26 20:47:41 (00:00:00, 0 <- 9)
+ Increasing:  2026-10-27 06:34:53 - 2026-10-27 06:34:56 (00:00:03, 0 -> 9)
+ Maintaining: 2026-10-27 06:34:56 - 2026-10-27 06:35:57 (00:01:01, 9)
+ Decreasing:  2026-10-27 06:35:57 - 2026-10-27 06:35:57 (00:00:00, 0 <- 9)
 
- Target host: http://127.0.0.1:8013/
+ Target host: http://127.0.0.1:8080/
  goose v0.19.0-dev
  ------------------------------------------------------------------------------
 ```
@@ -252,13 +253,13 @@ When a transaction returns an error that is not a request error, such as `Transa
  ------------------------------------------------------------------------------
  Count       | Transaction: error
  ------------------------------------------------------------------------------
- 20,663        1.3 ErrUser flaky: TransactionError: custom error (every third call fails)
+ 27,005        1.3 ErrUser flaky: TransactionError: custom error (every third call fails)
  ------------------------------------------------------------------------------
 ```
 
 The summary ends with the overview of the test plan: each phase, when it started and stopped, how long it took, and how many users were running.
 
-The errors and transaction errors tables count every error from the start of the run: the metrics reset after the ramp up does not clear them. In the run above, `flaky` failed 16,231 times after the reset, as the `# fails` column of its transaction table (not shown) counts, and 20,663 times in all. `--no-error-summary` leaves both tables out of the summary and the reports; the [error log](../logging/errors.md) and the [transaction log](../logging/transactions.md) still record every error.
+The errors and transaction errors tables count the errors after the metrics reset that follows the ramp up, as the other tables do, or every error from the start of the run with `--no-reset-metrics`. In the run above, `flaky` failed 27,005 times after the reset, as the `# fails` column of its transaction table (not shown) also counts. `--no-error-summary` leaves both tables out of the summary and the reports; the [error log](../logging/errors.md) and the [transaction log](../logging/transactions.md) still record every error.
 
 ## Report Formats
 

@@ -31,9 +31,10 @@ impl Default for TestPlan {
 
 lazy_static! {
     // Each step of a test plan is "{users},{timespan}"; white space is ignored.
+    // The time span is read by `util::parse_timespan`, as every other time
+    // span is, so its units take either case and an empty span is 0.
     static ref STEP: Regex =
-        Regex::new(r"^\s*([0-9]+)\s*,\s*([0-9]+|(([0-9]+?)h)?(([0-9]+?)m)?(([0-9]+?)s)?)\s*$")
-            .unwrap();
+        Regex::new(r"^\s*([0-9]+)\s*,\s*([0-9hmsHMS]*)\s*$").unwrap();
 }
 
 /// Automatically represent all load tests internally as a test plan.
@@ -353,6 +354,60 @@ mod test {
             let again = TestPlan::parse(&parsed.to_string()).unwrap();
             assert_eq!(again.steps, parsed.steps, "{}", plan);
             assert_eq!(again.to_string(), written, "{}", plan);
+        }
+    }
+
+    /// A step's time units parse in either case, as every other time span
+    /// does, from the command line and from `--test-plan` itself.
+    #[test]
+    fn step_units_in_either_case() {
+        for (upper, lower) in [
+            ("2,1M", "2,1m"),
+            ("10,1H30M", "10,1h30m"),
+            ("5,10S", "5,10s"),
+            ("10,1h30M;0,5S", "10,1h30m;0,5s"),
+        ] {
+            let parsed = TestPlan::from_str(upper).unwrap();
+            assert_eq!(
+                parsed.steps,
+                TestPlan::from_str(lower).unwrap().steps,
+                "{upper}"
+            );
+            let configured =
+                GooseConfiguration::parse_args_default(&["--test-plan", upper]).unwrap();
+            assert_eq!(configured.test_plan.unwrap().steps, parsed.steps, "{upper}");
+        }
+    }
+
+    /// Plans that parsed before units took either case parse the same, and
+    /// steps that were refused still are.
+    #[test]
+    fn step_grammar_unchanged() {
+        for (plan, steps) in [
+            ("10,", vec![(10, 0)]),
+            ("10,90", vec![(10, 90_000)]),
+            ("10,1h30m", vec![(10, 5_400_000)]),
+            ("0,5s;10,20s", vec![(0, 5_000), (10, 20_000)]),
+            (" 3 , 2m10s ;0,1h2m3s", vec![(3, 130_000), (0, 3_723_000)]),
+        ] {
+            assert_eq!(TestPlan::parse(plan).unwrap().steps, steps, "{plan}");
+        }
+        for plan in [
+            "2,15mins",
+            "2,5 junk",
+            "2,1m1h",
+            "2,h",
+            "2,1d",
+            "2,ms",
+            "2,s",
+            "2,1h1h",
+            "2,1h 30m",
+            "2,5\u{17f}",
+            "2,\u{661}h",
+            "x",
+            "2",
+        ] {
+            assert!(TestPlan::parse(plan).is_err(), "{}", plan);
         }
     }
 

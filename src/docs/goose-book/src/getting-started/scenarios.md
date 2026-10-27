@@ -68,7 +68,7 @@ For more information, try '--help'.
 A machine name with a `_` suffix, such as `loadtesttransactions_1` above, selects that one scenario. For example, a load test that registers two scenarios both named `Visitor` lists them as `visitor` and `visitor_1`, and `--scenarios visitor_1` runs only the second:
 
 ```bash,ignore
-% cargo run --release -- --host http://127.0.0.1:8000 -u2 -r2 -t2s --scenarios visitor_1
+% cargo run --release -- --host http://127.0.0.1:8080 -u2 -r2 -t2s --scenarios visitor_1
 ...
  === PER SCENARIO METRICS ===
  ------------------------------------------------------------------------------

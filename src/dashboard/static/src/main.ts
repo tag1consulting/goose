@@ -24,7 +24,7 @@ import {
   updateControlFromSnapshot,
 } from "./control";
 import { requireElement } from "./dom";
-import { formatDuration, formatInt, formatMs, formatPct, formatRate, kv } from "./format";
+import { formatDuration, formatFailPct, formatInt, formatMs, formatRate, kv } from "./format";
 import {
   initHeatmapCard,
   redrawHeatmapCard,
@@ -139,7 +139,7 @@ function renderSnapshot(
   setUsersKpi(snap.active_users, snap.target_users);
   const agg = snap.aggregate;
   setRpsKpi(agg.requests_per_second);
-  kpiFail.textContent = formatPct(agg.failure_rate);
+  kpiFail.textContent = formatFailPct(agg.failure_rate);
   const p = agg.percentile_ms;
   // Once coordinated omission mitigation has events, response times are
   // shown adjusted, labelled so, with the measured value on hover.
@@ -192,7 +192,7 @@ function renderSnapshot(
   aggregateEl.appendChild(kv("Failures", formatInt(agg.total_failures)));
   aggregateEl.appendChild(kv("RPS", formatRate(agg.requests_per_second)));
   aggregateEl.appendChild(kv("Failures/s", formatRate(agg.failures_per_second)));
-  aggregateEl.appendChild(kv("Fail %", formatPct(agg.failure_rate)));
+  aggregateEl.appendChild(kv("Fail %", formatFailPct(agg.failure_rate)));
   // The minimum has no adjusted value: the adjusted line pairs the measured
   // minimum with the adjusted maximum.
   const measuredMinMax = minMaxText(

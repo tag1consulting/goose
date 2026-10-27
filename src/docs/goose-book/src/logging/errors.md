@@ -15,7 +15,7 @@ By default, logs are written in JSON Lines format. For example:
 
 ```json
 {"elapsed":0,"scenario_index":0,"scenario_name":"erruser","transaction_index":2,"transaction_name":"flaky","run_time":0,"user":0,"error":"TransactionError: custom error (every third call fails)"}
-{"elapsed":0,"raw":{"method":"Get","url":"http://127.0.0.1:8000/about/","headers":[],"body":"","custom_method":""},"name":"/about/","final_url":"http://127.0.0.1:8000/about/","redirected":false,"response_time":0,"status_code":404,"user":0,"error":"404 Not Found: /about/"}
+{"elapsed":0,"raw":{"method":"Get","url":"http://127.0.0.1:8080/about/","headers":[],"body":"","custom_method":""},"name":"/about/","final_url":"http://127.0.0.1:8080/about/","redirected":false,"response_time":0,"status_code":404,"user":0,"error":"404 Not Found: /about/"}
 ```
 
 These lines are from a load test run against a local server that answers `/about/` with a `404`. Its `ErrUser` scenario requests `/` and `/about/`, and its `flaky` transaction returns `TransactionError::Custom("every third call fails")` one time in three. The first line is a transaction error, the second a request error.
@@ -27,7 +27,7 @@ The `csv` format starts with a header row. Its first nine columns are a request 
 ```csv
 elapsed,raw,name,final_url,redirected,response_time,status_code,user,error,scenario_index,scenario_name,transaction_index,transaction_name,run_time
 0,,,,,,,0,TransactionError: custom error (every third call fails),0,erruser,2,flaky,0
-0,"GooseRawRequest { method: Get, url: ""http://127.0.0.1:8000/about/"", headers: [], body: """", custom_method: """" }",/about/,http://127.0.0.1:8000/about/,false,0,404,0,404 Not Found: /about/,,,,,
+0,"GooseRawRequest { method: Get, url: ""http://127.0.0.1:8080/about/"", headers: [], body: """", custom_method: """" }",/about/,http://127.0.0.1:8080/about/,false,0,404,0,404 Not Found: /about/,,,,,
 ```
 
 `--no-error-summary` leaves errors out of the errors tables of the [metrics](../getting-started/metrics.md) and reports, not out of this log.
