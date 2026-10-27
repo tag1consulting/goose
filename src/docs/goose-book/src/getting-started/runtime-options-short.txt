@@ -83,10 +83,10 @@ Dashboard:
 Controllers:
       --no-autostart           Wait for a Controller to start the test
       --no-telnet              Disable the telnet Controller
-      --telnet-host <HOST>     Telnet host [default: 0.0.0.0]
+      --telnet-host <HOST>     Telnet host [default: 127.0.0.1]
       --telnet-port <PORT>     Telnet port [default: 5116]
       --websocket              Enable the WebSocket Controller
-      --websocket-host <HOST>  WebSocket host [default: 0.0.0.0]
+      --websocket-host <HOST>  WebSocket host [default: 127.0.0.1]
       --websocket-port <PORT>  WebSocket port [default: 5117]
 
 HTTP client:

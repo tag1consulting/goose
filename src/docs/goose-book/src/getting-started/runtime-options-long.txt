@@ -607,11 +607,14 @@ Controllers:
           Set in code with GooseDefault::NoTelnet.
 
       --telnet-host <HOST>
-          Telnet host [default: 0.0.0.0]
+          Telnet host [default: 127.0.0.1]
 
-          The address the telnet Controller listens on.
+          The address the telnet Controller listens on. It has no
+          authentication: any other address, such as 0.0.0.0, prints a warning
+          at startup, as anyone who can reach the port can start, stop and
+          reconfigure the load test.
 
-          Example: --telnet-host 127.0.0.1. Set in code with
+          Example: --telnet-host 0.0.0.0. Set in code with
           GooseDefault::TelnetHost.
 
       --telnet-port <PORT>
@@ -633,11 +636,14 @@ Controllers:
           Set in code with GooseDefault::WebSocket.
 
       --websocket-host <HOST>
-          WebSocket host [default: 0.0.0.0]
+          WebSocket host [default: 127.0.0.1]
 
-          The address the WebSocket Controller listens on, with --websocket.
+          The address the WebSocket Controller listens on, with --websocket. It
+          has no authentication: any other address, such as 0.0.0.0, prints a
+          warning at startup, as anyone who can reach the port can start, stop
+          and reconfigure the load test.
 
-          Example: --websocket-host 127.0.0.1. Set in code with
+          Example: --websocket-host 0.0.0.0. Set in code with
           GooseDefault::WebSocketHost.
 
       --websocket-port <PORT>

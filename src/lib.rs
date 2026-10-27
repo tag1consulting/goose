@@ -4018,7 +4018,9 @@ mod tests {
     use super::*;
 
     /// The telnet Controller listens by default and the WebSocket Controller
-    /// only with `--websocket`.
+    /// only with `--websocket`, and with no host given both listen on
+    /// 127.0.0.1 only: a connection to this machine's own non-loopback
+    /// address, where it has one, is refused.
     #[tokio::test]
     async fn websocket_controller_listens_only_when_asked_for() {
         /// A port nothing listens on, for now.
@@ -4029,12 +4031,8 @@ mod tests {
         for websocket in [false, true] {
             let (telnet_port, websocket_port) = (free_port(), free_port());
             let mut args = vec![
-                "--telnet-host",
-                "127.0.0.1",
                 "--telnet-port",
                 &telnet_port,
-                "--websocket-host",
-                "127.0.0.1",
                 "--websocket-port",
                 &websocket_port,
             ];
@@ -4050,19 +4048,36 @@ mod tests {
             let listening = goose_attack.setup_controllers(&control_tx).await;
             assert!(listening.telnet);
             assert_eq!(listening.websocket, websocket);
-            let connects = |port: String| async move {
-                tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
-                    .await
-                    .is_ok()
+            let connects = |host: std::net::IpAddr, port: &str| {
+                let address = std::net::SocketAddr::new(host, port.parse().unwrap());
+                async move { tokio::net::TcpStream::connect(address).await.is_ok() }
             };
-            assert!(connects(telnet_port).await);
+            let loopback = std::net::Ipv4Addr::LOCALHOST.into();
+            assert!(connects(loopback, &telnet_port).await);
+            if let Some(lan) = lan_address() {
+                assert!(!connects(lan, &telnet_port).await, "telnet on {}", lan);
+                assert!(
+                    !connects(lan, &websocket_port).await,
+                    "WebSocket on {}",
+                    lan
+                );
+            }
             assert_eq!(
-                connects(websocket_port).await,
+                connects(loopback, &websocket_port).await,
                 websocket,
                 "--websocket {}",
                 websocket
             );
         }
+    }
+
+    /// This machine's address on the network a default route leads to, if it
+    /// has one: a UDP connect picks the source address and sends nothing.
+    fn lan_address() -> Option<std::net::IpAddr> {
+        let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+        socket.connect("192.0.2.1:9").ok()?;
+        let ip = socket.local_addr().ok()?.ip();
+        (!ip.is_loopback() && !ip.is_unspecified()).then_some(ip)
     }
 
     // Serial with every test that calls `initialize_attack`: installing the

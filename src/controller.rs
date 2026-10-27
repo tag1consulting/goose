@@ -1,7 +1,9 @@
 //! Optional telnet and WebSocket Controller threads.
 //!
-//! By default, Goose launches both a telnet Controller and a WebSocket Controller, allowing
-//! real-time control of the running load test.
+//! By default, Goose launches a telnet Controller on 127.0.0.1:5116, allowing real-time
+//! control of the running load test; `--websocket` adds a WebSocket Controller on
+//! 127.0.0.1:5117. Neither has authentication, so one bound off loopback, with
+//! `--telnet-host` or `--websocket-host`, prints a warning at startup.
 
 use crate::config::GooseConfiguration;
 use crate::metrics::{GooseMetrics, MetricsCommand};
@@ -1339,7 +1341,8 @@ impl ListeningControllers {
 
 /// Bind the TCP port a `protocol` Controller listens on. A port Goose can't
 /// bind is logged as an error, naming the Controller, its address and why,
-/// and the load test runs without that Controller.
+/// and the load test runs without that Controller. One bound off loopback
+/// prints [`unauthenticated_warning`].
 pub(crate) async fn bind_controller(
     configuration: &GooseConfiguration,
     protocol: ControllerProtocol,
@@ -1363,6 +1366,13 @@ pub(crate) async fn bind_controller(
     match TcpListener::bind(&address).await {
         Ok(listener) => {
             info!("[controller]: {protocol:?} listening on: {address}");
+            let warning = listener
+                .local_addr()
+                .ok()
+                .and_then(|bound| unauthenticated_warning(protocol, bound));
+            if let Some(warning) = warning {
+                crate::util::warning_block("[controller]", &warning);
+            }
             Some(listener)
         }
         Err(e) => {
@@ -1372,6 +1382,29 @@ pub(crate) async fn bind_controller(
             None
         }
     }
+}
+
+/// The warning a Controller listening on `bound` prints at startup when that
+/// is not a loopback address: it has no authentication, so anyone who can
+/// reach it controls the load test. `None` on loopback, the default.
+pub(crate) fn unauthenticated_warning(
+    protocol: ControllerProtocol,
+    bound: std::net::SocketAddr,
+) -> Option<String> {
+    if bound.ip().is_loopback() {
+        return None;
+    }
+    let option = match protocol {
+        ControllerProtocol::Telnet => "--telnet-host",
+        ControllerProtocol::WebSocket => "--websocket-host",
+    };
+    let port = bound.port();
+    Some(format!(
+        "WARNING: the {protocol:?} Controller on {bound} has no authentication.\n\
+         Anyone who can reach this port can start, stop and reconfigure the load test.\n\
+         Safer: leave {option} unset to listen on 127.0.0.1 only, and use an\n\
+         ssh forward (ssh -L {port}:127.0.0.1:{port} host)."
+    ))
 }
 
 /// The control loop accepts connections on the `listener` [`bind_controller`]
@@ -4337,6 +4370,63 @@ pub(crate) mod tests {
             .await
             .expect("the WebSocket Controller must answer or end the connection")
             .and_then(Result::ok)
+    }
+
+    /// A Controller listening off loopback warns that it has no
+    /// authentication; one on loopback, the default, doesn't.
+    #[test]
+    fn controller_off_loopback_warns() {
+        let bound = |args: &[&str], protocol| {
+            let c = GooseConfiguration::parse_args_default(args).unwrap();
+            let (host, port) = match protocol {
+                ControllerProtocol::Telnet => (c.telnet_host(), c.telnet_port()),
+                ControllerProtocol::WebSocket => (c.websocket_host(), c.websocket_port()),
+            };
+            std::net::SocketAddr::new(host.parse().unwrap(), port)
+        };
+        assert_eq!(
+            unauthenticated_warning(
+                ControllerProtocol::Telnet,
+                bound(&["--telnet-host", "0.0.0.0"], ControllerProtocol::Telnet)
+            )
+            .as_deref(),
+            Some(
+                "WARNING: the Telnet Controller on 0.0.0.0:5116 has no authentication.\n\
+                 Anyone who can reach this port can start, stop and reconfigure the load test.\n\
+                 Safer: leave --telnet-host unset to listen on 127.0.0.1 only, and use an\n\
+                 ssh forward (ssh -L 5116:127.0.0.1:5116 host)."
+            )
+        );
+        assert_eq!(
+            unauthenticated_warning(
+                ControllerProtocol::WebSocket,
+                bound(&["--websocket-host", "::"], ControllerProtocol::WebSocket)
+            )
+            .as_deref(),
+            Some(
+                "WARNING: the WebSocket Controller on [::]:5117 has no authentication.\n\
+                 Anyone who can reach this port can start, stop and reconfigure the load test.\n\
+                 Safer: leave --websocket-host unset to listen on 127.0.0.1 only, and use an\n\
+                 ssh forward (ssh -L 5117:127.0.0.1:5117 host)."
+            )
+        );
+        // The default warns about neither.
+        for protocol in [ControllerProtocol::Telnet, ControllerProtocol::WebSocket] {
+            assert_eq!(
+                unauthenticated_warning(protocol, bound(&[], protocol)),
+                None
+            );
+        }
+        for (address, warns) in [
+            ("127.0.0.2:5116", false),
+            ("[::1]:5116", false),
+            ("10.1.2.3:5116", true),
+            ("[fe80::1]:5116", true),
+        ] {
+            let warning =
+                unauthenticated_warning(ControllerProtocol::Telnet, address.parse().unwrap());
+            assert_eq!(warning.is_some(), warns, "{}", address);
+        }
     }
 
     /// A client that closes the connection gets the close echoed, so the

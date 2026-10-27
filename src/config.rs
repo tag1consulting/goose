@@ -58,7 +58,7 @@ const DEFAULT_DASHBOARD_MAX_CLIENTS: u32 = 32;
 
 /// The address a Controller listens on when neither its `--telnet-host` or
 /// `--websocket-host` option nor its [`GooseDefault`] sets one.
-const DEFAULT_CONTROLLER_HOST: &str = "0.0.0.0";
+const DEFAULT_CONTROLLER_HOST: &str = "127.0.0.1";
 
 /// The port the telnet Controller listens on when neither `--telnet-port` nor
 /// [`GooseDefault::TelnetPort`] sets one.
@@ -804,11 +804,13 @@ pub struct GooseConfiguration {
     /// Set in code with GooseDefault::NoTelnet.
     #[arg(help_heading = "Controllers", long)]
     pub no_telnet: bool,
-    /// Telnet host [default: 0.0.0.0]
+    /// Telnet host [default: 127.0.0.1]
     ///
-    /// The address the telnet Controller listens on.
+    /// The address the telnet Controller listens on. It has no authentication: any other
+    /// address, such as 0.0.0.0, prints a warning at startup, as anyone who can reach the
+    /// port can start, stop and reconfigure the load test.
     ///
-    /// Example: --telnet-host 127.0.0.1. Set in code with GooseDefault::TelnetHost.
+    /// Example: --telnet-host 0.0.0.0. Set in code with GooseDefault::TelnetHost.
     #[arg(help_heading = "Controllers", long, value_name = "HOST")]
     pub telnet_host: Option<String>,
     /// Telnet port [default: 5116]
@@ -837,11 +839,13 @@ pub struct GooseConfiguration {
     /// Set in code with GooseDefault::NoWebSocket.
     #[arg(help_heading = "Controllers", long, hide = true)]
     pub no_websocket: bool,
-    /// WebSocket host [default: 0.0.0.0]
+    /// WebSocket host [default: 127.0.0.1]
     ///
-    /// The address the WebSocket Controller listens on, with --websocket.
+    /// The address the WebSocket Controller listens on, with --websocket. It has no
+    /// authentication: any other address, such as 0.0.0.0, prints a warning at startup, as
+    /// anyone who can reach the port can start, stop and reconfigure the load test.
     ///
-    /// Example: --websocket-host 127.0.0.1. Set in code with GooseDefault::WebSocketHost.
+    /// Example: --websocket-host 0.0.0.0. Set in code with GooseDefault::WebSocketHost.
     #[arg(help_heading = "Controllers", long, value_name = "HOST")]
     pub websocket_host: Option<String>,
     /// WebSocket port [default: 5117]
@@ -1692,11 +1696,14 @@ pub enum GooseDefault {
     ThrottleRequests,
     /// An optional default to follows base_url redirect with subsequent request.
     StickyFollow,
-    /// An optional default for host telnet Controller listens on.
+    /// An optional default for host telnet Controller listens on, 127.0.0.1 if unset; any
+    /// other address prints a warning at startup, as the Controller has no authentication.
     TelnetHost,
     /// An optional default for port telnet Controller listens on.
     TelnetPort,
-    /// An optional default for host Websocket Controller listens on.
+    /// An optional default for host WebSocket Controller listens on, 127.0.0.1 if unset;
+    /// any other address prints a warning at startup, as the Controller has no
+    /// authentication.
     WebSocketHost,
     /// An optional default for port WebSocket Controller listens on.
     WebSocketPort,
@@ -7286,6 +7293,41 @@ mod test {
             assert_eq!(on.websocket_port, Some(DEFAULT_WEBSOCKET_PORT));
             assert!(on.no_websocket_warning().is_none());
         }
+    }
+
+    /// With no host given both Controllers listen on 127.0.0.1; a host from
+    /// the command line or a `GooseDefault`, unspecified ones included, is
+    /// kept.
+    #[test]
+    fn controllers_listen_on_loopback_unless_a_host_is_given() {
+        assert_eq!(GooseConfiguration::default().telnet_host(), "127.0.0.1");
+        assert_eq!(GooseConfiguration::default().websocket_host(), "127.0.0.1");
+        let c = validated(&["--websocket"], &GooseDefaults::default()).unwrap();
+        assert_eq!(c.telnet_host.as_deref(), Some("127.0.0.1"));
+        assert_eq!(c.websocket_host.as_deref(), Some("127.0.0.1"));
+
+        let c = validated(
+            &[
+                "--websocket",
+                "--telnet-host",
+                "0.0.0.0",
+                "--websocket-host",
+                "::",
+            ],
+            &GooseDefaults::default(),
+        )
+        .unwrap();
+        assert_eq!(c.telnet_host.as_deref(), Some("0.0.0.0"));
+        assert_eq!(c.websocket_host.as_deref(), Some("::"));
+
+        let defaults = defaults_from(|attack| {
+            attack
+                .set_default(GooseDefault::TelnetHost, "0.0.0.0")?
+                .set_default(GooseDefault::WebSocketHost, "10.1.2.3")
+        });
+        let c = validated(&["--websocket"], &defaults).unwrap();
+        assert_eq!(c.telnet_host.as_deref(), Some("0.0.0.0"));
+        assert_eq!(c.websocket_host.as_deref(), Some("10.1.2.3"));
     }
 
     /// `--no-websocket` and `GooseDefault::NoWebSocket`, from Goose 0.18, still
