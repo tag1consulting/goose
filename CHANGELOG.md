@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.19.0-dev
+ - [#783](https://github.com/tag1consulting/goose/pull/783) build the Goose Book in CI with mdBook 0.5.4, failing on any warning or error it logs (a missing include logs an error and still exits 0); drop `multilingual` from `book.toml`, which mdBook 0.5 refuses
  - [#782](https://github.com/tag1consulting/goose/pull/782) **behavior change**: a Controller's `config` and `config-json`, and `{:?}` of a `GooseConfiguration` or `GooseUser`, show a set dashboard auth token as `(set)`, never the token; the dashboard still checks the real one
  - [#782](https://github.com/tag1consulting/goose/pull/782) **behavior change**: the WebSocket Controller, which has no authentication and accepts any Origin, is off by default; `--websocket` (`GooseDefault::WebSocket`) turns it on, and `--no-websocket` (`GooseDefault::NoWebSocket`) still runs with a warning and is refused with `--websocket`
  - [#782](https://github.com/tag1consulting/goose/pull/782) **behavior change**: the telnet and WebSocket Controllers, which have no authentication, listen on `127.0.0.1` by default instead of `0.0.0.0`; `--telnet-host`, `--websocket-host`, `GooseDefault::TelnetHost` and `GooseDefault::WebSocketHost` still take any address, and a Controller listening off loopback prints a warning at startup

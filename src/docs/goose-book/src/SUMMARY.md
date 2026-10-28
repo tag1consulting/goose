@@ -5,7 +5,6 @@
 [Glossary](glossary.md)  
 
 - [Getting Started](getting-started/overview.md)
-    - [Upgrading From 0.18](getting-started/upgrading.md)
     - [Creating A Load test](getting-started/creating.md)
     - [Validating Requests](getting-started/validation.md)
     - [Running A Load Test](getting-started/running.md)
@@ -29,9 +28,10 @@
     - [Debug Log](logging/debug.md)
 
 - [Controllers](controller/overview.md)
+    - [Live Dashboard](controller/dashboard.md)
+        - [Dashboard Reference](controller/dashboard-reference.md)
     - [Telnet Controller](controller/telnet.md)
     - [WebSocket Controller](controller/websocket.md)
-    - [Live Dashboard](controller/dashboard.md)
 
 - [Gaggle: Distributed Load Test](gaggle/overview.md)
     - [Manager](gaggle/manager.md)
@@ -59,3 +59,5 @@
     - [TCP Load Test](example/tcp.md)
     - [Drupal Memcache](example/drupal-memcache.md)
     - [Umami](example/umami.md)
+
+- [Upgrading From 0.18](getting-started/upgrading.md)
