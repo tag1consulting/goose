@@ -148,6 +148,45 @@
         "-q"
       ],
       "dashboard": "http://127.0.0.1:5118"
+    },
+    "front-door": {
+      "example": "umami",
+      "features": [
+        "dashboard"
+      ],
+      "target": "${GOOSE_SHOTS_UMAMI}",
+      "flags": [
+        "--dashboard",
+        "-u",
+        "50",
+        "-r",
+        "1",
+        "--no-reset-metrics",
+        "-t",
+        "3m",
+        "-q"
+      ]
+    },
+    "report": {
+      "example": "umami",
+      "features": [
+        "dashboard"
+      ],
+      "target": "${GOOSE_SHOTS_UMAMI}",
+      "flags": [
+        "--dashboard",
+        "--dashboard-control",
+        "--dashboard-no-auth",
+        "--report-file",
+        "-u",
+        "50",
+        "-r",
+        "1",
+        "--no-reset-metrics",
+        "-t",
+        "2m",
+        "-q"
+      ]
     }
   },
   "shots": [
@@ -317,6 +356,29 @@
       "capture": {
         "type": "element",
         "selector": "#charts > .chart-card:nth-child(2)"
+      }
+    },
+    {
+      "name": "common-dashboard",
+      "output": "getting-started/common-dashboard.png",
+      "run": "front-door",
+      "at": 135,
+      "capture": {
+        "type": "band",
+        "from": "header.top-bar",
+        "to": "#charts > .chart-card:nth-child(2)",
+        "pad": 8
+      }
+    },
+    {
+      "name": "report-rps",
+      "output": "getting-started/rps.png",
+      "run": "report",
+      "at": 190,
+      "capture": {
+        "type": "report",
+        "file": "report.html",
+        "selector": "#graph-rps"
       }
     }
   ]
