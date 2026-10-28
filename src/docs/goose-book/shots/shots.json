@@ -359,6 +359,18 @@
       }
     },
     {
+      "name": "title-dashboard",
+      "output": "title-dashboard.png",
+      "run": "front-door",
+      "at": 150,
+      "capture": {
+        "type": "band",
+        "from": "#kpis",
+        "to": "#chart-latency-card",
+        "pad": 8
+      }
+    },
+    {
       "name": "common-dashboard",
       "output": "getting-started/common-dashboard.png",
       "run": "front-door",
