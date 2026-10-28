@@ -187,6 +187,134 @@
         "2m",
         "-q"
       ]
+    },
+    "example-simple": {
+      "example": "simple",
+      "features": [
+        "dashboard"
+      ],
+      "target": "${GOOSE_SHOTS_HTTP}",
+      "flags": [
+        "-u",
+        "1024",
+        "-r",
+        "64",
+        "-t",
+        "3m",
+        "--no-reset-metrics",
+        "--dashboard",
+        "-q"
+      ]
+    },
+    "example-closure": {
+      "example": "closure",
+      "features": [
+        "dashboard"
+      ],
+      "target": "${GOOSE_SHOTS_HTTP}",
+      "flags": [
+        "-u",
+        "200",
+        "-r",
+        "50",
+        "-t",
+        "3m",
+        "--no-reset-metrics",
+        "--dashboard",
+        "-q"
+      ]
+    },
+    "example-session": {
+      "example": "session",
+      "features": [
+        "dashboard"
+      ],
+      "target": "${GOOSE_SHOTS_SESSION}",
+      "flags": [
+        "-u",
+        "100",
+        "-r",
+        "20",
+        "-t",
+        "2m",
+        "--no-reset-metrics",
+        "--report-file",
+        "--dashboard",
+        "-q"
+      ]
+    },
+    "example-basic-auth": {
+      "example": "basic_auth",
+      "features": [
+        "dashboard"
+      ],
+      "target": "${GOOSE_SHOTS_HTTP}",
+      "flags": [
+        "-u",
+        "60",
+        "-r",
+        "20",
+        "-t",
+        "2m",
+        "--no-reset-metrics",
+        "--report-file",
+        "--dashboard",
+        "-q"
+      ]
+    },
+    "example-graphql": {
+      "example": "graphql_loadtest",
+      "features": [
+        "dashboard"
+      ],
+      "target": "${GOOSE_SHOTS_GRAPHQL}",
+      "flags": [
+        "-u",
+        "5",
+        "-r",
+        "5",
+        "-t",
+        "3m",
+        "--no-reset-metrics",
+        "--dashboard",
+        "-q"
+      ]
+    },
+    "example-tcp": {
+      "example": "tcp_loadtest",
+      "features": [
+        "dashboard"
+      ],
+      "target": "${GOOSE_SHOTS_TCP}",
+      "flags": [
+        "-u",
+        "10",
+        "-r",
+        "10",
+        "-t",
+        "3m",
+        "--no-reset-metrics",
+        "--dashboard",
+        "-q"
+      ]
+    },
+    "example-umami": {
+      "example": "umami",
+      "features": [
+        "dashboard"
+      ],
+      "target": "${GOOSE_SHOTS_UMAMI}",
+      "flags": [
+        "-u",
+        "50",
+        "-r",
+        "5",
+        "-t",
+        "3m",
+        "--no-reset-metrics",
+        "--dashboard",
+        "-q"
+      ]
     }
   },
   "shots": [
@@ -391,6 +519,223 @@
         "type": "report",
         "file": "report.html",
         "selector": "#graph-rps"
+      }
+    },
+    {
+      "name": "example-simple",
+      "output": "example/simple-dashboard.png",
+      "run": "example-simple",
+      "at": 120,
+      "capture": {
+        "type": "band",
+        "from": "#kpis",
+        "to": "#charts > .chart-card:nth-child(1)",
+        "right": "#charts > .chart-card:nth-child(1)"
+      }
+    },
+    {
+      "name": "example-thumb-simple",
+      "output": "example/thumbs/simple.png",
+      "run": "example-simple",
+      "at": 121,
+      "maxKB": 100,
+      "capture": {
+        "type": "element",
+        "selector": "#kpis",
+        "right": "#kpis > .kpi:nth-child(2)"
+      }
+    },
+    {
+      "name": "example-closure",
+      "output": "example/closure-requests.png",
+      "run": "example-closure",
+      "at": 100,
+      "capture": {
+        "type": "element",
+        "selector": "#requests",
+        "right": "#requests-table th:nth-child(7)"
+      }
+    },
+    {
+      "name": "example-thumb-closure",
+      "output": "example/thumbs/closure.png",
+      "run": "example-closure",
+      "at": 101,
+      "maxKB": 100,
+      "capture": {
+        "type": "element",
+        "selector": "#requests",
+        "right": "#requests-table th:nth-child(4)",
+        "height": 270
+      }
+    },
+    {
+      "name": "example-thumb-session",
+      "output": "example/thumbs/session.png",
+      "run": "example-session",
+      "at": 100,
+      "maxKB": 100,
+      "capture": {
+        "type": "element",
+        "selector": "#requests",
+        "right": "#requests-table th:nth-child(4)",
+        "height": 270
+      }
+    },
+    {
+      "name": "example-session",
+      "output": "example/session-requests.png",
+      "run": "example-session",
+      "at": 150,
+      "capture": {
+        "type": "report",
+        "file": "report.html",
+        "selector": ".requests table",
+        "right": ".requests table th:nth-child(4)"
+      }
+    },
+    {
+      "name": "example-thumb-basic-auth",
+      "output": "example/thumbs/basic-auth.png",
+      "run": "example-basic-auth",
+      "at": 100,
+      "maxKB": 100,
+      "capture": {
+        "type": "element",
+        "selector": "#requests",
+        "right": "#requests-table th:nth-child(4)",
+        "height": 270,
+        "bottom": "#requests-table tbody tr:nth-child(4)"
+      }
+    },
+    {
+      "name": "example-basic-auth-requests",
+      "output": "example/basic-auth-requests.png",
+      "run": "example-basic-auth",
+      "at": 150,
+      "capture": {
+        "type": "report",
+        "file": "report.html",
+        "selector": ".requests table",
+        "right": ".requests table th:nth-child(4)"
+      }
+    },
+    {
+      "name": "example-basic-auth-transactions",
+      "output": "example/basic-auth-transactions.png",
+      "run": "example-basic-auth",
+      "at": 151,
+      "capture": {
+        "type": "report",
+        "file": "report.html",
+        "selector": ".transactions table",
+        "right": ".transactions table th:nth-child(3)"
+      }
+    },
+    {
+      "name": "example-graphql-transactions",
+      "output": "example/graphql-transactions.png",
+      "run": "example-graphql",
+      "at": 100,
+      "capture": {
+        "type": "element",
+        "selector": "#transactions",
+        "right": "#transactions-table th:nth-child(8)"
+      }
+    },
+    {
+      "name": "example-graphql-requests",
+      "output": "example/graphql-requests.png",
+      "run": "example-graphql",
+      "at": 100,
+      "capture": {
+        "type": "element",
+        "selector": "#requests",
+        "right": "#requests-table th:nth-child(7)"
+      }
+    },
+    {
+      "name": "example-thumb-graphql",
+      "output": "example/thumbs/graphql.png",
+      "run": "example-graphql",
+      "at": 101,
+      "maxKB": 100,
+      "capture": {
+        "type": "element",
+        "selector": "#transactions-table",
+        "right": "#transactions-table th:nth-child(4)"
+      }
+    },
+    {
+      "name": "example-tcp-requests",
+      "output": "example/tcp-requests.png",
+      "run": "example-tcp",
+      "at": 100,
+      "capture": {
+        "type": "element",
+        "selector": "#requests",
+        "right": "#requests-table th:nth-child(7)"
+      }
+    },
+    {
+      "name": "example-tcp-latency",
+      "output": "example/tcp-latency.png",
+      "run": "example-tcp",
+      "at": 102,
+      "actions": [
+        {
+          "do": "select",
+          "selector": "#heatmap-request",
+          "value": "TCP tcp_echo"
+        },
+        {
+          "do": "wait",
+          "seconds": 2
+        }
+      ],
+      "capture": {
+        "type": "element",
+        "selector": "#chart-latency-card",
+        "width": 800
+      }
+    },
+    {
+      "name": "example-thumb-tcp",
+      "output": "example/thumbs/tcp.png",
+      "run": "example-tcp",
+      "at": 101,
+      "maxKB": 100,
+      "capture": {
+        "type": "element",
+        "selector": "#requests",
+        "right": "#requests-table th:nth-child(4)",
+        "height": 270
+      }
+    },
+    {
+      "name": "example-umami",
+      "output": "example/umami-transactions.png",
+      "run": "example-umami",
+      "at": 120,
+      "capture": {
+        "type": "band",
+        "from": "#scenarios-table",
+        "to": "#transactions-table",
+        "right": "#transactions-table th:nth-child(5)",
+        "bottom": "#transactions-table tbody tr:nth-child(6)",
+        "pad": 8
+      }
+    },
+    {
+      "name": "example-thumb-umami",
+      "output": "example/thumbs/umami.png",
+      "run": "example-umami",
+      "at": 121,
+      "maxKB": 100,
+      "capture": {
+        "type": "element",
+        "selector": "#scenarios-table",
+        "right": "#scenarios-table th:nth-child(3)"
       }
     }
   ]
