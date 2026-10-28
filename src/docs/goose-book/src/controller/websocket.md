@@ -15,12 +15,12 @@ Requests must be made in the following format:
 {"request":String}
 ```
 
-For example, a client should send the follow json to request the current load test metrics:
+For example, a client should send the following JSON to request the current load test metrics:
 ```json
 {"request":"metrics"}
 ```
 
-A request may be at most 131,072 bytes (128 KiB), the longest single command line argument Linux takes with 4 KiB pages. A test plan sent to a Controller is at most 4096 bytes and 100 steps, as from the dashboard; see the [bounds every front end shares](telnet.md). A longer message is answered with a close frame, code 1009 (message too big), with the reason `message too big, at most 131072 bytes`, and the connection ends.
+A request may be at most 131,072 bytes (128 KiB), the longest single command line argument Linux takes with 4 KiB pages. A longer message is answered with a close frame, code 1009 (message too big), with the reason `message too big, at most 131072 bytes`, and the connection ends. A test plan sent to a Controller is at most 4096 bytes and 100 steps, as from the dashboard; see the [bounds every front end shares](telnet.md#controller-commands).
 
 Responses will always be in the following format:
 ```json
