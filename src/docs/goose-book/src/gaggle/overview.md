@@ -1,6 +1,6 @@
 # Gaggle: Distributed Load Test
 
-**NOTE: Goose 0.19 cannot run a Gaggle. Gaggle support was removed in Goose 0.17.0 (see https://github.com/tag1consulting/goose/pull/529) and is planned for Goose 0.20. The `gaggle` feature, the `--manager` and `--worker` flags and the other options in this section do not exist in 0.19. This section describes how Gaggles worked in Goose 0.16.4, the last release with them; use that release if you need a distributed load test today.**
+**NOTE: Goose 0.19 cannot run a Gaggle. Gaggle support was removed in Goose 0.17.0 (see [PR 529](https://github.com/tag1consulting/goose/pull/529)) and will be restored in Goose 0.20, before the 1.0 release. The `gaggle` feature, the `--manager` and `--worker` flags and the other options in this section do not exist in 0.19. This section describes how Gaggles worked in Goose 0.16.4, the last release with them; use that release if you need a distributed load test today.**
 
 Goose 0.16 also supported distributed load testing. A Gaggle is one Goose process running in [Manager mode](manager.md), and 1 or more Goose processes running in [Worker mode](worker.md). The Manager coordinates starting and stopping the Workers, and collects aggregated metrics. Gaggle support is a [cargo feature that must be enabled at compile-time](technical.md#compile-time-feature). To launch a Gaggle, you must copy your load test application to all servers from which you wish to generate load.
 
@@ -8,8 +8,8 @@ It is strongly recommended that the same load test application be copied to all 
 
 ## Load Testing At Scale
 
-Experimenting with running Goose load tests from AWS, Goose used all available system resources, so it was generally limited only by network speed. A smaller server instance was able to simulate 2,000 users generating over 6,500 requests per second and saturating a 2.6 Gbps uplink. As more uplink speed was added, Goose was able to scale linearly: by distributing the test across two servers with faster uplinks, it simulated 12,000 active users generating over 41,000 requests per second and saturating 16 Gbps.
+Experimenting with running Goose load tests from AWS, Goose used all available system resources, so it was generally limited only by network speed. A smaller server instance was able to simulate 2,000 users generating over 6,500 requests per second and sustaining 2.5 Gbps. As more uplink speed was added, Goose was able to scale linearly: by distributing the test across two servers with faster uplinks, it simulated 12,000 active users generating over 41,000 requests per second and saturating 16 Gbps.
 
 Generating this much traffic in and of itself is not fundamentally difficult, but with Goose each request is fully analyzed and validated. It not only confirms the response code for each response the server returns, but also inspects the returned HTML to confirm it contains all expected elements. Links to static elements such as images and CSS are extracted from each response and also loaded, with each simulated user behaving similar to how a real user would. Goose excels at providing consistent and repeatable load testing.
 
-For full details and graphs, refer to the blog [A Goose In The Clouds: Load Testing At Scale](https://www.tag1consulting.com/blog/goose-clouds-load-testing-scale).
+For full details and graphs, refer to the blog [A Goose In The Clouds: Load Testing At Scale](https://www.tag1.com/blog/goose-clouds-load-testing-scale/).
