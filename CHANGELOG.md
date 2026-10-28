@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.19.0-dev
+ - [#784](https://github.com/tag1consulting/goose/pull/784) the first line of `-h` and `--help` names the Goose version, `Goose 0.19.0: an HTTP(S) load testing tool written in Rust`; the Book shows the help of the release, without a pre-release suffix such as `-dev`, and its check fails when the release number changes until the help is regenerated
  - [#783](https://github.com/tag1consulting/goose/pull/783) build the Goose Book in CI with mdBook 0.5.4, failing on any warning or error it logs (a missing include logs an error and still exits 0); drop `multilingual` from `book.toml`, which mdBook 0.5 refuses
  - [#782](https://github.com/tag1consulting/goose/pull/782) **behavior change**: a Controller's `config` and `config-json`, and `{:?}` of a `GooseConfiguration` or `GooseUser`, show a set dashboard auth token as `(set)`, never the token; the dashboard still checks the real one
  - [#782](https://github.com/tag1consulting/goose/pull/782) **behavior change**: the WebSocket Controller, which has no authentication and accepts any Origin, is off by default; `--websocket` (`GooseDefault::WebSocket`) turns it on, and `--no-websocket` (`GooseDefault::NoWebSocket`) still runs with a warning and is refused with `--websocket`

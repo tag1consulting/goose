@@ -1119,6 +1119,13 @@ fn program_name() -> String {
         .unwrap_or_else(|| "loadtest".to_string())
 }
 
+/// The first line of `-h` and `--help`, naming the Goose version that prints it.
+const HELP_ABOUT: &str = concat!(
+    "Goose ",
+    env!("CARGO_PKG_VERSION"),
+    ": an HTTP(S) load testing tool written in Rust"
+);
+
 /// The command line Goose parses, its help wrapped to `width` columns and its usage and
 /// examples naming the load test `name`.
 fn command(name: &str, width: usize) -> clap::Command {
@@ -1158,9 +1165,7 @@ fn command(name: &str, width: usize) -> clap::Command {
             .allow_negative_numbers(true),
     );
     // Set after the derive, which would otherwise take the structure's documentation.
-    let command = command
-        .about("Goose: an HTTP(S) load testing tool written in Rust")
-        .long_about(None);
+    let command = command.about(HELP_ABOUT).long_about(None);
     // -h and --help lead the Information heading, ahead of -V.
     let order = command
         .get_arguments()
@@ -6489,8 +6494,7 @@ mod test {
         }
 
         // 0.19 has no distributed mode.
-        assert!(help_for("--help", 80)
-            .starts_with("Goose: an HTTP(S) load testing tool written in Rust\n"));
+        assert!(help_for("--help", 80).starts_with(&format!("{}\n", HELP_ABOUT)));
     }
 
     /// `--report-file` and the six log options take an optional value: given without
@@ -6753,9 +6757,39 @@ mod test {
         }
     }
 
+    /// A version without its pre-release suffix or build metadata: the release a
+    /// development build becomes.
+    fn release_version(version: &str) -> &str {
+        version.split(['-', '+']).next().unwrap_or(version)
+    }
+
+    #[test]
+    fn release_version_drops_the_suffix() {
+        assert_eq!(release_version("0.19.0-dev"), "0.19.0");
+        assert_eq!(release_version("0.19.0"), "0.19.0");
+        assert_eq!(release_version("1.0.0-rc.1"), "1.0.0");
+        assert_eq!(release_version("1.0.0+build.5"), "1.0.0");
+        assert_eq!(release_version("1.0.0-beta-2+build"), "1.0.0");
+    }
+
+    /// Help as the book shows it: the version on its first line is the release, so a
+    /// development build's help reads as the release will print it.
+    #[cfg(feature = "pdf-reports")]
+    fn help_for_the_book(flag: &str) -> String {
+        let help = help_for(flag, 80);
+        let version = env!("CARGO_PKG_VERSION");
+        let release = HELP_ABOUT.replacen(version, release_version(version), 1);
+        let rest = help
+            .strip_prefix(HELP_ABOUT)
+            .unwrap_or_else(|| panic!("{} does not start with {:?}", flag, HELP_ABOUT));
+        format!("{}{}", release, rest)
+    }
+
     /// The book's runtime options page includes the `-h` and `--help` output from
     /// these files. They are rendered with the `pdf-reports` feature, so they always
-    /// list the PDF options, and CI's `--all-features` run checks them.
+    /// list the PDF options, and CI's `--all-features` run checks them. Their first
+    /// line names the release, not the development version, so a version bump fails
+    /// this until they are regenerated.
     #[cfg(feature = "pdf-reports")]
     #[test]
     fn help_matches_the_book() {
@@ -6767,7 +6801,7 @@ mod test {
             ("runtime-options-short.txt", "-h"),
             ("runtime-options-long.txt", "--help"),
         ] {
-            let help = help_for(flag, 80);
+            let help = help_for_the_book(flag);
             let path = dir.join(file);
             if update {
                 std::fs::write(&path, &help).unwrap();
