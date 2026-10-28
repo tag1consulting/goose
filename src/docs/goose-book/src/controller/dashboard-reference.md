@@ -1,14 +1,10 @@
 # Dashboard Reference
 
-This page holds every flag, rule and endpoint of the [Live Dashboard](dashboard.md), and the snapshot fields a client most needs. Start there for what the dashboard shows and how to use it.
-
-> The dashboard is an opt in crate feature: build Goose with `--features dashboard`. [Stability](#stability) says what the dashboard and its `/api/v1` endpoints promise from one release to the next.
-
-Goose can optionally serve a **live web dashboard** while a load test runs. The dashboard streams compact metric snapshots (including trailing RPS, users, and latency series) over Server-Sent Events (SSE), with a short poll fallback if SSE is unavailable.
+This page has every flag, rule and endpoint of the [Live Dashboard](dashboard.md), and the snapshot fields a client most needs. The dashboard sends a metrics snapshot over Server-Sent Events (SSE), and falls back to a short poll when SSE isn't available. Compatibility rules are in [Stability](#stability).
 
 ## Enabling the dashboard
 
-The dashboard is off by default. Compile Goose with the `dashboard` crate feature, then enable observation with `--dashboard`:
+The dashboard is behind the `dashboard` crate feature, which isn't on by default. Build with `--features dashboard` and run with `--dashboard`:
 
 ```bash
 cargo run --release --features dashboard --example simple -- \
@@ -23,147 +19,124 @@ Then open:
 http://127.0.0.1:5118/
 ```
 
-The dashboard port opens when the Controllers' ports do, once Goose has built a client for every user, which takes longer with more users and fewer cores. With `--no-autostart` users are built on Start, so the port opens at once.
+A build without the feature refuses `--dashboard` at startup and tells you to rebuild with `--features dashboard`.
+
+The dashboard's port opens when the Controllers' ports do, once Goose has built a client for every user (which takes longer with more users and fewer cores). With `--no-autostart` users are built on Start, so the port opens at once.
+
+The server stays up until the load test exits, which after an autostarted run can be well after the run ends ([Waiting after an autostarted run](#waiting-after-an-autostarted-run)). Before `GooseAttack::execute()` returns, finished or failed, connected pages get `event: closed`, open connections get up to one second to finish, and the server closes. A program can then run another `GooseAttack` on the same port right away. On the event stream, the `closed` event's data is `1`.
 
 ### Related flags
 
 | Flag | Default | Purpose |
 |------|---------|---------|
-| `--dashboard` | off | Enable the live dashboard HTTP server (observe) |
-| `--dashboard-control` | off | Enable the control endpoints and UI: Start, Stop, users, the run settings (which can point the load at any host), Quit, the report switches, Save report now and Delete of saved reports and logs (requires `--dashboard`; does **not** auto-enable the dashboard) |
-| `--dashboard-host HOST` | `127.0.0.1` | Bind address. A loopback address needs no token for metrics; any other needs a token or `--dashboard-no-auth`; see [Bind and token rules](#bind-and-token-rules) |
-| `--dashboard-port PORT` | `5118` | Bind port. `0` picks a free port, which the startup log names: `[dashboard]: listening on http://127.0.0.1:60096 (read-only)`. |
-| `--dashboard-auth-token TOKEN` | empty | Shared secret for metric APIs when configured; required when `--dashboard-control` is set (even on loopback), and for any bind off loopback, unless `--dashboard-no-auth` is. Visible in process listings (`ps`) like any CLI flag; set it in the load test's code with `GooseDefault::DashboardAuthToken` to keep it out of them. |
-| `--dashboard-no-auth` | off | Allow dashboard access and control without a token. Anyone who can reach the port can watch the test and download saved reports, and with `--dashboard-control` start, stop and point the load at any host, and delete saved reports and logs; Goose warns at startup with control on loopback, and on anything but loopback. Needs `--dashboard`; refused with `--dashboard-auth-token`. See [Control without a token](#control-without-a-token). |
-| `--dashboard-max-clients N` | `32` | Max concurrent SSE clients (`GET /api/v1/events`); further clients receive HTTP 503. `0` is refused at startup (`must be at least 1`). The server also holds at most twice this many connections plus 16 (80 by default); a connection beyond that is closed as soon as it is accepted. |
-| `--no-percentiles-over-time` | off | Turn off the response time heatmap and the histograms behind it; the card shows the average latency chart instead. It also turns off the HTML report's response time heatmap, and works without `--dashboard`. See [The response time heatmap](#the-response-time-heatmap). |
+| `--dashboard` | off | Serve the dashboard, read-only |
+| `--dashboard-control` | off | Turn on control: Start, Stop, users, the run settings (which can point the load at any host), Quit, the report switches, Save report now, and deleting saved reports and logs. Refused at startup without `--dashboard`, which it doesn't turn on |
+| `--dashboard-host HOST` | `127.0.0.1` | Bind address ([Loopback default and auth policy](#loopback-default-and-auth-policy)) |
+| `--dashboard-port PORT` | `5118` | Bind port. `0` picks a free port, which the startup log shows: `[dashboard]: listening on http://127.0.0.1:60096 (read-only)`. A port in use stops Goose when it binds, with `[dashboard]: failed to bind ...: ... (is the port already in use?)`; pick another port. On a shared machine, see [Keeping the token private](#keeping-the-token-private) |
+| `--dashboard-auth-token TOKEN` | empty | The token for the metric, report and control routes ([What requires a token](#what-requires-a-token)). The [Security matrix](#security-matrix-observe-vs-control) lists when it's required |
+| `--dashboard-no-auth` | off | Serve with no token, control included under `--dashboard-control` ([Control without a token](#control-without-a-token)). Refused at startup without `--dashboard` |
+| `--dashboard-max-clients N` | `32` | Maximum concurrent clients on the event stream (`GET /api/v1/events`); the next one gets HTTP 503. `0` is refused at startup (`must be at least 1`). The server also holds at most `2 × N + 16` connections (80 by default), and closes any connection beyond that as soon as it's accepted |
+| `--no-percentiles-over-time` | off | Turn off the response time heatmap and the histograms behind it, on the dashboard and in the HTML report ([The response time heatmap](#the-response-time-heatmap)). Works without `--dashboard` |
 
-Defaults can also be set programmatically with `GooseDefault::Dashboard`, `GooseDefault::DashboardControl`, `GooseDefault::DashboardNoAuth`, `GooseDefault::DashboardHost`, `GooseDefault::DashboardPort`, `GooseDefault::DashboardAuthToken`, `GooseDefault::DashboardMaxClients`, and `GooseDefault::NoPercentilesOverTime`.
-
-> **Feature flag:** the HTTP server is compiled behind the opt-in `dashboard` crate feature (not in default features, same pattern as `pdf-reports`). Enable it with `--features dashboard`. Builds without that feature reject `--dashboard` at startup with a clear rebuild hint.
-
-The server lives as long as the load test, with one exception: see [Waiting after an autostarted run](#waiting-after-an-autostarted-run). When `GooseAttack::execute()` returns, whether the run finished or failed, connected browsers receive `event: closed`, open connections get up to one second to finish, and the listener and every connection are closed before `execute()` returns, so a program can run another `GooseAttack` on the same port right away.
+Each has a default you can set in code: `GooseDefault::Dashboard`, `GooseDefault::DashboardControl`, `GooseDefault::DashboardNoAuth`, `GooseDefault::DashboardHost`, `GooseDefault::DashboardPort`, `GooseDefault::DashboardAuthToken`, `GooseDefault::DashboardMaxClients` and `GooseDefault::NoPercentilesOverTime`.
 
 ### Observe vs control at a glance
 
-| Capability | Live Dashboard (observe) | Live Dashboard + control | Controllers (telnet / WebSocket) |
-|------------|--------------------------|--------------------------|----------------------------------|
+| Capability | Dashboard (read-only) | Dashboard with control | Controllers ([telnet](telnet.md) / [WebSocket](websocket.md)) |
+|------------|---------------------|------------------------|----------------------------------|
 | Live rates, percentiles, errors | Yes | Yes | `metrics` / `metrics-json` |
 | Trailing RPS / users / latency charts | Yes | Yes | No |
-| Start / stop / set users | **No** | Yes | Yes |
+| Start / stop / set users | No | Yes | Yes |
 | Host / ramps / run time | No | Yes | Yes |
-| Test plan | No | Through `POST /api/v1/control/settings` or `POST /api/v1/control/start` only | Yes (`test-plan`) |
-| `config` / `metrics` | No | No | Yes |
-| Process shutdown | No | Quit, from Idle only | Yes (`shutdown`, any phase) |
+| Test plan | No | Only through `POST /api/v1/control/settings` or `POST /api/v1/control/start` | Yes (`test-plan`) |
+| `config` / `config-json` | No | No | Yes |
+| Shut Goose down | No | Quit, from Idle only | Yes (`shutdown`, any phase) |
 | Default bind | `127.0.0.1:5118` | `127.0.0.1:5118` | `127.0.0.1:5116` / `:5117`, WebSocket only with `--websocket` |
-| Auth | Token on metric APIs when configured | Token for control unless `--dashboard-no-auth`; metrics follow observe rules | None (see Controller docs) |
+| Auth | [Security matrix](#security-matrix-observe-vs-control) | [Security matrix](#security-matrix-observe-vs-control) | None |
 
-When control is off, `POST /api/v1/control/*` returns **404** (routes are not registered). Prefer Controllers for `config`, `metrics` and shutting down a running test; use dashboard control for Start, Stop, users and the run settings from a browser.
+The Controllers stay available alongside the dashboard. Dashboard control uses the same [phase](../glossary.md#attack-phase) transitions they do.
 
 ## Bind and token rules
 
-### On a shared machine
-
-Every user of the machine running Goose can reach what Goose serves on loopback. This is what each of them can do, and how to close it:
-
-| Who | What they can reach | To close it |
-|-----|---------------------|-------------|
-| Any local process | The telnet Controller, on by default on `127.0.0.1:5116` with no authentication: start, stop, change users, the host, the ramps, the run time and the test plan, read `config` and `metrics`, and shut Goose down | `--no-telnet` |
-| Any local process, or any page in a local browser | The WebSocket Controller, when `--websocket` turns it on; it takes no authentication and accepts a connection from any web page | Leave `--websocket` off |
-| Any local user, with no token set | The dashboard's metrics (request names, hosts, error strings, rates) and the run's details (its notes, its `--report-file` paths and its run settings: host, ramps, run time and test plan): snapshots, the event stream, the per request heatmap, and every saved report in the runs folder, to list and download. By holding the event stream open when an autostarted run ends, they also keep Goose and its port up until it is told to quit ([Waiting after an autostarted run](#waiting-after-an-autostarted-run)) | A token, set in code as below |
-| Any local user, under `--dashboard-no-auth` with `--dashboard-control` | Everything in the row above, and Start, Stop, users, the run settings (including the host the load goes to), Quit, the report switches, Save report now, and Delete of saved reports and logs | A token in place of `--dashboard-no-auth` |
-| Any local user, with a token set | The page's HTML and static files, and [`GET /api/v1/health`](#health-endpoint-exception): among other fields, the Goose version, whether control is on, the Controllers' addresses and how many pages are watching. They can also fill the connection cap, which every client shares, token or not: a user who keeps `2 × --dashboard-max-clients + 16` connections open, sending a request on each at least every 10 seconds, keeps your browser out until they stop | The metrics are already closed. No setting closes the lockout: run where you trust the other users, or behind a firewall when the bind is off loopback |
-| Any local user, through the file system | The run folders under `goose-runs` (reports and logs), which Goose writes as any file, with the process's umask, so a usual umask lets every local user read them | Run Goose under `umask 077`, or keep the runs under a folder only you can read, such as `--output-dir ~/private/nightly` with `~/private` at mode 700: a second run with the same `--output-dir`, once that folder holds files, writes a new folder beside it, `nightly-2` |
-| Any local user, with the token on the command line | The token itself, in process listings (`ps`) | Set it in the load test's code with `GooseDefault::DashboardAuthToken`, as below |
-
-With the dashboard off loopback, "local" in the dashboard rows of this table becomes everyone who can reach its port (the telnet and WebSocket Controllers keep their own binds), and the token and the metrics cross the network as unencrypted http.
-
-To keep the token off the command line, read it in the load test's code, for example from an environment variable, and set it as a default. Make the token long and random, such as the output of `openssl rand -hex 32`: Goose does not limit wrong guesses on any route, and logs them only on the control routes and Delete. An empty token counts as none, so refuse one, as this does:
-
-```rust
-let token = std::env::var("DASHBOARD_TOKEN")
-    .ok()
-    .filter(|token| !token.is_empty())
-    .expect("set DASHBOARD_TOKEN to a non-empty value");
-GooseAttack::initialize()?
-    .set_default(GooseDefault::DashboardAuthToken, token.as_str())?
-    // register scenarios and run as before
-```
-
-A token written into the source instead is readable by anyone who can read the source or the binary. The token can also turn up in other places: in a reverse proxy's access log, as `?token=` on the first page load (`/?token=`) and on the page's metric URLs (see [Security notes](#security-notes-summary)); in a browser tab duplicated or restored from the one that opened the dashboard (see [Browser bootstrap with `?token=`](#browser-bootstrap-with-token)); and in `curl` command lines, which `ps` shows like any other (see [curl examples](#curl-examples)). An `export DASHBOARD_TOKEN=...` typed at a shell also lands in its history; `read -rs DASHBOARD_TOKEN && export DASHBOARD_TOKEN` in bash or zsh sets it without echoing it or writing it there. On Linux a process's environment, unlike its arguments, is readable only by its own user and root.
-
-The token also goes to whatever listens on the dashboard's port. If another user holds that port when Goose binds it, after building its users or at once with `--no-autostart`, Goose logs `[dashboard]: failed to bind ...: ... (is the port already in use?)` and exits, and the other process keeps the port: a tunnel or a reloaded tab then sends your token to it. So does a tab left open after Goose stops without a clean exit (killed or crashed): the page keeps retrying the event stream and polling, with the token, until it gets through. Send the token only while your own Goose is up, as its `listening on` line shows. That is an info line, which `-q` hides; under `-q`, check that `lsof -iTCP:5118 -sTCP:LISTEN` names your own Goose process before you send the token. Close the dashboard tab once Goose is gone, and pick another port with `--dashboard-port` when the default is taken.
-
-So on a shared machine: keep the dashboard on loopback, set a token in the load test's code, add `--no-telnet` unless you need the telnet Controller, leave `--websocket` off, run under `umask 077` or keep the run folders under a folder only you can read, reach the dashboard from your own machine over an [SSH tunnel](#ssh-tunnels), and send the token only once your own Goose holds the port, as above.
-
 ### Loopback default and auth policy
 
-By default the dashboard binds to **loopback only** (`127.0.0.1`). That is intentional: metrics snapshots include request names, error strings, hostnames and rates, and the run's notes, `--report-file` paths and run settings; none of it should be world-readable.
+The dashboard binds to loopback (`127.0.0.1`) by default. Goose treats a bind host as loopback when it's:
 
-Goose treats a bind host as loopback when it is:
+- `localhost` (any case, with no DNS lookup)
+- an IPv4 address in `127.0.0.0/8`, such as `127.0.0.1` or `127.0.0.2`
+- `::1`, with or without brackets (`[::1]`)
 
-- `localhost` (case-insensitive, no DNS lookup)
-- any IPv4 address in `127.0.0.0/8` (for example `127.0.0.1`, `127.0.0.2`)
-- IPv6 loopback `::1` (with or without brackets: `[::1]`)
+Goose decides this from the `--dashboard-host` value as written, so a hostname that resolves to a loopback address isn't loopback. Any other bind, including `0.0.0.0`, `::`, a LAN address or a hostname, needs a token (`--dashboard-auth-token` or `GooseDefault::DashboardAuthToken`) or `--dashboard-no-auth`. With neither, Goose refuses to start.
 
-**Non-loopback** binds, including unspecified addresses that listen on all interfaces (`0.0.0.0`, `::`) and LAN addresses and hostnames, **require** a token at startup (`--dashboard-auth-token` or `GooseDefault::DashboardAuthToken`), unless `--dashboard-no-auth` is set. Goose refuses to start, with an error, if neither is given.
+Goose also checks the `Host` header of every request, the page, its static files and `/api/v1/health` included:
 
-If a token **is** configured, it is enforced, even on loopback, on the metric APIs: every metric and report route that [What requires a token](#what-requires-a-token) lists.
+| Bind | `Host` it takes, with any port | Refusal |
+|------|--------------------------------|---------|
+| Loopback, whatever the token setting | `localhost`, an address in `127.0.0.0/8`, or `[::1]` | 403, plain text `host not allowed` |
+| Off loopback, under `--dashboard-no-auth` | An IP address (`10.0.0.5:5118`, `[fe80::1]:5118`), `localhost`, or the `--dashboard-host` value | 403, `{ "ok": false, "reason": "host_not_allowed" }` |
+| Off loopback, with a token | Any | None |
 
-On a loopback bind every request must carry a loopback `Host` header (`localhost`, an address in `127.0.0.0/8` or `[::1]`, with any port), whatever the token setting; anything else, a missing `Host` included, gets **403** with the plain text body `host not allowed`. This covers every route, the page, its static files and `/api/v1/health` included. This stops DNS rebinding: a web page that points its own domain at 127.0.0.1 sends its own domain as `Host`, so it cannot read snapshots from a dashboard that has no token. A reverse proxy in front of a loopback bind must pass a loopback `Host` (nginx `proxy_pass http://127.0.0.1:5118` does by default). Whether a bind is loopback is decided by the `--dashboard-host` value as written, by the list above. A hostname that resolves to a loopback address does not count as loopback: this `Host` check does not apply to it, and it needs a token like any other non-loopback bind.
+Where Goose checks `Host`, a missing one is refused. The check blocks DNS rebinding, where a web page points its own domain at the dashboard's address and sends that domain as `Host`.
+
+Under `--dashboard-no-auth`, to browse by a DNS name, set `--dashboard-host` to that name; Goose then binds an address it resolves to.
 
 ### Security matrix (observe vs control)
 
 | Bind | Observe (`--dashboard`) | Control (`--dashboard-control`) |
 |------|-------------------------|----------------------------------|
-| Loopback, no token | Metrics OK without auth | **Startup error** (control needs a token or `--dashboard-no-auth`) |
-| Loopback, token set | Metrics require token | Control requires token |
-| Loopback, `--dashboard-no-auth` | Metrics OK without auth | Control open without a token; cross site requests refused |
-| Non-loopback, no token | **Startup error** | **Startup error** |
-| Non-loopback, token set | Metrics require token | Control requires token |
-| Non-loopback, `--dashboard-no-auth` | Metrics open; startup warning, page banner, Host rule | Control open without a token; startup warning, page banner, Host rule, cross site requests refused |
-| Any bind, `--dashboard-no-auth` with `--dashboard-auth-token` | **Startup error** | **Startup error** |
+| Loopback, no token | Metrics open | Startup error (control needs a token or `--dashboard-no-auth`) |
+| Loopback, token set | Metrics need the token | Control needs the token |
+| Loopback, `--dashboard-no-auth` | Metrics open | Control open; startup warning; cross-origin requests refused |
+| Off loopback, no token | Startup error | Startup error |
+| Off loopback, token set | Metrics need the token | Control needs the token |
+| Off loopback, `--dashboard-no-auth` | Metrics open; startup warning; page banner | Control open; startup warning; page banner; cross-origin requests refused |
+| Any bind, `--dashboard-no-auth` with `--dashboard-auth-token` | Startup error | Startup error |
 
-"Metrics" in this table means every route the token guards when one is set: the snapshot, the event stream, the per request heatmap and the saved reports, which can be listed and downloaded. [What requires a token](#what-requires-a-token) lists them. Every loopback bind also checks `Host` on every route, as [Loopback default and auth policy](#loopback-default-and-auth-policy) explains; the "Host rule" in the table is the check off loopback under `--dashboard-no-auth`, in [Off loopback](#off-loopback), and "cross site requests refused" is the check in [Control without a token](#control-without-a-token).
+"Metrics" here means every `GET` route marked Required in [What requires a token](#what-requires-a-token), the report routes included; [On a shared machine](#on-a-shared-machine) shows what they reveal and to whom. There is one token: under `--dashboard-control`, anyone you give it to for watching can also start, stop and redirect the test, and delete saved reports and logs.
 
-Additional control rules:
+### What requires a token
 
-- `--dashboard-control` without `--dashboard` → **startup hard-fail** (control does not auto-enable the dashboard). The same goes for `--dashboard-no-auth` without `--dashboard`.
-- Without `--dashboard-no-auth`, control endpoints always require a non-empty `--dashboard-auth-token`, even on loopback, so other local processes cannot POST start/stop/users without the secret. The telnet Controller, on by default, takes the same commands from any local process with no authentication; see [On a shared machine](#on-a-shared-machine).
-- Startup log shows capability at a glance: `(read-only)`, `(read-only, no token)`, `(control enabled)` or `(control enabled, no token)`; see [Startup lines](#startup-lines).
+| Path | When a token is set | Notes |
+|------|---------------------|-------|
+| `GET /` (the HTML shell of the single page app) | Public | |
+| `GET /static/app.js`, `GET /static/app.css` | Public | |
+| `GET /api/v1/health` | Public | No load test metrics ([Health endpoint exception](#health-endpoint-exception)) |
+| `GET /api/v1/snapshot` | Required | |
+| `GET /api/v1/events` (SSE) | Required | |
+| `GET /api/v1/series` | Required | [Request heatmap endpoint](#request-heatmap-endpoint) |
+| `GET /api/v1/reports` and `/api/v1/reports/*` | Required | [Report endpoints](#report-endpoints) |
+| `POST /api/v1/control/*` | Required | Only with `--dashboard-control`; Bearer header only ([Endpoints](#endpoints)) |
+| `DELETE /api/v1/reports/{name}` | Required | Only with `--dashboard-control`; Bearer header only ([Endpoints](#endpoints)) |
 
-### Startup lines
+#### Browser bootstrap with `?token=`
 
-Goose says at startup what the dashboard allows and how to get control. Read-only:
-
-```text
-[dashboard]: listening on http://127.0.0.1:5118 (read-only)
-[dashboard]: read-only; for control add --dashboard-control and either --dashboard-no-auth (no token) or --dashboard-auth-token <token>
-```
-
-With a token already set, the second line reads `read-only; for control add --dashboard-control`, as `--dashboard-no-auth` would then be refused.
-
-Control with a token, which is never printed; `<token>` is the literal placeholder:
-
-```text
-[dashboard]: listening on http://127.0.0.1:5118 (control enabled)
-[dashboard]: open http://127.0.0.1:5118/?token=<token> to control the test
-```
-
-On an unspecified bind, `--dashboard-host 0.0.0.0` or `::`, the listening line names the bind address, and the line to open names `127.0.0.1` or `[::1]`, which a browser on the same machine can open: `open http://127.0.0.1:5118/?token=<token> to control the test`. From another machine, use this machine's address instead.
-
-Control with `--dashboard-no-auth` on loopback, the second line at warn level:
+A browser's `EventSource` can't set an `Authorization` header, so to open a dashboard that has a token, put the token in the URL:
 
 ```text
-[dashboard]: listening on http://127.0.0.1:5118 (control enabled, no token)
-[dashboard]: --dashboard-no-auth: anyone on this machine can start, stop and redirect the test
+http://{host}:{port}/?token=SECRET
 ```
 
-Read-only with `--dashboard-no-auth`, the listening line reads `(read-only, no token)` and the second line `read-only; for control add --dashboard-control`. Off loopback, `--dashboard-no-auth` adds the warning in [Control without a token](#control-without-a-token).
+The page reads `token` from the URL and strips it from the address bar with `history.replaceState`. It adds `?token=` to its `/api/v1/snapshot`, `/api/v1/events` and `/api/v1/series` requests.
+
+The page keeps the token in the tab's `sessionStorage` (never `localStorage`). A reload keeps it and closing the tab drops it; a new tab or window on the bare URL needs `?token=` again. A tab duplicated from the browser menu gets a copy of the token, and a browser that restores closed tabs may restore the token too. A token in the URL replaces a stored one. When the server answers 401 to a snapshot, event stream or series request, or to a start, stop, users, quit or settings request, the page drops the stored token, so a stale one (for example after Goose restarts with a new token) isn't sent again. A 401 on the report switches, Save report now, a Delete or a report route only shows the error.
+
+If the page loads without a token when one is required, it still renders, but the metric calls get 401 and the page shows:
+
+```text
+Open this dashboard as http://host:port/?token=… (token required for metrics).
+```
+
+Other clients can send the token either way for metrics:
+
+```bash
+curl -sS -H "Authorization: Bearer $DASHBOARD_TOKEN" http://127.0.0.1:5118/api/v1/snapshot
+# or
+curl -sS "http://127.0.0.1:5118/api/v1/snapshot?token=$DASHBOARD_TOKEN"
+```
 
 ### Control without a token
 
-`--dashboard-no-auth` lets the dashboard start, stop, quit and change users, the run settings and the report switches, save the report now, and delete saved reports and logs, with no token and no `?token=` URL:
+With `--dashboard-no-auth`, the dashboard's control works with no token and no `?token=` URL:
 
 ```bash
 cargo run --release --features dashboard --example simple -- \
@@ -172,30 +145,26 @@ cargo run --release --features dashboard --example simple -- \
   -u 50 -t 10m
 ```
 
-Open `http://127.0.0.1:5118/`. The header reads `Live dashboard · control, no token`, and the Control card works as with a token. On loopback anyone on the machine can use it, as with a read-only dashboard with no token; with control on, Goose warns at startup.
+With no token, the control routes (`POST /api/v1/control/*` and `DELETE /api/v1/reports/{name}`) refuse the requests another site's page could send. A request that sends an `Origin` other than `http://<its Host>`, or lacks `Content-Type: application/json`, gets 403 with `{ "ok": false, "reason": "cross_origin" }`. (A form, a link or a plain `fetch` from another site can't send that content type without the browser first asking the server, and Goose sends no CORS headers, so the browser never sends the request.) The dashboard page sends `Content-Type: application/json` on every control request, with `{}` as the body of a POST that has nothing else to send; its Delete sends the header with no body.
 
-`--dashboard-no-auth` can't be given with `--dashboard-auth-token`, and needs `--dashboard`. Without `--dashboard-control` it keeps the dashboard read-only and lifts the token rule for a non-loopback bind.
-
-With no token, nothing but the browser's own rules keeps another web page from sending the dashboard a request, so the control routes (`POST /api/v1/control/*` and `DELETE /api/v1/reports/{name}`) refuse what another site's page can send. A request with an `Origin` other than `http://` followed by its own `Host`, or without `Content-Type: application/json`, gets **403** with `{ "ok": false, "reason": "cross_origin" }`. A form, a link and a plain `fetch` from another site can't send that content type without the browser first asking the server, and Goose sends no CORS headers, so the browser never lets them. The dashboard page sends `Content-Type: application/json` on every control request, with `{}` as the body of a POST with nothing else to send; its Delete sends the header with no body. Behind a reverse proxy that serves the page over https, or that rewrites `Host`, the page's `Origin` no longer matches, and every control request is refused this way.
-
-Under `--dashboard-no-auth`, control works through a proxy only when the page's `Origin` still matches the `Host` Goose sees. Off loopback Goose takes any IP address as `Host`, so a proxy reached by an IP address only has to serve plain http and forward `Host` unchanged. A proxy reached by a name takes three things:
-
-- the proxy serves plain http, under a name that resolves to the machine Goose runs on;
-- it forwards that `Host` unchanged;
-- Goose runs with `--dashboard-host` set to that name, and binds an address it resolves to.
-
-Such a proxy adds no encryption. For https at the proxy, use a token instead. Behind a proxy to a loopback bind, use a token too: that bind takes only a loopback `Host`, which never matches the page's `Origin` once the proxy is reached by any other name.
-
-`curl` and scripts send no `Origin`, so they need only the content type:
+`curl` and scripts send no `Origin`, so they only need the content type:
 
 ```bash
-curl -X POST -H 'Content-Type: application/json' -d '{}' \
-  http://127.0.0.1:5118/api/v1/control/start
+curl -sS -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:5118/api/v1/control/start
 ```
 
-#### Off loopback
+Behind a reverse proxy, control under `--dashboard-no-auth` works only while the page's `Origin` matches the `Host` Goose sees:
 
-On a non-loopback bind, such as `--dashboard-host 0.0.0.0`, anyone who can reach the port can watch the test and, with `--dashboard-control`, start, stop and point the load at any host. Goose starts, and writes this warning straight to standard error, where neither `-q` nor the log level hides it, and to the Goose log at warn level:
+| Proxy | Control under `--dashboard-no-auth` |
+|-------|-------------------------------------|
+| Serves https, or rewrites `Host` | Refused |
+| Reached by IP address, serves plain http, passes `Host` unchanged, in front of an off loopback bind | Works |
+| Reached by a name that resolves to Goose's machine, serves plain http, passes `Host` unchanged, with `--dashboard-host` set to that name | Works |
+| In front of a loopback bind | Refused: the proxy must pass a loopback `Host`, which never matches the page's `Origin`. Use a token |
+
+### Off loopback
+
+Under `--dashboard-no-auth` on a bind off loopback, such as `--dashboard-host 0.0.0.0`, Goose starts and writes this warning to standard error (where neither `-q` nor the log level hides it) and to the Goose log at warn level:
 
 ```text
 ==============================================================================
@@ -209,68 +178,26 @@ to the DNS name you browse to.
 ==============================================================================
 ```
 
-Without `--dashboard-control` the second sentence reads `Anyone who can reach this port can watch the test.` The page shows the first two sentences in a warning banner that names the address the page was opened at and stays for as long as the page is open.
+Without `--dashboard-control` the second sentence reads `Anyone who can reach this port can watch the test.` The page shows the first two sentences in a banner, with the address the page was opened at. The banner stays up while the page is open.
 
-The safer ways are an [SSH tunnel](#ssh-tunnels) to a loopback bind, or a token.
-
-Under `--dashboard-no-auth`, off loopback the server also checks `Host` on every route: it takes an IP address (`10.0.0.5:5118`, `[fe80::1]:5118`), `localhost`, or the `--dashboard-host` value, with any port, and refuses any other name with **403** and `{ "ok": false, "reason": "host_not_allowed" }`. A page that points its own domain at the load generator (DNS rebinding) sends that domain as both `Host` and `Origin`, so the `Origin` rule alone would let it through. To browse to the dashboard by a DNS name, set `--dashboard-host` to that name; Goose then binds an address that name resolves to.
-
-### What requires a token
-
-| Path | Auth when token configured | Notes |
-|------|----------------------------|-------|
-| `GET /` (the page's HTML shell; the page is a single page app, SPA) | **Public** | |
-| `GET /static/app.js`, `GET /static/app.css` | **Public** | |
-| `GET /api/v1/health` | **Public** | Liveness and timing counters; includes `control_enabled` and the Controller addresses (no load-test metrics); see [Health endpoint exception](#health-endpoint-exception) |
-| `GET /api/v1/snapshot` | **Required** | |
-| `GET /api/v1/events` (SSE) | **Required** | |
-| `GET /api/v1/series` | **Required** | One request's response time heatmap; see [Request heatmap endpoint](#request-heatmap-endpoint) |
-| `GET /api/v1/reports` and `/api/v1/reports/*` | **Required** | The runs panel's reports; see [Report endpoints](#report-endpoints) |
-| `POST /api/v1/control/*` | **Required** when control is enabled, unless `--dashboard-no-auth` | Even on loopback; **404** when control is off |
-| `DELETE /api/v1/reports/{name}` | **Required** when control is enabled, unless `--dashboard-no-auth` | Control token, as for `POST /api/v1/control/*`; **404** when control is off |
-
-Under `--dashboard-no-auth` no token is configured, so no route needs one: the metric and report routes are open as on a loopback bind with no token, and the control routes take a request without a token and refuse a cross site one instead; see [Control without a token](#control-without-a-token).
-
-The shell and static assets stay public because classic `<script src>` loads cannot forward a document `?token=` query (or an in-memory secret). Sensitive data lives only in the snapshot, event stream, series and report APIs; mutation lives only on the control routes (the control POSTs and `DELETE /api/v1/reports/{name}`).
-
-#### Browser bootstrap with `?token=`
-
-Browsers' `EventSource` cannot set `Authorization` headers. For remote or token-protected dashboards, open:
+### Startup lines
 
 ```text
-http://{host}:{port}/?token=SECRET
+[dashboard]: listening on http://127.0.0.1:5118 (control enabled)
+[dashboard]: open http://127.0.0.1:5118/?token=<token> to control the test
 ```
 
-The embedded UI reads `token` from the URL on load, strips it from the address bar with `history.replaceState`, and attaches `?token=` to `/api/v1/snapshot`, `/api/v1/events` and `/api/v1/series` requests.
+Goose never prints the token; `<token>` is literal. Each line starts with `[dashboard]: `:
 
-The UI keeps the token in the tab's `sessionStorage`, so reloading the page keeps it. A new tab or window opened on the bare URL does not get it and needs `?token=` again, and the token goes away with the tab. A tab duplicated from the browser menu gets a copy, since browsers copy `sessionStorage` when duplicating a tab, and a browser that restores closed tabs may restore it with the tab. It is never written to `localStorage`. A token in the URL replaces a stored one. When the server answers **401** to a snapshot, event stream or series request, or to a start, stop, users, quit or settings request, the UI removes the stored token (a 401 on the report switches, Save report now, a Delete or a report route only shows the error), so a stale token (for example after Goose restarts with a new one) is not sent again on the next reload.
+| Setup | `listening on` suffix | Second line | Second line's level |
+|-------|-----------------------|-------------|-------|
+| Read-only, no token | `(read-only)` | `read-only; for control add --dashboard-control and either --dashboard-no-auth (no token) or --dashboard-auth-token <token>` | info |
+| Read-only, token set | `(read-only)` | `read-only; for control add --dashboard-control` | info |
+| Read-only, `--dashboard-no-auth` | `(read-only, no token)` | `read-only; for control add --dashboard-control` | info |
+| Control, token set | `(control enabled)` | `open http://<address>/?token=<token> to control the test` | info |
+| Control, `--dashboard-no-auth` | `(control enabled, no token)` | On loopback, `--dashboard-no-auth: anyone on this machine can start, stop and redirect the test` | warn |
 
-Control POSTs from the SPA use **`Authorization: Bearer` only** (never `?token=` on control routes), to avoid putting the secret on mutating URLs that may appear in proxy logs.
-
-If the shell loads without a token when one is required, the page still renders, but metric calls return **401** and the UI shows:
-
-```text
-Open this dashboard as http://host:port/?token=… (token required for metrics).
-```
-
-Non-browser clients may use either for **metrics**:
-
-```bash
-curl -H "Authorization: Bearer SECRET" http://host:5118/api/v1/snapshot
-# or
-curl "http://host:5118/api/v1/snapshot?token=SECRET"
-```
-
-`GET /api/v1/snapshot` returns **503** with an empty body when no snapshot arrives within five seconds, which happens while the main loop (the Goose task that runs the load test's phases) or the metrics processor is busy (for example building the users of a large `users` change), or when the dashboard is shutting down. Retry after a short wait.
-
-For **control**, the server accepts **`Authorization: Bearer` only** (query `?token=` is rejected on control routes):
-
-```bash
-curl -H "Authorization: Bearer SECRET" \
-  -H "Content-Type: application/json" \
-  -d '{}' \
-  -X POST http://host:5118/api/v1/control/start
-```
+Off loopback, `--dashboard-no-auth` adds the warning block in [Off loopback](#off-loopback), which replaces the warn line. On a `0.0.0.0` or `::` bind the listening line shows the bind address and the `open` line shows `127.0.0.1` or `[::1]`.
 
 ### Example: bind on all interfaces
 
@@ -285,50 +212,90 @@ cargo run --release --features dashboard --example simple -- \
   -u 200 -t 1h
 ```
 
-From another machine, open `http://<this machine's address>:5118/?token=<token>`, with the token's value in place of `<token>`. On a shared machine, set the token in the load test's code instead of on the command line, where `ps` shows it to every user; see [On a shared machine](#on-a-shared-machine). Goose serves plain http, so the token and the metrics cross the network unencrypted; [SSH tunnels](#ssh-tunnels) avoid that.
+On a shared machine, set the token in code instead ([Keeping the token private](#keeping-the-token-private)).
+
+From another machine, open `http://<this machine's address>:5118/?token=<token>`. For encryption, keep the default loopback bind and use an SSH tunnel or a reverse proxy instead ([SSH tunnels](#ssh-tunnels)).
+
+## Exposure and logging
+
+### On a shared machine
+
+Every user of the machine running Goose can reach what Goose serves on loopback. Off loopback, read "Any local user" in the three token rows (with no token set; under `--dashboard-no-auth` with `--dashboard-control`; with a token set) as anyone who can reach the port. The token and the metrics then also cross the network as unencrypted http. The Controllers keep their own binds; the other rows stay local.
+
+| Who | What they can reach | To close it |
+|-----|---------------------|-------------|
+| Any local process | The telnet Controller, on by default at `127.0.0.1:5116` with no authentication, and every command it takes ([telnet](telnet.md)), `shutdown` included | `--no-telnet` |
+| Any local process, or any page in a local browser | The WebSocket Controller, under `--websocket`. It takes no authentication and accepts a connection from any web page | Leave `--websocket` off |
+| Any local user, with no token set | The metrics, the run's notes, `--report-file` paths and run settings, and every saved report in the [runs folder](#the-runs-panel) | A token, set in code ([Keeping the token private](#keeping-the-token-private)) |
+| Any local user, under `--dashboard-no-auth` with `--dashboard-control` | The row above, plus everything `--dashboard-control` turns on ([Related flags](#related-flags)), the host the load goes to included | A token in place of `--dashboard-no-auth` |
+| Any local user, with a token set | The page's HTML and static files, and [`GET /api/v1/health`](#health-endpoint-exception). They can also fill the connection cap and keep your browser out ([Security notes](#security-notes-summary)) | No setting closes the lockout. Run where you trust the other users, or behind a firewall when the bind is off loopback |
+| Any local user, through the file system | The run folders under `goose-runs` (reports and logs), written with the process's umask, which usually lets every local user read them | `umask 077`, or an `--output-dir` inside a folder only you can read, such as `~/private/nightly` with `~/private` at mode 700 |
+| Any local user, with the token on the command line | The token, in `ps` | Set it in code |
+
+With no token set, any local user can read the request names, hosts, error strings and rates in the snapshot, the event stream and the per request heatmap. Saved reports can be listed and downloaded even when only their owner can read the files. A client holding the event stream open when an autostarted run ends with its report saved keeps Goose and its port up ([Waiting after an autostarted run](#waiting-after-an-autostarted-run)).
+
+#### Keeping the token private
+
+To keep the token off the command line, read it in the load test's code (from an environment variable, for example) and set it as a default. On Linux a process's environment, unlike its arguments, is readable only by its own user and root. Make it long and random, such as `openssl rand -hex 32`, since Goose doesn't limit wrong guesses. An empty token counts as none, so the code below refuses one:
+
+```rust
+let token = std::env::var("DASHBOARD_TOKEN")
+    .ok()
+    .filter(|token| !token.is_empty())
+    .expect("set DASHBOARD_TOKEN to a non-empty value");
+GooseAttack::initialize()?
+    .set_default(GooseDefault::DashboardAuthToken, token.as_str())?
+    // register scenarios and run as before
+```
+
+Anyone who can read the source or the binary can read a token written into the source. A token can also turn up:
+
+- in a reverse proxy's access log ([SSH tunnels](#ssh-tunnels));
+- in a browser tab duplicated or restored from the one that opened the dashboard ([Browser bootstrap with `?token=`](#browser-bootstrap-with-token));
+- in `curl` command lines ([curl examples](#curl-examples));
+- in your shell history, after `export DASHBOARD_TOKEN=...`. In bash or zsh, `read -rs DASHBOARD_TOKEN && export DASHBOARD_TOKEN` sets it without echoing it or writing it there.
+
+The token goes to whatever holds the dashboard's port:
+
+- If another user holds the port when Goose binds ([Enabling the dashboard](#enabling-the-dashboard) says when that is), Goose exits with the bind error in [Related flags](#related-flags), and a tunnel or a reloaded tab then sends your token to the other process.
+- A tab left open after Goose is killed or crashes keeps retrying with the token until something answers. Close the tab once Goose is gone.
+
+Send the token only while your own Goose is up, as its `listening on` line shows. Under `-q`, which hides it, check that `lsof -iTCP:5118 -sTCP:LISTEN` shows your Goose process.
 
 ### Security notes (summary)
 
-- **Default off**, **default loopback** bind; control is a **separate** opt-in (`--dashboard-control`).
-- Non-loopback without a configured token → **startup hard-fail**, unless `--dashboard-no-auth` is set.
-- Control without a token → **startup hard-fail**, even on loopback, unless `--dashboard-no-auth` is set.
-- Token protects **metric APIs** when configured; control POSTs require the token when control is on, unless `--dashboard-no-auth` is set.
-- `--dashboard-no-auth` with `--dashboard-auth-token` → **startup hard-fail**. Under `--dashboard-no-auth` the control routes refuse a cross site request (403 `cross_origin`), and off loopback Goose warns at startup, the page shows a warning banner, and only an IP address, `localhost` or the `--dashboard-host` name is taken as `Host` (403 `host_not_allowed`).
-- Shell/static/health stay public and contain no load-test metrics.
-- Prefer `Authorization: Bearer` for scripts; browsers use `?token=` for metrics (EventSource limits) and **Bearer only** for control POSTs (with a token set, the server rejects query tokens on `/api/v1/control/*`).
-- Query tokens on the first page load and on metric URLs can appear in reverse-proxy access logs; prefer an SSH tunnel, or a reverse proxy whose access log only you can read or that does not log query strings, when that matters. Every response sends `Referrer-Policy: no-referrer`, so the page does not pass its `?token=` URL on as a `Referer`.
-- `--dashboard-auth-token` is visible in process listings (`ps`) like any CLI argument; on a shared machine, set the token in code instead, as [On a shared machine](#on-a-shared-machine) shows.
-- Goose never logs the token value; the startup lines name the `<token>` placeholder, never the secret. See [What Goose logs](#what-goose-logs).
-- The UI renders metric fields with `textContent` only (no `innerHTML`) and serves a strict Content-Security-Policy without `'unsafe-inline'` scripts.
-- No session cookies and no CORS headers; classic cross-site cookie CSRF does not apply. With no token, under `--dashboard-no-auth`, the control routes check `Origin` and `Content-Type` instead.
-- Every response sends `Cache-Control: no-store` (the first page load carries `?token=` and the APIs carry metrics) and `X-Content-Type-Options: nosniff`.
-- On a loopback bind, requests whose `Host` is not loopback get 403 (DNS rebinding).
-- A client gets 10 seconds to send a request's headers, on a new connection and between requests on a keep-alive one, and the server holds at most `2 × --dashboard-max-clients + 16` connections, so a client that sends nothing is closed after 10 seconds and the number of open connections is bounded. The cap is shared by every client, with a token or without one, so a client that holds that many connections open keeps every other client out; Goose logs each connection it closes this way only at debug level. Long-lived SSE streams are not cut: the timeout covers headers only.
+- Every response sends `Cache-Control: no-store`, `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`, so the page doesn't pass its `?token=` URL on as a `Referer`.
+- The page renders metric fields with `textContent` only (no `innerHTML`), and the server sends a strict Content-Security-Policy with no `'unsafe-inline'` scripts and `frame-ancestors 'none'`.
+- There are no session cookies and no CORS headers, so classic cross-origin cookie CSRF doesn't apply. Under `--dashboard-no-auth` the control routes check `Origin` and `Content-Type` instead ([Control without a token](#control-without-a-token)).
+- A client gets 10 seconds to send a request's headers, on a new connection and between requests on a keep-alive one, and is closed if it sends nothing. Event streams aren't cut, since the timeout covers headers only. The connection cap ([Related flags](#related-flags)) is shared by every client, token or not, so a client that keeps that many connections open, with a request on each at least every 10 seconds, keeps everyone else out until it stops.
 
 ### What Goose logs
 
-The main loop is the Goose task that runs the load test's phases and applies control commands. Goose logs at info each control request the main loop answers, as `[dashboard]: control <name> ok` or `rejected`, with the phase, and logs at warn each one it can't answer (`control admission full`, `control timed out`, `control unavailable`). Goose does not log a control request it refuses before the main loop sees it: a malformed body, an out of range value, a body over 16 KiB, or one that fails the cross site or `Host` checks (see [Control without a token](#control-without-a-token) and [Loopback default and auth policy](#loopback-default-and-auth-policy)). A missing or wrong token on a control POST (`report` and `report/now` among them) or on a Delete is logged at warn, and each deleted report at info. A missing or wrong token on a metric route or a report download is not logged, and no line at info or warn names the client's address. Goose never logs the token value: the startup lines name the `<token>` placeholder, and a Controller's `config` and `config-json` show a set token as `(set)`.
+When the [main loop](#endpoints) answers a control request, Goose logs it at info as `[dashboard]: control <name> ok` or `rejected` with the phase; a request the main loop doesn't answer is logged at warn (`control admission full`, `control timed out`, `control unavailable`).
 
-Info lines go to the console, where `-q` hides them. Without `--goose-log` (`-G`) there is no log file, and the file `-G` writes holds warn and error lines only unless `-g` adds info. For a record of control requests and Deletes on disk, run with `-G` and `-g`.
+Goose logs a missing or wrong token on a control POST (`report` and `report/now` included) or a Delete at warn, and each completed Delete at info, or at warn when it fails on disk (a Delete refused with 404 or 409 isn't logged). It doesn't log a missing or wrong token on a metric route or a report download, or any other refusal before the main loop: a malformed body, an out of range value, a body over 16 KiB, or a failed cross-origin or `Host` check. Connections closed at the cap are logged only at debug. No line at info or warn includes the client's address, and Goose never logs the token; a Controller's `config` and `config-json` show a set token as `(set)`.
+
+Info lines go to the console, where `-q` hides them. The `--goose-log` (`-G`) file holds only warn and error lines unless `-g` adds info, so for a record of control requests and Deletes on disk, run with `-G` and `-g`.
 
 ## SSH tunnels
 
-Prefer keeping Goose on loopback and tunneling from your laptop. On a shared machine, open the tunnel only once your own Goose holds the port ([On a shared machine](#on-a-shared-machine) says how to check):
+Keep Goose on loopback and tunnel to it from your laptop:
 
 ```bash
 ssh -L 5118:127.0.0.1:5118 loadgen.example.com
-# open http://127.0.0.1:5118/ locally
 ```
 
-With a loopback bind and no auth token (observe-only, or control under `--dashboard-no-auth`), no `?token=` is required over the tunnel. If you set a token (required when control is enabled without `--dashboard-no-auth`), pass it in the browser URL; see [Browser bootstrap with `?token=`](#browser-bootstrap-with-token). On a shared machine a loopback bind with no token is open to every local user, so set a token there as well.
+Then open `http://127.0.0.1:5118/` locally, adding `?token=<token>` when a token is set.
 
-TLS termination is not provided by Goose; use an SSH tunnel or reverse proxy when you need encryption in transit. A reverse proxy must pass a loopback `Host` to a loopback bind ([Loopback default and auth policy](#loopback-default-and-auth-policy)); under `--dashboard-no-auth` one that serves https or rewrites `Host` gets every control request refused ([Control without a token](#control-without-a-token)); and its access log records the `?token=` on the first page load and on metric URLs ([Security notes](#security-notes-summary)).
+Goose doesn't terminate TLS. For encryption in transit, use an SSH tunnel or a reverse proxy.
 
-## Control endpoints
+Behind a reverse proxy, keep Goose on loopback so its plain http port isn't reachable directly, use a token, and have the proxy pass a loopback `Host` (nginx `proxy_pass http://127.0.0.1:5118` does by default). Its access log can record `?token=`, so keep that log private or don't log query strings. Under `--dashboard-no-auth`, control works behind a proxy only in the cases [Control without a token](#control-without-a-token) lists.
+
+## Control
 
 ### Controlling a load test from the dashboard
 
-Control is **off by default**. Enable it with `--dashboard-control` and a token, as here, or with `--dashboard-no-auth` instead of the token; see [Control without a token](#control-without-a-token):
+Control with a token:
 
 ```bash
 read -rs DASHBOARD_TOKEN && export DASHBOARD_TOKEN
@@ -341,11 +308,11 @@ cargo run --release --features dashboard --example simple -- \
   -u 50 -t 10m
 ```
 
-Open `http://127.0.0.1:5118/?token=<token>`, with the token's value in place of `<token>`; on a shared machine, set the token in code, as [On a shared machine](#on-a-shared-machine) says. The header shows `Live dashboard · control`, and a control panel appears with **Start**, **Stop**, a target-users input (`Apply`, `−` / `+` step buttons), **Edit settings**, which opens a form for the host, the ramps and the run time, and, in Idle, **Quit**.
+Open `http://127.0.0.1:5118/?token=<token>`. The Control card then has **Start**, **Stop**, **Target**, **Edit settings** and, in Idle, **Quit** ([The Control card](#the-control-card)). Without a token, see [Control without a token](#control-without-a-token).
 
 #### `--no-autostart` recipe
 
-`--no-autostart` keeps Goose in **Idle** until something starts the test. It is allowed when any Controller is enabled (the telnet Controller is on by default, the WebSocket Controller only with `--websocket`) **or** when `--dashboard-control` is set (with dashboard, and a token or `--dashboard-no-auth`):
+`--no-autostart` keeps Goose in Idle until something starts the test. Goose refuses it unless a Controller is on (telnet is by default, WebSocket only with `--websocket`) or dashboard control is on. With dashboard control off, it also refuses when every enabled Controller failed to listen on its port.
 
 ```bash
 read -rs DASHBOARD_TOKEN && export DASHBOARD_TOKEN
@@ -360,75 +327,108 @@ cargo run --release --features dashboard --example simple -- \
   -u 50
 ```
 
-Then Start from the UI or via `POST /api/v1/control/start`. On a shared machine, set the token in code instead, as [On a shared machine](#on-a-shared-machine) says, so `ps` does not show it. Without Controllers **and** without dashboard control, `--no-autostart` is a startup hard-fail (there would be no way to leave Idle). The same goes, with dashboard control off, when the Controllers are enabled but none could listen on its port.
+Then press **Start**, or send `POST /api/v1/control/start`. When the run ends, Goose goes back to Idle and waits for another Start; press **Quit** or send `POST /api/v1/control/quit` (or a Controller `shutdown`) to exit.
+
+On a shared machine, set the token in code instead ([Keeping the token private](#keeping-the-token-private)).
 
 ### Endpoints
 
+The main loop is the Goose task that runs the load test's phases and applies control commands.
+
 | Method | Path | Body | Description |
 |--------|------|------|-------------|
-| `POST` | `/api/v1/control/start` | empty, `{}`, or run settings | Start an idle load test → enters **Increase**; with run settings, apply them and start in one step, all or none |
-| `POST` | `/api/v1/control/settings` | run settings | Apply run settings without starting, all or none; see [Run settings](#run-settings) |
-| `POST` | `/api/v1/control/stop` | empty or `{}` | Stop all users at once → enters **Decrease** (eventual Idle); accepted only in **Increase** and **Maintain**, else `"ok": false` with `invalid_phase` |
-| `POST` | `/api/v1/control/users` | `{"users": N}` | Set absolute target user count (`N` an integer from 1 to 100000) |
-| `POST` | `/api/v1/control/quit` | empty or `{}` | Shut Goose down; accepted only in **Idle** |
-| `POST` | `/api/v1/control/report` | `{"save": B, "graph_data": B}`, either or both, each `B` a boolean | Set Save report and Include graph data; see [Saving the report](#saving-the-report) |
-| `POST` | `/api/v1/control/report/now` | empty or `{}` | Save report now; accepted only while a run is in progress, else `invalid_phase` (`invalid_report` under `--no-metrics`) |
-| `DELETE` | `/api/v1/reports/{name}` | none | Delete a folder's reports and logs; see [Report endpoints](#report-endpoints) |
+| `POST` | `/api/v1/control/start` | empty, `{}`, or run settings | Start the test ([Start and Stop semantics](#start-and-stop-semantics)). With run settings, apply them and start in one step |
+| `POST` | `/api/v1/control/settings` | run settings | Apply run settings without starting ([Run settings](#run-settings)) |
+| `POST` | `/api/v1/control/stop` | empty or `{}` | Stop all users at once |
+| `POST` | `/api/v1/control/users` | `{"users": N}` | Set the target user count, an integer from 1 to 100000 ([Users on a running test](#users-on-a-running-test)) |
+| `POST` | `/api/v1/control/quit` | empty or `{}` | Shut Goose down ([Start and Stop semantics](#start-and-stop-semantics)) |
+| `POST` | `/api/v1/control/report` | `{"save": B, "graph_data": B}`, one or both, each a boolean | Set Save report and Include graph data ([Saving the report](#saving-the-report)) |
+| `POST` | `/api/v1/control/report/now` | empty or `{}` | Save the report now. Only while a run is in progress, otherwise `invalid_phase` |
+| `DELETE` | `/api/v1/reports/{name}` | none | Delete a folder's reports and logs ([Report endpoints](#report-endpoints)) |
 
-Auth: `Authorization: Bearer <token>` only (query `?token=` → **401**). Missing/wrong token → **401**. Control disabled → **404**. Under `--dashboard-no-auth` no token is needed, and a cross site request gets **403**; see [Control without a token](#control-without-a-token).
+Send the token as `Authorization: Bearer <token>`; a `?token=` query gets 401, even beside a valid header.
+
+A control request gets one of these:
+
+| Status | Body | When |
+|--------|------|------|
+| 200 | JSON, `"ok": true` | The main loop applied the command |
+| 200 | JSON, `"ok": false`, with `error` from the first table below or a run settings refusal ([Refusals](#refusals)) | The main loop refused the command |
+| 204 | Empty | A Delete succeeded |
+| 400 | JSON, `"ok": false`, with `error` `bad_request` (a malformed body), `invalid_users` (a `/control/users` count out of bounds), or a run settings refusal ([Refusals](#refusals)) | Refused before the main loop |
+| 401 | Empty | The token is missing or wrong, or sent as `?token=` |
+| 403 | `{ "ok": false, "reason": "cross_origin" }` | Under `--dashboard-no-auth`, a cross-origin request ([Control without a token](#control-without-a-token)) |
+| 403 | `{ "ok": false, "reason": "host_not_allowed" }` off loopback under `--dashboard-no-auth`; plain text `host not allowed` on a loopback bind | A `Host` Goose doesn't take ([Loopback default and auth policy](#loopback-default-and-auth-policy)) |
+| 404 | Empty | Control is off, so the route isn't registered (or, for a Delete, a folder the runs panel doesn't list) |
+| 405 | Empty | A method the route doesn't take, such as `GET` on a control route |
+| 409 | Plain text reason | A Delete Goose refuses ([Report endpoints](#report-endpoints)) |
+| 413 | Plain text | A POST body over 16 KiB, checked before the token |
+| 500 | Plain text `can't delete the report` | A Delete that fails on disk |
+| 503 | JSON, `"ok": false`, with `error` from the second table below | The main loop didn't answer |
+
+For a POST, only a 200 with `ok: true` is success. A 200 body has `field` only when one setting is at fault. A 400 or 503 body has `phase`, `active_users` and `target_users` set to `null`, and `field` set to `null` unless a run settings refusal sets it.
+
+When the main loop refuses a command, `error` is one of these:
+
+| `error` | When |
+|---------|------|
+| `invalid_phase` | The phase can't take the command |
+| `prepare_failed` | A Start can't prepare the load test |
+| `conflicting_settings` | The command conflicts with other settings, such as 1 user while an increase time is set |
+| `internal` | Applying the command failed inside Goose, which then ends the load test with that error |
+| `invalid_report` | Save report turned on under `--no-metrics` or during a run with no folder, or Save report now under `--no-metrics` |
+| `report_busy` | Save report now is still writing the report it was last asked for |
+| `report_failed` | Save report now can't start writing the report, as during a run with no folder or when its folder can't be written to; `message` has the reason |
+
+Run settings have refusals of their own, `no_host` among them ([Refusals](#refusals)). A report write that fails after an `ok: true` shows up in the snapshot's `report.error`.
+
+When the main loop doesn't answer, `error` is one of these:
+
+| `error` | When | Client action |
+|---------|------|---------------|
+| `busy` | Four control requests are already waiting for the main loop | Wait and retry |
+| `unavailable` | The main loop no longer takes control requests, for example because the load test is exiting | Don't retry |
+| `timeout` | The main loop didn't answer within 15 seconds | Read `phase` and `target_users` from a snapshot before retrying. A command still queued at the timeout is skipped, but one the main loop had started may still apply |
+
+A Start is refused with `prepare_failed` and `"field": "host"` when a scenario has no host from `--host`, the scenario itself or the default host. It's also refused that way when a `test_start` or `test_stop` transaction is registered and neither `--host` nor the default host is set, since those transactions run with no scenario host. An autostarted run with the same configuration fails at launch instead.
 
 #### curl examples
 
-These pass the token on `curl`'s command line, which `ps` shows to every user. On a shared machine, put the header in a file only you can read and pass it with `-H @<file>` (curl 7.55 or later) instead.
+The examples below put the token on `curl`'s command line, which `ps` shows to every user. On a shared machine, put the header in a file only you can read and pass it with `-H @<file>` (curl 7.55 or later). Under `--dashboard-no-auth`, drop `-H "$AUTH"`, and send `-H 'Content-Type: application/json' -d '{}'` on every control POST that has no other body (a Delete takes the header alone); GET routes need neither ([Control without a token](#control-without-a-token)).
+
+Each command is a separate example, run against a `--no-autostart` Goose ([`--no-autostart` recipe](#--no-autostart-recipe)). Add `-w '\n%{http_code}\n'` to see the status. In CI, set `DASHBOARD_TOKEN` from the job's secrets instead of `read -rs`. A Stop's `ok: true` means stopping began; wait until a [snapshot](#snapshot-data) reads `"phase": "idle"` before a Start or a Quit.
 
 ```bash
 read -rs DASHBOARD_TOKEN && export DASHBOARD_TOKEN
-BASE="http://127.0.0.1:5118"
+AUTH="Authorization: Bearer $DASHBOARD_TOKEN"
+URL=http://127.0.0.1:5118/api/v1
 
-# Start (success means the phase entered Increase, not that test_start finished)
-curl -sS -X POST \
-  -H "Authorization: Bearer $DASHBOARD_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{}' \
-  "$BASE/api/v1/control/start"
+# Start
+curl -sS -X POST -H "$AUTH" "$URL/control/start"
 
-# Stop (success means the cancel began: the phase is decrease, not idle)
-curl -sS -X POST \
-  -H "Authorization: Bearer $DASHBOARD_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{}' \
-  "$BASE/api/v1/control/stop"
+# Stop
+curl -sS -X POST -H "$AUTH" "$URL/control/stop"
 
 # Start against another host at 20 users per second, holding 10 minutes
-curl -sS -X POST \
-  -H "Authorization: Bearer $DASHBOARD_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"host":"https://staging.example.com","increase_rate":20,"run_time_secs":600}' \
-  "$BASE/api/v1/control/start"
+curl -sS -H "$AUTH" -H 'Content-Type: application/json' -d '{"host":"https://test.example.com","increase_rate":20,"run_time_secs":600}' "$URL/control/start"
 
-# Hold the running test 5 more minutes than it started with
-curl -sS -X POST \
-  -H "Authorization: Bearer $DASHBOARD_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"run_time_secs":900}' \
-  "$BASE/api/v1/control/settings"
+# Change a running users ramp's hold to 15 minutes
+curl -sS -H "$AUTH" -H 'Content-Type: application/json' -d '{"run_time_secs":900}' "$URL/control/settings"
 
-# Set absolute user count
-curl -sS -X POST \
-  -H "Authorization: Bearer $DASHBOARD_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"users":100}' \
-  "$BASE/api/v1/control/users"
+# Set the user count
+curl -sS -H "$AUTH" -H 'Content-Type: application/json' -d '{"users":100}' "$URL/control/users"
 
-# Quit (only while idle: Goose shuts down)
-curl -sS -X POST \
-  -H "Authorization: Bearer $DASHBOARD_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{}' \
-  "$BASE/api/v1/control/quit"
+# Turn Save report off
+curl -sS -H "$AUTH" -H 'Content-Type: application/json' -d '{"save": false}' "$URL/control/report"
+
+# Save the report now (while a run is in progress)
+curl -sS -X POST -H "$AUTH" "$URL/control/report/now"
+
+# Quit (from Idle)
+curl -sS -X POST -H "$AUTH" "$URL/control/quit"
 ```
 
-Example success bodies:
+A Start or a Stop answers:
 
 ```json
 {
@@ -452,50 +452,48 @@ Example success bodies:
 }
 ```
 
-Logical rejections return **HTTP 200** with `"ok": false` and a stable `error` code: `invalid_phase` when the phase cannot take the command, `prepare_failed` when a Start cannot prepare the load test, `conflicting_settings` when the command conflicts with other settings, such as `users 1` while an increase time is set, `no_host` when clearing the host would leave something with no host, and `internal` when applying the command fails inside Goose, which then ends the load test with that error. The report control routes add three: `invalid_report` when Save report is turned on under `--no-metrics` or during a run with no folder, and for Save report now under `--no-metrics`; `report_busy` while Save report now is still writing the report it was last asked for; and `report_failed` when Save report now can't start writing the report, as during a run with no folder or when its folder can't be written to, with the reason in `message`. A write that fails after an `ok: true` answer shows in the snapshot's `report.error`. When one setting is at fault the body also names it in `field` (for example `"field": "users"`, or `"field": "host"` for a Start with no host); `field` is left out otherwise. A malformed body returns **400** with `error` set to `bad_request`, and a `users` value that is not an integer from 1 to 100000 returns **400** with `invalid_users`; those two 400 bodies, and every 503 body below, have `"field": null`. A run settings body has 400 refusals of its own, which name the field; see [Run settings](#run-settings). A body larger than 16 KiB gets **413** with a plain text body, before the token is checked.
-
-A Start is refused with `prepare_failed` and `"field": "host"` before it replies when some scenario has no host from `--host`, the scenario itself or the default host, and also when a `test_start` or `test_stop` transaction is registered and neither `--host` nor the default host is set, since those run with no scenario host. An autostarted run with the same configuration fails at launch instead.
-
-When the main loop does not answer, a control POST returns **503** with `"ok": false`, an `error` code from this table, and `phase`, `active_users`, `target_users` and `field` set to `null`:
-
-| `error` | When | Client action |
-|---------|------|---------------|
-| `busy` | Four control requests are already waiting for the main loop | Wait and retry |
-| `unavailable` | The main loop no longer takes control requests, for example because the load test is exiting | Do not retry |
-| `timeout` | The main loop did not answer within 15 seconds | Re-read `phase` and `target_users` from a snapshot before retrying: a command still queued at the timeout is skipped, but one the main loop had started may still apply |
-
 ## Start, stop, users and run settings
+
+A users ramp is a run set by `users` and the ramp settings, with no test plan.
 
 ### Start and Stop semantics
 
-**Start success means the test entered Increase**, not that `test_start` transactions finished. Goose replies as soon as the phase transitions (same timing as Controllers), then runs `reset_run_state` / user `test_start` on the main loop. A long `test_start` does not block the HTTP 200.
+Start is accepted only in Idle. A successful Start means the phase has entered Increase. Goose replies as soon as the phase changes, then runs `reset_run_state` (and with it any `test_start` transaction) on the main loop, so a long `test_start` doesn't hold up the 200.
 
-**Stop is accepted only in Increase and Maintain.** In any other phase, a planned ramp down or a users decrease among them, it replies `"ok": false` with `invalid_phase`; to end a ramp down early, use a Controller's `shutdown` or Ctrl-C, both of which also exit Goose.
+Stop is accepted only in Increase and Maintain. In any other phase, including a configured ramp down or a Users decrease, it answers `invalid_phase`. To stop all users during a ramp down, use a Controller's `shutdown` or Ctrl-C; both also exit Goose.
 
-**Stop is not instantaneous idle.** A successful Stop begins a **cancel** through `AttackPhase::Decrease` (Canceling), which stops all users at once, whatever the decrease rate or time: those shape a users ramp's own ramp down, never a Stop. The process returns to **Idle** only after decrease finishes. While a Stop's cancel runs (phase `decrease` with `stopping` true):
+A successful Stop moves to phase `decrease` and stops all users at once. The decrease rate and time don't apply. When the users have stopped, Goose writes the run's reports as at the end of any run and returns to Idle. Until then the phase is `decrease` with `stopping` true, and Users is refused (`invalid_phase` from the dashboard, false from a Controller).
 
-- **Stop** is disabled (a Stop is already under way)
-- **Start** stays disabled until phase is `idle` again
-- **Users** is refused until phase is `idle` again (the dashboard returns `"ok": false` with `invalid_phase`, a Controller replies false), so Users cannot turn a Stop back into a running load test
-
-The snapshot's `stopping` field is `true` from the Stop until `idle`; a Controller `shutdown` and Ctrl-C set it the same way. A users ramp's own ramp down is also phase `decrease`, but `stopping` stays `false` and **Users** is accepted there: the ramp down is abandoned and the run holds the new count until stopped. While a test plan runs, **Users** is refused with `invalid_phase` and `"field": "users"`, as the plan sets users: edit the plan, or stop and set users to switch to a users ramp.
+Quit is accepted only in Idle; in any other phase it answers `invalid_phase`. Stop the test first, or send a Controller `shutdown`.
 
 ### Users on a running test
 
-A users ramp keeps its shape when the user count changes mid run (Target, the `users` command, or `POST /api/v1/control/users`): Goose takes the new count and keeps the hold (the run time after the ramp up) and the ramp down, and regenerates the steps still ahead from them.
+When the user count changes mid run (**Target**, a Controller's `users`, or `POST /api/v1/control/users`), Goose regenerates the steps of a users ramp still ahead for the new count. What happens to the hold (the run time after the ramp up) and the ramp down depends on when the change arrives:
 
 | When Users arrives | What happens |
 |--------------------|--------------|
-| During the ramp up | Ramp to the new count, then hold for the full run time, then ramp down for the new count; a new count that is the one the run already has holds that count until stopped |
-| During the hold | Ramp to the new count; the hold keeps its end. If the ramp outlasts it, or the new count is the one the run already has, the run holds that count until stopped, with no ramp down |
-| During the ramp down | The ramp down is abandoned, and the run holds the new count until stopped |
+| During the ramp up | Ramp to the new count, hold it for the full run time, then ramp down for the new count. A count equal to the active users keeps that count with no end and no ramp down |
+| During the hold | Ramp to the new count; the hold keeps its end. If the ramp ends after the hold's end, or the new count equals the active users, the run keeps that count with no end and no ramp down (`stage` still reads `hold`) |
+| During the ramp down | The ramp down is abandoned, and the run holds the new count until stopped. `run_time_secs` is unchanged and `stage` reads `hold_until_stopped` |
 | While holding until stopped | Ramp to the new count, and keep holding |
 
-Adding users ramps at the increase rate; removing them at the decrease rate, else the increase rate; 1 per second for an increase with no increase rate, and for a decrease with neither rate. Increase and decrease times are not used for these changes. A decrease rate sent while a users ramp runs regenerates the ramp down still ahead at the new rate; on a run with a run time and no ramp down, where all users would stop at once when the hold ends, it adds a ramp down at that rate; on a run holding until stopped it only sets the rate for the next Users decrease, a later run time, and the next Start. Clearing the decrease rate (`null`) on a running test removes a ramp down this run added, so all users stop at once again, and is refused with `conflicting_settings` while a ramp down the run started with is still ahead. An increase rate sent while running is for the next Users increase, and never re-paces a ramp in progress. While running, either rate is refused with `conflicting_settings` when its own time is set, since a time changes only in Idle, and both are refused during the ramp down, while stopping, and while a test plan runs.
+Goose adds users at the increase rate, and removes them at the decrease rate or, without one, the increase rate. With no rate to use, it goes at 1 user per second. Increase and decrease times don't apply to these changes.
+
+The rates can change on a running users ramp too ([Refusals](#refusals) lists what's refused):
+
+| Sent | What happens |
+|------|--------------|
+| `decrease_rate` | The ramp down still ahead is regenerated at the new rate. On a run with a run time and no ramp down, where all users would stop at once when the hold ends, it adds a ramp down at that rate. On a run holding until stopped, it only sets the rate for the next Users decrease, for the ramp down if a run time is set later, and for the next Start |
+| `decrease_rate: null` | Removes a ramp down this run added, so all users stop at once again. Refused with `conflicting_settings` while a ramp down the run started with is still ahead |
+| `increase_rate` | Used for the next Users increase. A ramp in progress keeps its pace |
+
+While a test plan runs, Users is refused with `invalid_phase` and `"field": "users"`, because the plan sets users. Edit the plan, or stop the test and set users, which switches to a users ramp.
 
 ### Run settings
 
-`POST /api/v1/control/settings` applies run settings, and `POST /api/v1/control/start` applies them and starts in one step, so no other client can change a setting in between. Both take the token (the one `--dashboard-auth-token` or `GooseDefault::DashboardAuthToken` sets; there is no second token for control) and the 16 KiB body limit, and go to the main loop as one command, checked as a whole: a refusal, a Start's `prepare_failed` among them, leaves every setting, the test plan, the running test and `target_users` as they were.
+The page's **Edit settings** form sends these settings ([The Control card](#the-control-card)). A Start with a body applies them and starts in one step, so no other client can change a setting in between. Goose applies a body all or nothing: a refusal (including a Start's `prepare_failed`) leaves every setting, the test plan, the running test and `target_users` as they were.
+
+#### Body
 
 ```json
 {
@@ -510,55 +508,74 @@ Adding users ramps at the increase rate; removing them at the decrease rate, els
 }
 ```
 
-- A field left out is left alone, and `null` clears it back to Goose's default. Clearing `host` goes back to each scenario's host, or the default host. A field that is not one of these is refused.
-- Values are bounded as the Controllers bound them: `host` an `http` or `https` url with no user name or password; `users` 1 to 100000; the rates 0.01 to 100000 users per second; the times whole seconds from 1 to 30 days (`0` is refused: send `null` to clear); `test_plan` in the `--test-plan` format, within the bounds of the [Controller commands](telnet.md#controller-commands): at most 100 steps of up to 30 days each, in at most 4096 bytes, starting 1 to 100000 users in total.
-- `test_plan` switches to a test plan and clears users, the ramp settings and the run time; `users` switches back and clears the test plan. `test_plan: null` is accepted only with `users`. While a test plan is configured, a ramp setting without `users` is refused with `"field": "users"`.
-- In Idle, a rate and its own time each replace the other, so a rate alone clears its time, and a time alone clears its rate; on a running test a rate is refused while its own time is set. The two cannot both be set in one body. A test plan cannot be sent with `users` or a ramp setting, though clearing a ramp setting beside it with `null` is accepted.
-- `users: null` is refused. On a running test `users` is refused in a settings body: change users on its own with `/api/v1/control/users`.
+- A field left out stays as it is, and `null` clears it back to Goose's default (`users` can't be cleared, and `test_plan: null` needs `users`; [Refusals](#refusals)). Clearing `host` goes back to each scenario's host, or the default host. An unknown field is refused.
+- `test_plan` switches to a test plan and clears users and the ramp settings (the rates, the times and the run time). `users` switches back and clears the test plan.
+- In Idle, a rate and its own time replace each other: a rate alone clears its time, and a time alone clears its rate.
 
-Refusals are checked in this order, and the first one is answered:
+Values have the Controllers' bounds:
+
+| Field | Bound |
+|-------|-------|
+| `host` | An `http` or `https` url with no user name or password |
+| `users` | 1 to 100000 |
+| `increase_rate`, `decrease_rate` | 0.01 to 100000 users per second |
+| `increase_time_secs`, `decrease_time_secs`, `run_time_secs` | Whole seconds from 1 to 30 days (`0` is refused; send `null` to clear) |
+| `test_plan` | The `--test-plan` format, at most 100 steps of up to 30 days each, 4096 bytes, and 1 to 100000 users in total ([Controller commands](telnet.md#controller-commands)) |
+
+#### Refusals
+
+Goose checks these in order and answers the first that applies:
 
 | Status | `error` | When |
 |--------|---------|------|
-| 400 | `bad_request` | The body is not JSON, not an object, or has a field Goose does not know |
-| 400 | `invalid_value` | A value of the wrong type or out of bounds, and `users: null` |
-| 400 | `conflicting_settings` | Settings that never go together, whatever the state |
-| 200 | `invalid_phase` | A setting the phase cannot change, set or cleared |
-| 200 | `conflicting_settings` | A ramp setting while a test plan is configured (`"field": "users"`); a rate on a running test while its own time is set; clearing the decrease rate or the run time on a running test where that is refused; the command line's rules (run time, a decrease rate or time, and a test plan under `--iterations`, a test plan under `--no-reset-metrics`, and in Idle a time with fewer than 2 users) |
+| 400 | `bad_request` | The body isn't JSON, isn't an object, or has a field Goose doesn't know |
+| 400 | `invalid_value` | A value of the wrong type or out of bounds, or `users: null` |
+| 400 | `conflicting_settings` | `test_plan` with `users` or a ramp setting (clearing a ramp setting beside it with `null` is fine) |
+| 400 | `conflicting_settings` | `test_plan: null` without `users` |
+| 400 | `conflicting_settings` | A rate and its own time both set to values in one body |
+| 200 | `invalid_phase` | A setting set or cleared in a stage that can't change it ([By stage](#by-stage)); `users` in a body on a running test (use `/api/v1/control/users`) |
+| 200 | `conflicting_settings` | A ramp setting without `users` while a test plan is configured (`"field": "users"`) |
+| 200 | `conflicting_settings` | A rate on a running test while its own time is set (`field` is the rate) |
+| 200 | `conflicting_settings` | On a running test, clearing the decrease rate while a ramp down the run started with is still ahead, or clearing the run time while a ramp down is configured |
+| 200 | `conflicting_settings` | Under `--iterations`: a run time, decrease rate, decrease time or test plan |
+| 200 | `conflicting_settings` | Under `--no-reset-metrics`: a test plan |
+| 200 | `conflicting_settings` | In Idle: a ramp time with fewer than 2 users |
 | 200 | `no_host` | `host: null` would leave a scenario, or a `test_start` or `test_stop` transaction, with no host |
-| 200 | `prepare_failed` | A Start that cannot prepare the load test, as without settings |
+| 200 | `prepare_failed` | A Start that can't prepare the load test, as without settings |
 
-When one setting is at fault, the refusal names it in `field` (`host`, `users`, `increase_rate`, `increase_time`, `decrease_rate`, `decrease_time`, `run_time` or `test_plan`); a `bad_request` has `"field": null`, and a Start refused for its phase, or a `prepare_failed` not caused by a missing host, has no `field`. A reply to new settings, sent to `settings` or with a Start, carries `settings` as the snapshot does, whether accepted or refused by the main loop, so the page that sent them has the settings before the next snapshot; after a 503 `timeout`, read them from the next snapshot.
+A refusal puts the setting at fault in `field`: `host`, `users`, `increase_rate`, `increase_time`, `decrease_rate`, `decrease_time`, `run_time` or `test_plan` (the times without `_secs`). A Start refused for its phase, and a `prepare_failed` not caused by a missing host, have no `field`.
 
-Which settings each phase takes, by `settings.stage`: `ramp_up`, `hold` and `hold_until_stopped` are a running users ramp, `test_plan` a running test plan, `ramping_down` the configured ramp down, and `stopping` a Stop, `shutdown` or Ctrl-C:
+The reply to `/control/settings`, or to a Start with a body, carries a `settings` object in the snapshot's format, whether the main loop accepted the new values or refused them. A 400 or 503 carries none; read the settings from the next snapshot.
+
+#### By stage
+
+The columns follow `settings.stage`: `ramp_up`, `hold` and `hold_until_stopped` are a running users ramp, `test_plan` is a running test plan, `ramping_down` is the configured ramp down, and `stopping` is a Stop, `shutdown` or Ctrl-C.
 
 | Setting | Idle | Running, users ramp | Running, test plan | Ramping down | Stopping |
 |---------|------|---------------------|--------------------|--------------|----------|
 | `host` | yes | no | no | no | no |
-| `users` (`/api/v1/control/users`) | yes | yes | no | yes, abandons the ramp down and holds | no |
-| `increase_rate` | yes | yes, for the next Users increase; refused while the increase time is set | no | no | no |
-| `decrease_rate` | yes | yes, regenerates the ramp down ahead, or only sets the rate on a run holding until stopped; refused while the decrease time is set | no | no | no |
+| `users` (`/api/v1/control/users`; in a settings body, Idle only) | yes | yes | no | yes, abandons the ramp down and holds | no |
+| `increase_rate` | yes | yes ([Users on a running test](#users-on-a-running-test)) | no | no | no |
+| `decrease_rate` | yes | yes ([Users on a running test](#users-on-a-running-test)) | no | no | no |
 | `increase_time_secs`, `decrease_time_secs` | yes | no | no | no | no |
-| `run_time_secs` | yes | yes | no, the plan sets how long it runs | no | no |
-| `test_plan` | yes | yes, replaces the ramp | yes, restarts from its first step | yes, replaces the ramp down | no |
-
-A test plan sent to a running test starts from its first step, ramping from the current user count.
+| `run_time_secs` | yes | yes ([Run time on a running test](#run-time-on-a-running-test)) | no, the plan sets how long it runs | no | no |
+| `test_plan` | yes | yes, replaces the ramp | yes, restarts from its first step, ramping from the current user count | yes, replaces the ramp down | no |
 
 ### Run time on a running test
 
-The run time is the hold at full users after the ramp up, on a running test as in Idle. A new value is always written to the configuration, which `settings.run_time_secs` and the next Start read, and changes this run:
+An accepted run time goes into the configuration, which `settings.run_time_secs` and the next Start read, and it changes the current run:
 
 | When the run time changes | What happens |
 |---------------------------|--------------|
-| During the ramp up, before the hold | The hold ahead takes the new run time; with no run time before, a hold is added, then the run ramps down as configured, or stops all users at once |
-| During the hold | The hold ends at its start plus the new run time; if that has passed, the ramp down starts at once. If the new run time puts the end of the hold earlier than the end of the ramp from a users change made during the hold, the run holds until stopped |
+| During the ramp up, before the hold | The hold ahead takes the new run time. With no run time before, a hold is added, then the run ramps down as configured, or stops all users at once |
+| During the hold | The hold ends at its start plus the new run time; if that has passed, the ramp down starts at once. If a ramp from a Users change is still running at the new end, the run keeps its count with no end and no ramp down (`stage` still reads `hold`) |
 | While holding until stopped | The run holds from now for the new run time, then ramps down as configured, or stops all users at once |
 
-Clearing it (`null`, or `runtime 0` from a Controller) on a running test holds until stopped, and is refused with `conflicting_settings` while a ramp down is configured. The run time is refused during the ramp down, while stopping and while a test plan runs. Telnet and WebSocket take the same rules for `runtime`.
+Clearing it (`null`, or `runtime 0` from a Controller) on a running test holds until stopped, and is refused with `conflicting_settings` while a ramp down is configured. The telnet and WebSocket Controllers' `runtime` follows the same rules.
 
 ### Run settings in the snapshot
 
-Every snapshot carries `settings`: what the next Start runs, and where the running test is. It reaches every tab within a tick of a change from any front end.
+Each snapshot carries `settings`: what the next Start runs, and where the running test is. Every tab sees a change within about a second.
 
 ```json
 "settings": {
@@ -576,25 +593,173 @@ Every snapshot carries `settings`: what the next Start runs, and where the runni
 }
 ```
 
-Names are the command line's flags in snake case, durations are whole seconds with a `_secs` suffix, and `null` means unset, so Goose's default applies.
+Names are the command line's flags in snake case, durations are whole seconds with a `_secs` suffix, and `null` means unset.
 
 | Field | Meaning |
 |-------|---------|
 | `host` | The `--host` override, or `null` |
-| `hosts` | The hosts the next Start will load test: per scenario, `--host`, else the scenario's host, else the default host, sorted and deduplicated, written as the top level `hosts` writes them (`http://localhost/`, with the slash). A scenario with no host from any source adds nothing, so it is right in Idle, after a host change, and under `--no-autostart` with no host yet. The top level `hosts` keeps meaning the current or last run's hosts |
-| `users` | The configured user count, `null` only with a test plan. `target_users` is different: the count the current step ramps toward |
+| `hosts` | The hosts the next Start will load test, sorted and deduplicated. Each scenario adds `--host`, else its own host, else the default host, or nothing when it has none. The form matches the top level `hosts` (`http://localhost/`, with the slash), which still means the current or last run's hosts |
+| `users` | The configured user count, `null` only with a test plan. (`target_users` is the count the current step ramps toward.) |
 | `increase_rate`, `decrease_rate` | Users per second |
 | `increase_time_secs`, `decrease_time_secs` | The ramp up or ramp down as a time |
 | `run_time_secs` | The hold at full users after the ramp up, not the total run time |
-| `test_plan` | The test plan as `--test-plan` takes it, in canonical form: each step's duration in whole seconds, so `10,1h30m` reads `10,5400` |
-| `hold_ends_in_secs` | Seconds until the hold ends once it has a fixed end, `0` while a ramp runs past the hold's end, and still `0` once a users ramp outlasts the hold and the run holds until stopped (see [Users on a running test](#users-on-a-running-test)); `null` at any other time |
-| `stage` | Where the run is: `idle`, `ramp_up`, `hold`, `hold_until_stopped`, `ramping_down` or `stopping` for a users ramp; `idle`, `test_plan` or `stopping` for a test plan. When a users ramp outlasts the hold and the run holds until stopped, `stage` still reads `hold` |
+| `test_plan` | The test plan as `--test-plan` takes it, in canonical form with each step's duration in whole seconds, so `10,1h30m` reads `10,5400` |
+| `hold_ends_in_secs` | Seconds until the hold ends, once it has a fixed end. `0` while a ramp from a Users change runs past the hold's end, and still `0` once the run keeps that count with no end. `null` at any other time |
+| `stage` | Where the run is: `idle`, `ramp_up`, `hold`, `hold_until_stopped`, `ramping_down` or `stopping` for a users ramp; `idle`, `test_plan` or `stopping` for a test plan ([Users on a running test](#users-on-a-running-test) covers a Users change that runs past the hold's end) |
 
-`phase` alone cannot say this: `decrease` with `stopping` false is a Users decrease, the configured ramp down, or a test plan step to fewer users. After Users during a ramp down, `run_time_secs` is unchanged while `stage` reads `hold_until_stopped`.
+`phase` alone can't tell the stages apart: `decrease` with `stopping` false is a Users decrease, the configured ramp down, or a test plan step to fewer users.
+
+## The page in detail
+
+### What the UI shows
+
+[The tour](dashboard.md) walks through each card; this section has the rules behind them.
+
+The phase badge is gray in `idle`, blue in `increase`, green in `maintain`, orange in `decrease` and red in `shutdown`. The connection dot is green on SSE, yellow when the page has fallen back to polling (the event stream was refused, as past `--dashboard-max-clients`, or kept failing), red when disconnected and gray once Goose has exited.
+
+The header's hosts are the current or last run's. In Idle they read `Last run: …` when the next Start would load test other hosts. With control off, the header also shows the run settings summary ([The Control card](#the-control-card)). While a test runs the summary leaves out the hosts; in Idle it shows the next Start's hosts only when they differ from the last run's. The subtitle reads `Live dashboard · control` with control and a token, `Live dashboard · control, no token` with control under `--dashboard-no-auth`, and `Live dashboard · read-only` without control, and stays `Live dashboard` when `GET /api/v1/health` fails. The footer shows the address each Controller listens on, as `GET /api/v1/health` reports it, or says none is running.
+
+The Users tile shows the active users, then the target in smaller type. RPS shows whole requests a second from 100 up and two decimals below; hover it for the two decimals the tables show.
+
+Every figure except the Users tile, the charts and the heatmap covers the whole run, from the start of the test or the last metrics reset. The tiles read `p95 ms (whole run)` and `Avg ms (whole run)`, the totals card is titled **Whole run**, and hovering a table's `avg ms`, `min ms`, `p50`, `p95`, `p99`, `max ms` or `status codes` heading shows `Whole run`. Goose measures response times to the microsecond; the tiles, the **Whole run** card and the tables show times and averages under 10 ms to the hundredth of a millisecond and from 10 ms in whole milliseconds, rounded half up, so 0.418 ms reads `0.42` and 37.6 ms reads `38` (the heatmap truncates instead; [The response time heatmap](#the-response-time-heatmap)).
+
+The line charts and the heatmap keep the last 300 seconds. The requests and failures chart, the average latency chart and their data tables end at the last complete second. Chart colors follow the system's light or dark theme, and switch with it.
+
+The Scenarios and Transactions tables list every registered scenario and transaction, so a scenario excluded by `--scenarios` or assigned no users stays at 0 runs. Goose cuts the other tables before sending them:
+
+| Table | Rows sent | Set when rows were cut |
+|-------|-----------|------------------------|
+| Requests | The 100 with the most requests | `flags.requests_truncated` |
+| Errors | The 50 with the most occurrences | `flags.errors_truncated` |
+| Transaction errors | The 50 with the most occurrences | `flags.transaction_errors_truncated` |
+
+Transaction errors counts each error a transaction returned that isn't a request error, by transaction (numbered from 1), scenario, name and error. Transactions and Requests show failures per second and minimum and maximum response times. Requests also lists each request's status codes, most frequent first: the top three and how many more, such as `200 9,812 · 503 44 · 500 40 · +2`, with every code on hover. Under `--no-status-codes` the column is empty.
+
+A transaction's time covers its whole function, so it includes `--throttle-requests` delays and any sleep inside it. A scenario's time includes the wait after each transaction.
+
+When `--co-mitigation` has recorded at least one event, the KPI strip, the **Whole run** card and the Requests table show adjusted response times, which include synthetic times that mitigation records for requests a stalled user couldn't send. The tiles read `p95 ms (whole run, adjusted)` and `Avg ms (whole run, adjusted)`, and above the Requests table a note reads `Response times include the synthetic times coordinated omission mitigation adds. Hover a value to see the measured one.` The **Whole run** card shows both. The maximum is adjusted too; the minimum is always measured. As in the printed metrics and the reports, the adjusted figures include every request, with measured times for requests that got no synthetic times.
+
+The report bar and the runs panel are in [Saving the report](#saving-the-report).
+
+### The Control card
+
+With control off (`health.control_enabled` false), the Control card shows [the read-only card](#the-read-only-card). With control on, it shows its controls. When the page doesn't have the token and Goose isn't under `--dashboard-no-auth`, none of them act: **Target** and the settings form show `Enter the control token to change settings`, and a banner reads:
+
+```text
+Open this dashboard as http://host:port/?token=… (token required for control).
+```
+
+The same banner shows after a 401 on a start, stop, users, quit or settings request.
+
+**Start** is enabled only in Idle and **Stop** only in Increase and Maintain ([Start and Stop semantics](#start-and-stop-semantics)). **Quit** shows only in Idle; after it the status line reads `Goose is shutting down.`
+
+The summary line above the buttons shows what the next Start runs, such as `https://example.com/ · 100 users at 10/s · hold 10 min · then 10/s down`. While a test runs it says where the run is, worded from `settings.stage`: `ramping to 100 users at 10/s`, `ramp down in 6 min 52 s` during the hold, `holding until stopped`, `ramping down at 10/s`, `stopping`, or for a test plan `test plan: 3 steps, peak 100 users, 1 h 1 min total`. It isn't a live region, so screen readers don't announce the countdown.
+
+**Target** takes a user count: type one and press **Apply**, or press **−** or **+**, which change it by the **step** value next to them (10 by default) and apply at once. Active users is a read-only label from the latest snapshot.
+
+In Idle the field shows the users the next Start runs; with a test plan it's empty, and applying a count replaces the plan with a users ramp. While running it shows the count the run ramps toward.
+
+The field follows the server until you edit it. An edit holds until its Apply succeeds and a snapshot reports it, or until another client changes the count first; the field then shows the new count and the status line says it changed elsewhere. An unapplied edit is discarded, with one note in the status line, when the run starts stopping or a test plan starts. While `stopping` is set or a test plan runs, or the page doesn't have the token, the field and step are read only, with the reason under them.
+
+**Edit settings** opens a form with Host, Ramp up and Ramp down (each users per second, or a total time in s, min or h) and Run time. It starts open in Idle and closed while running, and once you open or close it, the browser remembers your choice. Times show in the largest unit that divides them evenly, so `120 s` reads `2 min`.
+
+Fields follow the server until you edit them, as Target does. Edits stay pending: the form reads `Edit settings (N unapplied)`, **Apply settings** sends them, **Discard edits** drops them, and in Idle **Start** reads **Start with changes** and sends them with the start. An unapplied Target count is an edit too: on its own it turns **Start** into **Start with changes**, and N includes it. An emptied field goes out as `null`, an untouched one is left out, and a number the browser can't read is refused on the page and doesn't go out as `null`. While other edits are pending in Idle, the Target count goes with them: Target's **Apply** is off, and **−** and **+** only change the field.
+
+The first host change in a page load asks for confirmation: `Load will go to …` appears under Host, with **Confirm** and **Cancel** buttons. While it's open, editing Host changes the destination it shows. It closes without sending if the edits stop changing the host, or if the button that opened it (**Apply settings** or **Start with changes**) can no longer act.
+
+While a users ramp runs, a ramp set by rate takes only a new rate, a ramp set by time is read only (`Set by time: 5 min; change it when idle`), and the run time stays editable, with `held 3 min 8 s of 10 min` under it during the hold. Fields the stage can't change are read only, with the reason under them, and an edit the stage can no longer take is discarded, with one note in the status line. When a refusal gives a `field`, the form opens, marks the field and moves focus to it. A test plan can't be set here; send `test_plan` instead ([Run settings](#run-settings)).
+
+The status line shows the server's `message`, in red for a refusal; a 503 says control is busy or timed out, or shows the server's message. A 403 from the cross-origin guard reads `Refused: the request's Origin doesn't match this dashboard's address (another site, or a proxy)`, and one from the `Host` check reads `Refused: open the dashboard by its IP address or its --dashboard-host name`. [Control without a token](#control-without-a-token) lists the proxy setups that work.
+
+### The read-only card
+
+Without `--dashboard-control` the Control card shows this in place of its controls:
+
+```text
+Read-only: this dashboard can't start, stop or change the test.
+To control it from here, restart Goose with --dashboard-control --dashboard-no-auth (no token), or with --dashboard-control --dashboard-auth-token <token> and open http://127.0.0.1:5118/?token=<token>.
+Control this test via the telnet controller listening on 127.0.0.1:5116.
+```
+
+The URL in the second sentence uses the address the page was opened at. When the page has a token, or the dashboard runs with `--dashboard-no-auth`, the second sentence reads `To control it from here, restart Goose with --dashboard-control added.` The last sentence lists whichever of the telnet and WebSocket Controllers are listening, and is left out when neither is. Screen readers get the notice as a note named `Read-only dashboard`; nothing in it takes focus. When `GET /api/v1/health` fails, the card reads `Couldn't check whether control is on (/api/v1/health failed). Reload to retry.` instead.
+
+### The response time heatmap
+
+The **Response times by second** card is a heatmap. Each column holds the requests that started in that second. While a test runs, the heatmap doesn't draw the two newest seconds. The rows are 100 microseconds wide under 1 ms, 1 ms up to 64 ms, 2 ms up to 100 ms, 10 ms up to 500 ms, 50 ms up to 1 s, 100 ms up to 5 s and 1 s up to 61 s: 237 rows. The row from 100 ms holds 100 to 109 ms, and the row from 1.4 s holds 1,400 to 1,499 ms. Each row is made of whole buckets of the histogram Goose keeps a run's times in. A bucket that crosses a row's edge is drawn in the row where it ends, so a time just under a row's upper edge can land in the row above. Past 61 seconds (possible with a longer `--timeout`) each row is a single bucket, 0.8% to 1.6% as wide as the times it holds.
+
+Each row is as tall as the range of times it holds on the logarithmic axis, which is marked at 0.1, 0.2 and 0.5 ms, 1, 2, 5, 10, 20, 50, 100, 200 and 500 ms, and 1, 2, 5, 10, 20 and 60 s, as far as the data reaches. Seconds along the bottom are labelled at round steps from the start of the test (1, 2, 5, 10, 15, 30, 60, 120 or 300 seconds, the smallest that gives at most eight labels), so a label stays on its second as the window slides.
+
+Cell color runs on a logarithmic scale from the sparsest cell drawn to the busiest. The legend shows those two counts at its ends and is marked `(log scale)`. A cell of one request still stands out; a second with no requests is empty. The tooltip shows the second, the row's range, how many requests the cell holds and their share of the second, then that second's p50, p95 and p99. A row under 1 ms reads as its range, such as `0.9 to 1 ms`.
+
+The p50 line is solid, p95 dashed and p99 dotted, in one color and width, each stroke shown in the legend. Each is labelled at the right edge with its newest value, such as `p95: 81 ms`, and lines with the same value share a label (`p95, p99: 4 ms`). A second's percentiles come from its cells' counts by the rule Goose uses for whole run figures: the rank is the second's request count times the percentile (0.95 for p95), rounded, and the value is the first row, from the fastest, where the running count reaches that rank. The point sits at the middle of that row, and a line breaks at a second with no requests. The labels, the tooltip, the chart summary and the data table truncate the value, to a tenth of a millisecond under 1 ms and to whole milliseconds from 1 ms, so it always falls inside its row.
+
+The select at the top of the card shows one request alone, and **All requests** goes back. Goose keeps per second times for the first 100 request names it records a response time for, counting again from each metrics reset. The select lists those of them that are among the Requests table's rows. A name recorded after the first 100 counts only toward **All requests**. The select is sorted by method, then name, and isn't rebuilt while it has focus, so a request that appears then is added when focus leaves.
+
+When coordinated omission mitigation has recorded an event, **Adjusted** (the default, matching the KPI strip and the tables) counts the synthetic times that mitigation adds, and so do the lines; **Measured** leaves them out. Synthetic times belong to the seconds of the stall, which Goose only learns of when the stall ends, so cells already drawn can change.
+
+Under `--no-percentiles-over-time` the card shows the average latency chart instead.
+
+## Snapshot data
+
+`GET /api/v1/snapshot` returns the current state. `phase` is `idle`, `increase`, `maintain`, `decrease` or `shutdown`; `stopping` is true while a Stop, `shutdown` or Ctrl-C finishes; `active_users` and `target_users` are the counts. With `AUTH` and `URL` set as in [curl examples](#curl-examples):
+
+```bash
+curl -sS -H "$AUTH" "$URL/snapshot"
+```
+
+It returns 503 with an empty body when no snapshot arrives within 5 seconds (the build itself gets 4; see `snapshot_timeouts` in [Health endpoint exception](#health-endpoint-exception)). That happens while the main loop or the metrics processor is busy (building the users of a large `users` change, say) and while the dashboard shuts down. Retry after a short wait.
+
+### Routes and top level fields
+
+In 0.19 `/api/v1` serves `GET /api/v1/health`, `GET /api/v1/snapshot`, `GET /api/v1/events`, `GET /api/v1/series`, `GET /api/v1/reports`, `GET /api/v1/reports/{name}/{file}` and `GET /api/v1/reports/{name}/compare.md`. With `--dashboard-control` it adds the control routes in [Endpoints](#endpoints).
+
+A snapshot's top level fields are `version`, `generated_at`, `goose_version`, `phase`, `stopping`, `duration_secs`, `active_users`, `maximum_users`, `target_users`, `total_users`, `hosts`, `aggregate`, `requests`, `errors`, `transaction_errors`, `scenarios`, `transactions`, `series`, `flags`, `report` and `settings`. [Run settings in the snapshot](#run-settings-in-the-snapshot) covers `settings`, and [Heatmap data](#heatmap-data) covers `series.heatmap`.
+
+### Heatmap data
+
+The snapshot's `series.heatmap` carries the heatmap, or `null` under `--no-percentiles-over-time`:
+
+| Field | Meaning |
+|-------|---------|
+| `generation` | Which set of histograms the columns come from. It changes when they are cleared, by a metrics reset or a new test, and a client then starts over |
+| `rev` | The newest change the columns include |
+| `since` | The `rev` these columns follow on from, or `0` for every column of the window |
+| `start_second`, `end_second` | The window, in seconds from the start of the test. Columns before `start_second` are dropped |
+| `hold_from` | Seconds from this one on are still filling and not drawn |
+| `buckets_us` | `[time, lowest, highest]` in microseconds for each row index: the time the row stands for (its middle), then the lowest and highest time the row holds. A longer table replaces a shorter one; entries never change |
+| `columns` | The columns that changed: `{ "second", "measured": [index, count, ...], "synthetic": [index, count, ...] }`, each non empty row as its index in `buckets_us` and a count, `synthetic` empty unless mitigation has recorded an event |
+
+Each SSE snapshot carries only the columns changed since the previous one, the same for every client. A client holding another `rev` (after a reconnect, for example) fetches what it lacks with `GET /api/v1/snapshot?heatmap_generation=<generation>&heatmap_since=<rev>`; without those parameters it gets every column of the window. The bundled page does this itself.
+
+Size depends on how widely response times spread. With 300 users at about 26 requests a second over 3 request names, each SSE snapshot's heatmap was about 7 KB (most of it `buckets_us`) and a whole 92 second window 12.4 KB. When times spread over all 237 rows, the columns and a whole window grow many times larger. Each SSE snapshot grows far less, since it carries only the changed columns and `buckets_us` is still most of it.
+
+### Request heatmap endpoint
+
+`GET /api/v1/series?method=<method>&name=<request name>` returns one request's heatmap, over the same window and in the same shape as `series.heatmap`. The card fetches it when a request is chosen. `method` is the method as the Requests table shows it (`GET`, `POST`, ...) and `name` the request name; URL encode both. Add `heatmap_generation` and `heatmap_since` for only the columns changed since the heatmap you hold.
+
+| Status | Body |
+|--------|------|
+| `200` | `{ "method", "name", "heatmap": {...} }`, the heatmap in the shape of the snapshot's `series.heatmap` |
+| `400` | `{"error":"bad_request"}`: `method` or `name` is missing, or the two together are longer than 2,048 bytes |
+| `401` | Empty: the token is missing or wrong |
+| `404` | `{"error":"not_found"}`: the request has no heatmap of its own (not one of the first 100 names, or `--no-percentiles-over-time`) |
+| `503` | `{"error":"busy"}` with four series requests already in flight, `{"error":"timeout"}` when no answer arrives within 15 seconds, or `{"error":"unavailable"}` when Goose is no longer taking dashboard requests (shutting down) |
+
+A 200 answer is cached for one second for each request and each `heatmap_generation` and `heatmap_since` pair, so several viewers polling one request cost about one export a second.
+
+```bash
+curl -sS -H "$AUTH" "$URL/series?method=GET&name=%2F"
+```
+
+### Metrics disabled
+
+Under `--no-metrics` the dashboard still serves the page and the health endpoint. Snapshots report `flags.metrics_disabled: true`, with empty request, error, scenario and transaction tables, zero totals and empty series. The Requests, Scenarios and Transactions tables say metrics are disabled.
+
+`--no-transaction-metrics` sets `flags.transaction_metrics_disabled: true` and empties `transactions`; `--no-scenario-metrics` sets `flags.scenario_metrics_disabled: true` and empties `scenarios`. Each table then says its metrics are disabled. Both flags are also true under `--no-metrics`.
 
 ## Health endpoint exception
 
-`GET /api/v1/health` is intentionally **unauthenticated** so external monitors can check that the dashboard process is up without holding the metrics secret. Example response:
+`GET /api/v1/health` needs no token, so a monitor can check the dashboard is up:
 
 ```json
 {
@@ -615,195 +780,77 @@ Names are the command line's flags in snake case, durations are whole seconds wi
 | Field | Meaning |
 |-------|---------|
 | `ok` | Always `true` when the handler runs |
-| `version` | Goose crate package version (`CARGO_PKG_VERSION`) |
-| `last_build_ms` | Time the metrics processor spent on the last published snapshot, draining pending metrics and building it, in milliseconds (`0` if none yet) |
+| `version` | The Goose crate's package version (`CARGO_PKG_VERSION`) |
+| `last_build_ms` | Milliseconds the metrics processor spent on the last published snapshot, draining pending metrics and building it (`0` if none yet) |
 | `last_snapshot_ms` | Round trip of the last published snapshot in milliseconds, from the dashboard's request to the published JSON (`0` if none yet) |
-| `snapshot_timeouts` | Snapshot requests not answered within 4 seconds since process start; a late answer is dropped, never published |
-| `build_count` | Successful hub snapshot builds since process start |
-| `active_sse_clients` | Concurrent SSE clients currently holding a slot |
+| `snapshot_timeouts` | Snapshot builds that didn't finish within 4 seconds, since the process started. A late answer is dropped |
+| `build_count` | Successful snapshot builds since the process started |
+| `active_sse_clients` | Clients currently holding a slot on the event stream |
 | `control_enabled` | Whether the `POST /api/v1/control/*` routes and Delete are registered (`--dashboard-control`) |
-| `auth_required` | Whether control needs a token: `false` only under `--dashboard-no-auth`, when the page sends no token; `true` otherwise. It does not say whether metrics need one: a loopback dashboard with no token reads `true` and serves its metrics to anyone on the machine |
-| `loopback` | Whether the dashboard is bound to a loopback address; with `auth_required` false and this false, the page shows the no token warning |
-| `controllers` | The `host:port` the telnet and WebSocket Controllers listen on, after defaults (`127.0.0.1:5116` and `127.0.0.1:5117` unless set), or `null` for one turned off, the telnet Controller with `--no-telnet` and the WebSocket Controller unless `--websocket` turns it on, or one that couldn't listen on its port; the page footer names them |
+| `auth_required` | `false` only under `--dashboard-no-auth`, `true` otherwise. It doesn't say whether metrics need a token: a loopback dashboard with no token reads `true` and serves its metrics to anyone on the machine |
+| `loopback` | Whether the dashboard is bound to a loopback address. With this and `auth_required` both false, the page shows the no-token banner ([Off loopback](#off-loopback)) |
+| `controllers` | The `host:port` the telnet and WebSocket Controllers listen on, after defaults (`127.0.0.1:5116` and `127.0.0.1:5117` unless set). `null` for a Controller that's off (telnet with `--no-telnet`, WebSocket unless `--websocket` turns it on) or couldn't listen on its port. Both Controllers take no authentication; the field reveals only where they listen |
 
-These counters are ops-safe (timing and client counts only). The response does **not** include rates, hosts under test, request names, or error strings. `controllers` names this process's own listeners, which take no authentication; it reveals only where they listen. `last_snapshot_ms` minus `last_build_ms` is time spent waiting on the main loop and the metrics processor's queue, plus serializing the JSON. The main loop answers the dashboard between steps and sleeps up to 500 ms between them, so this difference can reach about 500 ms by design; a large `last_build_ms` is the one that points at the metrics processor. Both durations are also logged at `debug` with a `[dashboard]` prefix when a build completes, and a late answer to a timed out request is logged with its round trip.
+The health response has no rates, hosts under test, request names or error strings.
 
-## The page in detail
-
-### What the UI shows
-
-- **Phase badge**: `idle` (gray), `increase` (blue), `maintain` (green), `decrease` (orange), `shutdown` (red)
-- **Connection indicator**: green for SSE, yellow for poll fallback, red when disconnected, gray once Goose has exited
-- **KPI strip**: users, RPS, fail %, and the whole run p95 and average latency. The tiles share the row, and each value is sized to its tile, so it stays on one line. The users tile shows the active users, then the target, smaller. RPS shows whole requests a second at 100 and above, and two decimals below 100; hover the tile for the two decimals the tables show.
-- **Charts**: trailing series window (300 seconds) for RPS and failures per second and active users, and the response time heatmap; see [The response time heatmap](#the-response-time-heatmap). The RPS and failures chart and the average latency chart, and their data tables, end at the last complete second: the newest second is still filling, so it is not drawn. Their colors follow the system's light or dark theme, and change with it while the page is open.
-- **Whole run** card: requests, failures, RPS, failures per second, fail %, average, p50, p95 and p99, and minimum and maximum response times
-- **Sortable tables**: Scenarios, Transactions, Requests, Errors and Transaction errors. The scenario and transaction tables list every registered scenario and transaction and are never truncated; the request, error and transaction error tables show the top rows, 100 requests ranked by count and 50 of each kind of error ranked by occurrences (truncated server-side for large runs). The Transaction errors table counts each error a transaction returned that is not a request error, by transaction (numbered from 1), scenario, name and error. The Transactions and Requests tables show failures per second and minimum and maximum response times, and the Requests table each request's status codes, most frequent first: the top three and how many more, such as `200 9,812 · 503 44 · 500 40 · +2`, with every code on hover (empty with `--no-status-codes`)
-- **Hosts** in the header: the current or last run's hosts. In Idle, when the next Start would load test other hosts, they read `Last run: …`.
-- **Run settings** in the header, with control off: the same summary line the control panel shows, leaving out the hosts while running, and including the next Start's hosts in Idle when they differ from the last run's; see [Run settings in the snapshot](#run-settings-in-the-snapshot)
-- **Control panel**: with `--dashboard-control`, the run settings summary, Start / Stop / Quit / target users; see [Controlling a load test from the dashboard](#controlling-a-load-test-from-the-dashboard). Without it, the card says the dashboard is read-only and how to get control; see [The read-only card](#the-read-only-card)
-- **Notes** in the header: the run's `--notes`
-- **Report bar** at the top of the page: the **Save report** and **Include graph data** switches, **Save report now** with control on, and the `--report-file` paths; see [Saving the report](#saving-the-report)
-- **Runs panel**: the reports in the folder that holds the run folders, with downloads and comparisons, and with `--dashboard-control` a Delete button for each
-
-Every figure in the KPI strip except the users, and every figure in the **Whole run** card and the tables, covers the whole run, since the test started or since metrics were last reset; the p95 and average tiles and the **Whole run** card say so in their labels, and hovering a table's `avg ms`, `min ms`, `p50`, `p95`, `p99`, `max ms` or `status codes` heading says "Whole run". Only the charts and the heatmap are by second. Goose measures response times to the microsecond. It shows times under 10 ms to the hundredth of a millisecond and from 10 ms in whole milliseconds, rounded half up, so a 0.418 ms response reads `0.42` and a 37.6 ms one `38`. Averages follow the same rule.
-
-Transaction times cover the whole transaction function, so they include `--throttle-requests` delays and any sleep inside it, and scenario times include the wait after each transaction. Every registered scenario and transaction has a row, so a scenario excluded by `--scenarios`, or one no user was assigned to, stays at 0 runs.
-
-When control is off there are **no control buttons**. Use the Controllers (or enable dashboard control) to change the running test. The page footer names the address each Controller listens on, as `GET /api/v1/health` reports it, or says none is running.
-
-When coordinated omission mitigation is on (`--co-mitigation`) and has recorded at least one event, the KPI strip, the **Whole run** card and the requests table show adjusted response times, which include the synthetic times mitigation adds for requests a stalled user could not send. The KPI tiles and the **Whole run** card label them "adjusted", the requests table says so in a note above it, and hovering a value shows the measured one. The **Whole run** card shows both. The maximum is adjusted too; the minimum has no adjusted value and is always the measured one. The adjusted aggregate includes every request, using measured times for requests that never needed backfill, as the printed metrics and the reports do.
-
-### UI walkthrough (control panel)
-
-When `health.control_enabled` is true and the SPA has a token, or `health.auth_required` is false:
-
-1. **Phase badge** still shows `idle` / `increase` / `maintain` / `decrease` / `shutdown`.
-2. **Start** is enabled only in `idle`.
-3. **Stop** is enabled in `increase` and `maintain` only.
-4. **Summary line**: one line above the buttons says what the next Start runs, for example `https://example.com/ · 100 users at 10/s · hold 10 min · then 10/s down`, and while running where the run is: `ramping to 100 users at 10/s`, `ramp down in 6 min 52 s` during the hold, `holding until stopped`, `ramping down at 10/s`, `stopping`, or for a test plan `test plan: 3 steps, peak 100 users, 1 h 1 min total`. Its wording comes from `settings.stage`. It is not a live region, so the countdown is not announced.
-5. **Target users**: enter an absolute count and **Apply**, or use **−** / **+** with a configurable step (default 10). Active user count is a read-only label from the latest snapshot. In Idle the field shows the configured users the next Start runs (empty with a test plan, where applying a count replaces the plan with a users ramp); while running, the count the run ramps toward. It follows the server unless you are editing it: an edit holds until its Apply succeeds and a snapshot reports the value, or until another client changes the count, when the field shows the new count and the status line says it changed elsewhere. **−** and **+** step from what the field shows. An unapplied edit is discarded, and the status line says so once, when the run starts stopping or a test plan starts. The field and step are read only, never disabled, with the reason under them, while `stopping` is set, while a test plan runs, and without a token.
-6. **Edit settings** opens a form under the summary line for **Host**, **Ramp up** and **Ramp down** (each a number with users per second, or a total time in s, min or h), and **Run time**. It starts open in Idle and closed while running, and this browser remembers whether you opened or closed it, which then decides how it starts. Each field follows the server unless you are editing it, as Target does. An unapplied edit is pending: the form reads `Edit settings (N unapplied)`, **Apply settings** sends the pending edits, **Discard edits** drops them, and in Idle **Start** reads **Start with changes** and sends them with the start, the Target count among them. An emptied field goes out as `null`, and a field you did not touch is left out. A number the browser cannot read is refused on the page, naming the field, rather than sent as a clear. While edits are pending in Idle, Target's own Apply waits, and **−** / **+** only change the field. The first change of host in a page load asks first: `Load will go to …` under Host, with Confirm and Cancel, before anything is sent. Editing Host while the confirmation is open changes the destination it names; the confirmation closes, sending nothing, once the edits no longer change the host, or once the button that opened it can no longer act. A time shows in the largest unit that divides it evenly, so an applied `120 s` reads `2 min`, the same setting. While a users ramp runs, a ramp set by rate changes only its rate, a ramp set by time is read only (`Set by time: 5 min; change it when idle`), and the run time stays live, with `held 3 min 8 s of 10 min` under it during the hold. Fields the stage cannot change are read only, with the reason under them, and an edit the stage can no longer take is discarded, the status line saying so once. On a refusal that names a setting, the form opens, marks the field and moves focus to it. A test plan is set from a Controller or through `/api/v1/control/settings` or `/api/v1/control/start`.
-7. The status line shows the server's `message`, in red for a refusal; a 503 reads that control is busy or timed out, or gives the server's message; a 401 also puts a banner at the top of the page saying to reopen with `?token=`. A 403 from the cross site guard reads `Refused: the request's Origin doesn't match this dashboard's address (another site, or a proxy)`, and one from the Host rule `Refused: open the dashboard by its IP address or its --dashboard-host name`.
-8. **Quit** shows only in `idle`, and shuts Goose down; the status line then reads `Goose is shutting down.`
-
-Quit is refused outside `idle` (`"ok": false` with `invalid_phase`), so stop a running test first. A Controller `shutdown` command exits the Goose process from any phase.
-
-The header subtitle says which dashboard it is: `Live dashboard · control` with a token, `Live dashboard · control, no token` under `--dashboard-no-auth`, and `Live dashboard · read-only` without control; it stays `Live dashboard` when `GET /api/v1/health` fails.
-
-### The read-only card
-
-Without `--dashboard-control` the Control card stays, and says in place of its controls that the dashboard is read-only and how to get control:
-
-```text
-Read-only: this dashboard can't start, stop or change the test.
-To control it from here, restart Goose with --dashboard-control --dashboard-no-auth (no token), or with --dashboard-control --dashboard-auth-token <token> and open http://127.0.0.1:5118/?token=<token>.
-Control this test via the telnet controller listening on 127.0.0.1:5116.
-```
-
-The address is the one the page was opened at. When the page has a token, or the dashboard runs with `--dashboard-no-auth`, only control is missing, and the second sentence reads `To control it from here, restart Goose with --dashboard-control added.` The last sentence names the telnet and WebSocket Controllers that listen, and is left out when neither does. The notice is a note, named `Read-only dashboard` for screen readers, and holds nothing that takes focus. When `GET /api/v1/health` fails, the card says `Couldn't check whether control is on (/api/v1/health failed). Reload to retry.` instead.
-
-### The response time heatmap
-
-The response time card shows how long requests took, second by second, over the trailing window (300 seconds). Each column is one second, the oldest on the left. Each row is a range of response times: 100 microseconds each under a millisecond, 1 ms each up to 64 ms, 2 ms up to 100 ms, 10 ms up to 500 ms, 50 ms up to 1 second, 100 ms up to 5 seconds and 1 second up to 61 seconds, 237 rows in all. The bottom row holds responses under 100 microseconds, the row from 100 ms holds 100 to 109 ms, and the row from 1.4 s holds 1,400 to 1,499 ms. Past 61 seconds, which a longer `--timeout` allows, each row is one of the buckets Goose keeps a run's times in, 0.8% to 1.6% as wide as the times it holds. Each row takes whole buckets, and a bucket that crosses a row's edge is drawn in the row where it ends, so a time just under a row's upper edge may be drawn in the row above it. The rows sit on a logarithmic latency axis, so each row is as tall as the range of times it holds, and the axis is marked at 0.1, 0.2 and 0.5 ms, 1, 2, 5, 10, 20, 50, 100, 200 and 500 ms and 1, 2, 5, 10, 20 and 60 s, as far as the data reaches. Seconds are labelled along the bottom at round steps of 1, 2, 5, 10, 15, 30, 60, 120 or 300 seconds from the start of the test, the smallest that gives at most eight labels, so a label stays on its second as the window slides.
-
-The color of a cell shows how many requests in that second took that long, on a logarithmic scale running from the sparsest cell drawn to the busiest: the legend under the chart shows the sparsest cell's count at its left end and the busiest's at its right. In the light theme more requests are darker, in the dark theme brighter, and the legend marks the scale `(log scale)`. Even the sparsest cell stands out from the card, so a cell of one request is visible. A second with no requests is empty. Hover a cell for its second, its row's range of times, how many requests it holds and their share of the second's requests, followed by that second's p50, p95 and p99. A row under a millisecond reads as its range, such as `0.9 to 1 ms`.
-
-Three lines cross the heatmap: each second's p50, p95 and p99, in one color and one width, p50 solid, p95 dashed and p99 dotted. Each is labelled at the right edge with its newest value, such as `p95: 81 ms`, or one label for lines with the same newest value, such as `p95, p99: 4 ms`, and the legend shows a sample of each stroke. A second's percentile is worked out from the same counts its cells show, by the rule Goose uses for its whole run figures: the rank is the second's request count times the percentile, rounded, and the percentile is the time of the first row, from the fastest, at which the running count of requests reaches that rank. A heatmap percentile is the middle of its row, where its point sits. A line breaks at a second with no requests. The labels, the tooltip, the summary and the data table show it truncated, to the tenth of a millisecond under 1 ms and in whole milliseconds from 1 ms, so the value shown always falls inside its row. In the **Adjusted** view the lines include the synthetic times, as the cells do.
-
-Each column covers only the requests that started in that second. The KPI strip, the **Whole run** card and the tables cover the whole run instead, since the test started or since metrics were last reset, and say so. While a test runs, the two newest seconds are not drawn yet, because their slowest requests are still arriving.
-
-Choose a request in the select at the top of the card to see that request alone, and **All requests** to go back. Response times are kept by second for each of the first 100 request names Goose records a response time for, in the order it first records one, counting again from each metrics reset. Those are the names in the select, as far as they are among the rows the Requests table receives; a name seen later counts toward all requests but is not in the select. The select lists them by method, then name, whatever the Requests table's sort, and is not rebuilt while it has focus: a request that appears then is added when focus leaves it.
-
-When coordinated omission mitigation is on and has recorded an event, two buttons choose what the heatmap counts: **Adjusted**, the default, as in the KPI strip and the tables, adds the synthetic times mitigation adds for requests a stalled user could not send, and **Measured** leaves them out. Synthetic times belong to the seconds of the stall, which Goose only learns about when it ends, so cells in seconds already drawn can change.
-
-`--no-percentiles-over-time` turns the heatmap and the histograms behind it off, and the card shows the average latency chart instead. The same flag turns off the HTML report's heatmap.
-
-## Snapshot data
-
-### Heatmap data
-
-The snapshot's `series.heatmap` carries the heatmap, or `null` when percentiles over time are off:
-
-| Field | Meaning |
-|-------|---------|
-| `generation` | Which set of histograms the columns come from. It changes when they are cleared, by a metrics reset or a new test, and a client then starts over. |
-| `rev` | The newest change the columns include. |
-| `since` | The `rev` these columns follow on from, or `0` for every column of the window. |
-| `start_second`, `end_second` | The window, in seconds from the start of the test. Columns before `start_second` are dropped. |
-| `hold_from` | Seconds from this one on are still filling and not drawn. |
-| `buckets_us` | `[time, lowest, highest]` in microseconds for each row index: the time the row stands for, which is its middle, then the lowest and highest time the row holds. A longer table replaces a shorter one; entries never change. |
-| `columns` | The columns that changed: `{ "second", "measured": [index, count, ...], "synthetic": [index, count, ...] }`, each non empty bucket as an index and a count, `synthetic` empty unless mitigation has recorded an event. |
-
-Only the columns that changed are sent. Every SSE client gets the same snapshot, whose heatmap holds the columns changed since the previous one; a client holding another `rev`, for example after it reconnects, asks `GET /api/v1/snapshot?heatmap_generation=<generation>&heatmap_since=<rev>` for the columns it lacks. Without those parameters `GET /api/v1/snapshot` returns every column of the window. The dashboard does all of this itself.
-
-How big this is depends on how widely response times spread. In a test of 300 users at about 26 requests a second over 3 request names, each SSE snapshot's heatmap took about 6.7 KB (7.1 KB at most), 5.4 KB of it the row table `buckets_us`, and a whole window of 92 seconds took 12.4 KB. Times spread over every row are the worst case: then each column holds an index and a count for up to 237 rows (more past 61 seconds with a longer `--timeout`) instead of a few. In that worst case the columns in each snapshot grow many times over, but the snapshot as a whole grows far less, as the row table it always carries stays most of it; a whole window, which is all columns, grows many times over.
-
-### Request heatmap endpoint
-
-`GET /api/v1/series?method=<method>&name=<request name>` returns one request's heatmap over the same window, as the card uses it when a request is chosen, in the same shape: `{ "method", "name", "heatmap" }`. `method` is the method as the Requests table shows it (`GET`, `POST`, ...) and `name` is the request name; URL encode both. Add `heatmap_generation` and `heatmap_since` to get only the columns changed since the heatmap you hold. It needs the token when one is configured, as `GET /api/v1/snapshot` does.
-
-| Status | Body |
-|--------|------|
-| `200` | `{ "method", "name", "heatmap": {...} }`, the heatmap in the shape of the snapshot's `series.heatmap` |
-| `400` | `{"error":"bad_request"}`: `method` or `name` is missing, or the two together are longer than 2,048 bytes |
-| `401` | Empty: the token is missing or wrong, as for `GET /api/v1/snapshot` |
-| `404` | `{"error":"not_found"}`: the request has no heatmap of its own (not one of the first 100 names, or `--no-percentiles-over-time`) |
-| `503` | `{"error":"busy"}` with four series requests already in flight, `{"error":"timeout"}` when no answer arrives within 15 seconds, or `{"error":"unavailable"}` when Goose is no longer taking dashboard requests (shutting down) |
-
-Answers are cached for one second for each request and heatmap held, so several viewers polling one request cost about one export a second.
-
-```bash
-curl -s -H "Authorization: Bearer $DASHBOARD_TOKEN" \
-  "http://127.0.0.1:5118/api/v1/series?method=GET&name=%2F"
-```
-
-### Metrics disabled
-
-If Goose is started with `--no-metrics`, the dashboard still serves the shell and health endpoint, but snapshots report `flags.metrics_disabled: true` with empty request/error tables and empty series. The UI surfaces an honest empty state rather than fabricating data.
-
-Scenario and transaction metrics can also be turned off on their own:
-
-- `--no-transaction-metrics` sets `flags.transaction_metrics_disabled: true`; `transactions` is empty and the Transactions table says transaction metrics are disabled.
-- `--no-scenario-metrics` sets `flags.scenario_metrics_disabled: true`; `scenarios` is empty and the Scenarios table says scenario metrics are disabled.
-
-Both flags are also true under `--no-metrics`, where both tables say metrics are disabled.
+`last_snapshot_ms` minus `last_build_ms` is the wait on the main loop and the metrics processor's queue, plus serializing the JSON. The main loop answers the dashboard between steps and sleeps up to 500 ms between them, so that difference can reach about 500 ms; a large `last_build_ms` points at the metrics processor. Goose logs both durations at `debug`, with a `[dashboard]` prefix, when a build completes, and logs a late answer to a timed out request with its round trip.
 
 ## Saving the report
 
-[Output files](../getting-started/output-files.md) gives the rules for every file Goose writes. The dashboard adds rules 9 to 13.
+[Output files](../getting-started/output-files.md) has the rules for every file Goose writes; the dashboard adds rules 9 to 13.
 
-The report bar at the top of the page shows the **Save report** switch: whether this run's `report.html` and `report.json` are written to its folder, `goose-runs/<YYYYMMDD-HHMMSS>` unless `--output-dir` names one. It starts on with `--dashboard`, except under `--no-metrics`. Without `--dashboard`, it starts on with a bare `--report-file`, which writes into the run's folder, so such a console run is listed in the runs panel too; `--report-file` paths alone do not turn it on. The bar lists the `--report-file` paths, which are always written.
+The report bar's **Save report** switch sets whether this run's `report.html` and `report.json` are written to the run folder, `goose-runs/<YYYYMMDD-HHMMSS>` unless `--output-dir` gives one. It starts on with `--dashboard`, except under `--no-metrics`, which keeps no report. A run without `--dashboard` saves them to its run folder only with a bare `--report-file` (one given without a path); such a run shows up in the runs panel too. The bar also lists the `--report-file` paths, which are always written.
 
-Save report can be turned on or off at any time. While it is on, Goose keeps the run's graph data and heatmap for the whole run. While it is off and no `--report-file` path or `--pdf-print-html` is given, Goose keeps only the dashboard's last 10 minutes of graphs and 5 minutes of heatmap, so memory stays flat on a long soak test. Turning it on during a run keeps graphs from then on, with that window before it, and the report says when its graphs start and why.
+The switches, Save report now and Delete need control ([Related flags](#related-flags)); with it, both switches can change at any time. With no other report to write, turning Save report off keeps memory flat ([GraphData memory cost](#graphdata-memory-cost)). Turn it on mid run and the report has graphs from then on, plus the recent window, and says when its graphs start and why.
 
-**Save report now** writes the run's report as it stands into its folder while the run continues, marked `in_progress`. The report at the end of the run replaces it, also when Save report is off. The second switch, **Include graph data**, adds the per second graph data to the JSON report, as `--report-graph-data` does, and can also be changed at any time.
+**Save report now** writes the report as it stands into the run folder, marked `in_progress`, while the run continues; the report at the end of the run replaces it, even with Save report off. **Include graph data** adds the per second graph data to the JSON report as `--report-graph-data` does.
 
-Save report now, Delete, and changing either switch need `--dashboard-control` and the token, or `--dashboard-no-auth`, as Start and Stop do. Without control the switches are shown read only, so Save report stays on and every `--dashboard` run, except under `--no-metrics` or with a folder it can't write to, writes `report.html` and `report.json` into its folder. A 60 minute run of `examples/simple` without control, with 300 users at about 28 requests a second over 2 request names, grew by about 0.8 MiB an hour. With `--dashboard-control` you can turn Save report off to keep memory flat. `--no-metrics` keeps no report, so Save report stays off.
+Without control the switches are read only, so every `--dashboard` run writes its reports and keeps its graph data for the whole run, except under `--no-metrics` or when its folder can't be written to (below).
 
-When a run ends, a banner reads `Report saved in <folder>. Download HTML, JSON or Markdown.`, naming the run's folder, with a button for each report, or says why the report couldn't be saved. For a folder whose name the report routes don't take (see [Report endpoints](#report-endpoints)), it reads `Report saved in <folder>.` with no buttons. A Save report now that fails while the run goes on is shown at the foot of the runs panel, with the reason.
+When a run ends, a banner reads `Report saved in <folder>. Download HTML, JSON or Markdown.` with a button for each format, or `Couldn't save the report: <reason>`. If the folder's name is one the report routes don't take ([Report endpoints](#report-endpoints)), it reads `Report saved in <folder>.` with no buttons. If Save report now fails during the run, the reason shows at the foot of the runs panel.
 
-When only `--dashboard` asks for the run's folder, with no output flag given without a path and no `--output-dir`, a folder Goose can't write to does not stop the run. Goose prints a warning before any load, and runs with Save report off. A banner at the top of the page names the folder and the reason, and stays for the whole run. The Save report switch says why when you hover over it.
+When `--dashboard` is the only thing asking for a run folder (no output flag is given bare, and there's no `--output-dir`), a folder Goose can't write to doesn't stop the run. Goose logs `<reason>. This run's report is not saved.` at warn before any load and runs with Save report off; a banner reading `Save report is off for this run. <reason>` stays at the top of the page for the whole run, and the switch shows the reason on hover.
 
 ### The runs panel
 
-The **Runs** panel looks in the folder that holds each run's folder: the parent of the `--output-dir` folder, or `goose-runs` by default. It lists each folder there that holds a `report.json` or `report.json.gz` it can read; a folder whose JSON report can't be read is left out. It lists only folders with a name the report routes take; see [Report endpoints](#report-endpoints). It lists them while Goose is Idle too, before any run has a folder, and it lists folders written by runs without the dashboard. Rows are sorted newest first, by start time, or by when the report was written if it records no start time. Each row shows the folder's name, when the run started (in the viewer's local time), its notes, how long it ran, its users, requests and failures, how it ended (`Finished`, `Stopped`, `Ctrl-C`, `Canceled: <reason>` or `Users exited`), and the test. A report still marked in progress shows as `Running` for the run in progress and as `Incomplete` for any other: a run that ended without its final report. The first 50 rows are shown; `Show all` lists the rest. The list is read when the page opens, when a run starts, when Goose writes a report into a run's folder, and after a Delete. Goose writes a report there at the end of a run and on Save report now, and the snapshot's `report.writes` counts those writes.
+The runs panel looks in the runs folder: the parent of the `--output-dir` folder, or `goose-runs` by default. It lists each folder there with a readable `report.json` or `report.json.gz` and a name the report routes take ([Report endpoints](#report-endpoints)), including runs made without the dashboard. The panel works in Idle too.
 
-Each row offers HTML, Markdown and JSON. A format the folder lacks is rendered from its JSON report; without graph data in it, the rendered HTML report says the graphs were not recorded.
+Rows are newest first by start time, or by when the report was written if it has none. Each row shows the folder's name, when the run started (in the viewer's local time), its notes, how long it ran, its users, requests and failures, how it ended (`Finished`, `Stopped`, `Ctrl-C`, `Canceled: <reason>` or `Users exited`) and the test. A report still marked in progress shows as `Running` for the run in progress and `Incomplete` for any other (a run that ended without writing its final report). The panel shows 50 rows; **Show all** lists the rest.
 
-With `--dashboard-control`, each row also has a **Delete** button. It asks `Delete the reports and logs in <folder>?`, then deletes the folder's reports and the logs Goose names there, and the folder if that leaves it empty. The folder of the run in progress can't be deleted. Nor can the folder a bare `--goose-log` is open in: Goose keeps that log open in the last run's folder until the next run starts. Nor can a folder that holds `.goose-run`. A Goose process keeps that file in its run's folder while the run lasts, and after the run while a bare `--goose-log` is open there, so a dashboard never deletes what another process is writing. A process that is killed leaves the file behind; remove it by hand to free the folder.
+The panel reloads when the page opens, when a run starts, after a Delete, and when Goose writes a report into a run folder (at the end of a run and on Save report now; the snapshot's `report.writes` counts these).
 
-Check **Compare** on exactly two rows and `Download comparison` downloads a Markdown report of the newer run with the older as its baseline: every number shows its change, as with [`--baseline-file`](../getting-started/common.md#comparing-against-a-baseline). Runs with no requests can't be compared. When the two runs are from different tests the panel warns that the comparison may not mean much.
+Each row has HTML, Markdown and JSON downloads ([Report endpoints](#report-endpoints)). An HTML report rendered from JSON without graph data says the graphs weren't recorded. Downloads send the token in an `Authorization` header, not in the URL. They always save as files.
 
-Downloads are fetched with the token in an `Authorization` header and saved from the response, so the token never goes into a URL. Reports are always downloaded, never shown in the browser.
+With `--dashboard-control`, each row also has a **Delete** button. It asks `Delete the reports and logs in <folder>?`, then deletes what `DELETE /api/v1/reports/{name}` deletes, with the same refusals.
+
+Check **Compare** on exactly two rows and **Download comparison** downloads a Markdown report of the newer run against the older, every number showing its change as with [`--baseline-file`](../getting-started/common.md#comparing-against-a-baseline). A run with no requests can't be checked. If the two runs are from different tests, the panel warns `These runs are from different tests, so the comparison may not mean much.`
 
 ### Report endpoints
 
-The `GET` routes need the token when one is configured, as `GET /api/v1/snapshot` does. `DELETE` is registered only with `--dashboard-control` and needs the token as `Authorization: Bearer` (none under `--dashboard-no-auth`), as the control POSTs do. Each reads the disk only on request. Goose keeps what it parsed of each JSON report in memory, keyed by path, size and modification time, and writes no index.
+The token rules are in [What requires a token](#what-requires-a-token). Every route reads the disk on request. Goose caches what it parsed of each JSON report in memory, keyed by path, size and modification time, and writes no index.
 
 | Endpoint | Returns |
 |----------|---------|
-| `GET /api/v1/reports` | `{ "dir": "goose-runs", "reports": [ ... ] }`: for each folder holding a regular `report.json` or `report.json.gz` that can be read, its `name`, the run's record from its JSON report (`notes`, `goose_version`, `test`, `started`, `ended`, `ended_by`, `canceled_reason`, `in_progress` and `graphs_start`, with `notes`, `canceled_reason` and `graphs_start` left out when unset), `running`, `duration_secs`, `max_users`, `requests` and `failed_requests`, newest first |
-| `GET /api/v1/reports/{name}/{file}` | `report.html`, `report.md` or `report.json` of folder `{name}`, as an attachment named `goose-<test>-<name>.<ext>`; a format the folder lacks is rendered from its JSON report, or answers **422** with a one line reason when it can't be |
-| `GET /api/v1/reports/{name}/compare.md?baseline={name}` | Report `{name}` compared to the baseline, as Markdown, named `goose-<test>-<name>-vs-<baseline>.md`, starting with a line naming both and when each started. `422` with a one line reason when a JSON report can't be read or is inconsistent; a run with no requests compares as zeros |
-| `DELETE /api/v1/reports/{name}` | `204` once the folder's `report.html`, `report.md`, `report.json`, `goose.log` and the request, transaction, scenario, error and debug logs Goose names there, each plain or gzipped, and any temporary report file a stopped process left, are deleted, then the folder if that leaves it empty; `409` for the folder of the run in progress once it holds a report, the folder a bare `--goose-log` is open in, or a folder that holds `.goose-run`; `404` for a folder the panel does not list |
+| `GET /api/v1/reports` | `{ "dir": "goose-runs", "reports": [ ... ] }`, newest first, or `500` with plain text `can't list the reports` when the runs folder can't be read. Each entry has the folder's `name`; the run's record from its JSON report (`notes`, `goose_version`, `test`, `started`, `ended`, `ended_by`, `canceled_reason`, `in_progress` and `graphs_start`, where `notes`, `canceled_reason` and `graphs_start` are left out when unset); and `running`, `duration_secs`, `max_users`, `requests` and `failed_requests` |
+| `GET /api/v1/reports/{name}/{file}` | `report.html`, `report.md` or `report.json` of folder `{name}`, as an attachment named `goose-<test>-<name>.<ext>`. A format the folder lacks is rendered from its JSON report, or the route answers `422` with a one line reason when it can't be. A report stored gzipped is sent gzip encoded to a client that accepts gzip, and decompressed for any other |
+| `GET /api/v1/reports/{name}/compare.md?baseline={name}` | Report `{name}` compared to the baseline, as Markdown named `goose-<test>-<name>-vs-<baseline>.md`, starting with a line that lists both runs and when each started. `422` with a one line reason when a JSON report can't be read or is inconsistent; a run with no requests compares as zeros. `404` without `baseline` |
+| `DELETE /api/v1/reports/{name}` | `204` once these are deleted from the folder, plain or gzipped: `report.html`, `report.md`, `report.json`, `goose.log`, the request, transaction, scenario, error and debug logs, under the file names Goose gives them, and any temporary report file a stopped process left; then the folder, if that leaves it empty. `409` with a plain text reason for the folder of the run in progress once it holds a report (`The run in progress writes to this folder.`), the folder a bare `--goose-log` is open in (`Goose is writing its log to this folder.`), or a folder that holds `.goose-run` (`Another Goose process is writing to this folder.`) |
 
-A name is an ASCII letter or digit, then any mix of ASCII letters, digits, `.`, `_` and `-`. A folder with any other name is not listed. A name of any other form, a folder that is not one level down, a symlink, or a folder without a regular JSON report gets a plain `404`. A folder whose JSON report is not yet on disk is not listed: Goose writes the JSON report last, through a temporary file and a rename. Reports and comparisons are sent with `Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, `Cache-Control: no-store` and `Content-Security-Policy: sandbox`, so a report opened anyway runs no script with the dashboard's origin.
+Goose keeps a bare `--goose-log` open in the last run's folder until the next run starts, and keeps `.goose-run` in its run folder for the whole run and for as long as that log is open there. A killed process leaves `.goose-run` behind; remove it by hand to free the folder.
+
+A name is an ASCII letter or digit followed by any mix of ASCII letters, digits, `.`, `_` and `-`. Any other name, a folder that isn't one level down, a symlink, or a folder without a regular JSON report gets a plain `404`. Goose writes the JSON report last, through a temporary file and a rename, so the routes never read a half written JSON report. Reports and comparisons are also sent with `Content-Disposition: attachment` and `Content-Security-Policy: sandbox`, so a report opened anyway runs no script with the dashboard's origin.
+
+With `AUTH` and `URL` set as in [curl examples](#curl-examples):
 
 ```bash
-curl -s -H "Authorization: Bearer $DASHBOARD_TOKEN" http://127.0.0.1:5118/api/v1/reports
-curl -s -OJ -H "Authorization: Bearer $DASHBOARD_TOKEN" \
-  http://127.0.0.1:5118/api/v1/reports/nightly/report.html
-curl -s -OJ -H "Authorization: Bearer $DASHBOARD_TOKEN" \
-  "http://127.0.0.1:5118/api/v1/reports/nightly-2/compare.md?baseline=nightly"
-curl -s -X POST -H "Authorization: Bearer $DASHBOARD_TOKEN" -H 'Content-Type: application/json' \
-  -d '{"save": false}' http://127.0.0.1:5118/api/v1/control/report
+curl -sS -H "$AUTH" "$URL/reports"
+curl -sS -OJ -H "$AUTH" "$URL/reports/nightly/report.html"
+curl -sS -OJ -H "$AUTH" "$URL/reports/nightly-2/compare.md?baseline=nightly"
 ```
-
-With no token, which only a loopback bind or `--dashboard-no-auth` allows, every user on this machine (and off loopback, everyone who can reach the port) can list and download every report in that folder while the dashboard is up, even if the files themselves are readable only by their owner. On a shared machine, set a token in the load test's code, as [On a shared machine](#on-a-shared-machine) shows.
 
 ### Waiting after an autostarted run
 
-When an autostarted `--dashboard` run (one without `--no-autostart`) ends, Goose stays up instead of exiting if Save report wrote its report and any client is connected to the event stream, so the report can still be downloaded. With `--dashboard-control` it prints:
+When an autostarted `--dashboard` run (one without `--no-autostart`) ends on its own, Goose exits unless the run's report was written to its folder (Save report on, or a Save report now during the run) and a client is connected to the event stream; then it stays up so the report can still be downloaded. With `--dashboard-control` it prints:
 
 ```text
 Run finished. Download it from the dashboard at http://127.0.0.1:5118. Press Quit in the dashboard or Ctrl-C to exit.
@@ -815,99 +862,79 @@ and without it:
 Run finished. Download it from the dashboard at http://127.0.0.1:5118. Press Ctrl-C to exit.
 ```
 
-The phase goes back to `idle`, and the test does not start again. Goose exits on Quit in the dashboard, on Ctrl-C, or on a Controller `shutdown`; there is no exit timer, so closing the tab does not end the wait. Nothing is written or printed again, and `test_stop` does not run again. Any client on `/api/v1/events` counts, not only browser tabs: a script tailing the event stream when the run ends keeps Goose up until Goose is told to quit. With no client connected when the run ends, Goose exits at once, as it does without the dashboard. A run stopped from the dashboard or a Controller prints no `Run finished` line; Goose stays up in Idle, as after any Stop. A run canceled with Ctrl-C or aborted by a `--threshold` exits with no wait.
+The phase goes back to `idle` and the test doesn't restart on its own; a Start from the dashboard (with `--dashboard-control`) or a Controller runs another. Goose exits on Quit, Ctrl-C or a Controller `shutdown`; there's no exit timer, so closing the tab doesn't end the wait. Until another run starts, nothing more is written or printed, and `test_stop` doesn't run again. Any client on the event stream when the run ends counts, even a script tailing it.
+
+A run stopped from the dashboard or a Controller prints no `Run finished` line and stays in Idle, as after any Stop. A run canceled with Ctrl-C or aborted by a `--threshold` exits with no wait.
 
 ## GraphData memory cost
 
-Enabling `--dashboard` turns on the same per second **GraphData** series collection used for HTML report graphs (also enabled by `--report-file` and `--pdf-print-html`). Goose keeps every second of the whole run while a report will be written at the end of it: to a `--report-file` or `--pdf-print-html` path, or by [Save report](#saving-the-report), which is on by default with `--dashboard`. With Save report off and no `--report-file` or `--pdf-print-html` path, the dashboard keeps only twice its chart window (10 minutes). Without `--dashboard`, `--report-file` or `--pdf-print-html` nothing is recorded. The recording costs memory even when no browser is connected:
+`--dashboard`, `--report-file` and `--pdf-print-html` each turn on the per second GraphData recording that the HTML report's graphs use; without any of them nothing is recorded. It costs memory even when no page is open.
 
-- Per-second counters for requests, errors, users, and average latency are kept for the whole run while a report will be written, and for the last 10 minutes otherwise.
-- While a report will be written, memory grows with unique request names × run length, the same cost as generating HTML graphs; otherwise it stays flat.
-- Request, error and transaction error tables truncate to the top rows (`flags.requests_truncated` / `flags.errors_truncated` / `flags.transaction_errors_truncated` when capped); series charts use a fixed trailing window (5 minutes).
+While a report will be written at the end of the run (to a `--report-file` or `--pdf-print-html` path, or by [Save report](#saving-the-report)), Goose keeps every second of the run: requests, errors, users and average latency. Memory grows with unique request names × run length, the same as for HTML report graphs. Otherwise the dashboard keeps twice its 300 second chart window (10 minutes) and 300 seconds of heatmap, and memory stays flat.
 
-With no SSE client connected and no `GET /api/v1/snapshot` in the last two seconds (`/api/v1/health` does not count), the dashboard issues **no** snapshot builds (no extra metrics-processor work beyond GraphData recording). When clients are connected, snapshots are coalesced to about **1 Hz** for all viewers. Concurrent SSE clients are capped (default **32**, tunable with `--dashboard-max-clients`); further clients receive HTTP 503.
+Goose also keeps one response time histogram per second for the last 300 seconds, for the response time heatmap: one for all requests and one for each of the first 100 request names, and the same again for synthetic times while coordinated omission mitigation is on. That doesn't grow with run length. Its size depends on how many request names and distinct response times there are: about 0.2 MB for all requests and 10 MB for 100 names with typical response times, up to 30 MB in the worst case at the default 60 second timeout, and more with a longer `--timeout`. In a test of 1,000 users at about 21,800 requests a second over 25 request names, it added about 3.1 MiB of peak memory and no measurable CPU per request.
 
-Each snapshot build (while clients are connected or polling) runs on the **metrics processor** task: it drains pending metrics, exports the trailing series window, and builds percentile maps for the aggregate, up to 100 request rows, and one row per scenario and transaction, a number fixed by the load test's code. That cost scales with unique request names and the timing histograms Goose already maintains; the attack main loop does **not** await the build. Under extreme cardinality, prefer fewer unique request names, a shorter test, or disable the dashboard if you need absolute minimal overhead (same trade-off as `--report-file`).
+Each user sends its metrics in batches, every 100 requests or 250 ms. A batch holds each request name's response times for two seconds, the one it's filling and the next. A request from any other second sends the batch early. While a report will be written, each second is also added once to whole run columns for the HTML report's heatmap, up to 600 for all requests and 60 for each of those 100 names; the columns merge in pairs as they fill, so they stop growing too. `--no-percentiles-over-time` turns off the per second histograms and these whole run columns, along with their small per request cost; the other graph data is still recorded.
 
-With `--dashboard`, and also for a `--report-file` or `--pdf-print-html`, Goose keeps one response time histogram per second for the last 300 seconds, for all requests together and for each of the first 100 request names, plus the same for synthetic times while coordinated omission mitigation is on. It does not grow with run length. Its size depends on how many request names there are and how many distinct response times occur: about 0.2 MB for all requests and 10 MB for 100 names with typical response times, and up to 30 MB in the worst case at the default 60 second timeout, more with a longer `--timeout`. Filling it costs little. In a test of 1,000 users at about 21,800 requests a second over 25 request names, the heatmap added no measurable CPU or instructions per request: the difference from the dashboard without it was within the runs' spread of about 1%. It added 3.1 MiB of peak memory. Each user's batch of metrics is still sent every 100 requests or 250 ms, as without the heatmap; a batch keeps each request name's response times for the second it is filling and the next one, and a request from any other second sends it early. For the HTML report's heatmap, while a report will be written, each second is also added once to whole run columns: up to 600 for all requests and 60 for each of those 100 names. The columns merge in pairs as they fill, so they too stop growing. `--no-percentiles-over-time` turns all of it off, along with the small per request cost of filling it.
+With no client on the event stream and no `GET /api/v1/snapshot` in the last two seconds (`/api/v1/health` doesn't count), the dashboard builds no snapshots, so the metrics processor does no extra work beyond recording GraphData. With clients, builds are coalesced to about one a second for all of them.
 
-For extreme runs with tens of thousands of unique request names, expect higher GraphData memory (same as `--report-file`). Disable the dashboard for the least overhead, just as you can turn off the telnet Controller with `--no-telnet` (the WebSocket Controller is off unless `--websocket` turns it on).
-
-## Relationship to Controllers
-
-| Need | Prefer |
-|------|--------|
-| Watch live charts and tables | Live Dashboard (`--dashboard`) |
-| Start / Stop / set users, host, ramps and run time from a browser | Dashboard control (`--dashboard-control` + token, or `--dashboard-no-auth`) |
-| Test plan from a script | Dashboard control (`/api/v1/control/settings` or `/api/v1/control/start`) or the Controllers |
-| Full command set, `config` and `metrics` | [Telnet](telnet.md) / [WebSocket](websocket.md) Controllers |
-| Shut Goose down from Idle | Dashboard control (Quit) or the Controllers (`shutdown`) |
-| Shut down a running test | Controllers (`shutdown`) |
-
-Dashboard control reuses the same phase-transition logic as Controllers (shared helpers), and Controllers remain available alongside the dashboard.
-
-For full Controller documentation, see [Controlling A Running Goose Load Test](overview.md).
+Each snapshot build runs on the metrics processor task, and the main loop doesn't wait for it. It drains pending metrics, exports the series window, and builds percentile maps for the aggregate, up to 100 request rows, and each scenario and transaction, so its cost scales with unique request names. With tens of thousands of them, use fewer request names or a shorter test, or leave the dashboard off.
 
 ## Stability
 
 ### Building it in
 
-In 0.19 and 0.20 the dashboard is an opt in crate feature: build with `--features dashboard`. The goal is to make it a default feature in 1.0, a decision to be made on the feedback from 0.19 and 0.20.
+In 0.19 and 0.20 the dashboard is opt in ([Enabling the dashboard](#enabling-the-dashboard)). The plan is to make it a default feature in 1.0; feedback on 0.19 and 0.20 will decide.
 
 ### `/api/v1` in 0.19 and 0.20
 
-Changes are additive where possible: new fields, new endpoints and new error codes, under snapshot `version: 1`. A client must ignore fields it does not know and must not fail on an error code it does not know. Every change to `/api/v1` is listed in the CHANGELOG. A change that is not additive, such as a field or endpoint removed, renamed or given a different meaning, raises the snapshot `version`, and the CHANGELOG says so. 0.20 brings back distributed load testing (Gaggle) and may make such changes so the API can describe more than one worker.
+Changes are additive where possible (new fields, endpoints and error codes) under snapshot `version: 1`, and the CHANGELOG lists every change to `/api/v1`. A change that isn't additive, such as a field or endpoint removed, renamed or given a different meaning, raises the snapshot `version`, and the CHANGELOG entry flags the new version. 0.20 brings back distributed load testing (Gaggle) and may make such changes so the API can describe more than one worker.
 
 ### `/api/v1` from 1.0
 
-Semver covers it: within 1.x no field, endpoint or error code is removed, renamed or given a different meaning. New ones may be added, so a client must ignore fields it does not know and must not fail on an error code it does not know.
-
-### The routes and the snapshot
-
-In 0.19 `/api/v1` serves `GET /api/v1/health`, `GET /api/v1/snapshot`, `GET /api/v1/events`, `GET /api/v1/series`, `GET /api/v1/reports`, `GET /api/v1/reports/{name}/{file}` and `GET /api/v1/reports/{name}/compare.md`, and with `--dashboard-control` `POST /api/v1/control/start`, `settings`, `stop`, `users`, `quit`, `report` and `report/now`, and `DELETE /api/v1/reports/{name}`. A snapshot's top level fields are `version`, `generated_at`, `goose_version`, `phase`, `stopping`, `duration_secs`, `active_users`, `maximum_users`, `target_users`, `total_users`, `hosts`, `aggregate`, `requests`, `errors`, `transaction_errors`, `scenarios`, `transactions`, `series`, `flags`, `report` and `settings`. The SSE `closed` event's data is `1`.
+Semver covers it. Within 1.x no field, endpoint or error code is removed, renamed or given a different meaning; new ones may be added.
 
 ### What the contract is
 
-The contract is the JSON served under `/api/v1` and the snapshot `version`, a top level field in every snapshot. The Rust types behind it are internal and are not part of the public crate API. The bundled client is built for one `version` and refuses any other, and a client of your own should check `version` the same way.
+The contract is the JSON served under `/api/v1` and the snapshot `version`, a top level field in every snapshot. [Routes and top level fields](#routes-and-top-level-fields) lists what 0.19 serves. The Rust types behind it are internal and not part of the public crate API. In any release, a client must ignore fields it doesn't know and must not fail on an error code it doesn't know. The bundled client is built for the one `version` that `snapshot.d.ts` declares (`SNAPSHOT_VERSION` in the Rust module) and refuses any other with the banner `This page reads snapshot version 1 but the server sent <version>. Reload the page.`; a client of your own should check `version` the same way.
 
 ## Building the dashboard UI (TypeScript)
 
-The browser SPA lives under `src/dashboard/static/`. **Edit the TypeScript modules in `src/`, not the bundled JavaScript:**
+The page's sources live under `src/dashboard/static/`. Edit the TypeScript modules in `src/dashboard/static/src/`, never the bundled `app.js`, which the next `npm run build` overwrites. Paths in the table are relative to `src/dashboard/static/`.
 
 | File | Role |
 |------|------|
 | `src/main.ts` | Entry point: renders each snapshot and wires the modules together |
-| `src/connection.ts` | Access token handling, SSE stream, poll fallback, snapshot fetch and version check |
-| `src/control.ts` | Control panel, its POSTs, the phase badge and the run settings summary |
-| `src/settings-form.ts` | The Edit settings form: Host, Ramp up, Ramp down and Run time, and their pending edits |
+| `src/connection.ts` | Token handling, SSE stream, poll fallback, snapshot fetch and version check |
+| `src/control.ts` | The Control card, its POSTs and the phase badge |
+| `src/settings-form.ts` | The Edit settings form (Host, Ramp up, Ramp down and Run time) and its pending edits |
 | `src/run-settings.ts` | The run settings summary line, worded from `settings.stage` |
 | `src/follow.ts` | Fields that follow the server unless being edited (Target and the settings form) |
-| `src/charts.ts` | Chart.js setup and the line charts: RPS and failures, active users, and average latency |
+| `src/charts.ts` | Chart.js setup and the line charts: requests and failures, active users, and average latency |
 | `src/chart-data.ts` | Each line chart's one sentence summary and its data table |
 | `src/heatmap.ts` | The response time heatmap: data shaping and drawing |
-| `src/heatmap-card.ts` | The response time card: its request select, the Adjusted and Measured toggle, and the average latency chart when percentiles over time are off |
+| `src/heatmap-card.ts` | The Response times by second card: its request select, the Adjusted and Measured toggle, and the average latency chart when percentiles over time are off |
 | `src/coadjust.ts` | Which response time to show: coordinated omission adjusted or measured |
 | `src/runs.ts` | The report bar, Save report now, the report banners and the runs panel |
 | `src/tables.ts` | The shared sortable table (sorting, filtering, empty states) and the scenarios, transactions, requests, errors and transaction errors tables |
 | `src/format.ts` | Number and duration formatting, and the small DOM builders the summary and tables share |
 | `src/status.ts` | Banner and connection indicator |
 | `src/dom.ts` | Element lookup that checks each element's type |
-| `snapshot.d.ts` | **Generated** types of the snapshot JSON, from the Rust structs in `src/metrics/dashboard_snapshot.rs` |
+| `snapshot.d.ts` | Generated types of the snapshot JSON, from the Rust structs in the repository's `src/metrics/dashboard_snapshot.rs` |
 | `idle-snapshot.mjs` | A complete idle snapshot for the client tests, type checked against `snapshot.d.ts` by `npm run check` |
-| `tsconfig.json` / `package.json` | TypeScript type check and esbuild bundle config |
-| `*.test.mjs` | Client tests, run with `npm test`: `token`, `tables`, `runs`, `control`, `settings`, `coadjust`, `format`, `heatmap`, `a11y`, `chrome` and `monitor`. Most run in jsdom against the bundled `app.js`; `npm test` first builds `coadjust.ts`, `format.ts`, `heatmap.ts` and `charts.ts` into `test-build/` for the tests that load a module on its own |
+| `tsconfig.json`, `package.json` | TypeScript type check and esbuild bundle config |
+| `*.test.mjs` | Client tests: `token`, `tables`, `runs`, `control`, `settings`, `coadjust`, `format`, `heatmap`, `a11y`, `chrome` and `monitor`. `npm test` first builds `coadjust.ts`, `format.ts`, `heatmap.ts` and `charts.ts` into `test-build/` for the tests that load one module on its own |
 | `test-harness.mjs` | The jsdom page loader and stub server the client tests share |
-| `app.js` | **Bundled output** (the modules plus Chart.js), embedded by the Rust server via `include_str!` |
+| `app.js` | Bundled output (the modules plus Chart.js), embedded by the Rust server with `include_str!` |
 | `index.html`, `app.css` | Shell and styles (not generated) |
 
-`npm run build` bundles `src/main.ts`, the modules it imports and Chart.js into one minified `app.js` with [esbuild](https://esbuild.github.io/). Chart.js comes from npm at a pinned version (see `package.json`), with its own TypeScript types, so the chart configuration is type checked; its license comment is kept in the bundle.
+`npm run build` bundles `src/main.ts`, the modules it imports and Chart.js into one minified `app.js` with [esbuild](https://esbuild.github.io/). Chart.js comes from npm at the version pinned in `package.json`, with its own TypeScript types, and its license comment stays in the bundle.
 
-Cargo builds do **not** run npm. The committed `app.js` is what gets embedded, so a normal `cargo build` works without Node.js. After changing a module in `src/` (or the related type declarations), regenerate `app.js` and commit it with the sources.
+Cargo builds don't run npm: the committed `app.js` is what gets embedded, so `cargo build` works without Node.js. After changing a module in `src/dashboard/static/src/` (or the type declarations it uses), rebuild `app.js` and commit it with the sources. `node_modules/` is gitignored; `package.json` and `package-lock.json` are committed.
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) (with npm)
-- Network access once to install the dev dependencies (esbuild, Chart.js, TypeScript, and jsdom for the client tests)
+You need [Node.js](https://nodejs.org/) with npm, and network access once to install the dev dependencies (esbuild, Chart.js, TypeScript, and jsdom for the client tests).
 
 ### Rebuild
 
@@ -919,17 +946,17 @@ npm ci
 npm run build
 ```
 
-That runs esbuild and overwrites `app.js` in the same directory. Then rebuild Goose so the new script is embedded:
+Then rebuild Goose so it embeds the new script:
 
 ```bash
 cargo build --features dashboard
-# or exercise the dashboard:
-cargo run --release --features dashboard --example simple -- --dashboard ...
 ```
 
 ### Snapshot types
 
-`snapshot.d.ts` declares `DashboardSnapshot` and every struct it holds, and `RequestSeries`, the `/api/v1/series` body, generated by [`ts-rs`](https://crates.io/crates/ts-rs) from the Rust structs, so `tsc` rejects a read of a field the structs do not have. Every `u64` is declared as `number`, which is what `JSON.parse` returns. After changing a snapshot struct, regenerate the file, then type check the client (and run `npm run build` if a module in `src/` changed). `tsconfig.json` sets `skipLibCheck` to false so `tsc` also checks the generated file:
+`snapshot.d.ts` declares `DashboardSnapshot`, every struct it holds, and `RequestSeries` (the `/api/v1/series` body). [`ts-rs`](https://crates.io/crates/ts-rs) generates it from the Rust structs, so `tsc` rejects a read of a field the structs don't have. Every `u64` is declared as `number`, which is what `JSON.parse` returns. `tsconfig.json` sets `skipLibCheck` to false, so `tsc` checks the generated file as well.
+
+To add a field: add it to the struct in `src/metrics/dashboard_snapshot.rs` (a new struct also needs `#[cfg_attr(test, derive(ts_rs::TS))]`), regenerate `snapshot.d.ts`, add the field to `idle-snapshot.mjs` (until you do, `npm run check` fails), rebuild `app.js` if a TypeScript module reads it, and list the field in the CHANGELOG ([Stability](#stability)). From the repository root, after `npm ci` ([Rebuild](#rebuild)):
 
 ```bash
 GOOSE_UPDATE_DASHBOARD_TYPES=1 cargo test --lib dashboard_types_match_rust
@@ -937,15 +964,13 @@ cd src/dashboard/static
 npm run check
 ```
 
-`ts-rs` is a dev dependency used only by unit tests, so crates that depend on Goose never pull it in. Without the environment variable, `dashboard_types_match_rust` compares the committed file with the structs and fails when they differ (a reordered field counts as a difference), so a struct change without a regenerated `snapshot.d.ts` fails `cargo test` in CI, and a client that reads a removed or renamed field then fails `npm run check`. A second test fails on any serde attribute other than `serde(skip)`, which `ts-rs` honours, or on a hand-written `Serialize` in the snapshot module, because `ts-rs` cannot see either, so the JSON could change without the types changing.
+Without the environment variable, `dashboard_types_match_rust` compares the committed file with the structs and fails on any difference, even a reordered field, so a struct change without a regenerated `snapshot.d.ts` fails `cargo test` in CI. A second test fails on any serde attribute other than `serde(skip)` (which `ts-rs` honours) and on a hand-written `Serialize` in the snapshot module, since `ts-rs` can't see either.
 
-`ts-rs` is pinned to an exact version in `Cargo.toml`. The committed file is compared byte for byte with its output, and Goose commits no `Cargo.lock`, so a new release that formats differently would otherwise fail CI with no change in Goose. Dependabot opens a pull request when a new `ts-rs` is released; if `dashboard_types_match_rust` fails on it, regenerate the file on that branch as above and review the diff.
-
-The client accepts only the snapshot `version` named in `snapshot.d.ts` (`SNAPSHOT_VERSION` in the Rust module) and shows an error banner for any other.
+`ts-rs` is a dev dependency used only by unit tests. It's pinned to an exact version in `Cargo.toml`, since the committed file is compared byte for byte with its output and Goose commits no `Cargo.lock`. Dependabot opens a pull request for each new `ts-rs` release; if `dashboard_types_match_rust` fails on it, regenerate the file on that branch as above and review the diff.
 
 ### Type check
 
-esbuild strips the TypeScript types without checking them, so `npm run build` succeeds on code that does not type check. `npm run check` is the type check: it runs `tsc` over the modules and `snapshot.d.ts` (`tsconfig.json` sets `noEmit`, so `tsc` writes nothing), then checks `idle-snapshot.mjs` against the snapshot types.
+esbuild strips the TypeScript types without checking them, so `npm run build` succeeds on code that doesn't type check. `npm run check` runs `tsc` over the modules and `snapshot.d.ts` (`tsconfig.json` sets `noEmit`, so `tsc` writes nothing), then checks `idle-snapshot.mjs` against the snapshot types. From the repository root:
 
 ```bash
 cd src/dashboard/static
@@ -954,17 +979,12 @@ npm run check
 
 ### Client tests
 
+Most tests load the bundled `app.js` into a jsdom page with a stubbed `fetch`. Build `app.js` first. From the repository root:
+
 ```bash
 cd src/dashboard/static
 npm run build
 npm test
 ```
 
-Most tests load the bundled `app.js` into a jsdom page with a stubbed `fetch`, so rebuild it first.
-
-### Notes
-
-- Do not hand-edit `app.js`; changes there will be lost on the next `npm run build`.
-- `node_modules/` is gitignored; only `package.json` / `package-lock.json` are committed so installs stay reproducible.
-- Chart.js is bundled into `app.js`; the server does not serve it as a separate file.
-- CI runs `npm run check`, rebuilds `app.js` with `npm ci && npm run build` (failing if the committed file differs from the esbuild bundle), and runs `npm test`.
+CI runs `npm ci` and `npm run check`, rebuilds `app.js` with `npm run build` (failing if the committed file differs from the bundle), and runs `npm test`.
