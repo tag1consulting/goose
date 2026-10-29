@@ -2,6 +2,8 @@
 
 This first chapter of the Goose Book provides a high-level overview of writing and running Goose load tests. If you're new to Goose, this is the place to start.
 
+If you have load tests written for Goose 0.18, [Upgrading From 0.18](upgrading.md) lists the changes that can break them.
+
 ## The Importance Of Load Testing
 
 Load testing can help prevent website outages, stress test code changes, and identify bottlenecks. It can also quickly perform functional regression testing. The ability to run the same test repeatedly gives critical insight into the impact of changes to the code and/or systems.
@@ -34,4 +36,4 @@ Before diving into Goose, you should have:
 - **HTTP Understanding**: Knowledge of HTTP methods, status codes, and web application architecture
 - **Testing Mindset**: Understanding of what you want to test and what constitutes success
 
-Don't worry if you're new to load testing - Goose's approach will guide you toward writing realistic and valuable tests.
+If you are new to load testing, start with [Creating a Load Test](creating.md).

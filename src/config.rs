@@ -58,7 +58,7 @@ const DEFAULT_DASHBOARD_MAX_CLIENTS: u32 = 32;
 
 /// The address a Controller listens on when neither its `--telnet-host` or
 /// `--websocket-host` option nor its [`GooseDefault`] sets one.
-const DEFAULT_CONTROLLER_HOST: &str = "0.0.0.0";
+const DEFAULT_CONTROLLER_HOST: &str = "127.0.0.1";
 
 /// The port the telnet Controller listens on when neither `--telnet-port` nor
 /// [`GooseDefault::TelnetPort`] sets one.
@@ -101,7 +101,7 @@ const DEFAULT_PDF_TIMEOUT: u64 = 60;
 /// option was not given, so any value a user types, `0` and `""` among them, is kept.
 /// When the load test starts, Goose resolves each `None` against any [`GooseDefault`]
 /// before falling back to its built in default.
-#[derive(Args, Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Args, Clone, Default, Serialize, Deserialize)]
 pub struct GooseConfiguration {
     /// Target host, such as http://10.21.32.33
     ///
@@ -154,7 +154,7 @@ pub struct GooseConfiguration {
     ///
     /// How fast to stop users at the end of the load test. A decimal is allowed, as for
     /// --increase-rate. Without it or --decrease-time, every user stops at once. Not
-    /// allowed with --decrease-time or --test-plan.
+    /// allowed with --decrease-time, --iterations or --test-plan.
     ///
     /// Example: --decrease-rate 5. Set in code with GooseDefault::DecreaseRate.
     #[arg(help_heading = "Load test", long, value_name = "RATE")]
@@ -163,7 +163,7 @@ pub struct GooseConfiguration {
     ///
     /// Stops the users evenly over this time at the end of the load test, in place of
     /// --decrease-rate. TIME is as for --increase-time. Needs at least 2 users. Not allowed
-    /// with --decrease-rate or --test-plan.
+    /// with --decrease-rate, --iterations or --test-plan.
     ///
     /// Example: --decrease-time 1m. Set in code with GooseDefault::DecreaseTime, in seconds.
     #[arg(help_heading = "Load test", long, value_name = "TIME")]
@@ -172,7 +172,7 @@ pub struct GooseConfiguration {
     ///
     /// Each user stops after running its scenario N times, and the load test ends once
     /// every user has stopped. 0, the default, means no limit. Not allowed with
-    /// --run-time, --test-plan or --no-reset-metrics.
+    /// --run-time, --decrease-rate, --decrease-time, --test-plan or --no-reset-metrics.
     ///
     /// Example: --iterations 5. Set in code with GooseDefault::Iterations.
     #[arg(help_heading = "Load test", long, value_name = "N")]
@@ -367,7 +367,7 @@ pub struct GooseConfiguration {
     /// Label the run in its reports
     ///
     /// Stores TEXT in the JSON report and shows it at the top of the HTML and Markdown
-    /// reports and in the dashboard. Needs --report-file or --dashboard.
+    /// reports and in the dashboard. Needs --report-file, --pdf-print-html or --dashboard.
     ///
     /// Example: --notes "baseline before cache change". Set in code with
     /// GooseDefault::Notes.
@@ -402,8 +402,8 @@ pub struct GooseConfiguration {
     /// Graph only totals in reports
     ///
     /// Report graphs show a line for the total and, by default, one more for each request,
-    /// transaction or scenario. This leaves out the extra lines. Needs --report-file or
-    /// --dashboard.
+    /// transaction or scenario. This leaves out the extra lines. Needs --report-file,
+    /// --pdf-print-html or --dashboard.
     ///
     /// Set in code with GooseDefault::NoGranularData.
     #[arg(help_heading = "Reports", long)]
@@ -411,7 +411,8 @@ pub struct GooseConfiguration {
     /// Write print-ready HTML for PDF
     ///
     /// Writes the HTML report, laid out for printing, to FILE, to turn into a PDF in any
-    /// browser. Needs neither Chrome nor the pdf-reports feature.
+    /// browser. Needs neither Chrome nor the pdf-reports feature. Not allowed with
+    /// --no-metrics.
     ///
     /// Example: --pdf-print-html report-print.html.
     #[arg(help_heading = "Reports", long, value_name = "FILE")]
@@ -728,7 +729,7 @@ pub struct GooseConfiguration {
     /// Bind host [default: 127.0.0.1]
     ///
     /// The address the dashboard listens on, with --dashboard. An address that is not a
-    /// loopback address needs --dashboard-auth-token.
+    /// loopback address needs --dashboard-auth-token or --dashboard-no-auth.
     ///
     /// Example: --dashboard-host 0.0.0.0. Set in code with GooseDefault::DashboardHost.
     #[arg(help_heading = "Dashboard", long, value_name = "HOST")]
@@ -745,19 +746,30 @@ pub struct GooseConfiguration {
     ///
     /// The token a dashboard client must send, as an Authorization: Bearer header or a
     /// token query parameter. Needed when --dashboard-host is not a loopback address, and
-    /// always with --dashboard-control.
+    /// with --dashboard-control, unless --dashboard-no-auth is set.
     ///
     /// Set in code with GooseDefault::DashboardAuthToken.
     #[arg(help_heading = "Dashboard", long, value_name = "TOKEN")]
+    #[serde(serialize_with = "serialize_token")]
     pub dashboard_auth_token: Option<String>,
     /// Allow control from the dashboard
     ///
     /// Lets the dashboard start, stop and quit the load test and change its users. Needs
-    /// --dashboard and --dashboard-auth-token, even on a loopback address.
+    /// --dashboard, and --dashboard-auth-token or --dashboard-no-auth.
     ///
     /// Set in code with GooseDefault::DashboardControl.
     #[arg(help_heading = "Dashboard", long)]
     pub dashboard_control: bool,
+    /// Dashboard without a token
+    ///
+    /// Allow dashboard access and control without a token. Anyone who can reach the port
+    /// can watch the test, and with --dashboard-control start, stop and redirect it; on
+    /// anything but loopback Goose warns at startup. Needs --dashboard, and can't be used
+    /// with --dashboard-auth-token.
+    ///
+    /// Set in code with GooseDefault::DashboardNoAuth.
+    #[arg(help_heading = "Dashboard", long)]
+    pub dashboard_no_auth: bool,
     /// Max live clients [default: 32]
     ///
     /// The most dashboard pages that may follow the live stream at once.
@@ -777,8 +789,9 @@ pub struct GooseConfiguration {
 
     /// Wait for a Controller to start the test
     ///
-    /// Starts idle and waits for a start command from the telnet or WebSocket Controller,
-    /// or from the dashboard with --dashboard-control. Needs one of them enabled.
+    /// Starts idle and waits for a start command from the telnet Controller, the WebSocket
+    /// Controller with --websocket, or the dashboard with --dashboard-control. Needs one of
+    /// them enabled.
     ///
     /// Set in code with GooseDefault::NoAutoStart.
     #[arg(help_heading = "Controllers", long)]
@@ -791,11 +804,13 @@ pub struct GooseConfiguration {
     /// Set in code with GooseDefault::NoTelnet.
     #[arg(help_heading = "Controllers", long)]
     pub no_telnet: bool,
-    /// Telnet host [default: 0.0.0.0]
+    /// Telnet host [default: 127.0.0.1]
     ///
-    /// The address the telnet Controller listens on.
+    /// The address the telnet Controller listens on. It has no authentication: any other
+    /// address, such as 0.0.0.0, prints a warning at startup, as anyone who can reach the
+    /// port can start, stop and reconfigure the load test.
     ///
-    /// Example: --telnet-host 127.0.0.1. Set in code with GooseDefault::TelnetHost.
+    /// Example: --telnet-host 0.0.0.0. Set in code with GooseDefault::TelnetHost.
     #[arg(help_heading = "Controllers", long, value_name = "HOST")]
     pub telnet_host: Option<String>,
     /// Telnet port [default: 5116]
@@ -805,24 +820,37 @@ pub struct GooseConfiguration {
     /// Example: --telnet-port 6116. Set in code with GooseDefault::TelnetPort.
     #[arg(help_heading = "Controllers", long, value_name = "PORT")]
     pub telnet_port: Option<u16>,
+    /// Enable the WebSocket Controller
+    ///
+    /// Accepts Controller commands over WebSocket, on --websocket-host and
+    /// --websocket-port. Off by default: the WebSocket Controller has no authentication
+    /// and accepts a connection from any web page, so any browser that can reach the port
+    /// can drive the test.
+    ///
+    /// Set in code with GooseDefault::WebSocket.
+    #[arg(help_heading = "Controllers", long)]
+    pub websocket: bool,
     /// Disable the WebSocket Controller
     ///
-    /// By default, Goose accepts Controller commands over WebSocket, on --websocket-host
-    /// and --websocket-port.
+    /// The WebSocket Controller is off unless --websocket is given. Still accepted, with a
+    /// warning, so command lines written for Goose 0.18 run; can't be used with
+    /// --websocket.
     ///
     /// Set in code with GooseDefault::NoWebSocket.
-    #[arg(help_heading = "Controllers", long)]
+    #[arg(help_heading = "Controllers", long, hide = true)]
     pub no_websocket: bool,
-    /// WebSocket host [default: 0.0.0.0]
+    /// WebSocket host [default: 127.0.0.1]
     ///
-    /// The address the WebSocket Controller listens on.
+    /// The address the WebSocket Controller listens on, with --websocket. It has no
+    /// authentication: any other address, such as 0.0.0.0, prints a warning at startup, as
+    /// anyone who can reach the port can start, stop and reconfigure the load test.
     ///
-    /// Example: --websocket-host 127.0.0.1. Set in code with GooseDefault::WebSocketHost.
+    /// Example: --websocket-host 0.0.0.0. Set in code with GooseDefault::WebSocketHost.
     #[arg(help_heading = "Controllers", long, value_name = "HOST")]
     pub websocket_host: Option<String>,
     /// WebSocket port [default: 5117]
     ///
-    /// The TCP port the WebSocket Controller listens on.
+    /// The TCP port the WebSocket Controller listens on, with --websocket.
     ///
     /// Example: --websocket-port 6117. Set in code with GooseDefault::WebSocketPort.
     #[arg(help_heading = "Controllers", long, value_name = "PORT")]
@@ -831,7 +859,7 @@ pub struct GooseConfiguration {
     /// Request timeout in seconds [default: 60]
     ///
     /// How long each request may take before it fails. A decimal is allowed: 0.5 is half
-    /// a second. At least 0.001, one millisecond.
+    /// a second. Rounded to the millisecond, so at least 0.0005.
     ///
     /// Example: --timeout 15. Set in code with GooseDefault::Timeout.
     #[arg(help_heading = "HTTP client", long, value_name = "SECS")]
@@ -859,6 +887,193 @@ pub struct GooseConfiguration {
     /// Set in code with GooseDefault::AcceptInvalidCerts.
     #[arg(help_heading = "HTTP client", long)]
     pub accept_invalid_certs: bool,
+}
+
+/// How output shows the dashboard auth token: a set token reads [`TOKEN_SHOWN`], and an
+/// empty one, which sets no token, reads as it is.
+const TOKEN_SHOWN: &str = "(set)";
+
+/// The dashboard auth token as output shows it: never the token itself.
+fn shown_token(token: &Option<String>) -> Option<&str> {
+    token
+        .as_deref()
+        .map(|token| if token.is_empty() { token } else { TOKEN_SHOWN })
+}
+
+/// Serializes the dashboard auth token as [`shown_token`] shows it, so no JSON Goose
+/// writes, such as a Controller's `config-json`, holds the token.
+fn serialize_token<S: serde::Serializer>(
+    token: &Option<String>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    shown_token(token).serialize(serializer)
+}
+
+/// The derived `Debug`, except that a set dashboard auth token reads `(set)`, never
+/// the token: a Controller's `config` is this `Debug`, and a
+/// [`GooseUser`](crate::goose::GooseUser)'s configuration is public. Listing every
+/// field by name makes a new field a compile error here until it is added.
+impl std::fmt::Debug for GooseConfiguration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let GooseConfiguration {
+            host,
+            users,
+            increase_rate,
+            increase_time,
+            run_time,
+            decrease_rate,
+            decrease_time,
+            iterations,
+            test_plan,
+            scenarios,
+            throttle_requests,
+            version,
+            list,
+            scenarios_list,
+            verbose,
+            quiet,
+            goose_log,
+            log_level,
+            running_metrics,
+            no_print_metrics,
+            no_error_summary,
+            report_file,
+            output_dir,
+            compress,
+            notes,
+            report_graph_data,
+            render_report,
+            baseline_file,
+            no_granular_report,
+            pdf_print_html,
+            #[cfg(feature = "pdf-reports")]
+            pdf_scale,
+            #[cfg(feature = "pdf-reports")]
+            pdf_timeout,
+            no_reset_metrics,
+            no_metrics,
+            no_transaction_metrics,
+            no_scenario_metrics,
+            no_status_codes,
+            co_mitigation,
+            threshold,
+            no_threshold_abort,
+            threshold_abort_delay,
+            thresholds,
+            request_log,
+            request_format,
+            request_body,
+            transaction_log,
+            transaction_format,
+            scenario_log,
+            scenario_format,
+            error_log,
+            error_format,
+            debug_log,
+            debug_format,
+            no_debug_body,
+            dashboard,
+            dashboard_host,
+            dashboard_port,
+            dashboard_auth_token,
+            dashboard_control,
+            dashboard_no_auth,
+            dashboard_max_clients,
+            no_percentiles_over_time,
+            no_autostart,
+            no_telnet,
+            telnet_host,
+            telnet_port,
+            websocket,
+            no_websocket,
+            websocket_host,
+            websocket_port,
+            timeout,
+            no_gzip,
+            sticky_follow,
+            accept_invalid_certs,
+        } = self;
+        let mut debug = f.debug_struct("GooseConfiguration");
+        debug
+            .field("host", host)
+            .field("users", users)
+            .field("increase_rate", increase_rate)
+            .field("increase_time", increase_time)
+            .field("run_time", run_time)
+            .field("decrease_rate", decrease_rate)
+            .field("decrease_time", decrease_time)
+            .field("iterations", iterations)
+            .field("test_plan", test_plan)
+            .field("scenarios", scenarios)
+            .field("throttle_requests", throttle_requests)
+            .field("version", version)
+            .field("list", list)
+            .field("scenarios_list", scenarios_list)
+            .field("verbose", verbose)
+            .field("quiet", quiet)
+            .field("goose_log", goose_log)
+            .field("log_level", log_level)
+            .field("running_metrics", running_metrics)
+            .field("no_print_metrics", no_print_metrics)
+            .field("no_error_summary", no_error_summary)
+            .field("report_file", report_file)
+            .field("output_dir", output_dir)
+            .field("compress", compress)
+            .field("notes", notes)
+            .field("report_graph_data", report_graph_data)
+            .field("render_report", render_report)
+            .field("baseline_file", baseline_file)
+            .field("no_granular_report", no_granular_report)
+            .field("pdf_print_html", pdf_print_html);
+        #[cfg(feature = "pdf-reports")]
+        debug
+            .field("pdf_scale", pdf_scale)
+            .field("pdf_timeout", pdf_timeout);
+        debug
+            .field("no_reset_metrics", no_reset_metrics)
+            .field("no_metrics", no_metrics)
+            .field("no_transaction_metrics", no_transaction_metrics)
+            .field("no_scenario_metrics", no_scenario_metrics)
+            .field("no_status_codes", no_status_codes)
+            .field("co_mitigation", co_mitigation)
+            .field("threshold", threshold)
+            .field("no_threshold_abort", no_threshold_abort)
+            .field("threshold_abort_delay", threshold_abort_delay)
+            .field("thresholds", thresholds)
+            .field("request_log", request_log)
+            .field("request_format", request_format)
+            .field("request_body", request_body)
+            .field("transaction_log", transaction_log)
+            .field("transaction_format", transaction_format)
+            .field("scenario_log", scenario_log)
+            .field("scenario_format", scenario_format)
+            .field("error_log", error_log)
+            .field("error_format", error_format)
+            .field("debug_log", debug_log)
+            .field("debug_format", debug_format)
+            .field("no_debug_body", no_debug_body)
+            .field("dashboard", dashboard)
+            .field("dashboard_host", dashboard_host)
+            .field("dashboard_port", dashboard_port)
+            .field("dashboard_auth_token", &shown_token(dashboard_auth_token))
+            .field("dashboard_control", dashboard_control)
+            .field("dashboard_no_auth", dashboard_no_auth)
+            .field("dashboard_max_clients", dashboard_max_clients)
+            .field("no_percentiles_over_time", no_percentiles_over_time)
+            .field("no_autostart", no_autostart)
+            .field("no_telnet", no_telnet)
+            .field("telnet_host", telnet_host)
+            .field("telnet_port", telnet_port)
+            .field("websocket", websocket)
+            .field("no_websocket", no_websocket)
+            .field("websocket_host", websocket_host)
+            .field("websocket_port", websocket_port)
+            .field("timeout", timeout)
+            .field("no_gzip", no_gzip)
+            .field("sticky_follow", sticky_follow)
+            .field("accept_invalid_certs", accept_invalid_certs)
+            .finish()
+    }
 }
 
 /// The book page that documents every runtime option.
@@ -904,6 +1119,13 @@ fn program_name() -> String {
         .unwrap_or_else(|| "loadtest".to_string())
 }
 
+/// The first line of `-h` and `--help`, naming the Goose version that prints it.
+const HELP_ABOUT: &str = concat!(
+    "Goose ",
+    env!("CARGO_PKG_VERSION"),
+    ": an HTTP(S) load testing tool written in Rust"
+);
+
 /// The command line Goose parses, its help wrapped to `width` columns and its usage and
 /// examples naming the load test `name`.
 fn command(name: &str, width: usize) -> clap::Command {
@@ -943,9 +1165,7 @@ fn command(name: &str, width: usize) -> clap::Command {
             .allow_negative_numbers(true),
     );
     // Set after the derive, which would otherwise take the structure's documentation.
-    let command = command
-        .about("Goose: a distributed HTTP(S) load testing tool written in Rust")
-        .long_about(None);
+    let command = command.about(HELP_ABOUT).long_about(None);
     // -h and --help lead the Information heading, ahead of -V.
     let order = command
         .get_arguments()
@@ -1085,7 +1305,8 @@ fn tidy_help(help: &str) -> String {
 
 /// A tip for a command line that gives an option a value beginning with a hyphen as
 /// its own argument, as `--goose-log -run.log`: clap reads that value as another
-/// option, so the option has no value, or the value is an unknown option. The tip
+/// option, so the option has no value, or the value is an unknown option. A
+/// negative number, as `--users -1`, gets a tip that the option takes none. The tip
 /// names the option, never the value, which can be a `--dashboard-auth-token`.
 fn hyphen_value_tip(args: &[&str]) -> Option<String> {
     let command = command("loadtest", DEFAULT_HELP_WIDTH);
@@ -1107,7 +1328,17 @@ fn hyphen_value_tip(args: &[&str]) -> Option<String> {
             named && arg.get_action().takes_values()
         });
         takes_value.then(|| {
-            format!("tip: a value that begins with a hyphen goes after =, as in {option}=<value>")
+            // A negative number is refused whichever way it is given: clap
+            // takes one as the value of an option that takes text.
+            let negative = value[1..].starts_with(|c: char| c.is_ascii_digit() || c == '.')
+                && value.parse::<f64>().is_ok();
+            if negative {
+                format!("tip: {option} takes no negative number")
+            } else {
+                format!(
+                    "tip: a value that begins with a hyphen goes after =, as in {option}=<value>"
+                )
+            }
         })
     })
 }
@@ -1174,8 +1405,12 @@ impl FromStr for Scenarios {
         for line in lines {
             // Ignore white space an case.
             let scenario = line.trim().to_lowercase();
-            // Valid scenario names are alphanumeric, with optional * wildcards.
-            if scenario.chars().all(|c| c.is_alphanumeric() || c == '*') {
+            // Valid scenario names are alphanumeric, with optional * wildcards,
+            // and the _ that tells apart scenarios registered with one name.
+            if scenario
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '*' || c == '_')
+            {
                 active.push(scenario);
             } else {
                 // The caller reports the error: clap for the command line, the
@@ -1184,8 +1419,8 @@ impl FromStr for Scenarios {
                     option: "`configuration.scenarios`".to_string(),
                     value: line.to_string(),
                     detail: format!(
-                        "'{}' is not a scenario name: use letters and digits, with * as a \
-                         wildcard; --scenarios-list prints the names.",
+                        "'{}' is not a scenario name: use letters, digits and _, with * as \
+                         a wildcard; --scenarios-list prints the names.",
                         line.trim()
                     ),
                 });
@@ -1208,7 +1443,7 @@ fn scenarios_parser(value: &str) -> Result<Scenarios, String> {
 /// Optional default values for Goose run-time options.
 ///
 /// These custom defaults can be configured using [`GooseDefaultType::set_default()`].
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub(crate) struct GooseDefaults {
     /// An optional default host to run this load test against.
     pub host: Option<String>,
@@ -1293,7 +1528,10 @@ pub(crate) struct GooseDefaults {
     pub no_debug_body: Option<bool>,
     /// An optional default for not enabling telnet Controller thread.
     pub no_telnet: Option<bool>,
-    /// An optional default for not enabling WebSocket Controller thread.
+    /// An optional default for enabling the WebSocket Controller.
+    pub websocket: Option<bool>,
+    /// An optional default for not enabling WebSocket Controller thread, which is now
+    /// off unless enabled.
     pub no_websocket: Option<bool>,
     /// An optional default for not auto-starting the load test.
     pub no_autostart: Option<bool>,
@@ -1327,6 +1565,8 @@ pub(crate) struct GooseDefaults {
     pub dashboard: Option<bool>,
     /// An optional default for enabling dashboard control endpoints.
     pub dashboard_control: Option<bool>,
+    /// An optional default for allowing dashboard access and control without a token.
+    pub dashboard_no_auth: Option<bool>,
     /// An optional default for host the dashboard listens on.
     pub dashboard_host: Option<String>,
     /// An optional default for port the dashboard listens on.
@@ -1435,7 +1675,10 @@ pub enum GooseDefault {
     NoDebugBody,
     /// An optional default for not enabling telnet Controller thread.
     NoTelnet,
-    /// An optional default for not enabling WebSocket Controller thread.
+    /// An optional default for enabling the WebSocket Controller, which is off by default.
+    WebSocket,
+    /// An optional default for not enabling the WebSocket Controller. It is now off by
+    /// default, so this only warns; it can't be used with [`GooseDefault::WebSocket`].
     NoWebSocket,
     /// An optional default for coordinated omission mitigation.
     CoordinatedOmissionMitigation,
@@ -1458,11 +1701,14 @@ pub enum GooseDefault {
     ThrottleRequests,
     /// An optional default to follows base_url redirect with subsequent request.
     StickyFollow,
-    /// An optional default for host telnet Controller listens on.
+    /// An optional default for host telnet Controller listens on, 127.0.0.1 if unset; any
+    /// other address prints a warning at startup, as the Controller has no authentication.
     TelnetHost,
     /// An optional default for port telnet Controller listens on.
     TelnetPort,
-    /// An optional default for host Websocket Controller listens on.
+    /// An optional default for host WebSocket Controller listens on, 127.0.0.1 if unset;
+    /// any other address prints a warning at startup, as the Controller has no
+    /// authentication.
     WebSocketHost,
     /// An optional default for port WebSocket Controller listens on.
     WebSocketPort,
@@ -1470,6 +1716,8 @@ pub enum GooseDefault {
     Dashboard,
     /// An optional default for enabling dashboard control endpoints.
     DashboardControl,
+    /// An optional default for allowing dashboard access and control without a token.
+    DashboardNoAuth,
     /// An optional default for host the dashboard listens on.
     DashboardHost,
     /// An optional default for port the dashboard listens on.
@@ -1521,6 +1769,7 @@ pub enum GooseDefault {
 ///
 /// The following run-time options can be configured with a custom default using a
 /// borrowed string slice ([`&str`]):
+///  - [`GooseDefault::BaselineFile`]
 ///  - [`GooseDefault::DebugLog`]
 ///  - [`GooseDefault::ErrorLog`]
 ///  - [`GooseDefault::GooseLog`]
@@ -1578,6 +1827,7 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::NoErrorSummary`]
 ///  - [`GooseDefault::NoDebugBody`]
 ///  - [`GooseDefault::NoTelnet`]
+///  - [`GooseDefault::WebSocket`]
 ///  - [`GooseDefault::NoWebSocket`]
 ///  - [`GooseDefault::NoAutoStart`]
 ///  - [`GooseDefault::NoGzip`]
@@ -1587,6 +1837,7 @@ pub enum GooseDefault {
 ///  - [`GooseDefault::ReportGraphData`]
 ///  - [`GooseDefault::Dashboard`]
 ///  - [`GooseDefault::DashboardControl`]
+///  - [`GooseDefault::DashboardNoAuth`]
 ///  - [`GooseDefault::NoPercentilesOverTime`]
 ///  - [`GooseDefault::AcceptInvalidCerts`]
 ///
@@ -1677,6 +1928,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::WebSocketPort
             | GooseDefault::DashboardPort
             | GooseDefault::DashboardMaxClients
+            | GooseDefault::RunningMetrics
             | GooseDefault::Compress => {
                 return Err(GooseError::InvalidOption {
                     option: format!("GooseDefault::{key:?}"),
@@ -1686,8 +1938,7 @@ impl GooseDefaultType<&str> for GooseAttack {
                     ),
                 });
             }
-            GooseDefault::RunningMetrics
-            | GooseDefault::NoResetMetrics
+            GooseDefault::NoResetMetrics
             | GooseDefault::NoMetrics
             | GooseDefault::NoThresholdAbort
             | GooseDefault::NoTransactionMetrics
@@ -1697,6 +1948,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::NoErrorSummary
             | GooseDefault::NoDebugBody
             | GooseDefault::NoTelnet
+            | GooseDefault::WebSocket
             | GooseDefault::NoWebSocket
             | GooseDefault::NoAutoStart
             | GooseDefault::NoGzip
@@ -1706,6 +1958,7 @@ impl GooseDefaultType<&str> for GooseAttack {
             | GooseDefault::ReportGraphData
             | GooseDefault::Dashboard
             | GooseDefault::DashboardControl
+            | GooseDefault::DashboardNoAuth
             | GooseDefault::NoPercentilesOverTime
             | GooseDefault::AcceptInvalidCerts => {
                 return Err(GooseError::InvalidOption {
@@ -1831,6 +2084,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::NoErrorSummary
             | GooseDefault::NoDebugBody
             | GooseDefault::NoTelnet
+            | GooseDefault::WebSocket
             | GooseDefault::NoWebSocket
             | GooseDefault::NoAutoStart
             | GooseDefault::NoGzip
@@ -1840,6 +2094,7 @@ impl GooseDefaultType<usize> for GooseAttack {
             | GooseDefault::ReportGraphData
             | GooseDefault::Dashboard
             | GooseDefault::DashboardControl
+            | GooseDefault::DashboardNoAuth
             | GooseDefault::NoPercentilesOverTime
             | GooseDefault::AcceptInvalidCerts => {
                 return Err(GooseError::InvalidOption {
@@ -1902,6 +2157,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             GooseDefault::NoErrorSummary => self.defaults.no_error_summary = Some(value),
             GooseDefault::NoDebugBody => self.defaults.no_debug_body = Some(value),
             GooseDefault::NoTelnet => self.defaults.no_telnet = Some(value),
+            GooseDefault::WebSocket => self.defaults.websocket = Some(value),
             GooseDefault::NoWebSocket => self.defaults.no_websocket = Some(value),
             GooseDefault::NoAutoStart => self.defaults.no_autostart = Some(value),
             GooseDefault::NoGzip => self.defaults.no_gzip = Some(value),
@@ -1912,6 +2168,7 @@ impl GooseDefaultType<bool> for GooseAttack {
             GooseDefault::ReportGraphData => self.defaults.report_graph_data = Some(value),
             GooseDefault::Dashboard => self.defaults.dashboard = Some(value),
             GooseDefault::DashboardControl => self.defaults.dashboard_control = Some(value),
+            GooseDefault::DashboardNoAuth => self.defaults.dashboard_no_auth = Some(value),
             GooseDefault::NoPercentilesOverTime => {
                 self.defaults.no_percentiles_over_time = Some(value)
             }
@@ -2036,6 +2293,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::NoErrorSummary
             | GooseDefault::NoDebugBody
             | GooseDefault::NoTelnet
+            | GooseDefault::WebSocket
             | GooseDefault::NoWebSocket
             | GooseDefault::NoAutoStart
             | GooseDefault::NoGzip
@@ -2045,6 +2303,7 @@ impl GooseDefaultType<GooseCoordinatedOmissionMitigation> for GooseAttack {
             | GooseDefault::ReportGraphData
             | GooseDefault::Dashboard
             | GooseDefault::DashboardControl
+            | GooseDefault::DashboardNoAuth
             | GooseDefault::NoPercentilesOverTime
             | GooseDefault::AcceptInvalidCerts
             => {
@@ -2172,6 +2431,7 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::NoErrorSummary
             | GooseDefault::NoDebugBody
             | GooseDefault::NoTelnet
+            | GooseDefault::WebSocket
             | GooseDefault::NoWebSocket
             | GooseDefault::NoAutoStart
             | GooseDefault::NoGzip
@@ -2181,6 +2441,7 @@ impl GooseDefaultType<GooseLogFormat> for GooseAttack {
             | GooseDefault::ReportGraphData
             | GooseDefault::Dashboard
             | GooseDefault::DashboardControl
+            | GooseDefault::DashboardNoAuth
             | GooseDefault::NoPercentilesOverTime
             | GooseDefault::AcceptInvalidCerts
             => {
@@ -2351,6 +2612,7 @@ impl GooseDefaultType<f64> for GooseAttack {
             | GooseDefault::NoErrorSummary
             | GooseDefault::NoDebugBody
             | GooseDefault::NoTelnet
+            | GooseDefault::WebSocket
             | GooseDefault::NoWebSocket
             | GooseDefault::NoAutoStart
             | GooseDefault::NoGzip
@@ -2360,6 +2622,7 @@ impl GooseDefaultType<f64> for GooseAttack {
             | GooseDefault::ReportGraphData
             | GooseDefault::Dashboard
             | GooseDefault::DashboardControl
+            | GooseDefault::DashboardNoAuth
             | GooseDefault::NoPercentilesOverTime
             | GooseDefault::AcceptInvalidCerts => {
                 return Err(GooseError::InvalidOption {
@@ -2395,6 +2658,114 @@ impl GooseDefaultType<f64> for GooseAttack {
         }
         Ok(Box::new(self))
     }
+}
+
+/// One dashboard configuration the tests run every layer over: its flags, and
+/// the words its startup refusal names, `None` when it starts.
+#[cfg(test)]
+pub(crate) struct DashboardRow {
+    pub(crate) name: &'static str,
+    pub(crate) args: &'static [&'static str],
+    pub(crate) refusal: Option<&'static [&'static str]>,
+}
+
+/// The token the token rows set.
+#[cfg(test)]
+pub(crate) const DASHBOARD_ROW_TOKEN: &str = "s3cret";
+
+/// The dashboard configuration matrix, shared by the configuration tests and
+/// the HTTP tests in `src/dashboard.rs`.
+#[cfg(test)]
+pub(crate) const DASHBOARD_ROWS: &[DashboardRow] = &[
+    DashboardRow {
+        name: "R1",
+        args: &["--dashboard"],
+        refusal: None,
+    },
+    DashboardRow {
+        name: "R2",
+        args: &["--dashboard", "--dashboard-auth-token", DASHBOARD_ROW_TOKEN],
+        refusal: None,
+    },
+    DashboardRow {
+        name: "R3",
+        args: &[
+            "--dashboard",
+            "--dashboard-control",
+            "--dashboard-auth-token",
+            DASHBOARD_ROW_TOKEN,
+        ],
+        refusal: None,
+    },
+    DashboardRow {
+        name: "R4",
+        args: &["--dashboard", "--dashboard-control", "--dashboard-no-auth"],
+        refusal: None,
+    },
+    DashboardRow {
+        name: "R5",
+        args: &["--dashboard", "--dashboard-no-auth"],
+        refusal: None,
+    },
+    DashboardRow {
+        name: "R6",
+        args: &[
+            "--dashboard",
+            "--dashboard-control",
+            "--dashboard-no-auth",
+            "--dashboard-host",
+            "0.0.0.0",
+        ],
+        refusal: None,
+    },
+    DashboardRow {
+        name: "R7",
+        args: &[
+            "--dashboard",
+            "--dashboard-no-auth",
+            "--dashboard-auth-token",
+            DASHBOARD_ROW_TOKEN,
+        ],
+        refusal: Some(&["--dashboard-no-auth", "--dashboard-auth-token"]),
+    },
+    DashboardRow {
+        name: "R8",
+        args: &["--dashboard-no-auth"],
+        refusal: Some(&["--dashboard-no-auth", "requires", "--dashboard)"]),
+    },
+    DashboardRow {
+        name: "R9",
+        args: &["--dashboard", "--dashboard-control"],
+        refusal: Some(&["--dashboard-control", "--dashboard-auth-token"]),
+    },
+    DashboardRow {
+        name: "R10",
+        args: &["--dashboard", "--dashboard-host", "0.0.0.0"],
+        refusal: Some(&["0.0.0.0", "--dashboard-auth-token"]),
+    },
+    DashboardRow {
+        name: "R11",
+        args: &[
+            "--dashboard",
+            "--dashboard-control",
+            "--dashboard-auth-token",
+            DASHBOARD_ROW_TOKEN,
+            "--dashboard-host",
+            "0.0.0.0",
+        ],
+        refusal: None,
+    },
+];
+
+/// A row's configuration, parsed from its flags and configured as a run does.
+#[cfg(test)]
+pub(crate) fn dashboard_row_configuration(row: &DashboardRow) -> GooseConfiguration {
+    let mut configuration = GooseConfiguration::parse_args_default(row.args)
+        .unwrap_or_else(|e| panic!("{}: {:?}", row.name, e));
+    configuration
+        .configure(&GooseDefaults::default())
+        .unwrap_or_else(|e| panic!("{}: {:?}", row.name, e));
+    configuration
 }
 
 /// Returns true if `host` is a loopback bind address for dashboard auth policy.
@@ -2456,8 +2827,8 @@ impl GooseConfiguration {
 }
 
 /// The seconds in time span option `option`, refused when the span is too long
-/// for a `usize` in milliseconds or has a digit of another script before a
-/// unit, naming which.
+/// for a `usize` in milliseconds, has a digit of another script before a unit,
+/// or is not a time span all the way through, naming which.
 pub(crate) fn timespan(option: &str, value: &str) -> Result<usize, GooseError> {
     util::timespan_seconds(value).map_err(|e| GooseError::InvalidOption {
         option: format!("`configuration.{option}`"),
@@ -2467,6 +2838,9 @@ pub(crate) fn timespan(option: &str, value: &str) -> Result<usize, GooseError> {
             util::SpanError::ForeignDigit => {
                 format!("`configuration.{option}` must use the ASCII digits 0 to 9.")
             }
+            util::SpanError::Invalid => format!(
+                "`configuration.{option}` must be whole seconds, or hours, minutes and seconds in that order, such as 90, 90s or 1h2m3s."
+            ),
         },
     })
 }
@@ -3116,7 +3490,26 @@ impl GooseConfiguration {
             ])
             .unwrap_or(false);
 
-        // Configure `no_websocket`.
+        // Configure `websocket`.
+        self.websocket = self
+            .get_value(vec![
+                // Use --websocket if set.
+                GooseValue {
+                    value: Some(self.websocket),
+                    filter: !self.websocket,
+                    message: "websocket",
+                },
+                // Use default if --websocket hasn't been set.
+                GooseValue {
+                    value: defaults.websocket,
+                    filter: defaults.websocket.is_none(),
+                    message: "",
+                },
+            ])
+            .unwrap_or(false);
+
+        // Configure `no_websocket`, which only warns now the WebSocket Controller is
+        // off by default.
         self.no_websocket = self
             .get_value(vec![
                 // Use --no-websocket if set.
@@ -3195,7 +3588,7 @@ impl GooseConfiguration {
             // Otherwise use the built in default.
             GooseValue {
                 value: Some(DEFAULT_CONTROLLER_HOST.to_string()),
-                filter: self.no_websocket,
+                filter: !self.websocket,
                 message: "",
             },
         ]);
@@ -3215,7 +3608,7 @@ impl GooseConfiguration {
             // Otherwise use the built in default.
             GooseValue {
                 value: Some(DEFAULT_WEBSOCKET_PORT),
-                filter: self.no_websocket,
+                filter: !self.websocket,
                 message: "",
             },
         ]);
@@ -3252,6 +3645,24 @@ impl GooseConfiguration {
                     value: defaults.dashboard_control,
                     filter: defaults.dashboard_control.is_none(),
                     message: "dashboard_control",
+                },
+            ])
+            .unwrap_or(false);
+
+        // Configure `dashboard_no_auth`.
+        self.dashboard_no_auth = self
+            .get_value(vec![
+                // Use --dashboard-no-auth if set.
+                GooseValue {
+                    value: Some(self.dashboard_no_auth),
+                    filter: !self.dashboard_no_auth,
+                    message: "dashboard_no_auth",
+                },
+                // Use GooseDefault if not already set.
+                GooseValue {
+                    value: defaults.dashboard_no_auth,
+                    filter: defaults.dashboard_no_auth.is_none(),
+                    message: "dashboard_no_auth",
                 },
             ])
             .unwrap_or(false);
@@ -3762,7 +4173,8 @@ impl GooseConfiguration {
 
     /// This configuration as a Controller's `config` and `config-json` show it:
     /// an output flag given without a path reads `(the run's folder)`, not
-    /// [`RUN_FOLDER`].
+    /// [`RUN_FOLDER`]. The dashboard auth token needs nothing here: its `Debug` and
+    /// its JSON never hold it.
     pub(crate) fn shown(&self) -> GooseConfiguration {
         let mut shown = self.clone();
         for log in [
@@ -3785,9 +4197,9 @@ impl GooseConfiguration {
 
     /// Whether the graph data is kept for the whole run, with Save report set
     /// to `save_report`: true when a report will be written at the run's end,
-    /// to a `--report-file` path or by Save report.
+    /// to a `--report-file` or `--pdf-print-html` path, or by Save report.
     pub(crate) fn keeps_full_graph(&self, save_report: bool) -> bool {
-        !self.report_paths().is_empty() || save_report
+        !self.report_paths().is_empty() || self.pdf_print_html().is_some() || save_report
     }
 
     /// Whether only the dashboard asks for a run's folder: no output flag given
@@ -3863,10 +4275,16 @@ impl GooseConfiguration {
         self.pdf_timeout.unwrap_or(DEFAULT_PDF_TIMEOUT)
     }
 
-    /// Whether per second graph data is recorded: for a `--report-file`, or the
-    /// dashboard's charts and its Save report.
+    /// Whether a report may be written: to a `--report-file` or
+    /// `--pdf-print-html` path, or by the dashboard's Save report.
+    pub(crate) fn writes_report(&self) -> bool {
+        !self.report_file.is_empty() || self.pdf_print_html().is_some() || self.dashboard
+    }
+
+    /// Whether per second graph data is recorded: for a report
+    /// ([`Self::writes_report`]), or the dashboard's charts.
     pub(crate) fn records_graph_data(&self) -> bool {
-        !self.report_file.is_empty() || self.dashboard
+        self.writes_report()
     }
 
     /// Whether response time histograms are kept for each second, for the
@@ -3949,13 +4367,13 @@ impl GooseConfiguration {
             }
         }
 
-        // If set, timeout must be a number of at least one millisecond.
+        // If set, timeout must be a number that rounds to at least one millisecond.
         if let Some(timeout) = self.timeout.as_ref() {
             if !timeout_millis(number("timeout", timeout)?).is_some_and(|ms| ms >= 1) {
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.timeout`".to_string(),
                     value: timeout.to_string(),
-                    detail: "`configuration.timeout` must be at least 0.001 (one millisecond)."
+                    detail: "`configuration.timeout` must round to at least one millisecond: 0.0005 or more."
                         .to_string(),
                 });
             }
@@ -4078,7 +4496,7 @@ impl GooseConfiguration {
             // The --no-reset-metrics option isn't compatible with --test-plan.
             if self.no_reset_metrics {
                 return Err(GooseError::InvalidOption {
-                    option: "`configuration.no_reset_metrics".to_string(),
+                    option: "`configuration.no_reset_metrics`".to_string(),
                     value: self.no_reset_metrics.to_string(),
                     detail: "`configuration.no_reset_metrics` can not be set with `configuration.test_plan` (metrics are not reset)."
                         .to_string(),
@@ -4098,20 +4516,37 @@ impl GooseConfiguration {
                             .to_string(),
                 });
             }
+            // A ramp down starts once the ramp up ends and stops users whatever
+            // iterations they have left, so neither --decrease-time nor
+            // --decrease-rate is compatible with --iterations.
+            if self.decrease_time_secs() > 0 {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.decrease_time`".to_string(),
+                    value: self.decrease_time_secs().to_string(),
+                    detail: "`configuration.decrease_time` can not be set with `configuration.iterations`.".to_string(),
+                });
+            }
+            if let Some(decrease_rate) = self.decrease_rate.as_ref() {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.decrease_rate`".to_string(),
+                    value: decrease_rate.to_string(),
+                    detail: "`configuration.decrease_rate` can not be set with `configuration.iterations`.".to_string(),
+                });
+            }
             // The --test-plan option isn't compatible with --iterations.
             if self.test_plan.is_some() {
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.iterations`".to_string(),
                     value: self.iterations().to_string(),
                     detail:
-                        "`configuration.iteratoins` can not be set with `configuration.test_plan`."
+                        "`configuration.iterations` can not be set with `configuration.test_plan`."
                             .to_string(),
                 });
             }
             // The --no-reset-metrics option isn't compatible with --iterations.
             if self.no_reset_metrics {
                 return Err(GooseError::InvalidOption {
-                    option: "`configuration.no_reset_metrics".to_string(),
+                    option: "`configuration.no_reset_metrics`".to_string(),
                     value: self.no_reset_metrics.to_string(),
                     detail: "`configuration.no_reset_metrics` can not be set with `configuration.iterations` (metrics are not reset)."
                         .to_string(),
@@ -4151,7 +4586,8 @@ impl GooseConfiguration {
         }
 
         // An `rps` rule the throttle keeps the run from reaching can never pass.
-        if let Some(throttle) = self.throttle_requests {
+        // A throttle of 0 is no throttle.
+        if let Some(throttle) = self.throttle_requests.filter(|&throttle| throttle > 0) {
             for threshold in &self.thresholds {
                 let Some((floor, inclusive)) = threshold.rate_floor() else {
                     continue;
@@ -4224,6 +4660,15 @@ impl GooseConfiguration {
                         "`configuration.report_file` can not be set with `configuration.no_metrics`."
                             .to_string(),
                 });
+            // Nor can the print ready HTML report.
+            } else if let Some(pdf_print_html) = self.pdf_print_html() {
+                return Err(GooseError::InvalidOption {
+                    option: "`configuration.pdf_print_html`".to_string(),
+                    value: pdf_print_html.to_string(),
+                    detail:
+                        "`configuration.pdf_print_html` can not be set with `configuration.no_metrics`."
+                            .to_string(),
+                });
             // Coordinated Omission Mitigation can't be enabled if metrics are disabled.
             } else if self.co_mitigation.as_ref().unwrap()
                 != &GooseCoordinatedOmissionMitigation::Disabled
@@ -4231,21 +4676,22 @@ impl GooseConfiguration {
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.co_mitigation`".to_string(),
                     value: format!("{:?}", self.co_mitigation.as_ref().unwrap()),
-                    detail: "`configuration.co_mitigation` can not be set with `configuration.no_metrircs`."
+                    detail: "`configuration.co_mitigation` can not be set with `configuration.no_metrics`."
                         .to_string(),
                 });
             }
         }
 
-        // A report is written at the end of the run to a --report-file path, or by
-        // Save report, which a bare --report-file or --dashboard turns on.
-        let has_report = !self.report_file.is_empty() || self.dashboard;
+        // A report is written at the end of the run to a --report-file or
+        // --pdf-print-html path, or by Save report, which a bare --report-file or
+        // --dashboard turns on.
+        let has_report = self.writes_report();
         if !has_report && self.no_granular_report {
             return Err(GooseError::InvalidOption {
                 option: "`configuration.no_granular_report`".to_string(),
                 value: true.to_string(),
                 detail:
-                    "`configuration.no_granular_report` (--no-granular-report) needs a report: add --report-file or --dashboard."
+                    "`configuration.no_granular_report` (--no-granular-report) needs a report: add --report-file, --pdf-print-html or --dashboard."
                         .to_string(),
             });
         }
@@ -4276,8 +4722,8 @@ impl GooseConfiguration {
             }
         }
 
-        // Graph data goes in a JSON report.
-        if self.report_graph_data && !has_report {
+        // Graph data goes in a JSON report, which --pdf-print-html does not write.
+        if self.report_graph_data && self.report_file.is_empty() && !self.dashboard {
             return Err(GooseError::InvalidOption {
                 option: "`configuration.report_graph_data`".to_string(),
                 value: true.to_string(),
@@ -4292,7 +4738,7 @@ impl GooseConfiguration {
                 return Err(GooseError::InvalidOption {
                     option: "`configuration.notes`".to_string(),
                     value: notes.to_string(),
-                    detail: "`configuration.notes` (--notes) would be stored nowhere: add --report-file or --dashboard."
+                    detail: "`configuration.notes` (--notes) would be stored nowhere: add --report-file, --pdf-print-html or --dashboard."
                         .to_string(),
                 });
             }
@@ -4327,12 +4773,25 @@ impl GooseConfiguration {
             }
         }
 
+        // The WebSocket Controller is on with --websocket and off without it, so
+        // --no-websocket says nothing, and with --websocket contradicts it.
+        if self.websocket && self.no_websocket {
+            return Err(GooseError::InvalidOption {
+                option: "`configuration.no_websocket`".to_string(),
+                value: true.to_string(),
+                detail: "`configuration.no_websocket` (--no-websocket) can't be used with `configuration.websocket` (--websocket): give one or the other".to_string(),
+            });
+        }
+        if let Some(warning) = self.no_websocket_warning() {
+            warn!("{warning}");
+        }
+
         // Can't disable autostart unless a Controller or dashboard control can start the test.
-        if self.no_autostart && self.no_telnet && self.no_websocket && !self.dashboard_control {
+        if self.no_autostart && self.no_telnet && !self.websocket && !self.dashboard_control {
             return Err(GooseError::InvalidOption {
                 option: "`configuration.no_autostart`".to_string(),
                 value: true.to_string(),
-                detail: "`configuration.no_autostart` requires at least one Controller or dashboard control be enabled"
+                detail: "`configuration.no_autostart` (--no-autostart) requires a Controller or dashboard control to start the test: leave the telnet Controller on, or add `configuration.websocket` (--websocket) or `configuration.dashboard_control` (--dashboard-control)"
                     .to_string(),
             });
         }
@@ -4372,7 +4831,7 @@ impl GooseConfiguration {
         // the Controllers' own log name the configured port.
         for (enabled, port, option) in [
             (!self.no_telnet, self.telnet_port(), "telnet_port"),
-            (!self.no_websocket, self.websocket_port(), "websocket_port"),
+            (self.websocket, self.websocket_port(), "websocket_port"),
         ] {
             if enabled && port == 0 {
                 return Err(GooseError::InvalidOption {
@@ -4406,6 +4865,9 @@ impl GooseConfiguration {
     /// `--dashboard-control` requires `--dashboard` (does not auto-enable) and a
     /// non-empty auth token even on loopback.
     ///
+    /// `--dashboard-no-auth` lifts both token rules, needs `--dashboard`, and
+    /// can't be given with a token.
+    ///
     /// If `--dashboard` is set but the crate was built without the `dashboard`
     /// feature, returns a compile-time feature error.
     pub(crate) fn validate_dashboard_config(&self) -> Result<(), GooseError> {
@@ -4415,6 +4877,15 @@ impl GooseConfiguration {
                 option: "`configuration.dashboard_control`".to_string(),
                 value: "true".to_string(),
                 detail: "`configuration.dashboard_control` (--dashboard-control) requires `configuration.dashboard` (--dashboard); control does not auto-enable the dashboard".to_string(),
+            });
+        }
+
+        // No auth requires --dashboard too: alone it would serve nothing.
+        if self.dashboard_no_auth && !self.dashboard {
+            return Err(GooseError::InvalidOption {
+                option: "`configuration.dashboard_no_auth`".to_string(),
+                value: "true".to_string(),
+                detail: "`configuration.dashboard_no_auth` (--dashboard-no-auth) requires `configuration.dashboard` (--dashboard); it does not enable the dashboard".to_string(),
             });
         }
 
@@ -4440,27 +4911,51 @@ impl GooseConfiguration {
             });
         }
 
-        // Control endpoints always require a configured auth token, even on loopback.
-        if self.dashboard_control && self.dashboard_auth_token().is_none() {
+        // A token and no token at once is a contradiction.
+        if self.dashboard_no_auth && self.dashboard_auth_token().is_some() {
+            return Err(GooseError::InvalidOption {
+                option: "`configuration.dashboard_no_auth`".to_string(),
+                value: "true".to_string(),
+                detail: "`configuration.dashboard_no_auth` (--dashboard-no-auth) can't be used with `configuration.dashboard_auth_token` (--dashboard-auth-token): give one or the other".to_string(),
+            });
+        }
+
+        // Without --dashboard-no-auth, control endpoints always require a
+        // configured auth token, even on loopback.
+        if self.dashboard_control
+            && !self.dashboard_no_auth
+            && self.dashboard_auth_token().is_none()
+        {
             return Err(GooseError::InvalidOption {
                 option: "`configuration.dashboard_control`".to_string(),
                 value: "true".to_string(),
-                detail: "`configuration.dashboard_control` (--dashboard-control) requires a non-empty `configuration.dashboard_auth_token` (--dashboard-auth-token), even on loopback".to_string(),
+                detail: "`configuration.dashboard_control` (--dashboard-control) requires a non-empty `configuration.dashboard_auth_token` (--dashboard-auth-token), even on loopback, unless `configuration.dashboard_no_auth` (--dashboard-no-auth) is set".to_string(),
             });
         }
 
         let host = self.dashboard_host();
-        if !is_loopback_bind(host) && self.dashboard_auth_token().is_none() {
+        if !is_loopback_bind(host)
+            && !self.dashboard_no_auth
+            && self.dashboard_auth_token().is_none()
+        {
             return Err(GooseError::InvalidOption {
                 option: "`configuration.dashboard_host`".to_string(),
                 value: host.to_string(),
                 detail: format!(
-                    "`configuration.dashboard` is enabled with non-loopback host `{host}`; set `configuration.dashboard_auth_token` (--dashboard-auth-token) when binding outside loopback"
+                    "`configuration.dashboard` is enabled with non-loopback host `{host}`; set `configuration.dashboard_auth_token` (--dashboard-auth-token) when binding outside loopback, or `configuration.dashboard_no_auth` (--dashboard-no-auth) to run without a token"
                 ),
             });
         }
 
         Ok(())
+    }
+
+    /// The warning for `--no-websocket`, which Goose 0.18 command lines give and
+    /// which now changes nothing.
+    pub(crate) fn no_websocket_warning(&self) -> Option<&'static str> {
+        self.no_websocket.then_some(
+            "--no-websocket is no longer needed: the WebSocket Controller is off unless --websocket is given",
+        )
     }
 
     /// Simplified PDF configuration validation.
@@ -4593,6 +5088,46 @@ impl GooseConfiguration {
 mod test {
     use super::*;
     use std::time::Duration;
+
+    /// Neither a configuration's JSON nor its `Debug`, plain or pretty, holds
+    /// the dashboard auth token: a set token reads `(set)`, and no token
+    /// still reads as none. A `GooseUser`, whose configuration is public, is
+    /// no way around it.
+    #[test]
+    fn output_never_holds_the_dashboard_auth_token() {
+        let token = "s3cret-token";
+        let configuration =
+            GooseConfiguration::parse_args_default(&["--dashboard-auth-token", token]).unwrap();
+        let user = crate::goose::GooseUser::single(
+            url::Url::parse("http://127.0.0.1/").unwrap(),
+            &configuration,
+        )
+        .unwrap();
+        for (path, text) in [
+            ("json", serde_json::to_string(&configuration).unwrap()),
+            ("debug", format!("{:?}", configuration)),
+            ("pretty debug", format!("{:#?}", configuration)),
+            (
+                "shown json",
+                serde_json::to_string(&configuration.shown()).unwrap(),
+            ),
+            ("shown debug", format!("{:#?}", configuration.shown())),
+            ("user debug", format!("{:?}", user)),
+        ] {
+            assert!(!text.contains(token), "{}: {}", path, text);
+            assert!(text.contains("(set)"), "{}: {}", path, text);
+        }
+        // The token Goose checks is still the real one.
+        assert_eq!(configuration.dashboard_auth_token(), Some(token));
+        assert_eq!(configuration.dashboard_auth_token.as_deref(), Some(token));
+
+        let unset = GooseConfiguration::parse_args_default::<&str>(&[]).unwrap();
+        assert_eq!(
+            serde_json::to_value(&unset).unwrap()["dashboard_auth_token"],
+            serde_json::Value::Null
+        );
+        assert!(format!("{:?}", unset).contains("dashboard_auth_token: None"));
+    }
 
     #[test]
     fn set_defaults() {
@@ -4847,6 +5382,34 @@ mod test {
         // Control with dashboard and token on non-loopback: ok.
         config.dashboard_host = Some("0.0.0.0".to_string());
         assert!(config.validate_dashboard_config().is_ok());
+    }
+
+    /// Every row of the dashboard matrix starts or is refused, a refusal
+    /// naming the options at fault.
+    #[test]
+    #[cfg(feature = "dashboard")]
+    fn dashboard_matrix_starts_or_names_the_refusal() {
+        let mut failed = Vec::new();
+        for row in DASHBOARD_ROWS {
+            let result = GooseConfiguration::parse_args_default(row.args).and_then(|mut c| {
+                c.configure(&GooseDefaults::default())?;
+                c.validate_dashboard_config()
+            });
+            match (row.refusal, result) {
+                (None, Ok(())) => {}
+                (None, Err(e)) => failed.push(format!("{} must start: {e:?}", row.name)),
+                (Some(_), Ok(())) => failed.push(format!("{} must be refused", row.name)),
+                (Some(needles), Err(GooseError::InvalidOption { detail, .. })) => {
+                    for needle in needles {
+                        if !detail.contains(needle) {
+                            failed.push(format!("{}: {needle:?} not in {detail:?}", row.name));
+                        }
+                    }
+                }
+                (Some(_), Err(e)) => failed.push(format!("{}: refused as {e:?}", row.name)),
+            }
+        }
+        assert!(failed.is_empty(), "{:#?}", failed);
     }
 
     #[test]
@@ -5439,6 +6002,42 @@ mod test {
         }
     }
 
+    /// A time span option, or a test plan step, that does not read as a time
+    /// span all the way through is refused, not read as the part before it.
+    #[test]
+    fn time_span_with_trailing_text_is_refused() {
+        for (flag, option) in [
+            ("--run-time", "run_time"),
+            ("--increase-time", "increase_time"),
+            ("--decrease-time", "decrease_time"),
+            ("--threshold-abort-delay", "threshold_abort_delay"),
+        ] {
+            for value in ["5 junk", "5s junk", "junk"] {
+                let mut config = GooseConfiguration::parse_args_default(&[flag, value]).unwrap();
+                match config.configure(&GooseDefaults::default()) {
+                    Err(GooseError::InvalidOption { detail, .. }) => assert_eq!(
+                        detail,
+                        format!(
+                            "`configuration.{}` must be whole seconds, or hours, minutes and seconds in that order, such as 90, 90s or 1h2m3s.",
+                            option
+                        ),
+                        "{} {}",
+                        flag,
+                        value
+                    ),
+                    other => panic!("{} {}: {:?}", flag, value, other),
+                }
+            }
+        }
+        for step in ["10,5 junk", "10,5s junk", "10,junk"] {
+            assert!(
+                crate::test_plan::TestPlan::parse(step).is_err(),
+                "{:?}",
+                step
+            );
+        }
+    }
+
     /// Serializes a configuration so two can be compared field by field.
     fn as_json(configuration: &GooseConfiguration) -> serde_json::Value {
         serde_json::to_value(configuration).unwrap()
@@ -5529,6 +6128,7 @@ mod test {
             "127.0.0.2",
             "--telnet-port",
             "6000",
+            "--websocket",
             "--no-websocket",
             "--websocket-host",
             "127.0.0.3",
@@ -5619,6 +6219,7 @@ mod test {
         assert!(c.no_telnet);
         assert_eq!(c.telnet_host.as_deref(), Some("127.0.0.2"));
         assert_eq!(c.telnet_port, Some(6000));
+        assert!(c.websocket);
         assert!(c.no_websocket);
         assert_eq!(c.websocket_host.as_deref(), Some("127.0.0.3"));
         assert_eq!(c.websocket_port, Some(6001));
@@ -5807,6 +6408,95 @@ mod test {
         }
     }
 
+    /// Each refusal says what is wrong: the type a default takes, the timeout
+    /// rule the code applies, a negative number, the log formats, and the names
+    /// of the options involved; and the help names what Goose is.
+    #[test]
+    fn messages_name_the_rule() {
+        let detail = |result: Result<GooseConfiguration, GooseError>| match result {
+            Err(GooseError::InvalidOption { option, detail, .. }) => (option, detail),
+            other => panic!("{:?}", other),
+        };
+
+        // RunningMetrics takes a usize.
+        match GooseAttack::initialize_with_config(GooseConfiguration::default())
+            .unwrap()
+            .set_default(GooseDefault::RunningMetrics, "x")
+        {
+            Err(GooseError::InvalidOption { detail, .. }) => assert_eq!(
+                detail,
+                "set_default(GooseDefault::RunningMetrics, x) expected usize value, received &str"
+            ),
+            Err(other) => panic!("{:?}", other),
+            Ok(_) => panic!("RunningMetrics took a &str"),
+        }
+
+        // A timeout rounds to the millisecond, so 0.0005 is the least.
+        assert!(validated(&["--timeout", "0.0005"], &Default::default()).is_ok());
+        assert_eq!(
+            detail(validated(&["--timeout", "0.0004"], &Default::default())).1,
+            "`configuration.timeout` must round to at least one millisecond: 0.0005 or more."
+        );
+
+        // A negative number is not a value beginning with a hyphen.
+        for args in [
+            &["--users", "-1"][..],
+            &["-u", "-1"],
+            &["--iterations", "-2"],
+        ] {
+            let (_, detail) = detail(GooseConfiguration::parse_args_default(args));
+            assert!(
+                detail.ends_with(&format!("; tip: {} takes no negative number", args[0])),
+                "{:?}: {}",
+                args,
+                detail
+            );
+            assert!(!detail.contains("goes after ="), "{:?}: {}", args, detail);
+        }
+
+        // An option that takes text takes a negative number as its value.
+        let notes = GooseConfiguration::parse_args_default(&["--notes", "-20"]).unwrap();
+        assert_eq!(notes.notes.as_deref(), Some("-20"));
+
+        // Every log format the parser accepts is named.
+        match "x".parse::<GooseLogFormat>() {
+            Err(GooseError::InvalidOption { detail, .. }) => assert_eq!(
+                detail,
+                "Invalid log_format, expected: csv, json, raw, or pretty"
+            ),
+            other => panic!("{:?}", other),
+        }
+
+        // The options a refusal names are spelled as they are.
+        let plan = ["--test-plan", "1,1s"];
+        assert_eq!(
+            detail(validated(
+                &[&["--iterations", "1"][..], &plan].concat(),
+                &Default::default()
+            ))
+            .1,
+            "`configuration.iterations` can not be set with `configuration.test_plan`."
+        );
+        assert_eq!(
+            detail(validated(
+                &["--no-metrics", "--co-mitigation", "average"],
+                &Default::default()
+            ))
+            .1,
+            "`configuration.co_mitigation` can not be set with `configuration.no_metrics`."
+        );
+        for other in [&plan[..], &["--iterations", "1"]] {
+            let (option, _) = detail(validated(
+                &[&["--no-reset-metrics"][..], other].concat(),
+                &Default::default(),
+            ));
+            assert_eq!(option, "`configuration.no_reset_metrics`");
+        }
+
+        // 0.19 has no distributed mode.
+        assert!(help_for("--help", 80).starts_with(&format!("{}\n", HELP_ABOUT)));
+    }
+
     /// `--report-file` and the six log options take an optional value: given without
     /// a path they write into the run's folder, by short and long name alike, and
     /// `""` still means no file.
@@ -5977,7 +6667,7 @@ mod test {
                 &["--scenarios", "a-b"],
                 "--scenarios <LIST>",
                 "a-b",
-                "invalid value 'a-b' for '--scenarios <LIST>': 'a-b' is not a scenario name: use letters and digits, with * as a wildcard; --scenarios-list prints the names.",
+                "invalid value 'a-b' for '--scenarios <LIST>': 'a-b' is not a scenario name: use letters, digits and _, with * as a wildcard; --scenarios-list prints the names.",
             ),
             (&["-h"], "-h", "", "help was requested"),
             (&["--help"], "--help", "", "help was requested"),
@@ -6067,9 +6757,39 @@ mod test {
         }
     }
 
+    /// A version without its pre-release suffix or build metadata: the release a
+    /// development build becomes.
+    fn release_version(version: &str) -> &str {
+        version.split(['-', '+']).next().unwrap_or(version)
+    }
+
+    #[test]
+    fn release_version_drops_the_suffix() {
+        assert_eq!(release_version("0.19.0-dev"), "0.19.0");
+        assert_eq!(release_version("0.19.0"), "0.19.0");
+        assert_eq!(release_version("1.0.0-rc.1"), "1.0.0");
+        assert_eq!(release_version("1.0.0+build.5"), "1.0.0");
+        assert_eq!(release_version("1.0.0-beta-2+build"), "1.0.0");
+    }
+
+    /// Help as the book shows it: the version on its first line is the release, so a
+    /// development build's help reads as the release will print it.
+    #[cfg(feature = "pdf-reports")]
+    fn help_for_the_book(flag: &str) -> String {
+        let help = help_for(flag, 80);
+        let version = env!("CARGO_PKG_VERSION");
+        let release = HELP_ABOUT.replacen(version, release_version(version), 1);
+        let rest = help
+            .strip_prefix(HELP_ABOUT)
+            .unwrap_or_else(|| panic!("{} does not start with {:?}", flag, HELP_ABOUT));
+        format!("{}{}", release, rest)
+    }
+
     /// The book's runtime options page includes the `-h` and `--help` output from
     /// these files. They are rendered with the `pdf-reports` feature, so they always
-    /// list the PDF options, and CI's `--all-features` run checks them.
+    /// list the PDF options, and CI's `--all-features` run checks them. Their first
+    /// line names the release, not the development version, so a version bump fails
+    /// this until they are regenerated.
     #[cfg(feature = "pdf-reports")]
     #[test]
     fn help_matches_the_book() {
@@ -6081,7 +6801,7 @@ mod test {
             ("runtime-options-short.txt", "-h"),
             ("runtime-options-long.txt", "--help"),
         ] {
-            let help = help_for(flag, 80);
+            let help = help_for_the_book(flag);
             let path = dir.join(file);
             if update {
                 std::fs::write(&path, &help).unwrap();
@@ -6108,7 +6828,11 @@ mod test {
                 assert!(line.chars().count() <= 80, "{}: {:?}", flag, line);
             }
         }
-        for arg in command("loadtest", 80).get_arguments() {
+        // A hidden option, such as `--no-websocket`, is in neither help.
+        for arg in command("loadtest", 80)
+            .get_arguments()
+            .filter(|arg| !arg.is_hide_set())
+        {
             let summary = arg
                 .get_help()
                 .expect("every option has a summary")
@@ -6330,7 +7054,7 @@ mod test {
                     assert_eq!(option, "`configuration.timeout`");
                     assert_eq!(
                         detail,
-                        "`configuration.timeout` must be at least 0.001 (one millisecond)."
+                        "`configuration.timeout` must round to at least one millisecond: 0.0005 or more."
                     );
                 }
                 other => panic!("{}: {:?}", timeout, other),
@@ -6388,7 +7112,10 @@ mod test {
     /// `--websocket-port 0` is refused, not replaced with port 5117.
     #[test]
     fn explicit_websocket_port_zero_is_refused() {
-        let config = resolve(&["--websocket-port", "0"], &GooseDefaults::default());
+        let config = resolve(
+            &["--websocket", "--websocket-port", "0"],
+            &GooseDefaults::default(),
+        );
         assert_eq!(refused_option(&config), "`configuration.websocket_port`");
     }
 
@@ -6578,6 +7305,118 @@ mod test {
         set(attack).unwrap().defaults.clone()
     }
 
+    /// The WebSocket Controller is off unless `--websocket` or
+    /// `GooseDefault::WebSocket` turns it on, and only then gets its built in
+    /// host and port.
+    #[test]
+    fn websocket_controller_is_off_unless_asked_for() {
+        let off = validated(&[], &GooseDefaults::default()).unwrap();
+        assert!(!off.websocket);
+        assert_eq!(off.websocket_host, None);
+        assert_eq!(off.websocket_port, None);
+        assert!(off.no_websocket_warning().is_none());
+
+        let defaults = defaults_from(|attack| attack.set_default(GooseDefault::WebSocket, true));
+        for (args, defaults) in [
+            (&["--websocket"][..], GooseDefaults::default()),
+            (&[][..], defaults),
+        ] {
+            let on = validated(args, &defaults).unwrap();
+            assert!(on.websocket, "{:?}", args);
+            assert_eq!(on.websocket_host.as_deref(), Some(DEFAULT_CONTROLLER_HOST));
+            assert_eq!(on.websocket_port, Some(DEFAULT_WEBSOCKET_PORT));
+            assert!(on.no_websocket_warning().is_none());
+        }
+    }
+
+    /// With no host given both Controllers listen on 127.0.0.1; a host from
+    /// the command line or a `GooseDefault`, unspecified ones included, is
+    /// kept.
+    #[test]
+    fn controllers_listen_on_loopback_unless_a_host_is_given() {
+        assert_eq!(GooseConfiguration::default().telnet_host(), "127.0.0.1");
+        assert_eq!(GooseConfiguration::default().websocket_host(), "127.0.0.1");
+        let c = validated(&["--websocket"], &GooseDefaults::default()).unwrap();
+        assert_eq!(c.telnet_host.as_deref(), Some("127.0.0.1"));
+        assert_eq!(c.websocket_host.as_deref(), Some("127.0.0.1"));
+
+        let c = validated(
+            &[
+                "--websocket",
+                "--telnet-host",
+                "0.0.0.0",
+                "--websocket-host",
+                "::",
+            ],
+            &GooseDefaults::default(),
+        )
+        .unwrap();
+        assert_eq!(c.telnet_host.as_deref(), Some("0.0.0.0"));
+        assert_eq!(c.websocket_host.as_deref(), Some("::"));
+
+        let defaults = defaults_from(|attack| {
+            attack
+                .set_default(GooseDefault::TelnetHost, "0.0.0.0")?
+                .set_default(GooseDefault::WebSocketHost, "10.1.2.3")
+        });
+        let c = validated(&["--websocket"], &defaults).unwrap();
+        assert_eq!(c.telnet_host.as_deref(), Some("0.0.0.0"));
+        assert_eq!(c.websocket_host.as_deref(), Some("10.1.2.3"));
+    }
+
+    /// `--no-websocket` and `GooseDefault::NoWebSocket`, from Goose 0.18, still
+    /// parse and leave the WebSocket Controller off, with a warning.
+    #[test]
+    fn no_websocket_still_parses_and_warns() {
+        let defaults = defaults_from(|attack| attack.set_default(GooseDefault::NoWebSocket, true));
+        for (args, defaults) in [
+            (&["--no-websocket"][..], GooseDefaults::default()),
+            (&[][..], defaults),
+        ] {
+            let configuration = validated(args, &defaults).unwrap();
+            assert!(!configuration.websocket, "{:?}", args);
+            let warning = configuration.no_websocket_warning().unwrap();
+            assert!(warning.contains("--websocket"), "{}", warning);
+        }
+    }
+
+    /// Turning the WebSocket Controller on and off at once is refused, from the
+    /// command line or from defaults.
+    #[test]
+    fn websocket_and_no_websocket_conflict() {
+        let websocket = defaults_from(|attack| attack.set_default(GooseDefault::WebSocket, true));
+        let no_websocket =
+            defaults_from(|attack| attack.set_default(GooseDefault::NoWebSocket, true));
+        for (args, defaults) in [
+            (
+                &["--websocket", "--no-websocket"][..],
+                GooseDefaults::default(),
+            ),
+            (&["--no-websocket"][..], websocket),
+            (&["--websocket"][..], no_websocket),
+        ] {
+            let detail = refused_detail(validated(args, &defaults));
+            assert!(
+                detail.contains("--no-websocket") && detail.contains("--websocket"),
+                "{:?}: {}",
+                args,
+                detail
+            );
+        }
+    }
+
+    /// `--no-autostart` needs something to start the test; with telnet off,
+    /// the refusal names `--websocket`, which is now off by default.
+    #[test]
+    fn no_autostart_without_a_controller_names_websocket() {
+        let defaults = GooseDefaults::default();
+        let detail = refused_detail(validated(&["--no-autostart", "--no-telnet"], &defaults));
+        assert!(detail.contains("--websocket"), "{}", detail);
+        assert!(detail.contains("--dashboard-control"), "{}", detail);
+        validated(&["--no-autostart", "--no-telnet", "--websocket"], &defaults).unwrap();
+        validated(&["--no-autostart"], &defaults).unwrap();
+    }
+
     #[test]
     fn abort_delay_parses_like_run_time() {
         for (delay, secs) in [
@@ -6713,6 +7552,60 @@ mod test {
             Err(other) => panic!("{:?}", other),
             Ok(_) => panic!("p95 was taken"),
         }
+    }
+
+    /// `--pdf-print-html` is a report: the notes and `--no-granular-report`
+    /// apply to it, `--no-metrics` refuses it, and it writes no JSON for
+    /// `--report-graph-data`.
+    #[test]
+    fn pdf_print_html_is_a_report() {
+        let print = ["--pdf-print-html", "print.html"];
+        for extra in [&["--notes", "a note"][..], &["--no-granular-report"]] {
+            assert!(
+                validated(&[&print[..], extra].concat(), &Default::default()).is_ok(),
+                "{:?}",
+                extra
+            );
+        }
+        assert_eq!(
+            refused_detail(validated(
+                &[&print[..], &["--no-metrics"]].concat(),
+                &Default::default()
+            )),
+            "`configuration.pdf_print_html` can not be set with `configuration.no_metrics`."
+        );
+        assert!(refused_detail(validated(
+            &[&print[..], &["--report-graph-data"]].concat(),
+            &Default::default()
+        ))
+        .contains("needs a report"));
+    }
+
+    /// `--throttle-requests 0` is no throttle, so it leaves every `rps` rule
+    /// reachable, from the command line and in code; a throttle still refuses
+    /// the rules above it.
+    #[test]
+    fn throttle_of_zero_refuses_no_rps_rule() {
+        assert!(validated(
+            &["--throttle-requests", "0", "--threshold", "rps>=1000"],
+            &Default::default()
+        )
+        .is_ok());
+        let defaults = defaults_from(|attack| {
+            attack
+                .set_default(GooseDefault::ThrottleRequests, 0)?
+                .set_default(GooseDefault::Threshold, "rps>=1000")
+        });
+        assert!(validated(&[], &defaults).is_ok());
+        let refused = refused_detail(validated(
+            &["--throttle-requests", "100", "--threshold", "rps>=200"],
+            &Default::default(),
+        ));
+        assert!(
+            refused.contains("`configuration.throttle_requests`"),
+            "{}",
+            refused
+        );
     }
 
     /// A rule that can never pass is refused before any user starts, from the

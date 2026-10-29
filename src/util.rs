@@ -14,12 +14,13 @@ use crate::{is_killswitch_triggered, reset_killswitch, trigger_killswitch, Goose
 ///
 /// Can be specified as an integer, indicating seconds. Or can use integers
 /// together with one or more of "h", "m", and "s", in that order, indicating
-/// "hours", "minutes", and "seconds".
+/// "hours", "minutes", and "seconds", in either case.
 ///
 /// Valid formats include: 20, 20s, 3m, 2h, 1h20m, 3h30m10s, etc.
 ///
-/// Returns `None` when the span is too long: a number does not fit in a
-/// `usize`, or the span in milliseconds does not.
+/// Returns `None` when the whole string is not such a span, or the span is
+/// too long: a number does not fit in a `usize`, or the span in milliseconds
+/// does not.
 ///
 /// # Example
 /// ```rust
@@ -31,8 +32,9 @@ use crate::{is_killswitch_triggered, reset_killswitch, trigger_killswitch, Goose
 /// // 45 seconds is 45 seconds.
 /// assert_eq!(util::parse_timespan("45"), Some(45));
 ///
-/// // Invalid value is 0 seconds.
-/// assert_eq!(util::parse_timespan("foo"), Some(0));
+/// // Anything else, such as text after the span, is an error.
+/// assert_eq!(util::parse_timespan("foo"), None);
+/// assert_eq!(util::parse_timespan("5s foo"), None);
 ///
 /// // Too long, or a digit of another script before a unit, is an error.
 /// assert_eq!(util::parse_timespan("99999999999999999999h"), None);
@@ -49,11 +51,13 @@ pub(crate) enum SpanError {
     TooLong,
     /// A digit of another script stands before a unit.
     ForeignDigit,
+    /// The string is not a time span all the way through.
+    Invalid,
 }
 
 lazy_static! {
     static ref TIMESPAN: Regex =
-        Regex::new(r"((?P<hours>\d+?)h)?((?P<minutes>\d+?)m)?((?P<seconds>\d+?)s)?").unwrap();
+        Regex::new(r"(?i)^((?P<hours>\d+)h)?((?P<minutes>\d+)m)?((?P<seconds>\d+)s)?$").unwrap();
 }
 
 /// The seconds in a time span, as [`parse_timespan`] reads it, or why it is
@@ -71,15 +75,14 @@ pub(crate) fn timespan_seconds(time_str: &str) -> Result<usize, SpanError> {
         }
         // Otherwise use a regex to extract hours, minutes and seconds from string.
         Err(_) => {
-            let time_matches = TIMESPAN.captures(time_str);
-            let part =
-                |name: &str, unit: usize| match time_matches.as_ref().and_then(|m| m.name(name)) {
-                    Some(n) => usize::from_str(n.as_str())
-                        .map_err(|e| cause(&e))?
-                        .checked_mul(unit)
-                        .ok_or(SpanError::TooLong),
-                    None => Ok(0),
-                };
+            let time_matches = TIMESPAN.captures(time_str).ok_or(SpanError::Invalid)?;
+            let part = |name: &str, unit: usize| match time_matches.name(name) {
+                Some(n) => usize::from_str(n.as_str())
+                    .map_err(|e| cause(&e))?
+                    .checked_mul(unit)
+                    .ok_or(SpanError::TooLong),
+                None => Ok(0),
+            };
             part("hours", 3600)?
                 .checked_add(part("minutes", 60)?)
                 .ok_or(SpanError::TooLong)?
@@ -482,6 +485,15 @@ pub(crate) fn setup_ctrlc_handler() {
     }
 }
 
+/// Print a warning that must be seen: straight to stderr between two rules,
+/// so neither `-q` nor the log level hides it, and to the Goose log at warn
+/// level on one line after `tag`.
+pub(crate) fn warning_block(tag: &str, text: &str) {
+    let rule = "=".repeat(78);
+    eprintln!("{rule}\n{text}\n{rule}");
+    warn!("{tag}: {}", text.replace('\n', " "));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -489,7 +501,7 @@ mod tests {
     #[test]
     fn timespan() {
         assert_eq!(parse_timespan("0"), Some(0));
-        assert_eq!(parse_timespan("foo"), Some(0));
+        assert_eq!(parse_timespan("foo"), None);
         assert_eq!(parse_timespan("1"), Some(1));
         assert_eq!(parse_timespan("1s"), Some(1));
         assert_eq!(parse_timespan("1m"), Some(60));
@@ -497,30 +509,34 @@ mod tests {
         assert_eq!(parse_timespan("1m1s"), Some(61));
         assert_eq!(parse_timespan("10m"), Some(600));
         assert_eq!(parse_timespan("10m5s"), Some(605));
-        assert_eq!(parse_timespan("15mins"), Some(900));
+        assert_eq!(parse_timespan("15mins"), None);
         assert_eq!(parse_timespan("60m"), Some(3600));
         assert_eq!(parse_timespan("1h"), Some(3600));
         assert_eq!(parse_timespan("1h15s"), Some(3615));
         assert_eq!(parse_timespan("1h5m"), Some(3900));
         assert_eq!(parse_timespan("1h5m13s"), Some(3913));
-        assert_eq!(parse_timespan("2h3min"), Some(7380));
+        assert_eq!(parse_timespan("2h3min"), None);
         assert_eq!(parse_timespan("3h3m"), Some(10980));
         assert_eq!(parse_timespan("3h3m5s"), Some(10985));
-        assert_eq!(parse_timespan("5hours"), Some(18000));
+        assert_eq!(parse_timespan("5hours"), None);
         assert_eq!(parse_timespan("450m"), Some(27000));
         assert_eq!(parse_timespan("24h"), Some(86400));
         assert_eq!(parse_timespan("88h88m88s"), Some(322168));
-        assert_eq!(parse_timespan("100hourblah"), Some(360000));
+        assert_eq!(parse_timespan("100hourblah"), None);
         // A digit of another script matches `\d` but is no `usize` digit: an
-        // error before a unit, where main panicked, otherwise no number at all,
-        // as on main.
+        // error before a unit, where main panicked, and without one, not a
+        // span.
+        assert!(matches!(
+            timespan_seconds("١h"),
+            Err(SpanError::ForeignDigit)
+        ));
         assert_eq!(parse_timespan("١h"), None);
         assert_eq!(parse_timespan("1h١m"), None);
-        assert_eq!(parse_timespan("١"), Some(0));
-        assert_eq!(parse_timespan("x١"), Some(0));
-        assert_eq!(parse_timespan("1h2m٣"), Some(3720));
-        // Other numeric characters are not digits: `\d` skips them, as on main.
-        assert_eq!(parse_timespan("2h²"), Some(7200));
+        assert_eq!(parse_timespan("١"), None);
+        assert_eq!(parse_timespan("x١"), None);
+        assert_eq!(parse_timespan("1h2m٣"), None);
+        // Other numeric characters are not digits.
+        assert_eq!(parse_timespan("2h²"), None);
         // Parts that each fit but overflow when added, and seconds too many
         // for a `usize`.
         assert_eq!(parse_timespan("5124095576030431h100s"), None);
@@ -530,6 +546,28 @@ mod tests {
         let longest = usize::MAX / 1_000;
         assert_eq!(parse_timespan(&longest.to_string()), Some(longest));
         assert_eq!(parse_timespan(&(longest + 1).to_string()), None);
+    }
+
+    #[test]
+    fn timespan_is_refused_unless_it_all_reads_as_one() {
+        for refused in ["5 junk", "5s junk", "junk", " 5s", "5s ", "1m1h"] {
+            assert!(
+                matches!(timespan_seconds(refused), Err(SpanError::Invalid)),
+                "{:?}",
+                refused
+            );
+            assert_eq!(parse_timespan(refused), None, "{:?}", refused);
+        }
+        // Units in either case, as the Controllers read them.
+        for (span, seconds) in [
+            ("5", 5),
+            ("5s", 5),
+            ("1h2m3s", 3_723),
+            ("2m", 120),
+            ("1H2M3S", 3_723),
+        ] {
+            assert_eq!(parse_timespan(span), Some(seconds), "{:?}", span);
+        }
     }
 
     #[test]

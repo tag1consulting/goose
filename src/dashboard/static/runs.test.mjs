@@ -321,11 +321,9 @@ test("the closed banner says Goose has exited", async () => {
 });
 
 test("Quit shows only with control on while idle and sends a Bearer POST", async () => {
+  // Read-only, the card shows its notice and hides Quit with the other buttons.
   const observe = await openPage("/?token=" + TOKEN, FRESH, TOKEN);
-  assert.equal(
-    observe.window.document.getElementById("control-panel").classList.contains("hidden"),
-    true
-  );
+  assert.equal(observe.window.document.getElementById("ctrl-quit").parentElement.hidden, true);
 
   const running = await openPage("/?token=" + TOKEN, FRESH, TOKEN, {
     controlEnabled: true,

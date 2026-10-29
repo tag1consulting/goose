@@ -28,9 +28,10 @@
     - [Debug Log](logging/debug.md)
 
 - [Controllers](controller/overview.md)
+    - [Live Dashboard](controller/dashboard.md)
+        - [Dashboard Reference](controller/dashboard-reference.md)
     - [Telnet Controller](controller/telnet.md)
     - [WebSocket Controller](controller/websocket.md)
-    - [Live Dashboard](controller/dashboard.md)
 
 - [Gaggle: Distributed Load Test](gaggle/overview.md)
     - [Manager](gaggle/manager.md)
@@ -47,6 +48,7 @@
     - [Defaults](config/defaults.md)
     - [Scheduling Scenarios And Transactions](config/scheduler.md)
     - [Proxy](config/proxy.md)
+    - [Cookies](config/cookie.md)
 
 - [Examples](example/overview.md)
     - [Simple](example/simple.md)
@@ -57,3 +59,5 @@
     - [TCP Load Test](example/tcp.md)
     - [Drupal Memcache](example/drupal-memcache.md)
     - [Umami](example/umami.md)
+
+- [Upgrading From 0.18](getting-started/upgrading.md)

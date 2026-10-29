@@ -172,9 +172,11 @@ function deleteReport(name: string): void {
   ) {
     return;
   }
+  // JSON content type: without a token, the server refuses a Delete
+  // without one as a cross site request.
   fetch("/api/v1/reports/" + encodeURIComponent(name), {
     method: "DELETE",
-    headers: authHeaders(),
+    headers: { "Content-Type": "application/json", ...authHeaders() },
   })
     .then(
       (res) => {

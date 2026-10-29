@@ -1,0 +1,973 @@
+{
+  "defaults": {
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "scale": 2,
+    "colorScheme": "light",
+    "locale": "en-US"
+  },
+  "runs": {
+    "control": {
+      "example": "umami",
+      "features": [
+        "dashboard"
+      ],
+      "target": "${GOOSE_SHOTS_UMAMI}",
+      "prelude": [
+        [
+          "--report-file",
+          "--notes",
+          "25 users",
+          "-u",
+          "25",
+          "-r",
+          "5",
+          "-t",
+          "60s",
+          "-q"
+        ],
+        [
+          "--report-file",
+          "--notes",
+          "50 users",
+          "-u",
+          "50",
+          "-r",
+          "5",
+          "-t",
+          "60s",
+          "-q"
+        ]
+      ],
+      "flags": [
+        "--dashboard",
+        "--dashboard-control",
+        "--dashboard-no-auth",
+        "-u",
+        "100",
+        "-r",
+        "1",
+        "--no-reset-metrics",
+        "-t",
+        "10m",
+        "--notes",
+        "100, then 150 users",
+        "-q"
+      ],
+      "dashboard": "http://127.0.0.1:5118",
+      "events": [
+        {
+          "name": "raise users to 150",
+          "at": 120,
+          "actions": [
+            {
+              "do": "fill",
+              "selector": "#ctrl-target",
+              "value": "150"
+            },
+            {
+              "do": "click",
+              "selector": "#ctrl-apply"
+            }
+          ]
+        },
+        {
+          "name": "stop and wait for Idle",
+          "at": 215,
+          "actions": [
+            {
+              "do": "click",
+              "selector": "#ctrl-stop"
+            },
+            {
+              "do": "waitFor",
+              "selector": "#phase-badge",
+              "text": "^(idle|IDLE)$"
+            },
+            {
+              "do": "wait",
+              "seconds": 3
+            }
+          ]
+        }
+      ]
+    },
+    "read-only": {
+      "example": "umami",
+      "features": [
+        "dashboard"
+      ],
+      "target": "${GOOSE_SHOTS_UMAMI}",
+      "flags": [
+        "--dashboard",
+        "-u",
+        "20",
+        "-r",
+        "5",
+        "-t",
+        "3m",
+        "-q"
+      ],
+      "dashboard": "http://127.0.0.1:5118"
+    },
+    "errors": {
+      "example": "umami",
+      "features": [
+        "dashboard"
+      ],
+      "target": "${GOOSE_SHOTS_UMAMI}",
+      "env": {
+        "ADMIN_PASSWORD": "not-the-password"
+      },
+      "flags": [
+        "--dashboard",
+        "-u",
+        "50",
+        "-r",
+        "5",
+        "-t",
+        "3m",
+        "--no-reset-metrics",
+        "-q"
+      ],
+      "dashboard": "http://127.0.0.1:5118",
+      "allowFailures": true
+    },
+    "test-plan": {
+      "example": "umami",
+      "features": [
+        "dashboard"
+      ],
+      "target": "${GOOSE_SHOTS_UMAMI}",
+      "flags": [
+        "--dashboard",
+        "--test-plan",
+        "20,20s;20,40s;60,20s;60,40s;20,20s;20,60s;0,0s",
+        "-q"
+      ],
+      "dashboard": "http://127.0.0.1:5118"
+    },
+    "front-door": {
+      "example": "umami",
+      "features": [
+        "dashboard"
+      ],
+      "target": "${GOOSE_SHOTS_UMAMI}",
+      "flags": [
+        "--dashboard",
+        "-u",
+        "50",
+        "-r",
+        "1",
+        "--no-reset-metrics",
+        "-t",
+        "3m",
+        "-q"
+      ]
+    },
+    "report": {
+      "example": "umami",
+      "features": [
+        "dashboard"
+      ],
+      "target": "${GOOSE_SHOTS_UMAMI}",
+      "flags": [
+        "--dashboard",
+        "--dashboard-control",
+        "--dashboard-no-auth",
+        "--report-file",
+        "-u",
+        "50",
+        "-r",
+        "1",
+        "--no-reset-metrics",
+        "-t",
+        "2m",
+        "-q"
+      ]
+    },
+    "example-simple": {
+      "example": "simple",
+      "features": [
+        "dashboard"
+      ],
+      "target": "${GOOSE_SHOTS_HTTP}",
+      "flags": [
+        "-u",
+        "1024",
+        "-r",
+        "64",
+        "-t",
+        "3m",
+        "--no-reset-metrics",
+        "--dashboard",
+        "-q"
+      ]
+    },
+    "example-closure": {
+      "example": "closure",
+      "features": [
+        "dashboard"
+      ],
+      "target": "${GOOSE_SHOTS_HTTP}",
+      "flags": [
+        "-u",
+        "200",
+        "-r",
+        "50",
+        "-t",
+        "3m",
+        "--no-reset-metrics",
+        "--dashboard",
+        "-q"
+      ]
+    },
+    "example-session": {
+      "example": "session",
+      "features": [
+        "dashboard"
+      ],
+      "target": "${GOOSE_SHOTS_SESSION}",
+      "flags": [
+        "-u",
+        "100",
+        "-r",
+        "20",
+        "-t",
+        "2m",
+        "--no-reset-metrics",
+        "--report-file",
+        "--dashboard",
+        "-q"
+      ]
+    },
+    "example-basic-auth": {
+      "example": "basic_auth",
+      "features": [
+        "dashboard"
+      ],
+      "target": "${GOOSE_SHOTS_HTTP}",
+      "flags": [
+        "-u",
+        "60",
+        "-r",
+        "20",
+        "-t",
+        "2m",
+        "--no-reset-metrics",
+        "--report-file",
+        "--dashboard",
+        "-q"
+      ]
+    },
+    "example-graphql": {
+      "example": "graphql_loadtest",
+      "features": [
+        "dashboard"
+      ],
+      "target": "${GOOSE_SHOTS_GRAPHQL}",
+      "flags": [
+        "-u",
+        "5",
+        "-r",
+        "5",
+        "-t",
+        "3m",
+        "--no-reset-metrics",
+        "--dashboard",
+        "-q"
+      ]
+    },
+    "example-tcp": {
+      "example": "tcp_loadtest",
+      "features": [
+        "dashboard"
+      ],
+      "target": "${GOOSE_SHOTS_TCP}",
+      "flags": [
+        "-u",
+        "10",
+        "-r",
+        "10",
+        "-t",
+        "3m",
+        "--no-reset-metrics",
+        "--dashboard",
+        "-q"
+      ]
+    },
+    "example-umami": {
+      "example": "umami",
+      "features": [
+        "dashboard"
+      ],
+      "target": "${GOOSE_SHOTS_UMAMI}",
+      "flags": [
+        "-u",
+        "50",
+        "-r",
+        "5",
+        "-t",
+        "3m",
+        "--no-reset-metrics",
+        "--dashboard",
+        "-q"
+      ]
+    },
+    "metrics": {
+      "example": "umami",
+      "features": [
+        "dashboard",
+        "pdf-reports"
+      ],
+      "target": "${GOOSE_SHOTS_UMAMI}",
+      "flags": [
+        "--dashboard",
+        "-u",
+        "50",
+        "-r",
+        "5",
+        "-t",
+        "3m",
+        "--report-file",
+        "report.pdf",
+        "--report-file",
+        "report.html",
+        "--report-file",
+        "report.md",
+        "--report-file",
+        "report.json",
+        "--dashboard-port",
+        "5128",
+        "--telnet-port",
+        "5126"
+      ],
+      "dashboard": "http://127.0.0.1:5128"
+    },
+    "co-average": {
+      "example": "graphql_loadtest",
+      "features": [
+        "dashboard"
+      ],
+      "target": "http://127.0.0.1:18900",
+      "server": {
+        "command": "${GOOSE_SHOTS_STALL_SERVER}",
+        "args": [
+          "--port",
+          "18900",
+          "--every",
+          "1000",
+          "--stall-ms",
+          "1000",
+          "--min-ms",
+          "5",
+          "--max-ms",
+          "15"
+        ],
+        "ready": "http://127.0.0.1:18900/stats"
+      },
+      "flags": [
+        "--dashboard",
+        "-u",
+        "10",
+        "-r",
+        "10",
+        "-t",
+        "2m",
+        "--co-mitigation",
+        "average",
+        "--report-file",
+        "report.html",
+        "--report-file",
+        "report.md",
+        "--report-file",
+        "report.json"
+      ]
+    }
+  },
+  "shots": [
+    {
+      "name": "dashboard-hero",
+      "output": "controller/dashboard-hero.png",
+      "run": "control",
+      "at": 100,
+      "capture": {
+        "type": "viewport",
+        "column": "#kpis",
+        "pad": 16,
+        "ready": "#chart-rps-summary"
+      }
+    },
+    {
+      "name": "dashboard-rps",
+      "output": "controller/dashboard-rps.png",
+      "run": "control",
+      "at": 200,
+      "capture": {
+        "type": "element",
+        "selector": "#charts > .chart-card:nth-child(1)"
+      }
+    },
+    {
+      "name": "dashboard-users",
+      "output": "controller/dashboard-users.png",
+      "run": "control",
+      "at": 200,
+      "capture": {
+        "type": "element",
+        "selector": "#charts > .chart-card:nth-child(2)"
+      }
+    },
+    {
+      "name": "dashboard-heatmap",
+      "output": "controller/dashboard-heatmap.png",
+      "run": "control",
+      "at": 202,
+      "capture": {
+        "type": "element",
+        "selector": "#chart-latency-card"
+      }
+    },
+    {
+      "name": "dashboard-requests",
+      "output": "controller/dashboard-requests.png",
+      "run": "control",
+      "at": 205,
+      "actions": [
+        {
+          "do": "click",
+          "selector": "#requests-table th[data-sort=p95]"
+        },
+        {
+          "do": "wait",
+          "seconds": 1
+        }
+      ],
+      "capture": {
+        "type": "element",
+        "selector": "#requests",
+        "height": 543,
+        "width": 1130
+      }
+    },
+    {
+      "name": "dashboard-settings",
+      "output": "controller/dashboard-settings.png",
+      "run": "control",
+      "at": 225,
+      "actions": [
+        {
+          "do": "open",
+          "selector": "#ctrl-settings"
+        },
+        {
+          "do": "fill",
+          "selector": "#set-host",
+          "value": "http://127.0.0.1:18888"
+        },
+        {
+          "do": "fill",
+          "selector": "#set-up",
+          "value": "10"
+        },
+        {
+          "do": "select",
+          "selector": "#set-up-unit",
+          "value": "rate"
+        },
+        {
+          "do": "fill",
+          "selector": "#set-run",
+          "value": "5"
+        },
+        {
+          "do": "select",
+          "selector": "#set-run-unit",
+          "value": "min"
+        },
+        {
+          "do": "click",
+          "selector": "#ctrl-start"
+        },
+        {
+          "do": "waitFor",
+          "selector": "#set-host-confirm-text",
+          "text": "Load will go to"
+        }
+      ],
+      "capture": {
+        "type": "element",
+        "selector": "#control-panel"
+      }
+    },
+    {
+      "name": "dashboard-runs",
+      "output": "controller/dashboard-runs.png",
+      "run": "control",
+      "at": 230,
+      "actions": [
+        {
+          "do": "click",
+          "selector": "#set-host-confirm-cancel"
+        },
+        {
+          "do": "check",
+          "selector": "#runs-body tr:nth-child(1) .run-compare"
+        },
+        {
+          "do": "check",
+          "selector": "#runs-body tr:nth-child(2) .run-compare"
+        }
+      ],
+      "capture": {
+        "type": "element",
+        "selector": "#runs-panel"
+      }
+    },
+    {
+      "name": "dashboard-read-only",
+      "output": "controller/dashboard-read-only.png",
+      "run": "read-only",
+      "at": 95,
+      "capture": {
+        "type": "element",
+        "selector": "#control-panel"
+      }
+    },
+    {
+      "name": "dashboard-errors",
+      "output": "controller/dashboard-errors.png",
+      "run": "errors",
+      "at": 100,
+      "capture": {
+        "type": "element",
+        "selector": "#errors"
+      }
+    },
+    {
+      "name": "test-plan-dashboard",
+      "output": "getting-started/test-plan-dashboard.png",
+      "run": "test-plan",
+      "at": 190,
+      "capture": {
+        "type": "element",
+        "selector": "#charts > .chart-card:nth-child(2)"
+      }
+    },
+    {
+      "name": "title-dashboard",
+      "output": "title-dashboard.png",
+      "run": "front-door",
+      "at": 150,
+      "capture": {
+        "type": "band",
+        "from": "#kpis",
+        "to": "#chart-latency-card",
+        "pad": 8
+      }
+    },
+    {
+      "name": "common-dashboard",
+      "output": "getting-started/common-dashboard.png",
+      "run": "front-door",
+      "at": 135,
+      "capture": {
+        "type": "band",
+        "from": "header.top-bar",
+        "to": "#charts > .chart-card:nth-child(2)",
+        "pad": 8
+      }
+    },
+    {
+      "name": "report-rps",
+      "output": "getting-started/rps.png",
+      "run": "report",
+      "at": 190,
+      "capture": {
+        "type": "report",
+        "file": "report.html",
+        "selector": "#graph-rps"
+      }
+    },
+    {
+      "name": "example-simple",
+      "output": "example/simple-dashboard.png",
+      "run": "example-simple",
+      "at": 120,
+      "capture": {
+        "type": "band",
+        "from": "#kpis",
+        "to": "#charts > .chart-card:nth-child(1)",
+        "right": "#charts > .chart-card:nth-child(1)"
+      }
+    },
+    {
+      "name": "example-thumb-simple",
+      "output": "example/thumbs/simple.png",
+      "run": "example-simple",
+      "at": 121,
+      "maxKB": 100,
+      "capture": {
+        "type": "element",
+        "selector": "#kpis",
+        "right": "#kpis > .kpi:nth-child(2)"
+      }
+    },
+    {
+      "name": "example-closure",
+      "output": "example/closure-requests.png",
+      "run": "example-closure",
+      "at": 100,
+      "capture": {
+        "type": "element",
+        "selector": "#requests",
+        "right": "#requests-table th:nth-child(7)"
+      }
+    },
+    {
+      "name": "example-thumb-closure",
+      "output": "example/thumbs/closure.png",
+      "run": "example-closure",
+      "at": 101,
+      "maxKB": 100,
+      "capture": {
+        "type": "element",
+        "selector": "#requests",
+        "right": "#requests-table th:nth-child(4)",
+        "height": 270
+      }
+    },
+    {
+      "name": "example-thumb-session",
+      "output": "example/thumbs/session.png",
+      "run": "example-session",
+      "at": 100,
+      "maxKB": 100,
+      "capture": {
+        "type": "element",
+        "selector": "#requests",
+        "right": "#requests-table th:nth-child(4)",
+        "height": 270
+      }
+    },
+    {
+      "name": "example-session",
+      "output": "example/session-requests.png",
+      "run": "example-session",
+      "at": 150,
+      "capture": {
+        "type": "report",
+        "file": "report.html",
+        "selector": ".requests table",
+        "right": ".requests table th:nth-child(4)"
+      }
+    },
+    {
+      "name": "example-thumb-basic-auth",
+      "output": "example/thumbs/basic-auth.png",
+      "run": "example-basic-auth",
+      "at": 100,
+      "maxKB": 100,
+      "capture": {
+        "type": "element",
+        "selector": "#requests",
+        "right": "#requests-table th:nth-child(4)",
+        "height": 270,
+        "bottom": "#requests-table tbody tr:nth-child(4)"
+      }
+    },
+    {
+      "name": "example-basic-auth-requests",
+      "output": "example/basic-auth-requests.png",
+      "run": "example-basic-auth",
+      "at": 150,
+      "capture": {
+        "type": "report",
+        "file": "report.html",
+        "selector": ".requests table",
+        "right": ".requests table th:nth-child(4)"
+      }
+    },
+    {
+      "name": "example-basic-auth-transactions",
+      "output": "example/basic-auth-transactions.png",
+      "run": "example-basic-auth",
+      "at": 151,
+      "capture": {
+        "type": "report",
+        "file": "report.html",
+        "selector": ".transactions table",
+        "right": ".transactions table th:nth-child(3)"
+      }
+    },
+    {
+      "name": "example-graphql-transactions",
+      "output": "example/graphql-transactions.png",
+      "run": "example-graphql",
+      "at": 100,
+      "capture": {
+        "type": "element",
+        "selector": "#transactions",
+        "right": "#transactions-table th:nth-child(8)"
+      }
+    },
+    {
+      "name": "example-graphql-requests",
+      "output": "example/graphql-requests.png",
+      "run": "example-graphql",
+      "at": 100,
+      "capture": {
+        "type": "element",
+        "selector": "#requests",
+        "right": "#requests-table th:nth-child(7)"
+      }
+    },
+    {
+      "name": "example-thumb-graphql",
+      "output": "example/thumbs/graphql.png",
+      "run": "example-graphql",
+      "at": 101,
+      "maxKB": 100,
+      "capture": {
+        "type": "element",
+        "selector": "#transactions-table",
+        "right": "#transactions-table th:nth-child(4)"
+      }
+    },
+    {
+      "name": "example-tcp-requests",
+      "output": "example/tcp-requests.png",
+      "run": "example-tcp",
+      "at": 100,
+      "capture": {
+        "type": "element",
+        "selector": "#requests",
+        "right": "#requests-table th:nth-child(7)"
+      }
+    },
+    {
+      "name": "example-tcp-latency",
+      "output": "example/tcp-latency.png",
+      "run": "example-tcp",
+      "at": 102,
+      "actions": [
+        {
+          "do": "select",
+          "selector": "#heatmap-request",
+          "value": "TCP tcp_echo"
+        },
+        {
+          "do": "wait",
+          "seconds": 2
+        }
+      ],
+      "capture": {
+        "type": "element",
+        "selector": "#chart-latency-card",
+        "width": 800
+      }
+    },
+    {
+      "name": "example-thumb-tcp",
+      "output": "example/thumbs/tcp.png",
+      "run": "example-tcp",
+      "at": 101,
+      "maxKB": 100,
+      "capture": {
+        "type": "element",
+        "selector": "#requests",
+        "right": "#requests-table th:nth-child(4)",
+        "height": 270
+      }
+    },
+    {
+      "name": "example-umami",
+      "output": "example/umami-transactions.png",
+      "run": "example-umami",
+      "at": 120,
+      "capture": {
+        "type": "band",
+        "from": "#scenarios-table",
+        "to": "#transactions-table",
+        "right": "#transactions-table th:nth-child(5)",
+        "bottom": "#transactions-table tbody tr:nth-child(6)",
+        "pad": 8
+      }
+    },
+    {
+      "name": "example-thumb-umami",
+      "output": "example/thumbs/umami.png",
+      "run": "example-umami",
+      "at": 121,
+      "maxKB": 100,
+      "capture": {
+        "type": "element",
+        "selector": "#scenarios-table",
+        "right": "#scenarios-table th:nth-child(3)"
+      }
+    },
+    {
+      "name": "metrics-dashboard-rps",
+      "output": "getting-started/metrics-dashboard-rps.png",
+      "run": "metrics",
+      "at": 150,
+      "capture": {
+        "type": "element",
+        "selector": "#charts > .chart-card:nth-child(1)"
+      }
+    },
+    {
+      "name": "metrics-pdf",
+      "output": "getting-started/metrics-pdf.png",
+      "run": "metrics",
+      "at": 240,
+      "capture": {
+        "type": "pdf",
+        "file": "report.pdf",
+        "dpi": 220,
+        "height": 600
+      }
+    },
+    {
+      "name": "metrics-html-requests",
+      "output": "getting-started/metrics-html-requests.png",
+      "run": "metrics",
+      "at": 242,
+      "capture": {
+        "type": "report",
+        "file": "report.html",
+        "selector": "div.requests",
+        "pad": 8,
+        "rows": 8
+      }
+    },
+    {
+      "name": "metrics-html-heatmap",
+      "output": "getting-started/metrics-html-heatmap.png",
+      "run": "metrics",
+      "at": 243,
+      "capture": {
+        "type": "report",
+        "file": "report.html",
+        "selector": [
+          "div.responses >> nth=0 >> h3",
+          ".heatmap-legend"
+        ],
+        "pad": 8
+      }
+    },
+    {
+      "name": "metrics-html-status-codes",
+      "output": "getting-started/metrics-html-status-codes.png",
+      "run": "metrics",
+      "at": 245,
+      "capture": {
+        "type": "report",
+        "file": "report.html",
+        "selector": "div.status_codes",
+        "pad": 8,
+        "rows": 8
+      }
+    },
+    {
+      "name": "metrics-html-transactions",
+      "output": "getting-started/metrics-html-transactions.png",
+      "run": "metrics",
+      "at": 246,
+      "capture": {
+        "type": "report",
+        "file": "report.html",
+        "selector": "div.transactions",
+        "pad": 8,
+        "rows": 11
+      }
+    },
+    {
+      "name": "metrics-html-scenarios",
+      "output": "getting-started/metrics-html-scenarios.png",
+      "run": "metrics",
+      "at": 247,
+      "capture": {
+        "type": "report",
+        "file": "report.html",
+        "selector": "div.scenarios",
+        "pad": 8
+      }
+    },
+    {
+      "name": "metrics-html-users",
+      "output": "getting-started/metrics-html-users.png",
+      "run": "metrics",
+      "at": 248,
+      "capture": {
+        "type": "report",
+        "file": "report.html",
+        "selector": "div.users",
+        "pad": 8
+      }
+    },
+    {
+      "name": "co-dashboard",
+      "output": "coordinated-omission/co-dashboard.png",
+      "run": "co-average",
+      "at": 100,
+      "capture": {
+        "type": "band",
+        "from": "#kpis",
+        "to": "#chart-latency-card",
+        "pad": 8
+      }
+    },
+    {
+      "name": "co-dashboard-whole-run",
+      "output": "coordinated-omission/co-dashboard-whole-run.png",
+      "run": "co-average",
+      "at": 102,
+      "capture": {
+        "type": "element",
+        "selector": "#aggregate"
+      }
+    },
+    {
+      "name": "co-html-requests",
+      "output": "coordinated-omission/co-html-requests.png",
+      "run": "co-average",
+      "at": 140,
+      "capture": {
+        "type": "report",
+        "file": "report.html",
+        "selector": "div.CO.requests",
+        "pad": 8
+      }
+    },
+    {
+      "name": "co-html-percentiles",
+      "output": "coordinated-omission/co-html-percentiles.png",
+      "run": "co-average",
+      "at": 141,
+      "capture": {
+        "type": "report",
+        "file": "report.html",
+        "selector": [
+          "div.responses >> nth=0 >> table",
+          "div.responses >> nth=1"
+        ],
+        "pad": 8
+      }
+    },
+    {
+      "name": "co-html-events",
+      "output": "coordinated-omission/co-html-events.png",
+      "run": "co-average",
+      "at": 141,
+      "capture": {
+        "type": "report",
+        "file": "report.html",
+        "selector": "div.co-metrics",
+        "pad": 8
+      }
+    }
+  ]
+}

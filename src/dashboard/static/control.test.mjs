@@ -528,3 +528,200 @@ test("with control on, the header leaves the run settings to the control card", 
   assert.equal(el(page, "run-settings").hidden, true);
   assert.equal(el(page, "hosts").textContent, "—");
 });
+
+// The page over the dashboard configuration matrix: one stub health body per
+// row, as the server answers it, and what the Control card, the subtitle,
+// the banners and the requests show. `notice` is the card's paragraphs in
+// place of the controls (null when the controls show); `tokenBanner` whether
+// the missing token banner shows; `noAuthBanner` the warning off loopback.
+const READ_ONLY = [
+  "Read-only: this dashboard can't start, stop or change the test.",
+  "To control it from here, restart Goose with --dashboard-control --dashboard-no-auth (no token), or with --dashboard-control --dashboard-auth-token <token> and open http://127.0.0.1:5118/?token=<token>.",
+  "Control this test via the telnet controller listening on 0.0.0.0:5116 or the WebSocket controller listening on 0.0.0.0:5117.",
+];
+const NO_AUTH_WARNING =
+  "WARNING: the dashboard on http://127.0.0.1:5118 has no token (--dashboard-no-auth). Anyone who can reach this port can watch the test, start and stop it, and point the load at any host.";
+// Read-only with a token, or with --dashboard-no-auth: only control is missing.
+const ADD_CONTROL = [
+  "Read-only: this dashboard can't start, stop or change the test.",
+  "To control it from here, restart Goose with --dashboard-control added.",
+];
+const CONTROLLERS = { telnet: "0.0.0.0:5116", websocket: "0.0.0.0:5117" };
+const PAGE_MATRIX = [
+  {
+    row: "R1",
+    path: "/",
+    serverToken: "",
+    health: { controlEnabled: false, authRequired: true, loopback: true, controllers: CONTROLLERS },
+    notice: READ_ONLY,
+    noticeLabel: "Read-only dashboard",
+    subtitle: "Live dashboard · read-only",
+    tokenBanner: false,
+    noAuthBanner: null,
+    startBearer: null,
+  },
+  {
+    row: "R2",
+    path: "/?token=" + TOKEN,
+    serverToken: TOKEN,
+    health: { controlEnabled: false, authRequired: true, loopback: true },
+    notice: ADD_CONTROL,
+    noticeLabel: "Read-only dashboard",
+    subtitle: "Live dashboard · read-only",
+    tokenBanner: false,
+    noAuthBanner: null,
+    startBearer: null,
+  },
+  {
+    row: "R5",
+    path: "/",
+    serverToken: "",
+    health: { controlEnabled: false, authRequired: false, loopback: true },
+    notice: ADD_CONTROL,
+    noticeLabel: "Read-only dashboard",
+    subtitle: "Live dashboard · read-only",
+    tokenBanner: false,
+    noAuthBanner: null,
+    startBearer: null,
+  },
+  {
+    row: "R3 with ?token=",
+    path: "/?token=" + TOKEN,
+    serverToken: TOKEN,
+    health: { controlEnabled: true, authRequired: true, loopback: true },
+    notice: null,
+    subtitle: "Live dashboard · control",
+    tokenBanner: false,
+    noAuthBanner: null,
+    startBearer: "Bearer " + TOKEN,
+  },
+  {
+    row: "R3 without ?token=",
+    path: "/",
+    serverToken: TOKEN,
+    health: { controlEnabled: true, authRequired: true, loopback: true },
+    notice: null,
+    subtitle: "Live dashboard · control",
+    tokenBanner: true,
+    noAuthBanner: null,
+    startBearer: null,
+  },
+  {
+    row: "R4",
+    path: "/",
+    serverToken: "",
+    health: { controlEnabled: true, authRequired: false, loopback: true },
+    notice: null,
+    subtitle: "Live dashboard · control, no token",
+    tokenBanner: false,
+    noAuthBanner: null,
+    startBearer: "",
+  },
+  {
+    row: "R6",
+    path: "/",
+    serverToken: "",
+    health: { controlEnabled: true, authRequired: false, loopback: false },
+    notice: null,
+    subtitle: "Live dashboard · control, no token",
+    tokenBanner: false,
+    noAuthBanner: NO_AUTH_WARNING,
+    startBearer: "",
+  },
+  {
+    row: "failed probe",
+    path: "/",
+    serverToken: "",
+    health: { healthStatus: 500 },
+    notice: ["Couldn't check whether control is on (/api/v1/health failed). Reload to retry."],
+    noticeLabel: "Control status unknown",
+    subtitle: "Live dashboard",
+    tokenBanner: false,
+    noAuthBanner: null,
+    startBearer: null,
+  },
+];
+
+for (const c of PAGE_MATRIX) {
+  test(`the page over the matrix: ${c.row}`, async () => {
+    const page = await openPage(c.path, FRESH, c.serverToken, {
+      eventStream: true,
+      ...c.health,
+    });
+    page.events.emit("snapshot", snapshot("idle", 20));
+    await settle(page.window);
+    const doc = page.window.document;
+    const panel = el(page, "control-panel");
+    const notice = el(page, "ctrl-notice");
+    assert.equal(panel.classList.contains("hidden"), false, "the card shows");
+
+    if (c.notice) {
+      assert.equal(notice.hidden, false);
+      assert.deepEqual(
+        Array.from(notice.querySelectorAll("p")).map((p) => p.textContent),
+        c.notice
+      );
+      assert.equal(notice.getAttribute("role"), "note");
+      assert.equal(notice.getAttribute("aria-label"), c.noticeLabel);
+      assert.equal(
+        notice.querySelectorAll("a, button, input, select, textarea, [tabindex]").length,
+        0,
+        "the notice holds nothing focusable"
+      );
+    } else {
+      // A page without the notice (as before it existed) shows none.
+      assert.equal(!notice || notice.hidden, true);
+    }
+    // The controls stay in the page; read-only, they hide with their rows.
+    for (const id of ["ctrl-summary", "ctrl-settings", "ctrl-status"]) {
+      assert.equal(el(page, id).hidden, !!c.notice, id);
+    }
+    for (const id of ["ctrl-start", "ctrl-stop", "ctrl-target"]) {
+      assert.ok(el(page, id), id + " stays in the page");
+      assert.equal(el(page, id).closest(".control-row").hidden, !!c.notice, id);
+    }
+
+    assert.equal(el(page, "subtitle").textContent, c.subtitle);
+    assert.equal(
+      el(page, "banner").textContent.includes("token required for control"),
+      c.tokenBanner,
+      "the missing token banner"
+    );
+    const warning = el(page, "no-auth-banner");
+    if (c.noAuthBanner) {
+      assert.equal(warning.className, "banner warn");
+      assert.equal(warning.textContent, c.noAuthBanner);
+      assert.equal(warning.getAttribute("role"), "alert");
+      assert.equal(warning.querySelectorAll("button").length, 0, "not dismissible");
+      // A snapshot rewrites the main banner, never this one.
+      page.events.emit("snapshot", snapshot("idle", 20));
+      await settle(page.window);
+      assert.equal(warning.textContent, c.noAuthBanner);
+    } else {
+      assert.equal(!warning || warning.className === "banner hidden", true);
+    }
+
+    if (c.startBearer !== null) {
+      el(page, "ctrl-start").click();
+      await settle(page.window);
+      const start = page.requests.filter((r) => r.path === "/api/v1/control/start");
+      assert.equal(start.length, 1, "Start sends");
+      assert.equal(start[0].bearer, c.startBearer);
+      assert.equal(start[0].contentType, "application/json");
+      assert.equal(start[0].body, "{}");
+      assert.equal(start[0].url.includes("token="), false);
+    } else {
+      el(page, "ctrl-start").click();
+      await settle(page.window);
+      assert.equal(posts(page).length, 0, "nothing is sent");
+    }
+    if (c.serverToken === "") {
+      assert.deepEqual(
+        page.requests.filter((r) => r.bearer !== "" || r.url.includes("token=")),
+        [],
+        "no request carries a token"
+      );
+    }
+    assert.equal(doc.querySelectorAll("#control-panel > h2").length, 1);
+  });
+}

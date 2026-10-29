@@ -1,6 +1,8 @@
 # Gaggle Worker
 
-At this time, a Goose process can be either a Manager or a Worker, not both. Therefor, it usually makes sense to launch your first Worker on the same server that the Manager is running on. If not otherwise configured, a Goose Worker will try to connect to the Manager on the localhost.
+**NOTE: Goose 0.19 cannot run a Gaggle. Gaggle support was removed in Goose 0.17.0 and will be restored in Goose 0.20, before the 1.0 release. This page describes Goose 0.16.4, the last release with it; see the [Gaggle overview](overview.md).**
+
+At this time, a Goose process can be either a Manager or a Worker, not both. Therefore, it usually makes sense to launch your first Worker on the same server that the Manager is running on. If not otherwise configured, a Goose Worker will try to connect to the Manager on the localhost.
 
 ## Examples
 

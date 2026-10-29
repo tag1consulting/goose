@@ -9,30 +9,43 @@ Logs include the entire [`TransactionMetric`](https://docs.rs/goose/*/goose/metr
 By default, logs are written in JSON Lines format. For example:
 
 ```json
-{"elapsed":0,"scenario_index":0,"transaction_index":0,"name":"","run_time":1,"success":true,"user":0,"run_time_fraction_us":720}
-{"elapsed":1,"scenario_index":0,"transaction_index":1,"name":"","run_time":0,"success":true,"user":0,"run_time_fraction_us":89}
-{"elapsed":9694,"scenario_index":0,"transaction_index":2,"name":"","run_time":0,"success":true,"user":1,"run_time_fraction_us":325}
-{"elapsed":11082,"scenario_index":0,"transaction_index":2,"name":"","run_time":0,"success":true,"user":5,"run_time_fraction_us":447}
-{"elapsed":12519,"scenario_index":0,"transaction_index":2,"name":"","run_time":0,"success":true,"user":0,"run_time_fraction_us":200}
+{"elapsed":0,"scenario_index":0,"transaction_index":0,"name":"","run_time":0,"success":true,"user":0,"run_time_fraction_us":334,"error":""}
+{"elapsed":0,"scenario_index":0,"transaction_index":1,"name":"","run_time":0,"success":true,"user":0,"run_time_fraction_us":92,"error":""}
+{"elapsed":6172,"scenario_index":0,"transaction_index":2,"name":"","run_time":1,"success":true,"user":0,"run_time_fraction_us":41,"error":""}
+{"elapsed":8600,"scenario_index":0,"transaction_index":2,"name":"","run_time":0,"success":true,"user":2,"run_time_fraction_us":257,"error":""}
 ```
 
-These lines are from the [`simple`](../example/simple.md) example, whose transactions have no names. In the first line, `GooseUser` thread 0 successfully ran transaction 0, the login, in 1.720 milliseconds. In the third line, `GooseUser` thread 1 successfully ran transaction 2, the `/about/` page, in 325 microseconds.
+These lines are from the [`simple`](../example/simple.md) example, whose transactions have no names, run with `-u 4 -r 4 -t 12s` against a local server. In the first line, `GooseUser` thread 0 successfully ran transaction 0, the login, in 334 microseconds. In the third line, the same thread successfully ran transaction 2, the `/about/` page, in 1.041 milliseconds.
 
-The `--transaction-format` option can be used to log in `csv`, `json` (default), `raw` or `pretty` format. The `raw` format is Rust's debug output of the entire 
-[`TransactionMetric`](https://docs.rs/goose/*/goose/metrics/struct.TransactionMetric.html) object.
+Each line ends with an `error` field. It is empty when the transaction succeeded. When the transaction returned an error, `success` is `false` and `error` holds the error as its `Display` writes it. This line is from a load test whose `flaky` transaction returns `TransactionError::Custom("every third call fails")` one time in three:
 
-For example, `csv` output of the same example looks like:
+```json
+{"elapsed":0,"scenario_index":0,"transaction_index":2,"name":"flaky","run_time":0,"success":false,"user":0,"run_time_fraction_us":68,"error":"TransactionError: custom error (every third call fails)"}
+```
+
+A transaction that failed because a request made with `error_on_fail`, or marked failed with `set_failure`, failed names the request error in `error`, as `request failed: <method> <name>: <error>`; the request error itself is counted in the [errors table](../getting-started/metrics.md) and the [error log](errors.md). A transaction canceled as the run ended has no error. A transaction that returns a `TransactionError::Custom` or `Url` error, or a `Reqwest` error from reading the response body or building the request, is counted, by scenario, transaction and error, in the Transaction Errors tables of the [metrics](../getting-started/metrics.md) and reports, and is written to the [error log](errors.md). Any other error, such as a `Reqwest` error from sending a request or from an error status, is named only in this log.
+
+The `--transaction-format` option can be used to log in `csv`, `json` (default), `raw` or `pretty` format. The `raw` format is Rust's debug output of the entire [`TransactionMetric`](https://docs.rs/goose/*/goose/metrics/struct.TransactionMetric.html) object, one per line, and `pretty` is the same output spread over several indented lines per transaction. In each of them the `error` field comes last:
+
+```text
+TransactionMetric { elapsed: 2, scenario_index: 0, transaction_index: 2, name: "flaky", run_time: 0, success: false, user: 0, run_time_fraction_us: 101, error: "TransactionError: custom error (every third call fails)" }
+```
+
+For example, `csv` output of the `simple` example starts with a header row and looks like:
+
 ```csv
-elapsed,scenario_index,transaction_index,name,run_time,success,user,run_time_us
-838,0,0,,0,true,5,596
-838,0,1,,0,true,5,267
-8355,0,2,,1322,true,1,1322171
-8318,0,2,,1405,true,0,1405552
-9700,0,2,,1368,true,2,1368577
+elapsed,scenario_index,transaction_index,name,run_time,success,user,run_time_us,error
+0,0,0,,0,true,0,455,
+0,0,1,,0,true,0,143,
+251,0,0,,0,true,1,471,
+251,0,1,,0,true,1,163,
+7872,0,2,,0,true,1,220,
 ```
 
-`run_time` is in whole milliseconds, truncated. The `json`, `raw` and `pretty` formats also carry `run_time_fraction_us`, the microseconds past those milliseconds (0 to 999), and the `csv` format ends with a `run_time_us` column holding the whole time in microseconds.
+The `error` column is last, and is empty for a transaction that succeeded. A failed transaction fills it:
 
-# Gaggle Mode
+```csv
+0,0,2,flaky,0,false,0,77,TransactionError: custom error (every third call fails)
+```
 
-When operating in Gaggle-mode, the `--transaction-log` option can only be enabled on the Worker processes, configuring Goose to spread out the overhead of writing logs.
+`run_time` is in whole milliseconds, truncated. The `json`, `raw` and `pretty` formats also carry `run_time_fraction_us`, the microseconds past those milliseconds (0 to 999), and the `csv` format has a `run_time_us` column, before `error`, holding the whole time in microseconds.

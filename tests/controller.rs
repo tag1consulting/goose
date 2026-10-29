@@ -34,7 +34,7 @@ const INCREASE_TIME: usize = 1;
 // There are multiple test variations in this file.
 #[derive(Clone, PartialEq)]
 enum TestType {
-    // Enable --no-telnet.
+    // Enable --websocket and --no-telnet.
     WebSocket,
     // Enable --no-websocket.
     Telnet,
@@ -200,7 +200,7 @@ async fn run_standalone_test(test_type: TestType) {
     let mock_endpoints = setup_mock_server_endpoints(&server);
 
     let mut configuration_flags = match &test_type {
-        TestType::WebSocket => vec!["--no-telnet"],
+        TestType::WebSocket => vec!["--websocket", "--no-telnet"],
         // Also test writing a report-file when stopping load test through controller.
         TestType::Telnet => vec!["--no-websocket", "--report-file", REPORT_FILE],
     };

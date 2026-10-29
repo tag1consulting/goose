@@ -128,6 +128,19 @@ for (const theme of Object.keys(THEMES)) {
     }
   });
 
+  test(`the read-only notice and the no token warning are at least 4.5:1 in the ${theme} theme`, () => {
+    const vars = tokens(theme);
+    const card = resolve(cascaded(theme, [".card"], "background"), vars);
+    const notice = resolve(cascaded(theme, [".control-notice p"], "color"), vars);
+    const ratio = contrast(notice, card);
+    assert.ok(ratio >= 4.5, `notice ${notice} on ${card} is ${ratio.toFixed(2)}:1`);
+    const selectors = [".banner", ".banner.warn"];
+    const fg = resolve(cascaded(theme, selectors, "color"), vars);
+    const bg = resolve(cascaded(theme, selectors, "background"), vars);
+    const warn = contrast(fg, bg);
+    assert.ok(warn >= 4.5, `warning ${fg} on ${bg} is ${warn.toFixed(2)}:1`);
+  });
+
   test(`the pressed heatmap toggle is at least 4.5:1 in the ${theme} theme`, () => {
     const vars = tokens(theme);
     const selectors = [".segmented button", '.segmented button[aria-pressed="true"]'];

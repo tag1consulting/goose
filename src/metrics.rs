@@ -353,6 +353,9 @@ pub(crate) enum MetricsCommand {
     /// `rps` rules count ends here. It drains as [`MetricsCommand::EnterMaintain`]
     /// does.
     LeaveMaintain { seconds: f64 },
+    /// A user started running scenario `scenario_index`: count it among the
+    /// scenario's users, though it may complete no iteration.
+    UserStarted { scenario_index: usize, user: usize },
     /// Record the current user count for the users-per-second graph.
     RecordUsers {
         active_users: usize,
@@ -372,6 +375,9 @@ pub(crate) enum MetricsCommand {
         /// Seconds on the continuous series clock at the reset, where the
         /// report heatmap's columns start again.
         series_elapsed_secs: usize,
+        /// The `(scenario index, user)` of each user still running, which
+        /// the scenarios count again after the reset.
+        running_users: Vec<(usize, usize)>,
         ack: tokio::sync::oneshot::Sender<()>,
     },
     /// Return a snapshot of the current metrics for the controller.
@@ -496,8 +502,10 @@ pub(crate) struct MetricsProcessor {
 /// statistically relevant information as [`GooseUser`](../goose/struct.GooseUser.html)
 /// threads are unable to make additional requests while they are blocked by an upstream stall.
 /// Goose mitigates this by backfilling the requests that would have been made during that time.
-/// Backfilled requests show up in the `--request-file` if enabled, though they were not actually
-/// sent to the server.
+/// Backfilled requests are never sent to the server, and the `--request-log` does not hold
+/// them; it holds the request that ended a stall a second time, with
+/// [`coordinated_omission_elapsed`](struct.GooseRequestMetric.html#structfield.coordinated_omission_elapsed)
+/// and `user_cadence` set.
 ///
 /// Goose can be configured to backfill requests based on the expected
 /// [`user_cadence`](struct.GooseRequestMetric.html#structfield.user_cadence). The expected
@@ -1825,6 +1833,17 @@ impl ScenarioMetricAggregate {
     }
 }
 
+/// The iterations a scenario's table shows: `count` scenario runs averaged
+/// over the `users` who ran them. The console and every report show this, for
+/// one scenario and for them all.
+pub(crate) fn iterations_per_user(count: usize, users: usize) -> f32 {
+    match users {
+        // No user ran the scenario.
+        0 => 0.0,
+        _ => count as f32 / users as f32,
+    }
+}
+
 /// [`ScenarioMetricAggregate`] as it is written.
 #[derive(Serialize)]
 struct ScenarioAggregateOut<'a> {
@@ -2183,60 +2202,25 @@ impl GooseMetrics {
         let mut aggregate_total_count = 0;
         for (request_key, request) in self.requests.iter().sorted() {
             let total_count = request.success_count + request.fail_count;
-            let fail_percent = if request.fail_count > 0 {
-                request.fail_count as f32 / total_count as f32 * 100.0
-            } else {
-                0.0
-            };
             let (reqs, fails) =
                 per_second_calculations(self.duration, total_count, request.fail_count);
             let reqs_precision = determine_precision(reqs);
             let fails_precision = determine_precision(fails);
-            // Compress 100.0 and 0.0 to 100 and 0 respectively to save width.
-            if fail_percent as usize == 100 || fail_percent as usize == 0 {
-                let fail_and_percent = format!(
-                    "{} ({}%)",
-                    request.fail_count.to_formatted_string(&Locale::en),
-                    fail_percent as usize
-                );
-                writeln!(
-                    fmt,
-                    " {:<24} | {:>13} | {:>14} | {:>8.reqs_p$} | {:>7.fails_p$}",
-                    util::truncate_string(request_key, 24),
-                    total_count.to_formatted_string(&Locale::en),
-                    fail_and_percent,
-                    reqs,
-                    fails,
-                    reqs_p = reqs_precision,
-                    fails_p = fails_precision,
-                )?;
-            } else {
-                let fail_and_percent = format!(
-                    "{} ({:.1}%)",
-                    request.fail_count.to_formatted_string(&Locale::en),
-                    fail_percent
-                );
-                writeln!(
-                    fmt,
-                    " {:<24} | {:>13} | {:>14} | {:>8.reqs_p$} | {:>7.fails_p$}",
-                    util::truncate_string(request_key, 24),
-                    total_count.to_formatted_string(&Locale::en),
-                    fail_and_percent,
-                    reqs,
-                    fails,
-                    reqs_p = reqs_precision,
-                    fails_p = fails_precision,
-                )?;
-            }
+            writeln!(
+                fmt,
+                " {:<24} | {:>13} | {:>14} | {:>8.reqs_p$} | {:>7.fails_p$}",
+                util::truncate_string(request_key, 24),
+                total_count.to_formatted_string(&Locale::en),
+                fail_and_percent(request.fail_count, total_count),
+                reqs,
+                fails,
+                reqs_p = reqs_precision,
+                fails_p = fails_precision,
+            )?;
             aggregate_total_count += total_count;
             aggregate_fail_count += request.fail_count;
         }
         if self.requests.len() > 1 {
-            let aggregate_fail_percent = if aggregate_fail_count > 0 {
-                aggregate_fail_count as f32 / aggregate_total_count as f32 * 100.0
-            } else {
-                0.0
-            };
             writeln!(
                 fmt,
                 " -------------------------+---------------+----------------+----------+--------"
@@ -2245,42 +2229,17 @@ impl GooseMetrics {
                 per_second_calculations(self.duration, aggregate_total_count, aggregate_fail_count);
             let reqs_precision = determine_precision(reqs);
             let fails_precision = determine_precision(fails);
-            // Compress 100.0 and 0.0 to 100 and 0 respectively to save width.
-            if aggregate_fail_percent as usize == 100 || aggregate_fail_percent as usize == 0 {
-                let fail_and_percent = format!(
-                    "{} ({}%)",
-                    aggregate_fail_count.to_formatted_string(&Locale::en),
-                    aggregate_fail_percent as usize
-                );
-                writeln!(
-                    fmt,
-                    " {:<24} | {:>13} | {:>14} | {:>8.reqs_p$} | {:>7.fails_p$}",
-                    "Aggregated",
-                    aggregate_total_count.to_formatted_string(&Locale::en),
-                    fail_and_percent,
-                    reqs,
-                    fails,
-                    reqs_p = reqs_precision,
-                    fails_p = fails_precision,
-                )?;
-            } else {
-                let fail_and_percent = format!(
-                    "{} ({:.1}%)",
-                    aggregate_fail_count.to_formatted_string(&Locale::en),
-                    aggregate_fail_percent
-                );
-                writeln!(
-                    fmt,
-                    " {:<24} | {:>13} | {:>14} | {:>8.reqs_p$} | {:>7.fails_p$}",
-                    "Aggregated",
-                    aggregate_total_count.to_formatted_string(&Locale::en),
-                    fail_and_percent,
-                    reqs,
-                    fails,
-                    reqs_p = reqs_precision,
-                    fails_p = fails_precision,
-                )?;
-            }
+            writeln!(
+                fmt,
+                " {:<24} | {:>13} | {:>14} | {:>8.reqs_p$} | {:>7.fails_p$}",
+                "Aggregated",
+                aggregate_total_count.to_formatted_string(&Locale::en),
+                fail_and_percent(aggregate_fail_count, aggregate_total_count),
+                reqs,
+                fails,
+                reqs_p = reqs_precision,
+                fails_p = fails_precision,
+            )?;
         }
 
         Ok(())
@@ -2318,11 +2277,6 @@ impl GooseMetrics {
             for transaction in scenario {
                 transaction_count += 1;
                 let total_count = transaction.success_count + transaction.fail_count;
-                let fail_percent = if transaction.fail_count > 0 {
-                    transaction.fail_count as f32 / total_count as f32 * 100.0
-                } else {
-                    0.0
-                };
                 let (runs, fails) =
                     per_second_calculations(self.duration, total_count, transaction.fail_count);
                 let runs_precision = determine_precision(runs);
@@ -2345,65 +2299,29 @@ impl GooseMetrics {
                     displayed_scenario = true;
                 }
 
-                if fail_percent as usize == 100 || fail_percent as usize == 0 {
-                    let fail_and_percent = format!(
-                        "{} ({}%)",
-                        transaction.fail_count.to_formatted_string(&Locale::en),
-                        fail_percent as usize
-                    );
-                    writeln!(
-                        fmt,
-                        " {:<24} | {:>13} | {:>14} | {:>8.runs_p$} | {:>7.fails_p$}",
-                        util::truncate_string(
-                            &format!(
-                                "  {}: {}",
-                                transaction.transaction_index + 1,
-                                transaction.transaction_name.name_for_transaction()
-                            ),
-                            24
+                writeln!(
+                    fmt,
+                    " {:<24} | {:>13} | {:>14} | {:>8.runs_p$} | {:>7.fails_p$}",
+                    util::truncate_string(
+                        &format!(
+                            "  {}: {}",
+                            transaction.transaction_index + 1,
+                            transaction.transaction_name.name_for_transaction()
                         ),
-                        total_count.to_formatted_string(&Locale::en),
-                        fail_and_percent,
-                        runs,
-                        fails,
-                        runs_p = runs_precision,
-                        fails_p = fails_precision,
-                    )?;
-                } else {
-                    let fail_and_percent = format!(
-                        "{} ({:.1}%)",
-                        transaction.fail_count.to_formatted_string(&Locale::en),
-                        fail_percent
-                    );
-                    writeln!(
-                        fmt,
-                        " {:<24} | {:>13} | {:>14} | {:>8.runs_p$} | {:>7.fails_p$}",
-                        util::truncate_string(
-                            &format!(
-                                "  {}: {}",
-                                transaction.transaction_index + 1,
-                                transaction.transaction_name.name_for_transaction()
-                            ),
-                            24
-                        ),
-                        total_count.to_formatted_string(&Locale::en),
-                        fail_and_percent,
-                        runs,
-                        fails,
-                        runs_p = runs_precision,
-                        fails_p = fails_precision,
-                    )?;
-                }
+                        24
+                    ),
+                    total_count.to_formatted_string(&Locale::en),
+                    fail_and_percent(transaction.fail_count, total_count),
+                    runs,
+                    fails,
+                    runs_p = runs_precision,
+                    fails_p = fails_precision,
+                )?;
                 aggregate_total_count += total_count;
                 aggregate_fail_count += transaction.fail_count;
             }
         }
         if transaction_count > 1 {
-            let aggregate_fail_percent = if aggregate_fail_count > 0 {
-                aggregate_fail_count as f32 / aggregate_total_count as f32 * 100.0
-            } else {
-                0.0
-            };
             writeln!(
                 fmt,
                 " -------------------------+---------------+----------------+----------+--------"
@@ -2412,43 +2330,17 @@ impl GooseMetrics {
                 per_second_calculations(self.duration, aggregate_total_count, aggregate_fail_count);
             let runs_precision = determine_precision(runs);
             let fails_precision = determine_precision(fails);
-
-            // Compress 100.0 and 0.0 to 100 and 0 respectively to save width.
-            if aggregate_fail_percent as usize == 100 || aggregate_fail_percent as usize == 0 {
-                let fail_and_percent = format!(
-                    "{} ({}%)",
-                    aggregate_fail_count.to_formatted_string(&Locale::en),
-                    aggregate_fail_percent as usize
-                );
-                writeln!(
-                    fmt,
-                    " {:<24} | {:>13} | {:>14} | {:>8.runs_p$} | {:>7.fails_p$}",
-                    "Aggregated",
-                    aggregate_total_count.to_formatted_string(&Locale::en),
-                    fail_and_percent,
-                    runs,
-                    fails,
-                    runs_p = runs_precision,
-                    fails_p = fails_precision,
-                )?;
-            } else {
-                let fail_and_percent = format!(
-                    "{} ({:.1}%)",
-                    aggregate_fail_count.to_formatted_string(&Locale::en),
-                    aggregate_fail_percent
-                );
-                writeln!(
-                    fmt,
-                    " {:<24} | {:>13} | {:>14} | {:>8.runs_p$} | {:>7.fails_p$}",
-                    "Aggregated",
-                    aggregate_total_count.to_formatted_string(&Locale::en),
-                    fail_and_percent,
-                    runs,
-                    fails,
-                    runs_p = runs_precision,
-                    fails_p = fails_precision,
-                )?;
-            }
+            writeln!(
+                fmt,
+                " {:<24} | {:>13} | {:>14} | {:>8.runs_p$} | {:>7.fails_p$}",
+                "Aggregated",
+                aggregate_total_count.to_formatted_string(&Locale::en),
+                fail_and_percent(aggregate_fail_count, aggregate_total_count),
+                runs,
+                fails,
+                runs_p = runs_precision,
+                fails_p = fails_precision,
+            )?;
         }
 
         Ok(())
@@ -2559,7 +2451,7 @@ impl GooseMetrics {
             let (runs, _fails) =
                 per_second_calculations(self.duration, scenario.run_times.counter, 0);
             let runs_precision = determine_precision(runs);
-            let iterations = scenario.run_times.counter as f32 / scenario.users.len() as f32;
+            let iterations = iterations_per_user(scenario.run_times.counter, scenario.users.len());
             let iterations_precision = determine_precision(iterations);
             writeln!(
                 fmt,
@@ -2578,7 +2470,7 @@ impl GooseMetrics {
             let (aggregate_runs, _fails) =
                 per_second_calculations(self.duration, aggregate_counter, 0);
             let aggregate_runs_precision = determine_precision(aggregate_runs);
-            let aggregate_iterations = aggregate_counter as f32 / aggregate_users as f32;
+            let aggregate_iterations = iterations_per_user(aggregate_counter, aggregate_users);
             let aggregate_iterations_precision = determine_precision(aggregate_iterations);
             writeln!(
                 fmt,
@@ -3637,6 +3529,13 @@ impl MetricsProcessor {
                 self.metrics.rps_window.leave(mark);
                 false
             }
+            MetricsCommand::UserStarted {
+                scenario_index,
+                user,
+            } => {
+                self.record_scenario_user(scenario_index, user);
+                false
+            }
             MetricsCommand::RecordUsers {
                 active_users,
                 elapsed_secs,
@@ -3653,6 +3552,7 @@ impl MetricsProcessor {
                 maximum_users,
                 active_users,
                 series_elapsed_secs,
+                running_users,
                 ack,
             } => {
                 // Drain all pending metrics before reset.
@@ -3665,8 +3565,16 @@ impl MetricsProcessor {
                 self.metrics.print_running();
                 // Reset all metrics state.
                 self.metrics.requests = HashMap::new();
+                // The errors tables count the errors of the measured time,
+                // as every other table does; the error log keeps them all.
+                self.metrics.errors.clear();
+                self.metrics.transaction_errors.clear();
                 self.metrics
                     .initialize_scenario_metrics(&self.scenarios, &self.configuration);
+                // The users still running run their scenarios in the measured time.
+                for (scenario_index, user) in running_users {
+                    self.record_scenario_user(scenario_index, user);
+                }
                 self.metrics
                     .initialize_transaction_metrics(
                         &self.scenarios,
@@ -3688,6 +3596,12 @@ impl MetricsProcessor {
                 // rules count, as when a Controller changed the users before the
                 // ramp up ended, starts again with them.
                 self.metrics.rps_window.reset();
+                // Coordinated omission counts restart with the requests they
+                // add up to.
+                if let Some(co_metrics) = self.metrics.coordinated_omission_metrics.as_mut() {
+                    *co_metrics =
+                        CoordinatedOmissionMetrics::new(co_metrics.mitigation_strategy.clone());
+                }
                 // Increment the batch epoch so user-side batches accumulated
                 // before the reset are discarded when they arrive.
                 self.metrics_epoch.fetch_add(1, AtomicOrdering::Relaxed);
@@ -3865,6 +3779,14 @@ impl MetricsProcessor {
         &mut self.graph_data
     }
 
+    /// Count `user` among the users of scenario `scenario_index`, when
+    /// scenario metrics are kept.
+    fn record_scenario_user(&mut self, scenario_index: usize, user: usize) {
+        if let Some(scenario) = self.metrics.scenarios.get_mut(scenario_index) {
+            scenario.users.insert(user);
+        }
+    }
+
     /// Whether coordinated omission mitigation has recorded an event, so the
     /// dashboard shows adjusted values.
     fn co_active(&self) -> bool {
@@ -4009,47 +3931,26 @@ impl MetricsProcessor {
     /// Process a single request metric: record errors, handle CO backfill, update
     /// aggregates and graph data.
     fn process_request_metric(&mut self, request_metric: &GooseRequestMetric) {
-        if !request_metric.error.is_empty() {
+        // A coordinated omission copy repeats a request already sent, with
+        // its error: only the synthetic times derived from it are new.
+        if !request_metric.error.is_empty() && request_metric.coordinated_omission_elapsed == 0 {
             self.record_error(request_metric);
         }
 
-        if request_metric.coordinated_omission_elapsed > 0 && request_metric.user_cadence > 0 {
-            if let Some(co_metrics) = &mut self.metrics.coordinated_omission_metrics {
-                let synthetic_count = (request_metric.coordinated_omission_elapsed as i64
-                    - request_metric.user_cadence as i64
-                    - request_metric.response_time as i64)
-                    / request_metric.user_cadence as i64;
-
-                if synthetic_count > 0 {
-                    co_metrics.record_co_event(
-                        std::time::Duration::from_millis(request_metric.user_cadence),
-                        std::time::Duration::from_millis(
-                            request_metric.coordinated_omission_elapsed,
-                        ),
-                        synthetic_count as u32,
-                        request_metric.user,
-                        request_metric.scenario_name.to_string(),
-                    );
-                }
+        if request_metric.coordinated_omission_elapsed > 0 {
+            // Without a cadence there is nothing to backfill, and the request
+            // itself was already counted.
+            if request_metric.user_cadence == 0 {
+                return;
             }
-
             let mut co_metric = request_metric.clone();
             let mut response_time = request_metric.coordinated_omission_elapsed as i64
                 - request_metric.user_cadence as i64
                 - request_metric.response_time as i64;
+            // The synthetic requests the loop below records, the count the
+            // event reports.
+            let mut synthetic_count: u32 = 0;
 
-            // Synthetic times also go to the dashboard's heatmap, each in
-            // the second its synthetic request would have started. This copy
-            // was sent because the previous scenario iteration took
-            // `coordinated_omission_elapsed` (E) ms, more than twice the
-            // cadence (c). That iteration is the stall, and it ended at or
-            // just before this request started, at `elapsed` (s) ms since the
-            // start. The loop below records t_k = E - k*c - r for k = 1, 2, ...
-            // while t_k > r, where r is this request's own response time; a
-            // request that took t_k and ended at s started at s - t_k. This
-            // is exact for the first request of an iteration and slightly late
-            // for later ones, and with wait times the seconds compress toward
-            // the end of the stall.
             let latency_key = self.graph_data.records_synthetic_latency().then(|| {
                 format!(
                     "{} {}",
@@ -4083,13 +3984,32 @@ impl MetricsProcessor {
                         co_metric.success,
                     );
                     response_time -= request_metric.user_cadence as i64;
+                    synthetic_count += 1;
                 } else {
                     break;
                 }
             }
+
+            if synthetic_count > 0 {
+                if let Some(co_metrics) = &mut self.metrics.coordinated_omission_metrics {
+                    co_metrics.record_co_event(
+                        std::time::Duration::from_millis(request_metric.user_cadence),
+                        std::time::Duration::from_millis(
+                            request_metric.coordinated_omission_elapsed,
+                        ),
+                        synthetic_count,
+                        request_metric.user,
+                        request_metric.scenario_name.to_string(),
+                    );
+                }
+            }
         } else {
-            if let Some(co_metrics) = &mut self.metrics.coordinated_omission_metrics {
-                co_metrics.record_actual_request();
+            // An update from set_success() or set_failure() names a request
+            // already counted.
+            if !request_metric.update {
+                if let Some(co_metrics) = &mut self.metrics.coordinated_omission_metrics {
+                    co_metrics.record_actual_request();
+                }
             }
 
             self.record_request_metric(request_metric);
@@ -4545,6 +4465,7 @@ impl GooseAttack {
                             maximum_users: self.metrics.maximum_users,
                             active_users: goose_attack_run_state.active_users,
                             series_elapsed_secs: self.series_elapsed_secs(),
+                            running_users: goose_attack_run_state.running_users.clone(),
                             ack: ack_tx,
                         })
                         .expect("metrics processor channel closed unexpectedly");
@@ -4860,7 +4781,6 @@ impl GooseAttack {
     ) -> Result<Vec<u8>, GooseError> {
         use crate::report::pdf::generate_pdf_from_html;
         use crate::report::print::generate_print_optimized_html_content;
-        use tokio::fs as async_fs;
 
         // Generate HTML report content using the shared function
         let html_report = source.html(baseline)?;
@@ -4868,17 +4788,8 @@ impl GooseAttack {
         // Add print-optimized CSS for better PDF output using the shared function
         let print_optimized_html = generate_print_optimized_html_content(&html_report);
 
-        // If pdf_print_html is configured, save the PDF-optimized HTML for debugging
-        if let Some(pdf_print_html) = self.configuration.pdf_print_html() {
-            if let Err(e) = async_fs::write(pdf_print_html, &print_optimized_html).await {
-                return Err(GooseError::InvalidOption {
-                    option: "--pdf-print-html".to_string(),
-                    value: pdf_print_html.to_string(),
-                    detail: format!("Failed to write PDF-optimized HTML: {e}"),
-                });
-            }
-            info!("PDF-optimized HTML saved to: {pdf_print_html}");
-        }
+        // A --pdf-print-html file is written by write_report_files, with or
+        // without a PDF report.
 
         // The Chrome found at startup, by create_reports, unless it was a
         // download that another Goose run's refresh has since removed.
@@ -5455,6 +5366,31 @@ fn first_error(
     }
 }
 
+/// The `# fails` cell of a console table: the failure count, then its
+/// share of `total`. 0% and 100% print without a decimal; a share under 1%
+/// prints with one, or as `<0.1%` when that one would be 0, so failures
+/// never show as 0%.
+fn fail_and_percent(fail_count: usize, total: usize) -> String {
+    let fail_percent = if fail_count > 0 {
+        fail_count as f32 / total as f32 * 100.0
+    } else {
+        0.0
+    };
+    let percent = if fail_count == 0 || fail_percent as usize == 100 {
+        // Compress 100.0 and 0.0 to 100 and 0 respectively to save width.
+        format!("{}%", fail_percent as usize)
+    } else {
+        match format!("{fail_percent:.1}") {
+            tenths if tenths == "0.0" => "<0.1%".to_string(),
+            tenths => format!("{tenths}%"),
+        }
+    };
+    format!(
+        "{} ({percent})",
+        fail_count.to_formatted_string(&Locale::en)
+    )
+}
+
 /// Helper to calculate requests and fails per seconds.
 pub(crate) fn per_second_calculations(duration: usize, total: usize, fail: usize) -> (f32, f32) {
     let (requests_per_second, fails_per_second) = if duration == 0 {
@@ -5741,6 +5677,70 @@ mod test {
                     .collect()
             })
             .collect()
+    }
+
+    /// The console's requests and transactions tables, as printed.
+    struct FailTables<'a>(&'a GooseMetrics);
+
+    impl fmt::Display for FailTables<'_> {
+        fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+            self.0.fmt_transactions(fmt)?;
+            self.0.fmt_requests(fmt)
+        }
+    }
+
+    /// A failure rate under 1% shows as one, never as 0%, in the `# fails`
+    /// column of every console table and its Aggregated row; 0 failures
+    /// and rates of 1% or more print as they did.
+    #[test]
+    fn fails_column_under_one_percent() {
+        // Each row's failures of its total, its cell, and the Aggregated
+        // cell of two such rows.
+        for (fails, total, expected, aggregate) in [
+            (0, 1_000, "0 (0%)", "0 (0%)"),
+            (3, 1_000, "3 (0.3%)", "6 (0.3%)"),
+            (1, 100_000, "1 (<0.1%)", "2 (<0.1%)"),
+            (10, 1_000, "10 (1.0%)", "20 (1.0%)"),
+            (999, 1_000, "999 (99.9%)", "1,998 (99.9%)"),
+            (1_000, 1_000, "1,000 (100%)", "2,000 (100%)"),
+        ] {
+            let mut metrics = GooseMetrics {
+                display_metrics: true,
+                ..Default::default()
+            };
+            for path in ["/a", "/b"] {
+                let mut request = GooseRequestMetricAggregate::new(path, GooseMethod::Get, 0, "");
+                request.success_count = total - fails;
+                request.fail_count = fails;
+                metrics.requests.insert(format!("GET {path}"), request);
+            }
+            metrics.transactions = vec![(0..2)
+                .map(|index| {
+                    let mut transaction = TransactionMetricAggregate::new(
+                        0,
+                        "S".into(),
+                        index,
+                        TransactionName::TransactionOnly(Arc::from(format!("t{index}"))),
+                    );
+                    transaction.success_count = total - fails;
+                    transaction.fail_count = fails;
+                    transaction
+                })
+                .collect()];
+            let printed = FailTables(&metrics).to_string();
+            for name in ["GET /a", "GET /b", "1: t0", "2: t1"] {
+                assert_eq!(
+                    printed_rows(&printed, name)[0][1],
+                    expected,
+                    "{name}\n{printed}"
+                );
+            }
+            let aggregated = printed_rows(&printed, "Aggregated");
+            assert_eq!(aggregated.len(), 2, "{printed}");
+            for row in aggregated {
+                assert_eq!(row[1], aggregate, "{printed}");
+            }
+        }
     }
 
     /// The minimum over several requests counts a 0 ms minimum.
@@ -6967,6 +6967,7 @@ mod test {
             maximum_users: 1,
             active_users: 1,
             series_elapsed_secs: 10,
+            running_users: Vec::new(),
             ack,
         });
         // In flight at the reset: started at 9.8 s, finished after it.
@@ -6989,6 +6990,121 @@ mod test {
                 key
             );
         }
+    }
+
+    /// The metrics reset clears both errors tables, so the Controllers'
+    /// `metrics` reply and the dashboard snapshot read none from before it.
+    #[tokio::test]
+    async fn reset_clears_errors_tables() {
+        let mut processor = make_test_processor(0);
+        let mut failed = make_request_metric("/about/", 1, 404, 100);
+        failed.success = false;
+        failed.error = "404 Not Found: /about/".to_string();
+        processor.process_request_metric(&failed);
+        processor.record_transaction_error(&GooseTransactionErrorMetric {
+            elapsed: 100,
+            scenario_index: 0,
+            scenario_name: Arc::from("TestScenario"),
+            transaction_index: 0,
+            transaction_name: Arc::from("tx"),
+            run_time: 1,
+            user: 0,
+            error: "ramping up".to_string(),
+        });
+        assert_eq!(processor.metrics.errors.len(), 1);
+        assert_eq!(processor.metrics.transaction_errors.len(), 1);
+        let (ack, _ack_rx) = tokio::sync::oneshot::channel();
+        processor.handle_command(MetricsCommand::Reset {
+            duration: 1,
+            total_users: 1,
+            maximum_users: 1,
+            active_users: 1,
+            series_elapsed_secs: 1,
+            running_users: Vec::new(),
+            ack,
+        });
+        let (respond, respond_rx) = tokio::sync::oneshot::channel();
+        processor.handle_command(MetricsCommand::GetMetrics {
+            duration: 1,
+            total_users: 1,
+            maximum_users: 1,
+            history: Vec::new(),
+            respond,
+        });
+        let metrics = respond_rx.await.unwrap();
+        assert!(metrics.errors.is_empty(), "{:?}", metrics.errors);
+        assert!(
+            metrics.transaction_errors.is_empty(),
+            "{:?}",
+            metrics.transaction_errors
+        );
+        let (respond, respond_rx) = tokio::sync::oneshot::channel();
+        processor.handle_command(MetricsCommand::GetDashboardSnapshot {
+            duration: 1,
+            total_users: 1,
+            maximum_users: 1,
+            active_users: 1,
+            target_users: 1,
+            series_elapsed_secs: 1,
+            phase: "maintain".to_string(),
+            stopping: false,
+            series_window_secs: dashboard_snapshot::SERIES_WINDOW_SECS,
+            report: dashboard_snapshot::SnapshotReport::default(),
+            settings: Box::new(dashboard_snapshot::SnapshotSettings::idle()),
+            heatmap_since: None,
+            respond,
+        });
+        let snapshot = respond_rx.await.unwrap();
+        assert!(snapshot.errors.is_empty());
+        assert!(snapshot.transaction_errors.is_empty());
+    }
+
+    /// A user counts among its scenario's users from when it starts, and
+    /// again after a metrics reset while it still runs, iteration or not.
+    #[test]
+    fn scenario_users_are_the_users_running_it() {
+        let mut processor = make_dashboard_test_processor(GooseConfiguration {
+            host: Some("http://localhost".to_string()),
+            ..Default::default()
+        });
+        let mut scenario = crate::goose::Scenario::new("Only");
+        scenario.scenarios_index = 0;
+        processor.scenarios = vec![scenario];
+        processor
+            .metrics
+            .initialize_scenario_metrics(&processor.scenarios, &processor.configuration);
+        for user in 0..3 {
+            processor.handle_command(MetricsCommand::UserStarted {
+                scenario_index: 0,
+                user,
+            });
+        }
+        assert_eq!(processor.metrics.scenarios[0].users.len(), 3);
+        // A scenario index that has no metrics is ignored.
+        processor.handle_command(MetricsCommand::UserStarted {
+            scenario_index: 7,
+            user: 9,
+        });
+
+        // User 2 stopped before the reset.
+        let (ack, _ack_rx) = tokio::sync::oneshot::channel();
+        processor.handle_command(MetricsCommand::Reset {
+            duration: 1,
+            total_users: 3,
+            maximum_users: 3,
+            active_users: 2,
+            series_elapsed_secs: 1,
+            running_users: vec![(0, 0), (0, 1)],
+            ack,
+        });
+        let scenario = &processor.metrics.scenarios[0];
+        assert_eq!(scenario.users, vec![0, 1].into_iter().collect());
+        assert_eq!(scenario.run_times.counter, 0);
+        assert_eq!(
+            iterations_per_user(scenario.run_times.counter, scenario.users.len()),
+            0.0
+        );
+        assert_eq!(iterations_per_user(0, 0), 0.0);
     }
 
     #[test]
@@ -7022,6 +7138,7 @@ mod test {
             maximum_users: 5,
             active_users: 5,
             series_elapsed_secs: 10,
+            running_users: Vec::new(),
             ack: ack_tx,
         });
         assert!(!shutdown);
@@ -7893,6 +8010,7 @@ mod test {
             maximum_users: 1,
             active_users: 1,
             series_elapsed_secs: 12,
+            running_users: Vec::new(),
             ack,
         });
         assert_eq!(
@@ -8064,6 +8182,73 @@ mod test {
             let series = request_series(&mut processor, "/fail", false).unwrap();
             assert_eq!(series.heatmap.counts(2), (1, 0), "cadence {user_cadence}");
         }
+    }
+
+    #[test]
+    fn co_copies_and_updates_are_counted_once() {
+        let mut processor =
+            make_latency_test_processor(GooseCoordinatedOmissionMitigation::Average);
+        let co = |p: &MetricsProcessor| {
+            let co = p.metrics.coordinated_omission_metrics.as_ref().unwrap();
+            (
+                co.actual_requests,
+                co.synthetic_requests,
+                co.co_events.len(),
+            )
+        };
+
+        // A request, then its update from set_success().
+        let request = make_request_metric("/ok", 20, 200, 1_000);
+        processor.process_request_metric(&request);
+        let mut update = request.clone();
+        update.update = true;
+        processor.process_request_metric(&update);
+        assert_eq!(co(&processor), (1, 0, 0));
+
+        // A failed request that ended a stall.
+        let mut failed = make_request_metric("/", 20, 500, 2_000);
+        failed.success = false;
+        failed.error = "500 Internal Server Error".to_string();
+        processor.process_request_metric(&failed);
+        assert_eq!(co(&processor), (2, 0, 0));
+
+        // Its copy, without a cadence: nothing to backfill and nothing new.
+        let mut copy = failed.clone();
+        copy.coordinated_omission_elapsed = 1_000;
+        processor.process_request_metric(&copy);
+        assert_eq!(co(&processor), (2, 0, 0));
+
+        // With a 100 ms cadence, a 1000 ms stall and a 20 ms request, the
+        // synthetic times are 880, 780, ... 80, 9 of them.
+        copy.user_cadence = 100;
+        processor.process_request_metric(&copy);
+        assert_eq!(co(&processor), (2, 9, 1));
+        let aggregate = &processor.metrics.requests["GET /"];
+        let co_data = aggregate.coordinated_omission_data.as_ref().unwrap();
+        assert_eq!(co_data.counter - aggregate.raw_data.counter, 9);
+        // The error is the request's, recorded once.
+        assert_eq!(
+            processor
+                .metrics
+                .errors
+                .values()
+                .map(|e| e.occurrences)
+                .sum::<usize>(),
+            1
+        );
+
+        // A metrics reset starts the counts again.
+        let (ack, _ack_rx) = tokio::sync::oneshot::channel();
+        processor.handle_command(MetricsCommand::Reset {
+            duration: 3,
+            total_users: 1,
+            maximum_users: 1,
+            active_users: 1,
+            series_elapsed_secs: 3,
+            running_users: Vec::new(),
+            ack,
+        });
+        assert_eq!(co(&processor), (0, 0, 0));
     }
 
     /// Send `original` through a user thread built from `configuration`, mark

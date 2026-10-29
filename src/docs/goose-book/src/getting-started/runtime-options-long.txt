@@ -1,4 +1,4 @@
-Goose: a distributed HTTP(S) load testing tool written in Rust
+Goose 0.19.0: an HTTP(S) load testing tool written in Rust
 
 Usage: loadtest [OPTIONS]
 
@@ -63,7 +63,8 @@ Load test:
 
           How fast to stop users at the end of the load test. A decimal is
           allowed, as for --increase-rate. Without it or --decrease-time, every
-          user stops at once. Not allowed with --decrease-time or --test-plan.
+          user stops at once. Not allowed with --decrease-time, --iterations or
+          --test-plan.
 
           Example: --decrease-rate 5. Set in code with
           GooseDefault::DecreaseRate.
@@ -73,7 +74,8 @@ Load test:
 
           Stops the users evenly over this time at the end of the load test, in
           place of --decrease-rate. TIME is as for --increase-time. Needs at
-          least 2 users. Not allowed with --decrease-rate or --test-plan.
+          least 2 users. Not allowed with --decrease-rate, --iterations or
+          --test-plan.
 
           Example: --decrease-time 1m. Set in code with
           GooseDefault::DecreaseTime, in seconds.
@@ -83,7 +85,8 @@ Load test:
 
           Each user stops after running its scenario N times, and the load test
           ends once every user has stopped. 0, the default, means no limit. Not
-          allowed with --run-time, --test-plan or --no-reset-metrics.
+          allowed with --run-time, --decrease-rate, --decrease-time, --test-plan
+          or --no-reset-metrics.
 
           Example: --iterations 5. Set in code with GooseDefault::Iterations.
 
@@ -242,8 +245,8 @@ Reports:
           Label the run in its reports
 
           Stores TEXT in the JSON report and shows it at the top of the HTML and
-          Markdown reports and in the dashboard. Needs --report-file or
-          --dashboard.
+          Markdown reports and in the dashboard. Needs --report-file,
+          --pdf-print-html or --dashboard.
 
           Example: --notes "baseline before cache change". Set in code with
           GooseDefault::Notes.
@@ -280,7 +283,7 @@ Reports:
 
           Report graphs show a line for the total and, by default, one more for
           each request, transaction or scenario. This leaves out the extra
-          lines. Needs --report-file or --dashboard.
+          lines. Needs --report-file, --pdf-print-html or --dashboard.
 
           Set in code with GooseDefault::NoGranularData.
 
@@ -289,6 +292,7 @@ Reports:
 
           Writes the HTML report, laid out for printing, to FILE, to turn into a
           PDF in any browser. Needs neither Chrome nor the pdf-reports feature.
+          Not allowed with --no-metrics.
 
           Example: --pdf-print-html report-print.html.
 
@@ -523,7 +527,8 @@ Dashboard:
           Bind host [default: 127.0.0.1]
 
           The address the dashboard listens on, with --dashboard. An address
-          that is not a loopback address needs --dashboard-auth-token.
+          that is not a loopback address needs --dashboard-auth-token or
+          --dashboard-no-auth.
 
           Example: --dashboard-host 0.0.0.0. Set in code with
           GooseDefault::DashboardHost.
@@ -542,7 +547,8 @@ Dashboard:
 
           The token a dashboard client must send, as an Authorization: Bearer
           header or a token query parameter. Needed when --dashboard-host is not
-          a loopback address, and always with --dashboard-control.
+          a loopback address, and with --dashboard-control, unless
+          --dashboard-no-auth is set.
 
           Set in code with GooseDefault::DashboardAuthToken.
 
@@ -550,10 +556,20 @@ Dashboard:
           Allow control from the dashboard
 
           Lets the dashboard start, stop and quit the load test and change its
-          users. Needs --dashboard and --dashboard-auth-token, even on a
-          loopback address.
+          users. Needs --dashboard, and --dashboard-auth-token or
+          --dashboard-no-auth.
 
           Set in code with GooseDefault::DashboardControl.
+
+      --dashboard-no-auth
+          Dashboard without a token
+
+          Allow dashboard access and control without a token. Anyone who can
+          reach the port can watch the test, and with --dashboard-control start,
+          stop and redirect it; on anything but loopback Goose warns at startup.
+          Needs --dashboard, and can't be used with --dashboard-auth-token.
+
+          Set in code with GooseDefault::DashboardNoAuth.
 
       --dashboard-max-clients <N>
           Max live clients [default: 32]
@@ -576,9 +592,9 @@ Controllers:
       --no-autostart
           Wait for a Controller to start the test
 
-          Starts idle and waits for a start command from the telnet or WebSocket
-          Controller, or from the dashboard with --dashboard-control. Needs one
-          of them enabled.
+          Starts idle and waits for a start command from the telnet Controller,
+          the WebSocket Controller with --websocket, or the dashboard with
+          --dashboard-control. Needs one of them enabled.
 
           Set in code with GooseDefault::NoAutoStart.
 
@@ -591,11 +607,14 @@ Controllers:
           Set in code with GooseDefault::NoTelnet.
 
       --telnet-host <HOST>
-          Telnet host [default: 0.0.0.0]
+          Telnet host [default: 127.0.0.1]
 
-          The address the telnet Controller listens on.
+          The address the telnet Controller listens on. It has no
+          authentication: any other address, such as 0.0.0.0, prints a warning
+          at startup, as anyone who can reach the port can start, stop and
+          reconfigure the load test.
 
-          Example: --telnet-host 127.0.0.1. Set in code with
+          Example: --telnet-host 0.0.0.0. Set in code with
           GooseDefault::TelnetHost.
 
       --telnet-port <PORT>
@@ -606,26 +625,31 @@ Controllers:
           Example: --telnet-port 6116. Set in code with
           GooseDefault::TelnetPort.
 
-      --no-websocket
-          Disable the WebSocket Controller
+      --websocket
+          Enable the WebSocket Controller
 
-          By default, Goose accepts Controller commands over WebSocket, on
-          --websocket-host and --websocket-port.
+          Accepts Controller commands over WebSocket, on --websocket-host and
+          --websocket-port. Off by default: the WebSocket Controller has no
+          authentication and accepts a connection from any web page, so any
+          browser that can reach the port can drive the test.
 
-          Set in code with GooseDefault::NoWebSocket.
+          Set in code with GooseDefault::WebSocket.
 
       --websocket-host <HOST>
-          WebSocket host [default: 0.0.0.0]
+          WebSocket host [default: 127.0.0.1]
 
-          The address the WebSocket Controller listens on.
+          The address the WebSocket Controller listens on, with --websocket. It
+          has no authentication: any other address, such as 0.0.0.0, prints a
+          warning at startup, as anyone who can reach the port can start, stop
+          and reconfigure the load test.
 
-          Example: --websocket-host 127.0.0.1. Set in code with
+          Example: --websocket-host 0.0.0.0. Set in code with
           GooseDefault::WebSocketHost.
 
       --websocket-port <PORT>
           WebSocket port [default: 5117]
 
-          The TCP port the WebSocket Controller listens on.
+          The TCP port the WebSocket Controller listens on, with --websocket.
 
           Example: --websocket-port 6117. Set in code with
           GooseDefault::WebSocketPort.
@@ -635,7 +659,7 @@ HTTP client:
           Request timeout in seconds [default: 60]
 
           How long each request may take before it fails. A decimal is allowed:
-          0.5 is half a second. At least 0.001, one millisecond.
+          0.5 is half a second. Rounded to the millisecond, so at least 0.0005.
 
           Example: --timeout 15. Set in code with GooseDefault::Timeout.
 

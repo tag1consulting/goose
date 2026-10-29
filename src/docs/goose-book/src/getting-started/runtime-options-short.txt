@@ -1,4 +1,4 @@
-Goose: a distributed HTTP(S) load testing tool written in Rust
+Goose 0.19.0: an HTTP(S) load testing tool written in Rust
 
 Usage: loadtest [OPTIONS]
 
@@ -76,16 +76,17 @@ Dashboard:
       --dashboard-port <PORT>         Bind port [default: 5118]
       --dashboard-auth-token <TOKEN>  Auth token
       --dashboard-control             Allow control from the dashboard
+      --dashboard-no-auth             Dashboard without a token
       --dashboard-max-clients <N>     Max live clients [default: 32]
       --no-percentiles-over-time      Don't track per-second response times
 
 Controllers:
       --no-autostart           Wait for a Controller to start the test
       --no-telnet              Disable the telnet Controller
-      --telnet-host <HOST>     Telnet host [default: 0.0.0.0]
+      --telnet-host <HOST>     Telnet host [default: 127.0.0.1]
       --telnet-port <PORT>     Telnet port [default: 5116]
-      --no-websocket           Disable the WebSocket Controller
-      --websocket-host <HOST>  WebSocket host [default: 0.0.0.0]
+      --websocket              Enable the WebSocket Controller
+      --websocket-host <HOST>  WebSocket host [default: 127.0.0.1]
       --websocket-port <PORT>  WebSocket port [default: 5117]
 
 HTTP client:

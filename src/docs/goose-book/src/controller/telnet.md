@@ -1,6 +1,8 @@
 # Telnet Controller
 
-The host and port that the telnet Controller listens on can be configured at start time with `--telnet-host` and `--telnet-port`. The telnet Controller can be completely disabled with the `--no-telnet` command line option. The defaults can be changed with [`GooseDefault::TelnetHost`](https://docs.rs/goose/*/goose/config/enum.GooseDefault.html#variant.TelnetHost),[`GooseDefault::TelnetPort`](https://docs.rs/goose/*/goose/config/enum.GooseDefault.html#variant.TelnetPort), and [`GooseDefault::NoTelnet`](https://docs.rs/goose/*/goose/config/enum.GooseDefault.html#variant.NoTelnet).
+The telnet Controller listens on `127.0.0.1:5116` by default, so only this machine can reach it. It has no authentication: anyone who can reach its port can start, stop and reconfigure the load test. To reach it from another machine, either forward the port over ssh to the default bind (`ssh -L 5116:127.0.0.1:5116 loadtest`, then `telnet localhost 5116`), or start Goose with an explicit host such as `--telnet-host 0.0.0.0`, which prints a warning at startup that the Controller has no authentication.
+
+The host and port that the telnet Controller listens on can be configured at start time with `--telnet-host` and `--telnet-port`. The telnet Controller can be completely disabled with the `--no-telnet` command line option. The defaults can be changed with [`GooseDefault::TelnetHost`](https://docs.rs/goose/*/goose/config/enum.GooseDefault.html#variant.TelnetHost), [`GooseDefault::TelnetPort`](https://docs.rs/goose/*/goose/config/enum.GooseDefault.html#variant.TelnetPort), and [`GooseDefault::NoTelnet`](https://docs.rs/goose/*/goose/config/enum.GooseDefault.html#variant.NoTelnet).
 
 ## Controller Commands
 
@@ -11,7 +13,7 @@ Trying 127.0.0.1...
 Connected to localhost.
 Escape character is '^]'.
 goose> ?
-goose 0.17.2 controller commands:
+goose 0.19.0 controller commands:
 help               this help
 exit               exit controller
 
@@ -37,6 +39,10 @@ goodbye!
 goose> Connection closed by foreign host.
 ```
 
+`exit`, `quit` and `q` end the session, and `help` and `?` print this list. Commands and values are not case sensitive, and most commands take aliases: `increase_rate` and `increase-rate` for `increaserate`, `increasetime` for `increase-time`, `run_time` for `runtime`, `testplan` and `plan` for `test-plan`, `stats` for `metrics`, and the like. A command takes its value after one space.
+
+`config` prints the configuration, and `config-json` prints it as JSON, with an option that is not set shown as `null` and an output flag given without a path shown as `(the run's folder)`. Neither shows the dashboard auth token: one that is set reads `(set)`. `metrics` prints the metrics tables, and `metrics-json` prints the metrics as JSON. In that JSON each request's `raw_data` holds its response times in microsecond buckets, `times_us`, beside `minimum_time_us`, `maximum_time_us` and `total_time_us`, and the whole millisecond `minimum_time`, `maximum_time`, `total_time` and `counter`; each transaction and scenario holds the same as `times_us`, `min_time_us`, `max_time_us` and `total_time_us`, beside `min_time`, `max_time`, `total_time` and `counter`. Each request also holds `status_code_counts`, how many responses got each status code, and `status_code_timings`, each status code's `count`, `total_time_us`, `min_time_us` and `max_time_us`.
+
 A command whose value can't be used is refused with what the value must be, and changes nothing:
 ```bash
 goose> users 0
@@ -54,22 +60,24 @@ Telnet, WebSocket and the dashboard share these bounds:
 | `host` | An `http://` or `https://` url with no user name or password, which would show to observers and in reports |
 | `users` | 1 to 100000 |
 | `increaserate`, `decreaserate` | 0.01 to 100000 users per second |
-| `increase-time`, `decrease-time`, `runtime` | 1 second to 30 days; `0` clears the setting, so Goose's default applies |
+| `increase-time`, `decrease-time`, `runtime` | 1 second to 30 days; `0` clears the setting, so Goose's default applies (the dashboard takes `null` to clear, and refuses `0`) |
 | `test-plan` | At most 100 steps of 0 seconds to 30 days each, in at most 4096 bytes, starting 1 to 100000 users in total |
 
-`host`, `increase-time` and `decrease-time` are accepted only while the load test is idle, as they are read when it starts. `runtime`, `users` and `test-plan` also change a running load test. A `runtime` on a running users ramp moves the end of the hold in progress to its start plus the new run time, and starts the ramp down at once if that has passed; before the hold starts it replaces the hold ahead, and on a run holding until stopped it holds from now for the new run time, then ramps down. `runtime 0` on a running test holds until stopped, and is refused while a ramp down is configured. `runtime` is refused during the ramp down, while stopping and while a test plan runs, as the plan sets how long it runs. See [Run time on a running test](dashboard.md#run-time-on-a-running-test). A `users` change on a running users ramp keeps its run time and ramp down: it ramps to the new count, then holds until the hold's end and ramps down for the new count, and during the ramp down it abandons the ramp down and holds the new count until stopped. `users` is refused while a test plan runs, as the plan sets users. See [Users on a running test](dashboard.md#users-on-a-running-test).
+`host`, `increase-time` and `decrease-time` are accepted only while the load test is idle, as they are read when it starts. `runtime`, `users` and `test-plan` also change a running load test. A `runtime` on a running users ramp moves the end of the hold in progress to its start plus the new run time, and starts the ramp down at once if that has passed. If the new run time puts the end of the hold earlier than the end of the ramp from a `users` change made during the hold, the run holds until stopped. Before the hold starts, a `runtime` replaces the hold ahead, and on a run holding until stopped it holds from now for the new run time, then ramps down. `runtime 0` on a running test holds until stopped, and is refused while a ramp down is configured. `runtime` is refused during the ramp down, while stopping and while a test plan runs, as the plan sets how long it runs. See [Run time on a running test](dashboard-reference.md#run-time-on-a-running-test). A `users` change on a running users ramp keeps its run time and ramp down: it ramps to the new count, holds, and ramps down from the new count. A change during the ramp up holds for the full run time; a change during the hold keeps the hold's end. If the new ramp outlasts the hold, or the new count is the one the run already has, it holds that count until stopped. A `users` change during the ramp down abandons it and holds the new count until stopped. `users` is refused while a test plan runs, as the plan sets users. See [Users on a running test](dashboard-reference.md#users-on-a-running-test).
 
 The rates are accepted in Idle and on a running users ramp, and are refused during its ramp down, while stopping and while a test plan runs. On a running test, a rate is refused while its own time is set, since a time changes only in Idle; in Idle a rate clears its own time and a time clears its own rate. A decrease rate on a running users ramp regenerates the ramp down still ahead, or adds one where all users would stop at once when the hold ends; an increase rate is for the next `users` increase.
 
-A test plan sets users, so while one is configured a rate or a time is refused with `set users first to switch to a users ramp`: `users` switches to a users ramp and clears the plan, and `test-plan` switches back and clears users, the rates and the times. The command line's rules also apply: `runtime` and `test-plan` are refused under `--iterations`, `test-plan` under `--no-reset-metrics`, and in Idle `increase-time` or `decrease-time` with fewer than 2 users, or `users 1` while either is set. `users` and `test-plan` are refused while a `stop`, `shutdown` or Ctrl-C is ramping the load test down. A command that gets no answer within 15 seconds is reported as timed out, and may still apply.
+A test plan sets users, so a rate or a time is refused in Idle with `set users first to switch to a users ramp`, and, while the plan runs, with `a test plan is running`. While one is configured, `users` switches to a users ramp and clears the plan, and `test-plan` switches back and clears users, the rates and the times. The command line's rules also apply: `runtime`, `decreaserate`, `decrease-time` and `test-plan` are refused under `--iterations`, `test-plan` under `--no-reset-metrics`, and in Idle `increase-time` or `decrease-time` with fewer than 2 users, or `users 1` while either is set. `users` and `test-plan` are refused while a `stop`, `shutdown` or Ctrl-C is ramping the load test down. A command that gets no answer within 15 seconds is answered `control timed out, it may still apply: check before retrying`: check the configuration or metrics before sending it again.
 
 ## Example
 
 One possible use-case for the controller is to dynamically reconfigure the number of users being simulated by the load test. In the following example, the load test was launched with the following parameters:
 
 ```bash
-% cargo run --release --example umami -- --no-autostart --host https://umami.ddev.site/ --increase-rate 50 --report-file report.html
+% cargo run --release --example umami -- --no-autostart --telnet-host 0.0.0.0 --host https://umami.ddev.site/ --increase-rate 50 --report-file report.html --report-file report.md
 ```
+
+The `--telnet-host 0.0.0.0` lets the telnet Controller be reached from another machine, here one that reaches the load test as `loadtest`, and prints the warning that it has no authentication.
 
 Then the telnet controller is invoked as follows:
 ```bash
@@ -104,40 +112,37 @@ load test shut down
 goose> Connection closed by foreign host.
 ```
 
-Initially the load test is configured with an increase rate of 50, so goose increases and decreases the user count by 50 user threads per second. Later we reconfigure the increase rate to 5, slowing down the rate that goose alters the number of user threads. The result is more clearly illustrated in the following graph generated at the end of the above example load test:
+Initially the load test is configured with an increase rate of 50, so goose increases and decreases the user count by 50 user threads per second: with no decrease rate set, Goose lowers the user count at the increase rate. Later we reconfigure the increase rate to 5, slowing down the rate that goose alters the number of user threads. This graph, from the end of that load test, shows the result:
 
 ![Controller dynamic users and increase rate](controller-users.png)
 
-The above commands are also summarized in the metrics overview:
+The above commands are also summarized in the plan overview of the Markdown report, `report.md`, here from a run of the same commands against a local server (the HTML report has the same table):
 
-```ignore
- === OVERVIEW ===
- ------------------------------------------------------------------------------
- Action       Started               Stopped             Elapsed    Users
- ------------------------------------------------------------------------------
- Increasing:  2022-05-05 07:09:34 - 2022-05-05 07:09:34 (00:00:00, 0 -> 10)
- Maintaining: 2022-05-05 07:09:34 - 2022-05-05 07:09:40 (00:00:06, 10)
- Increasing:  2022-05-05 07:09:40 - 2022-05-05 07:09:40 (00:00:00, 10 -> 20)
- Maintaining: 2022-05-05 07:09:40 - 2022-05-05 07:09:46 (00:00:06, 20)
- Increasing:  2022-05-05 07:09:46 - 2022-05-05 07:09:47 (00:00:01, 20 -> 40)
- Maintaining: 2022-05-05 07:09:47 - 2022-05-05 07:09:50 (00:00:03, 40)
- Increasing:  2022-05-05 07:09:50 - 2022-05-05 07:09:51 (00:00:01, 40 -> 80)
- Maintaining: 2022-05-05 07:09:51 - 2022-05-05 07:09:59 (00:00:08, 80)
- Decreasing:  2022-05-05 07:09:59 - 2022-05-05 07:10:00 (00:00:01, 40 <- 80)
- Maintaining: 2022-05-05 07:10:00 - 2022-05-05 07:10:05 (00:00:05, 40)
- Decreasing:  2022-05-05 07:10:05 - 2022-05-05 07:10:06 (00:00:01, 20 <- 40)
- Maintaining: 2022-05-05 07:10:06 - 2022-05-05 07:10:12 (00:00:06, 20)
- Increasing:  2022-05-05 07:10:12 - 2022-05-05 07:10:15 (00:00:03, 20 -> 160)
- Maintaining: 2022-05-05 07:10:15 - 2022-05-05 07:10:19 (00:00:04, 160)
- Decreasing:  2022-05-05 07:10:19 - 2022-05-05 07:10:22 (00:00:03, 20 <- 160)
- Maintaining: 2022-05-05 07:10:22 - 2022-05-05 07:10:35 (00:00:13, 20)
- Increasing:  2022-05-05 07:10:35 - 2022-05-05 07:10:50 (00:00:15, 20 -> 80)
- Maintaining: 2022-05-05 07:10:50 - 2022-05-05 07:10:54 (00:00:04, 80)
- Decreasing:  2022-05-05 07:10:54 - 2022-05-05 07:11:07 (00:00:13, 20 <- 80)
- Maintaining: 2022-05-05 07:11:07 - 2022-05-05 07:11:13 (00:00:06, 20)
- Canceling:   2022-05-05 07:11:13 - 2022-05-05 07:11:13 (00:00:00, 0 <- 20)
+```markdown
+## Plan Overview
 
- Target host: https://umami.ddev.site/
- goose v0.18.1
- ------------------------------------------------------------------------------
+| Action | Started | Stopped | Elapsed | Users |
+| ------ | ------- | ------- | ------- | ----: |
+| Increasing | 26-10-25 22:12:31 | 26-10-25 22:12:31 | 00:00:00 | 0 &rarr; 18 |
+| Maintaining | 26-10-25 22:12:31 | 26-10-25 22:12:43 | 00:00:12 | 18 |
+| Increasing | 26-10-25 22:12:43 | 26-10-25 22:12:43 | 00:00:00 | 18 &rarr; 20 |
+| Maintaining | 26-10-25 22:12:43 | 26-10-25 22:12:55 | 00:00:12 | 20 |
+| Increasing | 26-10-25 22:12:55 | 26-10-25 22:12:56 | 00:00:01 | 20 &rarr; 40 |
+| Maintaining | 26-10-25 22:12:56 | 26-10-25 22:13:07 | 00:00:11 | 40 |
+| Increasing | 26-10-25 22:13:07 | 26-10-25 22:13:08 | 00:00:01 | 40 &rarr; 80 |
+| Maintaining | 26-10-25 22:13:08 | 26-10-25 22:13:22 | 00:00:14 | 80 |
+| Decreasing | 26-10-25 22:13:22 | 26-10-25 22:13:23 | 00:00:01 | 40 &larr; 80 |
+| Maintaining | 26-10-25 22:13:23 | 26-10-25 22:13:34 | 00:00:11 | 40 |
+| Decreasing | 26-10-25 22:13:34 | 26-10-25 22:13:34 | 00:00:00 | 20 &larr; 40 |
+| Maintaining | 26-10-25 22:13:34 | 26-10-25 22:13:46 | 00:00:12 | 20 |
+| Increasing | 26-10-25 22:13:46 | 26-10-25 22:13:49 | 00:00:03 | 20 &rarr; 160 |
+| Maintaining | 26-10-25 22:13:49 | 26-10-25 22:14:01 | 00:00:12 | 160 |
+| Decreasing | 26-10-25 22:14:01 | 26-10-25 22:14:04 | 00:00:03 | 20 &larr; 160 |
+| Maintaining | 26-10-25 22:14:04 | 26-10-25 22:14:17 | 00:00:13 | 20 |
+| Increasing | 26-10-25 22:14:17 | 26-10-25 22:14:22 | 00:00:05 | 20 &rarr; 43 |
+| Decreasing | 26-10-25 22:14:22 | 26-10-25 22:14:27 | 00:00:05 | 20 &larr; 43 |
+| Maintaining | 26-10-25 22:14:27 | 26-10-25 22:14:47 | 00:00:20 | 20 |
+| Canceling | 26-10-25 22:14:47 | 26-10-25 22:14:48 | 00:00:01 | 0 &larr; 20 |
 ```
+
+The run starts with the default users, one per CPU core (18 here). At 5 users a second, the `users 80` that follows `increase_rate 5` had reached 43 users when `users 20` arrived about 5 seconds later, so Goose turned back from 43.

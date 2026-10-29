@@ -843,3 +843,34 @@ test("the RPS KPI keeps two decimals under 100", async () => {
   );
   assert.equal(window.document.getElementById("kpi-rps").textContent, rate(99.5));
 });
+
+test("the Fail % KPI and aggregate show a failure rate under 1% as one", async () => {
+  const pct = (n, digits) =>
+    n.toLocaleString(undefined, {
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
+    }) + "%";
+  // Each failure rate, then as the KPI and the aggregate's Fail % show it:
+  // 0 and 1% or more keep two decimals.
+  const cases = [
+    [0, pct(0, 2)],
+    [3 / 1000, pct(0.3, 1)],
+    [1 / 100000, "<0.1%"],
+    [10 / 1000, pct(1, 2)],
+    [999 / 1000, pct(99.9, 2)],
+  ];
+  for (const [failure_rate, shown] of cases) {
+    const window = await load(
+      snapshotWith(
+        { aggregate: { ...IDLE_SNAPSHOT.aggregate, total_requests: 100000, failure_rate } },
+        { metrics_disabled: false }
+      )
+    );
+    const doc = window.document;
+    assert.equal(doc.getElementById("kpi-fail").textContent, shown, String(failure_rate));
+    const fail = Array.from(doc.querySelectorAll("#aggregate-body .kv")).find(
+      (kv) => kv.querySelector(".k").textContent === "Fail %"
+    );
+    assert.equal(fail.querySelector(".v").textContent, shown, String(failure_rate));
+  }
+});

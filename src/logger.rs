@@ -161,14 +161,14 @@
 //! [`log_debug`](../goose/struct.GooseUser.html#method.log_debug)
 //! results in a debug log message similar to:
 //! ```json
-//! {"body":null,"header":null,"request":null,"tag":"POSTing [(\"field_1\", \"foo\"), (\"field_2\", \"bar\"), (\"op\", \"Save\")] on /path/to/form"}
+//! {"tag":"POSTing [(\"field_1\", \"foo\"), (\"field_2\", \"bar\"), (\"op\", \"Save\")] on /path/to/form","request":null,"header":null,"body":null}
 //! ```
 //!
 //! The second call to
 //! [`log_debug`](../goose/struct.GooseUser.html#method.log_debug)
 //! results in a debug log message similar to:
 //! ```json
-//! {"body":null,"header":null,"request":{"elapsed":1,"final_url":"http://local.dev/path/to/form","method":"POST","name":"(Anon) post to form","redirected":false,"response_time":22,"status_code":404,"success":false,"update":false,"url":"http://local.dev/path/to/form","user":0},"tag":"POSTing [(\"field_1\", \"foo\"), (\"field_2\", \"bar\"), (\"op\", \"Save\")] on /path/to/form"}
+//! {"tag":"POSTing [\n    (\n        \"field_1\",\n        \"foo\",\n    ),\n    (\n        \"field_2\",\n        \"bar\",\n    ),\n    (\n        \"op\",\n        \"Save\",\n    ),\n] on /path/to/form","request":{"elapsed":0,"scenario_index":0,"scenario_name":"doc","transaction_index":0,"transaction_name":{"TransactionOnly":""},"raw":{"method":"Post","url":"http://local.dev/path/to/form","headers":["(\"content-type\", \"application/x-www-form-urlencoded\")"],"body":"","custom_method":""},"name":"/path/to/form","final_url":"http://local.dev/path/to/form","redirected":false,"response_time":1,"status_code":200,"success":true,"update":false,"user":0,"error":"","coordinated_omission_elapsed":0,"user_cadence":0,"response_time_fraction_us":372},"header":null,"body":null}
 //! ```
 //!
 //! For a more complex debug logging example, refer to the
@@ -601,7 +601,7 @@ impl FromStr for GooseLogFormat {
             Err(GooseError::InvalidOption {
                 option: format!("GooseLogFormat::{s:?}"),
                 value: s.to_string(),
-                detail: "Invalid log_format, expected: csv, json, or raw".to_string(),
+                detail: "Invalid log_format, expected: csv, json, raw, or pretty".to_string(),
             })
         }
     }

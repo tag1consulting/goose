@@ -1,0 +1,13 @@
+{
+  "name": "goose-book-shots",
+  "private": true,
+  "description": "Retakes the Goose Book's screenshots from real load tests",
+  "type": "module",
+  "scripts": {
+    "shots": "node shots.mjs",
+    "list": "node shots.mjs --list"
+  },
+  "devDependencies": {
+    "playwright": "1.64.0"
+  }
+}

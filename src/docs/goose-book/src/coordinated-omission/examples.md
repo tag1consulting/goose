@@ -1,18 +1,18 @@
 # Practical Examples
 
-This chapter provides real-world examples of when and how to use different Coordinated Omission mitigation strategies. Each example includes the command to run, expected output, and interpretation guidance.
+Each example shows when to use a Coordinated Omission mitigation strategy. Each example includes the command to run against a load test of your own, an illustration of the summary Goose prints when mitigation is enabled, and interpretation guidance. The figures are illustrations, not results of real runs; the [Metrics](metrics.md) page explains each line.
 
 ## Example 1: Microservice SLA Validation
 
 **Scenario**: You're testing a payment processing microservice that must respond within 100ms for 99% of requests.
 
-**Goal**: Detect any SLA violations, no matter how brief.
+**Goal**: Detect any stall, no matter how brief.
 
 **Strategy**: Use `minimum` cadence to catch even momentary slowdowns.
 
 ```bash
 # Test command
-cargo run --example payment_service -- \
+cargo run --release -- \
     --host https://payments.api.company.com \
     --users 20 \
     --run-time 5m \
@@ -24,21 +24,18 @@ cargo run --example payment_service -- \
 # Duration: 300 seconds
 # Total CO Events: 2
 # Events per minute: 0.40
-# 
+#
 # Request Breakdown:
-#   Actual requests: 18,450
+#   Actual requests: 18450
 #   Synthetic requests: 12 (0.1%)
-# 
+#
 # Severity Distribution:
 #   Minor: 2
-#   Moderate: 0
-#   Severe: 0
-#   Critical: 0
 ```
 
 **Interpretation**: 
 - ✅ **Excellent**: Only 2 minor CO events in 5 minutes
-- ✅ **SLA Met**: 0.1% synthetic requests indicates 99.9% of requests met timing expectations
+- ✅ **Minimal Impact**: only 0.1% of the response times are synthetic
 - ✅ **No Critical Issues**: No severe or critical events
 
 **Red Flag Example**:
@@ -48,19 +45,18 @@ cargo run --example payment_service -- \
 # Duration: 300 seconds
 # Total CO Events: 45
 # Events per minute: 9.00
-# 
+#
 # Request Breakdown:
-#   Actual requests: 18,450
+#   Actual requests: 18450
 #   Synthetic requests: 892 (4.6%)
-# 
+#
 # Severity Distribution:
 #   Minor: 38
 #   Moderate: 6
 #   Severe: 1
-#   Critical: 0
 ```
 
-**Action Required**: 4.6% synthetic requests and frequent CO events indicate the service is struggling to meet SLA requirements consistently.
+**Action Required**: 4.6% synthetic requests and frequent CO events indicate the service stalls often enough to check its response time percentiles against the SLA.
 
 ## Example 2: E-commerce Website Load Testing
 
@@ -72,7 +68,7 @@ cargo run --example payment_service -- \
 
 ```bash
 # Test command
-cargo run --example ecommerce_site -- \
+cargo run --release -- \
     --host https://shop.company.com \
     --users 500 \
     --run-time 15m \
@@ -84,16 +80,15 @@ cargo run --example ecommerce_site -- \
 # Duration: 900 seconds
 # Total CO Events: 12
 # Events per minute: 0.80
-# 
+#
 # Request Breakdown:
-#   Actual requests: 145,230
+#   Actual requests: 145230
 #   Synthetic requests: 234 (0.2%)
-# 
+#
 # Severity Distribution:
 #   Minor: 8
 #   Moderate: 3
 #   Severe: 1
-#   Critical: 0
 ```
 
 **Interpretation**:
@@ -108,11 +103,11 @@ cargo run --example ecommerce_site -- \
 # Duration: 900 seconds
 # Total CO Events: 156
 # Events per minute: 10.40
-# 
+#
 # Request Breakdown:
-#   Actual requests: 145,230
-#   Synthetic requests: 12,450 (7.9%)
-# 
+#   Actual requests: 145230
+#   Synthetic requests: 12450 (7.9%)
+#
 # Severity Distribution:
 #   Minor: 89
 #   Moderate: 45
@@ -132,7 +127,7 @@ cargo run --example ecommerce_site -- \
 
 ```bash
 # Test command
-cargo run --example api_gateway -- \
+cargo run --release -- \
     --host https://gateway.api.company.com \
     --users 100 \
     --run-time 30m \
@@ -144,16 +139,15 @@ cargo run --example api_gateway -- \
 # Duration: 1800 seconds
 # Total CO Events: 23
 # Events per minute: 0.77
-# 
+#
 # Request Breakdown:
-#   Actual requests: 324,500
+#   Actual requests: 324500
 #   Synthetic requests: 445 (0.1%)
-# 
+#
 # Severity Distribution:
 #   Minor: 18
 #   Moderate: 4
 #   Severe: 1
-#   Critical: 0
 ```
 
 **Interpretation**:
@@ -171,7 +165,7 @@ cargo run --example api_gateway -- \
 
 ```bash
 # Test command
-cargo run --example database_app -- \
+cargo run --release -- \
     --host https://app.company.com \
     --users 200 \
     --run-time 10m \
@@ -183,16 +177,14 @@ cargo run --example database_app -- \
 # Duration: 600 seconds
 # Total CO Events: 8
 # Events per minute: 0.80
-# 
+#
 # Request Breakdown:
-#   Actual requests: 89,450
+#   Actual requests: 89450
 #   Synthetic requests: 67 (0.1%)
-# 
+#
 # Severity Distribution:
 #   Minor: 6
 #   Moderate: 2
-#   Severe: 0
-#   Critical: 0
 ```
 
 **Pool Exhaustion Example**:
@@ -202,11 +194,11 @@ cargo run --example database_app -- \
 # Duration: 600 seconds
 # Total CO Events: 234
 # Events per minute: 23.40
-# 
+#
 # Request Breakdown:
-#   Actual requests: 89,450
-#   Synthetic requests: 8,920 (9.1%)
-# 
+#   Actual requests: 89450
+#   Synthetic requests: 8920 (9.1%)
+#
 # Severity Distribution:
 #   Minor: 45
 #   Moderate: 123
@@ -214,7 +206,7 @@ cargo run --example database_app -- \
 #   Critical: 10
 ```
 
-**Action Required**: High CO event rate and 9.1% synthetic requests indicate connection pool exhaustion. Increase pool size or optimize database queries.
+**Action Required**: High CO event rate and 9.1% synthetic requests are consistent with connection pool exhaustion. Increase pool size or optimize database queries.
 
 ## Example 5: CDN Performance Validation
 
@@ -226,7 +218,7 @@ cargo run --example database_app -- \
 
 ```bash
 # Test command with CDN issues simulated
-cargo run --example cdn_test -- \
+cargo run --release -- \
     --host https://app.company.com \
     --users 150 \
     --run-time 10m \
@@ -238,11 +230,11 @@ cargo run --example cdn_test -- \
 # Duration: 600 seconds
 # Total CO Events: 89
 # Events per minute: 8.90
-# 
+#
 # Request Breakdown:
-#   Actual requests: 67,230
-#   Synthetic requests: 2,340 (3.4%)
-# 
+#   Actual requests: 67230
+#   Synthetic requests: 2340 (3.4%)
+#
 # Severity Distribution:
 #   Minor: 34
 #   Moderate: 38
@@ -265,7 +257,7 @@ cargo run --example cdn_test -- \
 
 ```bash
 # First, test with CO disabled for baseline
-cargo run --example baseline_test -- \
+cargo run --release -- \
     --host https://optimized.company.com \
     --users 100 \
     --run-time 10m \
@@ -273,7 +265,7 @@ cargo run --example baseline_test -- \
     --report-file baseline_raw.html
 
 # Then test with CO detection enabled
-cargo run --example baseline_test -- \
+cargo run --release -- \
     --host https://optimized.company.com \
     --users 100 \
     --run-time 10m \
@@ -285,9 +277,9 @@ cargo run --example baseline_test -- \
 # Duration: 600 seconds
 # Total CO Events: 0
 # Events per minute: 0.00
-# 
+#
 # Request Breakdown:
-#   Actual requests: 45,670
+#   Actual requests: 45670
 #   Synthetic requests: 0 (0.0%)
 ```
 
@@ -323,7 +315,7 @@ cargo run --example baseline_test -- \
 ## Best Practices Summary
 
 1. **Choose the Right Mode**:
-   - `minimum` for strict SLA validation
+   - `minimum` for the most sensitive detection
    - `average` for realistic user simulation
    - `disabled` for baseline measurements
 

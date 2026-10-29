@@ -83,8 +83,10 @@ async fn authenticated_index(user: &mut GooseUser) -> TransactionResult {
         .get_request_builder(&GooseMethod::Get, "/")?
         .bearer_auth(&session.jwt_token);
 
-    // Add the manually created RequestBuilder and build a GooseRequest object.
+    // Add the manually created RequestBuilder and build a GooseRequest object. The
+    // path names the request in the metrics, as the RequestBuilder already has its URL.
     let goose_request = GooseRequest::builder()
+        .path("/")
         .set_request_builder(reqwest_request_builder)
         .build();
 

@@ -909,3 +909,150 @@ mod performance_and_edge_cases {
         }
     }
 }
+
+/// How the request counts of a run with coordinated omission mitigation
+/// agree with each other.
+mod co_counts {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static STALL_ITERATIONS: AtomicUsize = AtomicUsize::new(0);
+
+    /// `GET /` every 20 ms, with every tenth iteration stalled 400 ms first,
+    /// well past the cadence.
+    async fn get_index_stalling(user: &mut GooseUser) -> TransactionResult {
+        let iteration = STALL_ITERATIONS.fetch_add(1, Ordering::Relaxed);
+        if iteration > 0 && iteration.is_multiple_of(10) {
+            tokio::time::sleep(Duration::from_millis(400)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let _goose = user.get("/").await?;
+        Ok(())
+    }
+
+    async fn get_index_steady(user: &mut GooseUser) -> TransactionResult {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let _goose = user.get("/").await?;
+        Ok(())
+    }
+
+    /// Every request counted in `# reqs`, across all requests.
+    fn total_requests(metrics: &goose::metrics::GooseMetrics) -> u64 {
+        metrics
+            .requests
+            .values()
+            .map(|r| (r.success_count + r.fail_count) as u64)
+            .sum()
+    }
+
+    /// The synthetic times recorded: the coordinated omission data holds every
+    /// time the raw data holds, and the synthetic ones.
+    fn synthetic_times(metrics: &goose::metrics::GooseMetrics) -> u64 {
+        metrics
+            .requests
+            .values()
+            .filter_map(|r| {
+                r.coordinated_omission_data
+                    .as_ref()
+                    .map(|co| (co.counter - r.raw_data.counter) as u64)
+            })
+            .sum()
+    }
+
+    #[tokio::test]
+    async fn requests_are_actual_plus_synthetic() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(GET).path("/");
+            then.status(200);
+        });
+
+        let config = common::build_configuration(
+            &server,
+            vec![
+                "--run-time",
+                "4",
+                "--co-mitigation",
+                "average",
+                "--no-reset-metrics",
+            ],
+        );
+        let goose_metrics = common::run_load_test(
+            common::build_load_test(
+                config,
+                vec![scenario!("Stall").register_transaction(transaction!(get_index_stalling))],
+                None,
+                None,
+            ),
+            None,
+        )
+        .await;
+
+        let co = goose_metrics
+            .coordinated_omission_metrics
+            .as_ref()
+            .expect("co metrics");
+        assert!(!co.co_events.is_empty(), "the stalls trigger mitigation");
+        assert!(co.synthetic_requests > 0);
+        let requests = total_requests(&goose_metrics);
+        assert_eq!(
+            requests,
+            co.actual_requests + co.synthetic_requests,
+            "# reqs {} is actual {} plus synthetic {}",
+            requests,
+            co.actual_requests,
+            co.synthetic_requests
+        );
+        assert_eq!(
+            co.synthetic_requests,
+            synthetic_times(&goose_metrics),
+            "synthetic requests are the synthetic times recorded"
+        );
+        // Every actual request reached the server.
+        assert_eq!(co.actual_requests, mock.calls() as u64);
+    }
+
+    #[tokio::test]
+    async fn actual_requests_start_at_the_metrics_reset() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/");
+            then.status(200);
+        });
+
+        // Two users at one a second: about 50 requests before the reset.
+        let config = common::build_configuration(
+            &server,
+            vec![
+                "--users",
+                "2",
+                "--run-time",
+                "2",
+                "--co-mitigation",
+                "average",
+            ],
+        );
+        let goose_metrics = common::run_load_test(
+            common::build_load_test(
+                config,
+                vec![scenario!("Steady").register_transaction(transaction!(get_index_steady))],
+                None,
+                None,
+            ),
+            None,
+        )
+        .await;
+
+        let co = goose_metrics
+            .coordinated_omission_metrics
+            .as_ref()
+            .expect("co metrics");
+        assert!(co.actual_requests > 0);
+        assert_eq!(
+            total_requests(&goose_metrics),
+            co.actual_requests + co.synthetic_requests,
+            "actual requests {} exclude the ramp up",
+            co.actual_requests
+        );
+    }
+}

@@ -274,7 +274,7 @@ impl<W: Write> Markdown<'_, '_, W> {
             r#"
 ## Scenario Metrics
 
-| Transaction | # Users | # Times Run | Average (ms) | Min (ms) | Max (ms) | Scenarios/s | Iterations |
+| Scenario | # Users | # Times Run | Average (ms) | Min (ms) | Max (ms) | Scenarios/s | Iterations |
 | ----------- | ------: | ----------: | -----------: | -------: | -------: | ----------: | ---------: |
 "#
         )?;

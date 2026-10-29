@@ -620,7 +620,7 @@ async fn flags_that_would_write_nowhere_are_refused() {
         (
             vec!["--notes", "lost"],
             "`configuration.notes`",
-            "add --report-file or --dashboard",
+            "add --report-file, --pdf-print-html or --dashboard",
         ),
         (
             vec!["--output-dir", dir.as_str()],

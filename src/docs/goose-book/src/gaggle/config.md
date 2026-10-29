@@ -1,6 +1,6 @@
 # Run-time Flags
 
-**NOTE: Gaggle support was temporarily removed as of Goose 0.17.0 (see https://github.com/tag1consulting/goose/pull/529). Use Goose 0.16.4 if you need the functionality described in this section.**
+**NOTE: Goose 0.19 cannot run a Gaggle. Gaggle support was removed in Goose 0.17.0 and will be restored in Goose 0.20, before the 1.0 release. This page describes Goose 0.16.4, the last release with it; see the [Gaggle overview](overview.md).**
 
 * `--manager`: starts a Goose process in Manager mode. There currently can only be one Manager per Gaggle.
 * `--worker`: starts a Goose process in Worker mode. How many Workers are in a given Gaggle is defined by the `--expect-workers` option, documented below.

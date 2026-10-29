@@ -185,8 +185,10 @@ mod basic_auth_example {
             reqwest_request_builder = reqwest_request_builder.basic_auth(username, Some(password));
         }
 
-        // Build the GooseRequest and make the request
+        // Build the GooseRequest and make the request. The path names the request in
+        // the metrics, as the RequestBuilder already has its URL.
         let goose_request = GooseRequest::builder()
+            .path(path)
             .set_request_builder(reqwest_request_builder)
             .build();
 
@@ -220,6 +222,7 @@ mod basic_auth_example {
             .basic_auth(username, Some(password));
 
         let goose_request = GooseRequest::builder()
+            .path("/basic-auth/user/passwd")
             .set_request_builder(reqwest_request_builder)
             .build();
 
@@ -237,6 +240,7 @@ mod basic_auth_example {
             .basic_auth(username, Some(password));
 
         let goose_request = GooseRequest::builder()
+            .path("/basic-auth/user/passwd")
             .set_request_builder(reqwest_request_builder)
             .build();
 
