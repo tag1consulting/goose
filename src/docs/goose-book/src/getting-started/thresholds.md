@@ -11,7 +11,7 @@ cargo run --release -- -H http://local.dev/ -u 50 -r 10 -t 10m \
 
 Quote each rule: `<` and `>` redirect in a shell.
 
-Thresholds give one pass or fail verdict for the whole run. They are meant for a simple load test, one that ramps up, holds a single user count, and ramps down. To check several user counts, run a separate load test for each one. For how `rps` is counted, see [`rps` counts only the time users hold steady](#rps-counts-only-the-time-users-hold-steady).
+Thresholds give one pass or fail verdict per run. They are meant for a simple load test, one that ramps up, holds a single user count, and ramps down. To check several user counts, run a separate load test for each one. For how `rps` is counted, see [`rps` counts only the time users hold steady](#rps-counts-only-the-time-users-hold-steady).
 
 ## Syntax
 
