@@ -2,45 +2,58 @@
 
 ## Cargo
 
-[Cargo](https://doc.rust-lang.org/cargo/) is the Rust package manager. To create a new load test, use Cargo to create a new application (you can name your application anything, we've generically selected `loadtest`):
+[Cargo](https://doc.rust-lang.org/cargo/) is the Rust package manager. To create a new load test, use Cargo to create a new application. You can give it any name; this page uses `loadtest`:
 
 ```bash
 $ cargo new loadtest
     Creating binary (application) `loadtest` package
+note: see more `Cargo.toml` keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 $ cd loadtest/
 ```
 
-This creates a new directory named `loadtest/` containing `loadtest/Cargo.toml` and `loadtest/src/main.rs`. Edit `Cargo.toml` and add Goose and [`Tokio`](https://tokio.rs/) under the dependencies heading:
+This creates a new directory named `loadtest/` containing `loadtest/Cargo.toml` and `loadtest/src/main.rs`. Edit `Cargo.toml` and add Goose and [Tokio](https://tokio.rs/) under the `[dependencies]` heading, so the file reads:
 
 ```toml
+[package]
+name = "loadtest"
+version = "0.1.0"
+edition = "2024"
+
 [dependencies]
 goose = "^0.19"
 tokio = "^1"
 ```
 
-At this point it's possible to compile all dependencies, though the resulting binary only displays "Hello, world!":
+The `edition` line is the one your version of Cargo wrote; leave it as it is.
+
+You can now compile all dependencies, though the program still only prints "Hello, world!". The first build downloads and compiles every crate Goose depends on, so it takes a while:
 
 ```bash
 $ cargo run
     Updating crates.io index
+     Locking 253 packages to highest Rust 1.99.0 compatible versions
+      Adding generic-array v0.14.7 (available: v0.14.9)
+ Downloading crates ...
   Downloaded goose v0.19.0
       ...
    Compiling goose v0.19.0
-   Compiling loadtest v0.1.0 (/home/jandrews/devel/rust/loadtest)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 18.35s
+   Compiling loadtest v0.1.0 (/home/you/loadtest)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 27.70s
      Running `target/debug/loadtest`
 Hello, world!
 ```
 
+The package count, the Rust version and the build time depend on your toolchain and your machine. This debug build only checks that everything compiles; [Running A Load Test](running.md) builds with `--release`, which compiles the dependencies once more.
+
 ## Creating the load test
 
-To create an actual load test, you first have to add the following boilerplate to the top of `src/main.rs` to make Goose's functionality available to your code:
+To create an actual load test, first add the following line to the top of `src/main.rs` to make Goose's functionality available to your code:
 
 ```rust,ignore
 use goose::prelude::*;
 ```
 
-> **Note:** Using the above prelude automatically adds the following `use` statements necessary when writing a load test, so you don't need to manually add all of them:
+> **Note:** The prelude adds the following `use` statements for you, so you don't need to write them out:
 >
 > ```rust,ignore
 > use goose::config::{GooseDefault, GooseDefaultType};
@@ -52,15 +65,11 @@ use goose::prelude::*;
 > use goose::{scenario, transaction, GooseAttack, GooseError, GooseScheduler};
 > ```
 
-Then create a new load testing function. Our example loads the front page of the website under test. Goose passes all load testing functions a mutable reference to a GooseUser object, which is used to track metrics and make web requests. Thanks to the [Reqwest](https://docs.rs/reqwest/) library, the Goose client manages things like cookies, headers, and sessions for you. Load testing functions must be declared async, ensuring that your simulated users don't become CPU-locked.
+Then create a transaction function: an async function that makes requests, which Goose runs as a [transaction](../glossary.md#transaction). Goose passes every transaction function a mutable reference to a `GooseUser`, which makes the web requests and records their metrics. Each `GooseUser` has its own [Reqwest](https://docs.rs/reqwest/) client, and with Goose's default features that client keeps the user's cookies from one request to the next (see [Cookies](../config/cookie.md)). A transaction function usually does not set the host: you give the host when you run the load test, so the same load test runs against different environments without recompiling.
 
-In load test functions you typically do not set the host, and instead configure the host at run time, so you can run your load test against different environments without recompiling. Goose joins each path to the host the way a browser resolves a link. With a host that has no path, such as `http://local.dev/`, `about/` and `/about/` both request `http://local.dev/about/`. With a host that has a path, use paths that do not start with a `/` so they stay under it: with `--host http://local.dev/site/`, `about/` requests `http://local.dev/site/about/`, while `/about/` requests `http://local.dev/about/`. End such a host with a `/`: with `--host http://local.dev/site`, `about/` requests `http://local.dev/about/`.
-
-The following `loadtest_index` function simply loads the front page of our web page:
+Below the `use` line, add the following `loadtest_index` function, which loads the front page:
 
 ```rust,ignore
-use goose::prelude::*;
-
 async fn loadtest_index(user: &mut GooseUser) -> TransactionResult {
     let _goose_metrics = user.get("").await?;
 
@@ -68,11 +77,11 @@ async fn loadtest_index(user: &mut GooseUser) -> TransactionResult {
 }
 ```
 
-The function is declared `async` so that we don't block a CPU-core while loading web pages. All Goose load test functions are passed in a mutable reference to a `GooseUser` object, and return a `TransactionResult` which is either an empty `Ok(())` on success, or a boxed `TransactionError` on failure. We use the `GooseUser` object to make requests, in this case we make a `GET` request for the front page, specified with an empty path `""`. The `.await` frees up the CPU-core while we wait for the web page to respond, and the trailing `?` unwraps the response, returning any unexpected errors that may be generated by this request.
+The function is declared `async`, so a user waiting for a page does not block a CPU core. It returns a `TransactionResult`, which is either an empty `Ok(())` on success or a boxed `TransactionError` on failure. Here the `GooseUser` makes a `GET` request for the front page, given as the empty path `""`. The `.await` lets other users run while the server responds. The trailing `?` returns early in two cases: Goose could not build or record the request, for example because the URL is invalid, or the run ended while the request waited on a [throttle](throttle.md). If the request fails because the server answers with a `404` or because Goose cannot connect to it, the `?` does not return. Goose records a failed request, and the function carries on.
 
-When the GET request completes, Goose returns metrics which we store in the  `_goose_metrics` variable. The variable is prefixed with an underscore (`_`) to tell the compiler we are intentionally not using the results. Finally, after making a single successful request, we return `Ok(())` to let Goose know this transaction function completed successfully.
+The request returns a `GooseResponse`, which holds Goose's record of the request and the server's response. This function stores it in `_goose_metrics`, and the leading underscore (`_`) tells the compiler the variable is unused on purpose. The function then returns `Ok(())`, so Goose counts the transaction as a success even if its request failed. [Validating Requests](validation.md) shows how to fail a transaction.
 
-Now we have to tell Goose about our new transaction function. Edit the `main()` function, setting a return type and replacing the hello world text as follows:
+Replace the `main()` function with the following, which gives it a return type and registers `loadtest_index` with Goose:
 
 ```rust,ignore
 #[tokio::main]
@@ -88,46 +97,66 @@ async fn main() -> Result<(), GooseError> {
 }
 ```
 
-The `#[tokio::main]` at the beginning of this example is a Tokio macro necessary because Goose is an asynchronous library, allowing (and requiring) us to declare the `main()` function of our load test application as `async`.
+`scenario!` creates a [scenario](../glossary.md#scenario), the list of transactions each user runs over and over, and `register_transaction` adds `loadtest_index` to it.
 
-If you're new to Rust, `main()`'s return type of `Result<(), GooseError>` may look strange. It essentially says that `main` will return nothing (`()`) on success, and will return a `GooseError` on failure. This is helpful as several of `GooseAttack`'s methods can fail, returning an error. In our example, `initialize()` and `execute()` each may fail. The `?` that follows the method's name tells our program to exit and return an error on failure, otherwise continue on. Note that the `.execute()` method is asynchronous, so it must be followed with `.await`, and as it can return an error it also has a `?`. The final line, `Ok(())` returns the empty result expected on success.
+`#[tokio::main]` is a Tokio macro. Goose is an asynchronous library, and the macro lets you declare `main()` as `async`.
+
+If you're new to Rust, the return type `Result<(), GooseError>` says that `main` returns nothing (`()`) on success and a `GooseError` on failure. `initialize()` and `execute()` can each fail, and the `?` after each one ends the program with its error. `.execute()` is asynchronous, so `.await` comes before its `?`. The final line, `Ok(())`, returns the empty result expected on success.
+
+The whole `src/main.rs` now reads:
+
+```rust,ignore
+use goose::prelude::*;
+
+async fn loadtest_index(user: &mut GooseUser) -> TransactionResult {
+    let _goose_metrics = user.get("").await?;
+
+    Ok(())
+}
+
+#[tokio::main]
+async fn main() -> Result<(), GooseError> {
+    GooseAttack::initialize()?
+        .register_scenario(scenario!("LoadtestTransactions")
+            .register_transaction(transaction!(loadtest_index))
+        )
+        .execute()
+        .await?;
+
+    Ok(())
+}
+```
+
+That is your first load test.
+
+### Paths and the host
+
+Goose joins each path to the host the way a browser resolves a link. With a host that has no path, such as `http://local.dev/`, `about/` and `/about/` both request `http://local.dev/about/`. With a host that has a path, use paths that do not start with a `/` so they stay under it: with `--host http://local.dev/site/`, `about/` requests `http://local.dev/site/about/`, while `/about/` requests `http://local.dev/about/`. End such a host with a `/`. Without it, `--host http://local.dev/site` drops `site`, and `about/` requests `http://local.dev/about/`.
 
 ## Naming Transactions
 
-Goose provides two methods for naming transactions, each with different behaviors:
+A transaction without a name is listed by its number alone in the transaction metrics. Goose has two methods for naming a transaction, which you call on the `transaction!(...)` you register. They differ in what they do to the names of the transaction's requests.
 
 ### `set_name()`
-Sets a custom name for the transaction only. This is used for organizing metrics and identifying transactions in reports. Individual requests within the transaction will still maintain their descriptive names (based on path or explicitly set).
+
+Names the transaction only. Each request the transaction makes keeps its own name, which is its path unless the request was given a name.
 
 ```rust,ignore
-let transaction = transaction!(loadtest_index)
-    .set_name("Homepage Load");
+.register_transaction(transaction!(loadtest_index).set_name("Homepage Load"))
 ```
 
-**Use when:** You want to give a meaningful name to a transaction for metrics reporting while preserving detailed request-level information.
+**Use when:** you want a readable transaction name and still want each request listed by its own path.
 
-### `set_name_for_transaction_and_requests()` 
-Sets a custom name for the transaction, and for every request it makes that has no name of its own. A request named with `GooseRequest::builder().name()` keeps its own name; every other request in the transaction is listed under the transaction's name in the metrics, in place of its path.
+### `set_name_for_transaction_and_requests()`
+
+Names the transaction, and every request it makes that has no name of its own. A request named with `GooseRequest::builder().name()` keeps its own name; every other request in the transaction is listed under the transaction's name in the request metrics, in place of its path.
+
+Here `checkout_flow` stands for a transaction function of your own that makes several requests:
 
 ```rust,ignore
-let transaction = transaction!(checkout_flow)
-    .set_name_for_transaction_and_requests("Checkout");
+.register_transaction(transaction!(checkout_flow).set_name_for_transaction_and_requests("Checkout"))
 ```
 
-**Use when:** You want all requests within a transaction to be grouped under the same name, typically for complex multi-step flows where individual request paths are less important than the overall flow.
+**Use when:** a transaction is a multistep flow, such as a login or a checkout, and you want its requests counted together under one name.
 
-### When to Use Each Approach
-
-- **Use `set_name()`** when:
-  - You want clear transaction-level organization in metrics
-  - Individual request details (paths, methods) are important for debugging
-  - You're testing diverse endpoints within a single transaction
-  - You need to identify specific failing requests within a transaction
-
-- **Use `set_name_for_transaction_and_requests()`** when:
-  - You have a multi-step flow that should be treated as a unit
-  - Individual request paths are less meaningful than the overall flow
-  - You want simplified metrics that group all related requests together
-  - You're testing a cohesive user journey (e.g., "Login", "Checkout", "Registration")
-
-And that's it, you've created your first load test! Read on to see how to run it and what it does.
+[Running A Load Test](running.md) runs the load test; to watch a run live in your browser, turn on the `dashboard` feature and add `--dashboard` (see [Live Dashboard](../controller/dashboard.md)).
