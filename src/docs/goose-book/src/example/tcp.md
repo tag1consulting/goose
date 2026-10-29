@@ -1,10 +1,18 @@
 # TCP Load Test
 
-The [`examples/tcp_loadtest.rs`](https://github.com/tag1consulting/goose/blob/main/examples/tcp_loadtest.rs) example demonstrates how to use Goose to load test a raw TCP server. While Goose is primarily an HTTP load testing framework, its metrics pipeline supports any protocol through [`GooseUser::record_custom_request`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.record_custom_request) and [`GooseUser::record_custom_request_duration`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.record_custom_request_duration), both new in 0.19; the example uses `record_custom_request_duration`.
+The [`examples/tcp_loadtest.rs`](https://github.com/tag1consulting/goose/blob/main/examples/tcp_loadtest.rs) example demonstrates how to use Goose to load test a raw TCP server. While Goose is primarily an HTTP load testing framework, its metrics pipeline supports any protocol through `GooseUser::record_custom_request` and `GooseUser::record_custom_request_duration`, both new in 0.19. The example uses `record_custom_request_duration`.
 
-## Why non-HTTP load testing?
+<img src="tcp-latency.png" width="800" alt="The left part of the dashboard's Response times by second card with TCP tcp_echo picked: the first 77 seconds of round trips, most between 0.2 and 0.5 ms">
 
-Some services communicate over raw TCP, UDP, WebSocket, gRPC, or other protocols rather than HTTP. Previously, the only way to record metrics for these operations was to construct fake HTTP `GooseRequest` objects, which produced misleading results (spurious 404 errors). With `record_custom_request`, you time the operation yourself and hand the result to Goose.
+<img src="tcp-requests.png" width="630" alt="The dashboard's Requests table cut after its avg ms column, with one row: method TCP, name tcp_echo, 3,271 requests, 0 fails, 33.04 a second, 0.31 ms on average">
+
+*`cargo run --release --features dashboard --example tcp_loadtest -- --host tcp://127.0.0.1:9000 -u 10 -r 10 -t 3m --no-reset-metrics --dashboard -q`, against a small local Node echo server that writes each connection's bytes back to it, about 100 seconds in.*
+
+The latency image shows the left part of the dashboard's Response times by second card, the run's first 77 seconds; the summary under its chart is the mean of the last 10 drawn seconds, which fall to the right of that part. Each user pauses 100 to 500 ms after every round trip, so 10 users make about 33 round trips a second. The example records each round trip as a `Duration`, so Goose keeps the fraction of a millisecond: most fall between 0.2 and 0.5 ms, and they average 0.31 ms. `as_millis()` truncates, so with `record_custom_request` every round trip under 1 ms would have been recorded as 0 ms. With `-q` Goose does not print the dashboard's address when it starts: open `http://127.0.0.1:5118` while the test runs. If that tab is still open when the run ends, Goose prints the address and waits for Ctrl-C.
+
+## Load testing other protocols
+
+Some services communicate over raw TCP, UDP, WebSocket, gRPC, or other protocols rather than HTTP. Before 0.19, the only way to record metrics for these operations was to construct fake HTTP `GooseRequest` objects, which produced misleading results (spurious 404 errors). With `record_custom_request`, you time the operation yourself and hand the result to Goose.
 
 ## The API
 
@@ -21,7 +29,7 @@ user.record_custom_request(
 
 This is a fragment: it runs inside a transaction function, with the six values already set.
 
-Recorded metrics appear in all Goose reports under the method label you provide. These are the final request tables of the command under [Running the example](#running-the-example), run against a local echo server:
+Recorded metrics appear in all Goose reports under the method label you provide. These are the final request tables of the command under [Running the example](#running-the-example), a different run from the dashboard run above, against a different echo server, so their times differ:
 
 ```
  === PER REQUEST METRICS ===
@@ -47,7 +55,7 @@ Recorded metrics appear in all Goose reports under the method label you provide.
  Aggregated               |                                           1,194 [0] 
 ```
 
-A custom request is counted like an HTTP request: in the `# reqs`, `# fails`, `req/s` and `fail/s` columns, in the Aggregated row of a load test with more than one request, and in its response times and status codes.
+A custom request is counted like an HTTP request: in the `# reqs`, `# fails`, `req/s` and `fail/s` columns, in the Aggregated rows (the request tables print one only when there is more than one request name; the status code table always does), and in its response times and status codes.
 
 ### Parameters
 
