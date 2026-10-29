@@ -253,7 +253,7 @@ async function capture(page, ctx, shot, file) {
   if (c.type === "element") {
     await waitReady(page, c.selector, c.text, 120);
     await page.locator(c.selector).scrollIntoViewIfNeeded();
-    if (pad === 0 && !c.width && !c.height && !c.rows) return page.locator(c.selector).screenshot({ path: file, animations: "disabled" });
+    if (pad === 0 && !c.width && !c.height && !c.rows && !c.right && !c.bottom) return page.locator(c.selector).screenshot({ path: file, animations: "disabled" });
     return clipShot(page, [c.selector], pad, file, c);
   }
   if (c.type === "band") {
@@ -309,18 +309,21 @@ function findReport(cwd, name) {
   throw new Error(`no ${name} in ${cwd}`);
 }
 
+// The box of the first element a selector matches, in page coordinates.
+async function pageBox(page, sel) {
+  await page.locator(sel).first().scrollIntoViewIfNeeded();
+  return page.locator(sel).first().evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    return { x: r.left + window.scrollX, y: r.top + window.scrollY, right: r.right + window.scrollX, bottom: r.bottom + window.scrollY };
+  });
+}
+
 // A screenshot of the box around every selector, plus `pad` pixels, in page coordinates,
-// cut to at most `width` and `height` CSS pixels from its top left corner when given.
+// cut to at most `width` and `height` CSS pixels from its top left corner, and at the right edge
+// of `right` and the bottom edge of `bottom`, when given, snapped inward to device pixels.
 async function clipShot(page, selectors, pad, file, limits = {}) {
   const boxes = [];
-  for (const sel of selectors) {
-    await page.locator(sel).first().scrollIntoViewIfNeeded();
-    const box = await page.locator(sel).first().evaluate((el) => {
-      const r = el.getBoundingClientRect();
-      return { x: r.left + window.scrollX, y: r.top + window.scrollY, right: r.right + window.scrollX, bottom: r.bottom + window.scrollY };
-    });
-    boxes.push(box);
-  }
+  for (const sel of selectors) boxes.push(await pageBox(page, sel));
   const x = Math.max(0, Math.min(...boxes.map((b) => b.x)) - pad);
   const y = Math.max(0, Math.min(...boxes.map((b) => b.y)) - pad);
   let right = Math.max(...boxes.map((b) => b.right)) + pad;
@@ -336,7 +339,19 @@ async function clipShot(page, selectors, pad, file, limits = {}) {
   }
   if (limits.width) right = Math.min(right, x + limits.width);
   if (limits.height) bottom = Math.min(bottom, y + limits.height);
-  return page.screenshot({ path: file, fullPage: true, clip: { x, y, width: right - x, height: bottom - y }, animations: "disabled" });
+  // `right` and `bottom` end the cut at an element's edge, such as a table column's header
+  // cell or a row, so the cut never splits a column or a row whatever the data's width.
+  if (limits.right) right = Math.min(right, (await pageBox(page, limits.right)).right);
+  if (limits.bottom) bottom = Math.min(bottom, (await pageBox(page, limits.bottom)).bottom);
+  // Snap the cut inward to whole device pixels: the left and top edges up, the right and bottom
+  // edges down. A box that starts or ends part way into a device pixel may be painted on either
+  // side of it, and a fractional clip is rounded by the capture, so an unsnapped cut could take a
+  // pixel row from beyond its rectangle. Snapped inward, it never does, and loses at most one
+  // device pixel of its own edge.
+  const scale = await page.evaluate(() => window.devicePixelRatio);
+  const [sx, sy] = [x, y].map((v) => Math.ceil(v * scale) / scale);
+  const [sr, sb] = [right, bottom].map((v) => Math.floor(v * scale) / scale);
+  return page.screenshot({ path: file, fullPage: true, clip: { x: sx, y: sy, width: sr - sx, height: sb - sy }, animations: "disabled" });
 }
 
 function optimize(file) {
@@ -429,6 +444,8 @@ async function runGoose(browser, binary, name, run, shots, manifest, problems, {
     const page = await context.newPage();
     await page.goto(token ? `${base}/?token=${encodeURIComponent(token)}` : `${base}/`);
     const ctx = { base, token, cwd };
+    // The images this attempt took, copied into the Book once the run passes its check.
+    const taken = [];
     // Shots, and the run's own events (actions with no capture), in time order.
     const events = (run.events ?? []).map((e, i) => ({ ...e, name: e.name ?? `event ${i + 1}`, event: true }));
     for (const shot of [...shots, ...events].sort((a, b) => a.at - b.at)) {
@@ -446,12 +463,17 @@ async function runGoose(browser, binary, name, run, shots, manifest, problems, {
       await page.setViewportSize(shot.viewport ?? manifest.defaults.viewport);
       for (const action of shot.actions ?? []) await doAction(page, ctx, action);
       if (shot.settle) await sleep(shot.settle * 1000);
-      const file = path.join(BOOK_SRC, shot.output);
+      // Each image is written into the run's folder first, and copied into the Book only
+      // once the run has passed its check, so a failed attempt never leaves an image there.
+      const file = path.join(cwd, "shots", shot.output);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
       await capture(page, ctx, shot, file);
+      taken.push(shot.output);
       const optimized = optimize(file);
       const bytes = fs.statSync(file).size;
       log(`wrote ${shot.output} (${Math.round(bytes / 1024)} KB${optimized ? ", oxipng" : ""}, ${Math.round((Date.now() - started) / 1000)} s in)`);
-      if (bytes > MAX_BYTES) problems.push(`${shot.output} is ${Math.round(bytes / 1024)} KB, over 500 KB`);
+      const limit = shot.maxKB ? Math.min(shot.maxKB * 1024, MAX_BYTES) : MAX_BYTES;
+      if (bytes > limit) problems.push(`${shot.output} is ${(bytes / 1024).toFixed(1)} KB, over ${limit / 1024} KB`);
     }
     await page.close();
     // A run whose images must show no errors is taken again if any request failed.
@@ -459,6 +481,12 @@ async function runGoose(browser, binary, name, run, shots, manifest, problems, {
       const snap = await api(base, token, "GET", "/api/v1/snapshot");
       const failures = snap.status === 200 ? JSON.parse(snap.text).aggregate.total_failures : null;
       if (failures !== 0) throw new FailedRun(`run ${name} had ${failures ?? "unknown"} failed requests`);
+    }
+    // If any image is over its size limit, none of the run's images reach the Book, so one
+    // page never mixes two runs; the pass reports it and fails.
+    for (const output of problems.length ? [] : taken) {
+      fs.mkdirSync(path.dirname(path.join(BOOK_SRC, output)), { recursive: true });
+      fs.copyFileSync(path.join(cwd, "shots", output), path.join(BOOK_SRC, output));
     }
   } finally {
     await context.close();
@@ -480,6 +508,18 @@ async function main() {
     return;
   }
   const runNames = [...new Set(shots.map((s) => s.run))];
+  // A page's images should come from one run, so say when --only takes part of one.
+  for (const name of runNames) {
+    const left = manifest.shots.filter((s) => s.run === name && !shots.includes(s)).map((s) => s.name);
+    if (left.length) log(`warning: run ${name} also has ${left.join(", ")}, which this pass does not retake`);
+  }
+  // Every run's target and env variables must be set before the first run starts, so a pass
+  // never stops part way for a missing one.
+  for (const name of runNames) {
+    const run = manifest.runs[name];
+    expand(run.target);
+    for (const v of Object.values(run.env ?? {})) expand(v);
+  }
   const binaryFor = build(runNames.map((n) => manifest.runs[n]), opts.skipBuild);
   const t0 = Date.now();
   const problems = [];
@@ -488,16 +528,24 @@ async function main() {
     for (const name of runNames) {
       const run = manifest.runs[name];
       const attempts = run.attempts ?? 3;
+      // Folders kept from an earlier pass's failed attempts would read as this pass's.
+      for (const d of fs.existsSync(path.join(WORK, "runs")) ? fs.readdirSync(path.join(WORK, "runs")) : []) {
+        if (d.startsWith(`${name}.attempt-`)) fs.rmSync(path.join(WORK, "runs", d), { recursive: true, force: true });
+      }
       for (let attempt = 1; ; attempt++) {
+        // Only the attempt that is kept reports its images' problems.
+        const found = [];
         try {
-          // Problems count only for the attempt whose images are kept.
-          const found = [];
           await takeRun(browser, binaryFor(run), name, run, shots.filter((s) => s.run === name), manifest, found);
           problems.push(...found);
           break;
         } catch (err) {
           if (!(err instanceof FailedRun) || attempt >= attempts) throw err;
-          log(`${err.message}; taking it again (attempt ${attempt + 1} of ${attempts})`);
+          // Keep the failed attempt's folder, so its log says which requests failed.
+          const kept = path.join(WORK, "runs", `${name}.attempt-${attempt}`);
+          fs.rmSync(kept, { recursive: true, force: true });
+          fs.renameSync(path.join(WORK, "runs", name), kept);
+          log(`${err.message}, kept in ${path.relative(HERE, kept)}; taking it again (attempt ${attempt + 1} of ${attempts})`);
         }
       }
     }

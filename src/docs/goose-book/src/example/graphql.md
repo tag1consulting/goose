@@ -1,15 +1,21 @@
 # GraphQL
 
-Goose provides helper methods for load testing GraphQL APIs, new in 0.19, for sending GraphQL queries and mutations.
+Goose 0.19 adds two helper methods that send GraphQL queries and mutations.
+
+<img src="graphql-transactions.png" width="810" alt="The dashboard's Transactions table cut after its avg ms column: Simple Query, User Query, Complex Query and Mutation in the GraphQL Load Test scenario, each run about 1,809,875 times at about 18,099 a second, with 0 fails">
+
+<img src="graphql-requests.png" width="703" alt="The dashboard's Requests table cut after its avg ms column: POST /graphql, POST get user by id, POST complex user posts query and POST create post, each about 1,809,936 requests at about 18,099 a second, with 0 fails">
+
+*`cargo run --release --features dashboard --example graphql_loadtest -- --host http://127.0.0.1:4400 -u 5 -r 5 -t 3m --no-reset-metrics --dashboard -q`, against a local Node server that answers each of the example's four operations at `POST /graphql` with a 200 and a JSON `data` body without delay, 100 seconds in.*
+
+The transactions are named with `set_name()`, and three of their requests with `post_graphql_named()`. Simple Query's request is sent with `post_graphql()`, which names it by its path, `POST /graphql`. No transaction waits, and this server answers without delay, so 5 users send about 72,000 requests a second; the [Sample Output](#sample-output) below comes from a slower server. With `-q` Goose does not print the dashboard's address when it starts: open `http://127.0.0.1:5118` while the test runs. If that tab is still open when the run ends, Goose prints the address and waits for Ctrl-C.
 
 ## GraphQL Helper Methods
 
-Goose includes two GraphQL helper methods:
+- `post_graphql()`: POST a GraphQL query as JSON to a path; the metrics name the request by its path, for example `POST /graphql`
+- `post_graphql_named()`: the same, with a name for the request in the metrics, for example `POST get user by id`
 
-- [`post_graphql()`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.post_graphql): POST a GraphQL query as JSON to a path; the metrics name the request by its path, for example `POST /graphql`
-- [`post_graphql_named()`](https://docs.rs/goose/*/goose/goose/struct.GooseUser.html#method.post_graphql_named): the same, with a name for the request in the metrics, for example `POST get user by id`
-
-Both take the query as anything that implements `serde::Serialize`, usually a `serde_json::Value` built with `json!()`, and return a [`GooseResponse`](https://docs.rs/goose/*/goose/goose/struct.GooseResponse.html), like the other request helpers.
+Both take the request body as anything that implements `serde::Serialize`, usually a `serde_json::Value` built with `json!()`, and return a [`GooseResponse`](https://docs.rs/goose/*/goose/goose/struct.GooseResponse.html), like the other request helpers.
 
 ## GraphQL Endpoint Configuration
 
@@ -25,7 +31,7 @@ let _goose = user.post_graphql("/api/graphql", &query).await?;
 
 ## Example: GraphQL Load Test
 
-The [`examples/graphql_loadtest.rs`](https://github.com/tag1consulting/goose/blob/main/examples/graphql_loadtest.rs) example defines one scenario, `GraphQL Load Test`, with four transactions. None sets a weight or a wait time, so each user runs the four in turn, without pausing, for as long as the load test runs. Each one POSTs to `/graphql`:
+The [`examples/graphql_loadtest.rs`](https://github.com/tag1consulting/goose/blob/main/examples/graphql_loadtest.rs) example defines one scenario, `GraphQL Load Test`, with four transactions. No transaction sets a weight, and the scenario sets no wait time, so each user runs the four in turn, without pausing, for as long as the load test runs. Each one POSTs to `/graphql`:
 
 | Transaction | Sends | Request name in the metrics |
 |---|---|---|
@@ -34,21 +40,19 @@ The [`examples/graphql_loadtest.rs`](https://github.com/tag1consulting/goose/blo
 | `Complex Query` | a `GetUserWithPosts` query for a user's posts and their comments, with the variables `userId` and `first` | `POST complex user posts query` |
 | `Mutation` | a `CreatePost` mutation with an `input` variable | `POST create post` |
 
-The full source is at the end of this page.
-
 ## Key Features
 
 ### JSON Query Construction
-GraphQL queries are constructed as JSON objects using `serde_json::json!()`, making it easy to build complex queries with variables.
+Each query is a `serde_json::Value` built with `json!()`.
 
-### Variables Support
-GraphQL variables are fully supported, allowing you to create dynamic queries that simulate real user behavior.
+### Variables
+Variables go in the JSON value's `variables` field, beside its `query` field, as `User Query`, `Complex Query` and `Mutation` show.
 
 ### Named Requests
-Using `post_graphql_named()` allows you to give meaningful names to your GraphQL operations, making metrics easier to understand. Every request made with `post_graphql()` to the same path shares one row in the metrics.
+`post_graphql_named()` gives each operation its own row in the metrics. Every request made with `post_graphql()` to the same path shares one row.
 
 ### Weighted Transactions
-Different types of GraphQL operations can be weighted differently with `set_weight()` to simulate realistic usage patterns (e.g., more reads than writes). The example leaves every transaction at the default weight of 1.
+`set_weight()` makes one operation run more often than another, such as more reads than writes. The example leaves every transaction at the default weight of 1.
 
 ## Advanced Usage
 
@@ -134,7 +138,7 @@ $ cargo run --release --example graphql_loadtest -- --host http://localhost:8080
 19:53:25 [INFO] printing running metrics after 5 seconds...
 ```
 
-Goose starts one user a second, and when all 5 have launched it prints the metrics so far and resets them. Those tables are left out here. The rest of the output follows:
+Goose starts one user a second, and when all 5 have launched it prints the metrics so far and resets them. Those tables are left out here.
 
 ```bash
 All 5 users launched, resetting metrics (disable with --no-reset-metrics).
@@ -236,11 +240,7 @@ All 5 users launched, resetting metrics (disable with --no-reset-metrics).
 
 ### Key Observations
 
-- **Named Operations**: Each request made with `post_graphql_named()` appears with its custom name (e.g., "get user by id", "create post"), and the one made with `post_graphql()` appears by its path, `POST /graphql`
-- **Request Grouping**: All GraphQL requests show as POST requests
-- **Transaction Timing**: The transaction tables show each transaction by the name given with `set_name()`, and how long it took
-- **Even Distribution**: With no weights set, each transaction runs about as often as the others, so the four requests have about the same counts
-- **Status Codes**: Every request returned HTTP 200. A GraphQL server usually answers a GraphQL error with a 200 too, with the error in the response body, so Goose counts it as a success unless the transaction checks the body as in [Error Handling](#error-handling)
+Each request made with `post_graphql_named()` appears under its own name, such as `POST get user by id`, and the one made with `post_graphql()` under its path, `POST /graphql`. With no weights set, each transaction runs about as often as the others, so the four requests have about the same counts. Every request returned 200.
 
 ## Complete Source Code
 
