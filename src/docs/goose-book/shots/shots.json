@@ -315,6 +315,76 @@
         "--dashboard",
         "-q"
       ]
+    },
+    "metrics": {
+      "example": "umami",
+      "features": [
+        "dashboard",
+        "pdf-reports"
+      ],
+      "target": "${GOOSE_SHOTS_UMAMI}",
+      "flags": [
+        "--dashboard",
+        "-u",
+        "50",
+        "-r",
+        "5",
+        "-t",
+        "3m",
+        "--report-file",
+        "report.pdf",
+        "--report-file",
+        "report.html",
+        "--report-file",
+        "report.md",
+        "--report-file",
+        "report.json",
+        "--dashboard-port",
+        "5128",
+        "--telnet-port",
+        "5126"
+      ],
+      "dashboard": "http://127.0.0.1:5128"
+    },
+    "co-average": {
+      "example": "graphql_loadtest",
+      "features": [
+        "dashboard"
+      ],
+      "target": "http://127.0.0.1:18900",
+      "server": {
+        "command": "${GOOSE_SHOTS_STALL_SERVER}",
+        "args": [
+          "--port",
+          "18900",
+          "--every",
+          "1000",
+          "--stall-ms",
+          "1000",
+          "--min-ms",
+          "5",
+          "--max-ms",
+          "15"
+        ],
+        "ready": "http://127.0.0.1:18900/stats"
+      },
+      "flags": [
+        "--dashboard",
+        "-u",
+        "10",
+        "-r",
+        "10",
+        "-t",
+        "2m",
+        "--co-mitigation",
+        "average",
+        "--report-file",
+        "report.html",
+        "--report-file",
+        "report.md",
+        "--report-file",
+        "report.json"
+      ]
     }
   },
   "shots": [
@@ -736,6 +806,167 @@
         "type": "element",
         "selector": "#scenarios-table",
         "right": "#scenarios-table th:nth-child(3)"
+      }
+    },
+    {
+      "name": "metrics-dashboard-rps",
+      "output": "getting-started/metrics-dashboard-rps.png",
+      "run": "metrics",
+      "at": 150,
+      "capture": {
+        "type": "element",
+        "selector": "#charts > .chart-card:nth-child(1)"
+      }
+    },
+    {
+      "name": "metrics-pdf",
+      "output": "getting-started/metrics-pdf.png",
+      "run": "metrics",
+      "at": 240,
+      "capture": {
+        "type": "pdf",
+        "file": "report.pdf",
+        "dpi": 220,
+        "height": 600
+      }
+    },
+    {
+      "name": "metrics-html-requests",
+      "output": "getting-started/metrics-html-requests.png",
+      "run": "metrics",
+      "at": 242,
+      "capture": {
+        "type": "report",
+        "file": "report.html",
+        "selector": "div.requests",
+        "pad": 8,
+        "rows": 8
+      }
+    },
+    {
+      "name": "metrics-html-heatmap",
+      "output": "getting-started/metrics-html-heatmap.png",
+      "run": "metrics",
+      "at": 243,
+      "capture": {
+        "type": "report",
+        "file": "report.html",
+        "selector": [
+          "div.responses >> nth=0 >> h3",
+          ".heatmap-legend"
+        ],
+        "pad": 8
+      }
+    },
+    {
+      "name": "metrics-html-status-codes",
+      "output": "getting-started/metrics-html-status-codes.png",
+      "run": "metrics",
+      "at": 245,
+      "capture": {
+        "type": "report",
+        "file": "report.html",
+        "selector": "div.status_codes",
+        "pad": 8,
+        "rows": 8
+      }
+    },
+    {
+      "name": "metrics-html-transactions",
+      "output": "getting-started/metrics-html-transactions.png",
+      "run": "metrics",
+      "at": 246,
+      "capture": {
+        "type": "report",
+        "file": "report.html",
+        "selector": "div.transactions",
+        "pad": 8,
+        "rows": 11
+      }
+    },
+    {
+      "name": "metrics-html-scenarios",
+      "output": "getting-started/metrics-html-scenarios.png",
+      "run": "metrics",
+      "at": 247,
+      "capture": {
+        "type": "report",
+        "file": "report.html",
+        "selector": "div.scenarios",
+        "pad": 8
+      }
+    },
+    {
+      "name": "metrics-html-users",
+      "output": "getting-started/metrics-html-users.png",
+      "run": "metrics",
+      "at": 248,
+      "capture": {
+        "type": "report",
+        "file": "report.html",
+        "selector": "div.users",
+        "pad": 8
+      }
+    },
+    {
+      "name": "co-dashboard",
+      "output": "coordinated-omission/co-dashboard.png",
+      "run": "co-average",
+      "at": 100,
+      "capture": {
+        "type": "band",
+        "from": "#kpis",
+        "to": "#chart-latency-card",
+        "pad": 8
+      }
+    },
+    {
+      "name": "co-dashboard-whole-run",
+      "output": "coordinated-omission/co-dashboard-whole-run.png",
+      "run": "co-average",
+      "at": 102,
+      "capture": {
+        "type": "element",
+        "selector": "#aggregate"
+      }
+    },
+    {
+      "name": "co-html-requests",
+      "output": "coordinated-omission/co-html-requests.png",
+      "run": "co-average",
+      "at": 140,
+      "capture": {
+        "type": "report",
+        "file": "report.html",
+        "selector": "div.CO.requests",
+        "pad": 8
+      }
+    },
+    {
+      "name": "co-html-percentiles",
+      "output": "coordinated-omission/co-html-percentiles.png",
+      "run": "co-average",
+      "at": 141,
+      "capture": {
+        "type": "report",
+        "file": "report.html",
+        "selector": [
+          "div.responses >> nth=0 >> table",
+          "div.responses >> nth=1"
+        ],
+        "pad": 8
+      }
+    },
+    {
+      "name": "co-html-events",
+      "output": "coordinated-omission/co-html-events.png",
+      "run": "co-average",
+      "at": 141,
+      "capture": {
+        "type": "report",
+        "file": "report.html",
+        "selector": "div.co-metrics",
+        "pad": 8
       }
     }
   ]

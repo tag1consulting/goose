@@ -11,7 +11,7 @@ cargo run --release -- -H http://local.dev/ -u 50 -r 10 -t 10m \
 
 Quote each rule: `<` and `>` redirect in a shell.
 
-Thresholds give one verdict for the whole run. They fit a sustained test that ramps up, holds its users steady, and ramps down. A test plan with several holds gets that one verdict too, and no rule can judge one test plan step on its own. To judge each user count by itself, give each a load test of its own. See [`rps` counts only the time users hold steady](#rps-counts-only-the-time-users-hold-steady) for how several holds, a hold at 0 users, and `--iterations` change `rps`.
+You can set as many thresholds as you like. Goose checks them all once a second while the run goes, stops the run as soon as one fails, and checks them all again at the end; see [Stopping the run](#stopping-the-run). Each threshold covers the whole run, not just part of it. Thresholds are meant for a simple load test, one that ramps up, holds a single user count, and ramps down. To check several user counts, run a separate load test for each one. For how `rps` is counted, see [`rps` counts only the time users hold steady](#rps-counts-only-the-time-users-hold-steady).
 
 ## Syntax
 
@@ -62,10 +62,17 @@ A percentile comes from the same [histogram buckets](https://github.com/tag1cons
 
 ## Stopping the run
 
-By default Goose checks every rule once a second while the load test runs, and the first rule that fails stops the run through the [killswitch](killswitch.md), with a reason that names the rule and what was observed:
+By default Goose checks every rule once a second while the load test runs, and the first rule that fails stops the run through the [killswitch](killswitch.md), with a reason that names the rule and what was observed. In this run of the `simple` example, a local test server, not part of Goose, answered each request in 1.5 seconds until 12 seconds after the first request it received, then failed every request:
+
+```bash
+cargo run --release --example simple -- -H http://127.0.0.1:19862 -u 50 -r 50 -t 60s \
+    --threshold "p95<2s" --threshold "error-rate<1%" --no-telnet
+```
+
+Once 1% or more of requests had failed, the next check stopped the run, 12 seconds after the run entered Maintain:
 
 ```
-Killswitch triggered: threshold p95<500ms failed: observed 812ms
+19:44:39 [INFO] Killswitch triggered: threshold error-rate<1% failed: observed 2.54%
 ```
 
 A threshold failure is a killswitch stop, and works as any other [killswitch](killswitch.md) does. The run then fails, as below.
@@ -76,7 +83,7 @@ With `--no-threshold-abort`, Goose never stops the run for a threshold. It runs 
 
 Checking starts when the run first enters Maintain, the first time it holds its users steady, in every mode. A ramp up therefore never fails a rule while the run goes. A users ramp resets its metrics as it enters Maintain. Under `--test-plan`, `--iterations` or `--no-reset-metrics` they are not reset, so the ramp up's requests still count in the first check, except in `rps`, which counts only the hold.
 
-Once checking starts, every later Increase or Maintain step of a test plan is checked too. Checking pauses while the run stops users, in Decrease, and ends at Shutdown. The judgement at the end still covers the whole run, except for `rps`, below.
+Once checking starts, every later Increase or Maintain step of a test plan is checked too. Checking pauses while the run stops users, in Decrease, and ends at Shutdown. The judgement at the end still counts every request since the metrics reset, or since the start of the run when there is none, including those made in Decrease. `rps` is the exception, below.
 
 A test plan that never holds its users steady, such as `10,1m;0,1m`, never enters Maintain, so its rules are judged only at the end, and its `rps` rules can not pass. Goose warns about this at startup, unless `--no-threshold-abort` is set and no rule is an `rps` rule.
 
@@ -84,7 +91,7 @@ A rule whose metric has no samples yet, such as a rule for a request that has no
 
 ### `rps` counts only the time users hold steady
 
-An `rps` rule counts only the time the run spends holding its users steady, in Maintain, in every mode, with or without `--no-threshold-abort`, while the run goes and at the end. It counts the requests made while the run holds its users, over the seconds it holds them, added up over every hold of a test plan. Holds at different user counts therefore give one rate, and an `rps>=` rule judges that one rate. An `rps` rule's row reads as `213.5 from Maintain`. A ramp up, a ramp down, and an Increase step between two holds add nothing, so none of them pulls the rate down. The report's Aggregated requests per second can differ, as it covers the whole run: under `--test-plan`, the ramp up's lower rate would pull it down and fail an `rps>=` rule that the steady load meets.
+An `rps` rule counts only the time the run spends holding its users steady, in Maintain. This is true in every mode, both in the judgement at the end and in any checks while the run goes. It counts the requests made while the run holds its users, over the seconds it holds them, added up over every hold of a test plan. Holds at different user counts therefore give one rate, and an `rps>=` rule judges that one rate. An `rps` rule's row gives the rate followed by `from Maintain`. A ramp up, a ramp down, and an Increase step between two holds add nothing, so none of them pulls the rate down. The report's Aggregated requests per second can differ: it covers every second since the metrics reset. A run under `--test-plan`, `--iterations` or `--no-reset-metrics` has no reset, so there the ramp up's lower rate pulls that figure down, and an `rps>=` rule judged on it would fail although the steady load meets it.
 
 A test plan step that stays at 0 users after a ramp down and before a later ramp up is a hold too: it adds seconds and no requests, so it pulls the rate down. In `10,10s;10,20s;0,5s;0,20s;10,10s;10,20s;0,5s`, that step is `0,20s`. Leave such a step out of a test plan with an `rps` rule: without `0,20s`, the ramp down leads straight into the next ramp up, and the rate covers only the two holds at 10 users.
 
@@ -96,7 +103,7 @@ Until the run has held its users for a whole second there is no rate to judge. A
 
 `--threshold-abort-delay` holds the first check back by a time after the run first enters Maintain, given as for `--run-time`: `30s`, `2m`, or a bare number of seconds. It never changes the judgement at the end of the run.
 
-Use it when the first seconds of a run are slow for a reason you accept, such as a cold cache. With `--threshold-abort-delay 1m`, a warm up spike in the first minute after the run enters Maintain can not stop the run, but it still counts in the final percentiles, so a rule it breaks for the whole run still fails at the end:
+Use it when the first seconds of a run are slow for a reason you accept, such as a cold cache. With `--threshold-abort-delay 1m`, a warm up spike in the first minute after the run enters Maintain can not stop the run, but it still counts in the final percentiles, so a rule it breaks in the final metrics still fails at the end:
 
 ```bash
 cargo run --release -- -H http://local.dev/ -u 50 -r 50 -t 10m \
@@ -109,7 +116,7 @@ It needs a `--threshold`, and is not allowed with `--no-threshold-abort`, which 
 
 When the run ends, Goose judges every rule once more on the final metrics. Here a rule whose metric has no samples fails, observed as `no samples`: a rule for a request that never ran says nothing about that request, so it can not pass.
 
-The rule that stopped the run always fails. Requests that finish after it stopped, and any the check had not counted yet, are counted afterwards, so by the end its value can be back inside the limit. Its row shows the value when it stopped the run and the value at the end, such as `100% at abort, 0.8% at end`, or one value when the two are the same.
+The rule that stopped the run always fails. Requests that finish after it stopped, and any the check had not counted yet, are counted afterwards, so by the end its value can be higher or lower than when it stopped the run. Its row shows the value at the stop and at the end, such as `2.54% at abort, 6.45% at end` in the run under [Stopping the run](#stopping-the-run), or one value when the two are the same.
 
 When every rule passes, `execute()` returns `Ok(GooseMetrics)` as usual. When any fails, it returns `GooseError::ThresholdsFailed` once every report is written. The error holds the rules that failed and the run's metrics, as a `ThresholdMetrics` that reads as the `GooseMetrics` it holds:
 
@@ -142,17 +149,24 @@ A load test whose `main` returns `Result<(), GooseError>` and uses `?` on `execu
       --report-file report.html
 ```
 
+The console output of the run under [Stopping the run](#stopping-the-run) ends with the rule that failed, then the error `main` returns, before Goose exits with code 1:
+
+```text
+19:44:40 [ERROR] threshold error-rate<1% failed: observed 2.54% at abort, 6.45% at end
+Error: ThresholdsFailed { failed: [ThresholdResult { rule: "error-rate<1%", observed: "2.54% at abort, 6.45% at end", value: Some(6.451612903225806), passed: false, aborted: true }], metrics: ThresholdMetrics { .. } }
+```
+
 ## Reports
 
-The console's final tables, and the HTML, Markdown and JSON reports, have a Thresholds section with a row for each rule: the rule, what was observed, and the result. A failing row says `FAIL`, and `FAIL, stopped the run` for the rule that stopped it, so the result never rests on colour alone. The JSON report keeps the results, so a report rendered from it with `--render-report` shows the same section. Without thresholds there is no section.
+The PDF, HTML and Markdown reports have a Thresholds section with a row for each rule: the rule, what was observed, and the result. A failing row says `FAIL`, and `FAIL, stopped the run` for the rule that stopped it, so the result never rests on color alone. The JSON report keeps each result as an object in `raw_metrics.thresholds`, with `rule`, `observed`, `value`, `passed` and `aborted`, so a report rendered from it with `--render-report` shows the same section. Without thresholds there is no section. The console's final tables have the same section; the run under [Stopping the run](#stopping-the-run) printed:
 
 ```
  === THRESHOLDS ===
  ------------------------------------------------------------------------------
- Rule                                         |                   Observed | Result
+ Rule                                         |                     Observed | Result
  ------------------------------------------------------------------------------
- error-rate<1%                                | 100% at abort, 0.8% at end | FAIL, stopped the run
- p95<500ms                                    |                      312ms | PASS
+ p95<2s                                       |                       1499ms | PASS
+ error-rate<1%                                | 2.54% at abort, 6.45% at end | FAIL, stopped the run
  ------------------------------------------------------------------------------
 ```
 
@@ -179,4 +193,4 @@ Rules given with `--threshold` replace every rule set in code; they are not adde
 
 ## Overhead
 
-Thresholds do no work per request, as Goose reads the metrics once a second: over 5 runs of 10 minutes per build, alternating builds, with 32 users sending requests back to back to nginx on the same 18 core MacBook Pro, the averages of the middle 3 runs by requests per second put throughput and p95 within run to run noise, and CPU time 1% to 2% higher with 3 thresholds than before thresholds.
+Thresholds do no work per request: Goose judges each rule against the metrics it already keeps, once a second while it checks (see [When checking starts and stops](#when-checking-starts-and-stops)) and once at the end, or only at the end under `--no-threshold-abort`.
