@@ -11,7 +11,7 @@ cargo run --release -- -H http://local.dev/ -u 50 -r 10 -t 10m \
 
 Quote each rule: `<` and `>` redirect in a shell.
 
-Thresholds give one verdict per run. They fit a sustained test that ramps up, holds its users steady, and ramps down. A test plan with several holds gets that one verdict too, and no rule can judge one test plan step on its own. To judge each user count by itself, give each a load test of its own. See [`rps` counts only the time users hold steady](#rps-counts-only-the-time-users-hold-steady) for how several holds, a hold at 0 users, and `--iterations` change `rps`.
+Thresholds give one pass or fail verdict for the whole run. They are meant for a simple load test, one that ramps up, holds a single user count, and ramps down. To check several user counts, run a separate load test for each one. For how `rps` is counted, see [`rps` counts only the time users hold steady](#rps-counts-only-the-time-users-hold-steady).
 
 ## Syntax
 
