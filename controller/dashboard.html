@@ -1,0 +1,317 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Live Dashboard - The Goose Book</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../css/general-e96d0476.css">
+        <link rel="stylesheet" href="../css/chrome-d279d366.css">
+        <link rel="stylesheet" href="../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../searchindex-e0e91710.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc-b1be2d52.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">The Goose Book</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="live-dashboard"><a class="header" href="#live-dashboard">Live Dashboard</a></h1>
+<p>The live dashboard is a web page Goose serves while a load test runs. It shows the test’s users, requests, response times and errors second by second. It saves each run’s report, and lists saved runs to download and compare. With control turned on it can also start and stop the test, and change its users, host, ramps and run time.</p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="dashboard-hero.png" alt="The Goose live dashboard during a load test of the Umami demo site, with control on and no token: the header, the report bar, a notice that request rows were truncated, the Control card, the KPI row, and the requests per second and active users charts"><span class="img-wrapper"><img src="dashboard-hero.png" alt="The Goose live dashboard during a load test of the Umami demo site, with control on and no token: the header, the report bar, a notice that request rows were truncated, the Control card, the KPI row, and the requests per second and active users charts"></span></label></p>
+<p><em>The first screen of a run with control on, explained section by section below, with the truncation notice under <a href="#the-tables">The tables</a>.</em></p>
+<p>Build Goose with the <code>dashboard</code> feature, add <code>--dashboard</code>, and open <code>http://127.0.0.1:5118/</code>. In a checkout of Goose, against your own <a href="../example/umami.html">Umami</a> site:</p>
+<pre><code class="language-bash">cargo run --release --features dashboard --example umami -- \
+  --dashboard -H http://umami.example.com -u 100 -r 1
+</code></pre>
+<p>Most images on this page come from one run of the command above, against a local Umami site at <code>http://localhost:18888</code>: the first image, the charts, the heatmap, the Requests table, the Control card with Edit settings open, and the Runs panel. That run added <code>--dashboard-control --dashboard-no-auth</code> for control, <code>-t 10m</code> for a 10 minute hold, <code>--no-reset-metrics</code> so the tables include the ramp up, <code>--notes "100, then 150 users"</code>, which the header shows, and <code>-q</code> to keep the console quiet. The read-only and Errors images come from runs of their own, and their captions say what changed.</p>
+<h2 id="turning-it-on"><a class="header" href="#turning-it-on">Turning it on</a></h2>
+<p>The dashboard is an opt in crate feature. In your own load test crate, turn it on in <code>Cargo.toml</code>, as <a href="../requirements.html">Requirements</a> shows:</p>
+<pre><code class="language-toml">goose = { version = "^0.19", features = ["dashboard"] }
+</code></pre>
+<p>Then run your load test with <code>--dashboard</code>, like any other option:</p>
+<pre><code class="language-bash">cargo run --release -- --dashboard -H https://staging.example.com
+</code></pre>
+<p>A build without the feature refuses <code>--dashboard</code> at startup. The dashboard listens on <code>127.0.0.1:5118</code>; <a href="dashboard-reference.html#related-flags">Dashboard Reference</a> lists the flags that change that.</p>
+<p><code>--dashboard</code> alone gives a read-only dashboard. Its Control card says so, names the two ways to get control, and points to the telnet Controller, which Goose starts by default and which takes no authentication:</p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="dashboard-read-only.png" alt="The read-only Control card, saying it can’t start, stop or change the test, listing the two ways to restart Goose with control, and naming the telnet Controller on 127.0.0.1:5116"><span class="img-wrapper"><img src="dashboard-read-only.png" alt="The read-only Control card, saying it can’t start, stop or change the test, listing the two ways to restart Goose with control, and naming the telnet Controller on 127.0.0.1:5116"></span></label></p>
+<p><em>With <code>--dashboard</code> alone the card can only point elsewhere: to a restart with control, or to the telnet Controller listening on <code>127.0.0.1:5116</code>.</em></p>
+<p>To control the test from the page as well, add <code>--dashboard-control</code> and one of:</p>
+<ul>
+<li><code>--dashboard-auth-token &lt;token&gt;</code>, then open <code>http://127.0.0.1:5118/?token=&lt;token&gt;</code>. See <a href="dashboard-reference.html#browser-bootstrap-with-token">Browser bootstrap with <code>?token=</code></a>.</li>
+<li><code>--dashboard-no-auth</code>, for control with no token, described next.</li>
+</ul>
+<h3 id="control-without-a-token"><a class="header" href="#control-without-a-token">Control without a token</a></h3>
+<p>With <code>--dashboard-control --dashboard-no-auth</code> the page reads <code>Live dashboard · control, no token</code>. Anyone who can reach the dashboard’s port can then start and stop the test, point the load at any host, and delete saved reports. On a shared machine use a token instead, set in the load test’s code so <code>ps</code> does not show it; <a href="dashboard-reference.html#on-a-shared-machine">On a shared machine</a> shows how, and what else is open there. <a href="dashboard-reference.html#control-without-a-token">Control without a token</a> in the reference gives its rules, among them the warning Goose prints off loopback.</p>
+<h3 id="what-changes-and-what-doesnt"><a class="header" href="#what-changes-and-what-doesnt">What changes, and what doesn’t</a></h3>
+<ul>
+<li>The dashboard saves each run’s <code>report.html</code> and <code>report.json</code> in a run folder, <code>goose-runs/&lt;start time&gt;</code> under the working directory by default; see <a href="dashboard-reference.html#saving-the-report">Saving the report</a>. Goose still writes the reports it is asked for (PDF, HTML, Markdown and JSON), and prints the same metrics to the console, with a few lines more about the dashboard.</li>
+<li>Watching adds no requests to the target. <code>--dashboard</code> costs Goose memory for the per second graph data, whether or not a page is open, and a little CPU for each snapshot, built about once a second while a page is open; <a href="dashboard-reference.html#graphdata-memory-cost">Memory cost</a> gives the numbers.</li>
+</ul>
+<h3 id="watching-from-another-machine"><a class="header" href="#watching-from-another-machine">Watching from another machine</a></h3>
+<p>Keep the dashboard on loopback and use an <a href="dashboard-reference.html#ssh-tunnels">SSH tunnel</a>, or bind another address with <code>--dashboard-host</code> and a token. On a shared machine, set a token either way, in the load test’s code: a loopback dashboard with no token is open to every user of that machine. With a token set, the token goes in the URL whether or not control is on: <code>http://127.0.0.1:5118/?token=&lt;token&gt;</code> through the tunnel, or <code>http://&lt;address&gt;:5118/?token=&lt;token&gt;</code> on a bind off loopback. <a href="dashboard-reference.html#bind-and-token-rules">Bind and token rules</a> says what each choice exposes, and to whom.</p>
+<h2 id="what-it-shows"><a class="header" href="#what-it-shows">What it shows</a></h2>
+<p>The header shows the phase (<code>idle</code>, <code>increase</code>, <code>maintain</code>, <code>decrease</code> or <code>shutdown</code>), the hosts under load, how long the test has run, its <code>--notes</code>, and the connection, <code>SSE</code> with a green dot while the page is streaming. With control off it also shows the run settings, such as the test plan. Under the header, the report bar holds the report switches, described under <a href="#save-compare-and-delete-runs">Save, compare and delete runs</a>. Below it and the Control card, the KPI row shows the active users against the target, then requests per second, the failure rate, the p95 and the average response time; all but the users cover the whole run, or the time since metrics were last reset, as <a href="#the-tables">The tables</a> explains.</p>
+<h3 id="active-users"><a class="header" href="#active-users">Active users</a></h3>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="dashboard-users.png" alt="The Active users chart: a ramp from 0 to 100 users, a hold, a second ramp to 150 and a hold at 150"><span class="img-wrapper"><img src="dashboard-users.png" alt="The Active users chart: a ramp from 0 to 100 users, a hold, a second ramp to 150 and a hold at 150"></span></label></p>
+<p><em>Users ramp to 100 at one a second, hold, then ramp to 150 after Target was set to 150 at 120 seconds, and hold again; the axis counts seconds since the test started.</em></p>
+<p>Each point is one second. The charts keep the last 300 seconds of the run, so these, taken 200 seconds in, show all of it; on a longer run the start scrolls off, and the reports keep the whole run. The summary under each line chart is the mean of its last 10 seconds (the requests per second chart leaves out the newest second, still filling), with <code>rising</code> or <code>falling</code> when that is more than 10 percent above or below the 10 seconds before, and <code>steady</code> otherwise, once there are 20 seconds of data. So in the first image, taken as the ramp ended, the summary under the users chart reads <code>Users 96 of 100</code> while the Users tile already reads <code>100 / 100</code>. The step to 150 came from the Control card while the test ran, with no restart.</p>
+<h3 id="requests-per-second"><a class="header" href="#requests-per-second">Requests per second</a></h3>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="dashboard-rps.png" alt="The requests and failures per second chart for the same run: requests climb to about 1,000 a second by 100 seconds, then swing between about 575 and 1,440 around 1,000, and failures stay at zero"><span class="img-wrapper"><img src="dashboard-rps.png" alt="The requests and failures per second chart for the same run: requests climb to about 1,000 a second by 100 seconds, then swing between about 575 and 1,440 around 1,000, and failures stay at zero"></span></label></p>
+<p><em>Requests per second climb with the users to about 1,000 by 100 seconds, then stop climbing; the dashed Failures/s line stays at zero.</em></p>
+<p>Against the users chart, this shows the site at capacity: from 120 to 170 seconds users went from 100 to 150 and requests per second did not rise. The summary under the chart reads <code>RPS 950.50</code>.</p>
+<h3 id="the-response-time-heatmap"><a class="header" href="#the-response-time-heatmap">The response time heatmap</a></h3>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="dashboard-heatmap.png" alt="The response time heatmap for the same run: most requests take 5 to 20 ms throughout, and from about 124 seconds a band of slower requests forms between 200 ms and 1 second, with the p95 and p99 lines rising into it"><span class="img-wrapper"><img src="dashboard-heatmap.png" alt="The response time heatmap for the same run: most requests take 5 to 20 ms throughout, and from about 124 seconds a band of slower requests forms between 200 ms and 1 second, with the p95 and p99 lines rising into it"></span></label></p>
+<p><em>From about 124 seconds, as users pass about 104, the p95 line climbs from about 20 ms to several hundred and the p99 rises to mostly between 500 ms and 1 second, while the p50 stays near 8 ms.</em></p>
+<p>The card, titled Response times by second, draws each second as a column, oldest on the left, and each row as a range of response times on a logarithmic axis; a darker cell holds more requests. Three lines cross it: each second’s p50, p95 and p99. The newest two seconds are not drawn yet, as their slowest requests are still arriving. The labels at the right edge show the newest drawn second, here <code>p95: 335 ms</code>, and the summary under the chart the mean of the last 10 drawn seconds, <code>p95 638 ms</code>. Hover a cell for its second, its range, its count and that second’s percentiles, and pick a request at the top of the card to see it alone. <a href="dashboard-reference.html#the-response-time-heatmap">The response time heatmap</a> in the reference gives the rows, the color scale and how each percentile is worked out.</p>
+<h3 id="the-tables"><a class="header" href="#the-tables">The tables</a></h3>
+<p>Below the charts, <strong>Summary</strong> gives the phase, how long the test has run, the users and total users, the Goose version, the hosts and the series window (the 300 seconds the charts keep), and <strong>Whole run</strong> the totals and response time percentiles. <strong>Scenarios</strong> lists every scenario with its users, how many times it ran and how long it took. <strong>Transactions</strong> lists every transaction with its runs, failures and times, and <strong>Requests</strong> each request with its counts, times and status codes:</p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="dashboard-requests.png" alt="The Requests table sorted by p95, slowest first: POST /es/search/node at 212 ms, then the English search, Spanish recipe pages and two node pages near 200 ms"><span class="img-wrapper"><img src="dashboard-requests.png" alt="The Requests table sorted by p95, slowest first: POST /es/search/node at 212 ms, then the English search, Spanish recipe pages and two node pages near 200 ms"></span></label></p>
+<p><em>Sorted by p95 with one click on its heading, the table puts the Spanish search, <code>POST /es/search/node</code>, first at 212 ms over the whole run, and scrolls right for p99, max and the status codes.</em></p>
+<p>The table’s p95 covers the whole run, so the fast first two minutes weigh in; the heatmap’s lines are each one second.</p>
+<p>Click a heading to sort by it. Every figure covers the whole run, or the time since metrics were last reset: as in a console run, Goose resets them when the ramp up ends, unless <code>--no-reset-metrics</code> or <code>--iterations</code> is given, or a test plan runs (see <a href="../getting-started/metrics.html">Metrics</a>). Goose sends the dashboard only the 100 busiest request names. A site with more, such as Umami, shows the notice <code>request rows truncated (showing top rows only).</code> above the Control card, and the table lists those 100, so a slow request that is rarely made may not be among them. In the run above, the admin user’s login and article edits, a few requests each, are left out, though the login and the saved edits are slower than the Spanish search. The reports list every request.</p>
+<h3 id="errors"><a class="header" href="#errors">Errors</a></h3>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="dashboard-errors.png" alt="The Errors table: the admin login that failed with a wrong password, and the 403 responses to the edits that followed"><span class="img-wrapper"><img src="dashboard-errors.png" alt="The Errors table: the admin login that failed with a wrong password, and the 403 responses to the edits that followed"></span></label></p>
+<p><em>From a run with <code>ADMIN_PASSWORD</code> set to a wrong password: the admin user’s login fails, its row names the cause, and each article the admin then tries to edit answers 403.</em></p>
+<p>Each row is one error, with its request and its count, and rows appear while the run is going; the table holds the 50 most frequent, and a notice at the top of the page says when there are more. <strong>Transaction errors</strong>, below it, counts errors that a transaction’s own code returned, other than failed requests.</p>
+<h2 id="what-you-can-do-with-it"><a class="header" href="#what-you-can-do-with-it">What you can do with it</a></h2>
+<p>Stop, Start, Quit, changing users or settings, the report switches, Save report now and Delete need control on. Saved runs can be downloaded and compared without it.</p>
+<h3 id="stop-a-run-that-is-erroring"><a class="header" href="#stop-a-run-that-is-erroring">Stop a run that is erroring</a></h3>
+<p>Errors show first in the Fail % tile and as the dashed red Failures/s line in the requests per second chart, at zero in the run behind the charts above. The Errors table, below Requests, says what they are. When a run is failing, press <strong>Stop</strong> rather than waiting for it to end: the users stop at once, and Goose writes the run’s reports, as at the end of any run. See <a href="dashboard-reference.html#start-and-stop-semantics">Start and Stop semantics</a>.</p>
+<h3 id="change-users-and-settings"><a class="header" href="#change-users-and-settings">Change users and settings</a></h3>
+<p>Type a count in <strong>Target</strong> and press <strong>Apply</strong>, or press <strong>−</strong> or <strong>+</strong> to send a change of one <strong>step</strong> at once. Goose ramps up to a higher count at the increase rate, as the change to 150 above shows, and down to a lower one at the decrease rate, or the increase rate when no decrease rate is set. An increase with no increase rate set, and a decrease with neither rate set, go at 1 user a second. A change of users never uses <code>--increase-time</code> or <code>--decrease-time</code>. A change made during the ramp up starts the hold once the new count is reached, for the full run time; a change made during the hold leaves its end where it was. The planned ramp down follows, unless the new ramp outlasts the hold, or the new count is the one the run already has: then the run holds that count until stopped. Once the ramp down has started, a new count abandons it, and Goose holds the new count until stopped. See <a href="dashboard-reference.html#users-on-a-running-test">Users on a running test</a>.</p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="dashboard-settings.png" alt="The Control card in Idle with Edit settings open: a new host, ramp up and run time pending, and the host confirmation"><span class="img-wrapper"><img src="dashboard-settings.png" alt="The Control card in Idle with Edit settings open: a new host, ramp up and run time pending, and the host confirmation"></span></label></p>
+<p><em>In Idle after the charts’ run was stopped, and with a new host, ramp up and run time pending: <strong>Start</strong> reads <strong>Start with changes</strong>, the new host waits for Confirm, and the note under Target says a change of users would go with them.</em></p>
+<p><strong>Edit settings</strong> opens a form for the host, the ramp up and ramp down, and the run time. An edit stays pending until you press <strong>Apply settings</strong>, or until <strong>Start with changes</strong> starts the next run with it. The first change of host in a page load asks for confirmation before anything is sent. While a test runs, the form takes only what the run can still change, such as the run time, and says why for the rest. In Idle with settings edits pending, Target’s <strong>Apply</strong> sends nothing on its own, and <strong>−</strong> and <strong>+</strong> only change the Target count: the count goes with those edits when you press <strong>Apply settings</strong> or <strong>Start with changes</strong>. See <a href="dashboard-reference.html#run-settings">Run settings</a>.</p>
+<h3 id="start-a-run"><a class="header" href="#start-a-run">Start a run</a></h3>
+<p>Start Goose with <code>--no-autostart</code> and it waits in Idle for <strong>Start</strong>; after a Stop it waits the same way. With settings edits pending, the button reads <strong>Start with changes</strong> and sends them with the start, as in the Control card above. The card shows <strong>Quit</strong>, which shuts Goose down, only in Idle, so stop a running test first.</p>
+<h3 id="save-compare-and-delete-runs"><a class="header" href="#save-compare-and-delete-runs">Save, compare and delete runs</a></h3>
+<p>The report bar at the top of the page holds two switches. <strong>Save report</strong> sets whether this run’s report is written to its folder, and <strong>Include graph data</strong> adds the per second data to the JSON report. With control on, the switches can be changed, and the bar also holds <strong>Save report now</strong>, which writes the report mid run; without control the switches are shown read only. <code>--report-graph-data</code> turns Include graph data on from the command line. Without control, Save report stays on, except under <code>--no-metrics</code> or when the run’s folder can’t be written to.</p>
+<p>The <strong>Runs</strong> panel at the foot of the page lists the saved reports in <code>goose-runs</code>, the newest 50 first, with <strong>Show all</strong> for the rest. With <code>--output-dir &lt;dir&gt;</code>, which names the run’s own folder, it lists the folder that holds <code>&lt;dir&gt;</code> instead. The list also includes console runs made without the dashboard, when they wrote to a run folder: a run given a bare <code>--report-file</code>, with no file name, writes <code>report.html</code> and <code>report.json</code> there (see <a href="../getting-started/output-files.html">Output Files</a>).</p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="dashboard-runs.png" alt="The Runs panel with three saved runs, two of them checked for comparison"><span class="img-wrapper"><img src="dashboard-runs.png" alt="The Runs panel with three saved runs, two of them checked for comparison"></span></label></p>
+<p><em>Three saved runs: two from console runs given a bare <code>--report-file</code>, and the newest from the dashboard; the two newest are checked, so Download comparison appears.</em></p>
+<p>Each row downloads its HTML, Markdown or JSON report; a format the run did not save is rendered from its JSON report. Check <strong>Compare</strong> on two rows and <strong>Download comparison</strong> gives a Markdown report of the newer run against the older. With control on, <strong>Delete</strong> removes a run’s reports and logs. See <a href="dashboard-reference.html#saving-the-report">Saving the report</a> and <a href="dashboard-reference.html#the-runs-panel">The runs panel</a>.</p>
+<h2 id="when-the-run-ends"><a class="header" href="#when-the-run-ends">When the run ends</a></h2>
+<p>When a run Goose started on its own (without <code>--no-autostart</code>) reaches its end, Goose exits. That is when its run time and any ramp down are over, its test plan finishes, or every user exits. If a page is connected at that moment and the report was saved, Goose stays up instead, so the report can still be downloaded, and prints:</p>
+<pre><code class="language-text">Run finished. Download it from the dashboard at http://127.0.0.1:5118. Press Ctrl-C to exit.
+</code></pre>
+<p>With control on, it ends <code>Press Quit in the dashboard or Ctrl-C to exit.</code> Closing the tab does not end this wait; Ctrl-C, a Controller <code>shutdown</code> and Quit do.</p>
+<p>A Stop leaves Goose in Idle with the page up, ready for the next run, and a run started from the dashboard or a Controller goes back to Idle when it ends. During a run, Ctrl-C, the <a href="../getting-started/killswitch.html">killswitch</a>, a Controller <code>shutdown</code> or a <a href="../getting-started/thresholds.html">threshold</a> that aborts the run ends both the run and Goose, with no wait. Once Goose exits, the page says <code>Goose has exited.</code> See <a href="dashboard-reference.html#waiting-after-an-autostarted-run">Waiting after an autostarted run</a>.</p>
+<h2 id="reference"><a class="header" href="#reference">Reference</a></h2>
+<p><a href="dashboard-reference.html">Dashboard Reference</a> lists every flag and default, the bind and token rules, the control endpoints, the snapshot and health endpoints, and how to build the page from its TypeScript sources.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../controller/overview.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../controller/dashboard-reference.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../controller/overview.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../controller/dashboard-reference.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../mark-09e88c2c.min.js"></script>
+        <script src="../searcher-09f2665d.js"></script>
+
+        <script src="../clipboard-1626706a.min.js"></script>
+        <script src="../highlight-abc7f01d.js"></script>
+        <script src="../book-609e4cb8.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

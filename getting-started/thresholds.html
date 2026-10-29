@@ -1,0 +1,364 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Thresholds - The Goose Book</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../css/general-e96d0476.css">
+        <link rel="stylesheet" href="../css/chrome-d279d366.css">
+        <link rel="stylesheet" href="../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../searchindex-e0e91710.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc-b1be2d52.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">The Goose Book</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="thresholds"><a class="header" href="#thresholds">Thresholds</a></h1>
+<p>A threshold is a pass/fail rule on a load test’s metrics, such as “the 95th percentile response time stays under 500 ms” or “under 1% of requests fail”. Give one with <code>--threshold</code>, as often as needed. A rule that fails stops the run by default, and always makes the run fail: <code>GooseAttack::execute()</code> returns an error once every report is written (see <a href="#exit-code-in-ci">Exit code in CI</a>). Every report says which rules passed and which failed.</p>
+<pre><code class="language-bash">cargo run --release -- -H http://local.dev/ -u 50 -r 10 -t 10m \
+    --threshold "p95&lt;500ms" \
+    --threshold "error-rate&lt;1%" \
+    --threshold "p99&lt;2s for GET /checkout"
+</code></pre>
+<p>Quote each rule: <code>&lt;</code> and <code>&gt;</code> redirect in a shell.</p>
+<p>You can set as many thresholds as you like. Goose checks them all once a second while the run goes, stops the run as soon as one fails, and checks them all again at the end; see <a href="#stopping-the-run">Stopping the run</a>. Each threshold covers the whole run, not just part of it. Thresholds are meant for a simple load test, one that ramps up, holds a single user count, and ramps down. To check several user counts, run a separate load test for each one. For how <code>rps</code> is counted, see <a href="#rps-counts-only-the-time-users-hold-steady"><code>rps</code> counts only the time users hold steady</a>.</p>
+<h2 id="syntax"><a class="header" href="#syntax">Syntax</a></h2>
+<p>A rule is <code>&lt;metric&gt;&lt;op&gt;&lt;value&gt;</code>, optionally followed by <code> for &lt;request&gt;</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Metric</th><th>Measures</th><th>Value</th></tr>
+</thead>
+<tbody>
+<tr><td><code>pNN</code></td><td>A response time percentile, with optional decimals, such as <code>p50</code>, <code>p95</code> or <code>p99.9</code>, greater than 0 and less than 100</td><td>A time: a number with <code>us</code>, <code>ms</code> or <code>s</code>; a bare number is milliseconds</td></tr>
+<tr><td><code>avg</code></td><td>The average response time</td><td>A time</td></tr>
+<tr><td><code>max</code></td><td>The slowest response time</td><td>A time</td></tr>
+<tr><td><code>error-rate</code></td><td>Failed requests as a percent of all requests</td><td>A number with an optional <code>%</code>, at most 100</td></tr>
+<tr><td><code>rps</code></td><td>Requests per second while the run holds its users steady</td><td>A number</td></tr>
+</tbody>
+</table>
+</div>
+<p>The operator is <code>&lt;</code>, <code>&lt;=</code>, <code>&gt;</code> or <code>&gt;=</code>. A rule passes when the comparison holds for what Goose observed: <code>p95&lt;500ms</code> passes at 499 ms and fails at 500 ms, while <code>p95&lt;=500ms</code> passes at 500 ms too.</p>
+<p>Without <code> for &lt;request&gt;</code>, a rule judges all requests together, as the <code>Aggregated</code> row of the report’s tables does. With it, the rule judges only the request with that name: its full name as the HTML or Markdown report shows it, method and name together, such as <code>GET /login</code>, where the name is the path or the request’s custom name, as in <code>POST login</code>. The console’s tables cut long names short, so copy a name from a report. When the run ends, Goose warns about a rule for a request the run never made, suggesting the name it most likely means:</p>
+<pre><code>threshold p95&lt;1s for get /: no request named "get /"; did you mean "GET /"?
+</code></pre>
+<p>Some rules:</p>
+<ul>
+<li><code>p95&lt;500ms</code>: 95% of all responses take less than 500 ms.</li>
+<li><code>p99.9&lt;=2s</code>: 99.9% of all responses take at most 2 seconds.</li>
+<li><code>avg&lt;150</code>: the average response is under 150 ms.</li>
+<li><code>error-rate&lt;1%</code>: fewer than 1% of requests fail.</li>
+<li><code>rps&gt;=200</code>: the run makes at least 200 requests a second while it holds its users steady.</li>
+<li><code>max&lt;5s for GET /checkout</code>: no <code>GET /checkout</code> takes 5 seconds or more.</li>
+</ul>
+<p>A rule that does not parse is refused before any user starts, with a <code>GooseError::InvalidOption</code> whose <code>detail</code> says what is wrong with it:</p>
+<pre><code>threshold "p100&lt;1s": the percentile must be greater than 0 and less than 100, such as p95 or p99.9.
+</code></pre>
+<p>So is a rule that can never pass: any rule with <code>&lt;0</code>, such as <code>p95&lt;0</code> or <code>error-rate&lt;0</code>, as well as <code>rps&lt;=0</code> and <code>error-rate&gt;100</code> (with or without <code>%</code>). With <code>--throttle-requests N</code>, which keeps the run at N requests a second or fewer, <code>rps&gt;M</code> is refused when M is N or more, and <code>rps&gt;=M</code> when M is more than N:</p>
+<pre><code>threshold "rps&gt;=200": it can never pass; `configuration.throttle_requests` caps the run at 100 requests a second.
+</code></pre>
+<p><code>--throttle-requests 0</code> means no throttle, so it refuses no <code>rps</code> rule.</p>
+<p>Thresholds judge metrics, so <code>--threshold</code> is not allowed with <code>--no-metrics</code>.</p>
+<p>A percentile comes from the same <a href="https://github.com/tag1consulting/goose/blob/main/src/metrics/buckets.rs">histogram buckets</a> as every report’s percentiles, so it can be up to 0.78% away from the exact time, while the average and the slowest time are exact.</p>
+<h2 id="stopping-the-run"><a class="header" href="#stopping-the-run">Stopping the run</a></h2>
+<p>By default Goose checks every rule once a second while the load test runs, and the first rule that fails stops the run through the <a href="killswitch.html">killswitch</a>, with a reason that names the rule and what was observed. In this run of the <code>simple</code> example, a local test server, not part of Goose, answered each request in 1.5 seconds until 12 seconds after the first request it received, then failed every request:</p>
+<pre><code class="language-bash">cargo run --release --example simple -- -H http://127.0.0.1:19862 -u 50 -r 50 -t 60s \
+    --threshold "p95&lt;2s" --threshold "error-rate&lt;1%" --no-telnet
+</code></pre>
+<p>Once 1% or more of requests had failed, the next check stopped the run, 12 seconds after the run entered Maintain:</p>
+<pre><code>19:44:39 [INFO] Killswitch triggered: threshold error-rate&lt;1% failed: observed 2.54%
+</code></pre>
+<p>A threshold failure is a killswitch stop, and works as any other <a href="killswitch.html">killswitch</a> does. The run then fails, as below.</p>
+<p>With <code>--no-threshold-abort</code>, Goose never stops the run for a threshold. It runs its full time, and judges every rule only at the end.</p>
+<h3 id="when-checking-starts-and-stops"><a class="header" href="#when-checking-starts-and-stops">When checking starts and stops</a></h3>
+<p>Checking starts when the run first enters Maintain, the first time it holds its users steady, in every mode. A ramp up therefore never fails a rule while the run goes. A users ramp resets its metrics as it enters Maintain. Under <code>--test-plan</code>, <code>--iterations</code> or <code>--no-reset-metrics</code> they are not reset, so the ramp up’s requests still count in the first check, except in <code>rps</code>, which counts only the hold.</p>
+<p>Once checking starts, every later Increase or Maintain step of a test plan is checked too. Checking pauses while the run stops users, in Decrease, and ends at Shutdown. The judgement at the end still counts every request since the metrics reset, or since the start of the run when there is none, including those made in Decrease. <code>rps</code> is the exception, below.</p>
+<p>A test plan that never holds its users steady, such as <code>10,1m;0,1m</code>, never enters Maintain, so its rules are judged only at the end, and its <code>rps</code> rules can not pass. Goose warns about this at startup, unless <code>--no-threshold-abort</code> is set and no rule is an <code>rps</code> rule.</p>
+<p>A rule whose metric has no samples yet, such as a rule for a request that has not run, is skipped while the run goes. The first check can judge only a few requests, so one early error can fail <code>error-rate</code>. The first seconds of the first hold can also fail an <code>rps&gt;=</code> rule that the whole hold meets. <code>--threshold-abort-delay</code> gives the run time to make more requests before the first check.</p>
+<h3 id="rps-counts-only-the-time-users-hold-steady"><a class="header" href="#rps-counts-only-the-time-users-hold-steady"><code>rps</code> counts only the time users hold steady</a></h3>
+<p>An <code>rps</code> rule counts only the time the run spends holding its users steady, in Maintain. This is true in every mode, both in the judgement at the end and in any checks while the run goes. It counts the requests made while the run holds its users, over the seconds it holds them, added up over every hold of a test plan. Holds at different user counts therefore give one rate, and an <code>rps&gt;=</code> rule judges that one rate. An <code>rps</code> rule’s row gives the rate followed by <code>from Maintain</code>. A ramp up, a ramp down, and an Increase step between two holds add nothing, so none of them pulls the rate down. The report’s Aggregated requests per second can differ: it covers every second since the metrics reset. A run under <code>--test-plan</code>, <code>--iterations</code> or <code>--no-reset-metrics</code> has no reset, so there the ramp up’s lower rate pulls that figure down, and an <code>rps&gt;=</code> rule judged on it would fail although the steady load meets it.</p>
+<p>A test plan step that stays at 0 users after a ramp down and before a later ramp up is a hold too: it adds seconds and no requests, so it pulls the rate down. In <code>10,10s;10,20s;0,5s;0,20s;10,10s;10,20s;0,5s</code>, that step is <code>0,20s</code>. Leave such a step out of a test plan with an <code>rps</code> rule: without <code>0,20s</code>, the ramp down leads straight into the next ramp up, and the rate covers only the two holds at 10 users.</p>
+<p><code>--iterations</code> is refused at startup with <code>--decrease-rate</code> or <code>--decrease-time</code>, as a ramp down would stop users before they finish their iterations: the error reads <code>`configuration.decrease_rate` can not be set with `configuration.iterations`.</code>, or the same for <code>decrease_time</code>. With <code>--iterations</code>, the run enters Maintain when the ramp up ends and stays there until the last user finishes its iterations. A run whose users all finish before the ramp up ends never enters Maintain. Once the first user finishes, the rest of the hold has fewer users making requests. That time still counts, so it pulls the rate down. A run with <code>--run-time</code> in place of <code>--iterations</code> keeps every user making requests until the hold ends, so use <code>--run-time</code> with an <code>rps</code> rule.</p>
+<p>Until the run has held its users for a whole second there is no rate to judge. A run that never enters Maintain has no time to count, so its <code>rps</code> rules fail at the end as <code>no samples</code>.</p>
+<h3 id="--threshold-abort-delay"><a class="header" href="#--threshold-abort-delay"><code>--threshold-abort-delay</code></a></h3>
+<p><code>--threshold-abort-delay</code> holds the first check back by a time after the run first enters Maintain, given as for <code>--run-time</code>: <code>30s</code>, <code>2m</code>, or a bare number of seconds. It never changes the judgement at the end of the run.</p>
+<p>Use it when the first seconds of a run are slow for a reason you accept, such as a cold cache. With <code>--threshold-abort-delay 1m</code>, a warm up spike in the first minute after the run enters Maintain can not stop the run, but it still counts in the final percentiles, so a rule it breaks in the final metrics still fails at the end:</p>
+<pre><code class="language-bash">cargo run --release -- -H http://local.dev/ -u 50 -r 50 -t 10m \
+    --threshold "p95&lt;500ms" --threshold-abort-delay 1m
+</code></pre>
+<p>It needs a <code>--threshold</code>, and is not allowed with <code>--no-threshold-abort</code>, which never stops the run.</p>
+<h2 id="the-end-of-the-run"><a class="header" href="#the-end-of-the-run">The end of the run</a></h2>
+<p>When the run ends, Goose judges every rule once more on the final metrics. Here a rule whose metric has no samples fails, observed as <code>no samples</code>: a rule for a request that never ran says nothing about that request, so it can not pass.</p>
+<p>The rule that stopped the run always fails. Requests that finish after it stopped, and any the check had not counted yet, are counted afterwards, so by the end its value can be higher or lower than when it stopped the run. Its row shows the value at the stop and at the end, such as <code>2.54% at abort, 6.45% at end</code> in the run under <a href="#stopping-the-run">Stopping the run</a>, or one value when the two are the same.</p>
+<p>When every rule passes, <code>execute()</code> returns <code>Ok(GooseMetrics)</code> as usual. When any fails, it returns <code>GooseError::ThresholdsFailed</code> once every report is written. The error holds the rules that failed and the run’s metrics, as a <code>ThresholdMetrics</code> that reads as the <code>GooseMetrics</code> it holds:</p>
+<pre><code class="language-rust ignore">match goose_attack.execute().await {
+    Ok(metrics) =&gt; println!("all {} thresholds passed", metrics.thresholds.len()),
+    Err(GooseError::ThresholdsFailed { failed, metrics }) =&gt; {
+        for result in &amp;failed {
+            eprintln!("{} failed: observed {}", result.rule, result.observed);
+        }
+        eprintln!("the run lasted {} seconds", metrics.duration);
+        std::process::exit(1);
+    }
+    Err(e) =&gt; return Err(e),
+}</code></pre>
+<p><code>GooseMetrics::thresholds</code> holds every rule’s <code>ThresholdResult</code> in either case: its rule, what was observed, as text and as a number, whether it passed, and whether it stopped the run.</p>
+<h3 id="exit-code-in-ci"><a class="header" href="#exit-code-in-ci">Exit code in CI</a></h3>
+<p>A load test whose <code>main</code> returns <code>Result&lt;(), GooseError&gt;</code> and uses <code>?</code> on <code>execute()</code>, as every example does, exits with code 1 when a threshold fails, so a CI step fails with it. This step runs the <code>simple</code> example from a Goose checkout; in your own load test crate, use <code>cargo run --release --</code> instead:</p>
+<pre><code class="language-yaml">- name: Load test
+  run: |
+    cargo run --release --example simple -- \
+      --host http://staging.example.com --users 20 --increase-rate 5 --run-time 5m \
+      --threshold "p95&lt;500ms" --threshold "error-rate&lt;1%" \
+      --report-file report.html
+</code></pre>
+<p>The console output of the run under <a href="#stopping-the-run">Stopping the run</a> ends with the rule that failed, then the error <code>main</code> returns, before Goose exits with code 1:</p>
+<pre><code class="language-text">19:44:40 [ERROR] threshold error-rate&lt;1% failed: observed 2.54% at abort, 6.45% at end
+Error: ThresholdsFailed { failed: [ThresholdResult { rule: "error-rate&lt;1%", observed: "2.54% at abort, 6.45% at end", value: Some(6.451612903225806), passed: false, aborted: true }], metrics: ThresholdMetrics { .. } }
+</code></pre>
+<h2 id="reports"><a class="header" href="#reports">Reports</a></h2>
+<p>The PDF, HTML and Markdown reports have a Thresholds section with a row for each rule: the rule, what was observed, and the result. A failing row says <code>FAIL</code>, and <code>FAIL, stopped the run</code> for the rule that stopped it, so the result never rests on color alone. The JSON report keeps each result as an object in <code>raw_metrics.thresholds</code>, with <code>rule</code>, <code>observed</code>, <code>value</code>, <code>passed</code> and <code>aborted</code>, so a report rendered from it with <code>--render-report</code> shows the same section. Without thresholds there is no section. The console’s final tables have the same section; the run under <a href="#stopping-the-run">Stopping the run</a> printed:</p>
+<pre><code> === THRESHOLDS ===
+ ------------------------------------------------------------------------------
+ Rule                                         |                     Observed | Result
+ ------------------------------------------------------------------------------
+ p95&lt;2s                                       |                       1499ms | PASS
+ error-rate&lt;1%                                | 2.54% at abort, 6.45% at end | FAIL, stopped the run
+ ------------------------------------------------------------------------------
+</code></pre>
+<h2 id="setting-thresholds-in-code"><a class="header" href="#setting-thresholds-in-code">Setting thresholds in code</a></h2>
+<p>Set rules in code with <code>GooseDefault::Threshold</code>. Each call adds one rule, so code can set several. A rule that does not parse is refused by <code>set_default</code> itself:</p>
+<pre class="playground"><code class="language-rust edition2018">use goose::prelude::*;
+
+#[tokio::main]
+async fn main() -&gt; Result&lt;(), GooseError&gt; {
+    GooseAttack::initialize()?
+        .set_default(GooseDefault::Threshold, "p95&lt;500ms")?
+        .set_default(GooseDefault::Threshold, "error-rate&lt;1%")?
+        // Judge them only at the end of the run.
+        .set_default(GooseDefault::NoThresholdAbort, true)?;
+
+    Ok(())
+}</code></pre>
+<p>Rules given with <code>--threshold</code> replace every rule set in code; they are not added to them. <code>GooseDefault::ThresholdAbortDelay</code> sets the delay, in seconds.</p>
+<h2 id="overhead"><a class="header" href="#overhead">Overhead</a></h2>
+<p>Thresholds do no work per request: Goose judges each rule against the metrics it already keeps, once a second while it checks (see <a href="#when-checking-starts-and-stops">When checking starts and stops</a>) and once at the end, or only at the end under <code>--no-threshold-abort</code>.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../getting-started/throttle.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../getting-started/killswitch.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../getting-started/throttle.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../getting-started/killswitch.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../mark-09e88c2c.min.js"></script>
+        <script src="../searcher-09f2665d.js"></script>
+
+        <script src="../clipboard-1626706a.min.js"></script>
+        <script src="../highlight-abc7f01d.js"></script>
+        <script src="../book-609e4cb8.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

@@ -1,0 +1,669 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>GraphQL - The Goose Book</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../css/general-e96d0476.css">
+        <link rel="stylesheet" href="../css/chrome-d279d366.css">
+        <link rel="stylesheet" href="../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../searchindex-e0e91710.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc-b1be2d52.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">The Goose Book</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="graphql"><a class="header" href="#graphql">GraphQL</a></h1>
+<p>Goose 0.19 adds two helper methods that send GraphQL queries and mutations.</p>
+<img src="graphql-transactions.png" width="810" alt="The dashboard&#39;s Transactions table cut after its avg ms column: Simple Query, User Query, Complex Query and Mutation in the GraphQL Load Test scenario, each run about 1,809,875 times at about 18,099 a second, with 0 fails">
+<img src="graphql-requests.png" width="703" alt="The dashboard&#39;s Requests table cut after its avg ms column: POST /graphql, POST get user by id, POST complex user posts query and POST create post, each about 1,809,936 requests at about 18,099 a second, with 0 fails">
+<p><em><code>cargo run --release --features dashboard --example graphql_loadtest -- --host http://127.0.0.1:4400 -u 5 -r 5 -t 3m --no-reset-metrics --dashboard -q</code>, against a local Node server that answers each of the example’s four operations at <code>POST /graphql</code> with a 200 and a JSON <code>data</code> body without delay, 100 seconds in.</em></p>
+<p>The transactions are named with <code>set_name()</code>, and three of their requests with <code>post_graphql_named()</code>. Simple Query’s request is sent with <code>post_graphql()</code>, which names it by its path, <code>POST /graphql</code>. No transaction waits, and this server answers without delay, so 5 users send about 72,000 requests a second; the <a href="#sample-output">Sample Output</a> below comes from a slower server. With <code>-q</code> Goose does not print the dashboard’s address when it starts: open <code>http://127.0.0.1:5118</code> while the test runs. If that tab is still open when the run ends, Goose prints the address and waits for Ctrl-C.</p>
+<h2 id="graphql-helper-methods"><a class="header" href="#graphql-helper-methods">GraphQL Helper Methods</a></h2>
+<ul>
+<li><code>post_graphql()</code>: POST a GraphQL query as JSON to a path; the metrics name the request by its path, for example <code>POST /graphql</code></li>
+<li><code>post_graphql_named()</code>: the same, with a name for the request in the metrics, for example <code>POST get user by id</code></li>
+</ul>
+<p>Both take the request body as anything that implements <code>serde::Serialize</code>, usually a <code>serde_json::Value</code> built with <code>json!()</code>, and return a <a href="https://docs.rs/goose/*/goose/goose/struct.GooseResponse.html"><code>GooseResponse</code></a>, like the other request helpers.</p>
+<h2 id="graphql-endpoint-configuration"><a class="header" href="#graphql-endpoint-configuration">GraphQL Endpoint Configuration</a></h2>
+<p>There is no configured GraphQL endpoint: the path is the first argument of each call, and Goose prepends the host as it does for every request. By convention, most GraphQL APIs use <code>/graphql</code>, but you can specify any path. In this fragment <code>query</code> is a <code>serde_json::Value</code>:</p>
+<pre><code class="language-rust ignore">// Using the conventional /graphql endpoint
+let _goose = user.post_graphql("/graphql", &amp;query).await?;
+
+// Using a custom endpoint
+let _goose = user.post_graphql("/api/graphql", &amp;query).await?;</code></pre>
+<h2 id="example-graphql-load-test"><a class="header" href="#example-graphql-load-test">Example: GraphQL Load Test</a></h2>
+<p>The <a href="https://github.com/tag1consulting/goose/blob/main/examples/graphql_loadtest.rs"><code>examples/graphql_loadtest.rs</code></a> example defines one scenario, <code>GraphQL Load Test</code>, with four transactions. No transaction sets a weight, and the scenario sets no wait time, so each user runs the four in turn, without pausing, for as long as the load test runs. Each one POSTs to <code>/graphql</code>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Transaction</th><th>Sends</th><th>Request name in the metrics</th></tr>
+</thead>
+<tbody>
+<tr><td><code>Simple Query</code></td><td>the query <code>{ __typename }</code>, with <code>post_graphql()</code></td><td><code>POST /graphql</code></td></tr>
+<tr><td><code>User Query</code></td><td>a <code>GetUser</code> query with the variable <code>id</code></td><td><code>POST get user by id</code></td></tr>
+<tr><td><code>Complex Query</code></td><td>a <code>GetUserWithPosts</code> query for a user’s posts and their comments, with the variables <code>userId</code> and <code>first</code></td><td><code>POST complex user posts query</code></td></tr>
+<tr><td><code>Mutation</code></td><td>a <code>CreatePost</code> mutation with an <code>input</code> variable</td><td><code>POST create post</code></td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="key-features"><a class="header" href="#key-features">Key Features</a></h2>
+<h3 id="json-query-construction"><a class="header" href="#json-query-construction">JSON Query Construction</a></h3>
+<p>Each query is a <code>serde_json::Value</code> built with <code>json!()</code>.</p>
+<h3 id="variables"><a class="header" href="#variables">Variables</a></h3>
+<p>Variables go in the JSON value’s <code>variables</code> field, beside its <code>query</code> field, as <code>User Query</code>, <code>Complex Query</code> and <code>Mutation</code> show.</p>
+<h3 id="named-requests"><a class="header" href="#named-requests">Named Requests</a></h3>
+<p><code>post_graphql_named()</code> gives each operation its own row in the metrics. Every request made with <code>post_graphql()</code> to the same path shares one row.</p>
+<h3 id="weighted-transactions"><a class="header" href="#weighted-transactions">Weighted Transactions</a></h3>
+<p><code>set_weight()</code> makes one operation run more often than another, such as more reads than writes. The example leaves every transaction at the default weight of 1.</p>
+<h2 id="advanced-usage"><a class="header" href="#advanced-usage">Advanced Usage</a></h2>
+<h3 id="error-handling"><a class="header" href="#error-handling">Error Handling</a></h3>
+<p>Goose judges a GraphQL request by its HTTP status code, like any other request, so a GraphQL error returned with a <code>200</code> counts as a success. To catch those, read the response body and call <code>set_failure</code>:</p>
+<pre><code class="language-rust ignore">async fn validated_graphql_transaction(user: &amp;mut GooseUser) -&gt; TransactionResult {
+    let query = json!({
+        "query": "query GetUser($id: ID!) { user(id: $id) { id name } }",
+        "variables": { "id": "invalid-id" }
+    });
+
+    let mut goose = user
+        .post_graphql_named("/graphql", &amp;query, "get user with validation")
+        .await?;
+
+    if let Ok(response) = goose.response {
+        match response.json::&lt;serde_json::Value&gt;().await {
+            Ok(json) =&gt; {
+                if json.get("errors").is_some() {
+                    return user.set_failure("GraphQL errors returned", &amp;mut goose.request, None, None);
+                }
+            }
+            Err(_) =&gt; {
+                return user.set_failure("Invalid JSON response", &amp;mut goose.request, None, None);
+            }
+        }
+    }
+
+    Ok(())
+}</code></pre>
+<h3 id="custom-headers"><a class="header" href="#custom-headers">Custom Headers</a></h3>
+<p>If your GraphQL API requires authentication or custom headers, you can use the lower-level request building approach:</p>
+<pre><code class="language-rust ignore">async fn authenticated_graphql_transaction(user: &amp;mut GooseUser) -&gt; TransactionResult {
+    let query = json!({
+        "query": "query GetPrivateData { privateData { id value } }"
+    });
+
+    // Build custom request with authentication header
+    let request_builder = user
+        .get_request_builder(&amp;GooseMethod::Post, "/graphql")?
+        .header("Authorization", "Bearer your-token-here")
+        .json(&amp;query);
+
+    let goose_request = GooseRequest::builder()
+        .set_request_builder(request_builder)
+        .name("authenticated query")
+        .build();
+
+    let _goose = user.request(goose_request).await?;
+    Ok(())
+}</code></pre>
+<p>Both are fragments: they need <code>use goose::prelude::*;</code> and <code>use serde_json::json;</code>, and a scenario that registers them.</p>
+<h2 id="sample-output"><a class="header" href="#sample-output">Sample Output</a></h2>
+<p>Running the example for 30 seconds with 5 users, against a small local server that answers every POST to <code>/graphql</code>, after 5 to 25 ms, with a <code>200</code> and a JSON body:</p>
+<pre><code class="language-bash">$ cargo run --release --example graphql_loadtest -- --host http://localhost:8080 --users 5 --run-time 30s
+
+19:53:20 [INFO] Output verbosity level: INFO
+19:53:20 [INFO] Logfile verbosity level: WARN
+19:53:20 [INFO] users = 5
+19:53:20 [INFO] run_time = 30
+19:53:20 [INFO] global host configured: http://localhost:8080
+19:53:20 [INFO] [scheduler]: allocating transactions and scenarios with RoundRobin scheduler
+19:53:20 [INFO] [scheduler]: initializing 5 user states...
+19:53:20 [INFO] [controller]: Telnet listening on: 127.0.0.1:5116
+19:53:20 [INFO] entering GooseAttack phase: Increase
+19:53:20 [INFO] [user 1]: launching user from GraphQL Load Test
+19:53:21 [INFO] [user 2]: launching user from GraphQL Load Test
+19:53:22 [INFO] [user 3]: launching user from GraphQL Load Test
+19:53:23 [INFO] [user 4]: launching user from GraphQL Load Test
+19:53:24 [INFO] [user 5]: launching user from GraphQL Load Test
+19:53:25 [INFO] printing running metrics after 5 seconds...
+</code></pre>
+<p>Goose starts one user a second, and when all 5 have launched it prints the metrics so far and resets them. Those tables are left out here.</p>
+<pre><code class="language-bash">All 5 users launched, resetting metrics (disable with --no-reset-metrics).
+
+19:53:25 [INFO] entering GooseAttack phase: Maintain
+19:53:55 [INFO] entering GooseAttack phase: Decrease
+19:53:55 [INFO] [user 2]: exiting from GraphQL Load Test
+19:53:55 [INFO] [user 4]: exiting from GraphQL Load Test
+19:53:55 [INFO] [user 1]: exiting from GraphQL Load Test
+19:53:55 [INFO] [user 5]: exiting from GraphQL Load Test
+19:53:55 [INFO] [user 3]: exiting from GraphQL Load Test
+19:53:55 [INFO] entering GooseAttack phase: Shutdown
+19:53:55 [INFO] printing final metrics after 30 seconds...
+
+ === PER SCENARIO METRICS ===
+ ------------------------------------------------------------------------------
+ Name                     |  # users |  # times run | scenarios/s | iterations
+ ------------------------------------------------------------------------------
+ 1: GraphQL Load Test     |        5 |         2254 |       75.13 |     450.80
+ ------------------------------------------------------------------------------
+ Name                     |    Avg (ms) |        Min |         Max |     Median
+ ------------------------------------------------------------------------------
+   1: GraphQL Load Test   |          67 |         27 |         103 |         67
+
+ === PER TRANSACTION METRICS ===
+ ------------------------------------------------------------------------------
+ Name                     |   # times run |        # fails |  trans/s |  fail/s
+ ------------------------------------------------------------------------------
+ 1: GraphQL Load Test    
+   1: Simple Query        |         2,256 |         0 (0%) |    75.20 |    0.00
+   2: User Query          |         2,256 |         0 (0%) |    75.20 |    0.00
+   3: Complex Query       |         2,256 |         0 (0%) |    75.20 |    0.00
+   4: Mutation            |         2,256 |         0 (0%) |    75.20 |    0.00
+ -------------------------+---------------+----------------+----------+--------
+ Aggregated               |         9,024 |         0 (0%) |   300.80 |    0.00
+ ------------------------------------------------------------------------------
+ Name                     |    Avg (ms) |        Min |         Max |     Median
+ ------------------------------------------------------------------------------
+ 1: GraphQL Load Test    
+   1: Simple Query        |          17 |       5.28 |          29 |         17
+   2: User Query          |          17 |       5.25 |          29 |         17
+   3: Complex Query       |          17 |       5.29 |          28 |         17
+   4: Mutation            |          17 |       5.41 |          31 |         17
+ -------------------------+-------------+------------+-------------+-----------
+ Aggregated               |          17 |       5.25 |          31 |         17
+
+ === PER REQUEST METRICS ===
+ ------------------------------------------------------------------------------
+ Name                     |        # reqs |        # fails |    req/s |  fail/s
+ ------------------------------------------------------------------------------
+ POST /graphql            |         2,258 |         0 (0%) |    75.27 |    0.00
+ POST complex user post.. |         2,256 |         0 (0%) |    75.20 |    0.00
+ POST create post         |         2,256 |         0 (0%) |    75.20 |    0.00
+ POST get user by id      |         2,257 |         0 (0%) |    75.23 |    0.00
+ -------------------------+---------------+----------------+----------+--------
+ Aggregated               |         9,027 |         0 (0%) |   300.90 |    0.00
+ ------------------------------------------------------------------------------
+ Name                     |    Avg (ms) |        Min |         Max |     Median
+ ------------------------------------------------------------------------------
+ POST /graphql            |          17 |       5.28 |          29 |         17
+ POST complex user post.. |          17 |       5.27 |          28 |         17
+ POST create post         |          17 |       5.39 |          31 |         17
+ POST get user by id      |          17 |       5.24 |          29 |         17
+ -------------------------+-------------+------------+-------------+-----------
+ Aggregated               |          17 |       5.24 |          31 |         17
+ ------------------------------------------------------------------------------
+ Slowest page load within specified percentile of requests (in ms):
+ ------------------------------------------------------------------------------
+ Name                     |    50% |    75% |    98% |    99% |  99.9% | 99.99%
+ ------------------------------------------------------------------------------
+ POST /graphql            |     17 |     22 |     27 |     27 |     28 |     29
+ POST complex user post.. |     17 |     22 |     27 |     27 |     28 |     28
+ POST create post         |     17 |     22 |     27 |     27 |     28 |     31
+ POST get user by id      |     17 |     22 |     27 |     27 |     28 |     29
+ -------------------------+--------+--------+--------+--------+--------+-------
+ Aggregated               |     17 |     22 |     27 |     27 |     28 |     29
+ ------------------------------------------------------------------------------
+ Name                     |                                        Status codes 
+ ------------------------------------------------------------------------------
+ POST /graphql            |                                         2,258 [200]
+ POST complex user post.. |                                         2,256 [200]
+ POST create post         |                                         2,256 [200]
+ POST get user by id      |                                         2,257 [200]
+ -------------------------+----------------------------------------------------
+ Aggregated               |                                         9,027 [200] 
+
+ === OVERVIEW ===
+ ------------------------------------------------------------------------------
+ Action       Started               Stopped             Elapsed    Users
+ ------------------------------------------------------------------------------
+ Increasing:  2026-10-26 20:53:20 - 2026-10-26 20:53:25 (00:00:05, 0 -&gt; 5)
+ Maintaining: 2026-10-26 20:53:25 - 2026-10-26 20:53:55 (00:00:30, 5)
+ Decreasing:  2026-10-26 20:53:55 - 2026-10-26 20:53:55 (00:00:00, 0 &lt;- 5)
+
+ Target host: http://localhost:8080/
+ goose v0.19.0
+ ------------------------------------------------------------------------------
+</code></pre>
+<h3 id="key-observations"><a class="header" href="#key-observations">Key Observations</a></h3>
+<p>Each request made with <code>post_graphql_named()</code> appears under its own name, such as <code>POST get user by id</code>, and the one made with <code>post_graphql()</code> under its path, <code>POST /graphql</code>. With no weights set, each transaction runs about as often as the others, so the four requests have about the same counts. Every request returned 200.</p>
+<h2 id="complete-source-code"><a class="header" href="#complete-source-code">Complete Source Code</a></h2>
+<pre><code class="language-rust ignore">//! Example demonstrating GraphQL load testing with Goose.
+//!
+//! This example shows how to use Goose's GraphQL helper methods to load test
+//! a GraphQL API. The GraphQL helpers use the existing HTTP infrastructure
+//! and provide convenient methods for making GraphQL queries.
+//!
+//! ## Usage
+//!
+//! To compile and run this example:
+//!
+//! ```bash
+//! cargo run --example graphql_loadtest -- --host https://api.example.com
+//! ```
+//!
+//! ## Configuration Options
+//!
+//! - `--host`: Target host to load test
+//! - `--users`: Number of concurrent users (default: one per CPU)
+//! - `--run-time`: Duration to run the test (e.g., "30s", "5m")
+//!
+//! ## GraphQL Helper Methods
+//!
+//! Goose provides two GraphQL helper methods:
+//! - `post_graphql()`: Basic GraphQL queries
+//! - `post_graphql_named()`: Named GraphQL queries for better metrics tracking
+//!
+//! ## Example Commands
+//!
+//! Basic GraphQL load test:
+//! ```bash
+//! cargo run --example graphql_loadtest -- --host https://api.github.com --users 5 --run-time 30s
+//! ```
+//!
+//! Using a custom GraphQL endpoint path:
+//! ```bash
+//! cargo run --example graphql_loadtest -- --host https://api.example.com --users 10 --run-time 1m
+//! ```
+
+use goose::prelude::*;
+use serde_json::json;
+
+#[tokio::main]
+async fn main() -&gt; Result&lt;(), GooseError&gt; {
+    GooseAttack::initialize()?
+        .register_scenario(
+            scenario!("GraphQL Load Test")
+                .set_weight(1)?
+                .register_transaction(transaction!(simple_query).set_name("Simple Query"))
+                .register_transaction(transaction!(user_query).set_name("User Query"))
+                .register_transaction(transaction!(complex_query).set_name("Complex Query"))
+                .register_transaction(transaction!(mutation_example).set_name("Mutation")),
+        )
+        .execute()
+        .await?;
+
+    Ok(())
+}
+
+/// Simple GraphQL query example
+async fn simple_query(user: &amp;mut GooseUser) -&gt; TransactionResult {
+    let query = json!({
+        "query": "{ __typename }"
+    });
+
+    let _goose = user.post_graphql("/graphql", &amp;query).await?;
+    Ok(())
+}
+
+/// User query with variables
+async fn user_query(user: &amp;mut GooseUser) -&gt; TransactionResult {
+    let query = json!({
+        "query": "query GetUser($id: ID!) { user(id: $id) { id name email } }",
+        "variables": {
+            "id": "123"
+        }
+    });
+
+    // Use named query for better metrics tracking
+    let _goose = user
+        .post_graphql_named("/graphql", &amp;query, "get user by id")
+        .await?;
+    Ok(())
+}
+
+/// Complex query with multiple fields and nested data
+async fn complex_query(user: &amp;mut GooseUser) -&gt; TransactionResult {
+    let query = json!({
+        "query": r#"
+            query GetUserWithPosts($userId: ID!, $first: Int!) {
+                user(id: $userId) {
+                    id
+                    name
+                    email
+                    posts(first: $first) {
+                        edges {
+                            node {
+                                id
+                                title
+                                content
+                                createdAt
+                                comments(first: 5) {
+                                    edges {
+                                        node {
+                                            id
+                                            content
+                                            author {
+                                                name
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        "#,
+        "variables": {
+            "userId": "456",
+            "first": 10
+        }
+    });
+
+    let _goose = user
+        .post_graphql_named("/graphql", &amp;query, "complex user posts query")
+        .await?;
+    Ok(())
+}
+
+/// GraphQL mutation example
+async fn mutation_example(user: &amp;mut GooseUser) -&gt; TransactionResult {
+    let mutation = json!({
+        "query": r#"
+            mutation CreatePost($input: CreatePostInput!) {
+                createPost(input: $input) {
+                    id
+                    title
+                    content
+                    author {
+                        id
+                        name
+                    }
+                }
+            }
+        "#,
+        "variables": {
+            "input": {
+                "title": "Load Test Post",
+                "content": "This post was created during a load test",
+                "authorId": "789"
+            }
+        }
+    });
+
+    let _goose = user
+        .post_graphql_named("/graphql", &amp;mutation, "create post")
+        .await?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_graphql_transactions() {
+        // Test that transactions can be created without errors
+        let simple_transaction = transaction!(simple_query).set_name("Simple Query");
+        let user_transaction = transaction!(user_query).set_name("User Query");
+        let complex_transaction = transaction!(complex_query).set_name("Complex Query");
+        let mutation_transaction = transaction!(mutation_example).set_name("Mutation");
+
+        assert_eq!(simple_transaction.name, "Simple Query");
+        assert_eq!(user_transaction.name, "User Query");
+        assert_eq!(complex_transaction.name, "Complex Query");
+        assert_eq!(mutation_transaction.name, "Mutation");
+    }
+
+    #[test]
+    fn test_scenario_creation() {
+        // Test that the scenario can be created properly
+        let scenario = scenario!("GraphQL Load Test")
+            .set_weight(1)
+            .unwrap()
+            .register_transaction(transaction!(simple_query).set_name("Simple Query"))
+            .register_transaction(transaction!(user_query).set_name("User Query"))
+            .register_transaction(transaction!(complex_query).set_name("Complex Query"))
+            .register_transaction(transaction!(mutation_example).set_name("Mutation"));
+
+        assert_eq!(scenario.name, "GraphQL Load Test");
+        assert_eq!(scenario.weight, 1);
+        assert_eq!(scenario.transactions.len(), 4);
+    }
+
+    #[test]
+    fn test_json_query_creation() {
+        // Test that JSON queries can be created properly
+        let query = json!({
+            "query": "{ __typename }"
+        });
+
+        assert!(query.is_object());
+        assert!(query.get("query").is_some());
+        assert_eq!(query["query"], "{ __typename }");
+    }
+
+    #[test]
+    fn test_complex_json_query() {
+        // Test complex query with variables
+        let query = json!({
+            "query": "query GetUser($id: ID!) { user(id: $id) { id name } }",
+            "variables": {
+                "id": "123"
+            }
+        });
+
+        assert!(query.is_object());
+        assert!(query.get("query").is_some());
+        assert!(query.get("variables").is_some());
+        assert_eq!(query["variables"]["id"], "123");
+    }
+}</code></pre>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../example/basic-auth.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../example/tcp.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../example/basic-auth.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../example/tcp.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../mark-09e88c2c.min.js"></script>
+        <script src="../searcher-09f2665d.js"></script>
+
+        <script src="../clipboard-1626706a.min.js"></script>
+        <script src="../highlight-abc7f01d.js"></script>
+        <script src="../book-609e4cb8.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

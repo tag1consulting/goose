@@ -12,21 +12,20 @@
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
-        <link rel="icon" href="../favicon.svg">
-        <link rel="shortcut icon" href="../favicon.png">
-        <link rel="stylesheet" href="../css/variables.css">
-        <link rel="stylesheet" href="../css/general.css">
-        <link rel="stylesheet" href="../css/chrome.css">
-        <link rel="stylesheet" href="../css/print.css" media="print">
+        <link rel="icon" href="../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../css/general-e96d0476.css">
+        <link rel="stylesheet" href="../css/chrome-d279d366.css">
+        <link rel="stylesheet" href="../css/print-9e4910d8.css" media="print">
 
         <!-- Fonts -->
-        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
-        <link rel="stylesheet" href="../fonts/fonts.css">
+        <link rel="stylesheet" href="../fonts/fonts-9644e21d.css">
 
         <!-- Highlight.js Stylesheets -->
-        <link rel="stylesheet" id="highlight-css" href="../highlight.css">
-        <link rel="stylesheet" id="tomorrow-night-css" href="../tomorrow-night.css">
-        <link rel="stylesheet" id="ayu-highlight-css" href="../ayu-highlight.css">
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
 
         <!-- Custom theme stylesheets -->
 
@@ -36,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex.js";
+            window.path_to_searchindex_js = "../searchindex-e0e91710.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc.js"></script>
+        <script src="../toc-b1be2d52.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -53,7 +52,7 @@
             </div>
         </div>
     </div>
-    <div id="body-container">
+    <div id="mdbook-body-container">
         <!-- Work around some values being stored in localStorage wrapped in quotes -->
         <script>
             try {
@@ -82,12 +81,12 @@
             html.classList.add("js");
         </script>
 
-        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
 
         <!-- Hide / unhide sidebar before it is displayed -->
         <script>
             let sidebar = null;
-            const sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
             if (document.body.clientWidth >= 1080) {
                 try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
                 sidebar = sidebar || 'visible';
@@ -102,39 +101,39 @@
             }
         </script>
 
-        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
             <!-- populated by js -->
             <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
             <noscript>
                 <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
             </noscript>
-            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
             </div>
         </nav>
 
-        <div id="page-wrapper" class="page-wrapper">
+        <div id="mdbook-page-wrapper" class="page-wrapper">
 
             <div class="page">
-                <div id="menu-bar-hover-placeholder"></div>
-                <div id="menu-bar" class="menu-bar sticky">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
                     <div class="left-buttons">
-                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
-                            <i class="fa fa-bars"></i>
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
                         </label>
-                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
-                            <i class="fa fa-paint-brush"></i>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
                         </button>
-                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
-                            <li role="none"><button role="menuitem" class="theme" id="default_theme">Auto</button></li>
-                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
-                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
-                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
-                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
-                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
                         </ul>
-                        <button id="search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="searchbar">
-                            <i class="fa fa-search"></i>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
                         </button>
                     </div>
 
@@ -142,376 +141,274 @@
 
                     <div class="right-buttons">
                         <a href="../print.html" title="Print this book" aria-label="Print this book">
-                            <i id="print-button" class="fa fa-print"></i>
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
                         </a>
 
                     </div>
                 </div>
 
-                <div id="search-wrapper" class="hidden">
-                    <form id="searchbar-outer" class="searchbar-outer">
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
                         <div class="search-wrapper">
-                            <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
                             <div class="spinner-wrapper">
-                                <i class="fa fa-spinner fa-spin"></i>
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
                             </div>
                         </div>
                     </form>
-                    <div id="searchresults-outer" class="searchresults-outer hidden">
-                        <div id="searchresults-header" class="searchresults-header"></div>
-                        <ul id="searchresults">
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
                         </ul>
                     </div>
                 </div>
 
                 <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
                 <script>
-                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
-                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
-                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
                         link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
                     });
                 </script>
 
-                <div id="content" class="content">
+                <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="metrics"><a class="header" href="#metrics">Metrics</a></h1>
-<p>Here's sample output generated when running a loadtest, in this case the <a href="../example/umami.html">Umami example</a> that comes with Goose.</p>
-<p>In this case, the <a href="https://www.drupal.org/docs/umami-drupal-demonstration-installation-profile">Drupal Umami demo</a> was installed in a local container. The following command was used to configure Goose and run the load test. The <code>-u9</code> tells Goose to spin up 9 users. The <code>-r3</code> option tells Goose to hatch 3 users per second. The <code>-t1m</code> option tells Goose to run the load test for 1 minute, or 60 seconds. The <code>--no-reset-metrics</code> flag tells Goose to include all metrics, instead of the default which is to flush all metrics collected during start up. And finally, the <code>--report-file report.html</code> tells Goose to generate an HTML-formatted report named <code>report.html</code> once the load test finishes.</p>
-<h2 id="ascii-metrics"><a class="header" href="#ascii-metrics">ASCII metrics</a></h2>
-<pre><code class="language-bash">% cargo run --release --example umami -- --host http://umami.ddev.site/ -u9 -r3 -t1m --no-reset-metrics --report-file report.html
-   Compiling goose v0.18.1 (~/goose)
-    Finished release [optimized] target(s) in 11.88s
-     Running `target/release/examples/umami --host 'http://umami.ddev.site/' -u9 -r3 -t1m --no-reset-metrics --report-file report.html`
-05:09:05 [INFO] Output verbosity level: INFO
-05:09:05 [INFO] Logfile verbosity level: WARN
-05:09:05 [INFO] users = 9
-05:09:05 [INFO] run_time = 60
-05:09:05 [INFO] hatch_rate = 3
-05:09:05 [INFO] no_reset_metrics = true
-05:09:05 [INFO] report_file = report.html
-05:09:05 [INFO] iterations = 0
-05:09:05 [INFO] global host configured: http://umami.ddev.site/
-05:09:05 [INFO] allocating transactions and scenarios with RoundRobin scheduler
-05:09:05 [INFO] initializing 9 user states...
-05:09:05 [INFO] Telnet controller listening on: 0.0.0.0:5116
-05:09:05 [INFO] WebSocket controller listening on: 0.0.0.0:5117
-05:09:05 [INFO] entering GooseAttack phase: Increase
-05:09:05 [INFO] [user 1]: launching user from Anonymous Spanish user
-05:09:05 [INFO] [user 2]: launching user from Anonymous English user
-05:09:05 [INFO] [user 3]: launching user from Anonymous Spanish user
-05:09:06 [INFO] [user 4]: launching user from Anonymous English user
-05:09:06 [INFO] [user 5]: launching user from Anonymous Spanish user
-05:09:06 [INFO] [user 6]: launching user from Anonymous English user
-05:09:07 [INFO] [user 7]: launching user from Admin user
-05:09:07 [INFO] [user 8]: launching user from Anonymous Spanish user
-05:09:07 [INFO] [user 9]: launching user from Anonymous English user
-All 9 users hatched.
+<p>Goose can show a load test’s results six ways. The dashboard and the PDF need a Cargo feature as well as an option; the HTML, Markdown and JSON reports take one option each; the console metrics, like the log lines, need no flag.</p>
+<h2 id="report-formats"><a class="header" href="#report-formats">Choosing a view</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>View</th><th>What it holds</th><th>Who it is for</th><th>How to get it</th></tr>
+</thead>
+<tbody>
+<tr><td><a href="#the-live-dashboard">Live dashboard</a></td><td>Live charts and tables</td><td>You, while the run is going</td><td>The <code>dashboard</code> feature, then <code>--dashboard</code>, and open <code>http://127.0.0.1:5118/</code></td></tr>
+<tr><td><a href="#pdf-reports">PDF report</a></td><td>The HTML report’s sections in one tall, fixed page; its line graphs can stop short in this release</td><td>Someone who reads a finished run on screen or as an attachment</td><td>The <code>pdf-reports</code> feature and Chrome, which Goose downloads if it finds none, then <code>--report-file report.pdf</code>; for paper, or without the feature or Chrome, <code>--pdf-print-html print.html</code> and a browser’s Print, which breaks the report into pages</td></tr>
+<tr><td><a href="#html-report">HTML report</a></td><td>The tables, graphs to zoom and filter, and the response time heatmap; the graphs load from a CDN when the report is opened</td><td>An engineer studying the run</td><td><code>--report-file report.html</code></td></tr>
+<tr><td><a href="#markdown-report">Markdown report</a></td><td>Tables only</td><td>An issue, a pull request or a wiki page</td><td><code>--report-file report.md</code></td></tr>
+<tr><td><a href="#json-report">JSON report</a></td><td>Every table’s numbers, for programs</td><td>A script, a CI job, or a later run’s <a href="common.html#comparing-against-a-baseline"><code>--baseline-file</code></a></td><td><code>--report-file report.json</code></td></tr>
+<tr><td><a href="#ascii-metrics">Console metrics</a></td><td>Text tables</td><td>A quick look in the terminal, or a CI log</td><td>Printed at the end of every run, unless <code>--no-print-metrics</code> or <code>--no-metrics</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>A feature is turned on for the <code>goose</code> dependency in your load test’s <code>Cargo.toml</code>, as in <code>goose = { version = "^0.19", features = ["dashboard", "pdf-reports"] }</code>; the command below runs an example in the Goose repository, so it uses <code>--features</code>. A report’s type comes from the extension of its <code>--report-file</code>, so repeat the option for each report you want. If you keep the JSON report, <code>--render-report</code> can write any of the other reports from it later, without running the load test, as in <code>--render-report report.json --report-file report.pdf</code> (see <a href="output-files.html#what-a-report-holds">What a report holds</a>). Without a JSON report, another report means running the load test again. So add <code>--report-file report.json --report-graph-data</code> to any run you may want to report on later: a report rendered from a JSON report has graphs only when the run had <code>--report-graph-data</code> or the dashboard’s Include graph data switch on. Where reports go when no path is given is in <a href="output-files.html">Output Files</a>.</p>
+<p>Every image and excerpt on this page comes from one run of the <a href="../example/umami.html">Umami example</a> against a Drupal 11 site installed with the Umami demo profile, reached at <code>http://localhost:18888</code>. The site was changed as the example needs: search and contact enabled, a Website feedback contact form added, an alias added for one renamed article, image styles generated ahead of the run, and CSS and JS aggregation off, so each CSS and JS file is a static asset request of its own:</p>
+<pre><code class="language-bash">cargo run --release --features dashboard,pdf-reports --example umami -- \
+  -H http://localhost:18888 --dashboard -u 50 -r 5 -t 3m \
+  --report-file report.pdf --report-file report.html \
+  --report-file report.md --report-file report.json
+</code></pre>
+<p>The run behind the images also moved the dashboard and telnet ports, with <code>--dashboard-port 5128 --telnet-port 5126</code>, which changes nothing shown here. No request failed. Goose launched 5 users a second up to 50, reset its metrics once all 50 were running, then ran for 3 minutes. The tables, and every graph but User Metrics, count from that reset.</p>
+<h2 id="the-live-dashboard"><a class="header" href="#the-live-dashboard">The live dashboard</a></h2>
+<p>The dashboard shows the run as it happens: users, requests and failures per second, the response time heatmap, and tables of scenarios, transactions, requests and errors, updated every second.</p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="metrics-dashboard-rps.png" alt="The dashboard’s Requests / failures per second chart about 145 seconds into the run: zero for about 10 seconds, then mostly between 400 and 600 requests a second, with single seconds as low as about 320 and as high as about 770 requests, and no failures"><span class="img-wrapper"><img src="metrics-dashboard-rps.png" alt="The dashboard’s Requests / failures per second chart about 145 seconds into the run: zero for about 10 seconds, then mostly between 400 and 600 requests a second, with single seconds as low as about 320 and as high as about 770 requests, and no failures"></span></label></p>
+<p><em>The chart reads zero for the seconds the users were launching, because Goose clears it at the metrics reset; the summary under the chart gives the mean of the last 10 seconds, 502 requests a second.</em></p>
+<p>With <code>--dashboard</code> the dashboard’s Save report switch starts on, so the run also writes its own <code>report.html</code> and <code>report.json</code> into the run’s folder, named for the run’s local start time, such as <code>goose-runs/20261028-175916/</code> (see <a href="output-files.html">Output Files</a>). The <code>--report-file</code> reports go to the paths given, relative to where you ran the command. With its report saved and a dashboard tab open when the run ends on its own, Goose stays up so you can download its HTML, Markdown and JSON reports from the Runs panel; it exits on Ctrl-C, a Controller <code>shutdown</code>, or the dashboard’s Quit button, which needs <code>--dashboard-control</code>. A threshold, the killswitch or Ctrl-C that stops the run ends Goose without waiting for the dashboard (see <a href="../controller/dashboard.html#when-the-run-ends">When the run ends</a>). <a href="../controller/dashboard.html">Live Dashboard</a> tours every panel, and the <a href="../controller/dashboard-reference.html">Dashboard Reference</a> covers each in detail.</p>
+<h2 id="pdf-reports"><a class="header" href="#pdf-reports">PDF report</a></h2>
+<p>The PDF report is the HTML report with print styling, rendered by Chrome into one tall page. It has the same sections as the HTML report, controls included, though they do nothing in a PDF. Chrome loads the graphs from the HTML report’s CDN when it writes the PDF. In this release the line graphs, such as requests per second, can stop partway along their time axis, because Chrome prints them before they finish drawing; send the HTML report when the graphs matter.</p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="metrics-pdf.png" alt="The top of the PDF report: the Goose Attack Report title, 50 users, the target host and the Goose version, then the plan overview of the Increasing, Maintaining and Decreasing steps"><span class="img-wrapper"><img src="metrics-pdf.png" alt="The top of the PDF report: the Goose Attack Report title, 50 users, the target host and the Goose version, then the plan overview of the Increasing, Maintaining and Decreasing steps"></span></label></p>
+<p><em>The PDF is laid out as the HTML report is, in one tall page: the header, then the plan overview, then each section below them.</em></p>
+<p>Name a <code>.pdf</code> file with <code>--report-file report.pdf</code>. <code>--pdf-scale</code> and <code>--pdf-timeout</code> tune how Chrome renders it; see the <a href="common.html#pdf-report-example">PDF report example</a>. Without Chrome, <code>--pdf-print-html</code> writes the report laid out for printing from any browser; see the <a href="common.html#printer-friendly-html-report-example">printer-friendly HTML report example</a>.</p>
+<h3 id="system-requirements"><a class="header" href="#system-requirements">Chrome</a></h3>
+<p><a href="../requirements.html#chrome-for-pdf-reports">Requirements</a> gives the order in which Goose looks for a browser; a Chrome for Testing headless shell it downloaded earlier is used before a new download. When the <code>CHROME</code> environment variable is set and not empty, Goose uses that binary and never downloads one. It must name an executable file: if it names a macOS app bundle such as <code>/Applications/Google Chrome.app</code>, Goose stops with an error that names the binary inside it, <code>Contents/MacOS/Google Chrome</code>.</p>
+<p>Before the load test starts, Goose finds the browser, downloading it if needed, and renders a small test page, which must finish within <code>--pdf-timeout</code>. If that fails, the load test does not start, so a Chrome problem never costs a finished run. The log names the browser it will use:</p>
+<pre><code class="language-text">16:59:19 [INFO] PDF reports will use Chrome 156.0.8078.48 at /Applications/Google Chrome.app/Contents/MacOS/Google Chrome (installed); checked in 3.0s
+</code></pre>
+<p>A downloaded browser is kept in <code>goose/chrome</code> under the user cache directory: <code>~/.cache</code> (or <code>$XDG_CACHE_HOME</code>) on Linux, <code>~/Library/Caches</code> on macOS, and <code>%LOCALAPPDATA%</code> on Windows. Once a week Goose checks for a newer stable Chrome for Testing; when there is one, it downloads it and removes the older ones, and when the check fails it logs a warning and uses the one it has. Goose never updates or removes an installed browser or the one <code>CHROME</code> names. Goose built for musl, such as on Alpine, never downloads Chrome, because Chrome for Testing needs glibc: install Chromium (<code>apk add chromium</code>) or set <code>CHROME</code>.</p>
+<h3 id="troubleshooting-pdf-reports"><a class="header" href="#troubleshooting-pdf-reports">Troubleshooting PDF reports</a></h3>
+<ul>
+<li>Without a browser, Goose needs network access to download one, and <code>unzip</code> on <code>PATH</code> (<code>tar</code> on Windows). If a firewall blocks the download, or <code>unzip</code> is missing, install Chrome or Chromium or set <code>CHROME</code>.</li>
+<li>On Linux, a downloaded headless shell needs the shared libraries Chrome uses, such as <code>libnss3</code>. Installing Chromium from your distribution brings them in.</li>
+<li>When Chrome won’t start, the error names the binary and how Goose found it. On Linux it also says when the binary’s ELF interpreter is missing, usually a glibc binary on a musl system, and lists the shared libraries <code>ldd</code> can’t find. An “Exec format error” means the binary was built for another architecture.</li>
+<li>If the PDF fails at the end of a run, the other reports are still written, and the empty PDF file is removed.</li>
+</ul>
+<h2 id="html-report"><a class="header" href="#html-report">HTML report</a></h2>
+<p><code>--report-file report.html</code> writes the HTML report, one file of about 730 KB for this run. Its graphs use the <a href="https://echarts.apache.org">ECharts</a> library, loaded from a CDN when the report is opened, so they appear only where the CDN can be reached. Click a name in a graph’s legend to hide or show its line, and drag the handles under a graph to zoom.</p>
+<p><strong>Header and plan overview.</strong> The report opens with any <code>--notes</code>, then the number of users, the target host and the Goose version, then the plan overview: each step of the run, when it started and stopped, how long it took, and how many users were running. The PDF image above shows both.</p>
+<p><strong>Sections that depend on the run and its options.</strong> Thresholds follows the plan overview when <a href="thresholds.html"><code>--threshold</code></a> is set. When <a href="../coordinated-omission/metrics.html">coordinated omission</a> mitigation added synthetic times, an adjusted table follows Request Metrics and another follows Response Time Metrics. With mitigation on, the report ends with Coordinated Omission Event Metrics. Errors and Transaction Errors follow User Metrics when a request failed or a transaction returned an error that is not a request error. <code>--no-error-summary</code> leaves them out, and <code>--no-status-codes</code>, <code>--no-transaction-metrics</code> and <code>--no-scenario-metrics</code> leave out Status Code, Transaction and Scenario Metrics. With <a href="common.html#comparing-against-a-baseline"><code>--baseline-file</code></a>, each number in the request, response time, transaction, scenario and error tables is followed by its change from the earlier run. With mitigation on, the request counts and rates and the status code counts include the synthetic requests (see <a href="../coordinated-omission/metrics.html#co-event-metrics-display">Reading the event summary</a>).</p>
+<h3 id="requests"><a class="header" href="#requests">Request Metrics</a></h3>
+<p>A graph of requests per second, with a line for all requests and one for each request, then a table of each request: how many were made and failed, the average, minimum and maximum response time, and requests and failures per second. <code>--no-granular-report</code> draws only the totals, in this graph and in every other line graph of the report; the heatmap keeps its menu of request names.</p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="metrics-html-requests.png" alt="The HTML report’s Request Metrics section: requests per second from the metrics reset, the total and the static assets line near 500 a second, then the first eight rows of the request table"><span class="img-wrapper"><img src="metrics-html-requests.png" alt="The HTML report’s Request Metrics section: requests per second from the metrics reset, the total and the static assets line near 500 a second, then the first eight rows of the request table"></span></label></p>
+<p><em>Most of the 500 requests a second were static assets, the line just under the total; the page requests are the thin lines near zero.</em></p>
+<h4 id="response-time-breakdowns-by-status-code"><a class="header" href="#response-time-breakdowns-by-status-code">Response time breakdowns by status code</a></h4>
+<p>When one request name gets more than one status code, such as some <code>200</code> and some <code>500</code> responses, a row for each status code follows its row, starting <code>└─</code>. In the PDF, HTML and Markdown reports the row gives that code’s count, share of the responses, and average, minimum and maximum times; in the console metrics it follows the request in the table of times, with the share in its name and <code>-</code> for Median, because Goose keeps only those figures for each code. A request that got no response, such as one that could not connect, counts under status code <code>0</code>. The rows hold measured times only, never coordinated omission synthetic ones. They are in the PDF, HTML and Markdown reports, in the JSON report as each request’s <code>status_code_timings</code>, and in the console metrics.</p>
+<h3 id="response-time-metrics"><a class="header" href="#response-time-metrics">Response Time Metrics</a></h3>
+<p>A graph of the average response time each second, then the response time heatmap of the run since the metrics reset, then a table of percentiles from 50% to 100%: the 95%ile column is the slowest of the fastest 95% of each request’s responses. The console metrics use other percentiles, from 50% to 99.99%.</p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="metrics-html-heatmap.png" alt="The HTML report’s response time heatmap from the metrics reset to the end of the run: most requests between 4 and 20 milliseconds, a p99 line between 80 and 240 milliseconds, and a p95 line that spikes now and then"><span class="img-wrapper"><img src="metrics-html-heatmap.png" alt="The HTML report’s response time heatmap from the metrics reset to the end of the run: most requests between 4 and 20 milliseconds, a p99 line between 80 and 240 milliseconds, and a p95 line that spikes now and then"></span></label></p>
+<p><em>The p50 line holds near 9 ms throughout; the p95 line sits near 80 ms for the first half minute, then near 25 ms with spikes to 80 ms and more.</em></p>
+<p>The heatmap uses the <a href="../controller/dashboard-reference.html#the-response-time-heatmap">dashboard’s</a> rows and percentiles, with p50, p95 and p99 drawn as colored lines, but covers the whole run since the metrics reset, while the dashboard’s heatmap shows the last 5 minutes. A column starts one second wide. Once a series holds 600 columns for all requests, or 60 for one request name, adjacent pairs merge, and the heatmap says how wide each column is. This 3 minute run kept one second columns for all requests, while each request name’s columns merged to 4 seconds. A menu picks all requests or one of the first 100 request names Goose recorded. <code>--no-percentiles-over-time</code> leaves the heatmap out.</p>
+<h3 id="status-code-metrics"><a class="header" href="#status-code-metrics">Status Code Metrics</a></h3>
+<p>A table of every status code each request received.</p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="metrics-html-status-codes.png" alt="The HTML report’s Status Code Metrics table: the first eight requests, each with the number of 200 responses it got"><span class="img-wrapper"><img src="metrics-html-status-codes.png" alt="The HTML report’s Status Code Metrics table: the first eight requests, each with the number of 200 responses it got"></span></label></p>
+<p><em>Every request in this run got <code>200</code>; a request that also got other codes lists each with its count.</em></p>
+<h3 id="transaction-metrics"><a class="header" href="#transaction-metrics">Transaction Metrics</a></h3>
+<p>A graph of transactions per second and a table of each transaction, grouped by scenario. A transaction fails only when its code returns an error, so a transaction can succeed while a request it made failed; <a href="../logging/transactions.html">Transaction Log</a> explains which errors are counted where. Scenarios and transactions are numbered from 1 on the dashboard, in every report’s transaction errors table (the JSON report’s <code>transaction_errors</code> too) and in the console metrics. The transaction tables of the PDF, HTML, Markdown and JSON reports number them from 0, as <code>0.0</code>. So transaction <code>0.2</code> in those tables is <code>1.3</code> on the dashboard and in the transaction errors tables, and transaction <code>3</code> under scenario <code>1</code> in the console metrics.</p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="metrics-html-transactions.png" alt="The HTML report’s Transaction Metrics section: transactions per second, then the table’s ten Anonymous English user transactions, from “0.0 anon /” to “0.9 anon /en/contact”"><span class="img-wrapper"><img src="metrics-html-transactions.png" alt="The HTML report’s Transaction Metrics section: transactions per second, then the table’s ten Anonymous English user transactions, from “0.0 anon /” to “0.9 anon /en/contact”"></span></label></p>
+<p><em>Each transaction loads a page and its static assets, and each form transaction also loads a second page, so about 30 transactions a second carried the 500 requests a second above.</em></p>
+<h3 id="scenarios"><a class="header" href="#scenarios">Scenario Metrics</a></h3>
+<p>A graph of scenarios per second and a table of each scenario. <code># Users</code> is how many users ran the scenario since the metrics reset, or since the start in a run with no reset, whether or not they finished an <a href="../glossary.html#iteration">iteration</a>. <code># Times Run</code> counts finished iterations, and the times are how long one iteration took. <code>Iterations</code> is <code># Times Run</code> divided by <code># Users</code>, in the Aggregated row too. A scenario no user ran shows an average and Iterations of 0.</p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="metrics-html-scenarios.png" alt="The HTML report’s Scenario Metrics section: scenarios per second, then the table of the three Umami scenarios and the aggregate"><span class="img-wrapper"><img src="metrics-html-scenarios.png" alt="The HTML report’s Scenario Metrics section: scenarios per second, then the table of the three Umami scenarios and the aggregate"></span></label></p>
+<p><em>The one Admin user took 34 to 43 seconds for each iteration, so it finished 4 in the 3 minutes, while the 40 Anonymous English users finished 254.</em></p>
+<h3 id="users"><a class="header" href="#users">User Metrics</a></h3>
+<p>A graph of how many users were running.</p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="metrics-html-users.png" alt="The HTML report’s User Metrics graph: users climbing 5 a second to 50, then holding at 50 to the end of the run"><span class="img-wrapper"><img src="metrics-html-users.png" alt="The HTML report’s User Metrics graph: users climbing 5 a second to 50, then holding at 50 to the end of the run"></span></label></p>
+<p><em>This is the only graph that shows the ramp up; the others count from the metrics reset.</em></p>
+<h2 id="markdown-report"><a class="header" href="#markdown-report">Markdown report</a></h2>
+<p><code>--report-file report.md</code> writes the Markdown report: the HTML report’s tables, as Markdown tables, in the same order. It has no graphs or heatmap, no header lines for the user count, host or version, and no coordinated omission adjusted tables. Its error sections are headed Error Metrics and Transaction Error Metrics. Its coordinated omission section, Coordinated Omission Metrics, adds tables of events by user and by scenario when there are events; see <a href="../coordinated-omission/metrics.html">Coordinated Omission metrics</a>. Its scenario table’s first column is headed Scenario, as in the HTML report. The start of its Request Metrics:</p>
+<pre><code class="language-markdown">## Request Metrics
 
-05:09:08 [INFO] entering GooseAttack phase: Maintain
-05:10:08 [INFO] entering GooseAttack phase: Decrease
-05:10:08 [INFO] [user 2]: exiting user from Anonymous English user
-05:10:08 [INFO] [user 3]: exiting user from Anonymous Spanish user
-05:10:08 [INFO] [user 6]: exiting user from Anonymous English user
-05:10:08 [INFO] [user 8]: exiting user from Anonymous Spanish user
-05:10:08 [INFO] [user 4]: exiting user from Anonymous English user
-05:10:08 [INFO] [user 7]: exiting user from Admin user
-05:10:08 [INFO] [user 1]: exiting user from Anonymous Spanish user
-05:10:08 [INFO] [user 9]: exiting user from Anonymous English user
-05:10:08 [INFO] [user 5]: exiting user from Anonymous Spanish user
-05:10:08 [INFO] wrote html report file to: report.html
-05:10:08 [INFO] entering GooseAttack phase: Shutdown
-05:10:08 [INFO] printing final metrics after 63 seconds...
-
- === PER SCENARIO METRICS ===
+| Method | Name | # Requests | # Fails | Average (ms) | Min (ms) | Max (ms) | RPS | Failures/s |
+| ------ | ---- | ---------: | ------: | -----------: | -------: | -------: | --: | ---------: |
+| GET | / | 528 | 0 | 32 | 8.55 | 267 | 2.93 | 0.00 |
+| GET | /en/about-umami | 254 | 0 | 27 | 9.15 | 107 | 1.41 | 0.00 |
+| GET | /en/articles/ | 265 | 0 | 39 | 10 | 256 | 1.47 | 0.00 |
+</code></pre>
+<h2 id="json-report"><a class="header" href="#json-report">JSON report</a></h2>
+<p><code>--report-file report.json</code> writes the JSON report: every table the other reports show, as indented JSON (383 KB for this run), with the graph data only when asked for (below). Its top level, with each array and object shown by its size:</p>
+<pre><code class="language-bash">jq 'map_values(if type == "array" then "\(length) rows" elif type == "object" then "{\(keys | length) keys}" else . end)' report.json
+</code></pre>
+<pre><code class="language-json">{
+  "goose_version": "0.19.0",
+  "test": "umami",
+  "started": "2026-10-28T16:59:19Z",
+  "ended": "2026-10-28T17:02:30Z",
+  "ended_by": "completed",
+  "in_progress": false,
+  "raw_metrics": "{14 keys}",
+  "raw_request_metrics": "143 rows",
+  "raw_response_metrics": "143 rows",
+  "co_request_metrics": null,
+  "co_response_metrics": null,
+  "scenario_metrics": "4 rows",
+  "transaction_metrics": "27 rows",
+  "status_code_metrics": "143 rows",
+  "errors": null,
+  "coordinated_omission_metrics": null
+}
+</code></pre>
+<p>The JSON report’s times, which end <code>Z</code>, are UTC, as are the log’s; the run’s folder and the plan overview in the other reports and the console metrics use local time, an hour ahead here, as in <a href="running.html#what-the-run-produced">Running A Load Test</a>.</p>
+<ul>
+<li><code>raw_metrics</code> is Goose’s own record of the run, <a href="https://docs.rs/goose/latest/goose/metrics/struct.GooseMetrics.html"><code>GooseMetrics</code></a>, with the test plan steps the run went through, in <code>history</code>, and each <code>--threshold</code> result. Each transaction’s <code>transaction_name</code> there is an object that says how it was named, such as <code>{"TransactionOnly":"anon /"}</code>.</li>
+<li><code>raw_request_metrics</code>, <code>raw_response_metrics</code>, <code>scenario_metrics</code>, <code>transaction_metrics</code> and <code>status_code_metrics</code> are the tables the other reports show; <code>raw_request_metrics</code> has a row for each request and the Aggregated row, and each request in <code>raw_metrics</code> holds <code>status_code_timings</code> in place of the <code>└─</code> breakdown rows.</li>
+<li><code>errors</code> is <code>null</code> without errors, and <code>transaction_errors</code> appears only when a transaction returned an error that is not a request error.</li>
+<li>The <code>co_</code> keys are <code>null</code> until coordinated omission mitigation adds synthetic times, and <code>coordinated_omission_metrics</code> is <code>null</code> with mitigation off.</li>
+<li><code>graphs</code>, with the per second data behind the graphs and the heatmap, appears only when the run had <code>--report-graph-data</code> or the dashboard’s Include graph data switch on.</li>
+</ul>
+<p>Minimums, maximums and percentiles in <code>raw_request_metrics</code>, <code>raw_response_metrics</code> and the other tables are whole milliseconds, truncated, so a 37.999 ms time is <code>37</code>; averages keep their fraction of a millisecond, as <code>31.861234848484848</code> for <code>GET /</code>. A request or scenario average with no times to average is <code>0</code>, and each scenario’s heading row in <code>transaction_metrics</code> has <code>null</code> averages and rates. The raw timing data keeps microseconds, in fields ending <code>_us</code>. A JSON report loads as a baseline with <a href="common.html#comparing-against-a-baseline"><code>--baseline-file</code></a> (see <a href="common.html#baselines-from-older-goose-releases">Baselines from older Goose releases</a>), and <code>--render-report</code> writes the other reports from it.</p>
+<h2 id="ascii-metrics"><a class="header" href="#ascii-metrics">Console metrics</a></h2>
+<p>While the load test runs, Goose logs what it is doing; <a href="running.html">Running A Load Test</a> walks through those log lines. Once every user has started, it prints the tables so far and <a href="../glossary.html#metrics-reset">resets its metrics</a>, after which every table, errors included, counts from zero. A run with <code>--iterations</code> or a test plan never resets, and <code>--no-reset-metrics</code> keeps the ramp up in the tables. With <code>--running-metrics N</code> it prints the tables again every N seconds, ramp up included. During the ramp up it also prints them each time a user starts at least N milliseconds after the last print, because in Goose 0.19 the user launch code reads N as milliseconds. When the run ends, it prints the final metrics in this order: scenarios, with their times; transactions, with their times; requests, with their response times, percentiles and status codes; errors, transaction errors and thresholds, when there are any; the coordinated omission event summary, whenever mitigation is on; and last the <a href="../glossary.html#plan-overview">plan overview</a>, as <a href="running.html#what-the-run-produced">Running A Load Test</a> shows. From this run, up to the plan overview, with <code>...</code> for the rows and tables left out:</p>
+<pre><code class="language-text"> === PER SCENARIO METRICS ===
  ------------------------------------------------------------------------------
  Name                     |  # users |  # times run | scenarios/s | iterations
  ------------------------------------------------------------------------------
- 1: Anonymous English u.. |        4 |            8 |        0.13 |       2.00
- 2: Anonymous Spanish u.. |        4 |            8 |        0.13 |       2.00
- 3: Admin user            |        1 |            1 |        0.02 |       1.00
+ 1: Anonymous English u.. |       40 |          254 |        1.41 |       6.35
+ 2: Anonymous Spanish u.. |        9 |           54 |        0.30 |       6.00
+ 3: Admin user            |        1 |            4 |        0.02 |       4.00
  -------------------------+----------+--------------+-------------+------------
- Aggregated               |        9 |           17 |        0.27 |       1.89
- ------------------------------------------------------------------------------
- Name                     |    Avg (ms) |        Min |         Max |     Median
- ------------------------------------------------------------------------------
-   1: Anonymous English.. |       25251 |     19,488 |      31,308 |     19,488
-   2: Anonymous Spanish.. |       24394 |     20,954 |      27,821 |     20,954
-   3: Admin user          |       32431 |     32,431 |      32,431 |     32,431
- -------------------------+-------------+------------+-------------+-----------
- Aggregated               |       25270 |     19,488 |      32,431 |     19,488
+ Aggregated               |       50 |          312 |        1.73 |       6.24
+ ...
 
  === PER TRANSACTION METRICS ===
  ------------------------------------------------------------------------------
  Name                     |   # times run |        # fails |  trans/s |  fail/s
  ------------------------------------------------------------------------------
  1: Anonymous English user
-   1: anon /              |            21 |         0 (0%) |     0.33 |    0.00
-   2: anon /en/basicpage  |            12 |         0 (0%) |     0.19 |    0.00
-   3: anon /en/articles/  |            12 |         0 (0%) |     0.19 |    0.00
-   4: anon /en/articles/% |            21 |         0 (0%) |     0.33 |    0.00
-   5: anon /en/recipes/   |            12 |         0 (0%) |     0.19 |    0.00
-   6: anon /en/recipes/%  |            36 |         0 (0%) |     0.57 |    0.00
-   7: anon /node/%nid     |            11 |         0 (0%) |     0.17 |    0.00
-   8: anon /en term       |            19 |         0 (0%) |     0.30 |    0.00
-   9: anon /en/search     |             9 |         0 (0%) |     0.14 |    0.00
-   10: anon /en/contact   |             9 |         0 (0%) |     0.14 |    0.00
- 2: Anonymous Spanish user
-   1: anon /es/           |            22 |         0 (0%) |     0.35 |    0.00
-   2: anon /es/basicpage  |            12 |         0 (0%) |     0.19 |    0.00
-   3: anon /es/articles/  |            12 |         0 (0%) |     0.19 |    0.00
-   4: anon /es/articles/% |            21 |         0 (0%) |     0.33 |    0.00
-   5: anon /es/recipes/   |            12 |         0 (0%) |     0.19 |    0.00
-   6: anon /es/recipes/%  |            37 |         0 (0%) |     0.59 |    0.00
-   7: anon /es term       |            21 |         0 (0%) |     0.33 |    0.00
-   8: anon /es/search     |            12 |         0 (0%) |     0.19 |    0.00
-   9: anon /es/contact    |            10 |         0 (0%) |     0.16 |    0.00
- 3: Admin user           
-   1: auth /en/user/login |             1 |         0 (0%) |     0.02 |    0.00
-   2: auth /              |             4 |         0 (0%) |     0.06 |    0.00
-   3: auth /en/articles/  |             2 |         0 (0%) |     0.03 |    0.00
-   4: auth /en/node/%/e.. |             3 |         0 (0%) |     0.05 |    0.00
+   1: anon /              |           519 |         0 (0%) |     2.88 |    0.00
+   2: anon /en/basicpage  |           254 |         0 (0%) |     1.41 |    0.00
+ ...
  -------------------------+---------------+----------------+----------+--------
- Aggregated               |           331 |         0 (0%) |     5.25 |    0.00
- ------------------------------------------------------------------------------
- Name                     |    Avg (ms) |        Min |         Max |     Median
- ------------------------------------------------------------------------------
- 1: Anonymous English user
-   1: anon /              |      123.48 |         85 |         224 |        110
-   2: anon /en/basicpage  |       56.08 |         44 |          75 |         50
-   3: anon /en/articles/  |      147.58 |         91 |         214 |        140
-   4: anon /en/articles/% |      148.14 |         72 |         257 |        160
-   5: anon /en/recipes/   |      170.58 |        109 |         242 |        150
-   6: anon /en/recipes/%  |       66.08 |         48 |         131 |         60
-   7: anon /node/%nid     |       94.09 |         46 |         186 |         70
-   8: anon /en term       |      134.37 |         52 |         194 |        130
-   9: anon /en/search     |      282.33 |        190 |         339 |        270
-   10: anon /en/contact   |      246.89 |        186 |         346 |        260
- 2: Anonymous Spanish user
-   1: anon /es/           |      141.36 |         88 |         285 |        130
-   2: anon /es/basicpage  |       61.17 |         43 |          92 |         51
-   3: anon /es/articles/  |      130.58 |         87 |         187 |        110
-   4: anon /es/articles/% |      164.52 |         85 |         263 |        170
-   5: anon /es/recipes/   |      161.25 |        108 |         274 |        120
-   6: anon /es/recipes/%  |       65.24 |         47 |         107 |         61
-   7: anon /es term       |      145.14 |         49 |         199 |        150
-   8: anon /es/search     |      276.33 |        206 |         361 |        270
-   9: anon /es/contact    |      240.20 |        204 |         297 |        230
- 3: Admin user           
-   1: auth /en/user/login |      262.00 |        262 |         262 |        262
-   2: auth /              |      260.75 |        238 |         287 |        250
-   3: auth /en/articles/  |      232.00 |        220 |         244 |        220
-   4: auth /en/node/%/e.. |      745.67 |        725 |         771 |        725
- -------------------------+-------------+------------+-------------+-----------
- Aggregated               |      141.73 |         43 |         771 |        120
+ Aggregated               |         5,124 |         0 (0%) |    28.47 |    0.00
+ ...
 
  === PER REQUEST METRICS ===
  ------------------------------------------------------------------------------
  Name                     |        # reqs |        # fails |    req/s |  fail/s
  ------------------------------------------------------------------------------
- GET anon /               |            21 |         0 (0%) |     0.33 |    0.00
- GET anon /en term        |            19 |         0 (0%) |     0.30 |    0.00
- GET anon /en/articles/   |            12 |         0 (0%) |     0.19 |    0.00
- GET anon /en/articles/%  |            21 |         0 (0%) |     0.33 |    0.00
- GET anon /en/basicpage   |            12 |         0 (0%) |     0.19 |    0.00
- GET anon /en/contact     |             9 |         0 (0%) |     0.14 |    0.00
- GET anon /en/recipes/    |            12 |         0 (0%) |     0.19 |    0.00
- GET anon /en/recipes/%   |            36 |         0 (0%) |     0.57 |    0.00
- GET anon /en/search      |             9 |         0 (0%) |     0.14 |    0.00
- GET anon /es term        |            21 |         0 (0%) |     0.33 |    0.00
- GET anon /es/            |            22 |         0 (0%) |     0.35 |    0.00
- GET anon /es/articles/   |            12 |         0 (0%) |     0.19 |    0.00
- GET anon /es/articles/%  |            21 |         0 (0%) |     0.33 |    0.00
- GET anon /es/basicpage   |            12 |         0 (0%) |     0.19 |    0.00
- GET anon /es/contact     |            10 |         0 (0%) |     0.16 |    0.00
- GET anon /es/recipes/    |            12 |         0 (0%) |     0.19 |    0.00
- GET anon /es/recipes/%   |            37 |         0 (0%) |     0.59 |    0.00
- GET anon /es/search      |            12 |         0 (0%) |     0.19 |    0.00
- GET anon /node/%nid      |            11 |         0 (0%) |     0.17 |    0.00
- GET auth /               |             4 |         0 (0%) |     0.06 |    0.00
- GET auth /en/articles/   |             2 |         0 (0%) |     0.03 |    0.00
- GET auth /en/node/%/edit |             6 |         0 (0%) |     0.10 |    0.00
- GET auth /en/user/login  |             1 |         0 (0%) |     0.02 |    0.00
- GET static asset         |         3,516 |         0 (0%) |    55.81 |    0.00
- POST anon /en/contact    |             9 |         0 (0%) |     0.14 |    0.00
- POST anon /en/search     |             9 |         0 (0%) |     0.14 |    0.00
- POST anon /es/contact    |            10 |         0 (0%) |     0.16 |    0.00
- POST anon /es/search     |            12 |         0 (0%) |     0.19 |    0.00
- POST auth /en/node/%/e.. |             3 |         0 (0%) |     0.05 |    0.00
- POST auth /en/user/login |             1 |         0 (0%) |     0.02 |    0.00
+ GET /                    |           528 |         0 (0%) |     2.93 |    0.00
+ ...
+ GET static asset         |        85,825 |         0 (0%) |   476.81 |    0.00
+ ...
  -------------------------+---------------+----------------+----------+--------
- Aggregated               |         3,894 |         0 (0%) |    61.81 |    0.00
+ Aggregated               |        91,625 |         0 (0%) |   509.03 |    0.00
  ------------------------------------------------------------------------------
  Name                     |    Avg (ms) |        Min |         Max |     Median
  ------------------------------------------------------------------------------
- GET anon /               |       38.95 |         14 |         132 |         24
- GET anon /en term        |       95.63 |         22 |         159 |         98
- GET anon /en/articles/   |       61.67 |         16 |         139 |         42
- GET anon /en/articles/%  |       94.86 |         20 |         180 |        100
- GET anon /en/basicpage   |       25.67 |         17 |          40 |         24
- GET anon /en/contact     |       34.67 |         16 |          61 |         30
- GET anon /en/recipes/    |       59.83 |         17 |         130 |         45
- GET anon /en/recipes/%   |       27.86 |         16 |          56 |         22
- GET anon /en/search      |       54.33 |         20 |         101 |         30
- GET anon /es term        |      106.14 |         19 |         159 |        110
- GET anon /es/            |       51.41 |         18 |         179 |         29
- GET anon /es/articles/   |       53.42 |         17 |         110 |         27
- GET anon /es/articles/%  |      105.52 |         20 |         203 |        110
- GET anon /es/basicpage   |       27.25 |         18 |          55 |         22
- GET anon /es/contact     |       27.80 |         17 |          49 |         24
- GET anon /es/recipes/    |       59.08 |         18 |         165 |         26
- GET anon /es/recipes/%   |       28.65 |         16 |          61 |         26
- GET anon /es/search      |       46.42 |         17 |          99 |         25
- GET anon /node/%nid      |       52.73 |         17 |         133 |         38
- GET auth /               |      140.75 |        109 |         169 |        120
- GET auth /en/articles/   |      103.50 |         89 |         118 |         89
- GET auth /en/node/%/edit |      114.83 |         91 |         136 |        120
- GET auth /en/user/login  |       24.00 |         24 |          24 |         24
- GET static asset         |        5.11 |          2 |          38 |          5
- POST anon /en/contact    |      136.67 |         99 |         204 |        140
- POST anon /en/search     |      162.11 |        114 |         209 |        170
- POST anon /es/contact    |      137.70 |        111 |         174 |        130
- POST anon /es/search     |      164.08 |        118 |         235 |        140
- POST auth /en/node/%/e.. |      292.33 |        280 |         304 |        290
- POST auth /en/user/login |      143.00 |        143 |         143 |        143
+ GET /                    |          32 |       8.55 |         267 |         20
+ ...
+ GET static asset         |          11 |       3.81 |         401 |       8.26
+ ...
  -------------------------+-------------+------------+-------------+-----------
- Aggregated               |       11.41 |          2 |         304 |          5
+ Aggregated               |          14 |       3.81 |         438 |       8.51
  ------------------------------------------------------------------------------
  Slowest page load within specified percentile of requests (in ms):
  ------------------------------------------------------------------------------
  Name                     |    50% |    75% |    98% |    99% |  99.9% | 99.99%
  ------------------------------------------------------------------------------
- GET anon /               |     24 |     29 |    130 |    130 |    130 |    130
- GET anon /en term        |     98 |    110 |    159 |    159 |    159 |    159
- GET anon /en/articles/   |     42 |     92 |    139 |    139 |    139 |    139
- GET anon /en/articles/%  |    100 |    120 |    180 |    180 |    180 |    180
- GET anon /en/basicpage   |     24 |     30 |     40 |     40 |     40 |     40
- GET anon /en/contact     |     30 |     46 |     61 |     61 |     61 |     61
- GET anon /en/recipes/    |     45 |     88 |    130 |    130 |    130 |    130
- GET anon /en/recipes/%   |     22 |     31 |     55 |     56 |     56 |     56
- GET anon /en/search      |     30 |     89 |    100 |    100 |    100 |    100
- GET anon /es term        |    110 |    130 |    159 |    159 |    159 |    159
- GET anon /es/            |     29 |     57 |    179 |    179 |    179 |    179
- GET anon /es/articles/   |     27 |     96 |    110 |    110 |    110 |    110
- GET anon /es/articles/%  |    110 |    140 |    200 |    200 |    200 |    200
- GET anon /es/basicpage   |     22 |     27 |     55 |     55 |     55 |     55
- GET anon /es/contact     |     24 |     35 |     49 |     49 |     49 |     49
- GET anon /es/recipes/    |     26 |    110 |    165 |    165 |    165 |    165
- GET anon /es/recipes/%   |     26 |     34 |     57 |     61 |     61 |     61
- GET anon /es/search      |     25 |     78 |     99 |     99 |     99 |     99
- GET anon /node/%nid      |     38 |     41 |    130 |    130 |    130 |    130
- GET auth /               |    120 |    160 |    169 |    169 |    169 |    169
- GET auth /en/articles/   |     89 |    118 |    118 |    118 |    118 |    118
- GET auth /en/node/%/edit |    120 |    130 |    136 |    136 |    136 |    136
- GET auth /en/user/login  |     24 |     24 |     24 |     24 |     24 |     24
- GET static asset         |      5 |      6 |     10 |     13 |     29 |     38
- POST anon /en/contact    |    140 |    150 |    200 |    200 |    200 |    200
- POST anon /en/search     |    170 |    180 |    209 |    209 |    209 |    209
- POST anon /es/contact    |    130 |    150 |    170 |    170 |    170 |    170
- POST anon /es/search     |    140 |    180 |    235 |    235 |    235 |    235
- POST auth /en/node/%/e.. |    290 |    290 |    300 |    300 |    300 |    300
- POST auth /en/user/login |    143 |    143 |    143 |    143 |    143 |    143
+ GET /                    |     20 |     26 |    148 |    163 |    210 |    267
+ ...
+ GET static asset         |   8.26 |     10 |     74 |     78 |     92 |    281
+ ...
  -------------------------+--------+--------+--------+--------+--------+-------
- Aggregated               |      5 |      7 |    120 |    140 |    240 |    300
+ Aggregated               |   8.51 |     11 |     87 |    138 |    230 |    338
  ------------------------------------------------------------------------------
  Name                     |                                        Status codes 
  ------------------------------------------------------------------------------
- GET anon /               |                                            21 [200]
- GET anon /en term        |                                            19 [200]
- GET anon /en/articles/   |                                            12 [200]
- GET anon /en/articles/%  |                                            21 [200]
- GET anon /en/basicpage   |                                            12 [200]
- GET anon /en/contact     |                                             9 [200]
- GET anon /en/recipes/    |                                            12 [200]
- GET anon /en/recipes/%   |                                            36 [200]
- GET anon /en/search      |                                             9 [200]
- GET anon /es term        |                                            21 [200]
- GET anon /es/            |                                            22 [200]
- GET anon /es/articles/   |                                            12 [200]
- GET anon /es/articles/%  |                                            21 [200]
- GET anon /es/basicpage   |                                            12 [200]
- GET anon /es/contact     |                                            10 [200]
- GET anon /es/recipes/    |                                            12 [200]
- GET anon /es/recipes/%   |                                            37 [200]
- GET anon /es/search      |                                            12 [200]
- GET anon /node/%nid      |                                            11 [200]
- GET auth /               |                                             4 [200]
- GET auth /en/articles/   |                                             2 [200]
- GET auth /en/node/%/edit |                                             6 [200]
- GET auth /en/user/login  |                                             1 [200]
- GET static asset         |                                         3,516 [200]
- POST anon /en/contact    |                                             9 [200]
- POST anon /en/search     |                                             9 [200]
- POST anon /es/contact    |                                            10 [200]
- POST anon /es/search     |                                            12 [200]
- POST auth /en/node/%/e.. |                                             3 [200]
- POST auth /en/user/login |                                             1 [200]
+ GET /                    |                                           528 [200]
+ ...
+ GET static asset         |                                        85,825 [200]
+ ...
  -------------------------+----------------------------------------------------
- Aggregated               |                                         3,894 [200] 
-
- === OVERVIEW ===
- ------------------------------------------------------------------------------
- Action       Started               Stopped             Elapsed    Users
- ------------------------------------------------------------------------------
- Increasing:  2022-05-17 07:09:05 - 2022-05-17 07:09:08 (00:00:03, 0 -&gt; 9)
- Maintaining: 2022-05-17 07:09:08 - 2022-05-17 07:10:08 (00:01:00, 9)
- Decreasing:  2022-05-17 07:10:08 - 2022-05-17 07:10:08 (00:00:00, 0 &lt;- 9)
-
- Target host: http://umami.ddev.site/
- goose v0.18.1
- ------------------------------------------------------------------------------
+ Aggregated               |                                        91,625 [200] 
 </code></pre>
-<h2 id="metrics-reports"><a class="header" href="#metrics-reports">Metrics reports</a></h2>
-<p>In addition to the above metrics displayed on the CLI, we've also told Goose to create reports on other formats, like Markdown, JSON, or HTML.</p>
-<p>It is possible to create one or more reports at the same time, using one or more <code>--report-file</code> arguments. The type of report is chosen by the file extension. An unsupported file extension will lead to an error.</p>
-<p>The following subsections describe the reports on more detail.</p>
-<h3 id="html-report"><a class="header" href="#html-report">HTML report</a></h3>
-<h4 id="overview"><a class="header" href="#overview">Overview</a></h4>
-<p>The HTML report starts with a brief overview table, offering the same information found in the <a href="#ascii-metrics">ASCII overview</a> above:
-<img src="metrics-overview.jpg" alt="Metrics overview" /></p>
-<p><strong>NOTE:</strong> The HTML report includes some graphs that rely on the <a href="https://echarts.apache.org">eCharts JavaScript library</a>. The HTML report loads the library via CDN, which means that the graphs won't be loaded correctly if the CDN is not accessible.</p>
-<h4 id="requests"><a class="header" href="#requests">Requests</a></h4>
-<p>Next the report includes a graph of all requests made during the duration of the load test. By default, the graph includes an aggregated average, as well as per-request details. It's possible to click on the request names at the top of the graph to hide/show specific requests on the graphs. In this case, the graph shows that most requests made by the load test were for static assets.</p>
-<p>Below the graph is a table that shows per-request details, only partially included in this screenshot:
-<img src="metrics-requests.jpg" alt="Request metrics" /></p>
-<h4 id="response-times"><a class="header" href="#response-times">Response times</a></h4>
-<p>The next graph shows the response times measured for each request made. In the following graph, it's apparent that POST requests had the slowest responses, which is logical as they are not cached. As before, it's possible to click on the request names at the top of the graph to hide/show details about specific requests.</p>
-<p>Below the graph is a table that shows per-request details:
-<img src="metrics-response-time.jpg" alt="Response time metrics" /></p>
-<h4 id="status-codes"><a class="header" href="#status-codes">Status codes</a></h4>
-<p>All status codes returned by the server are displayed in a table, per-request and in aggregate. In our simple test, we received only <code>200 OK</code> responses.
-<img src="metrics-status-codes.jpg" alt="Status code metrics" /></p>
-<h4 id="transactions"><a class="header" href="#transactions">Transactions</a></h4>
-<p>The next graph summarizes all Transactions run during the load test. One or more requests are grouped logically inside Transactions. For example, the Transaction named <code>0.0 anon /</code> includes an anonymous (not-logged-in) request for the front page, as well as requests for all static assets found on the front page.</p>
-<p>Whereas a Request automatically fails based on the web server response code, the code that defines a Transaction must manually return an error for a Task to be considered failed. For example, the logic may be written to fail the Transaction of the html request fails, but not if one or more static asset requests fail.</p>
-<p>This graph is also followed by a table showing details on all Transactions, partially shown here:
-<img src="metrics-transactions.jpg" alt="Transaction metrics" /></p>
-<h4 id="scenarios"><a class="header" href="#scenarios">Scenarios</a></h4>
-<p>The next graph summarizes all Scenarios run during the load test. One or more Transactions are grouped logically inside Scenarios.</p>
-<p>For example, the Scenario named <code>Anonymous English user</code> includes the above <code>anon /</code> Transaction, the <code>anon /en/basicpage</code>, and all the rest of the Transactions requesting pages in English.</p>
-<p>It is followed by a table, shown in entirety here because this load test only has 3 Scenarios. The <code># Users</code> column indicates how many <code>GooseUser</code> threads were assigned to run this Scenario during the load test. The <code># Times Run</code> column indicates how many times in aggregate all <code>GooseUser</code> threads ran completely through the Scenario. From there you can see how long on average it took a <code>GooseUser</code> thread to run through all Transactions and make all contained Requests to completely run the Scenario, as well as the minimum and maximum amount of time. Finally, <code>Iterations</code> is how many times each assigned <code>GooseUser</code> thread ran through the entire Scenario (Iterations times the # of Users will always equal the total # of times run).</p>
-<p>As our example only ran for 60 seconds, and the <code>Admin user</code> Scenario took &gt;30 seconds to run once, the load test only ran completely through this scenario one time, also reflected in the following table:
-<img src="metrics-scenarios.jpg" alt="Scenario metrics" /></p>
-<h4 id="users"><a class="header" href="#users">Users</a></h4>
-<p>The final graph shows how many users were running at the various stages of the load test. As configured, Goose quickly ramped up to 9 users, then sustained that level of traffic for a minute before shutting down:
-<img src="metrics-users.jpg" alt="User metrics" /></p>
-<h3 id="markdown-report"><a class="header" href="#markdown-report">Markdown report</a></h3>
-<p>The Markdown report follows the structure of the <a href="#html-report">HTML report</a>. However, it does not include the chart elements.</p>
-<h3 id="json-report"><a class="header" href="#json-report">JSON report</a></h3>
-<p>The JSON report is a dump of the internal metrics collection. It is a JSON serialization of the <code>ReportData</code> structure. Mainly having a field named <code>raw_metrics</code>, carrying the content of <a href="https://docs.rs/goose/latest/goose/metrics/struct.GooseMetrics.html"><code>GooseMetrics</code></a>.</p>
-<h3 id="developer-documentation"><a class="header" href="#developer-documentation">Developer documentation</a></h3>
-<p>Additional details about how metrics are collected, stored, and displayed can be found <a href="https://docs.rs/goose/*/goose/metrics/index.html">in the developer documentation</a>.</p>
+<p><code>--no-print-metrics</code> leaves out every table the console prints, at the reset, with <code>--running-metrics</code> and at the end; the reports are still written.</p>
+<h2 id="response-times"><a class="header" href="#response-times">How Goose measures response times</a></h2>
+<p>Goose measures time to first byte: from sending a request until its response headers arrive, including connecting and following redirects, but not reading the body. Every request Goose sends is timed this way. A load test that needs the time to the last byte reads the body and times it; see <a href="#measuring-complete-download-time">Measuring complete download time</a>.</p>
+<p>Goose keeps request, transaction and scenario times to the microsecond. The tables of the dashboard, the PDF, HTML and Markdown reports and the console metrics show times under 10 ms to the hundredth of a millisecond and longer times in whole milliseconds, rounded half up. The heatmap labels truncate instead, as the <a href="../controller/dashboard-reference.html#the-response-time-heatmap">Dashboard Reference</a> explains, and so do the minimums, maximums and percentiles of the <a href="#json-report">JSON report</a>. Percentiles come from buckets never more than 0.78% off the times they hold, so 2.2 ms and 2.5 ms are told apart, and the fastest and slowest times are kept exactly.</p>
+<h3 id="measuring-complete-download-time"><a class="header" href="#measuring-complete-download-time">Measuring complete download time</a></h3>
+<p>To measure the time to the last byte, read the body yourself and record the time it took with <code>record_custom_request_duration</code>, which records it as a request of its own:</p>
+<pre class="playground"><code class="language-rust edition2018"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use goose::prelude::*;
+use std::time::Instant;
+
+async fn measure_full_download(user: &amp;mut GooseUser) -&gt; TransactionResult {
+    let started = Instant::now();
+    let goose = user.get("/large-file").await?;
+
+    // Read the entire response body.
+    let success = match goose.response {
+        Ok(response) =&gt; response.bytes().await.is_ok(),
+        Err(_) =&gt; false,
+    };
+
+    // Record the time to the last byte as a request of its own.
+    user.record_custom_request_duration(
+        "DOWNLOAD",
+        "/large-file",
+        started.elapsed(),
+        success,
+        None,
+        None,
+    )
+    .await?;
+
+    Ok(())
+}
+<span class="boring">}</span></code></pre>
+<p>The <code>GET /large-file</code> row then holds the time to the first byte, and the <code>DOWNLOAD /large-file</code> row the time to the last. A custom request is counted like any other, in its own row and in the Aggregated row; with no status code given, the status code table shows it under <code>[0]</code>, as in the <a href="../example/tcp.html">TCP example</a>. Reading whole bodies uses more memory and can lower the load one Goose process generates.</p>
+<p>Developer documentation on how metrics are collected and stored is in the <a href="https://docs.rs/goose/latest/goose/metrics/index.html"><code>goose::metrics</code> module</a>.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../getting-started/custom.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
-                                <i class="fa fa-angle-left"></i>
+                            <a rel="prev" href="../getting-started/output-files.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
                             <a rel="next prefetch" href="../getting-started/tips.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
-                                <i class="fa fa-angle-right"></i>
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
                         <div style="clear: both"></div>
@@ -520,17 +417,22 @@ All 9 users hatched.
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../getting-started/custom.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
-                        <i class="fa fa-angle-left"></i>
+                    <a rel="prev" href="../getting-started/output-files.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
                     <a rel="next prefetch" href="../getting-started/tips.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
-                        <i class="fa fa-angle-right"></i>
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>
 
         </div>
 
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
 
 
 
@@ -539,13 +441,13 @@ All 9 users hatched.
         </script>
 
 
-        <script src="../elasticlunr.min.js"></script>
-        <script src="../mark.min.js"></script>
-        <script src="../searcher.js"></script>
+        <script src="../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../mark-09e88c2c.min.js"></script>
+        <script src="../searcher-09f2665d.js"></script>
 
-        <script src="../clipboard.min.js"></script>
-        <script src="../highlight.js"></script>
-        <script src="../book.js"></script>
+        <script src="../clipboard-1626706a.min.js"></script>
+        <script src="../highlight-abc7f01d.js"></script>
+        <script src="../book-609e4cb8.js"></script>
 
         <!-- Custom JS scripts -->
 

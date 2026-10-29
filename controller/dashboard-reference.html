@@ -1,0 +1,1059 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Dashboard Reference - The Goose Book</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../css/general-e96d0476.css">
+        <link rel="stylesheet" href="../css/chrome-d279d366.css">
+        <link rel="stylesheet" href="../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../searchindex-e0e91710.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc-b1be2d52.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">The Goose Book</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="dashboard-reference"><a class="header" href="#dashboard-reference">Dashboard Reference</a></h1>
+<p>This page holds every flag, rule and endpoint of the <a href="dashboard.html">Live Dashboard</a>, and the snapshot fields a client most needs. Start there for what the dashboard shows and how to use it.</p>
+<blockquote>
+<p>The dashboard is an opt in crate feature: build Goose with <code>--features dashboard</code>. <a href="#stability">Stability</a> says what the dashboard and its <code>/api/v1</code> endpoints promise from one release to the next.</p>
+</blockquote>
+<p>Goose can optionally serve a <strong>live web dashboard</strong> while a load test runs. The dashboard streams compact metric snapshots (including trailing RPS, users, and latency series) over Server-Sent Events (SSE), with a short poll fallback if SSE is unavailable.</p>
+<h2 id="enabling-the-dashboard"><a class="header" href="#enabling-the-dashboard">Enabling the dashboard</a></h2>
+<p>The dashboard is off by default. Compile Goose with the <code>dashboard</code> crate feature, then enable observation with <code>--dashboard</code>:</p>
+<pre><code class="language-bash">cargo run --release --features dashboard --example simple -- \
+  --dashboard \
+  -H https://staging.example.com \
+  -u 50 -t 10m
+</code></pre>
+<p>Then open:</p>
+<pre><code class="language-text">http://127.0.0.1:5118/
+</code></pre>
+<p>The dashboard port opens when the Controllers’ ports do, once Goose has built a client for every user, which takes longer with more users and fewer cores. With <code>--no-autostart</code> users are built on Start, so the port opens at once.</p>
+<h3 id="related-flags"><a class="header" href="#related-flags">Related flags</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Default</th><th>Purpose</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--dashboard</code></td><td>off</td><td>Enable the live dashboard HTTP server (observe)</td></tr>
+<tr><td><code>--dashboard-control</code></td><td>off</td><td>Enable the control endpoints and UI: Start, Stop, users, the run settings (which can point the load at any host), Quit, the report switches, Save report now and Delete of saved reports and logs (requires <code>--dashboard</code>; does <strong>not</strong> auto-enable the dashboard)</td></tr>
+<tr><td><code>--dashboard-host HOST</code></td><td><code>127.0.0.1</code></td><td>Bind address. A loopback address needs no token for metrics; any other needs a token or <code>--dashboard-no-auth</code>; see <a href="#bind-and-token-rules">Bind and token rules</a></td></tr>
+<tr><td><code>--dashboard-port PORT</code></td><td><code>5118</code></td><td>Bind port. <code>0</code> picks a free port, which the startup log names: <code>[dashboard]: listening on http://127.0.0.1:60096 (read-only)</code>.</td></tr>
+<tr><td><code>--dashboard-auth-token TOKEN</code></td><td>empty</td><td>Shared secret for metric APIs when configured; required when <code>--dashboard-control</code> is set (even on loopback), and for any bind off loopback, unless <code>--dashboard-no-auth</code> is. Visible in process listings (<code>ps</code>) like any CLI flag; set it in the load test’s code with <code>GooseDefault::DashboardAuthToken</code> to keep it out of them.</td></tr>
+<tr><td><code>--dashboard-no-auth</code></td><td>off</td><td>Allow dashboard access and control without a token. Anyone who can reach the port can watch the test and download saved reports, and with <code>--dashboard-control</code> start, stop and point the load at any host, and delete saved reports and logs; Goose warns at startup with control on loopback, and on anything but loopback. Needs <code>--dashboard</code>; refused with <code>--dashboard-auth-token</code>. See <a href="#control-without-a-token">Control without a token</a>.</td></tr>
+<tr><td><code>--dashboard-max-clients N</code></td><td><code>32</code></td><td>Max concurrent SSE clients (<code>GET /api/v1/events</code>); further clients receive HTTP 503. <code>0</code> is refused at startup (<code>must be at least 1</code>). The server also holds at most twice this many connections plus 16 (80 by default); a connection beyond that is closed as soon as it is accepted.</td></tr>
+<tr><td><code>--no-percentiles-over-time</code></td><td>off</td><td>Turn off the response time heatmap and the histograms behind it; the card shows the average latency chart instead. It also turns off the HTML report’s response time heatmap, and works without <code>--dashboard</code>. See <a href="#the-response-time-heatmap">The response time heatmap</a>.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Defaults can also be set programmatically with <code>GooseDefault::Dashboard</code>, <code>GooseDefault::DashboardControl</code>, <code>GooseDefault::DashboardNoAuth</code>, <code>GooseDefault::DashboardHost</code>, <code>GooseDefault::DashboardPort</code>, <code>GooseDefault::DashboardAuthToken</code>, <code>GooseDefault::DashboardMaxClients</code>, and <code>GooseDefault::NoPercentilesOverTime</code>.</p>
+<blockquote>
+<p><strong>Feature flag:</strong> the HTTP server is compiled behind the opt-in <code>dashboard</code> crate feature (not in default features, same pattern as <code>pdf-reports</code>). Enable it with <code>--features dashboard</code>. Builds without that feature reject <code>--dashboard</code> at startup with a clear rebuild hint.</p>
+</blockquote>
+<p>The server lives as long as the load test, with one exception: see <a href="#waiting-after-an-autostarted-run">Waiting after an autostarted run</a>. When <code>GooseAttack::execute()</code> returns, whether the run finished or failed, connected browsers receive <code>event: closed</code>, open connections get up to one second to finish, and the listener and every connection are closed before <code>execute()</code> returns, so a program can run another <code>GooseAttack</code> on the same port right away.</p>
+<h3 id="observe-vs-control-at-a-glance"><a class="header" href="#observe-vs-control-at-a-glance">Observe vs control at a glance</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Capability</th><th>Live Dashboard (observe)</th><th>Live Dashboard + control</th><th>Controllers (telnet / WebSocket)</th></tr>
+</thead>
+<tbody>
+<tr><td>Live rates, percentiles, errors</td><td>Yes</td><td>Yes</td><td><code>metrics</code> / <code>metrics-json</code></td></tr>
+<tr><td>Trailing RPS / users / latency charts</td><td>Yes</td><td>Yes</td><td>No</td></tr>
+<tr><td>Start / stop / set users</td><td><strong>No</strong></td><td>Yes</td><td>Yes</td></tr>
+<tr><td>Host / ramps / run time</td><td>No</td><td>Yes</td><td>Yes</td></tr>
+<tr><td>Test plan</td><td>No</td><td>Through <code>POST /api/v1/control/settings</code> or <code>POST /api/v1/control/start</code> only</td><td>Yes (<code>test-plan</code>)</td></tr>
+<tr><td><code>config</code> / <code>metrics</code></td><td>No</td><td>No</td><td>Yes</td></tr>
+<tr><td>Process shutdown</td><td>No</td><td>Quit, from Idle only</td><td>Yes (<code>shutdown</code>, any phase)</td></tr>
+<tr><td>Default bind</td><td><code>127.0.0.1:5118</code></td><td><code>127.0.0.1:5118</code></td><td><code>127.0.0.1:5116</code> / <code>:5117</code>, WebSocket only with <code>--websocket</code></td></tr>
+<tr><td>Auth</td><td>Token on metric APIs when configured</td><td>Token for control unless <code>--dashboard-no-auth</code>; metrics follow observe rules</td><td>None (see Controller docs)</td></tr>
+</tbody>
+</table>
+</div>
+<p>When control is off, <code>POST /api/v1/control/*</code> returns <strong>404</strong> (routes are not registered). Prefer Controllers for <code>config</code>, <code>metrics</code> and shutting down a running test; use dashboard control for Start, Stop, users and the run settings from a browser.</p>
+<h2 id="bind-and-token-rules"><a class="header" href="#bind-and-token-rules">Bind and token rules</a></h2>
+<h3 id="on-a-shared-machine"><a class="header" href="#on-a-shared-machine">On a shared machine</a></h3>
+<p>Every user of the machine running Goose can reach what Goose serves on loopback. This is what each of them can do, and how to close it:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Who</th><th>What they can reach</th><th>To close it</th></tr>
+</thead>
+<tbody>
+<tr><td>Any local process</td><td>The telnet Controller, on by default on <code>127.0.0.1:5116</code> with no authentication: start, stop, change users, the host, the ramps, the run time and the test plan, read <code>config</code> and <code>metrics</code>, and shut Goose down</td><td><code>--no-telnet</code></td></tr>
+<tr><td>Any local process, or any page in a local browser</td><td>The WebSocket Controller, when <code>--websocket</code> turns it on; it takes no authentication and accepts a connection from any web page</td><td>Leave <code>--websocket</code> off</td></tr>
+<tr><td>Any local user, with no token set</td><td>The dashboard’s metrics (request names, hosts, error strings, rates) and the run’s details (its notes, its <code>--report-file</code> paths and its run settings: host, ramps, run time and test plan): snapshots, the event stream, the per request heatmap, and every saved report in the runs folder, to list and download. By holding the event stream open when an autostarted run ends, they also keep Goose and its port up until it is told to quit (<a href="#waiting-after-an-autostarted-run">Waiting after an autostarted run</a>)</td><td>A token, set in code as below</td></tr>
+<tr><td>Any local user, under <code>--dashboard-no-auth</code> with <code>--dashboard-control</code></td><td>Everything in the row above, and Start, Stop, users, the run settings (including the host the load goes to), Quit, the report switches, Save report now, and Delete of saved reports and logs</td><td>A token in place of <code>--dashboard-no-auth</code></td></tr>
+<tr><td>Any local user, with a token set</td><td>The page’s HTML and static files, and <a href="#health-endpoint-exception"><code>GET /api/v1/health</code></a>: among other fields, the Goose version, whether control is on, the Controllers’ addresses and how many pages are watching. They can also fill the connection cap, which every client shares, token or not: a user who keeps <code>2 × --dashboard-max-clients + 16</code> connections open, sending a request on each at least every 10 seconds, keeps your browser out until they stop</td><td>The metrics are already closed. No setting closes the lockout: run where you trust the other users, or behind a firewall when the bind is off loopback</td></tr>
+<tr><td>Any local user, through the file system</td><td>The run folders under <code>goose-runs</code> (reports and logs), which Goose writes as any file, with the process’s umask, so a usual umask lets every local user read them</td><td>Run Goose under <code>umask 077</code>, or keep the runs under a folder only you can read, such as <code>--output-dir ~/private/nightly</code> with <code>~/private</code> at mode 700: a second run with the same <code>--output-dir</code>, once that folder holds files, writes a new folder beside it, <code>nightly-2</code></td></tr>
+<tr><td>Any local user, with the token on the command line</td><td>The token itself, in process listings (<code>ps</code>)</td><td>Set it in the load test’s code with <code>GooseDefault::DashboardAuthToken</code>, as below</td></tr>
+</tbody>
+</table>
+</div>
+<p>With the dashboard off loopback, “local” in the dashboard rows of this table becomes everyone who can reach its port (the telnet and WebSocket Controllers keep their own binds), and the token and the metrics cross the network as unencrypted http.</p>
+<p>To keep the token off the command line, read it in the load test’s code, for example from an environment variable, and set it as a default. Make the token long and random, such as the output of <code>openssl rand -hex 32</code>: Goose does not limit wrong guesses on any route, and logs them only on the control routes and Delete. An empty token counts as none, so refuse one, as this does:</p>
+<pre class="playground"><code class="language-rust edition2018"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>let token = std::env::var("DASHBOARD_TOKEN")
+    .ok()
+    .filter(|token| !token.is_empty())
+    .expect("set DASHBOARD_TOKEN to a non-empty value");
+GooseAttack::initialize()?
+    .set_default(GooseDefault::DashboardAuthToken, token.as_str())?
+    // register scenarios and run as before
+<span class="boring">}</span></code></pre>
+<p>A token written into the source instead is readable by anyone who can read the source or the binary. The token can also turn up in other places: in a reverse proxy’s access log, as <code>?token=</code> on the first page load (<code>/?token=</code>) and on the page’s metric URLs (see <a href="#security-notes-summary">Security notes</a>); in a browser tab duplicated or restored from the one that opened the dashboard (see <a href="#browser-bootstrap-with-token">Browser bootstrap with <code>?token=</code></a>); and in <code>curl</code> command lines, which <code>ps</code> shows like any other (see <a href="#curl-examples">curl examples</a>). An <code>export DASHBOARD_TOKEN=...</code> typed at a shell also lands in its history; <code>read -rs DASHBOARD_TOKEN &amp;&amp; export DASHBOARD_TOKEN</code> in bash or zsh sets it without echoing it or writing it there. On Linux a process’s environment, unlike its arguments, is readable only by its own user and root.</p>
+<p>The token also goes to whatever listens on the dashboard’s port. If another user holds that port when Goose binds it, after building its users or at once with <code>--no-autostart</code>, Goose logs <code>[dashboard]: failed to bind ...: ... (is the port already in use?)</code> and exits, and the other process keeps the port: a tunnel or a reloaded tab then sends your token to it. So does a tab left open after Goose stops without a clean exit (killed or crashed): the page keeps retrying the event stream and polling, with the token, until it gets through. Send the token only while your own Goose is up, as its <code>listening on</code> line shows. That is an info line, which <code>-q</code> hides; under <code>-q</code>, check that <code>lsof -iTCP:5118 -sTCP:LISTEN</code> names your own Goose process before you send the token. Close the dashboard tab once Goose is gone, and pick another port with <code>--dashboard-port</code> when the default is taken.</p>
+<p>So on a shared machine: keep the dashboard on loopback, set a token in the load test’s code, add <code>--no-telnet</code> unless you need the telnet Controller, leave <code>--websocket</code> off, run under <code>umask 077</code> or keep the run folders under a folder only you can read, reach the dashboard from your own machine over an <a href="#ssh-tunnels">SSH tunnel</a>, and send the token only once your own Goose holds the port, as above.</p>
+<h3 id="loopback-default-and-auth-policy"><a class="header" href="#loopback-default-and-auth-policy">Loopback default and auth policy</a></h3>
+<p>By default the dashboard binds to <strong>loopback only</strong> (<code>127.0.0.1</code>). That is intentional: metrics snapshots include request names, error strings, hostnames and rates, and the run’s notes, <code>--report-file</code> paths and run settings; none of it should be world-readable.</p>
+<p>Goose treats a bind host as loopback when it is:</p>
+<ul>
+<li><code>localhost</code> (case-insensitive, no DNS lookup)</li>
+<li>any IPv4 address in <code>127.0.0.0/8</code> (for example <code>127.0.0.1</code>, <code>127.0.0.2</code>)</li>
+<li>IPv6 loopback <code>::1</code> (with or without brackets: <code>[::1]</code>)</li>
+</ul>
+<p><strong>Non-loopback</strong> binds, including unspecified addresses that listen on all interfaces (<code>0.0.0.0</code>, <code>::</code>) and LAN addresses and hostnames, <strong>require</strong> a token at startup (<code>--dashboard-auth-token</code> or <code>GooseDefault::DashboardAuthToken</code>), unless <code>--dashboard-no-auth</code> is set. Goose refuses to start, with an error, if neither is given.</p>
+<p>If a token <strong>is</strong> configured, it is enforced, even on loopback, on the metric APIs: every metric and report route that <a href="#what-requires-a-token">What requires a token</a> lists.</p>
+<p>On a loopback bind every request must carry a loopback <code>Host</code> header (<code>localhost</code>, an address in <code>127.0.0.0/8</code> or <code>[::1]</code>, with any port), whatever the token setting; anything else, a missing <code>Host</code> included, gets <strong>403</strong> with the plain text body <code>host not allowed</code>. This covers every route, the page, its static files and <code>/api/v1/health</code> included. This stops DNS rebinding: a web page that points its own domain at 127.0.0.1 sends its own domain as <code>Host</code>, so it cannot read snapshots from a dashboard that has no token. A reverse proxy in front of a loopback bind must pass a loopback <code>Host</code> (nginx <code>proxy_pass http://127.0.0.1:5118</code> does by default). Whether a bind is loopback is decided by the <code>--dashboard-host</code> value as written, by the list above. A hostname that resolves to a loopback address does not count as loopback: this <code>Host</code> check does not apply to it, and it needs a token like any other non-loopback bind.</p>
+<h3 id="security-matrix-observe-vs-control"><a class="header" href="#security-matrix-observe-vs-control">Security matrix (observe vs control)</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Bind</th><th>Observe (<code>--dashboard</code>)</th><th>Control (<code>--dashboard-control</code>)</th></tr>
+</thead>
+<tbody>
+<tr><td>Loopback, no token</td><td>Metrics OK without auth</td><td><strong>Startup error</strong> (control needs a token or <code>--dashboard-no-auth</code>)</td></tr>
+<tr><td>Loopback, token set</td><td>Metrics require token</td><td>Control requires token</td></tr>
+<tr><td>Loopback, <code>--dashboard-no-auth</code></td><td>Metrics OK without auth</td><td>Control open without a token; cross site requests refused</td></tr>
+<tr><td>Non-loopback, no token</td><td><strong>Startup error</strong></td><td><strong>Startup error</strong></td></tr>
+<tr><td>Non-loopback, token set</td><td>Metrics require token</td><td>Control requires token</td></tr>
+<tr><td>Non-loopback, <code>--dashboard-no-auth</code></td><td>Metrics open; startup warning, page banner, Host rule</td><td>Control open without a token; startup warning, page banner, Host rule, cross site requests refused</td></tr>
+<tr><td>Any bind, <code>--dashboard-no-auth</code> with <code>--dashboard-auth-token</code></td><td><strong>Startup error</strong></td><td><strong>Startup error</strong></td></tr>
+</tbody>
+</table>
+</div>
+<p>“Metrics” in this table means every route the token guards when one is set: the snapshot, the event stream, the per request heatmap and the saved reports, which can be listed and downloaded. <a href="#what-requires-a-token">What requires a token</a> lists them. Every loopback bind also checks <code>Host</code> on every route, as <a href="#loopback-default-and-auth-policy">Loopback default and auth policy</a> explains; the “Host rule” in the table is the check off loopback under <code>--dashboard-no-auth</code>, in <a href="#off-loopback">Off loopback</a>, and “cross site requests refused” is the check in <a href="#control-without-a-token">Control without a token</a>.</p>
+<p>Additional control rules:</p>
+<ul>
+<li><code>--dashboard-control</code> without <code>--dashboard</code> → <strong>startup hard-fail</strong> (control does not auto-enable the dashboard). The same goes for <code>--dashboard-no-auth</code> without <code>--dashboard</code>.</li>
+<li>Without <code>--dashboard-no-auth</code>, control endpoints always require a non-empty <code>--dashboard-auth-token</code>, even on loopback, so other local processes cannot POST start/stop/users without the secret. The telnet Controller, on by default, takes the same commands from any local process with no authentication; see <a href="#on-a-shared-machine">On a shared machine</a>.</li>
+<li>Startup log shows capability at a glance: <code>(read-only)</code>, <code>(read-only, no token)</code>, <code>(control enabled)</code> or <code>(control enabled, no token)</code>; see <a href="#startup-lines">Startup lines</a>.</li>
+</ul>
+<h3 id="startup-lines"><a class="header" href="#startup-lines">Startup lines</a></h3>
+<p>Goose says at startup what the dashboard allows and how to get control. Read-only:</p>
+<pre><code class="language-text">[dashboard]: listening on http://127.0.0.1:5118 (read-only)
+[dashboard]: read-only; for control add --dashboard-control and either --dashboard-no-auth (no token) or --dashboard-auth-token &lt;token&gt;
+</code></pre>
+<p>With a token already set, the second line reads <code>read-only; for control add --dashboard-control</code>, as <code>--dashboard-no-auth</code> would then be refused.</p>
+<p>Control with a token, which is never printed; <code>&lt;token&gt;</code> is the literal placeholder:</p>
+<pre><code class="language-text">[dashboard]: listening on http://127.0.0.1:5118 (control enabled)
+[dashboard]: open http://127.0.0.1:5118/?token=&lt;token&gt; to control the test
+</code></pre>
+<p>On an unspecified bind, <code>--dashboard-host 0.0.0.0</code> or <code>::</code>, the listening line names the bind address, and the line to open names <code>127.0.0.1</code> or <code>[::1]</code>, which a browser on the same machine can open: <code>open http://127.0.0.1:5118/?token=&lt;token&gt; to control the test</code>. From another machine, use this machine’s address instead.</p>
+<p>Control with <code>--dashboard-no-auth</code> on loopback, the second line at warn level:</p>
+<pre><code class="language-text">[dashboard]: listening on http://127.0.0.1:5118 (control enabled, no token)
+[dashboard]: --dashboard-no-auth: anyone on this machine can start, stop and redirect the test
+</code></pre>
+<p>Read-only with <code>--dashboard-no-auth</code>, the listening line reads <code>(read-only, no token)</code> and the second line <code>read-only; for control add --dashboard-control</code>. Off loopback, <code>--dashboard-no-auth</code> adds the warning in <a href="#control-without-a-token">Control without a token</a>.</p>
+<h3 id="control-without-a-token"><a class="header" href="#control-without-a-token">Control without a token</a></h3>
+<p><code>--dashboard-no-auth</code> lets the dashboard start, stop, quit and change users, the run settings and the report switches, save the report now, and delete saved reports and logs, with no token and no <code>?token=</code> URL:</p>
+<pre><code class="language-bash">cargo run --release --features dashboard --example simple -- \
+  --dashboard --dashboard-control --dashboard-no-auth \
+  -H https://staging.example.com \
+  -u 50 -t 10m
+</code></pre>
+<p>Open <code>http://127.0.0.1:5118/</code>. The header reads <code>Live dashboard · control, no token</code>, and the Control card works as with a token. On loopback anyone on the machine can use it, as with a read-only dashboard with no token; with control on, Goose warns at startup.</p>
+<p><code>--dashboard-no-auth</code> can’t be given with <code>--dashboard-auth-token</code>, and needs <code>--dashboard</code>. Without <code>--dashboard-control</code> it keeps the dashboard read-only and lifts the token rule for a non-loopback bind.</p>
+<p>With no token, nothing but the browser’s own rules keeps another web page from sending the dashboard a request, so the control routes (<code>POST /api/v1/control/*</code> and <code>DELETE /api/v1/reports/{name}</code>) refuse what another site’s page can send. A request with an <code>Origin</code> other than <code>http://</code> followed by its own <code>Host</code>, or without <code>Content-Type: application/json</code>, gets <strong>403</strong> with <code>{ "ok": false, "reason": "cross_origin" }</code>. A form, a link and a plain <code>fetch</code> from another site can’t send that content type without the browser first asking the server, and Goose sends no CORS headers, so the browser never lets them. The dashboard page sends <code>Content-Type: application/json</code> on every control request, with <code>{}</code> as the body of a POST with nothing else to send; its Delete sends the header with no body. Behind a reverse proxy that serves the page over https, or that rewrites <code>Host</code>, the page’s <code>Origin</code> no longer matches, and every control request is refused this way.</p>
+<p>Under <code>--dashboard-no-auth</code>, control works through a proxy only when the page’s <code>Origin</code> still matches the <code>Host</code> Goose sees. Off loopback Goose takes any IP address as <code>Host</code>, so a proxy reached by an IP address only has to serve plain http and forward <code>Host</code> unchanged. A proxy reached by a name takes three things:</p>
+<ul>
+<li>the proxy serves plain http, under a name that resolves to the machine Goose runs on;</li>
+<li>it forwards that <code>Host</code> unchanged;</li>
+<li>Goose runs with <code>--dashboard-host</code> set to that name, and binds an address it resolves to.</li>
+</ul>
+<p>Such a proxy adds no encryption. For https at the proxy, use a token instead. Behind a proxy to a loopback bind, use a token too: that bind takes only a loopback <code>Host</code>, which never matches the page’s <code>Origin</code> once the proxy is reached by any other name.</p>
+<p><code>curl</code> and scripts send no <code>Origin</code>, so they need only the content type:</p>
+<pre><code class="language-bash">curl -X POST -H 'Content-Type: application/json' -d '{}' \
+  http://127.0.0.1:5118/api/v1/control/start
+</code></pre>
+<h4 id="off-loopback"><a class="header" href="#off-loopback">Off loopback</a></h4>
+<p>On a non-loopback bind, such as <code>--dashboard-host 0.0.0.0</code>, anyone who can reach the port can watch the test and, with <code>--dashboard-control</code>, start, stop and point the load at any host. Goose starts, and writes this warning straight to standard error, where neither <code>-q</code> nor the log level hides it, and to the Goose log at warn level:</p>
+<pre><code class="language-text">==============================================================================
+WARNING: the dashboard on http://0.0.0.0:5118 has no token (--dashboard-no-auth).
+Anyone who can reach this port can watch the test, start and stop it,
+and point the load at any host.
+Safer: bind 127.0.0.1 and use an ssh forward (ssh -L 5118:127.0.0.1:5118 host),
+or use --dashboard-auth-token in place of --dashboard-no-auth. Only IP addresses,
+localhost and the --dashboard-host name are accepted as Host; set --dashboard-host
+to the DNS name you browse to.
+==============================================================================
+</code></pre>
+<p>Without <code>--dashboard-control</code> the second sentence reads <code>Anyone who can reach this port can watch the test.</code> The page shows the first two sentences in a warning banner that names the address the page was opened at and stays for as long as the page is open.</p>
+<p>The safer ways are an <a href="#ssh-tunnels">SSH tunnel</a> to a loopback bind, or a token.</p>
+<p>Under <code>--dashboard-no-auth</code>, off loopback the server also checks <code>Host</code> on every route: it takes an IP address (<code>10.0.0.5:5118</code>, <code>[fe80::1]:5118</code>), <code>localhost</code>, or the <code>--dashboard-host</code> value, with any port, and refuses any other name with <strong>403</strong> and <code>{ "ok": false, "reason": "host_not_allowed" }</code>. A page that points its own domain at the load generator (DNS rebinding) sends that domain as both <code>Host</code> and <code>Origin</code>, so the <code>Origin</code> rule alone would let it through. To browse to the dashboard by a DNS name, set <code>--dashboard-host</code> to that name; Goose then binds an address that name resolves to.</p>
+<h3 id="what-requires-a-token"><a class="header" href="#what-requires-a-token">What requires a token</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Path</th><th>Auth when token configured</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>GET /</code> (the page’s HTML shell; the page is a single page app, SPA)</td><td><strong>Public</strong></td><td></td></tr>
+<tr><td><code>GET /static/app.js</code>, <code>GET /static/app.css</code></td><td><strong>Public</strong></td><td></td></tr>
+<tr><td><code>GET /api/v1/health</code></td><td><strong>Public</strong></td><td>Liveness and timing counters; includes <code>control_enabled</code> and the Controller addresses (no load-test metrics); see <a href="#health-endpoint-exception">Health endpoint exception</a></td></tr>
+<tr><td><code>GET /api/v1/snapshot</code></td><td><strong>Required</strong></td><td></td></tr>
+<tr><td><code>GET /api/v1/events</code> (SSE)</td><td><strong>Required</strong></td><td></td></tr>
+<tr><td><code>GET /api/v1/series</code></td><td><strong>Required</strong></td><td>One request’s response time heatmap; see <a href="#request-heatmap-endpoint">Request heatmap endpoint</a></td></tr>
+<tr><td><code>GET /api/v1/reports</code> and <code>/api/v1/reports/*</code></td><td><strong>Required</strong></td><td>The runs panel’s reports; see <a href="#report-endpoints">Report endpoints</a></td></tr>
+<tr><td><code>POST /api/v1/control/*</code></td><td><strong>Required</strong> when control is enabled, unless <code>--dashboard-no-auth</code></td><td>Even on loopback; <strong>404</strong> when control is off</td></tr>
+<tr><td><code>DELETE /api/v1/reports/{name}</code></td><td><strong>Required</strong> when control is enabled, unless <code>--dashboard-no-auth</code></td><td>Control token, as for <code>POST /api/v1/control/*</code>; <strong>404</strong> when control is off</td></tr>
+</tbody>
+</table>
+</div>
+<p>Under <code>--dashboard-no-auth</code> no token is configured, so no route needs one: the metric and report routes are open as on a loopback bind with no token, and the control routes take a request without a token and refuse a cross site one instead; see <a href="#control-without-a-token">Control without a token</a>.</p>
+<p>The shell and static assets stay public because classic <code>&lt;script src&gt;</code> loads cannot forward a document <code>?token=</code> query (or an in-memory secret). Sensitive data lives only in the snapshot, event stream, series and report APIs; mutation lives only on the control routes (the control POSTs and <code>DELETE /api/v1/reports/{name}</code>).</p>
+<h4 id="browser-bootstrap-with-token"><a class="header" href="#browser-bootstrap-with-token">Browser bootstrap with <code>?token=</code></a></h4>
+<p>Browsers’ <code>EventSource</code> cannot set <code>Authorization</code> headers. For remote or token-protected dashboards, open:</p>
+<pre><code class="language-text">http://{host}:{port}/?token=SECRET
+</code></pre>
+<p>The embedded UI reads <code>token</code> from the URL on load, strips it from the address bar with <code>history.replaceState</code>, and attaches <code>?token=</code> to <code>/api/v1/snapshot</code>, <code>/api/v1/events</code> and <code>/api/v1/series</code> requests.</p>
+<p>The UI keeps the token in the tab’s <code>sessionStorage</code>, so reloading the page keeps it. A new tab or window opened on the bare URL does not get it and needs <code>?token=</code> again, and the token goes away with the tab. A tab duplicated from the browser menu gets a copy, since browsers copy <code>sessionStorage</code> when duplicating a tab, and a browser that restores closed tabs may restore it with the tab. It is never written to <code>localStorage</code>. A token in the URL replaces a stored one. When the server answers <strong>401</strong> to a snapshot, event stream or series request, or to a start, stop, users, quit or settings request, the UI removes the stored token (a 401 on the report switches, Save report now, a Delete or a report route only shows the error), so a stale token (for example after Goose restarts with a new one) is not sent again on the next reload.</p>
+<p>Control POSTs from the SPA use <strong><code>Authorization: Bearer</code> only</strong> (never <code>?token=</code> on control routes), to avoid putting the secret on mutating URLs that may appear in proxy logs.</p>
+<p>If the shell loads without a token when one is required, the page still renders, but metric calls return <strong>401</strong> and the UI shows:</p>
+<pre><code class="language-text">Open this dashboard as http://host:port/?token=… (token required for metrics).
+</code></pre>
+<p>Non-browser clients may use either for <strong>metrics</strong>:</p>
+<pre><code class="language-bash">curl -H "Authorization: Bearer SECRET" http://host:5118/api/v1/snapshot
+# or
+curl "http://host:5118/api/v1/snapshot?token=SECRET"
+</code></pre>
+<p><code>GET /api/v1/snapshot</code> returns <strong>503</strong> with an empty body when no snapshot arrives within five seconds, which happens while the main loop (the Goose task that runs the load test’s phases) or the metrics processor is busy (for example building the users of a large <code>users</code> change), or when the dashboard is shutting down. Retry after a short wait.</p>
+<p>For <strong>control</strong>, the server accepts <strong><code>Authorization: Bearer</code> only</strong> (query <code>?token=</code> is rejected on control routes):</p>
+<pre><code class="language-bash">curl -H "Authorization: Bearer SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{}' \
+  -X POST http://host:5118/api/v1/control/start
+</code></pre>
+<h3 id="example-bind-on-all-interfaces"><a class="header" href="#example-bind-on-all-interfaces">Example: bind on all interfaces</a></h3>
+<pre><code class="language-bash">read -rs DASHBOARD_TOKEN &amp;&amp; export DASHBOARD_TOKEN
+
+cargo run --release --features dashboard --example simple -- \
+  --dashboard \
+  --dashboard-host 0.0.0.0 \
+  --dashboard-auth-token "$DASHBOARD_TOKEN" \
+  -H https://staging.example.com \
+  -u 200 -t 1h
+</code></pre>
+<p>From another machine, open <code>http://&lt;this machine's address&gt;:5118/?token=&lt;token&gt;</code>, with the token’s value in place of <code>&lt;token&gt;</code>. On a shared machine, set the token in the load test’s code instead of on the command line, where <code>ps</code> shows it to every user; see <a href="#on-a-shared-machine">On a shared machine</a>. Goose serves plain http, so the token and the metrics cross the network unencrypted; <a href="#ssh-tunnels">SSH tunnels</a> avoid that.</p>
+<h3 id="security-notes-summary"><a class="header" href="#security-notes-summary">Security notes (summary)</a></h3>
+<ul>
+<li><strong>Default off</strong>, <strong>default loopback</strong> bind; control is a <strong>separate</strong> opt-in (<code>--dashboard-control</code>).</li>
+<li>Non-loopback without a configured token → <strong>startup hard-fail</strong>, unless <code>--dashboard-no-auth</code> is set.</li>
+<li>Control without a token → <strong>startup hard-fail</strong>, even on loopback, unless <code>--dashboard-no-auth</code> is set.</li>
+<li>Token protects <strong>metric APIs</strong> when configured; control POSTs require the token when control is on, unless <code>--dashboard-no-auth</code> is set.</li>
+<li><code>--dashboard-no-auth</code> with <code>--dashboard-auth-token</code> → <strong>startup hard-fail</strong>. Under <code>--dashboard-no-auth</code> the control routes refuse a cross site request (403 <code>cross_origin</code>), and off loopback Goose warns at startup, the page shows a warning banner, and only an IP address, <code>localhost</code> or the <code>--dashboard-host</code> name is taken as <code>Host</code> (403 <code>host_not_allowed</code>).</li>
+<li>Shell/static/health stay public and contain no load-test metrics.</li>
+<li>Prefer <code>Authorization: Bearer</code> for scripts; browsers use <code>?token=</code> for metrics (EventSource limits) and <strong>Bearer only</strong> for control POSTs (with a token set, the server rejects query tokens on <code>/api/v1/control/*</code>).</li>
+<li>Query tokens on the first page load and on metric URLs can appear in reverse-proxy access logs; prefer an SSH tunnel, or a reverse proxy whose access log only you can read or that does not log query strings, when that matters. Every response sends <code>Referrer-Policy: no-referrer</code>, so the page does not pass its <code>?token=</code> URL on as a <code>Referer</code>.</li>
+<li><code>--dashboard-auth-token</code> is visible in process listings (<code>ps</code>) like any CLI argument; on a shared machine, set the token in code instead, as <a href="#on-a-shared-machine">On a shared machine</a> shows.</li>
+<li>Goose never logs the token value; the startup lines name the <code>&lt;token&gt;</code> placeholder, never the secret. See <a href="#what-goose-logs">What Goose logs</a>.</li>
+<li>The UI renders metric fields with <code>textContent</code> only (no <code>innerHTML</code>) and serves a strict Content-Security-Policy without <code>'unsafe-inline'</code> scripts.</li>
+<li>No session cookies and no CORS headers; classic cross-site cookie CSRF does not apply. With no token, under <code>--dashboard-no-auth</code>, the control routes check <code>Origin</code> and <code>Content-Type</code> instead.</li>
+<li>Every response sends <code>Cache-Control: no-store</code> (the first page load carries <code>?token=</code> and the APIs carry metrics) and <code>X-Content-Type-Options: nosniff</code>.</li>
+<li>On a loopback bind, requests whose <code>Host</code> is not loopback get 403 (DNS rebinding).</li>
+<li>A client gets 10 seconds to send a request’s headers, on a new connection and between requests on a keep-alive one, and the server holds at most <code>2 × --dashboard-max-clients + 16</code> connections, so a client that sends nothing is closed after 10 seconds and the number of open connections is bounded. The cap is shared by every client, with a token or without one, so a client that holds that many connections open keeps every other client out; Goose logs each connection it closes this way only at debug level. Long-lived SSE streams are not cut: the timeout covers headers only.</li>
+</ul>
+<h3 id="what-goose-logs"><a class="header" href="#what-goose-logs">What Goose logs</a></h3>
+<p>The main loop is the Goose task that runs the load test’s phases and applies control commands. Goose logs at info each control request the main loop answers, as <code>[dashboard]: control &lt;name&gt; ok</code> or <code>rejected</code>, with the phase, and logs at warn each one it can’t answer (<code>control admission full</code>, <code>control timed out</code>, <code>control unavailable</code>). Goose does not log a control request it refuses before the main loop sees it: a malformed body, an out of range value, a body over 16 KiB, or one that fails the cross site or <code>Host</code> checks (see <a href="#control-without-a-token">Control without a token</a> and <a href="#loopback-default-and-auth-policy">Loopback default and auth policy</a>). A missing or wrong token on a control POST (<code>report</code> and <code>report/now</code> among them) or on a Delete is logged at warn, and each deleted report at info. A missing or wrong token on a metric route or a report download is not logged, and no line at info or warn names the client’s address. Goose never logs the token value: the startup lines name the <code>&lt;token&gt;</code> placeholder, and a Controller’s <code>config</code> and <code>config-json</code> show a set token as <code>(set)</code>.</p>
+<p>Info lines go to the console, where <code>-q</code> hides them. Without <code>--goose-log</code> (<code>-G</code>) there is no log file, and the file <code>-G</code> writes holds warn and error lines only unless <code>-g</code> adds info. For a record of control requests and Deletes on disk, run with <code>-G</code> and <code>-g</code>.</p>
+<h2 id="ssh-tunnels"><a class="header" href="#ssh-tunnels">SSH tunnels</a></h2>
+<p>Prefer keeping Goose on loopback and tunneling from your laptop. On a shared machine, open the tunnel only once your own Goose holds the port (<a href="#on-a-shared-machine">On a shared machine</a> says how to check):</p>
+<pre><code class="language-bash">ssh -L 5118:127.0.0.1:5118 loadgen.example.com
+# open http://127.0.0.1:5118/ locally
+</code></pre>
+<p>With a loopback bind and no auth token (observe-only, or control under <code>--dashboard-no-auth</code>), no <code>?token=</code> is required over the tunnel. If you set a token (required when control is enabled without <code>--dashboard-no-auth</code>), pass it in the browser URL; see <a href="#browser-bootstrap-with-token">Browser bootstrap with <code>?token=</code></a>. On a shared machine a loopback bind with no token is open to every local user, so set a token there as well.</p>
+<p>TLS termination is not provided by Goose; use an SSH tunnel or reverse proxy when you need encryption in transit. A reverse proxy must pass a loopback <code>Host</code> to a loopback bind (<a href="#loopback-default-and-auth-policy">Loopback default and auth policy</a>); under <code>--dashboard-no-auth</code> one that serves https or rewrites <code>Host</code> gets every control request refused (<a href="#control-without-a-token">Control without a token</a>); and its access log records the <code>?token=</code> on the first page load and on metric URLs (<a href="#security-notes-summary">Security notes</a>).</p>
+<h2 id="control-endpoints"><a class="header" href="#control-endpoints">Control endpoints</a></h2>
+<h3 id="controlling-a-load-test-from-the-dashboard"><a class="header" href="#controlling-a-load-test-from-the-dashboard">Controlling a load test from the dashboard</a></h3>
+<p>Control is <strong>off by default</strong>. Enable it with <code>--dashboard-control</code> and a token, as here, or with <code>--dashboard-no-auth</code> instead of the token; see <a href="#control-without-a-token">Control without a token</a>:</p>
+<pre><code class="language-bash">read -rs DASHBOARD_TOKEN &amp;&amp; export DASHBOARD_TOKEN
+
+cargo run --release --features dashboard --example simple -- \
+  --dashboard \
+  --dashboard-control \
+  --dashboard-auth-token "$DASHBOARD_TOKEN" \
+  -H https://staging.example.com \
+  -u 50 -t 10m
+</code></pre>
+<p>Open <code>http://127.0.0.1:5118/?token=&lt;token&gt;</code>, with the token’s value in place of <code>&lt;token&gt;</code>; on a shared machine, set the token in code, as <a href="#on-a-shared-machine">On a shared machine</a> says. The header shows <code>Live dashboard · control</code>, and a control panel appears with <strong>Start</strong>, <strong>Stop</strong>, a target-users input (<code>Apply</code>, <code>−</code> / <code>+</code> step buttons), <strong>Edit settings</strong>, which opens a form for the host, the ramps and the run time, and, in Idle, <strong>Quit</strong>.</p>
+<h4 id="--no-autostart-recipe"><a class="header" href="#--no-autostart-recipe"><code>--no-autostart</code> recipe</a></h4>
+<p><code>--no-autostart</code> keeps Goose in <strong>Idle</strong> until something starts the test. It is allowed when any Controller is enabled (the telnet Controller is on by default, the WebSocket Controller only with <code>--websocket</code>) <strong>or</strong> when <code>--dashboard-control</code> is set (with dashboard, and a token or <code>--dashboard-no-auth</code>):</p>
+<pre><code class="language-bash">read -rs DASHBOARD_TOKEN &amp;&amp; export DASHBOARD_TOKEN
+
+cargo run --release --features dashboard --example simple -- \
+  --no-autostart \
+  --no-telnet \
+  --dashboard \
+  --dashboard-control \
+  --dashboard-auth-token "$DASHBOARD_TOKEN" \
+  -H https://staging.example.com \
+  -u 50
+</code></pre>
+<p>Then Start from the UI or via <code>POST /api/v1/control/start</code>. On a shared machine, set the token in code instead, as <a href="#on-a-shared-machine">On a shared machine</a> says, so <code>ps</code> does not show it. Without Controllers <strong>and</strong> without dashboard control, <code>--no-autostart</code> is a startup hard-fail (there would be no way to leave Idle). The same goes, with dashboard control off, when the Controllers are enabled but none could listen on its port.</p>
+<h3 id="endpoints"><a class="header" href="#endpoints">Endpoints</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Method</th><th>Path</th><th>Body</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>POST</code></td><td><code>/api/v1/control/start</code></td><td>empty, <code>{}</code>, or run settings</td><td>Start an idle load test → enters <strong>Increase</strong>; with run settings, apply them and start in one step, all or none</td></tr>
+<tr><td><code>POST</code></td><td><code>/api/v1/control/settings</code></td><td>run settings</td><td>Apply run settings without starting, all or none; see <a href="#run-settings">Run settings</a></td></tr>
+<tr><td><code>POST</code></td><td><code>/api/v1/control/stop</code></td><td>empty or <code>{}</code></td><td>Stop all users at once → enters <strong>Decrease</strong> (eventual Idle); accepted only in <strong>Increase</strong> and <strong>Maintain</strong>, else <code>"ok": false</code> with <code>invalid_phase</code></td></tr>
+<tr><td><code>POST</code></td><td><code>/api/v1/control/users</code></td><td><code>{"users": N}</code></td><td>Set absolute target user count (<code>N</code> an integer from 1 to 100000)</td></tr>
+<tr><td><code>POST</code></td><td><code>/api/v1/control/quit</code></td><td>empty or <code>{}</code></td><td>Shut Goose down; accepted only in <strong>Idle</strong></td></tr>
+<tr><td><code>POST</code></td><td><code>/api/v1/control/report</code></td><td><code>{"save": B, "graph_data": B}</code>, either or both, each <code>B</code> a boolean</td><td>Set Save report and Include graph data; see <a href="#saving-the-report">Saving the report</a></td></tr>
+<tr><td><code>POST</code></td><td><code>/api/v1/control/report/now</code></td><td>empty or <code>{}</code></td><td>Save report now; accepted only while a run is in progress, else <code>invalid_phase</code> (<code>invalid_report</code> under <code>--no-metrics</code>)</td></tr>
+<tr><td><code>DELETE</code></td><td><code>/api/v1/reports/{name}</code></td><td>none</td><td>Delete a folder’s reports and logs; see <a href="#report-endpoints">Report endpoints</a></td></tr>
+</tbody>
+</table>
+</div>
+<p>Auth: <code>Authorization: Bearer &lt;token&gt;</code> only (query <code>?token=</code> → <strong>401</strong>). Missing/wrong token → <strong>401</strong>. Control disabled → <strong>404</strong>. Under <code>--dashboard-no-auth</code> no token is needed, and a cross site request gets <strong>403</strong>; see <a href="#control-without-a-token">Control without a token</a>.</p>
+<h4 id="curl-examples"><a class="header" href="#curl-examples">curl examples</a></h4>
+<p>These pass the token on <code>curl</code>’s command line, which <code>ps</code> shows to every user. On a shared machine, put the header in a file only you can read and pass it with <code>-H @&lt;file&gt;</code> (curl 7.55 or later) instead.</p>
+<pre><code class="language-bash">read -rs DASHBOARD_TOKEN &amp;&amp; export DASHBOARD_TOKEN
+BASE="http://127.0.0.1:5118"
+
+# Start (success means the phase entered Increase, not that test_start finished)
+curl -sS -X POST \
+  -H "Authorization: Bearer $DASHBOARD_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{}' \
+  "$BASE/api/v1/control/start"
+
+# Stop (success means the cancel began: the phase is decrease, not idle)
+curl -sS -X POST \
+  -H "Authorization: Bearer $DASHBOARD_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{}' \
+  "$BASE/api/v1/control/stop"
+
+# Start against another host at 20 users per second, holding 10 minutes
+curl -sS -X POST \
+  -H "Authorization: Bearer $DASHBOARD_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"host":"https://staging.example.com","increase_rate":20,"run_time_secs":600}' \
+  "$BASE/api/v1/control/start"
+
+# Hold the running test 5 more minutes than it started with
+curl -sS -X POST \
+  -H "Authorization: Bearer $DASHBOARD_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"run_time_secs":900}' \
+  "$BASE/api/v1/control/settings"
+
+# Set absolute user count
+curl -sS -X POST \
+  -H "Authorization: Bearer $DASHBOARD_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"users":100}' \
+  "$BASE/api/v1/control/users"
+
+# Quit (only while idle: Goose shuts down)
+curl -sS -X POST \
+  -H "Authorization: Bearer $DASHBOARD_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{}' \
+  "$BASE/api/v1/control/quit"
+</code></pre>
+<p>Example success bodies:</p>
+<pre><code class="language-json">{
+  "ok": true,
+  "command": "start",
+  "message": "load test started",
+  "phase": "increase",
+  "active_users": 0,
+  "target_users": 50
+}
+</code></pre>
+<pre><code class="language-json">{
+  "ok": true,
+  "command": "stop",
+  "message": "load test stopped",
+  "phase": "decrease",
+  "active_users": 50,
+  "target_users": 0
+}
+</code></pre>
+<p>Logical rejections return <strong>HTTP 200</strong> with <code>"ok": false</code> and a stable <code>error</code> code: <code>invalid_phase</code> when the phase cannot take the command, <code>prepare_failed</code> when a Start cannot prepare the load test, <code>conflicting_settings</code> when the command conflicts with other settings, such as <code>users 1</code> while an increase time is set, <code>no_host</code> when clearing the host would leave something with no host, and <code>internal</code> when applying the command fails inside Goose, which then ends the load test with that error. The report control routes add three: <code>invalid_report</code> when Save report is turned on under <code>--no-metrics</code> or during a run with no folder, and for Save report now under <code>--no-metrics</code>; <code>report_busy</code> while Save report now is still writing the report it was last asked for; and <code>report_failed</code> when Save report now can’t start writing the report, as during a run with no folder or when its folder can’t be written to, with the reason in <code>message</code>. A write that fails after an <code>ok: true</code> answer shows in the snapshot’s <code>report.error</code>. When one setting is at fault the body also names it in <code>field</code> (for example <code>"field": "users"</code>, or <code>"field": "host"</code> for a Start with no host); <code>field</code> is left out otherwise. A malformed body returns <strong>400</strong> with <code>error</code> set to <code>bad_request</code>, and a <code>users</code> value that is not an integer from 1 to 100000 returns <strong>400</strong> with <code>invalid_users</code>; those two 400 bodies, and every 503 body below, have <code>"field": null</code>. A run settings body has 400 refusals of its own, which name the field; see <a href="#run-settings">Run settings</a>. A body larger than 16 KiB gets <strong>413</strong> with a plain text body, before the token is checked.</p>
+<p>A Start is refused with <code>prepare_failed</code> and <code>"field": "host"</code> before it replies when some scenario has no host from <code>--host</code>, the scenario itself or the default host, and also when a <code>test_start</code> or <code>test_stop</code> transaction is registered and neither <code>--host</code> nor the default host is set, since those run with no scenario host. An autostarted run with the same configuration fails at launch instead.</p>
+<p>When the main loop does not answer, a control POST returns <strong>503</strong> with <code>"ok": false</code>, an <code>error</code> code from this table, and <code>phase</code>, <code>active_users</code>, <code>target_users</code> and <code>field</code> set to <code>null</code>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th><code>error</code></th><th>When</th><th>Client action</th></tr>
+</thead>
+<tbody>
+<tr><td><code>busy</code></td><td>Four control requests are already waiting for the main loop</td><td>Wait and retry</td></tr>
+<tr><td><code>unavailable</code></td><td>The main loop no longer takes control requests, for example because the load test is exiting</td><td>Do not retry</td></tr>
+<tr><td><code>timeout</code></td><td>The main loop did not answer within 15 seconds</td><td>Re-read <code>phase</code> and <code>target_users</code> from a snapshot before retrying: a command still queued at the timeout is skipped, but one the main loop had started may still apply</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="start-stop-users-and-run-settings"><a class="header" href="#start-stop-users-and-run-settings">Start, stop, users and run settings</a></h2>
+<h3 id="start-and-stop-semantics"><a class="header" href="#start-and-stop-semantics">Start and Stop semantics</a></h3>
+<p><strong>Start success means the test entered Increase</strong>, not that <code>test_start</code> transactions finished. Goose replies as soon as the phase transitions (same timing as Controllers), then runs <code>reset_run_state</code> / user <code>test_start</code> on the main loop. A long <code>test_start</code> does not block the HTTP 200.</p>
+<p><strong>Stop is accepted only in Increase and Maintain.</strong> In any other phase, a planned ramp down or a users decrease among them, it replies <code>"ok": false</code> with <code>invalid_phase</code>; to end a ramp down early, use a Controller’s <code>shutdown</code> or Ctrl-C, both of which also exit Goose.</p>
+<p><strong>Stop is not instantaneous idle.</strong> A successful Stop begins a <strong>cancel</strong> through <code>AttackPhase::Decrease</code> (Canceling), which stops all users at once, whatever the decrease rate or time: those shape a users ramp’s own ramp down, never a Stop. The process returns to <strong>Idle</strong> only after decrease finishes. While a Stop’s cancel runs (phase <code>decrease</code> with <code>stopping</code> true):</p>
+<ul>
+<li><strong>Stop</strong> is disabled (a Stop is already under way)</li>
+<li><strong>Start</strong> stays disabled until phase is <code>idle</code> again</li>
+<li><strong>Users</strong> is refused until phase is <code>idle</code> again (the dashboard returns <code>"ok": false</code> with <code>invalid_phase</code>, a Controller replies false), so Users cannot turn a Stop back into a running load test</li>
+</ul>
+<p>The snapshot’s <code>stopping</code> field is <code>true</code> from the Stop until <code>idle</code>; a Controller <code>shutdown</code> and Ctrl-C set it the same way. A users ramp’s own ramp down is also phase <code>decrease</code>, but <code>stopping</code> stays <code>false</code> and <strong>Users</strong> is accepted there: the ramp down is abandoned and the run holds the new count until stopped. While a test plan runs, <strong>Users</strong> is refused with <code>invalid_phase</code> and <code>"field": "users"</code>, as the plan sets users: edit the plan, or stop and set users to switch to a users ramp.</p>
+<h3 id="users-on-a-running-test"><a class="header" href="#users-on-a-running-test">Users on a running test</a></h3>
+<p>A users ramp keeps its shape when the user count changes mid run (Target, the <code>users</code> command, or <code>POST /api/v1/control/users</code>): Goose takes the new count and keeps the hold (the run time after the ramp up) and the ramp down, and regenerates the steps still ahead from them.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>When Users arrives</th><th>What happens</th></tr>
+</thead>
+<tbody>
+<tr><td>During the ramp up</td><td>Ramp to the new count, then hold for the full run time, then ramp down for the new count; a new count that is the one the run already has holds that count until stopped</td></tr>
+<tr><td>During the hold</td><td>Ramp to the new count; the hold keeps its end. If the ramp outlasts it, or the new count is the one the run already has, the run holds that count until stopped, with no ramp down</td></tr>
+<tr><td>During the ramp down</td><td>The ramp down is abandoned, and the run holds the new count until stopped</td></tr>
+<tr><td>While holding until stopped</td><td>Ramp to the new count, and keep holding</td></tr>
+</tbody>
+</table>
+</div>
+<p>Adding users ramps at the increase rate; removing them at the decrease rate, else the increase rate; 1 per second for an increase with no increase rate, and for a decrease with neither rate. Increase and decrease times are not used for these changes. A decrease rate sent while a users ramp runs regenerates the ramp down still ahead at the new rate; on a run with a run time and no ramp down, where all users would stop at once when the hold ends, it adds a ramp down at that rate; on a run holding until stopped it only sets the rate for the next Users decrease, a later run time, and the next Start. Clearing the decrease rate (<code>null</code>) on a running test removes a ramp down this run added, so all users stop at once again, and is refused with <code>conflicting_settings</code> while a ramp down the run started with is still ahead. An increase rate sent while running is for the next Users increase, and never re-paces a ramp in progress. While running, either rate is refused with <code>conflicting_settings</code> when its own time is set, since a time changes only in Idle, and both are refused during the ramp down, while stopping, and while a test plan runs.</p>
+<h3 id="run-settings"><a class="header" href="#run-settings">Run settings</a></h3>
+<p><code>POST /api/v1/control/settings</code> applies run settings, and <code>POST /api/v1/control/start</code> applies them and starts in one step, so no other client can change a setting in between. Both take the token (the one <code>--dashboard-auth-token</code> or <code>GooseDefault::DashboardAuthToken</code> sets; there is no second token for control) and the 16 KiB body limit, and go to the main loop as one command, checked as a whole: a refusal, a Start’s <code>prepare_failed</code> among them, leaves every setting, the test plan, the running test and <code>target_users</code> as they were.</p>
+<pre><code class="language-json">{
+  "host": "https://staging.example.com",
+  "users": 100,
+  "increase_rate": 10,
+  "increase_time_secs": null,
+  "decrease_rate": 5,
+  "decrease_time_secs": null,
+  "run_time_secs": 600,
+  "test_plan": null
+}
+</code></pre>
+<ul>
+<li>A field left out is left alone, and <code>null</code> clears it back to Goose’s default. Clearing <code>host</code> goes back to each scenario’s host, or the default host. A field that is not one of these is refused.</li>
+<li>Values are bounded as the Controllers bound them: <code>host</code> an <code>http</code> or <code>https</code> url with no user name or password; <code>users</code> 1 to 100000; the rates 0.01 to 100000 users per second; the times whole seconds from 1 to 30 days (<code>0</code> is refused: send <code>null</code> to clear); <code>test_plan</code> in the <code>--test-plan</code> format, within the bounds of the <a href="telnet.html#controller-commands">Controller commands</a>: at most 100 steps of up to 30 days each, in at most 4096 bytes, starting 1 to 100000 users in total.</li>
+<li><code>test_plan</code> switches to a test plan and clears users, the ramp settings and the run time; <code>users</code> switches back and clears the test plan. <code>test_plan: null</code> is accepted only with <code>users</code>. While a test plan is configured, a ramp setting without <code>users</code> is refused with <code>"field": "users"</code>.</li>
+<li>In Idle, a rate and its own time each replace the other, so a rate alone clears its time, and a time alone clears its rate; on a running test a rate is refused while its own time is set. The two cannot both be set in one body. A test plan cannot be sent with <code>users</code> or a ramp setting, though clearing a ramp setting beside it with <code>null</code> is accepted.</li>
+<li><code>users: null</code> is refused. On a running test <code>users</code> is refused in a settings body: change users on its own with <code>/api/v1/control/users</code>.</li>
+</ul>
+<p>Refusals are checked in this order, and the first one is answered:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Status</th><th><code>error</code></th><th>When</th></tr>
+</thead>
+<tbody>
+<tr><td>400</td><td><code>bad_request</code></td><td>The body is not JSON, not an object, or has a field Goose does not know</td></tr>
+<tr><td>400</td><td><code>invalid_value</code></td><td>A value of the wrong type or out of bounds, and <code>users: null</code></td></tr>
+<tr><td>400</td><td><code>conflicting_settings</code></td><td>Settings that never go together, whatever the state</td></tr>
+<tr><td>200</td><td><code>invalid_phase</code></td><td>A setting the phase cannot change, set or cleared</td></tr>
+<tr><td>200</td><td><code>conflicting_settings</code></td><td>A ramp setting while a test plan is configured (<code>"field": "users"</code>); a rate on a running test while its own time is set; clearing the decrease rate or the run time on a running test where that is refused; the command line’s rules (run time, a decrease rate or time, and a test plan under <code>--iterations</code>, a test plan under <code>--no-reset-metrics</code>, and in Idle a time with fewer than 2 users)</td></tr>
+<tr><td>200</td><td><code>no_host</code></td><td><code>host: null</code> would leave a scenario, or a <code>test_start</code> or <code>test_stop</code> transaction, with no host</td></tr>
+<tr><td>200</td><td><code>prepare_failed</code></td><td>A Start that cannot prepare the load test, as without settings</td></tr>
+</tbody>
+</table>
+</div>
+<p>When one setting is at fault, the refusal names it in <code>field</code> (<code>host</code>, <code>users</code>, <code>increase_rate</code>, <code>increase_time</code>, <code>decrease_rate</code>, <code>decrease_time</code>, <code>run_time</code> or <code>test_plan</code>); a <code>bad_request</code> has <code>"field": null</code>, and a Start refused for its phase, or a <code>prepare_failed</code> not caused by a missing host, has no <code>field</code>. A reply to new settings, sent to <code>settings</code> or with a Start, carries <code>settings</code> as the snapshot does, whether accepted or refused by the main loop, so the page that sent them has the settings before the next snapshot; after a 503 <code>timeout</code>, read them from the next snapshot.</p>
+<p>Which settings each phase takes, by <code>settings.stage</code>: <code>ramp_up</code>, <code>hold</code> and <code>hold_until_stopped</code> are a running users ramp, <code>test_plan</code> a running test plan, <code>ramping_down</code> the configured ramp down, and <code>stopping</code> a Stop, <code>shutdown</code> or Ctrl-C:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Setting</th><th>Idle</th><th>Running, users ramp</th><th>Running, test plan</th><th>Ramping down</th><th>Stopping</th></tr>
+</thead>
+<tbody>
+<tr><td><code>host</code></td><td>yes</td><td>no</td><td>no</td><td>no</td><td>no</td></tr>
+<tr><td><code>users</code> (<code>/api/v1/control/users</code>)</td><td>yes</td><td>yes</td><td>no</td><td>yes, abandons the ramp down and holds</td><td>no</td></tr>
+<tr><td><code>increase_rate</code></td><td>yes</td><td>yes, for the next Users increase; refused while the increase time is set</td><td>no</td><td>no</td><td>no</td></tr>
+<tr><td><code>decrease_rate</code></td><td>yes</td><td>yes, regenerates the ramp down ahead, or only sets the rate on a run holding until stopped; refused while the decrease time is set</td><td>no</td><td>no</td><td>no</td></tr>
+<tr><td><code>increase_time_secs</code>, <code>decrease_time_secs</code></td><td>yes</td><td>no</td><td>no</td><td>no</td><td>no</td></tr>
+<tr><td><code>run_time_secs</code></td><td>yes</td><td>yes</td><td>no, the plan sets how long it runs</td><td>no</td><td>no</td></tr>
+<tr><td><code>test_plan</code></td><td>yes</td><td>yes, replaces the ramp</td><td>yes, restarts from its first step</td><td>yes, replaces the ramp down</td><td>no</td></tr>
+</tbody>
+</table>
+</div>
+<p>A test plan sent to a running test starts from its first step, ramping from the current user count.</p>
+<h3 id="run-time-on-a-running-test"><a class="header" href="#run-time-on-a-running-test">Run time on a running test</a></h3>
+<p>The run time is the hold at full users after the ramp up, on a running test as in Idle. A new value is always written to the configuration, which <code>settings.run_time_secs</code> and the next Start read, and changes this run:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>When the run time changes</th><th>What happens</th></tr>
+</thead>
+<tbody>
+<tr><td>During the ramp up, before the hold</td><td>The hold ahead takes the new run time; with no run time before, a hold is added, then the run ramps down as configured, or stops all users at once</td></tr>
+<tr><td>During the hold</td><td>The hold ends at its start plus the new run time; if that has passed, the ramp down starts at once. If the new run time puts the end of the hold earlier than the end of the ramp from a users change made during the hold, the run holds until stopped</td></tr>
+<tr><td>While holding until stopped</td><td>The run holds from now for the new run time, then ramps down as configured, or stops all users at once</td></tr>
+</tbody>
+</table>
+</div>
+<p>Clearing it (<code>null</code>, or <code>runtime 0</code> from a Controller) on a running test holds until stopped, and is refused with <code>conflicting_settings</code> while a ramp down is configured. The run time is refused during the ramp down, while stopping and while a test plan runs. Telnet and WebSocket take the same rules for <code>runtime</code>.</p>
+<h3 id="run-settings-in-the-snapshot"><a class="header" href="#run-settings-in-the-snapshot">Run settings in the snapshot</a></h3>
+<p>Every snapshot carries <code>settings</code>: what the next Start runs, and where the running test is. It reaches every tab within a tick of a change from any front end.</p>
+<pre><code class="language-json">"settings": {
+  "host": "https://example.com",
+  "hosts": ["https://example.com/"],
+  "users": 100,
+  "increase_rate": 10.0,
+  "increase_time_secs": null,
+  "decrease_rate": null,
+  "decrease_time_secs": null,
+  "run_time_secs": 600,
+  "test_plan": null,
+  "hold_ends_in_secs": 412,
+  "stage": "hold"
+}
+</code></pre>
+<p>Names are the command line’s flags in snake case, durations are whole seconds with a <code>_secs</code> suffix, and <code>null</code> means unset, so Goose’s default applies.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><code>host</code></td><td>The <code>--host</code> override, or <code>null</code></td></tr>
+<tr><td><code>hosts</code></td><td>The hosts the next Start will load test: per scenario, <code>--host</code>, else the scenario’s host, else the default host, sorted and deduplicated, written as the top level <code>hosts</code> writes them (<code>http://localhost/</code>, with the slash). A scenario with no host from any source adds nothing, so it is right in Idle, after a host change, and under <code>--no-autostart</code> with no host yet. The top level <code>hosts</code> keeps meaning the current or last run’s hosts</td></tr>
+<tr><td><code>users</code></td><td>The configured user count, <code>null</code> only with a test plan. <code>target_users</code> is different: the count the current step ramps toward</td></tr>
+<tr><td><code>increase_rate</code>, <code>decrease_rate</code></td><td>Users per second</td></tr>
+<tr><td><code>increase_time_secs</code>, <code>decrease_time_secs</code></td><td>The ramp up or ramp down as a time</td></tr>
+<tr><td><code>run_time_secs</code></td><td>The hold at full users after the ramp up, not the total run time</td></tr>
+<tr><td><code>test_plan</code></td><td>The test plan as <code>--test-plan</code> takes it, in canonical form: each step’s duration in whole seconds, so <code>10,1h30m</code> reads <code>10,5400</code></td></tr>
+<tr><td><code>hold_ends_in_secs</code></td><td>Seconds until the hold ends once it has a fixed end, <code>0</code> while a ramp runs past the hold’s end, and still <code>0</code> once a users ramp outlasts the hold and the run holds until stopped (see <a href="#users-on-a-running-test">Users on a running test</a>); <code>null</code> at any other time</td></tr>
+<tr><td><code>stage</code></td><td>Where the run is: <code>idle</code>, <code>ramp_up</code>, <code>hold</code>, <code>hold_until_stopped</code>, <code>ramping_down</code> or <code>stopping</code> for a users ramp; <code>idle</code>, <code>test_plan</code> or <code>stopping</code> for a test plan. When a users ramp outlasts the hold and the run holds until stopped, <code>stage</code> still reads <code>hold</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><code>phase</code> alone cannot say this: <code>decrease</code> with <code>stopping</code> false is a Users decrease, the configured ramp down, or a test plan step to fewer users. After Users during a ramp down, <code>run_time_secs</code> is unchanged while <code>stage</code> reads <code>hold_until_stopped</code>.</p>
+<h2 id="health-endpoint-exception"><a class="header" href="#health-endpoint-exception">Health endpoint exception</a></h2>
+<p><code>GET /api/v1/health</code> is intentionally <strong>unauthenticated</strong> so external monitors can check that the dashboard process is up without holding the metrics secret. Example response:</p>
+<pre><code class="language-json">{
+  "ok": true,
+  "version": "&lt;goose package version&gt;",
+  "last_build_ms": 2,
+  "last_snapshot_ms": 180,
+  "snapshot_timeouts": 0,
+  "build_count": 42,
+  "active_sse_clients": 1,
+  "control_enabled": false,
+  "auth_required": true,
+  "loopback": true,
+  "controllers": { "telnet": "127.0.0.1:5116", "websocket": null }
+}
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><code>ok</code></td><td>Always <code>true</code> when the handler runs</td></tr>
+<tr><td><code>version</code></td><td>Goose crate package version (<code>CARGO_PKG_VERSION</code>)</td></tr>
+<tr><td><code>last_build_ms</code></td><td>Time the metrics processor spent on the last published snapshot, draining pending metrics and building it, in milliseconds (<code>0</code> if none yet)</td></tr>
+<tr><td><code>last_snapshot_ms</code></td><td>Round trip of the last published snapshot in milliseconds, from the dashboard’s request to the published JSON (<code>0</code> if none yet)</td></tr>
+<tr><td><code>snapshot_timeouts</code></td><td>Snapshot requests not answered within 4 seconds since process start; a late answer is dropped, never published</td></tr>
+<tr><td><code>build_count</code></td><td>Successful hub snapshot builds since process start</td></tr>
+<tr><td><code>active_sse_clients</code></td><td>Concurrent SSE clients currently holding a slot</td></tr>
+<tr><td><code>control_enabled</code></td><td>Whether the <code>POST /api/v1/control/*</code> routes and Delete are registered (<code>--dashboard-control</code>)</td></tr>
+<tr><td><code>auth_required</code></td><td>Whether control needs a token: <code>false</code> only under <code>--dashboard-no-auth</code>, when the page sends no token; <code>true</code> otherwise. It does not say whether metrics need one: a loopback dashboard with no token reads <code>true</code> and serves its metrics to anyone on the machine</td></tr>
+<tr><td><code>loopback</code></td><td>Whether the dashboard is bound to a loopback address; with <code>auth_required</code> false and this false, the page shows the no token warning</td></tr>
+<tr><td><code>controllers</code></td><td>The <code>host:port</code> the telnet and WebSocket Controllers listen on, after defaults (<code>127.0.0.1:5116</code> and <code>127.0.0.1:5117</code> unless set), or <code>null</code> for one turned off, the telnet Controller with <code>--no-telnet</code> and the WebSocket Controller unless <code>--websocket</code> turns it on, or one that couldn’t listen on its port; the page footer names them</td></tr>
+</tbody>
+</table>
+</div>
+<p>These counters are ops-safe (timing and client counts only). The response does <strong>not</strong> include rates, hosts under test, request names, or error strings. <code>controllers</code> names this process’s own listeners, which take no authentication; it reveals only where they listen. <code>last_snapshot_ms</code> minus <code>last_build_ms</code> is time spent waiting on the main loop and the metrics processor’s queue, plus serializing the JSON. The main loop answers the dashboard between steps and sleeps up to 500 ms between them, so this difference can reach about 500 ms by design; a large <code>last_build_ms</code> is the one that points at the metrics processor. Both durations are also logged at <code>debug</code> with a <code>[dashboard]</code> prefix when a build completes, and a late answer to a timed out request is logged with its round trip.</p>
+<h2 id="the-page-in-detail"><a class="header" href="#the-page-in-detail">The page in detail</a></h2>
+<h3 id="what-the-ui-shows"><a class="header" href="#what-the-ui-shows">What the UI shows</a></h3>
+<ul>
+<li><strong>Phase badge</strong>: <code>idle</code> (gray), <code>increase</code> (blue), <code>maintain</code> (green), <code>decrease</code> (orange), <code>shutdown</code> (red)</li>
+<li><strong>Connection indicator</strong>: green for SSE, yellow for poll fallback, red when disconnected, gray once Goose has exited</li>
+<li><strong>KPI strip</strong>: users, RPS, fail %, and the whole run p95 and average latency. The tiles share the row, and each value is sized to its tile, so it stays on one line. The users tile shows the active users, then the target, smaller. RPS shows whole requests a second at 100 and above, and two decimals below 100; hover the tile for the two decimals the tables show.</li>
+<li><strong>Charts</strong>: trailing series window (300 seconds) for RPS and failures per second and active users, and the response time heatmap; see <a href="#the-response-time-heatmap">The response time heatmap</a>. The RPS and failures chart and the average latency chart, and their data tables, end at the last complete second: the newest second is still filling, so it is not drawn. Their colors follow the system’s light or dark theme, and change with it while the page is open.</li>
+<li><strong>Whole run</strong> card: requests, failures, RPS, failures per second, fail %, average, p50, p95 and p99, and minimum and maximum response times</li>
+<li><strong>Sortable tables</strong>: Scenarios, Transactions, Requests, Errors and Transaction errors. The scenario and transaction tables list every registered scenario and transaction and are never truncated; the request, error and transaction error tables show the top rows, 100 requests ranked by count and 50 of each kind of error ranked by occurrences (truncated server-side for large runs). The Transaction errors table counts each error a transaction returned that is not a request error, by transaction (numbered from 1), scenario, name and error. The Transactions and Requests tables show failures per second and minimum and maximum response times, and the Requests table each request’s status codes, most frequent first: the top three and how many more, such as <code>200 9,812 · 503 44 · 500 40 · +2</code>, with every code on hover (empty with <code>--no-status-codes</code>)</li>
+<li><strong>Hosts</strong> in the header: the current or last run’s hosts. In Idle, when the next Start would load test other hosts, they read <code>Last run: …</code>.</li>
+<li><strong>Run settings</strong> in the header, with control off: the same summary line the control panel shows, leaving out the hosts while running, and including the next Start’s hosts in Idle when they differ from the last run’s; see <a href="#run-settings-in-the-snapshot">Run settings in the snapshot</a></li>
+<li><strong>Control panel</strong>: with <code>--dashboard-control</code>, the run settings summary, Start / Stop / Quit / target users; see <a href="#controlling-a-load-test-from-the-dashboard">Controlling a load test from the dashboard</a>. Without it, the card says the dashboard is read-only and how to get control; see <a href="#the-read-only-card">The read-only card</a></li>
+<li><strong>Notes</strong> in the header: the run’s <code>--notes</code></li>
+<li><strong>Report bar</strong> at the top of the page: the <strong>Save report</strong> and <strong>Include graph data</strong> switches, <strong>Save report now</strong> with control on, and the <code>--report-file</code> paths; see <a href="#saving-the-report">Saving the report</a></li>
+<li><strong>Runs panel</strong>: the reports in the folder that holds the run folders, with downloads and comparisons, and with <code>--dashboard-control</code> a Delete button for each</li>
+</ul>
+<p>Every figure in the KPI strip except the users, and every figure in the <strong>Whole run</strong> card and the tables, covers the whole run, since the test started or since metrics were last reset; the p95 and average tiles and the <strong>Whole run</strong> card say so in their labels, and hovering a table’s <code>avg ms</code>, <code>min ms</code>, <code>p50</code>, <code>p95</code>, <code>p99</code>, <code>max ms</code> or <code>status codes</code> heading says “Whole run”. Only the charts and the heatmap are by second. Goose measures response times to the microsecond. It shows times under 10 ms to the hundredth of a millisecond and from 10 ms in whole milliseconds, rounded half up, so a 0.418 ms response reads <code>0.42</code> and a 37.6 ms one <code>38</code>. Averages follow the same rule.</p>
+<p>Transaction times cover the whole transaction function, so they include <code>--throttle-requests</code> delays and any sleep inside it, and scenario times include the wait after each transaction. Every registered scenario and transaction has a row, so a scenario excluded by <code>--scenarios</code>, or one no user was assigned to, stays at 0 runs.</p>
+<p>When control is off there are <strong>no control buttons</strong>. Use the Controllers (or enable dashboard control) to change the running test. The page footer names the address each Controller listens on, as <code>GET /api/v1/health</code> reports it, or says none is running.</p>
+<p>When coordinated omission mitigation is on (<code>--co-mitigation</code>) and has recorded at least one event, the KPI strip, the <strong>Whole run</strong> card and the requests table show adjusted response times, which include the synthetic times mitigation adds for requests a stalled user could not send. The KPI tiles and the <strong>Whole run</strong> card label them “adjusted”, the requests table says so in a note above it, and hovering a value shows the measured one. The <strong>Whole run</strong> card shows both. The maximum is adjusted too; the minimum has no adjusted value and is always the measured one. The adjusted aggregate includes every request, using measured times for requests that never needed backfill, as the printed metrics and the reports do.</p>
+<h3 id="ui-walkthrough-control-panel"><a class="header" href="#ui-walkthrough-control-panel">UI walkthrough (control panel)</a></h3>
+<p>When <code>health.control_enabled</code> is true and the SPA has a token, or <code>health.auth_required</code> is false:</p>
+<ol>
+<li><strong>Phase badge</strong> still shows <code>idle</code> / <code>increase</code> / <code>maintain</code> / <code>decrease</code> / <code>shutdown</code>.</li>
+<li><strong>Start</strong> is enabled only in <code>idle</code>.</li>
+<li><strong>Stop</strong> is enabled in <code>increase</code> and <code>maintain</code> only.</li>
+<li><strong>Summary line</strong>: one line above the buttons says what the next Start runs, for example <code>https://example.com/ · 100 users at 10/s · hold 10 min · then 10/s down</code>, and while running where the run is: <code>ramping to 100 users at 10/s</code>, <code>ramp down in 6 min 52 s</code> during the hold, <code>holding until stopped</code>, <code>ramping down at 10/s</code>, <code>stopping</code>, or for a test plan <code>test plan: 3 steps, peak 100 users, 1 h 1 min total</code>. Its wording comes from <code>settings.stage</code>. It is not a live region, so the countdown is not announced.</li>
+<li><strong>Target users</strong>: enter an absolute count and <strong>Apply</strong>, or use <strong>−</strong> / <strong>+</strong> with a configurable step (default 10). Active user count is a read-only label from the latest snapshot. In Idle the field shows the configured users the next Start runs (empty with a test plan, where applying a count replaces the plan with a users ramp); while running, the count the run ramps toward. It follows the server unless you are editing it: an edit holds until its Apply succeeds and a snapshot reports the value, or until another client changes the count, when the field shows the new count and the status line says it changed elsewhere. <strong>−</strong> and <strong>+</strong> step from what the field shows. An unapplied edit is discarded, and the status line says so once, when the run starts stopping or a test plan starts. The field and step are read only, never disabled, with the reason under them, while <code>stopping</code> is set, while a test plan runs, and without a token.</li>
+<li><strong>Edit settings</strong> opens a form under the summary line for <strong>Host</strong>, <strong>Ramp up</strong> and <strong>Ramp down</strong> (each a number with users per second, or a total time in s, min or h), and <strong>Run time</strong>. It starts open in Idle and closed while running, and this browser remembers whether you opened or closed it, which then decides how it starts. Each field follows the server unless you are editing it, as Target does. An unapplied edit is pending: the form reads <code>Edit settings (N unapplied)</code>, <strong>Apply settings</strong> sends the pending edits, <strong>Discard edits</strong> drops them, and in Idle <strong>Start</strong> reads <strong>Start with changes</strong> and sends them with the start, the Target count among them. An emptied field goes out as <code>null</code>, and a field you did not touch is left out. A number the browser cannot read is refused on the page, naming the field, rather than sent as a clear. While edits are pending in Idle, Target’s own Apply waits, and <strong>−</strong> / <strong>+</strong> only change the field. The first change of host in a page load asks first: <code>Load will go to …</code> under Host, with Confirm and Cancel, before anything is sent. Editing Host while the confirmation is open changes the destination it names; the confirmation closes, sending nothing, once the edits no longer change the host, or once the button that opened it can no longer act. A time shows in the largest unit that divides it evenly, so an applied <code>120 s</code> reads <code>2 min</code>, the same setting. While a users ramp runs, a ramp set by rate changes only its rate, a ramp set by time is read only (<code>Set by time: 5 min; change it when idle</code>), and the run time stays live, with <code>held 3 min 8 s of 10 min</code> under it during the hold. Fields the stage cannot change are read only, with the reason under them, and an edit the stage can no longer take is discarded, the status line saying so once. On a refusal that names a setting, the form opens, marks the field and moves focus to it. A test plan is set from a Controller or through <code>/api/v1/control/settings</code> or <code>/api/v1/control/start</code>.</li>
+<li>The status line shows the server’s <code>message</code>, in red for a refusal; a 503 reads that control is busy or timed out, or gives the server’s message; a 401 also puts a banner at the top of the page saying to reopen with <code>?token=</code>. A 403 from the cross site guard reads <code>Refused: the request's Origin doesn't match this dashboard's address (another site, or a proxy)</code>, and one from the Host rule <code>Refused: open the dashboard by its IP address or its --dashboard-host name</code>.</li>
+<li><strong>Quit</strong> shows only in <code>idle</code>, and shuts Goose down; the status line then reads <code>Goose is shutting down.</code></li>
+</ol>
+<p>Quit is refused outside <code>idle</code> (<code>"ok": false</code> with <code>invalid_phase</code>), so stop a running test first. A Controller <code>shutdown</code> command exits the Goose process from any phase.</p>
+<p>The header subtitle says which dashboard it is: <code>Live dashboard · control</code> with a token, <code>Live dashboard · control, no token</code> under <code>--dashboard-no-auth</code>, and <code>Live dashboard · read-only</code> without control; it stays <code>Live dashboard</code> when <code>GET /api/v1/health</code> fails.</p>
+<h3 id="the-read-only-card"><a class="header" href="#the-read-only-card">The read-only card</a></h3>
+<p>Without <code>--dashboard-control</code> the Control card stays, and says in place of its controls that the dashboard is read-only and how to get control:</p>
+<pre><code class="language-text">Read-only: this dashboard can't start, stop or change the test.
+To control it from here, restart Goose with --dashboard-control --dashboard-no-auth (no token), or with --dashboard-control --dashboard-auth-token &lt;token&gt; and open http://127.0.0.1:5118/?token=&lt;token&gt;.
+Control this test via the telnet controller listening on 127.0.0.1:5116.
+</code></pre>
+<p>The address is the one the page was opened at. When the page has a token, or the dashboard runs with <code>--dashboard-no-auth</code>, only control is missing, and the second sentence reads <code>To control it from here, restart Goose with --dashboard-control added.</code> The last sentence names the telnet and WebSocket Controllers that listen, and is left out when neither does. The notice is a note, named <code>Read-only dashboard</code> for screen readers, and holds nothing that takes focus. When <code>GET /api/v1/health</code> fails, the card says <code>Couldn't check whether control is on (/api/v1/health failed). Reload to retry.</code> instead.</p>
+<h3 id="the-response-time-heatmap"><a class="header" href="#the-response-time-heatmap">The response time heatmap</a></h3>
+<p>The response time card shows how long requests took, second by second, over the trailing window (300 seconds). Each column is one second, the oldest on the left. Each row is a range of response times: 100 microseconds each under a millisecond, 1 ms each up to 64 ms, 2 ms up to 100 ms, 10 ms up to 500 ms, 50 ms up to 1 second, 100 ms up to 5 seconds and 1 second up to 61 seconds, 237 rows in all. The bottom row holds responses under 100 microseconds, the row from 100 ms holds 100 to 109 ms, and the row from 1.4 s holds 1,400 to 1,499 ms. Past 61 seconds, which a longer <code>--timeout</code> allows, each row is one of the buckets Goose keeps a run’s times in, 0.8% to 1.6% as wide as the times it holds. Each row takes whole buckets, and a bucket that crosses a row’s edge is drawn in the row where it ends, so a time just under a row’s upper edge may be drawn in the row above it. The rows sit on a logarithmic latency axis, so each row is as tall as the range of times it holds, and the axis is marked at 0.1, 0.2 and 0.5 ms, 1, 2, 5, 10, 20, 50, 100, 200 and 500 ms and 1, 2, 5, 10, 20 and 60 s, as far as the data reaches. Seconds are labelled along the bottom at round steps of 1, 2, 5, 10, 15, 30, 60, 120 or 300 seconds from the start of the test, the smallest that gives at most eight labels, so a label stays on its second as the window slides.</p>
+<p>The color of a cell shows how many requests in that second took that long, on a logarithmic scale running from the sparsest cell drawn to the busiest: the legend under the chart shows the sparsest cell’s count at its left end and the busiest’s at its right. In the light theme more requests are darker, in the dark theme brighter, and the legend marks the scale <code>(log scale)</code>. Even the sparsest cell stands out from the card, so a cell of one request is visible. A second with no requests is empty. Hover a cell for its second, its row’s range of times, how many requests it holds and their share of the second’s requests, followed by that second’s p50, p95 and p99. A row under a millisecond reads as its range, such as <code>0.9 to 1 ms</code>.</p>
+<p>Three lines cross the heatmap: each second’s p50, p95 and p99, in one color and one width, p50 solid, p95 dashed and p99 dotted. Each is labelled at the right edge with its newest value, such as <code>p95: 81 ms</code>, or one label for lines with the same newest value, such as <code>p95, p99: 4 ms</code>, and the legend shows a sample of each stroke. A second’s percentile is worked out from the same counts its cells show, by the rule Goose uses for its whole run figures: the rank is the second’s request count times the percentile, rounded, and the percentile is the time of the first row, from the fastest, at which the running count of requests reaches that rank. A heatmap percentile is the middle of its row, where its point sits. A line breaks at a second with no requests. The labels, the tooltip, the summary and the data table show it truncated, to the tenth of a millisecond under 1 ms and in whole milliseconds from 1 ms, so the value shown always falls inside its row. In the <strong>Adjusted</strong> view the lines include the synthetic times, as the cells do.</p>
+<p>Each column covers only the requests that started in that second. The KPI strip, the <strong>Whole run</strong> card and the tables cover the whole run instead, since the test started or since metrics were last reset, and say so. While a test runs, the two newest seconds are not drawn yet, because their slowest requests are still arriving.</p>
+<p>Choose a request in the select at the top of the card to see that request alone, and <strong>All requests</strong> to go back. Response times are kept by second for each of the first 100 request names Goose records a response time for, in the order it first records one, counting again from each metrics reset. Those are the names in the select, as far as they are among the rows the Requests table receives; a name seen later counts toward all requests but is not in the select. The select lists them by method, then name, whatever the Requests table’s sort, and is not rebuilt while it has focus: a request that appears then is added when focus leaves it.</p>
+<p>When coordinated omission mitigation is on and has recorded an event, two buttons choose what the heatmap counts: <strong>Adjusted</strong>, the default, as in the KPI strip and the tables, adds the synthetic times mitigation adds for requests a stalled user could not send, and <strong>Measured</strong> leaves them out. Synthetic times belong to the seconds of the stall, which Goose only learns about when it ends, so cells in seconds already drawn can change.</p>
+<p><code>--no-percentiles-over-time</code> turns the heatmap and the histograms behind it off, and the card shows the average latency chart instead. The same flag turns off the HTML report’s heatmap.</p>
+<h2 id="snapshot-data"><a class="header" href="#snapshot-data">Snapshot data</a></h2>
+<h3 id="heatmap-data"><a class="header" href="#heatmap-data">Heatmap data</a></h3>
+<p>The snapshot’s <code>series.heatmap</code> carries the heatmap, or <code>null</code> when percentiles over time are off:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><code>generation</code></td><td>Which set of histograms the columns come from. It changes when they are cleared, by a metrics reset or a new test, and a client then starts over.</td></tr>
+<tr><td><code>rev</code></td><td>The newest change the columns include.</td></tr>
+<tr><td><code>since</code></td><td>The <code>rev</code> these columns follow on from, or <code>0</code> for every column of the window.</td></tr>
+<tr><td><code>start_second</code>, <code>end_second</code></td><td>The window, in seconds from the start of the test. Columns before <code>start_second</code> are dropped.</td></tr>
+<tr><td><code>hold_from</code></td><td>Seconds from this one on are still filling and not drawn.</td></tr>
+<tr><td><code>buckets_us</code></td><td><code>[time, lowest, highest]</code> in microseconds for each row index: the time the row stands for, which is its middle, then the lowest and highest time the row holds. A longer table replaces a shorter one; entries never change.</td></tr>
+<tr><td><code>columns</code></td><td>The columns that changed: <code>{ "second", "measured": [index, count, ...], "synthetic": [index, count, ...] }</code>, each non empty bucket as an index and a count, <code>synthetic</code> empty unless mitigation has recorded an event.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Only the columns that changed are sent. Every SSE client gets the same snapshot, whose heatmap holds the columns changed since the previous one; a client holding another <code>rev</code>, for example after it reconnects, asks <code>GET /api/v1/snapshot?heatmap_generation=&lt;generation&gt;&amp;heatmap_since=&lt;rev&gt;</code> for the columns it lacks. Without those parameters <code>GET /api/v1/snapshot</code> returns every column of the window. The dashboard does all of this itself.</p>
+<p>How big this is depends on how widely response times spread. In a test of 300 users at about 26 requests a second over 3 request names, each SSE snapshot’s heatmap took about 6.7 KB (7.1 KB at most), 5.4 KB of it the row table <code>buckets_us</code>, and a whole window of 92 seconds took 12.4 KB. Times spread over every row are the worst case: then each column holds an index and a count for up to 237 rows (more past 61 seconds with a longer <code>--timeout</code>) instead of a few. In that worst case the columns in each snapshot grow many times over, but the snapshot as a whole grows far less, as the row table it always carries stays most of it; a whole window, which is all columns, grows many times over.</p>
+<h3 id="request-heatmap-endpoint"><a class="header" href="#request-heatmap-endpoint">Request heatmap endpoint</a></h3>
+<p><code>GET /api/v1/series?method=&lt;method&gt;&amp;name=&lt;request name&gt;</code> returns one request’s heatmap over the same window, as the card uses it when a request is chosen, in the same shape: <code>{ "method", "name", "heatmap" }</code>. <code>method</code> is the method as the Requests table shows it (<code>GET</code>, <code>POST</code>, …) and <code>name</code> is the request name; URL encode both. Add <code>heatmap_generation</code> and <code>heatmap_since</code> to get only the columns changed since the heatmap you hold. It needs the token when one is configured, as <code>GET /api/v1/snapshot</code> does.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Status</th><th>Body</th></tr>
+</thead>
+<tbody>
+<tr><td><code>200</code></td><td><code>{ "method", "name", "heatmap": {...} }</code>, the heatmap in the shape of the snapshot’s <code>series.heatmap</code></td></tr>
+<tr><td><code>400</code></td><td><code>{"error":"bad_request"}</code>: <code>method</code> or <code>name</code> is missing, or the two together are longer than 2,048 bytes</td></tr>
+<tr><td><code>401</code></td><td>Empty: the token is missing or wrong, as for <code>GET /api/v1/snapshot</code></td></tr>
+<tr><td><code>404</code></td><td><code>{"error":"not_found"}</code>: the request has no heatmap of its own (not one of the first 100 names, or <code>--no-percentiles-over-time</code>)</td></tr>
+<tr><td><code>503</code></td><td><code>{"error":"busy"}</code> with four series requests already in flight, <code>{"error":"timeout"}</code> when no answer arrives within 15 seconds, or <code>{"error":"unavailable"}</code> when Goose is no longer taking dashboard requests (shutting down)</td></tr>
+</tbody>
+</table>
+</div>
+<p>Answers are cached for one second for each request and heatmap held, so several viewers polling one request cost about one export a second.</p>
+<pre><code class="language-bash">curl -s -H "Authorization: Bearer $DASHBOARD_TOKEN" \
+  "http://127.0.0.1:5118/api/v1/series?method=GET&amp;name=%2F"
+</code></pre>
+<h3 id="metrics-disabled"><a class="header" href="#metrics-disabled">Metrics disabled</a></h3>
+<p>If Goose is started with <code>--no-metrics</code>, the dashboard still serves the shell and health endpoint, but snapshots report <code>flags.metrics_disabled: true</code> with empty request/error tables and empty series. The UI surfaces an honest empty state rather than fabricating data.</p>
+<p>Scenario and transaction metrics can also be turned off on their own:</p>
+<ul>
+<li><code>--no-transaction-metrics</code> sets <code>flags.transaction_metrics_disabled: true</code>; <code>transactions</code> is empty and the Transactions table says transaction metrics are disabled.</li>
+<li><code>--no-scenario-metrics</code> sets <code>flags.scenario_metrics_disabled: true</code>; <code>scenarios</code> is empty and the Scenarios table says scenario metrics are disabled.</li>
+</ul>
+<p>Both flags are also true under <code>--no-metrics</code>, where both tables say metrics are disabled.</p>
+<h2 id="saving-the-report"><a class="header" href="#saving-the-report">Saving the report</a></h2>
+<p><a href="../getting-started/output-files.html">Output files</a> gives the rules for every file Goose writes. The dashboard adds rules 9 to 13.</p>
+<p>The report bar at the top of the page shows the <strong>Save report</strong> switch: whether this run’s <code>report.html</code> and <code>report.json</code> are written to its folder, <code>goose-runs/&lt;YYYYMMDD-HHMMSS&gt;</code> unless <code>--output-dir</code> names one. It starts on with <code>--dashboard</code>, except under <code>--no-metrics</code>. Without <code>--dashboard</code>, it starts on with a bare <code>--report-file</code>, which writes into the run’s folder, so such a console run is listed in the runs panel too; <code>--report-file</code> paths alone do not turn it on. The bar lists the <code>--report-file</code> paths, which are always written.</p>
+<p>Save report can be turned on or off at any time. While it is on, Goose keeps the run’s graph data and heatmap for the whole run. While it is off and no <code>--report-file</code> path or <code>--pdf-print-html</code> is given, Goose keeps only the dashboard’s last 10 minutes of graphs and 5 minutes of heatmap, so memory stays flat on a long soak test. Turning it on during a run keeps graphs from then on, with that window before it, and the report says when its graphs start and why.</p>
+<p><strong>Save report now</strong> writes the run’s report as it stands into its folder while the run continues, marked <code>in_progress</code>. The report at the end of the run replaces it, also when Save report is off. The second switch, <strong>Include graph data</strong>, adds the per second graph data to the JSON report, as <code>--report-graph-data</code> does, and can also be changed at any time.</p>
+<p>Save report now, Delete, and changing either switch need <code>--dashboard-control</code> and the token, or <code>--dashboard-no-auth</code>, as Start and Stop do. Without control the switches are shown read only, so Save report stays on and every <code>--dashboard</code> run, except under <code>--no-metrics</code> or with a folder it can’t write to, writes <code>report.html</code> and <code>report.json</code> into its folder. A 60 minute run of <code>examples/simple</code> without control, with 300 users at about 28 requests a second over 2 request names, grew by about 0.8 MiB an hour. With <code>--dashboard-control</code> you can turn Save report off to keep memory flat. <code>--no-metrics</code> keeps no report, so Save report stays off.</p>
+<p>When a run ends, a banner reads <code>Report saved in &lt;folder&gt;. Download HTML, JSON or Markdown.</code>, naming the run’s folder, with a button for each report, or says why the report couldn’t be saved. For a folder whose name the report routes don’t take (see <a href="#report-endpoints">Report endpoints</a>), it reads <code>Report saved in &lt;folder&gt;.</code> with no buttons. A Save report now that fails while the run goes on is shown at the foot of the runs panel, with the reason.</p>
+<p>When only <code>--dashboard</code> asks for the run’s folder, with no output flag given without a path and no <code>--output-dir</code>, a folder Goose can’t write to does not stop the run. Goose prints a warning before any load, and runs with Save report off. A banner at the top of the page names the folder and the reason, and stays for the whole run. The Save report switch says why when you hover over it.</p>
+<h3 id="the-runs-panel"><a class="header" href="#the-runs-panel">The runs panel</a></h3>
+<p>The <strong>Runs</strong> panel looks in the folder that holds each run’s folder: the parent of the <code>--output-dir</code> folder, or <code>goose-runs</code> by default. It lists each folder there that holds a <code>report.json</code> or <code>report.json.gz</code> it can read; a folder whose JSON report can’t be read is left out. It lists only folders with a name the report routes take; see <a href="#report-endpoints">Report endpoints</a>. It lists them while Goose is Idle too, before any run has a folder, and it lists folders written by runs without the dashboard. Rows are sorted newest first, by start time, or by when the report was written if it records no start time. Each row shows the folder’s name, when the run started (in the viewer’s local time), its notes, how long it ran, its users, requests and failures, how it ended (<code>Finished</code>, <code>Stopped</code>, <code>Ctrl-C</code>, <code>Canceled: &lt;reason&gt;</code> or <code>Users exited</code>), and the test. A report still marked in progress shows as <code>Running</code> for the run in progress and as <code>Incomplete</code> for any other: a run that ended without its final report. The first 50 rows are shown; <code>Show all</code> lists the rest. The list is read when the page opens, when a run starts, when Goose writes a report into a run’s folder, and after a Delete. Goose writes a report there at the end of a run and on Save report now, and the snapshot’s <code>report.writes</code> counts those writes.</p>
+<p>Each row offers HTML, Markdown and JSON. A format the folder lacks is rendered from its JSON report; without graph data in it, the rendered HTML report says the graphs were not recorded.</p>
+<p>With <code>--dashboard-control</code>, each row also has a <strong>Delete</strong> button. It asks <code>Delete the reports and logs in &lt;folder&gt;?</code>, then deletes the folder’s reports and the logs Goose names there, and the folder if that leaves it empty. The folder of the run in progress can’t be deleted. Nor can the folder a bare <code>--goose-log</code> is open in: Goose keeps that log open in the last run’s folder until the next run starts. Nor can a folder that holds <code>.goose-run</code>. A Goose process keeps that file in its run’s folder while the run lasts, and after the run while a bare <code>--goose-log</code> is open there, so a dashboard never deletes what another process is writing. A process that is killed leaves the file behind; remove it by hand to free the folder.</p>
+<p>Check <strong>Compare</strong> on exactly two rows and <code>Download comparison</code> downloads a Markdown report of the newer run with the older as its baseline: every number shows its change, as with <a href="../getting-started/common.html#comparing-against-a-baseline"><code>--baseline-file</code></a>. Runs with no requests can’t be compared. When the two runs are from different tests the panel warns that the comparison may not mean much.</p>
+<p>Downloads are fetched with the token in an <code>Authorization</code> header and saved from the response, so the token never goes into a URL. Reports are always downloaded, never shown in the browser.</p>
+<h3 id="report-endpoints"><a class="header" href="#report-endpoints">Report endpoints</a></h3>
+<p>The <code>GET</code> routes need the token when one is configured, as <code>GET /api/v1/snapshot</code> does. <code>DELETE</code> is registered only with <code>--dashboard-control</code> and needs the token as <code>Authorization: Bearer</code> (none under <code>--dashboard-no-auth</code>), as the control POSTs do. Each reads the disk only on request. Goose keeps what it parsed of each JSON report in memory, keyed by path, size and modification time, and writes no index.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Endpoint</th><th>Returns</th></tr>
+</thead>
+<tbody>
+<tr><td><code>GET /api/v1/reports</code></td><td><code>{ "dir": "goose-runs", "reports": [ ... ] }</code>: for each folder holding a regular <code>report.json</code> or <code>report.json.gz</code> that can be read, its <code>name</code>, the run’s record from its JSON report (<code>notes</code>, <code>goose_version</code>, <code>test</code>, <code>started</code>, <code>ended</code>, <code>ended_by</code>, <code>canceled_reason</code>, <code>in_progress</code> and <code>graphs_start</code>, with <code>notes</code>, <code>canceled_reason</code> and <code>graphs_start</code> left out when unset), <code>running</code>, <code>duration_secs</code>, <code>max_users</code>, <code>requests</code> and <code>failed_requests</code>, newest first</td></tr>
+<tr><td><code>GET /api/v1/reports/{name}/{file}</code></td><td><code>report.html</code>, <code>report.md</code> or <code>report.json</code> of folder <code>{name}</code>, as an attachment named <code>goose-&lt;test&gt;-&lt;name&gt;.&lt;ext&gt;</code>; a format the folder lacks is rendered from its JSON report, or answers <strong>422</strong> with a one line reason when it can’t be</td></tr>
+<tr><td><code>GET /api/v1/reports/{name}/compare.md?baseline={name}</code></td><td>Report <code>{name}</code> compared to the baseline, as Markdown, named <code>goose-&lt;test&gt;-&lt;name&gt;-vs-&lt;baseline&gt;.md</code>, starting with a line naming both and when each started. <code>422</code> with a one line reason when a JSON report can’t be read or is inconsistent; a run with no requests compares as zeros</td></tr>
+<tr><td><code>DELETE /api/v1/reports/{name}</code></td><td><code>204</code> once the folder’s <code>report.html</code>, <code>report.md</code>, <code>report.json</code>, <code>goose.log</code> and the request, transaction, scenario, error and debug logs Goose names there, each plain or gzipped, and any temporary report file a stopped process left, are deleted, then the folder if that leaves it empty; <code>409</code> for the folder of the run in progress once it holds a report, the folder a bare <code>--goose-log</code> is open in, or a folder that holds <code>.goose-run</code>; <code>404</code> for a folder the panel does not list</td></tr>
+</tbody>
+</table>
+</div>
+<p>A name is an ASCII letter or digit, then any mix of ASCII letters, digits, <code>.</code>, <code>_</code> and <code>-</code>. A folder with any other name is not listed. A name of any other form, a folder that is not one level down, a symlink, or a folder without a regular JSON report gets a plain <code>404</code>. A folder whose JSON report is not yet on disk is not listed: Goose writes the JSON report last, through a temporary file and a rename. Reports and comparisons are sent with <code>Content-Disposition: attachment</code>, <code>X-Content-Type-Options: nosniff</code>, <code>Cache-Control: no-store</code> and <code>Content-Security-Policy: sandbox</code>, so a report opened anyway runs no script with the dashboard’s origin.</p>
+<pre><code class="language-bash">curl -s -H "Authorization: Bearer $DASHBOARD_TOKEN" http://127.0.0.1:5118/api/v1/reports
+curl -s -OJ -H "Authorization: Bearer $DASHBOARD_TOKEN" \
+  http://127.0.0.1:5118/api/v1/reports/nightly/report.html
+curl -s -OJ -H "Authorization: Bearer $DASHBOARD_TOKEN" \
+  "http://127.0.0.1:5118/api/v1/reports/nightly-2/compare.md?baseline=nightly"
+curl -s -X POST -H "Authorization: Bearer $DASHBOARD_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"save": false}' http://127.0.0.1:5118/api/v1/control/report
+</code></pre>
+<p>With no token, which only a loopback bind or <code>--dashboard-no-auth</code> allows, every user on this machine (and off loopback, everyone who can reach the port) can list and download every report in that folder while the dashboard is up, even if the files themselves are readable only by their owner. On a shared machine, set a token in the load test’s code, as <a href="#on-a-shared-machine">On a shared machine</a> shows.</p>
+<h3 id="waiting-after-an-autostarted-run"><a class="header" href="#waiting-after-an-autostarted-run">Waiting after an autostarted run</a></h3>
+<p>When an autostarted <code>--dashboard</code> run (one without <code>--no-autostart</code>) ends, Goose stays up instead of exiting if Save report wrote its report and any client is connected to the event stream, so the report can still be downloaded. With <code>--dashboard-control</code> it prints:</p>
+<pre><code class="language-text">Run finished. Download it from the dashboard at http://127.0.0.1:5118. Press Quit in the dashboard or Ctrl-C to exit.
+</code></pre>
+<p>and without it:</p>
+<pre><code class="language-text">Run finished. Download it from the dashboard at http://127.0.0.1:5118. Press Ctrl-C to exit.
+</code></pre>
+<p>The phase goes back to <code>idle</code>, and the test does not start again. Goose exits on Quit in the dashboard, on Ctrl-C, or on a Controller <code>shutdown</code>; there is no exit timer, so closing the tab does not end the wait. Nothing is written or printed again, and <code>test_stop</code> does not run again. Any client on <code>/api/v1/events</code> counts, not only browser tabs: a script tailing the event stream when the run ends keeps Goose up until Goose is told to quit. With no client connected when the run ends, Goose exits at once, as it does without the dashboard. A run stopped from the dashboard or a Controller prints no <code>Run finished</code> line; Goose stays up in Idle, as after any Stop. A run canceled with Ctrl-C or aborted by a <code>--threshold</code> exits with no wait.</p>
+<h2 id="graphdata-memory-cost"><a class="header" href="#graphdata-memory-cost">GraphData memory cost</a></h2>
+<p>Enabling <code>--dashboard</code> turns on the same per second <strong>GraphData</strong> series collection used for HTML report graphs (also enabled by <code>--report-file</code> and <code>--pdf-print-html</code>). Goose keeps every second of the whole run while a report will be written at the end of it: to a <code>--report-file</code> or <code>--pdf-print-html</code> path, or by <a href="#saving-the-report">Save report</a>, which is on by default with <code>--dashboard</code>. With Save report off and no <code>--report-file</code> or <code>--pdf-print-html</code> path, the dashboard keeps only twice its chart window (10 minutes). Without <code>--dashboard</code>, <code>--report-file</code> or <code>--pdf-print-html</code> nothing is recorded. The recording costs memory even when no browser is connected:</p>
+<ul>
+<li>Per-second counters for requests, errors, users, and average latency are kept for the whole run while a report will be written, and for the last 10 minutes otherwise.</li>
+<li>While a report will be written, memory grows with unique request names × run length, the same cost as generating HTML graphs; otherwise it stays flat.</li>
+<li>Request, error and transaction error tables truncate to the top rows (<code>flags.requests_truncated</code> / <code>flags.errors_truncated</code> / <code>flags.transaction_errors_truncated</code> when capped); series charts use a fixed trailing window (5 minutes).</li>
+</ul>
+<p>With no SSE client connected and no <code>GET /api/v1/snapshot</code> in the last two seconds (<code>/api/v1/health</code> does not count), the dashboard issues <strong>no</strong> snapshot builds (no extra metrics-processor work beyond GraphData recording). When clients are connected, snapshots are coalesced to about <strong>1 Hz</strong> for all viewers. Concurrent SSE clients are capped (default <strong>32</strong>, tunable with <code>--dashboard-max-clients</code>); further clients receive HTTP 503.</p>
+<p>Each snapshot build (while clients are connected or polling) runs on the <strong>metrics processor</strong> task: it drains pending metrics, exports the trailing series window, and builds percentile maps for the aggregate, up to 100 request rows, and one row per scenario and transaction, a number fixed by the load test’s code. That cost scales with unique request names and the timing histograms Goose already maintains; the attack main loop does <strong>not</strong> await the build. Under extreme cardinality, prefer fewer unique request names, a shorter test, or disable the dashboard if you need absolute minimal overhead (same trade-off as <code>--report-file</code>).</p>
+<p>With <code>--dashboard</code>, and also for a <code>--report-file</code> or <code>--pdf-print-html</code>, Goose keeps one response time histogram per second for the last 300 seconds, for all requests together and for each of the first 100 request names, plus the same for synthetic times while coordinated omission mitigation is on. It does not grow with run length. Its size depends on how many request names there are and how many distinct response times occur: about 0.2 MB for all requests and 10 MB for 100 names with typical response times, and up to 30 MB in the worst case at the default 60 second timeout, more with a longer <code>--timeout</code>. Filling it costs little. In a test of 1,000 users at about 21,800 requests a second over 25 request names, the heatmap added no measurable CPU or instructions per request: the difference from the dashboard without it was within the runs’ spread of about 1%. It added 3.1 MiB of peak memory. Each user’s batch of metrics is still sent every 100 requests or 250 ms, as without the heatmap; a batch keeps each request name’s response times for the second it is filling and the next one, and a request from any other second sends it early. For the HTML report’s heatmap, while a report will be written, each second is also added once to whole run columns: up to 600 for all requests and 60 for each of those 100 names. The columns merge in pairs as they fill, so they too stop growing. <code>--no-percentiles-over-time</code> turns all of it off, along with the small per request cost of filling it.</p>
+<p>For extreme runs with tens of thousands of unique request names, expect higher GraphData memory (same as <code>--report-file</code>). Disable the dashboard for the least overhead, just as you can turn off the telnet Controller with <code>--no-telnet</code> (the WebSocket Controller is off unless <code>--websocket</code> turns it on).</p>
+<h2 id="relationship-to-controllers"><a class="header" href="#relationship-to-controllers">Relationship to Controllers</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Need</th><th>Prefer</th></tr>
+</thead>
+<tbody>
+<tr><td>Watch live charts and tables</td><td>Live Dashboard (<code>--dashboard</code>)</td></tr>
+<tr><td>Start / Stop / set users, host, ramps and run time from a browser</td><td>Dashboard control (<code>--dashboard-control</code> + token, or <code>--dashboard-no-auth</code>)</td></tr>
+<tr><td>Test plan from a script</td><td>Dashboard control (<code>/api/v1/control/settings</code> or <code>/api/v1/control/start</code>) or the Controllers</td></tr>
+<tr><td>Full command set, <code>config</code> and <code>metrics</code></td><td><a href="telnet.html">Telnet</a> / <a href="websocket.html">WebSocket</a> Controllers</td></tr>
+<tr><td>Shut Goose down from Idle</td><td>Dashboard control (Quit) or the Controllers (<code>shutdown</code>)</td></tr>
+<tr><td>Shut down a running test</td><td>Controllers (<code>shutdown</code>)</td></tr>
+</tbody>
+</table>
+</div>
+<p>Dashboard control reuses the same phase-transition logic as Controllers (shared helpers), and Controllers remain available alongside the dashboard.</p>
+<p>For full Controller documentation, see <a href="overview.html">Controlling A Running Goose Load Test</a>.</p>
+<h2 id="stability"><a class="header" href="#stability">Stability</a></h2>
+<h3 id="building-it-in"><a class="header" href="#building-it-in">Building it in</a></h3>
+<p>In 0.19 and 0.20 the dashboard is an opt in crate feature: build with <code>--features dashboard</code>. The goal is to make it a default feature in 1.0, a decision to be made on the feedback from 0.19 and 0.20.</p>
+<h3 id="apiv1-in-019-and-020"><a class="header" href="#apiv1-in-019-and-020"><code>/api/v1</code> in 0.19 and 0.20</a></h3>
+<p>Changes are additive where possible: new fields, new endpoints and new error codes, under snapshot <code>version: 1</code>. A client must ignore fields it does not know and must not fail on an error code it does not know. Every change to <code>/api/v1</code> is listed in the CHANGELOG. A change that is not additive, such as a field or endpoint removed, renamed or given a different meaning, raises the snapshot <code>version</code>, and the CHANGELOG says so. 0.20 brings back distributed load testing (Gaggle) and may make such changes so the API can describe more than one worker.</p>
+<h3 id="apiv1-from-10"><a class="header" href="#apiv1-from-10"><code>/api/v1</code> from 1.0</a></h3>
+<p>Semver covers it: within 1.x no field, endpoint or error code is removed, renamed or given a different meaning. New ones may be added, so a client must ignore fields it does not know and must not fail on an error code it does not know.</p>
+<h3 id="the-routes-and-the-snapshot"><a class="header" href="#the-routes-and-the-snapshot">The routes and the snapshot</a></h3>
+<p>In 0.19 <code>/api/v1</code> serves <code>GET /api/v1/health</code>, <code>GET /api/v1/snapshot</code>, <code>GET /api/v1/events</code>, <code>GET /api/v1/series</code>, <code>GET /api/v1/reports</code>, <code>GET /api/v1/reports/{name}/{file}</code> and <code>GET /api/v1/reports/{name}/compare.md</code>, and with <code>--dashboard-control</code> <code>POST /api/v1/control/start</code>, <code>settings</code>, <code>stop</code>, <code>users</code>, <code>quit</code>, <code>report</code> and <code>report/now</code>, and <code>DELETE /api/v1/reports/{name}</code>. A snapshot’s top level fields are <code>version</code>, <code>generated_at</code>, <code>goose_version</code>, <code>phase</code>, <code>stopping</code>, <code>duration_secs</code>, <code>active_users</code>, <code>maximum_users</code>, <code>target_users</code>, <code>total_users</code>, <code>hosts</code>, <code>aggregate</code>, <code>requests</code>, <code>errors</code>, <code>transaction_errors</code>, <code>scenarios</code>, <code>transactions</code>, <code>series</code>, <code>flags</code>, <code>report</code> and <code>settings</code>. The SSE <code>closed</code> event’s data is <code>1</code>.</p>
+<h3 id="what-the-contract-is"><a class="header" href="#what-the-contract-is">What the contract is</a></h3>
+<p>The contract is the JSON served under <code>/api/v1</code> and the snapshot <code>version</code>, a top level field in every snapshot. The Rust types behind it are internal and are not part of the public crate API. The bundled client is built for one <code>version</code> and refuses any other, and a client of your own should check <code>version</code> the same way.</p>
+<h2 id="building-the-dashboard-ui-typescript"><a class="header" href="#building-the-dashboard-ui-typescript">Building the dashboard UI (TypeScript)</a></h2>
+<p>The browser SPA lives under <code>src/dashboard/static/</code>. <strong>Edit the TypeScript modules in <code>src/</code>, not the bundled JavaScript:</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>File</th><th>Role</th></tr>
+</thead>
+<tbody>
+<tr><td><code>src/main.ts</code></td><td>Entry point: renders each snapshot and wires the modules together</td></tr>
+<tr><td><code>src/connection.ts</code></td><td>Access token handling, SSE stream, poll fallback, snapshot fetch and version check</td></tr>
+<tr><td><code>src/control.ts</code></td><td>Control panel, its POSTs, the phase badge and the run settings summary</td></tr>
+<tr><td><code>src/settings-form.ts</code></td><td>The Edit settings form: Host, Ramp up, Ramp down and Run time, and their pending edits</td></tr>
+<tr><td><code>src/run-settings.ts</code></td><td>The run settings summary line, worded from <code>settings.stage</code></td></tr>
+<tr><td><code>src/follow.ts</code></td><td>Fields that follow the server unless being edited (Target and the settings form)</td></tr>
+<tr><td><code>src/charts.ts</code></td><td>Chart.js setup and the line charts: RPS and failures, active users, and average latency</td></tr>
+<tr><td><code>src/chart-data.ts</code></td><td>Each line chart’s one sentence summary and its data table</td></tr>
+<tr><td><code>src/heatmap.ts</code></td><td>The response time heatmap: data shaping and drawing</td></tr>
+<tr><td><code>src/heatmap-card.ts</code></td><td>The response time card: its request select, the Adjusted and Measured toggle, and the average latency chart when percentiles over time are off</td></tr>
+<tr><td><code>src/coadjust.ts</code></td><td>Which response time to show: coordinated omission adjusted or measured</td></tr>
+<tr><td><code>src/runs.ts</code></td><td>The report bar, Save report now, the report banners and the runs panel</td></tr>
+<tr><td><code>src/tables.ts</code></td><td>The shared sortable table (sorting, filtering, empty states) and the scenarios, transactions, requests, errors and transaction errors tables</td></tr>
+<tr><td><code>src/format.ts</code></td><td>Number and duration formatting, and the small DOM builders the summary and tables share</td></tr>
+<tr><td><code>src/status.ts</code></td><td>Banner and connection indicator</td></tr>
+<tr><td><code>src/dom.ts</code></td><td>Element lookup that checks each element’s type</td></tr>
+<tr><td><code>snapshot.d.ts</code></td><td><strong>Generated</strong> types of the snapshot JSON, from the Rust structs in <code>src/metrics/dashboard_snapshot.rs</code></td></tr>
+<tr><td><code>idle-snapshot.mjs</code></td><td>A complete idle snapshot for the client tests, type checked against <code>snapshot.d.ts</code> by <code>npm run check</code></td></tr>
+<tr><td><code>tsconfig.json</code> / <code>package.json</code></td><td>TypeScript type check and esbuild bundle config</td></tr>
+<tr><td><code>*.test.mjs</code></td><td>Client tests, run with <code>npm test</code>: <code>token</code>, <code>tables</code>, <code>runs</code>, <code>control</code>, <code>settings</code>, <code>coadjust</code>, <code>format</code>, <code>heatmap</code>, <code>a11y</code>, <code>chrome</code> and <code>monitor</code>. Most run in jsdom against the bundled <code>app.js</code>; <code>npm test</code> first builds <code>coadjust.ts</code>, <code>format.ts</code>, <code>heatmap.ts</code> and <code>charts.ts</code> into <code>test-build/</code> for the tests that load a module on its own</td></tr>
+<tr><td><code>test-harness.mjs</code></td><td>The jsdom page loader and stub server the client tests share</td></tr>
+<tr><td><code>app.js</code></td><td><strong>Bundled output</strong> (the modules plus Chart.js), embedded by the Rust server via <code>include_str!</code></td></tr>
+<tr><td><code>index.html</code>, <code>app.css</code></td><td>Shell and styles (not generated)</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>npm run build</code> bundles <code>src/main.ts</code>, the modules it imports and Chart.js into one minified <code>app.js</code> with <a href="https://esbuild.github.io/">esbuild</a>. Chart.js comes from npm at a pinned version (see <code>package.json</code>), with its own TypeScript types, so the chart configuration is type checked; its license comment is kept in the bundle.</p>
+<p>Cargo builds do <strong>not</strong> run npm. The committed <code>app.js</code> is what gets embedded, so a normal <code>cargo build</code> works without Node.js. After changing a module in <code>src/</code> (or the related type declarations), regenerate <code>app.js</code> and commit it with the sources.</p>
+<h3 id="prerequisites"><a class="header" href="#prerequisites">Prerequisites</a></h3>
+<ul>
+<li><a href="https://nodejs.org/">Node.js</a> (with npm)</li>
+<li>Network access once to install the dev dependencies (esbuild, Chart.js, TypeScript, and jsdom for the client tests)</li>
+</ul>
+<h3 id="rebuild"><a class="header" href="#rebuild">Rebuild</a></h3>
+<p>From the repository root:</p>
+<pre><code class="language-bash">cd src/dashboard/static
+npm ci
+npm run build
+</code></pre>
+<p>That runs esbuild and overwrites <code>app.js</code> in the same directory. Then rebuild Goose so the new script is embedded:</p>
+<pre><code class="language-bash">cargo build --features dashboard
+# or exercise the dashboard:
+cargo run --release --features dashboard --example simple -- --dashboard ...
+</code></pre>
+<h3 id="snapshot-types"><a class="header" href="#snapshot-types">Snapshot types</a></h3>
+<p><code>snapshot.d.ts</code> declares <code>DashboardSnapshot</code> and every struct it holds, and <code>RequestSeries</code>, the <code>/api/v1/series</code> body, generated by <a href="https://crates.io/crates/ts-rs"><code>ts-rs</code></a> from the Rust structs, so <code>tsc</code> rejects a read of a field the structs do not have. Every <code>u64</code> is declared as <code>number</code>, which is what <code>JSON.parse</code> returns. After changing a snapshot struct, regenerate the file, then type check the client (and run <code>npm run build</code> if a module in <code>src/</code> changed). <code>tsconfig.json</code> sets <code>skipLibCheck</code> to false so <code>tsc</code> also checks the generated file:</p>
+<pre><code class="language-bash">GOOSE_UPDATE_DASHBOARD_TYPES=1 cargo test --lib dashboard_types_match_rust
+cd src/dashboard/static
+npm run check
+</code></pre>
+<p><code>ts-rs</code> is a dev dependency used only by unit tests, so crates that depend on Goose never pull it in. Without the environment variable, <code>dashboard_types_match_rust</code> compares the committed file with the structs and fails when they differ (a reordered field counts as a difference), so a struct change without a regenerated <code>snapshot.d.ts</code> fails <code>cargo test</code> in CI, and a client that reads a removed or renamed field then fails <code>npm run check</code>. A second test fails on any serde attribute other than <code>serde(skip)</code>, which <code>ts-rs</code> honours, or on a hand-written <code>Serialize</code> in the snapshot module, because <code>ts-rs</code> cannot see either, so the JSON could change without the types changing.</p>
+<p><code>ts-rs</code> is pinned to an exact version in <code>Cargo.toml</code>. The committed file is compared byte for byte with its output, and Goose commits no <code>Cargo.lock</code>, so a new release that formats differently would otherwise fail CI with no change in Goose. Dependabot opens a pull request when a new <code>ts-rs</code> is released; if <code>dashboard_types_match_rust</code> fails on it, regenerate the file on that branch as above and review the diff.</p>
+<p>The client accepts only the snapshot <code>version</code> named in <code>snapshot.d.ts</code> (<code>SNAPSHOT_VERSION</code> in the Rust module) and shows an error banner for any other.</p>
+<h3 id="type-check"><a class="header" href="#type-check">Type check</a></h3>
+<p>esbuild strips the TypeScript types without checking them, so <code>npm run build</code> succeeds on code that does not type check. <code>npm run check</code> is the type check: it runs <code>tsc</code> over the modules and <code>snapshot.d.ts</code> (<code>tsconfig.json</code> sets <code>noEmit</code>, so <code>tsc</code> writes nothing), then checks <code>idle-snapshot.mjs</code> against the snapshot types.</p>
+<pre><code class="language-bash">cd src/dashboard/static
+npm run check
+</code></pre>
+<h3 id="client-tests"><a class="header" href="#client-tests">Client tests</a></h3>
+<pre><code class="language-bash">cd src/dashboard/static
+npm run build
+npm test
+</code></pre>
+<p>Most tests load the bundled <code>app.js</code> into a jsdom page with a stubbed <code>fetch</code>, so rebuild it first.</p>
+<h3 id="notes"><a class="header" href="#notes">Notes</a></h3>
+<ul>
+<li>Do not hand-edit <code>app.js</code>; changes there will be lost on the next <code>npm run build</code>.</li>
+<li><code>node_modules/</code> is gitignored; only <code>package.json</code> / <code>package-lock.json</code> are committed so installs stay reproducible.</li>
+<li>Chart.js is bundled into <code>app.js</code>; the server does not serve it as a separate file.</li>
+<li>CI runs <code>npm run check</code>, rebuilds <code>app.js</code> with <code>npm ci &amp;&amp; npm run build</code> (failing if the committed file differs from the esbuild bundle), and runs <code>npm test</code>.</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../controller/dashboard.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../controller/telnet.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../controller/dashboard.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../controller/telnet.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../mark-09e88c2c.min.js"></script>
+        <script src="../searcher-09f2665d.js"></script>
+
+        <script src="../clipboard-1626706a.min.js"></script>
+        <script src="../highlight-abc7f01d.js"></script>
+        <script src="../book-609e4cb8.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

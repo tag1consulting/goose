@@ -1,0 +1,395 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Basic Authentication - The Goose Book</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../css/general-e96d0476.css">
+        <link rel="stylesheet" href="../css/chrome-d279d366.css">
+        <link rel="stylesheet" href="../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../searchindex-e0e91710.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc-b1be2d52.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">The Goose Book</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="basic-authentication-example"><a class="header" href="#basic-authentication-example">Basic Authentication Example</a></h1>
+<p>The <a href="https://github.com/tag1consulting/goose/blob/main/examples/basic_auth.rs"><code>basic_auth.rs</code></a> example demonstrates different approaches to handling HTTP Basic Authentication in Goose load tests. It answers <a href="https://github.com/tag1consulting/goose/issues/608">issue #608</a>, how to test a site behind Basic Auth, including when static assets (CSS, JS, images) need the credentials too.</p>
+<img src="basic-auth-requests.png" width="450" alt="The HTML report&#39;s Request Metrics table cut after its # Fails column: GET /basic-auth/user/passwd with 1,854 requests, GET /json 607, GET /user-agent 621 and POST /post 612, all with 0 fails, and 3,694 in all">
+<p><em>The HTML report’s Request Metrics, from <code>cargo run --release --features dashboard --example basic_auth -- --host http://127.0.0.1:8080 -u 60 -r 20 -t 2m --no-reset-metrics --report-file --dashboard -q</code> against a local nginx server that answers the example’s four httpbin.org paths; the run writes <code>report.html</code> and <code>report.json</code> to <code>goose-runs/&lt;YYYYMMDD-HHMMSS&gt;/</code>.</em></p>
+<p>The server answers <code>/basic-auth/user/passwd</code> with 401 unless the request has Basic auth for the user <code>user</code> with the password <code>passwd</code>, and Goose counts a 401 as a failed request. No request failed, including all 1,854 to the protected path, so all three approaches below sent the credentials. With <code>-q</code> Goose does not print the dashboard’s address when it starts: open <code>http://127.0.0.1:5118</code> while the test runs. If that tab is still open when the run ends, Goose prints the address and waits for Ctrl-C.</p>
+<img src="basic-auth-transactions.png" width="485" alt="The HTML report&#39;s Transaction Metrics table cut after its # Fails column, grouped under CustomClientAuth with rows 0.0 to 0.3, HelperFunctionAuth with 1.0 and 1.1, and ManualPerRequestAuth with 2.0 and 2.1; row 0.0 ran 30 times, the rest between 301 and 629 times, all with 0 fails, and 3,724 in all">
+<p><em>The same run’s Transaction Metrics: one group for each approach.</em></p>
+<p>The example names no transaction, so the report lists each by number alone, scenario then transaction, from 0; the dashboard and the console count from 1. Row 0.0 is the on start <code>setup_basic_auth_client</code>, which sends no request of its own. It ran 30 times, once for each <code>CustomClientAuth</code> user: the weights 3, 2 and 1 give 30, 20 and 10 of the 60. The other rows follow the order of the table under <a href="#solutions-demonstrated">Solutions Demonstrated</a>.</p>
+<h2 id="problem-statement"><a class="header" href="#problem-statement">Problem Statement</a></h2>
+<p>When load testing a site protected by HTTP Basic Authentication:</p>
+<ol>
+<li><strong>Static assets</strong>: credentials added to one request do not reach the CSS, JavaScript and image requests its page leads to, so those fail when they need Basic Auth too</li>
+<li><strong>Code duplication</strong>: adding the credentials to every request by hand repeats the same code</li>
+</ol>
+<h2 id="solutions-demonstrated"><a class="header" href="#solutions-demonstrated">Solutions Demonstrated</a></h2>
+<p>The example shows three different approaches to handle Basic Auth, one per scenario:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Scenario</th><th>Weight</th><th>Transactions</th><th>Requests</th></tr>
+</thead>
+<tbody>
+<tr><td><code>CustomClientAuth</code></td><td>3</td><td><code>setup_basic_auth_client</code> (on start), <code>test_basic_auth_endpoint</code>, <code>test_user_agent_endpoint</code>, <code>test_json_endpoint</code></td><td><code>GET /basic-auth/user/passwd</code>, <code>GET /user-agent</code>, <code>GET /json</code></td></tr>
+<tr><td><code>HelperFunctionAuth</code></td><td>2</td><td><code>test_with_helper_function</code>, <code>test_post_with_helper</code></td><td><code>GET /basic-auth/user/passwd</code>, <code>POST /post</code></td></tr>
+<tr><td><code>ManualPerRequestAuth</code></td><td>1</td><td><code>test_manual_basic_auth</code>, <code>test_manual_with_validation</code></td><td><code>GET /basic-auth/user/passwd</code>, twice</td></tr>
+</tbody>
+</table>
+</div>
+<p>Every scenario waits 1 to 3 seconds after each transaction except the on start one. The paths are those of <a href="https://httpbin.org/">httpbin.org</a>, where <code>/basic-auth/user/passwd</code> answers 200 only to the user <code>user</code> with the password <code>passwd</code>.</p>
+<p>The excerpts below are taken from the example, where they sit inside a module compiled only with the <code>cookies</code> feature. That feature is on by default; built without it, the example prints an error and exits.</p>
+<h3 id="1-custom-client-with-default-headers-recommended"><a class="header" href="#1-custom-client-with-default-headers-recommended">1. Custom Client with Default Headers (Recommended)</a></h3>
+<p>This approach sets up the HTTP client once per user with default Basic Auth headers. All subsequent requests automatically include the authentication headers, including requests for static assets.</p>
+<pre><code class="language-rust ignore">async fn setup_basic_auth_client(user: &amp;mut GooseUser) -&gt; TransactionResult {
+    // Get credentials from environment variables
+    let (username, password) = get_basic_auth_credentials()?;
+
+    // Use reqwest's built-in basic_auth() to generate a properly encoded
+    // Authorization header, then extract it for use as a default header.
+    let temp_request = reqwest::Client::new()
+        .get("http://localhost")
+        .basic_auth(&amp;username, Some(&amp;password))
+        .build()
+        .map_err(TransactionError::Reqwest)?;
+
+    let mut headers = header::HeaderMap::new();
+    if let Some(auth_header) = temp_request.headers().get(header::AUTHORIZATION) {
+        headers.insert(header::AUTHORIZATION, auth_header.clone());
+    }
+
+    // Set up the client builder with default headers and other common settings
+    // Enable cookie store for maintaining session state with Basic Auth
+    let builder = Client::builder()
+        .user_agent("Goose/1.0 BasicAuth Example")
+        .default_headers(headers)
+        .timeout(Duration::from_secs(30))
+        .cookie_store(true);
+
+    // Apply the custom client to this user
+    user.set_client_builder(builder).await?;
+
+    Ok(())
+}</code></pre>
+<p><strong>Advantages:</strong></p>
+<ul>
+<li>Set up once per user</li>
+<li>Applies to every request the user makes, static assets included</li>
+<li>Works with helpers that load a page’s static assets, such as <code>validate_and_load_static_assets</code> in the <a href="umami.html">Umami example</a></li>
+</ul>
+<h3 id="2-helper-function-approach"><a class="header" href="#2-helper-function-approach">2. Helper Function Approach</a></h3>
+<p>This approach uses a helper function that adds Basic Auth to each request.</p>
+<pre><code class="language-rust ignore">async fn send_authenticated_request(
+    user: &amp;mut GooseUser,
+    method: &amp;GooseMethod,
+    path: &amp;str,
+) -&gt; Result&lt;GooseResponse, Box&lt;TransactionError&gt;&gt; {
+    let mut reqwest_request_builder = user.get_request_builder(method, path)?;
+
+    // Check for Basic Auth credentials in environment
+    if let Ok((username, password)) = get_basic_auth_credentials() {
+        reqwest_request_builder = reqwest_request_builder.basic_auth(username, Some(password));
+    }
+
+    // Build the GooseRequest and make the request. The path names the request in
+    // the metrics, as the RequestBuilder already has its URL.
+    let goose_request = GooseRequest::builder()
+        .path(path)
+        .set_request_builder(reqwest_request_builder)
+        .build();
+
+    let goose_response = user.request(goose_request).await?;
+    Ok(goose_response)
+}</code></pre>
+<p><strong>Advantages:</strong></p>
+<ul>
+<li>Control over each request</li>
+<li>Can apply authentication to some requests and not others</li>
+</ul>
+<p><strong>Disadvantages:</strong></p>
+<ul>
+<li>Must be called for every request</li>
+<li>Does not reach static asset requests</li>
+</ul>
+<p>The request is built from a Reqwest <code>RequestBuilder</code>, which already holds the URL, so the helper also calls <code>.path(path)</code> on the <code>GooseRequest</code> builder: the path names the request in the metrics, as <code>GET /basic-auth/user/passwd</code> and <code>POST /post</code>. Without <code>.path()</code> or <code>.name("...")</code>, Goose would name it by its method alone, as <code>GET</code> or <code>POST</code>.</p>
+<h3 id="3-manual-per-request-authentication"><a class="header" href="#3-manual-per-request-authentication">3. Manual Per-Request Authentication</a></h3>
+<p>This approach manually adds Basic Auth to each individual request using the request builder.</p>
+<pre><code class="language-rust ignore">async fn test_manual_basic_auth(user: &amp;mut GooseUser) -&gt; TransactionResult {
+    let (username, password) = get_basic_auth_credentials()?;
+
+    let reqwest_request_builder = user
+        .get_request_builder(&amp;GooseMethod::Get, "/basic-auth/user/passwd")?
+        .basic_auth(username, Some(password));
+
+    let goose_request = GooseRequest::builder()
+        .path("/basic-auth/user/passwd")
+        .set_request_builder(reqwest_request_builder)
+        .build();
+
+    let _goose_metrics = user.request(goose_request).await?;
+
+    Ok(())
+}</code></pre>
+<p><strong>Disadvantages:</strong></p>
+<ul>
+<li>Repeats the most code of the three approaches</li>
+<li>Does not reach static asset requests, the problem <a href="https://github.com/tag1consulting/goose/issues/608">issue #608</a> describes</li>
+<li>Must name each request with <code>.path()</code> or <code>.name()</code>, as in the helper function approach, or it is named by its method alone in the metrics</li>
+</ul>
+<h2 id="configuration"><a class="header" href="#configuration">Configuration</a></h2>
+<h3 id="environment-variables"><a class="header" href="#environment-variables">Environment Variables</a></h3>
+<p><strong>Separate variables:</strong></p>
+<pre><code class="language-bash">export BASIC_AUTH_USERNAME="your_username"
+export BASIC_AUTH_PASSWORD="your_password"
+</code></pre>
+<p><strong>Combined format:</strong></p>
+<pre><code class="language-bash">export BASIC_AUTH="username:password"
+</code></pre>
+<p><code>BASIC_AUTH_USERNAME</code> and <code>BASIC_AUTH_PASSWORD</code> are used when both are set; otherwise <code>BASIC_AUTH</code> is used, split at its first colon, so the password may contain colons. A <code>BASIC_AUTH</code> without a colon is an error. The manual approach’s transactions then fail immediately, because each returns the error, while the helper function sends its requests without credentials. The custom client’s on start transaction fails too, but Goose goes on with its standard client for that user. Those requests also go out without credentials, and the protected path answers them with 401.</p>
+<h3 id="default-credentials"><a class="header" href="#default-credentials">Default Credentials</a></h3>
+<p>If neither the pair nor <code>BASIC_AUTH</code> is set, the example uses the credentials <code>user:passwd</code>, which httpbin.org accepts. Each time it reads them it logs three warning lines, even with <code>-q</code>, and it reads them once per helper function request, once per manual transaction and once per custom client user. Setting the variables quiets those; <code>test_manual_with_validation</code> still warns after every 200 that static assets would fail.</p>
+<h2 id="running-the-example"><a class="header" href="#running-the-example">Running the Example</a></h2>
+<pre><code class="language-bash"># Using httpbin.org for testing (uses default credentials)
+cargo run --example basic_auth -- --host http://httpbin.org --users 5 --run-time 30s
+
+# With custom credentials
+BASIC_AUTH_USERNAME="myuser" BASIC_AUTH_PASSWORD="mypass" \
+cargo run --example basic_auth -- --host https://your-protected-site.com --users 10 --run-time 60s
+
+# Using combined format
+BASIC_AUTH="myuser:mypass" \
+cargo run --example basic_auth -- --host https://your-protected-site.com --users 10 --run-time 60s
+</code></pre>
+<p>Against another site the example still requests the httpbin.org paths in the table above, so change them to paths on your site first.</p>
+<h2 id="key-takeaways"><a class="header" href="#key-takeaways">Key Takeaways</a></h2>
+<ol>
+<li><strong>Use the custom client approach</strong> for most sites: it sends credentials with every request the user makes, CSS, JS and image requests included</li>
+<li><strong>Set up authentication once per user</strong>, in an on start transaction, rather than in every request</li>
+<li><strong>Use environment variables</strong> for credentials to keep them out of your code</li>
+<li><strong>Try your approach against httpbin.org</strong> before pointing it at your own site</li>
+</ol>
+<h2 id="related-issues"><a class="header" href="#related-issues">Related Issues</a></h2>
+<p>This example addresses <a href="https://github.com/tag1consulting/goose/issues/608">GitHub issue #608</a>: “How can I test a site behind Basic Auth”.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../example/session.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../example/graphql.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../example/session.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../example/graphql.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../mark-09e88c2c.min.js"></script>
+        <script src="../searcher-09f2665d.js"></script>
+
+        <script src="../clipboard-1626706a.min.js"></script>
+        <script src="../highlight-abc7f01d.js"></script>
+        <script src="../book-609e4cb8.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

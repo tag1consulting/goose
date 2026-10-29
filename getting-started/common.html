@@ -12,21 +12,20 @@
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
-        <link rel="icon" href="../favicon.svg">
-        <link rel="shortcut icon" href="../favicon.png">
-        <link rel="stylesheet" href="../css/variables.css">
-        <link rel="stylesheet" href="../css/general.css">
-        <link rel="stylesheet" href="../css/chrome.css">
-        <link rel="stylesheet" href="../css/print.css" media="print">
+        <link rel="icon" href="../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../css/general-e96d0476.css">
+        <link rel="stylesheet" href="../css/chrome-d279d366.css">
+        <link rel="stylesheet" href="../css/print-9e4910d8.css" media="print">
 
         <!-- Fonts -->
-        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
-        <link rel="stylesheet" href="../fonts/fonts.css">
+        <link rel="stylesheet" href="../fonts/fonts-9644e21d.css">
 
         <!-- Highlight.js Stylesheets -->
-        <link rel="stylesheet" id="highlight-css" href="../highlight.css">
-        <link rel="stylesheet" id="tomorrow-night-css" href="../tomorrow-night.css">
-        <link rel="stylesheet" id="ayu-highlight-css" href="../ayu-highlight.css">
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
 
         <!-- Custom theme stylesheets -->
 
@@ -36,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex.js";
+            window.path_to_searchindex_js = "../searchindex-e0e91710.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc.js"></script>
+        <script src="../toc-b1be2d52.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -53,7 +52,7 @@
             </div>
         </div>
     </div>
-    <div id="body-container">
+    <div id="mdbook-body-container">
         <!-- Work around some values being stored in localStorage wrapped in quotes -->
         <script>
             try {
@@ -82,12 +81,12 @@
             html.classList.add("js");
         </script>
 
-        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
 
         <!-- Hide / unhide sidebar before it is displayed -->
         <script>
             let sidebar = null;
-            const sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
             if (document.body.clientWidth >= 1080) {
                 try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
                 sidebar = sidebar || 'visible';
@@ -102,39 +101,39 @@
             }
         </script>
 
-        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
             <!-- populated by js -->
             <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
             <noscript>
                 <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
             </noscript>
-            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
             </div>
         </nav>
 
-        <div id="page-wrapper" class="page-wrapper">
+        <div id="mdbook-page-wrapper" class="page-wrapper">
 
             <div class="page">
-                <div id="menu-bar-hover-placeholder"></div>
-                <div id="menu-bar" class="menu-bar sticky">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
                     <div class="left-buttons">
-                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
-                            <i class="fa fa-bars"></i>
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
                         </label>
-                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
-                            <i class="fa fa-paint-brush"></i>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
                         </button>
-                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
-                            <li role="none"><button role="menuitem" class="theme" id="default_theme">Auto</button></li>
-                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
-                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
-                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
-                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
-                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
                         </ul>
-                        <button id="search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="searchbar">
-                            <i class="fa fa-search"></i>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
                         </button>
                     </div>
 
@@ -142,75 +141,77 @@
 
                     <div class="right-buttons">
                         <a href="../print.html" title="Print this book" aria-label="Print this book">
-                            <i id="print-button" class="fa fa-print"></i>
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
                         </a>
 
                     </div>
                 </div>
 
-                <div id="search-wrapper" class="hidden">
-                    <form id="searchbar-outer" class="searchbar-outer">
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
                         <div class="search-wrapper">
-                            <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
                             <div class="spinner-wrapper">
-                                <i class="fa fa-spinner fa-spin"></i>
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
                             </div>
                         </div>
                     </form>
-                    <div id="searchresults-outer" class="searchresults-outer hidden">
-                        <div id="searchresults-header" class="searchresults-header"></div>
-                        <ul id="searchresults">
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
                         </ul>
                     </div>
                 </div>
 
                 <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
                 <script>
-                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
-                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
-                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
                         link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
                     });
                 </script>
 
-                <div id="content" class="content">
+                <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="common-run-time-options"><a class="header" href="#common-run-time-options">Common Run Time Options</a></h1>
-<p>As seen on the previous page, Goose has a lot of run time options which can be overwhelming. The following are a few of the more common and more important options to be familiar with. In these examples we only demonstrate one option at a time, but it's generally useful to combine many options.</p>
+<p>These are the options you need in your first week of load testing: where to send the load, how many users, how fast they start, how long to run, how to watch the run, and which reports to keep. Combine them as you need. <a href="runtime-options.html">Run-Time Options</a> lists every option and the page that explains it.</p>
+<p>Each example other than the host example also needs <code>--host</code>, unless the load test sets a host itself with <code>GooseDefault::Host</code> or <code>Scenario::set_host</code>. Options that take a time, such as <code>--run-time</code> and <code>--increase-time</code>, take a whole number of seconds, or hours, minutes and seconds in that order, such as <code>1h30m</code> or <code>2m30s</code>.</p>
 <h2 id="host-to-load-test"><a class="header" href="#host-to-load-test">Host to load test</a></h2>
-<p>Load test plans typically contain relative paths, and so Goose must be told which host to run the load test against in order for it to start. This allows a single load test plan to be used for testing different environments, for example "http://local.example.com", "https://qa.example.com", and "https://www.example.com".</p>
+<p>A load test’s requests usually name only a path, such as <code>/about</code>, so Goose must be told which host to send them to. The same load test can then run against <code>http://local.example.com</code>, <code>https://qa.example.com</code> or <code>https://www.example.com</code>.</p>
 <h3 id="host-example"><a class="header" href="#host-example">Host example</a></h3>
-<p><em>Load test the https://www.example.com domain.</em></p>
+<p><em>Load test the <code>https://www.example.com</code> domain.</em></p>
 <pre><code class="language-bash">cargo run --release -- -H https://www.example.com
 </code></pre>
 <h2 id="how-many-users-to-simulate"><a class="header" href="#how-many-users-to-simulate">How many users to simulate</a></h2>
-<p>By default, Goose will launch one user per available CPU core. Often you will want to simulate considerably more users than this, and this can be done by setting the "--user" run time option.</p>
-<p>(<em>Alternatively, you can use <a href="./test-plan.html"><code>--test-plan</code></a> to build both simple and more complex traffic patterns that can include a varying number of users.</em>)</p>
+<p>By default, Goose will launch one user per available CPU core. Often you will want to simulate considerably more users than this, and this can be done by setting the <code>--users</code> run time option.</p>
+<p>(<em>Alternatively, you can use <a href="test-plan.html"><code>--test-plan</code></a> to build both simple and more complex traffic patterns that can include a varying number of users.</em>)</p>
 <h3 id="users-example"><a class="header" href="#users-example">Users example</a></h3>
 <p><em>Launch 1,000 GooseUsers.</em></p>
 <pre><code class="language-bash">cargo run --release -- -u 1000
 </code></pre>
+<p>At the default rate of one user a second, starting 1,000 users takes over 16 minutes; the next section shows how to start them faster.</p>
 <h2 id="controlling-how-long-it-takes-goose-to-launch-all-users"><a class="header" href="#controlling-how-long-it-takes-goose-to-launch-all-users">Controlling how long it takes Goose to launch all users</a></h2>
-<p>There are several ways to configure how long Goose will take to launch all configured GooseUsers. For starters, you can user either <code>--hatch-rate</code> or <code>--startup-time</code>, but not both together. Alternatively, you can use <a href="./test-plan.html"><code>--test-plan</code></a> to build both simple and more complex traffic patterns that can include varying launch rates.</p>
-<h3 id="specifying-the-hatch-rate"><a class="header" href="#specifying-the-hatch-rate">Specifying the hatch rate</a></h3>
-<p>By default, Goose starts one GooseUser per second. So if you configure <code>--users</code> to 10 it will take ten seconds to fully start the load test. If you set <code>--hatch-rate 5</code> then Goose will start 5 users every second, taking two seconds to start up. If you set <code>--hatch-rate 0.5</code> then Goose will start 1 user every 2 seconds, taking twenty seconds to start all 10 users.</p>
-<p>(<em>The configured hatch rate is a best effort limit, Goose will not start users faster than this but there is no guarantee that your load test server is capable of starting users as fast as you configure.</em>)</p>
-<h3 id="hatch-rate-example"><a class="header" href="#hatch-rate-example">Hatch rate example</a></h3>
+<p>Goose starts users at a rate, with <code>--increase-rate</code>, or over a time, with <code>--increase-time</code>, but not both together. (<em>These replace <code>--hatch-rate</code> and <code>--startup-time</code> from Goose 0.18 and earlier, which no longer exist; see <a href="upgrading.html">Upgrading From 0.18</a>.</em>)</p>
+<p>Both are best effort limits: Goose will not start users faster than you configure, but the machine running Goose may not be able to start them that fast.</p>
+<h3 id="specifying-the-increase-rate"><a class="header" href="#specifying-the-increase-rate">Specifying the increase rate</a></h3>
+<p>By default, Goose starts one GooseUser per second. So if you configure <code>--users</code> to 10 it will take ten seconds to fully start the load test. If you set <code>--increase-rate 5</code> then Goose will start 5 users every second, taking two seconds to start up. If you set <code>--increase-rate 0.5</code> then Goose will start 1 user every 2 seconds, taking twenty seconds to start all 10 users. The slowest rate Goose accepts is one user a day, about <code>0.0000116</code>; a slower rate is an error.</p>
+<p>Goose does not round a rate that is not a whole number: <code>--increase-rate 1.5</code> starts a user every 667 milliseconds, so the increase phase of 9 users lasts 6 seconds. <code>--decrease-rate</code>, <code>--increase-time</code>, <code>--decrease-time</code> and the steps of a <a href="test-plan.html">test plan</a> are not rounded either.</p>
+<h3 id="increase-rate-example"><a class="header" href="#increase-rate-example">Increase rate example</a></h3>
 <p><em>Launch one user every two seconds.</em></p>
 <pre><code class="language-bash">cargo run --release -- -r .5
 </code></pre>
-<h3 id="specifying-the-total-startup-time"><a class="header" href="#specifying-the-total-startup-time">Specifying the total startup time</a></h3>
-<p>Alternatively, you can tell Goose how long you'd like it to take to start all GooseUsers. So, if you configure <code>--users</code> to 10 and set <code>--startup-time 10</code> it will launch 1 user every second. If you set <code>--startup-time 1m</code> it will start 1 user every 6 seconds, starting all users over one minute. And if you set <code>--startup-time 2s</code> it will launch five users per second, launching all users in two seconds.</p>
-<p>(<em>The configured startup time is a best effort limit, Goose will not start users faster than this but there is no guarantee that your load test server is capable of starting users as fast as you configure.</em>)</p>
-<h3 id="startup-time-example"><a class="header" href="#startup-time-example">Startup time example</a></h3>
+<h3 id="specifying-the-total-increase-time"><a class="header" href="#specifying-the-total-increase-time">Specifying the total increase time</a></h3>
+<p>Alternatively, you can tell Goose how long you would like it to take to start all GooseUsers. So, if you configure <code>--users</code> to 10 and set <code>--increase-time 10</code> it will launch 1 user every second. If you set <code>--increase-time 1m</code> it will start 1 user every 6 seconds, starting all users over one minute. And if you set <code>--increase-time 2s</code> it will launch five users per second, launching all users in two seconds.</p>
+<h3 id="increase-time-example"><a class="header" href="#increase-time-example">Increase time example</a></h3>
 <p><em>Launch all users in 5 seconds.</em></p>
 <pre><code class="language-bash">cargo run --release -- -s 5
 </code></pre>
 <h2 id="specifying-how-long-the-load-test-will-run"><a class="header" href="#specifying-how-long-the-load-test-will-run">Specifying how long the load test will run</a></h2>
-<p>The <code>--run-time</code> option is not affected by how long Goose takes to start up. Thus, if you configure a load test with <code>--users 100 --startup-time 30m --run-time 5m</code> Goose will run for a total of 35 minutes, first ramping up for 30 minutes and then running at full load for 5 minutes. If you want Goose to exit immediately after all users start, you can set a very small run time, for example <code>--users 100 --hatch-rate .25 --run-time 1s</code>.</p>
-<p>Alternatively, you can use <a href="./test-plan.html"><code>--test-plan</code></a> to build both simple and more complex traffic patterns and can define how long the load test runs.</p>
-<p>A final option is to instead use the <code>--iterations</code> option to configure how many times GooseUsers will run through their assigned Scenario before exiting.</p>
-<p>If you do not configure a run time, Goose will run until it's canceled with <code>ctrl-c</code>.</p>
+<p>The <code>--run-time</code> option is not affected by how long Goose takes to start up. Thus, if you configure a load test with <code>--users 100 --increase-time 30m --run-time 5m</code> Goose will run for a total of 35 minutes, first ramping up for 30 minutes and then running at full load for 5 minutes. If you want Goose to exit immediately after all users start, you can set a very small run time, for example <code>--users 100 --increase-rate .25 --run-time 1s</code>.</p>
+<p>Instead of a run time, <code>--iterations</code> sets how many times each GooseUser runs through its scenario before it stops, and a <a href="test-plan.html"><code>--test-plan</code></a> sets how long each of its steps lasts.</p>
+<p>Goose resets its metrics when the ramp up ends. Its reports then leave the ramp up out of the totals and out of every graph but the active users graph. <code>--no-reset-metrics</code> keeps the ramp up in. A run limited by <code>--iterations</code> or shaped by a test plan never resets, and refuses <code>--no-reset-metrics</code>.</p>
+<p>If you do not configure a run time, Goose runs until it is canceled with <code>ctrl-c</code>.</p>
 <h3 id="run-time-example"><a class="header" href="#run-time-example">Run time example</a></h3>
 <p><em>Run the load test for 30 minutes.</em></p>
 <pre><code class="language-bash">cargo run --release -- -t 30m
@@ -219,31 +220,130 @@
 <p><em>Each GooseUser will take as long as it takes to fully run its assigned Scenario 5 times and then stop.</em></p>
 <pre><code class="language-bash">cargo run --release -- --iterations 5
 </code></pre>
-<h2 id="writing-an-html-formatted-report"><a class="header" href="#writing-an-html-formatted-report">Writing An HTML-formatted Report</a></h2>
-<p>By default, Goose displays <a href="metrics.html">text-formatted metrics</a> when a load test finishes.</p>
-<p>It can also optionally write one or more reports in HTML, Markdown, or JSON format. For that, you need to provide one or more <code>--report-file &lt;FILE&gt;</code> run-time options. All requested reports will be written.</p>
-<p>The value of <code>&lt;FILE&gt;</code> is an absolute or relative path to the report file to generate. The file extension will evaluate the type of report to write. Any file that already exists at the specified path will be overwritten.</p>
-<p>For more information, see <a href="metrics.html#metrics-reports">Metrics Reports</a>.</p>
-<p><img src="rps.png" alt="Requests per second graph" /></p>
+<h2 id="watching-a-run"><a class="header" href="#watching-a-run">Watching a run</a></h2>
+<p>With the <code>dashboard</code> feature turned on in your load test’s <code>Cargo.toml</code>, <code>--dashboard</code> serves a live web dashboard while the load test runs. Open <code>http://127.0.0.1:5118/</code> in a browser to see the users, requests per second, response times and errors as they change.</p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="common-dashboard.png" alt="The Goose live dashboard, read-only, just over two minutes into a load test of the Umami demo site: the header with the Maintain phase, the host and the time run; the Save report checkbox, checked; a notice that the request rows are truncated; the read-only Control card, which names the options that turn on control; the KPI row; and the requests per second and active users charts"><span class="img-wrapper"><img src="common-dashboard.png" alt="The Goose live dashboard, read-only, just over two minutes into a load test of the Umami demo site: the header with the Maintain phase, the host and the time run; the Save report checkbox, checked; a notice that the request rows are truncated; the read-only Control card, which names the options that turn on control; the KPI row; and the requests per second and active users charts"></span></label></p>
+<p><em>A read-only dashboard 2 minutes 14 seconds into a run of 50 users with <code>--no-reset-metrics</code>: the users chart climbs by one user a second to 50 and holds, and the requests chart climbs with it.</em></p>
+<p>By default the dashboard only watches: it cannot start, stop or change the test, and its Control card says how to turn control on. With <strong>Save report</strong> on, as it is by default, Goose writes the run’s <code>report.html</code> and <code>report.json</code> into its <a href="#run-folders">run folder</a> when the run ends. <code>--dashboard-control</code> lets the dashboard start and stop the test, change its users and settings, and, once the test is stopped, quit Goose. It also needs a token, set with <code>--dashboard-auth-token &lt;TOKEN&gt;</code> and given by opening <code>http://127.0.0.1:5118/?token=&lt;TOKEN&gt;</code>, or <code>--dashboard-no-auth</code>, which lets anyone who can reach the port control the test. <a href="../controller/dashboard.html">Live Dashboard</a> tours every part of the page, including the truncation notice.</p>
+<h3 id="dashboard-example"><a class="header" href="#dashboard-example">Dashboard example</a></h3>
+<p><em>Turn on the <code>dashboard</code> feature, then watch a load test in the browser.</em></p>
+<pre><code class="language-toml">goose = { version = "^0.19", features = ["dashboard"] }
+</code></pre>
+<pre><code class="language-bash">cargo run --release -- --dashboard
+</code></pre>
+<h2 id="writing-an-html-formatted-report"><a class="header" href="#writing-an-html-formatted-report">Writing reports</a></h2>
+<p><code>--report-file &lt;FILE&gt;</code> writes a report when the load test finishes. The file’s extension sets its type: <code>.pdf</code> for a PDF report, when Goose is built with the <code>pdf-reports</code> feature; <code>.html</code> or <code>.htm</code> for HTML; <code>.md</code> for Markdown; and <code>.json</code> for JSON. Give <code>--report-file</code> once for each report you want. A <code>--report-file</code> given without a path writes <code>report.html</code> and <code>report.json</code> into the <a href="#run-folders">run folder</a>. A file that already exists at the path is overwritten. <a href="metrics.html#report-formats">Report Formats</a> shows what each report holds. The HTML report is the easiest to start with.</p>
+<h3 id="pdf-report-example"><a class="header" href="#pdf-report-example">PDF report example</a></h3>
+<p><em>Build with the <code>pdf-reports</code> feature and write a PDF report, waiting up to two minutes for Chrome.</em></p>
+<pre><code class="language-bash">cargo run --release --features goose/pdf-reports -- --report-file report.pdf --pdf-timeout 120
+</code></pre>
+<p>A PDF report needs Chrome or Chromium; see <a href="../requirements.html#chrome-for-pdf-reports">Requirements</a>. <code>--pdf-timeout</code> is how many seconds Goose waits for Chrome to start and to render the PDF, from 10 to 600, default 60. <code>--pdf-scale</code>, from 0.1 to 2.0, default 0.8, sets how much Chrome scales the pages. Both exist only with the <code>pdf-reports</code> feature.</p>
 <h3 id="html-report-example"><a class="header" href="#html-report-example">HTML report example</a></h3>
-<p><em>Write an HTML-formatted report to <code>report.html</code> when the load test finishes.</em></p>
+<p><em>Write an HTML report to <code>report.html</code> when the load test finishes.</em></p>
 <pre><code class="language-bash">cargo run --release -- --report-file report.html
 </code></pre>
-<h3 id="html--markdown-report-example"><a class="header" href="#html--markdown-report-example">HTML &amp; Markdown report example</a></h3>
-<p><em>Write a Markdown and an HTML-formatted report when the load test finishes.</em></p>
-<pre><code class="language-bash">cargo run --release -- --report-file report.md --report-file report.html
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="rps.png" alt="The Request Metrics graph of an HTML report: requests per second over a run of about three minutes, a line for all requests and one for each request, with the ramp up shaded"><span class="img-wrapper"><img src="rps.png" alt="The Request Metrics graph of an HTML report: requests per second over a run of about three minutes, a line for all requests and one for each request, with the ramp up shaded"></span></label></p>
+<p><em>The HTML report’s requests per second graph, from a run of 50 users with <code>--no-reset-metrics</code>: the total climbs through the shaded ramp up and levels off once every user is running.</em></p>
+<h3 id="printer-friendly-html-report-example"><a class="header" href="#printer-friendly-html-report-example">Printer-friendly HTML report example</a></h3>
+<p><em>Write an HTML report laid out for printing to PDF.</em></p>
+<pre><code class="language-bash">cargo run --release -- --pdf-print-html print-report.html
 </code></pre>
+<p><code>--pdf-print-html</code> writes the HTML report laid out for printing, to turn into a PDF with your browser’s “Print to PDF” or to print on paper. It needs neither Chrome nor the <code>pdf-reports</code> feature, has the same graphs and response time heatmap as the HTML report, and cannot be used with <code>--no-metrics</code>. It can also be written beside a <code>--report-file</code>:</p>
+<pre><code class="language-bash">cargo run --release -- --report-file report.html --pdf-print-html print-report.html
+</code></pre>
+<h3 id="html-and-markdown-report-example"><a class="header" href="#html-and-markdown-report-example">HTML and Markdown report example</a></h3>
+<p><em>Write an HTML and a Markdown report when the load test finishes.</em></p>
+<pre><code class="language-bash">cargo run --release -- --report-file report.html --report-file report.md
+</code></pre>
+<h3 id="json-report-example"><a class="header" href="#json-report-example">JSON report example</a></h3>
+<p><em>Write a JSON report, which a later run can compare against with <a href="#comparing-against-a-baseline"><code>--baseline-file</code></a>.</em></p>
+<pre><code class="language-bash">cargo run --release -- --report-file report.json
+</code></pre>
+<h3 id="console-output"><a class="header" href="#console-output">Console output</a></h3>
+<p>Goose prints <a href="metrics.html#ascii-metrics">ASCII metrics</a> to the console when a load test finishes, whether or not it writes a report. <code>--no-print-metrics</code> leaves them out, and every requested report is still written.</p>
+<h2 id="run-folders"><a class="header" href="#run-folders">Run folders</a></h2>
+<p>An output flag given without a path, such as a bare <code>--report-file</code> or <code>--goose-log</code>, writes into the run folder: <code>goose-runs/&lt;YYYYMMDD-HHMMSS&gt;</code> from the run’s local start time, unless <code>--output-dir</code> names one. A run watched with <code>--dashboard</code> saves its report there too. <code>--notes</code> labels the run in its reports and on the dashboard. <a href="output-files.html">Output Files</a> gives the rules for every file Goose writes.</p>
+<pre><code class="language-bash">cargo run --release -- --report-file --notes "after the cache change"
+</code></pre>
+<p>When running Goose in Docker, mount a folder for the runs:</p>
+<pre><code class="language-bash">docker run -v "$PWD/goose-runs:/goose-runs" my-load-test --host https://example.com --output-dir /goose-runs/nightly --report-file
+</code></pre>
+<p>In CI, upload <code>goose-runs/</code> as a build artifact to keep every run’s reports.</p>
+<h2 id="comparing-against-a-baseline"><a class="header" href="#comparing-against-a-baseline">Comparing Against A Baseline</a></h2>
+<p>To see what changed between two runs, such as before and after a deployment, give the later run an earlier run’s JSON report with <code>--baseline-file</code>. A run folder that holds a <code>report.json</code> works too, such as the one a <code>--dashboard</code> run or a bare <code>--report-file</code> writes:</p>
+<pre><code class="language-bash">cargo run --release -- --report-file --baseline-file goose-runs/20261028-120502
+</code></pre>
+<p>The numeric metrics in the PDF, HTML and Markdown reports then include a delta showing the difference from the baseline. For example, instead of just showing <code>1,234</code> requests, the HTML report shows <code>1,234 (+200)</code> if the current run had 200 more requests than the baseline, or <code>1,234 (-50)</code> if it had 50 fewer; the Markdown report shows its request counts without thousands separators, <code>1234 (+200)</code>. The JSON report holds only the current run’s values, so it can be the next run’s baseline. The console metrics show no deltas.</p>
+<p>Deltas are calculated for:</p>
+<ul>
+<li><strong>Requests</strong>: number of requests, failures, average/min/max response time, requests/failures per second</li>
+<li><strong>Response time percentiles</strong>: p50, p60, p70, p80, p90, p95, p99, p100</li>
+<li><strong>Transactions</strong>: request count, failures, response times, rates</li>
+<li><strong>Scenarios</strong>: user count, iteration count, response times, rates</li>
+<li><strong>Errors</strong>: occurrence count</li>
+<li><strong>Transaction errors</strong>: occurrence count</li>
+<li><strong>Coordinated Omission</strong>: adjusted response times and standard deviation</li>
+</ul>
+<p>Metrics are matched between runs by their key (HTTP method + endpoint name for requests, transaction + name for transactions, etc.). A request in the current run but not in the baseline is shown without a delta, and one only in the baseline is not shown.</p>
+<p>The baseline must be a JSON report generated by Goose, plain or gzipped (<code>.json.gz</code>), or a run folder, whose <code>report.json</code> or <code>report.json.gz</code> is then used. If the file does not exist, contains invalid JSON, or has no request metrics, Goose will report an error. A load test can also set a default baseline in code with <a href="../config/defaults.html"><code>GooseDefault::BaselineFile</code></a>, which <code>--baseline-file</code> overrides.</p>
+<h3 id="baseline-comparison-example"><a class="header" href="#baseline-comparison-example">Baseline comparison example</a></h3>
+<p><em>Run a load test comparing against a previous run, generating both HTML and JSON reports.</em></p>
+<pre><code class="language-bash">cargo run --release -- --report-file report.html --report-file latest.json --baseline-file baseline.json
+</code></pre>
+<p>The resulting <code>latest.json</code> can then be used as the baseline for the next comparison, enabling a chain of run-over-run comparisons.</p>
+<h3 id="baselines-from-older-goose-releases"><a class="header" href="#baselines-from-older-goose-releases">Baselines from older Goose releases</a></h3>
+<p>A JSON report from Goose 0.18.1 or later loads as a baseline, including one from a run that received more than one status code. A baseline without transaction errors, such as one from Goose 0.18.1, still loads, and the run’s transaction errors then show no delta.</p>
+<p>A time’s delta is the current time minus the baseline time, each as the report prints it. A 0.19 baseline’s request, transaction and scenario times come from its microsecond timing data. A report from an older Goose holds whole milliseconds: its minimums and maximums are truncated, and its percentiles above 100 ms are rounded to 10 ms, 100 ms or whole seconds. So an unchanged time can read differently against it, such as <code>38 (+1)</code>.</p>
+<h2 id="controlling-the-ramp-down-rate"><a class="header" href="#controlling-the-ramp-down-rate">Controlling the ramp-down rate</a></h2>
+<p>You can configure how quickly Goose stops users at the end of a load test with <code>--decrease-rate</code> or <code>--decrease-time</code>. These are mutually exclusive, just like their increase counterparts, and <code>--decrease-rate</code> has the same slowest rate of one user a day. If neither is set, Goose stops all users at once.</p>
+<h3 id="decrease-rate-example"><a class="header" href="#decrease-rate-example">Decrease rate example</a></h3>
+<p><em>Stop one user every two seconds.</em></p>
+<pre><code class="language-bash">cargo run --release -- --decrease-rate .5
+</code></pre>
+<h3 id="decrease-time-example"><a class="header" href="#decrease-time-example">Decrease time example</a></h3>
+<p><em>Spread the stops over 30 seconds.</em></p>
+<pre><code class="language-bash">cargo run --release -- --decrease-time 30s
+</code></pre>
+<p>Goose divides the time by the number of users and stops one user each interval, the first at once, so with 4 users it stops one every 7.5 seconds and the last 22.5 seconds in.</p>
+<h2 id="graph-data-and-memory"><a class="header" href="#graph-data-and-memory">Graph data and memory</a></h2>
+<p>Goose keeps per second graph data in memory until the run ends whenever it will write a report then: for a <code>--report-file</code> path, for <code>--pdf-print-html</code>, and while Save report is on, as it is with <code>--dashboard</code> or a bare <code>--report-file</code>. It holds every second of the run, the ramp up included. After the metrics reset, Goose keeps zeros in memory for the ramp up seconds of the request, error, response time, transaction and scenario data, and the report leaves those seconds out of its graphs. When Save report is turned on mid run, the data starts up to 10 minutes before that moment. The graph data costs about 12 bytes per request name per second, and 4 bytes more per second for each name that has failed. Goose holds it in buffers that grow by doubling, so it can take up to twice that.</p>
+<p>Writing an HTML report costs far more while it is written: about 300 bytes more per request name for each second of the run. <code>--pdf-print-html</code> builds the same HTML and costs the same. A PDF report costs about three times as much in Goose, about 950 bytes per request name for each second of the run. Chrome needs memory of its own to print it, from about 400 MB for a small report to about 750 MB for a 20 minute run with 100 request names. A Markdown or JSON report adds almost nothing. With 20 and 100 request names and none failing, counting the doubling:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>run length</th><th>20 names, graph data</th><th>20 names, writing HTML</th><th>100 names, graph data</th><th>100 names, writing HTML</th></tr>
+</thead>
+<tbody>
+<tr><td>10 minutes</td><td>0.3 MB</td><td>4 MB</td><td>1.3 MB</td><td>20 MB</td></tr>
+<tr><td>1 hour</td><td>1.1 MB</td><td>24 MB</td><td>5 MB</td><td>114 MB</td></tr>
+<tr><td>24 hours</td><td>35 MB</td><td>570 MB</td><td>160 MB</td><td>2.8 GB</td></tr>
+<tr><td>7 days</td><td>280 MB</td><td>4 GB</td><td>1.3 GB</td><td>20 GB</td></tr>
+</tbody>
+</table>
+</div>
+<p>The per second costs were measured on 10 to 35 minute runs of Goose 0.19, and every row is computed from them. The table leaves out the response time heatmap, which stops growing once its columns fill, after about 10 minutes. At 100 request names it takes about 5 MB when response times are fast and even, 10 MB when they are typical, and up to about 40 MB when they spread widely, or more with a <code>--timeout</code> over 60 seconds; <code>--no-percentiles-over-time</code> turns it off.</p>
+<p>To keep the HTML cost out of a long soak test, write a JSON report with its graph data, <code>--report-file report.json --report-graph-data</code>, and turn it into an HTML report after the run with <code>--render-report report.json --report-file report.html</code>. The render needs more memory than writing the HTML during the run would, about 1.3 times as much for a 10 minute run and more for shorter ones, but it no longer competes with the load test, and it can run later or on another machine. <a href="output-files.html">Output Files</a> gives the rules.</p>
+<p>Without a report, as on a <code>--dashboard</code> run with Save report off, Goose keeps only the last 10 minutes of per second graph data in memory; the dashboard’s charts show the last 5 minutes of it. On a long soak test with <code>--dashboard-control</code>, no <code>--report-file</code> path and no <code>--pdf-print-html</code>, turn Save report off to keep memory flat, and turn it on before the part of the run you want graphed.</p>
+<h2 id="other-options"><a class="header" href="#other-options">Other options</a></h2>
+<p>When you need more than this page, these come next:</p>
+<ul>
+<li><a href="test-plan.html">Test Plan</a>: a load shape of steps, such as a ramp up, a hold and a spike.</li>
+<li><a href="throttle.html">Throttle</a>: a cap on requests per second.</li>
+<li><a href="thresholds.html">Thresholds</a>: pass and fail rules on the metrics.</li>
+<li><a href="scenarios.html">Limiting Scenarios</a>: running only some of a load test’s scenarios.</li>
+<li><a href="../logging/overview.html">Logging</a>: the request, transaction, scenario, error and debug logs.</li>
+</ul>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
                             <a rel="prev" href="../getting-started/runtime-options.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
-                                <i class="fa fa-angle-left"></i>
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
                             <a rel="next prefetch" href="../getting-started/test-plan.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
-                                <i class="fa fa-angle-right"></i>
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
                         <div style="clear: both"></div>
@@ -253,16 +353,21 @@
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
                     <a rel="prev" href="../getting-started/runtime-options.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
-                        <i class="fa fa-angle-left"></i>
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
                     <a rel="next prefetch" href="../getting-started/test-plan.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
-                        <i class="fa fa-angle-right"></i>
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>
 
         </div>
 
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
 
 
 
@@ -271,13 +376,13 @@
         </script>
 
 
-        <script src="../elasticlunr.min.js"></script>
-        <script src="../mark.min.js"></script>
-        <script src="../searcher.js"></script>
+        <script src="../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../mark-09e88c2c.min.js"></script>
+        <script src="../searcher-09f2665d.js"></script>
 
-        <script src="../clipboard.min.js"></script>
-        <script src="../highlight.js"></script>
-        <script src="../book.js"></script>
+        <script src="../clipboard-1626706a.min.js"></script>
+        <script src="../highlight-abc7f01d.js"></script>
+        <script src="../book-609e4cb8.js"></script>
 
         <!-- Custom JS scripts -->
 

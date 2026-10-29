@@ -12,21 +12,20 @@
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
-        <link rel="icon" href="../favicon.svg">
-        <link rel="shortcut icon" href="../favicon.png">
-        <link rel="stylesheet" href="../css/variables.css">
-        <link rel="stylesheet" href="../css/general.css">
-        <link rel="stylesheet" href="../css/chrome.css">
-        <link rel="stylesheet" href="../css/print.css" media="print">
+        <link rel="icon" href="../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../css/general-e96d0476.css">
+        <link rel="stylesheet" href="../css/chrome-d279d366.css">
+        <link rel="stylesheet" href="../css/print-9e4910d8.css" media="print">
 
         <!-- Fonts -->
-        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
-        <link rel="stylesheet" href="../fonts/fonts.css">
+        <link rel="stylesheet" href="../fonts/fonts-9644e21d.css">
 
         <!-- Highlight.js Stylesheets -->
-        <link rel="stylesheet" id="highlight-css" href="../highlight.css">
-        <link rel="stylesheet" id="tomorrow-night-css" href="../tomorrow-night.css">
-        <link rel="stylesheet" id="ayu-highlight-css" href="../ayu-highlight.css">
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
 
         <!-- Custom theme stylesheets -->
 
@@ -36,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex.js";
+            window.path_to_searchindex_js = "../searchindex-e0e91710.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc.js"></script>
+        <script src="../toc-b1be2d52.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -53,7 +52,7 @@
             </div>
         </div>
     </div>
-    <div id="body-container">
+    <div id="mdbook-body-container">
         <!-- Work around some values being stored in localStorage wrapped in quotes -->
         <script>
             try {
@@ -82,12 +81,12 @@
             html.classList.add("js");
         </script>
 
-        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
 
         <!-- Hide / unhide sidebar before it is displayed -->
         <script>
             let sidebar = null;
-            const sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
             if (document.body.clientWidth >= 1080) {
                 try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
                 sidebar = sidebar || 'visible';
@@ -102,39 +101,39 @@
             }
         </script>
 
-        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
             <!-- populated by js -->
             <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
             <noscript>
                 <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
             </noscript>
-            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
             </div>
         </nav>
 
-        <div id="page-wrapper" class="page-wrapper">
+        <div id="mdbook-page-wrapper" class="page-wrapper">
 
             <div class="page">
-                <div id="menu-bar-hover-placeholder"></div>
-                <div id="menu-bar" class="menu-bar sticky">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
                     <div class="left-buttons">
-                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
-                            <i class="fa fa-bars"></i>
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
                         </label>
-                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
-                            <i class="fa fa-paint-brush"></i>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
                         </button>
-                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
-                            <li role="none"><button role="menuitem" class="theme" id="default_theme">Auto</button></li>
-                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
-                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
-                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
-                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
-                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
                         </ul>
-                        <button id="search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="searchbar">
-                            <i class="fa fa-search"></i>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
                         </button>
                     </div>
 
@@ -142,118 +141,118 @@
 
                     <div class="right-buttons">
                         <a href="../print.html" title="Print this book" aria-label="Print this book">
-                            <i id="print-button" class="fa fa-print"></i>
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
                         </a>
 
                     </div>
                 </div>
 
-                <div id="search-wrapper" class="hidden">
-                    <form id="searchbar-outer" class="searchbar-outer">
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
                         <div class="search-wrapper">
-                            <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
                             <div class="spinner-wrapper">
-                                <i class="fa fa-spinner fa-spin"></i>
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
                             </div>
                         </div>
                     </form>
-                    <div id="searchresults-outer" class="searchresults-outer hidden">
-                        <div id="searchresults-header" class="searchresults-header"></div>
-                        <ul id="searchresults">
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
                         </ul>
                     </div>
                 </div>
 
                 <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
                 <script>
-                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
-                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
-                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
                         link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
                     });
                 </script>
 
-                <div id="content" class="content">
+                <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="running-a-load-test"><a class="header" href="#running-a-load-test">Running A Load Test</a></h1>
-<p>We will use Cargo to run our example load test application. It's best to get in the habit of setting the <code>--release</code> option whenever compiling or running load tests.</p>
+<p>Run the load test from <a href="creating.html">Creating A Load Test</a> with Cargo. Pass the <code>--release</code> option whenever you compile or run a load test: a debug build is much slower and can’t generate as much load.</p>
 <pre><code class="language-bash">$ cargo run --release
-    Finished release [optimized] target(s) in 0.06s
+    Finished `release` profile [optimized] target(s) in 0.07s
      Running `target/release/loadtest`
-07:08:43 [INFO] Output verbosity level: INFO
-07:08:43 [INFO] Logfile verbosity level: WARN
-07:08:43 [INFO] users defaulted to number of CPUs = 10
+17:13:37 [INFO] Output verbosity level: INFO
+17:13:37 [INFO] Logfile verbosity level: WARN
+17:13:37 [INFO] users defaulted to number of CPUs = 18
 Error: InvalidOption { option: "--host", value: "", detail: "A host must be defined via the --host option, the GooseAttack.set_default() function, or the Scenario.set_host() function (no host defined for LoadtestTransactions)." }
 </code></pre>
-<p>The load test fails with an error as it hasn't been told the host you want to load test.</p>
-<p>So, let's try again, this time passing in the <code>--host</code> flag. We will also add the <code>--report-file</code> flag with a <code>.html</code> file extension, <a href="common.html#writing-an-html-formatted-report">which will generate an HTML report</a>, and <code>--no-reset-metrics</code> to preserve all information including the load test startup. The same information will also <a href="metrics.html">be printed to the command line</a> (without graphs). After running for a few seconds, press <code>ctrl-c</code> one time to gracefully stop the load test:</p>
-<pre><code class="language-bash">% cargo run --release -- --host http://umami.ddev.site --report-file=report.html --no-reset-metrics
-    Finished release [optimized] target(s) in 0.06s
-     Running `target/release/loadtest --host 'http://umami.ddev.site' --report-file=report.html --no-reset-metrics`
-08:53:48 [INFO] Output verbosity level: INFO
-08:53:48 [INFO] Logfile verbosity level: WARN
-08:53:48 [INFO] users defaulted to number of CPUs = 10
-08:53:48 [INFO] no_reset_metrics = true
-08:53:48 [INFO] report_file = report.html
-08:53:48 [INFO] global host configured: http://umami.ddev.site
-08:53:48 [INFO] allocating transactions and scenarios with RoundRobin scheduler
-08:53:48 [INFO] initializing 10 user states...
-08:53:48 [INFO] Telnet controller listening on: 0.0.0.0:5116
-08:53:48 [INFO] WebSocket controller listening on: 0.0.0.0:5117
-08:53:48 [INFO] entering GooseAttack phase: Increase
-08:53:48 [INFO] [user 1]: launching user from LoadtestTransactions
-08:53:49 [INFO] [user 2]: launching user from LoadtestTransactions
-08:53:50 [INFO] [user 3]: launching user from LoadtestTransactions
-08:53:51 [INFO] [user 4]: launching user from LoadtestTransactions
-08:53:52 [INFO] [user 5]: launching user from LoadtestTransactions
-08:53:53 [INFO] [user 6]: launching user from LoadtestTransactions
-08:53:54 [INFO] [user 7]: launching user from LoadtestTransactions
-08:53:55 [INFO] [user 8]: launching user from LoadtestTransactions
-08:53:56 [INFO] [user 9]: launching user from LoadtestTransactions
-08:53:57 [INFO] [user 10]: launching user from LoadtestTransactions
-All 10 users hatched.
-
-08:53:58 [INFO] entering GooseAttack phase: Maintain
-^C08:54:25 [WARN] caught ctrl-c, stopping...
+<p>The load test fails because it has not been told which host to load test.</p>
+<p>Run it again, this time passing the <code>--host</code> option with the address of a site you run or are allowed to load test. The <code>--</code> passes the options after it to the load test rather than to Cargo. Without <code>-u</code>, Goose starts one user for each CPU; without <code>-t</code>, it runs until you stop it. This load test sets no wait time, so each user sends its next request as soon as the last one is answered. Against your own site, start small (see <a href="common.html#how-many-users-to-simulate">How many users to simulate</a> and <a href="common.html#specifying-how-long-the-load-test-will-run">Specifying how long the load test will run</a>):</p>
+<pre><code class="language-bash">$ cargo run --release -- --host https://your-site.example -u 2 -t 30s --report-file=report.html --no-reset-metrics
 </code></pre>
-<p>As of Goose 0.16.0, by default all <code>INFO</code> and higher level log messages are displayed on the console while the load test runs. You can disable these messages with the <code>-q</code> (<code>--quiet</code>) flag. Or, you can display low-level debug with the <code>-v</code> (<code>--verbose</code>) flag.</p>
-<h2 id="html-report"><a class="header" href="#html-report">HTML report</a></h2>
-<p>When the load tests finishes shutting down, it will display some <a href="metrics.html#ascii-metrics">ASCII metrics</a> on the CLI and an HTML report will be created in the local directory named <code>report.html</code> as was configured above. The graphs and tables found in the HTML report are what are demonstrated below:</p>
-<p><img src="report-header.png" alt="HTML report header section" /></p>
-<p>By default, Goose will hatch 1 <code>GooseUser</code> per second, up to the number of CPU cores available on the server used for load testing. In the above example, the loadtest was run from a laptop with 10 CPU cores, so it took 10 seconds to hatch all users.</p>
-<p>By default, after all users are launched Goose will flush all metrics collected during the launching process (we used the <code>--no-reset-metrics</code> flag to disable this behavior) so the summary metrics are collected with all users running. If we'd not used <code>--no-reset-metrics</code>, before flushing the metrics they would have been displayed to the console so the data is not lost.</p>
-<h2 id="request-metrics"><a class="header" href="#request-metrics">Request metrics</a></h2>
-<p><img src="report-requests.png" alt="HTML report request metrics section" /></p>
-<p>The per-request metrics are displayed first. Our single transaction makes a <code>GET</code> request for the empty <code>""</code> path, so it shows up in the metrics as simply <code>GET  </code>. The table in this section displays the total number of requests made (8,490), the average number of requests per second (229.46), and the average number of failed requests per second (0).</p>
-<p>Additionally it shows the average time required to load a page (37.85 milliseconds), the minimum time to load a page (12 ms) and the maximum time to load a page (115 ms).</p>
-<p>If our load test made multiple requests, the Aggregated line at the bottom of this section would show totals and averages of all requests together. Because we only make a single request, this row is identical to the per-request metrics.</p>
-<h2 id="response-time-metrics"><a class="header" href="#response-time-metrics">Response time metrics</a></h2>
-<p><img src="report-responses.png" alt="HTML report response times metrics section" /></p>
-<p>The second section displays the average time required to load a page. The table in this section is showing the slowest page load time for a range of percentiles. In our example, in the 50% fastest page loads, the slowest page loaded in 37 ms. In the 70% fastest page loads, the slowest page loaded in 42 ms, etc. The graph, on the other hand, is displaying the average response time aggregated across all requests.</p>
-<h2 id="status-code-metrics"><a class="header" href="#status-code-metrics">Status code metrics</a></h2>
-<p><img src="report-status-codes.png" alt="HTML report status code metrics section" /></p>
-<p>The third section is a table showing all response codes received for each request. In this simple example, all 8,490 requests received a <code>200 OK</code> response.</p>
-<h2 id="transaction-metrics"><a class="header" href="#transaction-metrics">Transaction metrics</a></h2>
-<p><img src="report-transactions.png" alt="HTML report transaction metrics section" /></p>
-<p>Next comes per-transaction metrics, starting with the name of our Scenario, <code>LoadtestTransactions</code>. Individual transactions in the Scenario are then listed in the order they are defined in our load test. We did not name our transaction, so it simply shows up as <code>0.0</code>. All defined transactions will be listed here, even if they did not run, so this can be useful to confirm everything in your load test is running as expected. Comparing the transaction metrics metrics collected for <code>0.0</code> to the per-request metrics collected for <code>GET /</code>, you can see that they are the same. This is because in our simple example, our single transaction only makes one request.</p>
-<p>In real load tests, you'll most likely have multiple scenarios each with multiple transactions, and Goose will show you metrics for each along with an aggregate of them all together.</p>
-<h2 id="scenario-metrics"><a class="header" href="#scenario-metrics">Scenario metrics</a></h2>
-<p><a href="metrics.html#scenarios">Per-scenario metrics</a> follow the per-transaction metrics. This page has has not yet been updated to include a proper example of Scenario metrics.</p>
-<h2 id="user-metrics"><a class="header" href="#user-metrics">User metrics</a></h2>
-<p><img src="report-users.png" alt="HTML report user metrics section" /></p>
-<p>Finally comes a chart showing how many users were running during the load test. You can clearly see the 10 users starting 1 per second at the start of the load test, as well as the final second when users quickly stopped.</p>
-<p>Refer to the <a href="../example/overview.html">examples</a> included with Goose for more complicated and useful load test examples.</p>
+<p><code>--report-file</code> with a <code>.html</code> file extension <a href="common.html#writing-an-html-formatted-report">writes an HTML report</a>, and <code>--no-reset-metrics</code> keeps the ramp up in that report (explained below). Stop a run without <code>-t</code> with one Ctrl-C. The run below is the same command against a test server on port 19060 of this machine, without <code>-u</code> and <code>-t</code>. It ran until Ctrl-C was pressed once, about 8 seconds after <code>entering GooseAttack phase: Maintain</code>:</p>
+<pre><code class="language-bash">$ cargo run --release -- --host http://localhost:19060 --report-file=report.html --no-reset-metrics
+    Finished `release` profile [optimized] target(s) in 0.06s
+     Running `target/release/loadtest --host 'http://localhost:19060' --report-file=report.html --no-reset-metrics`
+17:13:38 [INFO] Output verbosity level: INFO
+17:13:38 [INFO] Logfile verbosity level: WARN
+17:13:38 [INFO] users defaulted to number of CPUs = 18
+17:13:38 [INFO] no_reset_metrics = true
+17:13:38 [INFO] report_file = ["report.html"]
+17:13:38 [INFO] global host configured: http://localhost:19060
+17:13:38 [INFO] [scheduler]: allocating transactions and scenarios with RoundRobin scheduler
+17:13:38 [INFO] [scheduler]: initializing 18 user states...
+17:13:38 [INFO] [controller]: Telnet listening on: 127.0.0.1:5116
+17:13:38 [INFO] entering GooseAttack phase: Increase
+17:13:38 [INFO] [user 1]: launching user from LoadtestTransactions
+17:13:39 [INFO] [user 2]: launching user from LoadtestTransactions
+17:13:40 [INFO] [user 3]: launching user from LoadtestTransactions
+...
+17:13:54 [INFO] [user 17]: launching user from LoadtestTransactions
+17:13:55 [INFO] [user 18]: launching user from LoadtestTransactions
+All 18 users launched.
+
+17:13:56 [INFO] entering GooseAttack phase: Maintain
+17:14:04 [WARN] caught ctrl-c, stopping...
+17:14:04 [INFO] Killswitch triggered: SIGINT received
+17:14:05 [INFO] entering GooseAttack phase: Decrease
+17:14:05 [INFO] [user 14]: exiting from LoadtestTransactions
+17:14:05 [INFO] [user 5]: exiting from LoadtestTransactions
+...
+17:14:05 [INFO] html report file written to: report.html
+17:14:05 [INFO] entering GooseAttack phase: Shutdown
+17:14:05 [INFO] printing final metrics after 27 seconds...
+</code></pre>
+<p>All <code>INFO</code> and higher-level log messages are displayed on the console while the load test runs. The <code>entering GooseAttack phase:</code> lines name each <a href="../glossary.html#attack-phase">phase</a> the load test enters. <code>-q</code> (<code>--quiet</code>) hides the <code>INFO</code> lines and leaves warnings and errors, and <code>-v</code> (<code>--verbose</code>) adds low-level debug messages. In Goose 0.19, <code>-v</code> against a fast server can hang the run at the metrics reset; add <code>--no-reset-metrics</code> with it, and see <a href="tips.html#when-a-run-never-ends">When a run never ends</a>.</p>
+<p>Goose launches one user a second, so this machine’s 18 users took 18 seconds to ramp up; the overview below shows this as the Increasing step. With no wait time, this run’s console metrics, not shown here, report over 9,000 requests a second against the local test server.</p>
+<p>By default, once every user has started, Goose prints the metrics so far, <a href="../glossary.html#metrics-reset">resets them</a>, and prints <code>All 18 users launched, resetting metrics (disable with --no-reset-metrics).</code> The results then describe the run at full load. <code>--no-reset-metrics</code>, used here, skips that early print of the metrics and the reset, and Goose prints only <code>All 18 users launched.</code> The tables and graphs in <code>report.html</code> then include the ramp up; the <a href="metrics.html#users">User Metrics</a> graph shows the ramp up with or without the reset.</p>
+<h2 id="what-the-run-produced"><a class="header" href="#what-the-run-produced">What the run produced</a></h2>
+<p>Once every user has exited, Goose writes <code>report.html</code> in the directory you ran it from; open it in a browser. Then Goose enters Shutdown and prints its final console metrics, which end with the <a href="../glossary.html#plan-overview">plan overview</a>. The overview lists each step of the run, when it started and stopped, how long it took, and how many users were running:</p>
+<pre><code class="language-text"> === OVERVIEW ===
+ ------------------------------------------------------------------------------
+ Action       Started               Stopped             Elapsed    Users
+ ------------------------------------------------------------------------------
+ Increasing:  2026-10-28 18:13:38 - 2026-10-28 18:13:56 (00:00:18, 0 -&gt; 18)
+ Maintaining: 2026-10-28 18:13:56 - 2026-10-28 18:14:05 (00:00:09, 18)
+ Canceling:   2026-10-28 18:14:05 - 2026-10-28 18:14:05 (00:00:00, 0 &lt;- 18)
+
+ Target host: http://localhost:19060/
+ goose v0.19.0
+ ------------------------------------------------------------------------------
+</code></pre>
+<p>Because Ctrl-C stopped this run, the overview lists its Decrease phase as Canceling; a run that ends at its <code>-t</code> time lists it as Decreasing. The log lines in the run above carry UTC times; the plan overview uses local time, an hour ahead on this machine.</p>
+<p>To watch a run live, change the <code>goose</code> line in <code>Cargo.toml</code> to <code>goose = { version = "^0.19", features = ["dashboard"] }</code> and run with <code>--dashboard</code> (see <a href="common.html#watching-a-run">Watching a run</a>). Give <code>--report-file</code> once for each report you want; its extension sets the type (see <a href="common.html#writing-an-html-formatted-report">Writing reports</a>). A <code>.pdf</code> report also needs the <code>pdf-reports</code> feature, as in <code>features = ["dashboard", "pdf-reports"]</code>, and Chrome, which Goose downloads if it finds none (see <a href="../requirements.html#chrome-for-pdf-reports">Requirements</a>).</p>
+<p><a href="metrics.html">Metrics</a> shows every view of a run and when to use each, from the live dashboard through the PDF, HTML, Markdown and JSON reports to the console metrics. Its <a href="metrics.html#html-report">HTML report</a> section walks through the report you just opened, and its <a href="metrics.html#ascii-metrics">console metrics</a> section explains the tables printed before the plan overview.</p>
+<p>The <a href="../example/overview.html">examples</a> included with Goose show larger load tests.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
                             <a rel="prev" href="../getting-started/validation.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
-                                <i class="fa fa-angle-left"></i>
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
                             <a rel="next prefetch" href="../getting-started/runtime-options.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
-                                <i class="fa fa-angle-right"></i>
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
                         <div style="clear: both"></div>
@@ -263,16 +262,21 @@ All 10 users hatched.
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
                     <a rel="prev" href="../getting-started/validation.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
-                        <i class="fa fa-angle-left"></i>
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
                     <a rel="next prefetch" href="../getting-started/runtime-options.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
-                        <i class="fa fa-angle-right"></i>
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>
 
         </div>
 
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
 
 
 
@@ -281,13 +285,13 @@ All 10 users hatched.
         </script>
 
 
-        <script src="../elasticlunr.min.js"></script>
-        <script src="../mark.min.js"></script>
-        <script src="../searcher.js"></script>
+        <script src="../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../mark-09e88c2c.min.js"></script>
+        <script src="../searcher-09f2665d.js"></script>
 
-        <script src="../clipboard.min.js"></script>
-        <script src="../highlight.js"></script>
-        <script src="../book.js"></script>
+        <script src="../clipboard-1626706a.min.js"></script>
+        <script src="../highlight-abc7f01d.js"></script>
+        <script src="../book-609e4cb8.js"></script>
 
         <!-- Custom JS scripts -->
 

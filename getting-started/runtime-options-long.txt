@@ -1,0 +1,696 @@
+Goose 0.19.0: an HTTP(S) load testing tool written in Rust
+
+Usage: loadtest [OPTIONS]
+
+Use -h for a summary of each option, --help for details, defaults and examples.
+
+Load test:
+  -H, --host <URL>
+          Target host, such as http://10.21.32.33
+
+          The scheme, host and optional port each request's path is joined to.
+          It overrides a host set with Scenario::set_host or GooseDefault::Host,
+          and is required unless one of those gives every scenario a host. A
+          request with a full URL ignores it.
+
+          Example: -H http://localhost:8080. Set in code with
+          GooseDefault::Host.
+
+  -u, --users <N>
+          Concurrent users [default: one per CPU]
+
+          How many users to start. Without it, Goose starts one user for each
+          CPU available to it. At least 1, and at least 2 with --increase-time
+          or --decrease-time. Not allowed with --test-plan, which sets its own
+          user counts.
+
+          Example: -u 100. Set in code with GooseDefault::Users.
+
+  -r, --increase-rate <RATE>
+          Users started per second [default: 1]
+
+          How fast to start users. A decimal is allowed: 0.5 starts one user
+          every two seconds. The slowest rate is one user a day. Not allowed
+          with --increase-time or --test-plan.
+
+          Example: -r 10. Set in code with GooseDefault::IncreaseRate.
+
+  -s, --increase-time <TIME>
+          Time to start all users, such as 30s
+
+          Starts the users evenly over this time, in place of --increase-rate.
+          TIME is a whole number of seconds, or hours, minutes and seconds in
+          that order, such as 1h30m or 2m30s. Needs at least 2 users. Not
+          allowed with --increase-rate or --test-plan.
+
+          Example: -s 2m. Set in code with GooseDefault::IncreaseTime, in
+          seconds.
+
+  -t, --run-time <TIME>
+          Run this long after all users start
+
+          How long to keep every user running once all have started; starting
+          and stopping them takes extra time. Without it, the load test runs
+          until it is stopped, or until --iterations completes. TIME is as for
+          --increase-time. When it ends, users stop as --decrease-rate or
+          --decrease-time set, otherwise all at once. Not allowed with
+          --iterations or --test-plan.
+
+          Example: -t 20m. Set in code with GooseDefault::RunTime, in seconds.
+
+      --decrease-rate <RATE>
+          Users stopped per second
+
+          How fast to stop users at the end of the load test. A decimal is
+          allowed, as for --increase-rate. Without it or --decrease-time, every
+          user stops at once. Not allowed with --decrease-time, --iterations or
+          --test-plan.
+
+          Example: --decrease-rate 5. Set in code with
+          GooseDefault::DecreaseRate.
+
+      --decrease-time <TIME>
+          Time to stop all users, such as 30s
+
+          Stops the users evenly over this time at the end of the load test, in
+          place of --decrease-rate. TIME is as for --increase-time. Needs at
+          least 2 users. Not allowed with --decrease-rate, --iterations or
+          --test-plan.
+
+          Example: --decrease-time 1m. Set in code with
+          GooseDefault::DecreaseTime, in seconds.
+
+      --iterations <N>
+          Each user runs its scenario N times
+
+          Each user stops after running its scenario N times, and the load test
+          ends once every user has stopped. 0, the default, means no limit. Not
+          allowed with --run-time, --decrease-rate, --decrease-time, --test-plan
+          or --no-reset-metrics.
+
+          Example: --iterations 5. Set in code with GooseDefault::Iterations.
+
+      --test-plan <PLAN>
+          Load shape, such as "10,60s;0,30s"
+
+          Steps separated by semicolons, each a number of users and the time to
+          reach it: "10,60s;0,30s" starts 10 users over 60 seconds, then stops
+          them over 30 seconds. A step that keeps the number of users holds them
+          for its time. TIME is as for --increase-time. Not allowed with
+          --users, --increase-rate, --increase-time, --decrease-rate,
+          --decrease-time, --run-time, --iterations or --no-reset-metrics.
+
+          Example: --test-plan "10,1m;10,5m;0,30s". Set in code with
+          GooseDefault::TestPlan.
+
+      --scenarios <LIST>
+          Only run the named scenarios
+
+          A comma separated list of scenario machine names, as --scenarios-list
+          prints them. Matching ignores case, and * matches any run of
+          characters. Without it, every scenario runs.
+
+          Example: --scenarios "checkout,browse*". Set in code with
+          GooseDefault::Scenarios.
+
+      --throttle-requests <N>
+          Cap total requests per second
+
+          The most requests per second all users together may make. 0, the
+          default, means no cap.
+
+          Example: --throttle-requests 100. Set in code with
+          GooseDefault::ThrottleRequests.
+
+Information:
+  -h, --help
+          Print help: -h prints a summary of each option, --help this full
+          reference.
+
+  -V, --version
+          Print the Goose library version
+
+          Prints the name and version of the Goose library the load test was
+          built with, then exits.
+
+  -l, --list
+          List scenarios and their transactions
+
+          Prints each scenario and its transactions, with their weights, then
+          exits without load testing.
+
+      --scenarios-list
+          List scenario names, then exit
+
+          Prints the machine name of each scenario, which --scenarios matches,
+          and its full name, then exits without load testing.
+
+Console and Goose log:
+  -v, --verbose...
+          More console output (-v, -vv)
+
+          The console shows info messages by default. -v adds debug messages and
+          -vv adds trace messages. Not allowed with --quiet.
+
+          Example: -vv. Set in code with GooseDefault::Verbose.
+
+  -q, --quiet...
+          Less console output, warnings only
+
+          The console shows only warnings and errors, leaving out info messages;
+          -qq is the same as -q. Not allowed with --verbose.
+
+          Example: -q. Set in code with GooseDefault::Quiet.
+
+  -G, --goose-log [<FILE>]
+          Write the Goose log to FILE
+
+          Writes Goose's own log messages to FILE, at the detail --log-level
+          sets. Without FILE, writes goose.log into the run's folder. Without
+          the option, there is no Goose log.
+
+          Example: -G goose.log. Set in code with GooseDefault::GooseLog.
+
+  -g, --log-level...
+          More Goose log detail (-g, -gg)
+
+          The Goose log that --goose-log writes holds warnings and errors by
+          default. -g adds info messages, -gg debug messages and -ggg trace
+          messages.
+
+          Example: -G goose.log -gg. Set in code with GooseDefault::LogLevel.
+
+      --running-metrics <N>
+          Print running metrics every N seconds
+
+          Prints the metrics so far to the console every N seconds while the
+          load test runs. Without it, metrics are printed only at the end.
+
+          Example: --running-metrics 30. Set in code with
+          GooseDefault::RunningMetrics.
+
+      --no-print-metrics
+          Don't print metrics at the end
+
+          Leaves the metrics out of the console when the load test ends. Reports
+          are still written.
+
+          Set in code with GooseDefault::NoPrintMetrics.
+
+      --no-error-summary
+          Don't collect the error summary
+
+          Leaves the summary of errors out of the metrics, on the console and in
+          reports. The error log, --error-log, is still written.
+
+          Set in code with GooseDefault::NoErrorSummary.
+
+Reports:
+      --report-file [<FILE>]
+          Write a report; repeatable
+
+          Writes a report of the load test to FILE when it ends. The extension
+          picks the type: .html or .htm, .md, .json, or .pdf with the
+          pdf-reports feature. Without FILE, writes report.json and report.html
+          into the run's folder. Repeat the option to write several. Not allowed
+          with --no-metrics.
+
+          Example: --report-file report.html --report-file report.json. Set in
+          code with GooseDefault::ReportFile.
+
+      --output-dir <DIR>
+          Run folder, or goose-runs/<start time>
+
+          Sets the run's folder for output flags given without a path. Goose
+          creates it as the run starts, and removes it at the end of a run that
+          wrote nothing into it. When the folder already holds files, the run
+          uses DIR-2, DIR-3 and so on. Needs an output flag given without a
+          path, or --dashboard, which counts except under --no-metrics.
+
+          Example: --output-dir goose-runs/nightly --report-file. Set in code
+          with GooseDefault::OutputDir.
+
+      --compress [<LEVEL>]
+          Gzip files in the run's folder, 1 to 9
+
+          Gzips every file Goose writes into the run's folder, each named with
+          .gz added. A path given to an output flag keeps exactly that name; a
+          name that ends in .gz is gzipped without this option. LEVEL is 1
+          (fastest) to 9 (smallest), default 6, for every gzipped file.
+
+          Example: --report-file -R --compress 9. Set in code with
+          GooseDefault::Compress.
+
+      --notes <TEXT>
+          Label the run in its reports
+
+          Stores TEXT in the JSON report and shows it at the top of the HTML and
+          Markdown reports and in the dashboard. Needs --report-file,
+          --pdf-print-html or --dashboard.
+
+          Example: --notes "baseline before cache change". Set in code with
+          GooseDefault::Notes.
+
+      --report-graph-data
+          Add graph data to the JSON report
+
+          Adds the per second data behind the HTML report's graphs to the JSON
+          report, so a report rendered from it with --render-report has its
+          graphs. Needs --report-file or --dashboard.
+
+          Set in code with GooseDefault::ReportGraphData.
+
+      --render-report <FILE>
+          Write reports from a JSON report, exit
+
+          Writes the reports named by --report-file paths from FILE, a JSON
+          report, then exits without running a load test.
+
+          Example: --render-report report.json --report-file report.html.
+
+      --baseline-file <PATH>
+          Compare against an earlier run
+
+          PATH is a JSON report, plain or gzipped, or a folder that holds
+          report.json or report.json.gz. Every report then shows how each metric
+          changed from that run.
+
+          Example: --baseline-file baseline.json. Set in code with
+          GooseDefault::BaselineFile.
+
+      --no-granular-report
+          Graph only totals in reports
+
+          Report graphs show a line for the total and, by default, one more for
+          each request, transaction or scenario. This leaves out the extra
+          lines. Needs --report-file, --pdf-print-html or --dashboard.
+
+          Set in code with GooseDefault::NoGranularData.
+
+      --pdf-print-html <FILE>
+          Write print-ready HTML for PDF
+
+          Writes the HTML report, laid out for printing, to FILE, to turn into a
+          PDF in any browser. Needs neither Chrome nor the pdf-reports feature.
+          Not allowed with --no-metrics.
+
+          Example: --pdf-print-html report-print.html.
+
+      --pdf-scale <SCALE>
+          PDF scale, 0.1 to 2.0 [default: 0.8]
+
+          How much Chrome scales the pages of a .pdf --report-file. Only with
+          the pdf-reports feature.
+
+          Example: --pdf-scale 1.2. Set in code with GooseDefault::PdfScale.
+
+      --pdf-timeout <SECS>
+          PDF timeout, 10 to 600 s [default: 60]
+
+          Seconds to wait for Chrome to start and to render a .pdf
+          --report-file. Only with the pdf-reports feature.
+
+          Example: --pdf-timeout 120. Set in code with GooseDefault::PdfTimeout.
+
+Metrics:
+      --no-reset-metrics
+          Keep metrics from the ramp up
+
+          By default, Goose resets the metrics once every user has started, so
+          they cover only the full load. This keeps what was gathered while
+          users were starting. Not allowed with --test-plan or --iterations.
+
+          Set in code with GooseDefault::NoResetMetrics.
+
+      --no-metrics
+          Don't collect any metrics
+
+          Turns off every metric, and with them every report. Not allowed with
+          --report-file, --request-log, --transaction-log, --scenario-log,
+          --error-log or --co-mitigation.
+
+          Set in code with GooseDefault::NoMetrics.
+
+      --no-transaction-metrics
+          Don't collect transaction metrics
+
+          Leaves out the metrics for each transaction, keeping those for
+          requests and scenarios.
+
+          Set in code with GooseDefault::NoTransactionMetrics.
+
+      --no-scenario-metrics
+          Don't collect scenario metrics
+
+          Leaves out the metrics for each scenario, keeping those for requests
+          and transactions.
+
+          Set in code with GooseDefault::NoScenarioMetrics.
+
+      --no-status-codes
+          Don't collect status code metrics
+
+          Leaves out the count of each HTTP status code.
+
+          Set in code with GooseDefault::NoStatusCodes.
+
+      --co-mitigation <MODE>
+          Coordinated omission mitigation
+
+          Experimental. While the server stalls, users send fewer requests, so
+          the stall is under counted. Mitigation backfills the requests each
+          user would have sent at its usual cadence. MODE is average, maximum or
+          minimum, the cadence to backfill at, or disabled, the default. Not
+          allowed with --no-metrics.
+
+          Example: --co-mitigation average. Set in code with
+          GooseDefault::CoordinatedOmissionMitigation.
+
+      --threshold <RULE>
+          Pass/fail rule, such as p95<500ms
+
+          RULE is <metric><op><value>, with an optional " for <request>". The
+          metric is pNN with optional decimals (a response time percentile, such
+          as p95 or p99.9), avg, max, error-rate (failed requests as a percent
+          of all) or rps (requests per second while the run holds its users
+          steady, in Maintain). The op is <, <=, > or >=. A time takes us, ms or
+          s, a bare number being ms; an error-rate takes an optional %. A rule
+          ending " for <request>", named as the HTML or Markdown report names
+          it, judges only that request, as in "p99<2s for GET /checkout"; the
+          console cuts long names short. Without it, the rule judges all
+          requests together. A rule that can never pass is refused. A failing
+          rule stops the run, unless --no-threshold-abort is set, and always
+          fails it: execute() returns GooseError::ThresholdsFailed, so a main
+          that passes it up with ? exits nonzero. Repeat the option for several
+          rules; they replace any set in code. Not allowed with --no-metrics.
+
+          Example: --threshold "p95<500ms" --threshold "error-rate<1%". Set in
+          code with GooseDefault::Threshold, once for each rule.
+
+      --no-threshold-abort
+          Judge thresholds only at the end
+
+          By default, Goose checks every --threshold once a second from when the
+          run first enters Maintain, and stops the run when one fails. With this
+          set, Goose judges them only when the run ends, and a failing rule
+          still fails the run. An rps rule counts only the time spent holding
+          users steady, as it does without this.
+
+          Set in code with GooseDefault::NoThresholdAbort.
+
+      --threshold-abort-delay <TIME>
+          Wait before thresholds can stop the run
+
+          Checking starts when the run first enters Maintain, holding its users
+          steady, and this waits TIME more before the first check, to let a cold
+          cache warm up. TIME is as for --run-time; the default is 0. It never
+          changes the judgement at the end of the run. Needs --threshold, and
+          not allowed with --no-threshold-abort.
+
+          Example: --threshold-abort-delay 30s. Set in code with
+          GooseDefault::ThresholdAbortDelay, in seconds.
+
+Logs:
+  -R, --request-log [<FILE>]
+          Log every request to FILE
+
+          Writes a line for each request, in --request-format. Without FILE,
+          writes requests.json, .csv or .log, as --request-format sets, into the
+          run's folder. Not allowed with --no-metrics.
+
+          Example: -R requests.log. Set in code with GooseDefault::RequestLog.
+
+      --request-format <FMT>
+          Request log format
+
+          FMT is json, the default, csv, raw or pretty.
+
+          Example: --request-format csv. Set in code with
+          GooseDefault::RequestFormat.
+
+      --request-body
+          Add request bodies to the request log
+
+          Includes the body of each request in --request-log.
+
+          Set in code with GooseDefault::RequestBody.
+
+  -T, --transaction-log [<FILE>]
+          Log every transaction to FILE
+
+          Writes a line for each transaction, in --transaction-format. Without
+          FILE, writes transactions.json, .csv or .log, as --transaction-format
+          sets, into the run's folder. Not allowed with --no-metrics.
+
+          Example: -T transactions.log. Set in code with
+          GooseDefault::TransactionLog.
+
+      --transaction-format <FMT>
+          Transaction log format
+
+          FMT is json, the default, csv, raw or pretty.
+
+          Example: --transaction-format csv. Set in code with
+          GooseDefault::TransactionFormat.
+
+  -S, --scenario-log [<FILE>]
+          Log every scenario to FILE
+
+          Writes a line for each run of a scenario, in --scenario-format.
+          Without FILE, writes scenarios.json, .csv or .log, as
+          --scenario-format sets, into the run's folder. Not allowed with
+          --no-metrics.
+
+          Example: -S scenarios.log. Set in code with GooseDefault::ScenarioLog.
+
+      --scenario-format <FMT>
+          Scenario log format
+
+          FMT is json, the default, csv, raw or pretty.
+
+          Example: --scenario-format csv. Set in code with
+          GooseDefault::ScenarioFormat.
+
+  -E, --error-log [<FILE>]
+          Log every error to FILE
+
+          Writes a line for each failed request, in --error-format. Without
+          FILE, writes errors.json, .csv or .log, as --error-format sets, into
+          the run's folder. Not allowed with --no-metrics.
+
+          Example: -E errors.log. Set in code with GooseDefault::ErrorLog.
+
+      --error-format <FMT>
+          Error log format
+
+          FMT is json, the default, csv, raw or pretty.
+
+          Example: --error-format csv. Set in code with
+          GooseDefault::ErrorFormat.
+
+  -D, --debug-log [<FILE>]
+          Write the debug log to FILE
+
+          Writes what the load test logs with GooseUser::log_debug and
+          GooseUser::set_failure, with response bodies unless --no-debug-body,
+          in --debug-format. Without FILE, writes debug.json, .csv or .log, as
+          --debug-format sets, into the run's folder.
+
+          Example: -D debug.log. Set in code with GooseDefault::DebugLog.
+
+      --debug-format <FMT>
+          Debug log format
+
+          FMT is json, the default, csv, raw or pretty.
+
+          Example: --debug-format pretty. Set in code with
+          GooseDefault::DebugFormat.
+
+      --no-debug-body
+          Leave response bodies out of debug log
+
+          Writes --debug-log without response bodies, which keeps it small.
+
+          Set in code with GooseDefault::NoDebugBody.
+
+Dashboard:
+      --dashboard
+          Serve the live web dashboard
+
+          Serves a page that charts the load test as it runs, on 127.0.0.1 port
+          5118 unless --dashboard-host or --dashboard-port say otherwise. Needs
+          Goose built with the dashboard feature.
+
+          Set in code with GooseDefault::Dashboard.
+
+      --dashboard-host <HOST>
+          Bind host [default: 127.0.0.1]
+
+          The address the dashboard listens on, with --dashboard. An address
+          that is not a loopback address needs --dashboard-auth-token or
+          --dashboard-no-auth.
+
+          Example: --dashboard-host 0.0.0.0. Set in code with
+          GooseDefault::DashboardHost.
+
+      --dashboard-port <PORT>
+          Bind port [default: 5118]
+
+          The TCP port the dashboard listens on, with --dashboard. 0 picks a
+          free port, which the log shows.
+
+          Example: --dashboard-port 8088. Set in code with
+          GooseDefault::DashboardPort.
+
+      --dashboard-auth-token <TOKEN>
+          Auth token
+
+          The token a dashboard client must send, as an Authorization: Bearer
+          header or a token query parameter. Needed when --dashboard-host is not
+          a loopback address, and with --dashboard-control, unless
+          --dashboard-no-auth is set.
+
+          Set in code with GooseDefault::DashboardAuthToken.
+
+      --dashboard-control
+          Allow control from the dashboard
+
+          Lets the dashboard start, stop and quit the load test and change its
+          users. Needs --dashboard, and --dashboard-auth-token or
+          --dashboard-no-auth.
+
+          Set in code with GooseDefault::DashboardControl.
+
+      --dashboard-no-auth
+          Dashboard without a token
+
+          Allow dashboard access and control without a token. Anyone who can
+          reach the port can watch the test, and with --dashboard-control start,
+          stop and redirect it; on anything but loopback Goose warns at startup.
+          Needs --dashboard, and can't be used with --dashboard-auth-token.
+
+          Set in code with GooseDefault::DashboardNoAuth.
+
+      --dashboard-max-clients <N>
+          Max live clients [default: 32]
+
+          The most dashboard pages that may follow the live stream at once.
+
+          Example: --dashboard-max-clients 4. Set in code with
+          GooseDefault::DashboardMaxClients.
+
+      --no-percentiles-over-time
+          Don't track per-second response times
+
+          Leaves out the response time percentiles for each second behind the
+          dashboard's response time heatmap, which saves memory. Also turns off
+          the report's response time heatmap.
+
+          Set in code with GooseDefault::NoPercentilesOverTime.
+
+Controllers:
+      --no-autostart
+          Wait for a Controller to start the test
+
+          Starts idle and waits for a start command from the telnet Controller,
+          the WebSocket Controller with --websocket, or the dashboard with
+          --dashboard-control. Needs one of them enabled.
+
+          Set in code with GooseDefault::NoAutoStart.
+
+      --no-telnet
+          Disable the telnet Controller
+
+          By default, Goose accepts Controller commands over telnet, on
+          --telnet-host and --telnet-port.
+
+          Set in code with GooseDefault::NoTelnet.
+
+      --telnet-host <HOST>
+          Telnet host [default: 127.0.0.1]
+
+          The address the telnet Controller listens on. It has no
+          authentication: any other address, such as 0.0.0.0, prints a warning
+          at startup, as anyone who can reach the port can start, stop and
+          reconfigure the load test.
+
+          Example: --telnet-host 0.0.0.0. Set in code with
+          GooseDefault::TelnetHost.
+
+      --telnet-port <PORT>
+          Telnet port [default: 5116]
+
+          The TCP port the telnet Controller listens on.
+
+          Example: --telnet-port 6116. Set in code with
+          GooseDefault::TelnetPort.
+
+      --websocket
+          Enable the WebSocket Controller
+
+          Accepts Controller commands over WebSocket, on --websocket-host and
+          --websocket-port. Off by default: the WebSocket Controller has no
+          authentication and accepts a connection from any web page, so any
+          browser that can reach the port can drive the test.
+
+          Set in code with GooseDefault::WebSocket.
+
+      --websocket-host <HOST>
+          WebSocket host [default: 127.0.0.1]
+
+          The address the WebSocket Controller listens on, with --websocket. It
+          has no authentication: any other address, such as 0.0.0.0, prints a
+          warning at startup, as anyone who can reach the port can start, stop
+          and reconfigure the load test.
+
+          Example: --websocket-host 0.0.0.0. Set in code with
+          GooseDefault::WebSocketHost.
+
+      --websocket-port <PORT>
+          WebSocket port [default: 5117]
+
+          The TCP port the WebSocket Controller listens on, with --websocket.
+
+          Example: --websocket-port 6117. Set in code with
+          GooseDefault::WebSocketPort.
+
+HTTP client:
+      --timeout <SECS>
+          Request timeout in seconds [default: 60]
+
+          How long each request may take before it fails. A decimal is allowed:
+          0.5 is half a second. Rounded to the millisecond, so at least 0.0005.
+
+          Example: --timeout 15. Set in code with GooseDefault::Timeout.
+
+      --no-gzip
+          Don't send Accept-Encoding: gzip
+
+          By default, requests ask for gzip compressed responses, which Goose
+          decompresses.
+
+          Set in code with GooseDefault::NoGzip.
+
+      --sticky-follow
+          Keep following the host's redirect
+
+          When a request is redirected to another host, the user sends its later
+          requests to that host too.
+
+          Set in code with GooseDefault::StickyFollow.
+
+      --accept-invalid-certs
+          Accept invalid TLS certificates
+
+          Skips TLS certificate validation, for test servers with self signed or
+          expired certificates.
+
+          Set in code with GooseDefault::AcceptInvalidCerts.
+
+Examples:
+  loadtest -H http://localhost:8080 -u 10 -r 2 -t 5m
+  loadtest -H http://localhost:8080 -u 10 -r 2 -t 5m --report-file report.html
+
+Most options can also be set in code with GooseDefault; the command line wins. A
+value that begins with a hyphen goes after =, as in --goose-log=-run.log.
+https://book.goose.rs/getting-started/runtime-options.html

@@ -12,21 +12,20 @@
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
-        <link rel="icon" href="favicon.svg">
-        <link rel="shortcut icon" href="favicon.png">
-        <link rel="stylesheet" href="css/variables.css">
-        <link rel="stylesheet" href="css/general.css">
-        <link rel="stylesheet" href="css/chrome.css">
-        <link rel="stylesheet" href="css/print.css" media="print">
+        <link rel="icon" href="favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="favicon-8114d1fc.png">
+        <link rel="stylesheet" href="css/variables-8adf115d.css">
+        <link rel="stylesheet" href="css/general-e96d0476.css">
+        <link rel="stylesheet" href="css/chrome-d279d366.css">
+        <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
 
         <!-- Fonts -->
-        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
-        <link rel="stylesheet" href="fonts/fonts.css">
+        <link rel="stylesheet" href="fonts/fonts-9644e21d.css">
 
         <!-- Highlight.js Stylesheets -->
-        <link rel="stylesheet" id="highlight-css" href="highlight.css">
-        <link rel="stylesheet" id="tomorrow-night-css" href="tomorrow-night.css">
-        <link rel="stylesheet" id="ayu-highlight-css" href="ayu-highlight.css">
+        <link rel="stylesheet" id="mdbook-highlight-css" href="highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="ayu-highlight-3fdfc3ac.css">
 
         <!-- Custom theme stylesheets -->
 
@@ -36,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex.js";
+            window.path_to_searchindex_js = "searchindex-e0e91710.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc.js"></script>
+        <script src="toc-b1be2d52.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -53,7 +52,7 @@
             </div>
         </div>
     </div>
-    <div id="body-container">
+    <div id="mdbook-body-container">
         <!-- Work around some values being stored in localStorage wrapped in quotes -->
         <script>
             try {
@@ -82,12 +81,12 @@
             html.classList.add("js");
         </script>
 
-        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
 
         <!-- Hide / unhide sidebar before it is displayed -->
         <script>
             let sidebar = null;
-            const sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
             if (document.body.clientWidth >= 1080) {
                 try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
                 sidebar = sidebar || 'visible';
@@ -102,39 +101,39 @@
             }
         </script>
 
-        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
             <!-- populated by js -->
             <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
             <noscript>
                 <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
             </noscript>
-            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
             </div>
         </nav>
 
-        <div id="page-wrapper" class="page-wrapper">
+        <div id="mdbook-page-wrapper" class="page-wrapper">
 
             <div class="page">
-                <div id="menu-bar-hover-placeholder"></div>
-                <div id="menu-bar" class="menu-bar sticky">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
                     <div class="left-buttons">
-                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
-                            <i class="fa fa-bars"></i>
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
                         </label>
-                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
-                            <i class="fa fa-paint-brush"></i>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
                         </button>
-                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
-                            <li role="none"><button role="menuitem" class="theme" id="default_theme">Auto</button></li>
-                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
-                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
-                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
-                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
-                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
                         </ul>
-                        <button id="search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="searchbar">
-                            <i class="fa fa-search"></i>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
                         </button>
                     </div>
 
@@ -142,81 +141,158 @@
 
                     <div class="right-buttons">
                         <a href="print.html" title="Print this book" aria-label="Print this book">
-                            <i id="print-button" class="fa fa-print"></i>
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
                         </a>
 
                     </div>
                 </div>
 
-                <div id="search-wrapper" class="hidden">
-                    <form id="searchbar-outer" class="searchbar-outer">
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
                         <div class="search-wrapper">
-                            <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
                             <div class="spinner-wrapper">
-                                <i class="fa fa-spinner fa-spin"></i>
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
                             </div>
                         </div>
                     </form>
-                    <div id="searchresults-outer" class="searchresults-outer hidden">
-                        <div id="searchresults-header" class="searchresults-header"></div>
-                        <ul id="searchresults">
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
                         </ul>
                     </div>
                 </div>
 
                 <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
                 <script>
-                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
-                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
-                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
                         link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
                     });
                 </script>
 
-                <div id="content" class="content">
+                <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="glossary"><a class="header" href="#glossary">Glossary</a></h1>
+<p>These are the words Goose uses in a sense of its own, each with what it means in Goose and the page that explains it.</p>
+<h2 id="adjusted-metrics"><a class="header" href="#adjusted-metrics">Adjusted Metrics</a></h2>
+<p>The metrics Goose shows with <a href="#coordinated-omission">coordinated omission</a> mitigation on, once mitigation has added any <a href="#synthetic-request">synthetic requests</a>. Goose labels them “adjusted” and shows them beside the “raw” metrics of the requests actually sent. See <a href="./coordinated-omission/metrics.html">Coordinated Omission Metrics</a>.</p>
+<h2 id="attack-phase"><a class="header" href="#attack-phase">Attack Phase</a></h2>
+<p>The stage a <a href="#gooseattack">GooseAttack</a> is in, which Goose logs as <code>entering GooseAttack phase:</code> and the <a href="#live-dashboard">live dashboard</a> shows: <strong>Idle</strong>, <strong>Increase</strong> while users launch, <strong>Maintain</strong> once all are running, <strong>Decrease</strong> while they stop, and <strong>Shutdown</strong> as Goose exits. Idle is Goose waiting for a start from the dashboard or a <a href="#controller">Controller</a>, before a run or after one. The <a href="#plan-overview">plan overview</a> lists Decrease as Canceling, not Decreasing, when every user finishes its <a href="#iteration">iterations</a> or when <code>ctrl-c</code>, the dashboard, a Controller, a <a href="#killswitch">killswitch</a> or a failed <a href="#threshold">threshold</a> stops the run. See <a href="./getting-started/running.html">Running A Load Test</a>.</p>
+<h2 id="baseline"><a class="header" href="#baseline">Baseline</a></h2>
+<p>An earlier run’s JSON report, or the <a href="#run-folder">run folder</a> that holds it, given with <code>--baseline-file</code>. The PDF, HTML and Markdown reports then show each number’s change from it, such as <code>1,234 (+200)</code>. See <a href="./getting-started/common.html#comparing-against-a-baseline">Comparing Against A Baseline</a>.</p>
+<h2 id="cadence"><a class="header" href="#cadence">Cadence</a></h2>
+<p>How long a <a href="#gooseuser">GooseUser</a> takes to run once through its <a href="#scenario">scenario</a>, leaving out any wait time: its average, fastest or slowest time, as <code>--co-mitigation</code> chooses. <a href="#coordinated-omission">Coordinated omission</a> mitigation uses it to tell how many requests a user missed while the server stalled. See <a href="./coordinated-omission/mitigation.html">Mitigation</a>.</p>
+<h2 id="co-event"><a class="header" href="#co-event">CO Event</a></h2>
+<p>A <a href="#request">request</a> made after a stall, for which <a href="#coordinated-omission">coordinated omission</a> mitigation added <a href="#synthetic-request">synthetic requests</a>. The CO event count counts these requests, not the stalls. See <a href="./coordinated-omission/metrics.html#co-event-tracking">CO Event Tracking</a>.</p>
 <h2 id="controller"><a class="header" href="#controller">Controller</a></h2>
-<p>An interface that allows real-time control of a running Goose load test. Goose provides both <a href="./controller/telnet.html">Telnet</a> and <a href="./controller/websocket.html">WebSocket</a> controllers for dynamically adjusting test parameters like user count, hatch rate, and runtime during execution.</p>
+<p>The telnet or WebSocket interface that starts and stops a load test and changes its settings, such as its users, <a href="#host">host</a>, ramps, <a href="#run-time">run time</a> or <a href="#test-plan">test plan</a>. The <a href="#live-dashboard">live dashboard</a> can do the same with <a href="#dashboard-control">dashboard control</a>. See <a href="./controller/overview.html">Controllers</a>.</p>
 <h2 id="coordinated-omission"><a class="header" href="#coordinated-omission">Coordinated Omission</a></h2>
-<p>A phenomenon that occurs in load testing when the measurement system inadvertently excludes the results of requests that were affected by server slowdowns, leading to misleadingly optimistic performance metrics. Goose includes <a href="./coordinated-omission/mitigation.html">Coordinated Omission Mitigation</a> functionality to detect and correct for this.</p>
+<p>The error a load test makes when its users wait on a stalled server and so send fewer requests, which hides the stall from the metrics. Goose can correct for it with <code>--co-mitigation</code>. See <a href="./coordinated-omission/overview.html">Coordinated Omission</a>.</p>
+<h2 id="dashboard-control"><a class="header" href="#dashboard-control">Dashboard Control</a></h2>
+<p>What the <a href="#live-dashboard">live dashboard</a> can do with <code>--dashboard-control</code>: start and stop the test, change its users and settings, turn Save report off and on, delete saved runs, and quit Goose once the test is stopped. It also needs a <a href="#dashboard-token">dashboard token</a> or <code>--dashboard-no-auth</code>. Without control the dashboard is read-only: it shows the run, <a href="#save-report">saves its report</a> and lists saved runs in its <a href="#runs-panel">runs panel</a>, but cannot change the test. See <a href="./controller/dashboard.html#turning-it-on">Turning it on</a>.</p>
+<h2 id="dashboard-token"><a class="header" href="#dashboard-token">Dashboard Token</a></h2>
+<p>A secret set with <code>--dashboard-auth-token</code>. The <a href="#live-dashboard">live dashboard</a> then requires it, and a browser gives it by opening the dashboard’s address with <code>?token=&lt;TOKEN&gt;</code> added. See <a href="./controller/dashboard.html#turning-it-on">Turning it on</a>.</p>
+<h2 id="decrease-rate"><a class="header" href="#decrease-rate">Decrease Rate</a></h2>
+<p>How many <a href="#gooseuser">GooseUsers</a> stop each second at the end of a load test, set with <code>--decrease-rate</code>; <code>--decrease-time</code> spreads the stops over a time instead. With neither, all users stop at once. See <a href="./getting-started/common.html#controlling-the-ramp-down-rate">Controlling the ramp-down rate</a>.</p>
 <h2 id="gaggle"><a class="header" href="#gaggle">Gaggle</a></h2>
-<p>Goose's distributed load testing functionality that allows running coordinated load tests across multiple machines. A Gaggle consists of one Manager and multiple Workers. <strong>Note:</strong> Gaggle support was temporarily removed in Goose 0.17.0.</p>
+<p>Goose’s distributed load test, in which one Manager and one or more Workers ran a single load test across several servers. It was removed in Goose 0.17.0 and will be restored in Goose 0.20, before the 1.0 release; for a distributed load test today, use Goose 0.16.4. See <a href="./gaggle/overview.html">Gaggle: Distributed Load Test</a>.</p>
+<h2 id="goose-eggs"><a class="header" href="#goose-eggs">Goose Eggs</a></h2>
+<p>A companion crate of helpers for validating responses and for load testing Drupal sites, with its own version of the Umami example. See <a href="./getting-started/validation.html#goose-eggs">Goose Eggs</a>.</p>
+<h2 id="goose-log"><a class="header" href="#goose-log">Goose Log</a></h2>
+<p>Goose’s own log of what it is doing, written with <code>-G</code> (<code>--goose-log</code>), apart from the <a href="#logs">logs</a> of requests and transactions. It holds only warnings and errors unless <code>-g</code> (<code>--log-level</code>) adds info messages. See <a href="./getting-started/output-files.html">Output Files</a>.</p>
 <h2 id="gooseattack"><a class="header" href="#gooseattack">GooseAttack</a></h2>
-<p>A load test defined by one or more <a href="#scenario">Scenarios</a> with one or more <a href="#transaction">Transactions</a>.</p>
+<p>The load test itself: the <a href="#scenario">scenarios</a> it runs and its configuration, built with <code>GooseAttack::initialize()</code> and run with <code>execute()</code>. See <a href="./getting-started/creating.html">Creating A Load Test</a>.</p>
 <h2 id="gooseconfiguration"><a class="header" href="#gooseconfiguration">GooseConfiguration</a></h2>
-<p>A structure that defines all configuration options for a Goose load test, including user count, hatch rate, runtime, host, and various other parameters. Can be set via command line arguments, configuration files, or programmatically.</p>
+<p>The structure that holds every run-time option of a load test, parsed from the command line, with defaults the load test can set in code with <a href="#goosedefault"><code>GooseDefault</code></a>. See <a href="./getting-started/custom.html">Custom Options</a>.</p>
+<h2 id="goosedefault"><a class="header" href="#goosedefault">GooseDefault</a></h2>
+<p>The options a load test sets in its code with <code>set_default()</code>, such as a <a href="#host">host</a> or a number of users. An option given on the command line wins. See <a href="./config/defaults.html">Defaults</a>.</p>
 <h2 id="gooseerror"><a class="header" href="#gooseerror">GooseError</a></h2>
-<p>A helper that defines all possible errors returned by Goose. A <a href="#transaction">Transaction</a> returns a <a href="#transactionresult">TransactionResult</a>, which is either <a href="https://doc.rust-lang.org/std/result/enum.Result.html#variant.Ok"><code>Ok(())</code></a> or <a href="https://doc.rust-lang.org/std/result/enum.Result.html#variant.Err"><code>Err(GooseError)</code></a>.</p>
+<p>The error returned by <a href="#gooseattack">GooseAttack</a> methods such as <code>initialize()</code>, <code>set_default()</code> and <code>execute()</code>, for example when a run-time option is invalid or no <a href="#host">host</a> is configured. A <a href="#transaction">transaction</a> returns a <a href="#transactionerror">TransactionError</a> instead. See <a href="./getting-started/creating.html">Creating A Load Test</a>.</p>
+<h2 id="goosemetrics"><a class="header" href="#goosemetrics">GooseMetrics</a></h2>
+<p>The metrics a load test collects. <code>execute()</code> returns them when the run ends, and the JSON report holds them. See <a href="./getting-started/metrics.html#json-report">JSON report</a>.</p>
+<h2 id="gooserequest"><a class="header" href="#gooserequest">GooseRequest</a></h2>
+<p>A request built in a <a href="#transaction">transaction</a> with <code>GooseRequest::builder()</code>, for what the shortcuts such as <code>user.get()</code> and <code>user.post()</code> do not set, such as headers or the status code to expect. See <a href="https://docs.rs/goose/*/goose/goose/struct.GooseRequest.html"><code>GooseRequest</code></a> and the <a href="./example/basic-auth.html">Basic Authentication example</a>.</p>
 <h2 id="gooseuser"><a class="header" href="#gooseuser">GooseUser</a></h2>
-<p>A thread that repeatedly runs a single <a href="./getting-started/metrics.html#scenarios"><strong>scenario</strong></a> for the duration of the load test. For example, when Goose starts, you may use the <a href="./getting-started/common.html#how-many-users-to-simulate"><code>--users</code></a> command line option to configure how many GooseUser threads are started. This is not intended to be a 1:1 correlation between GooseUsers and real website users.</p>
-<h2 id="hatch-rate"><a class="header" href="#hatch-rate">Hatch Rate</a></h2>
-<p>The rate at which new <a href="#gooseuser">GooseUsers</a> are launched during the ramp-up phase of a load test, typically specified as users per second.</p>
+<p>A simulated user: an async task that runs one <a href="#scenario">scenario</a> over and over until the load test ends. Unless its scenario sets a wait time, it runs its <a href="#transaction">transactions</a> back to back, so it makes far more requests than one person would. <code>--users</code> sets how many start. See <a href="./getting-started/common.html#how-many-users-to-simulate">How many users to simulate</a>.</p>
+<h2 id="graph-data"><a class="header" href="#graph-data">Graph Data</a></h2>
+<p>The per second numbers behind a report’s graphs. When Goose will write a report at the end of the run, it keeps them in memory for every second of the run; without one, it keeps only the last 10 minutes for the <a href="#live-dashboard">live dashboard</a>, and none when there is no dashboard. <code>--report-graph-data</code> also adds them to the JSON report. See <a href="./getting-started/common.html#graph-data-and-memory">Graph data and memory</a>.</p>
+<h2 id="heatmap"><a class="header" href="#heatmap">Heatmap</a></h2>
+<p>A chart of response times over time, on the <a href="#live-dashboard">live dashboard</a> and in the PDF and HTML reports. Each column is a span of time and each row a range of response times; a cell’s color shows how many requests took that long, and lines show each column’s p50, p95 and p99. See <a href="./controller/dashboard.html#the-response-time-heatmap">The response time heatmap</a>.</p>
+<h2 id="hold"><a class="header" href="#hold">Hold</a></h2>
+<p>A time when the number of users stays steady: the <a href="#run-time">run time</a> after a ramp up, or a <a href="#test-plan">test plan</a> step that keeps the users it has. An <code>rps</code> <a href="#threshold">threshold</a>, on requests per second, counts only the holds. See <a href="./getting-started/thresholds.html#rps-counts-only-the-time-users-hold-steady">Thresholds</a>.</p>
+<h2 id="host"><a class="header" href="#host">Host</a></h2>
+<p>The base URL a load test sends its requests to, given with <code>-H</code> (<code>--host</code>). A request’s path, such as <code>/about</code>, is added to it, so one load test can run against any site. See <a href="./getting-started/common.html#host-to-load-test">Host to load test</a>.</p>
+<h2 id="increase-rate"><a class="header" href="#increase-rate">Increase Rate</a></h2>
+<p>How many <a href="#gooseuser">GooseUsers</a> start each second at the start of a load test, set with <code>--increase-rate</code>, one a second by default; <code>--increase-time</code> sets how long starting them all takes instead. See <a href="./getting-started/common.html#specifying-the-increase-rate">Specifying the increase rate</a>.</p>
+<h2 id="iteration"><a class="header" href="#iteration">Iteration</a></h2>
+<p>One run of a <a href="#gooseuser">GooseUser</a> through its whole <a href="#scenario">scenario</a>. <code>--iterations</code> stops each user after that many. See <a href="./getting-started/common.html#specifying-how-long-the-load-test-will-run">Specifying how long the load test will run</a>.</p>
+<h2 id="killswitch"><a class="header" href="#killswitch">Killswitch</a></h2>
+<p>A way to stop a running load test from your own code, by calling <code>goose::trigger_killswitch</code> with a reason. Goose stops the run as it does for <code>ctrl-c</code>, writes every report, and records the run as canceled with that reason. See <a href="./getting-started/killswitch.html">Killswitch</a>.</p>
+<h2 id="live-dashboard"><a class="header" href="#live-dashboard">Live Dashboard</a></h2>
+<p>The web page Goose serves while a load test runs with <code>--dashboard</code>. Goose must be built with the <code>dashboard</code> feature, which is off by default. The page shows users, requests, response times and errors second by second. See <a href="./controller/dashboard.html">Live Dashboard</a>.</p>
+<h2 id="logs"><a class="header" href="#logs">Logs</a></h2>
+<p>Files that record what happens during a run, each turned on with its own option, such as <code>--request-log</code>. The <a href="#request">request</a>, <a href="#transaction">transaction</a>, <a href="#scenario">scenario</a> and error logs record each one as it ends. The debug log holds what the load test writes with <code>log_debug()</code>, such as a failed request and its response. See <a href="./logging/overview.html">Logging</a>.</p>
+<h2 id="machine-name"><a class="header" href="#machine-name">Machine Name</a></h2>
+<p>A <a href="#scenario">scenario</a>’s name in lower case letters and digits, with <code>_1</code>, <code>_2</code> added when two names would be the same. <code>--scenarios</code> uses it to pick the scenarios that run, and <code>--scenarios-list</code> prints it. See <a href="./getting-started/scenarios.html">Limiting Scenarios</a>.</p>
+<h2 id="metrics-reset"><a class="header" href="#metrics-reset">Metrics Reset</a></h2>
+<p>When the ramp up ends, Goose prints the metrics so far and then clears them, so the totals that follow leave out the ramp up. <code>--no-reset-metrics</code> turns the reset off, so the totals include the ramp up. A run limited by <code>--iterations</code> (see <a href="#iteration">Iteration</a>) or shaped by a <a href="#test-plan">test plan</a> never resets. See <a href="./getting-started/common.html#specifying-how-long-the-load-test-will-run">Specifying how long the load test will run</a>.</p>
+<h2 id="plan-overview"><a class="header" href="#plan-overview">Plan Overview</a></h2>
+<p>A table of each step the run went through, such as Increasing, Maintaining, Decreasing or Canceling, with when it started and ended and how many users ran. The PDF, HTML and Markdown reports show it under their header, and the console prints it last. See <a href="./getting-started/running.html">Running A Load Test</a>.</p>
 <h2 id="request"><a class="header" href="#request">Request</a></h2>
-<p>A single <a href="./getting-started/metrics.html#requests"><strong>request</strong></a> based around HTTP verbs.</p>
+<p>One HTTP request a <a href="#gooseuser">GooseUser</a> makes, or an operation of another protocol recorded with <code>GooseUser::record_custom_request</code>, as in the <a href="./example/tcp.html">TCP example</a>. See <a href="./getting-started/creating.html">Creating A Load Test</a>.</p>
+<h2 id="request-name"><a class="header" href="#request-name">Request Name</a></h2>
+<p>The name a <a href="#request">request</a> is counted under in the metrics: its path, unless the load test names the request, or its <a href="#transaction">transaction</a> names its requests with <code>set_name_for_transaction_and_requests()</code>. See <a href="./getting-started/creating.html#naming-transactions">Naming Transactions</a>.</p>
+<h2 id="run-folder"><a class="header" href="#run-folder">Run Folder</a></h2>
+<p>The folder a run writes into when an output flag such as <code>--report-file</code> is given without a path, or when <a href="#save-report">Save report</a> writes the run’s report. It is the folder <code>--output-dir</code> names, or else <code>goose-runs/&lt;YYYYMMDD-HHMMSS&gt;</code>, named for the run’s local start time. See <a href="./getting-started/common.html#run-folders">Run folders</a>.</p>
+<h2 id="run-time"><a class="header" href="#run-time">Run Time</a></h2>
+<p>How long every user keeps running once all have started, set with <code>--run-time</code>. Starting and stopping the users takes extra time, so a run lasts longer than its run time. See <a href="./getting-started/common.html#specifying-how-long-the-load-test-will-run">Specifying how long the load test will run</a>.</p>
+<h2 id="running-metrics"><a class="header" href="#running-metrics">Running Metrics</a></h2>
+<p>The metrics so far, printed to the console every N seconds during a run with <code>--running-metrics N</code>, and during the ramp up also each time a user starts. See <a href="./getting-started/runtime-options.html">Run-Time Options</a>.</p>
+<h2 id="runs-panel"><a class="header" href="#runs-panel">Runs Panel</a></h2>
+<p>The <a href="#live-dashboard">live dashboard</a>’s list of runs: this run’s <a href="#run-folder">run folder</a> and the others beside it that hold a report, to download, compare or, with <a href="#dashboard-control">dashboard control</a>, delete. See <a href="./controller/dashboard.html#save-compare-and-delete-runs">Save, compare and delete runs</a>.</p>
+<h2 id="save-report"><a class="header" href="#save-report">Save Report</a></h2>
+<p>A run setting that writes the run’s report into its <a href="#run-folder">run folder</a> when the run ends. A <code>--report-file</code> given without a path turns it on, and so does <code>--dashboard</code> unless <code>--no-metrics</code> is set; the <a href="#live-dashboard">live dashboard</a> shows it as a switch that <a href="#dashboard-control">dashboard control</a> can turn off and on. See <a href="./controller/dashboard.html#save-compare-and-delete-runs">Save, compare and delete runs</a>.</p>
 <h2 id="scenario"><a class="header" href="#scenario">Scenario</a></h2>
-<p>A <a href="./getting-started/metrics.html#scenarios"><strong>scenario</strong></a> is a collection of <a href="./getting-started/metrics.html#transactions"><strong>transactions</strong></a> (aka steps) a user would undertake to achieve a specific user journey.</p>
+<p>A list of <a href="#transaction">transactions</a> one <a href="#gooseuser">GooseUser</a> runs, such as browsing anonymously or logging in to post. A load test can have many, each with a <a href="#weight">weight</a>. See <a href="./getting-started/creating.html">Creating A Load Test</a>.</p>
+<h2 id="scheduler"><a class="header" href="#scheduler">Scheduler</a></h2>
+<p>The order in which Goose assigns weighted <a href="#scenario">scenarios</a> to new users and runs a scenario’s <a href="#transaction">transactions</a>: round robin, serial or random. See <a href="./config/scheduler.html">Scheduling Scenarios And Transactions</a>.</p>
+<h2 id="session-data"><a class="header" href="#session-data">Session Data</a></h2>
+<p>Data a <a href="#gooseuser">GooseUser</a> keeps between its requests, such as a token from a login, stored with <code>set_session_data</code>. See <a href="./example/session.html">Session</a>.</p>
+<h2 id="snapshot"><a class="header" href="#snapshot">Snapshot</a></h2>
+<p>The JSON state the <a href="#live-dashboard">live dashboard</a> serves at <code>/api/v1/snapshot</code> and streams from <code>/api/v1/events</code>, about once a second. Its <code>version</code> field numbers the snapshot’s format, not the Goose release. See <a href="./controller/dashboard-reference.html">Dashboard Reference</a>.</p>
+<h2 id="start-and-stop-transactions"><a class="header" href="#start-and-stop-transactions">Start And Stop Transactions</a></h2>
+<p><a href="#transaction">Transactions</a> that run once, outside a <a href="#scenario">scenario</a>’s loop. One marked with <code>set_on_start()</code> runs when each user starts, and one marked with <code>set_on_stop()</code> when it stops. <code>GooseAttack::test_start()</code> registers one that runs once before the first user starts, and <code>test_stop()</code> one that runs once after the last user stops. See <a href="https://docs.rs/goose/*/goose/goose/struct.Transaction.html#method.set_on_start"><code>set_on_start</code></a> and <a href="https://docs.rs/goose/*/goose/struct.GooseAttack.html#method.test_start"><code>test_start</code></a>.</p>
+<h2 id="synthetic-request"><a class="header" href="#synthetic-request">Synthetic Request</a></h2>
+<p>A response time that <a href="#coordinated-omission">coordinated omission</a> mitigation adds for a request a user would have sent at its usual <a href="#cadence">cadence</a> had the server not stalled. See <a href="./coordinated-omission/metrics.html">Coordinated Omission Metrics</a>.</p>
 <h2 id="test-plan"><a class="header" href="#test-plan">Test Plan</a></h2>
-<p>A flexible approach to scheduling load test phases, allowing you to define complex load patterns like gradual ramp-up, sustained load periods, spike testing, and graceful ramp-down. Test plans use the format <code>users,duration;users,duration</code> to specify multiple phases.</p>
+<p>A list of steps that shapes a load test, given with <code>--test-plan</code>. Each step is a number of users and the time to reach it, written <code>users,time;users,time</code>, to build a ramp up, a <a href="#hold">hold</a>, a spike or a ramp down. See <a href="./getting-started/test-plan.html">Test Plan</a>.</p>
+<h2 id="threshold"><a class="header" href="#threshold">Threshold</a></h2>
+<p>A pass or fail rule on a load test’s metrics, such as <code>p95&lt;500ms</code> or <code>error-rate&lt;1%</code>, given with <code>--threshold</code>. A rule that fails stops the run by default and always makes it fail. See <a href="./getting-started/thresholds.html">Thresholds</a>.</p>
 <h2 id="throttle"><a class="header" href="#throttle">Throttle</a></h2>
-<p>A mechanism to limit the request rate of individual <a href="#gooseuser">GooseUsers</a>, helping simulate more realistic user behavior by introducing delays between requests rather than sending requests as fast as possible.</p>
+<p>A limit on how many requests per second all <a href="#gooseuser">GooseUsers</a> together send, set with <code>--throttle-requests</code>. See <a href="./getting-started/throttle.html">Throttle</a>.</p>
 <h2 id="transaction"><a class="header" href="#transaction">Transaction</a></h2>
-<p>A <a href="./getting-started/metrics.html#transactions"><strong>transaction</strong></a> is a collection of one or more <a href="./getting-started/metrics.html#request"><strong>requests</strong></a> and any desired validation. For example, this may include loading the front page and all contained static assets, logging into the website, or adding one or more items to a shopping chart. Transactions typically include assertions or expectation validation.</p>
+<p>A function that makes one or more <a href="#request">requests</a> and checks the responses, such as loading a page and its static assets, or logging in. See <a href="./getting-started/creating.html">Creating A Load Test</a>.</p>
+<h2 id="transactionerror"><a class="header" href="#transactionerror">TransactionError</a></h2>
+<p>The error a <a href="#transaction">transaction</a> returns when it fails. A failed request is counted once, with the request errors. A custom message, a bad URL, or a response body that cannot be read or decoded is counted as a transaction error. See <a href="./getting-started/validation.html#transaction-error-types">Transaction Error Types</a>.</p>
 <h2 id="transactionresult"><a class="header" href="#transactionresult">TransactionResult</a></h2>
-<p>A <a href="https://doc.rust-lang.org/std/result/enum.Result.html"><code>Result</code></a> returned by <a href="#transaction">Transaction</a> functions. A transaction can return <code>Ok(())</code> on success, or <code>Err(</code><a href="#gooseerror">GooseError</a><code>)</code> on failure.</p>
+<p>The type a <a href="#transaction">transaction</a> function returns, <code>Result&lt;(), Box&lt;TransactionError&gt;&gt;</code>: <code>Ok(())</code> on success, or a boxed <a href="#transactionerror">TransactionError</a> on failure. See <a href="./getting-started/validation.html">Validating Requests</a>.</p>
+<h2 id="users-ramp"><a class="header" href="#users-ramp">Users Ramp</a></h2>
+<p>A run shaped by its users, <a href="#increase-rate">increase rate</a>, run time and ramp down (<a href="#decrease-rate">decrease rate</a>), as opposed to a <a href="#test-plan">test plan</a>. When the <a href="#live-dashboard">live dashboard</a> or a <a href="#controller">Controller</a> changes its users mid run, Goose ramps to the new count and keeps the <a href="#run-time">run time</a> and ramp down where it can. See <a href="./controller/dashboard.html#change-users-and-settings">Change users and settings</a>.</p>
 <h2 id="weight"><a class="header" href="#weight">Weight</a></h2>
-<p>A value that controls the frequency with which a <a href="#transaction">Transaction</a> or <a href="#scenario">Scenario</a> runs, relative to the other transactions in the same scenario, or scenarios in the same load test. For example, if one transaction has a weight of 3 and another transaction in the same scenario has a weight of 1, the first transaction will run 3 times as often as the second.</p>
+<p>How often Goose picks a <a href="#transaction">transaction</a> within its scenario, or what share of users a <a href="#scenario">scenario</a> gets. A transaction of weight 3 runs 3 times as often as one of weight 1. See <a href="./config/scheduler.html">Scheduling Scenarios And Transactions</a>.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
                             <a rel="prev" href="requirements.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
-                                <i class="fa fa-angle-left"></i>
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
                             <a rel="next prefetch" href="getting-started/overview.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
-                                <i class="fa fa-angle-right"></i>
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
                         <div style="clear: both"></div>
@@ -226,16 +302,21 @@
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
                     <a rel="prev" href="requirements.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
-                        <i class="fa fa-angle-left"></i>
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
                     <a rel="next prefetch" href="getting-started/overview.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
-                        <i class="fa fa-angle-right"></i>
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>
 
         </div>
 
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
 
 
 
@@ -244,13 +325,13 @@
         </script>
 
 
-        <script src="elasticlunr.min.js"></script>
-        <script src="mark.min.js"></script>
-        <script src="searcher.js"></script>
+        <script src="elasticlunr-ef4e11c1.min.js"></script>
+        <script src="mark-09e88c2c.min.js"></script>
+        <script src="searcher-09f2665d.js"></script>
 
-        <script src="clipboard.min.js"></script>
-        <script src="highlight.js"></script>
-        <script src="book.js"></script>
+        <script src="clipboard-1626706a.min.js"></script>
+        <script src="highlight-abc7f01d.js"></script>
+        <script src="book-609e4cb8.js"></script>
 
         <!-- Custom JS scripts -->
 

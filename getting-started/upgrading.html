@@ -1,0 +1,307 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Upgrading From 0.18 - The Goose Book</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../css/general-e96d0476.css">
+        <link rel="stylesheet" href="../css/chrome-d279d366.css">
+        <link rel="stylesheet" href="../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../searchindex-e0e91710.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc-b1be2d52.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">The Goose Book</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="upgrading-from-018"><a class="header" href="#upgrading-from-018">Upgrading From 0.18</a></h1>
+<p>Change the dependency to <code>goose = "^0.19"</code>. The changes below can break a load test written for Goose 0.18, or change what it does.</p>
+<h2 id="removed-options"><a class="header" href="#removed-options">Removed options</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>0.18</th><th>0.19</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--hatch-rate</code> (<code>-r</code>)</td><td><code>--increase-rate</code> (<code>-r</code>), see <a href="common.html#controlling-how-long-it-takes-goose-to-launch-all-users">launching users</a></td></tr>
+<tr><td><code>--startup-time</code> (<code>-s</code>)</td><td><code>--increase-time</code> (<code>-s</code>), see <a href="common.html#controlling-how-long-it-takes-goose-to-launch-all-users">launching users</a></td></tr>
+<tr><td><code>GooseDefault::HatchRate</code></td><td><code>GooseDefault::IncreaseRate</code>, see <a href="../config/defaults.html">Defaults</a></td></tr>
+<tr><td><code>GooseDefault::StartupTime</code></td><td><code>GooseDefault::IncreaseTime</code>, see <a href="../config/defaults.html">Defaults</a></td></tr>
+<tr><td><code>GooseConfiguration</code> fields <code>hatch_rate</code> and <code>startup_time</code></td><td><code>increase_rate</code> and <code>increase_time</code>, see <a href="custom.html#command-line-arguments">Custom options</a></td></tr>
+<tr><td><code>goose::util::get_hatch_rate()</code></td><td><code>goose::util::parse_rate()</code></td></tr>
+<tr><td>Controller commands <code>hatchrate</code> and <code>startuptime</code></td><td><code>increaserate</code> and <code>increasetime</code>, see <a href="../controller/telnet.html#controller-commands">Controller commands</a></td></tr>
+<tr><td>Crate feature <code>gaggle</code></td><td>None: Gaggle was removed in 0.17.0 and will be restored in 0.20, before the 1.0 release. For a distributed load test today, use 0.16.4; see <a href="../gaggle/overview.html">Gaggle</a>.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The new <code>--decrease-rate</code> and <code>--decrease-time</code> control the ramp down; without them Goose stops all users at once, as 0.18 did. See <a href="common.html#controlling-the-ramp-down-rate">the ramp down rate</a>. Neither is allowed with <code>--iterations</code>: the run fails at startup with <code>`configuration.decrease_rate` can not be set with `configuration.iterations`.</code>, or the same for <code>decrease_time</code>. Drop the decrease option, as each user stops after its iterations anyway.</p>
+<h2 id="api-changes"><a class="header" href="#api-changes">API changes</a></h2>
+<ul>
+<li><strong>API change</strong>: the command line is parsed with <code>clap</code>. Remove <code>use gumdrop::Options;</code>: <code>GooseConfiguration::parse_args_default()</code> is now a method of its own, and <code>GooseConfiguration</code> implements <code>clap::Parser</code>. See <a href="custom.html#command-line-arguments">Custom options</a>.</li>
+<li><strong>API change</strong>: every <code>GooseConfiguration</code> field for an option that takes a single value, such as <code>host</code>, <code>run_time</code>, <code>increase_time</code> or <code>iterations</code>, is an <code>Option</code>, <code>None</code> when not given; set one with <code>Some</code>, as in <code>configuration.run_time = Some("30s".to_string())</code>. The <code>help</code> field is gone. See <a href="custom.html#command-line-arguments">Custom options</a>.</li>
+<li><strong>API change</strong>: session data must implement <code>Clone</code>; add <code>#[derive(Clone)]</code> to the struct. See the <a href="../example/session.html">Session example</a>.</li>
+<li><strong>API change</strong>: <code>GooseConfiguration::parse_args_default()</code> returns <code>GooseError::InvalidOption</code> for <code>-h</code> and <code>--help</code>, with the flag as <code>option</code> and the detail <code>help was requested</code>, where 0.18 returned the configuration with its <code>help</code> field set to <code>true</code>. See <a href="custom.html#building-the-configuration-yourself">Building the configuration yourself</a>.</li>
+<li><strong>API change</strong>: <code>TransactionError::RequestFailed { raw_request }</code> holds a <code>Box&lt;GooseRequestMetric&gt;</code>, <code>TransactionError::LoggerFailed { source }</code> a boxed <code>SendError</code>, and the new <code>TransactionError::Custom(String)</code> lets a transaction return <code>Err("reason".into())</code>. See <a href="validation.html#transaction-error-types">Transaction error types</a>.</li>
+<li><strong>API change</strong>: a <code>match</code> without a wildcard arm needs new arms for <code>TransactionError::Custom</code> (see <a href="validation.html#transaction-error-types">Transaction error types</a>), <code>GooseError::ThresholdsFailed</code> (see <a href="thresholds.html#the-end-of-the-run">The end of the run</a>), <code>GooseMethod::Custom</code> (see <a href="../example/tcp.html#the-api">The API</a>) and the new <code>GooseDefault</code> variants (see <a href="../config/defaults.html">Defaults</a>).</li>
+<li><strong>API change</strong>: scenario and transaction names are <code>Arc&lt;str&gt;</code> in place of <code>String</code>: <code>Scenario.name</code>, <code>Scenario.machine_name</code>, the <code>name</code> of <code>ScenarioMetric</code>, <code>TransactionMetric</code> and <code>ScenarioMetricAggregate</code>, <code>TransactionMetricAggregate.scenario_name</code>, <code>GooseRequestMetric.name</code> and <code>GooseRequestMetric.scenario_name</code>, and the <code>scenario_name</code> argument of <code>GooseUser::new()</code>. Reading one as <code>&amp;str</code> works unchanged. See the <a href="https://docs.rs/goose/latest/goose/goose/struct.Scenario.html">API documentation</a>.</li>
+<li><strong>API change</strong>: <code>Transaction.name</code> and the <code>transaction_name</code> of <code>GooseRequestMetric</code> and <code>TransactionMetricAggregate</code> are a <code>goose::goose::TransactionName</code> in place of a <code>String</code>: <code>TransactionOnly(Arc&lt;str&gt;)</code> for a name set with <code>set_name()</code>, or <code>InheritNameByRequests(Arc&lt;str&gt;)</code> for one set with <code>set_name_for_transaction_and_requests()</code>. Read the name with <code>name_for_transaction()</code>. <code>GooseRequestMetric.transaction_index</code> is a <code>usize</code> in place of a <code>String</code>. See <a href="creating.html#naming-transactions">Naming Transactions</a> and the <a href="https://docs.rs/goose/latest/goose/goose/enum.TransactionName.html">API documentation</a>.</li>
+<li><strong>API change</strong>: times are kept in microseconds. <code>GooseRequestMetricTimingData</code> has <code>times_us</code>, <code>minimum_time_us</code>, <code>maximum_time_us</code> and <code>total_time_us</code> in place of the millisecond <code>times</code>, <code>minimum_time</code>, <code>maximum_time</code> and <code>total_time</code>; <code>TransactionMetricAggregate</code> and <code>ScenarioMetricAggregate</code> keep their times in <code>run_times</code>; a struct literal of <code>GooseRequestMetric</code>, <code>TransactionMetric</code> or <code>ScenarioMetric</code> must set the new <code>response_time_fraction_us</code> or <code>run_time_fraction_us</code>. See <a href="metrics.html#response-times">Response times</a> and the API documentation of <a href="https://docs.rs/goose/latest/goose/metrics/struct.GooseRequestMetricTimingData.html"><code>GooseRequestMetricTimingData</code></a>, <a href="https://docs.rs/goose/latest/goose/metrics/struct.TransactionMetricAggregate.html"><code>TransactionMetricAggregate</code></a> and <a href="https://docs.rs/goose/latest/goose/metrics/struct.ScenarioMetricAggregate.html"><code>ScenarioMetricAggregate</code></a>.</li>
+<li>goose-eggs 0.6 is built for Goose 0.18. A load test that uses goose-eggs moves to Goose 0.19 with goose-eggs 0.7: set <code>goose-eggs = "0.7"</code>. See <a href="validation.html#goose-eggs">Goose Eggs</a>.</li>
+<li><strong>API change</strong>: the default crate features are now <code>cookies</code>, so <code>default-features = false</code> turns off <a href="../config/cookie.html">cookie support</a>, where in 0.18 it turned off TLS, and the <code>rustls-tls</code> feature no longer changes the TLS that load test requests use.</li>
+<li><strong>API change</strong>: <code>controller::ControllerCommand</code> carries each command’s parsed value, and <code>util::parse_timespan()</code> returns <code>Option&lt;usize&gt;</code>. See <a href="../controller/telnet.html#controller-commands">Controller commands</a> and the API documentation of <a href="https://docs.rs/goose/latest/goose/controller/enum.ControllerCommand.html"><code>ControllerCommand</code></a> and <a href="https://docs.rs/goose/latest/goose/util/fn.parse_timespan.html"><code>parse_timespan()</code></a>.</li>
+<li><strong>API change</strong>: <code>TestPlan::total_users()</code> stops at <code>usize::MAX</code> in place of overflowing, and <code>GooseError::InvalidControllerCommand</code> is no longer returned, though the variant is kept. See the API documentation of <a href="https://docs.rs/goose/latest/goose/test_plan/struct.TestPlan.html"><code>TestPlan</code></a>.</li>
+<li><strong>API change</strong>: <code>TransactionDetail</code> has no lifetime parameter: its <code>scenario_name</code> is an <code>Arc&lt;str&gt;</code>, its <code>transaction_index</code> an <code>Option&lt;usize&gt;</code> and its <code>transaction_name</code> a <code>TransactionName</code>, where 0.18 held <code>&amp;str</code>s. <code>GooseRequestMetric.transaction_index</code> is <code>usize::MAX</code> for a request made outside a transaction. See the API documentation of <a href="https://docs.rs/goose/latest/goose/metrics/struct.TransactionDetail.html"><code>TransactionDetail</code></a>.</li>
+<li><strong>API change</strong>: a transaction error is recorded. <code>GooseMetrics</code> has the new public field <code>transaction_errors</code>, a <code>GooseTransactionErrorMetrics</code> of <code>GooseTransactionErrorMetricAggregate</code>s, and <code>GooseTransactionErrorMetric</code> is an error log entry. <code>GooseMetric</code> has the new variants <code>All</code>, <code>Batch</code> and <code>TransactionError</code>, and <code>GooseLog</code> the new variants <code>TransactionError</code> and <code>FailedTransaction</code>, so a <code>match</code> on either without a wildcard arm needs new arms. See <a href="../logging/errors.html">Error log</a>.</li>
+<li><strong>API change</strong>: <code>GooseMetrics</code> has the new public field <code>thresholds</code>, each rule’s <code>ThresholdResult</code>, and the new <code>goose::threshold</code> module holds <code>Threshold</code> and <code>ThresholdResult</code>. See <a href="thresholds.html">Thresholds</a>.</li>
+<li><strong>API change</strong>: <code>GooseConfiguration</code> has new public fields: <code>threshold</code>, <code>no_threshold_abort</code>, <code>threshold_abort_delay</code>, <code>output_dir</code>, <code>compress</code>, <code>notes</code>, <code>report_graph_data</code>, <code>render_report</code> and <code>websocket</code>, among others, and, with the <code>pdf-reports</code> feature, <code>pdf_scale</code> and <code>pdf_timeout</code>, an <code>Option&lt;f64&gt;</code> and an <code>Option&lt;u64&gt;</code> set in code with <code>GooseDefault::PdfScale</code> and <code>GooseDefault::PdfTimeout</code>. See <a href="custom.html#command-line-arguments">Custom options</a> and <a href="output-files.html">Output files</a>.</li>
+<li><strong>API change</strong>: <code>config::RUN_FOLDER</code> and <code>reset_killswitch()</code> are public. See <a href="output-files.html#files">Output files</a> and <a href="killswitch.html">Killswitch</a>.</li>
+</ul>
+<h2 id="behavior-changes"><a class="header" href="#behavior-changes">Behavior changes</a></h2>
+<ul>
+<li><strong>behavior change</strong>: <code>Transaction::set_name()</code> names only the transaction; its requests keep their own names. Use <code>set_name_for_transaction_and_requests()</code> for the 0.18 behavior. See <a href="creating.html#naming-transactions">Naming transactions</a>.</li>
+<li><strong>behavior change</strong>: <code>--scenarios</code> matches machine names exactly, where 0.18 matched any part of the name; use <code>*</code> as a wildcard, as in <code>--scenarios "anon*"</code>. See <a href="scenarios.html#running-scenarios-by-machine-name">Limiting scenarios</a>.</li>
+<li><strong>behavior change</strong>: HTTPS uses rustls in place of the system’s native TLS library. Certificates are still checked by the operating system’s verifier, so a CA the system trusts is trusted, and <code>--accept-invalid-certs</code> skips the check in every build. See <a href="../requirements.html#tls">TLS</a>.</li>
+<li><strong>behavior change</strong>: an option value that begins with a hyphen goes after <code>=</code>, as in <code>--goose-log=-run.log</code>. Given as its own argument it is read as options, so <code>--goose-log -run.log</code> reads as <code>--goose-log</code> and <code>-r un.log</code>, and fails because <code>un.log</code> is not a number. When the command line itself does not parse, as with <code>--goose-log -x.log</code>, the error ends with a tip to use <code>=</code>. A negative number is still read as a value: <code>--timeout -5</code> reaches the timeout check and is refused there, and <code>--users -1</code> is refused with a tip that <code>--users</code> takes no negative number. An output option followed by another option, as in <code>--goose-log --quiet</code>, is given without a path and writes <code>goose.log</code> into the run’s folder. See <a href="output-files.html#files">Output files</a>.</li>
+<li><strong>behavior change</strong>: a report or log file whose name ends in <code>.gz</code> is written gzipped. See <a href="output-files.html#compression">Compression</a>.</li>
+<li><strong>behavior change</strong>: <code>--report-file</code> reports are written even with <code>--no-print-metrics</code>. See <a href="output-files.html">Output files</a>.</li>
+<li><strong>behavior change</strong>: <code>-h</code> prints a short summary and <code>--help</code> the full reference, both to stdout. See <a href="runtime-options.html">Run-time options</a>.</li>
+<li><strong>behavior change</strong>: <code>--run-time 0</code>, <code>--increase-time 0</code>, <code>--decrease-time 0</code> and <code>--throttle-requests 0</code> undo the matching <code>GooseDefault</code>, and an empty log path, as in <code>--request-log ""</code>, turns off a log a <code>GooseDefault</code> sets; <code>GooseDefault::Iterations</code> and <code>GooseDefault::NoGranularData</code> now take effect. See <a href="../config/defaults.html">Defaults</a>.</li>
+<li><strong>behavior change</strong>: values that started no users or broke Goose are refused before the load test starts: a test plan with no users, a time span too large to hold, an increase or decrease rate below one user a day, a rate or <code>--timeout</code> that is not a finite number, and a <code>--timeout</code> that rounds to less than 1 ms, including a negative one. A fractional <code>--timeout</code> is rounded to the nearest millisecond, so <code>0.0005</code> runs as 1 ms and anything below it is refused. See <a href="test-plan.html">Test plan</a> and <a href="runtime-options.html#full-reference">Run-time options</a>.</li>
+<li><strong>behavior change</strong>: a time span, as given to <code>--run-time</code>, <code>--increase-time</code>, <code>--decrease-time</code>, <code>--threshold-abort-delay</code>, a test plan step or a Controller command, is only hours, minutes and seconds written as <code>h</code>, <code>m</code> and <code>s</code>, as in <code>1h30m</code> or <code>45s</code>, in either case. 0.18 read <code>15mins</code>, <code>5hours</code> and <code>2h3min</code> by their leading part, as 15 minutes, 5 hours and 2 hours 3 minutes; 0.19 refuses them, so write <code>15m</code>, <code>5h</code> and <code>2h3m</code>. See <a href="runtime-options.html#full-reference">Run-time options</a>.</li>
+<li><strong>behavior change</strong>: times under 10 ms are shown to the hundredth of a millisecond, and percentiles are never more than 1% off, so figures differ from the whole milliseconds 0.18 printed. See <a href="metrics.html#response-times">Response times</a>.</li>
+<li><strong>behavior change</strong>: the JSON report’s timing data holds <code>times_us</code> in place of <code>times</code>, its averages are means of the microseconds, it includes the test plan history, and each transaction’s <code>transaction_name</code> is an object such as <code>{"TransactionOnly":"login"}</code>, where 0.18 wrote a string. See <a href="metrics.html#json-report">JSON report</a>.</li>
+<li><strong>behavior change</strong>: the CSV request log ends with a <code>response_time_us</code> column, the scenario log with <code>run_time_us</code>, and the transaction log with <code>run_time_us</code> and then <code>error</code>; the JSON, raw and pretty formats add <code>response_time_fraction_us</code> or <code>run_time_fraction_us</code>. In JSON logs the keys follow the order of the fields instead of being sorted, <code>transaction_name</code> is an object such as <code>{"TransactionOnly":"login"}</code>, where 0.18 wrote a string (the error log’s new transaction error entries write it as a string); the CSV request log’s <code>transaction_name</code> column is empty unless the name was set with <code>set_name_for_transaction_and_requests()</code>; and the request, debug and error logs write <code>transaction_index</code> as a number, such as <code>0</code>, where 0.18 wrote the string <code>"0"</code>. See <a href="../logging/overview.html">Logging</a> and <a href="../logging/requests.html#log-format">Request log</a>.</li>
+<li><strong>behavior change</strong>: <code>elapsed</code> in the request, error, transaction and scenario logs counts milliseconds since the load test started, where 0.18 counted from when each user was built; <code>GooseUser.started</code> is likewise the time the load test started, the same for every user, and the HTML report’s active users graph shows the increase ramp. See <a href="../logging/overview.html">Logging</a>, <a href="../logging/requests.html#log-format">Request log</a> and <a href="metrics.html#users">Users</a>.</li>
+<li><strong>behavior change</strong>: <code>GooseRawRequest.headers</code>, as read through <code>goose.request.raw.headers</code> or a <code>TransactionError::RequestFailed</code>, is empty unless the request log, debug log or error log is enabled. See <a href="../logging/requests.html">Request log</a>.</li>
+<li><strong>behavior change</strong>: Controller <code>users</code> takes 1 to 100000, and on a running load test keeps its run time and ramp down; <code>runtime</code> changes a running users ramp; a value that can’t be used is answered with what it must be; <code>config-json</code> (and the WebSocket Controller’s <code>config</code>) shows an unset option as <code>null</code> and has no <code>help</code> key, and telnet <code>config</code> shows <code>None</code> for an unset option and <code>Some(...)</code> around a set one. See <a href="../controller/telnet.html#controller-commands">Controller commands</a>.</li>
+<li><strong>behavior change</strong>: the telnet Controller’s <code>metrics-json</code> and the WebSocket Controller’s <code>metrics</code> replies hold <code>times_us</code> in place of <code>times</code> and write each transaction’s <code>transaction_name</code> as an object, as the JSON report does, and a WebSocket message over 131,072 bytes closes the connection. See <a href="../controller/websocket.html#details">WebSocket Controller</a>.</li>
+<li><strong>behavior change</strong>: the killswitch keeps the first reason it is given, and is cleared when a run starts. See <a href="killswitch.html">Killswitch</a>.</li>
+<li><strong>behavior change</strong>: users start and stop on time at any rate. 0.18 rounded the time between two users up to the next half second when it was over 500 ms, so <code>--increase-rate 1.5</code> started 1 user a second and a test plan step of 500 users in 5 minutes took 8 minutes 20 seconds. In 0.19 <code>--increase-rate 1.5</code> starts a user every 667 ms, and that step takes 5 minutes. This applies to <code>--increase-rate</code>, <code>--decrease-rate</code>, test plan steps and users changed by a Controller. See <a href="common.html#specifying-the-increase-rate">Specifying the increase rate</a>.</li>
+<li><strong>behavior change</strong>: <code>GooseScheduler::Random</code> shuffles transactions. 0.18 ran them in Serial order. 0.19 shuffles each scenario’s whole list once, so every user of a scenario runs the same random order; sequenced transactions are shuffled only within their sequence, and <code>on_start</code> and <code>on_stop</code> transactions run as before. See <a href="../config/scheduler.html#random-scheduler">Random Scheduler</a>.</li>
+<li><strong>behavior change</strong>: a transaction’s error is recorded. Each line of the transaction log, in every format, ends with an <code>error</code> field, empty for a transaction that succeeded. The error log gets an entry for each transaction error, and its CSV header gains the columns <code>scenario_index</code>, <code>scenario_name</code>, <code>transaction_index</code>, <code>transaction_name</code> and <code>run_time</code> after <code>error</code>; a request error row leaves them empty. The console summary and the HTML, Markdown, PDF and JSON reports add a Transaction Errors table when there are any, which <code>--no-error-summary</code> leaves out. See <a href="../logging/transactions.html#log-format">Transaction log</a> and <a href="../logging/errors.html#log-format">Error log</a>.</li>
+<li><strong>behavior change</strong>: the JSON report keeps each request’s times by status code in <code>status_code_timings</code>, under <code>raw_metrics.requests</code>, and holds transaction errors in <code>transaction_errors</code>. Its <code>raw_request_metrics</code> rows are each request and the Aggregated row. See <a href="metrics.html#json-report">JSON report</a>.</li>
+<li><strong>behavior change</strong>: with <code>--co-mitigation</code>, the Aggregated <code># reqs</code> is the “Actual requests” plus the “Synthetic requests” of the coordinated omission summary, and those counts start again when the metrics are reset after the ramp up. See <a href="../coordinated-omission/metrics.html#co-event-metrics-display">Coordinated omission metrics</a>.</li>
+<li><strong>behavior change</strong>: the errors and transaction errors tables start again when the metrics are reset after the ramp up, as the other tables do, where 0.18 kept the ramp up’s errors in them. <code>--no-reset-metrics</code> keeps them, and the error log still records every error. See <a href="metrics.html#ascii-metrics">Metrics</a>.</li>
+<li><strong>behavior change</strong>: a scenario counts every user that ran it in the measured time, including users that had not completed an iteration, and the HTML, Markdown and JSON reports’ Aggregated scenario Iterations is all runs divided by all users, as on the console, where 0.18’s reports added up each scenario’s iterations. See <a href="metrics.html#scenarios">Scenarios</a>.</li>
+<li><strong>behavior change</strong>: an average with no times to average, such as a scenario no user ran, is 0, where it was NaN (<code>null</code> in the JSON report). See <a href="metrics.html">Metrics</a>.</li>
+<li><strong>behavior change</strong>: <code>--scenarios</code> accepts <code>_</code>, so <code>name_1</code> selects a second scenario registered as <code>name</code>, and a pattern that matches no scenario logs a warning. See <a href="scenarios.html#running-scenarios-by-machine-name">Limiting scenarios</a>.</li>
+<li><strong>behavior change</strong>: a telnet or WebSocket Controller that can’t listen on its port logs an error, and the load test runs without it; <code>--no-autostart</code> is then refused when no Controller listens and dashboard control is off, as nothing could start the run. See <a href="../controller/overview.html">Controlling a running load test</a> and <a href="common.html#printer-friendly-html-report-example">Printer-friendly HTML report example</a>.</li>
+<li><strong>behavior change</strong>: a load test that a Controller starts again after it stopped counts its requests from zero. See <a href="../controller/overview.html">Controlling a running load test</a>.</li>
+<li><strong>behavior change</strong>: the first column of the Markdown report’s scenario table is headed <code>Scenario</code>, where 0.18 headed it <code>Transaction</code>. See <a href="metrics.html#markdown-report">Markdown report</a>.</li>
+<li><strong>behavior change</strong>: <code>--telnet-port 0</code> and <code>--websocket-port 0</code> are refused, where 0.18 read them as the default ports 5116 and 5117. Leave the option out for the default. See <a href="../controller/overview.html">Controlling a running load test</a>.</li>
+<li><strong>behavior change</strong>: the WebSocket Controller is off by default, as it takes no authentication and any web page a browser opens could reach it. A load test that used it adds <code>--websocket</code> or <code>GooseDefault::WebSocket</code>; <code>--no-websocket</code> and <code>GooseDefault::NoWebSocket</code> still run, with a warning, and are refused with <code>--websocket</code>. <code>--no-autostart --no-telnet</code> now needs <code>--websocket</code> or <code>--dashboard-control</code>. See <a href="../controller/websocket.html">WebSocket Controller</a>.</li>
+<li><strong>behavior change</strong>: the telnet and WebSocket Controllers listen on <code>127.0.0.1</code> by default, where 0.18 listened on <code>0.0.0.0</code>, as neither has authentication. A load test controlled over telnet or WebSocket from another machine, or from outside its container, now needs <code>--telnet-host 0.0.0.0</code> or <code>--websocket-host 0.0.0.0</code> (or <code>GooseDefault::TelnetHost</code> or <code>GooseDefault::WebSocketHost</code>), or an ssh tunnel to <code>127.0.0.1:5116</code>; a Controller listening on any address that is not loopback prints a warning at startup. See <a href="../controller/overview.html">Controlling a running load test</a>.</li>
+<li><strong>behavior change</strong>: a Controller’s <code>config</code> and <code>config-json</code> show a dashboard auth token that is set as <code>(set)</code>, never the token, as does <code>{:?}</code> of a <code>GooseConfiguration</code>. See <a href="../controller/telnet.html#controller-commands">Controller commands</a>.</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../example/umami.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../example/umami.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../mark-09e88c2c.min.js"></script>
+        <script src="../searcher-09f2665d.js"></script>
+
+        <script src="../clipboard-1626706a.min.js"></script>
+        <script src="../highlight-abc7f01d.js"></script>
+        <script src="../book-609e4cb8.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

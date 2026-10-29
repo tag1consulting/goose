@@ -12,21 +12,20 @@
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
-        <link rel="icon" href="../favicon.svg">
-        <link rel="shortcut icon" href="../favicon.png">
-        <link rel="stylesheet" href="../css/variables.css">
-        <link rel="stylesheet" href="../css/general.css">
-        <link rel="stylesheet" href="../css/chrome.css">
-        <link rel="stylesheet" href="../css/print.css" media="print">
+        <link rel="icon" href="../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../css/general-e96d0476.css">
+        <link rel="stylesheet" href="../css/chrome-d279d366.css">
+        <link rel="stylesheet" href="../css/print-9e4910d8.css" media="print">
 
         <!-- Fonts -->
-        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
-        <link rel="stylesheet" href="../fonts/fonts.css">
+        <link rel="stylesheet" href="../fonts/fonts-9644e21d.css">
 
         <!-- Highlight.js Stylesheets -->
-        <link rel="stylesheet" id="highlight-css" href="../highlight.css">
-        <link rel="stylesheet" id="tomorrow-night-css" href="../tomorrow-night.css">
-        <link rel="stylesheet" id="ayu-highlight-css" href="../ayu-highlight.css">
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
 
         <!-- Custom theme stylesheets -->
 
@@ -36,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex.js";
+            window.path_to_searchindex_js = "../searchindex-e0e91710.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc.js"></script>
+        <script src="../toc-b1be2d52.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -53,7 +52,7 @@
             </div>
         </div>
     </div>
-    <div id="body-container">
+    <div id="mdbook-body-container">
         <!-- Work around some values being stored in localStorage wrapped in quotes -->
         <script>
             try {
@@ -82,12 +81,12 @@
             html.classList.add("js");
         </script>
 
-        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
 
         <!-- Hide / unhide sidebar before it is displayed -->
         <script>
             let sidebar = null;
-            const sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
             if (document.body.clientWidth >= 1080) {
                 try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
                 sidebar = sidebar || 'visible';
@@ -102,39 +101,39 @@
             }
         </script>
 
-        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
             <!-- populated by js -->
             <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
             <noscript>
                 <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
             </noscript>
-            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
             </div>
         </nav>
 
-        <div id="page-wrapper" class="page-wrapper">
+        <div id="mdbook-page-wrapper" class="page-wrapper">
 
             <div class="page">
-                <div id="menu-bar-hover-placeholder"></div>
-                <div id="menu-bar" class="menu-bar sticky">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
                     <div class="left-buttons">
-                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
-                            <i class="fa fa-bars"></i>
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
                         </label>
-                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
-                            <i class="fa fa-paint-brush"></i>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
                         </button>
-                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
-                            <li role="none"><button role="menuitem" class="theme" id="default_theme">Auto</button></li>
-                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
-                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
-                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
-                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
-                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
                         </ul>
-                        <button id="search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="searchbar">
-                            <i class="fa fa-search"></i>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
                         </button>
                     </div>
 
@@ -142,118 +141,913 @@
 
                     <div class="right-buttons">
                         <a href="../print.html" title="Print this book" aria-label="Print this book">
-                            <i id="print-button" class="fa fa-print"></i>
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
                         </a>
 
                     </div>
                 </div>
 
-                <div id="search-wrapper" class="hidden">
-                    <form id="searchbar-outer" class="searchbar-outer">
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
                         <div class="search-wrapper">
-                            <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
                             <div class="spinner-wrapper">
-                                <i class="fa fa-spinner fa-spin"></i>
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
                             </div>
                         </div>
                     </form>
-                    <div id="searchresults-outer" class="searchresults-outer hidden">
-                        <div id="searchresults-header" class="searchresults-header"></div>
-                        <ul id="searchresults">
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
                         </ul>
                     </div>
                 </div>
 
                 <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
                 <script>
-                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
-                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
-                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
                         link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
                     });
                 </script>
 
-                <div id="content" class="content">
+                <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="run-time-options"><a class="header" href="#run-time-options">Run-Time Options</a></h1>
-<p>The <code>-h</code> flag will show all run-time configuration options available to Goose load tests. For example, you can pass the <code>-h</code> flag to our example loadtest as follows, <code>cargo run --release -- -h</code>:</p>
-<pre><code class="language-ignore">Usage: target/release/loadtest [OPTIONS]
+<p>Every Goose load test takes the run-time options below. Three of them need a crate feature: <code>--pdf-scale</code> and <code>--pdf-timeout</code> exist only when Goose is built with <code>pdf-reports</code>, and <code>--dashboard</code> is refused unless Goose is built with <code>dashboard</code>. <code>-h</code> prints a summary of each one, and <code>--help</code> prints the full reference: what each option does, its default, the values it takes, the options it works with or excludes, an example, and the <code>GooseDefault</code> that sets it in code, where they apply. To see the summary for your own load test, run <code>cargo run --release -- -h</code> in its folder, or <code>cargo run --release --example simple -- -h</code> in a checkout of Goose.</p>
+<p>The help on this page is from Goose 0.19.0. When you run <code>-h</code> yourself, its first line names the version of Goose your load test was built with, and <code>-V</code> (<code>--version</code>) prints the library’s name and version, such as <code>goose 0.19.0</code>. The output below comes from a build with the <code>pdf-reports</code> feature:</p>
+<pre><code class="language-text">Goose 0.19.0: an HTTP(S) load testing tool written in Rust
 
-Goose is a modern, high-performance, distributed HTTP(S) load testing tool,
-written in Rust. Visit https://book.goose.rs/ for more information.
+Usage: loadtest [OPTIONS]
 
-The following runtime options are available when launching a Goose load test:
+Use -h for a summary of each option, --help for details, defaults and examples.
 
-Optional arguments:
-  -h, --help                  Displays this help
-  -V, --version               Prints version information
-  -l, --list                  Lists all transactions and exits
+Load test:
+  -H, --host &lt;URL&gt;             Target host, such as http://10.21.32.33
+  -u, --users &lt;N&gt;              Concurrent users [default: one per CPU]
+  -r, --increase-rate &lt;RATE&gt;   Users started per second [default: 1]
+  -s, --increase-time &lt;TIME&gt;   Time to start all users, such as 30s
+  -t, --run-time &lt;TIME&gt;        Run this long after all users start
+      --decrease-rate &lt;RATE&gt;   Users stopped per second
+      --decrease-time &lt;TIME&gt;   Time to stop all users, such as 30s
+      --iterations &lt;N&gt;         Each user runs its scenario N times
+      --test-plan &lt;PLAN&gt;       Load shape, such as "10,60s;0,30s"
+      --scenarios &lt;LIST&gt;       Only run the named scenarios
+      --throttle-requests &lt;N&gt;  Cap total requests per second
 
-  -H, --host HOST             Defines host to load test (ie http://10.21.32.33)
-  -u, --users USERS           Sets concurrent users (default: number of CPUs)
-  -r, --hatch-rate RATE       Sets per-second user hatch rate (default: 1)
-  -s, --startup-time TIME     Starts users for up to (30s, 20m, 3h, 1h30m, etc)
-  -t, --run-time TIME         Stops load test after (30s, 20m, 3h, 1h30m, etc)
-  -G, --goose-log NAME        Enables Goose log file and sets name
-  -g, --log-level             Increases Goose log level (-g, -gg, etc)
-  -q, --quiet                 Decreases Goose verbosity (-q, -qq, etc)
-  -v, --verbose               Increases Goose verbosity (-v, -vv, etc)
+Information:
+  -h, --help            Print help (--help for more)
+  -V, --version         Print the Goose library version
+  -l, --list            List scenarios and their transactions
+      --scenarios-list  List scenario names, then exit
+
+Console and Goose log:
+  -v, --verbose...           More console output (-v, -vv)
+  -q, --quiet...             Less console output, warnings only
+  -G, --goose-log [&lt;FILE&gt;]   Write the Goose log to FILE
+  -g, --log-level...         More Goose log detail (-g, -gg)
+      --running-metrics &lt;N&gt;  Print running metrics every N seconds
+      --no-print-metrics     Don't print metrics at the end
+      --no-error-summary     Don't collect the error summary
+
+Reports:
+      --report-file [&lt;FILE&gt;]   Write a report; repeatable
+      --output-dir &lt;DIR&gt;       Run folder, or goose-runs/&lt;start time&gt;
+      --compress [&lt;LEVEL&gt;]     Gzip files in the run's folder, 1 to 9
+      --notes &lt;TEXT&gt;           Label the run in its reports
+      --report-graph-data      Add graph data to the JSON report
+      --render-report &lt;FILE&gt;   Write reports from a JSON report, exit
+      --baseline-file &lt;PATH&gt;   Compare against an earlier run
+      --no-granular-report     Graph only totals in reports
+      --pdf-print-html &lt;FILE&gt;  Write print-ready HTML for PDF
+      --pdf-scale &lt;SCALE&gt;      PDF scale, 0.1 to 2.0 [default: 0.8]
+      --pdf-timeout &lt;SECS&gt;     PDF timeout, 10 to 600 s [default: 60]
 
 Metrics:
-  --running-metrics TIME      How often to optionally print running metrics
-  --no-reset-metrics          Doesn't reset metrics after all users have started
-  --no-metrics                Doesn't track metrics
-  --no-transaction-metrics    Doesn't track transaction metrics
-  --no-scenario-metrics       Doesn't track scenario metrics
-  --no-print-metrics          Doesn't display metrics at end of load test
-  --no-error-summary          Doesn't display an error summary
-  --report-file NAME          Create reports, can be used multiple times (supports .html, .htm, .md, .json)
-  --no-granular-report        Disable granular graphs in report file
-  -R, --request-log NAME      Sets request log file name
-  --request-format FORMAT     Sets request log format (csv, json, raw, pretty)
-  --request-body              Include the request body in the request log
-  -T, --transaction-log NAME  Sets transaction log file name
-  --transaction-format FORMAT Sets log format (csv, json, raw, pretty)
-  -S, --scenario-log NAME     Sets scenario log file name
-  --scenario-format FORMAT    Sets log format (csv, json, raw, pretty)
-  -E, --error-log NAME        Sets error log file name
-  --error-format FORMAT       Sets error log format (csv, json, raw, pretty)
-  -D, --debug-log NAME        Sets debug log file name
-  --debug-format FORMAT       Sets debug log format (csv, json, raw, pretty)
-  --no-debug-body             Do not include the response body in the debug log
-  --no-status-codes           Do not track status code metrics
+      --no-reset-metrics              Keep metrics from the ramp up
+      --no-metrics                    Don't collect any metrics
+      --no-transaction-metrics        Don't collect transaction metrics
+      --no-scenario-metrics           Don't collect scenario metrics
+      --no-status-codes               Don't collect status code metrics
+      --co-mitigation &lt;MODE&gt;          Coordinated omission mitigation
+      --threshold &lt;RULE&gt;              Pass/fail rule, such as p95&lt;500ms
+      --no-threshold-abort            Judge thresholds only at the end
+      --threshold-abort-delay &lt;TIME&gt;  Wait before thresholds can stop the run
 
-Advanced:
-  --test-plan "TESTPLAN"      Defines a more complex test plan ("10,60s;0,30s")
-  --iterations ITERATIONS     Sets how many times to run scenarios then exit
-  --scenarios "SCENARIO"      Limits load test to only specified scenarios
-  --scenarios-list            Lists all scenarios and exits
-  --no-telnet                 Doesn't enable telnet Controller
-  --telnet-host HOST          Sets telnet Controller host (default: 0.0.0.0)
-  --telnet-port PORT          Sets telnet Controller TCP port (default: 5116)
-  --no-websocket              Doesn't enable WebSocket Controller
-  --websocket-host HOST       Sets WebSocket Controller host (default: 0.0.0.0)
-  --websocket-port PORT       Sets WebSocket Controller TCP port (default: 5117)
-  --no-autostart              Doesn't automatically start load test
-  --no-gzip                   Doesn't set the gzip Accept-Encoding header
-  --timeout VALUE             Sets per-request timeout, in seconds (default: 60)
-  --co-mitigation STRATEGY    Sets coordinated omission mitigation strategy
-  --throttle-requests VALUE   Sets maximum requests per second
-  --sticky-follow             Follows base_url redirect with subsequent requests
-  --accept-invalid-certs      Disables validation of https certificates
+Logs:
+  -R, --request-log [&lt;FILE&gt;]      Log every request to FILE
+      --request-format &lt;FMT&gt;      Request log format
+      --request-body              Add request bodies to the request log
+  -T, --transaction-log [&lt;FILE&gt;]  Log every transaction to FILE
+      --transaction-format &lt;FMT&gt;  Transaction log format
+  -S, --scenario-log [&lt;FILE&gt;]     Log every scenario to FILE
+      --scenario-format &lt;FMT&gt;     Scenario log format
+  -E, --error-log [&lt;FILE&gt;]        Log every error to FILE
+      --error-format &lt;FMT&gt;        Error log format
+  -D, --debug-log [&lt;FILE&gt;]        Write the debug log to FILE
+      --debug-format &lt;FMT&gt;        Debug log format
+      --no-debug-body             Leave response bodies out of debug log
+
+Dashboard:
+      --dashboard                     Serve the live web dashboard
+      --dashboard-host &lt;HOST&gt;         Bind host [default: 127.0.0.1]
+      --dashboard-port &lt;PORT&gt;         Bind port [default: 5118]
+      --dashboard-auth-token &lt;TOKEN&gt;  Auth token
+      --dashboard-control             Allow control from the dashboard
+      --dashboard-no-auth             Dashboard without a token
+      --dashboard-max-clients &lt;N&gt;     Max live clients [default: 32]
+      --no-percentiles-over-time      Don't track per-second response times
+
+Controllers:
+      --no-autostart           Wait for a Controller to start the test
+      --no-telnet              Disable the telnet Controller
+      --telnet-host &lt;HOST&gt;     Telnet host [default: 127.0.0.1]
+      --telnet-port &lt;PORT&gt;     Telnet port [default: 5116]
+      --websocket              Enable the WebSocket Controller
+      --websocket-host &lt;HOST&gt;  WebSocket host [default: 127.0.0.1]
+      --websocket-port &lt;PORT&gt;  WebSocket port [default: 5117]
+
+HTTP client:
+      --timeout &lt;SECS&gt;        Request timeout in seconds [default: 60]
+      --no-gzip               Don't send Accept-Encoding: gzip
+      --sticky-follow         Keep following the host's redirect
+      --accept-invalid-certs  Accept invalid TLS certificates
+
+Examples:
+  loadtest -H http://localhost:8080 -u 10 -r 2 -t 5m
+  loadtest -H http://localhost:8080 -u 10 -r 2 -t 5m --report-file report.html
+
+Run with --help for details, defaults and examples.
+https://book.goose.rs/getting-started/runtime-options.html
 </code></pre>
-<p>All of the above configuration options are <a href="https://docs.rs/goose/*/goose/config/struct.GooseConfiguration.html">defined in the developer documentation</a>.</p>
+<p>Help wraps to the terminal’s width, up to 120 columns. When the output is not a terminal, it wraps to <code>COLUMNS</code> if that is set, also up to 120, and to 80 columns otherwise. Both outputs on this page are the help at 80 columns.</p>
+<h2 id="where-each-option-is-explained"><a class="header" href="#where-each-option-is-explained">Where each option is explained</a></h2>
+<p>The options a load test needs first are on <a href="common.html">Common Options</a>. Every other option is explained on the page linked beside it, or here in the table.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Options</th><th>Explained</th></tr>
+</thead>
+<tbody>
+<tr><td><code>-H</code>/<code>--host</code></td><td><a href="common.html#host-to-load-test">Common Options</a></td></tr>
+<tr><td><code>-u</code>/<code>--users</code></td><td><a href="common.html#how-many-users-to-simulate">Common Options</a></td></tr>
+<tr><td><code>-t</code>/<code>--run-time</code>, <code>--iterations</code></td><td><a href="common.html#specifying-how-long-the-load-test-will-run">Common Options</a></td></tr>
+<tr><td><code>-r</code>/<code>--increase-rate</code>, <code>-s</code>/<code>--increase-time</code></td><td><a href="common.html#controlling-how-long-it-takes-goose-to-launch-all-users">Common Options</a></td></tr>
+<tr><td><code>--decrease-rate</code>, <code>--decrease-time</code></td><td><a href="common.html#controlling-the-ramp-down-rate">Common Options</a></td></tr>
+<tr><td><code>--test-plan</code></td><td><a href="test-plan.html">Test Plan</a></td></tr>
+<tr><td><code>--scenarios</code>, <code>--scenarios-list</code></td><td><a href="scenarios.html">Limiting Scenarios</a></td></tr>
+<tr><td><code>--throttle-requests</code></td><td><a href="throttle.html">Throttle</a></td></tr>
+<tr><td><code>-h</code>/<code>--help</code></td><td><code>-h</code> prints the summary and <code>--help</code> the full reference, both shown on this page.</td></tr>
+<tr><td><code>-V</code>/<code>--version</code></td><td>Prints the Goose library’s name and version, then exits.</td></tr>
+<tr><td><code>-l</code>/<code>--list</code></td><td>Prints each scenario by its display name, with its transactions and their weights, then exits without load testing; <code>--scenarios-list</code> prints the names <code>--scenarios</code> takes.</td></tr>
+<tr><td><code>-v</code>/<code>--verbose</code>, <code>-q</code>/<code>--quiet</code></td><td>Without either, the console shows info, warning and error messages while the load test runs. <code>-v</code> adds debug messages and <code>-vv</code> trace messages; <code>-q</code> leaves out the info messages.</td></tr>
+<tr><td><code>-G</code>/<code>--goose-log</code></td><td>Writes Goose’s own log of the run to a file, or into the run folder when given no path; <a href="output-files.html#files">Output Files</a> names the file.</td></tr>
+<tr><td><code>-g</code>/<code>--log-level</code></td><td>Adds info messages to the Goose log that <code>--goose-log</code> writes, debug messages with <code>-gg</code> and trace messages with <code>-ggg</code>. Without <code>-g</code>, that log holds only warnings and errors.</td></tr>
+<tr><td><code>--running-metrics</code></td><td>Prints the metrics so far to the console every N seconds, and during the ramp up also each time a user starts. The metrics at the end are printed too. With <code>--no-print-metrics</code>, neither is printed.</td></tr>
+<tr><td><code>--no-print-metrics</code></td><td><a href="common.html#console-output">Common Options</a></td></tr>
+<tr><td><code>--no-error-summary</code></td><td>Leaves the errors and transaction errors tables out of the console metrics and the reports. The <a href="../logging/errors.html">error log</a> still records every error.</td></tr>
+<tr><td><code>--report-file</code>, <code>--pdf-print-html</code>, <code>--pdf-scale</code>, <code>--pdf-timeout</code></td><td><a href="common.html#writing-an-html-formatted-report">Common Options</a></td></tr>
+<tr><td><code>--baseline-file</code></td><td><a href="common.html#comparing-against-a-baseline">Common Options</a></td></tr>
+<tr><td><code>--output-dir</code>, <code>--notes</code></td><td><a href="common.html#run-folders">Common Options</a>, then <a href="output-files.html#files">Output Files</a></td></tr>
+<tr><td><code>--report-graph-data</code>, <code>--render-report</code></td><td><a href="common.html#graph-data-and-memory">Common Options</a>, then <a href="output-files.html">Output Files</a></td></tr>
+<tr><td><code>--compress</code></td><td><a href="output-files.html#compression">Output Files</a></td></tr>
+<tr><td><code>--no-granular-report</code></td><td><a href="metrics.html#requests">Metrics</a></td></tr>
+<tr><td><code>--no-reset-metrics</code></td><td>Keeps the metrics from the ramp up, which Goose otherwise clears when the ramp up ends. A test plan or <code>--iterations</code> run never clears them, and the option is refused with either.</td></tr>
+<tr><td><code>--no-metrics</code></td><td>Collects no metrics, so Goose writes no report. It cannot be used with <code>--report-file</code>, <code>--pdf-print-html</code>, <code>--threshold</code>, <code>--co-mitigation</code>, or the request, transaction, scenario and error logs.</td></tr>
+<tr><td><code>--no-transaction-metrics</code>, <code>--no-scenario-metrics</code></td><td><code>--no-transaction-metrics</code> leaves each transaction’s metrics out of the console metrics and the reports, and the transaction log stays empty. <code>--no-scenario-metrics</code> does the same for scenarios and the scenario log.</td></tr>
+<tr><td><code>--no-status-codes</code></td><td>Leaves the count of each HTTP status code out of the console metrics and the reports.</td></tr>
+<tr><td><code>--co-mitigation</code></td><td><a href="../coordinated-omission/mitigation.html">Mitigation</a></td></tr>
+<tr><td><code>--threshold</code>, <code>--no-threshold-abort</code>, <code>--threshold-abort-delay</code></td><td><a href="thresholds.html">Thresholds</a></td></tr>
+<tr><td><code>-R</code>/<code>--request-log</code>, <code>--request-format</code>, <code>--request-body</code></td><td><a href="../logging/requests.html">Request Log</a></td></tr>
+<tr><td><code>-T</code>/<code>--transaction-log</code>, <code>--transaction-format</code></td><td><a href="../logging/transactions.html">Transaction Log</a></td></tr>
+<tr><td><code>-S</code>/<code>--scenario-log</code>, <code>--scenario-format</code></td><td><a href="../logging/scenarios.html">Scenario Log</a></td></tr>
+<tr><td><code>-E</code>/<code>--error-log</code>, <code>--error-format</code></td><td><a href="../logging/errors.html">Error Log</a></td></tr>
+<tr><td><code>-D</code>/<code>--debug-log</code>, <code>--debug-format</code>, <code>--no-debug-body</code></td><td><a href="../logging/debug.html">Debug Log</a></td></tr>
+<tr><td><code>--dashboard</code></td><td><a href="common.html#watching-a-run">Common Options</a>, then <a href="../controller/dashboard.html">Live Dashboard</a></td></tr>
+<tr><td><code>--dashboard-host</code>, <code>--dashboard-port</code>, <code>--dashboard-auth-token</code>, <code>--dashboard-control</code>, <code>--dashboard-no-auth</code>, <code>--dashboard-max-clients</code>, <code>--no-percentiles-over-time</code></td><td><a href="../controller/dashboard-reference.html#related-flags">Dashboard Reference</a></td></tr>
+<tr><td><code>--no-autostart</code></td><td><a href="../controller/overview.html">Controllers</a></td></tr>
+<tr><td><code>--no-telnet</code>, <code>--telnet-host</code>, <code>--telnet-port</code></td><td><a href="../controller/telnet.html">Telnet Controller</a></td></tr>
+<tr><td><code>--websocket</code>, <code>--websocket-host</code>, <code>--websocket-port</code></td><td><a href="../controller/websocket.html">WebSocket Controller</a></td></tr>
+<tr><td><code>--timeout</code></td><td><a href="tips.html#timeouts">Tips</a></td></tr>
+<tr><td><code>--no-gzip</code></td><td>By default requests ask for gzip compressed responses, which Goose decompresses; <code>--no-gzip</code> stops asking.</td></tr>
+<tr><td><code>--sticky-follow</code></td><td>When a request is redirected to another host, the GooseUser sends its later requests to that host too.</td></tr>
+<tr><td><code>--accept-invalid-certs</code></td><td>Skips TLS certificate validation, for test servers with self-signed or expired certificates.</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>--no-websocket</code> is not in the help: the WebSocket Controller is off unless <code>--websocket</code> turns it on, and a command line from Goose 0.18 that still passes <code>--no-websocket</code> runs with a warning. <a href="upgrading.html">Upgrading From 0.18</a> lists every option that was removed or now behaves differently.</p>
+<h2 id="full-reference"><a class="header" href="#full-reference">Full reference</a></h2>
+<p><code>cargo run --release -- --help</code> prints:</p>
+<pre><code class="language-text">Goose 0.19.0: an HTTP(S) load testing tool written in Rust
+
+Usage: loadtest [OPTIONS]
+
+Use -h for a summary of each option, --help for details, defaults and examples.
+
+Load test:
+  -H, --host &lt;URL&gt;
+          Target host, such as http://10.21.32.33
+
+          The scheme, host and optional port each request's path is joined to.
+          It overrides a host set with Scenario::set_host or GooseDefault::Host,
+          and is required unless one of those gives every scenario a host. A
+          request with a full URL ignores it.
+
+          Example: -H http://localhost:8080. Set in code with
+          GooseDefault::Host.
+
+  -u, --users &lt;N&gt;
+          Concurrent users [default: one per CPU]
+
+          How many users to start. Without it, Goose starts one user for each
+          CPU available to it. At least 1, and at least 2 with --increase-time
+          or --decrease-time. Not allowed with --test-plan, which sets its own
+          user counts.
+
+          Example: -u 100. Set in code with GooseDefault::Users.
+
+  -r, --increase-rate &lt;RATE&gt;
+          Users started per second [default: 1]
+
+          How fast to start users. A decimal is allowed: 0.5 starts one user
+          every two seconds. The slowest rate is one user a day. Not allowed
+          with --increase-time or --test-plan.
+
+          Example: -r 10. Set in code with GooseDefault::IncreaseRate.
+
+  -s, --increase-time &lt;TIME&gt;
+          Time to start all users, such as 30s
+
+          Starts the users evenly over this time, in place of --increase-rate.
+          TIME is a whole number of seconds, or hours, minutes and seconds in
+          that order, such as 1h30m or 2m30s. Needs at least 2 users. Not
+          allowed with --increase-rate or --test-plan.
+
+          Example: -s 2m. Set in code with GooseDefault::IncreaseTime, in
+          seconds.
+
+  -t, --run-time &lt;TIME&gt;
+          Run this long after all users start
+
+          How long to keep every user running once all have started; starting
+          and stopping them takes extra time. Without it, the load test runs
+          until it is stopped, or until --iterations completes. TIME is as for
+          --increase-time. When it ends, users stop as --decrease-rate or
+          --decrease-time set, otherwise all at once. Not allowed with
+          --iterations or --test-plan.
+
+          Example: -t 20m. Set in code with GooseDefault::RunTime, in seconds.
+
+      --decrease-rate &lt;RATE&gt;
+          Users stopped per second
+
+          How fast to stop users at the end of the load test. A decimal is
+          allowed, as for --increase-rate. Without it or --decrease-time, every
+          user stops at once. Not allowed with --decrease-time, --iterations or
+          --test-plan.
+
+          Example: --decrease-rate 5. Set in code with
+          GooseDefault::DecreaseRate.
+
+      --decrease-time &lt;TIME&gt;
+          Time to stop all users, such as 30s
+
+          Stops the users evenly over this time at the end of the load test, in
+          place of --decrease-rate. TIME is as for --increase-time. Needs at
+          least 2 users. Not allowed with --decrease-rate, --iterations or
+          --test-plan.
+
+          Example: --decrease-time 1m. Set in code with
+          GooseDefault::DecreaseTime, in seconds.
+
+      --iterations &lt;N&gt;
+          Each user runs its scenario N times
+
+          Each user stops after running its scenario N times, and the load test
+          ends once every user has stopped. 0, the default, means no limit. Not
+          allowed with --run-time, --decrease-rate, --decrease-time, --test-plan
+          or --no-reset-metrics.
+
+          Example: --iterations 5. Set in code with GooseDefault::Iterations.
+
+      --test-plan &lt;PLAN&gt;
+          Load shape, such as "10,60s;0,30s"
+
+          Steps separated by semicolons, each a number of users and the time to
+          reach it: "10,60s;0,30s" starts 10 users over 60 seconds, then stops
+          them over 30 seconds. A step that keeps the number of users holds them
+          for its time. TIME is as for --increase-time. Not allowed with
+          --users, --increase-rate, --increase-time, --decrease-rate,
+          --decrease-time, --run-time, --iterations or --no-reset-metrics.
+
+          Example: --test-plan "10,1m;10,5m;0,30s". Set in code with
+          GooseDefault::TestPlan.
+
+      --scenarios &lt;LIST&gt;
+          Only run the named scenarios
+
+          A comma separated list of scenario machine names, as --scenarios-list
+          prints them. Matching ignores case, and * matches any run of
+          characters. Without it, every scenario runs.
+
+          Example: --scenarios "checkout,browse*". Set in code with
+          GooseDefault::Scenarios.
+
+      --throttle-requests &lt;N&gt;
+          Cap total requests per second
+
+          The most requests per second all users together may make. 0, the
+          default, means no cap.
+
+          Example: --throttle-requests 100. Set in code with
+          GooseDefault::ThrottleRequests.
+
+Information:
+  -h, --help
+          Print help: -h prints a summary of each option, --help this full
+          reference.
+
+  -V, --version
+          Print the Goose library version
+
+          Prints the name and version of the Goose library the load test was
+          built with, then exits.
+
+  -l, --list
+          List scenarios and their transactions
+
+          Prints each scenario and its transactions, with their weights, then
+          exits without load testing.
+
+      --scenarios-list
+          List scenario names, then exit
+
+          Prints the machine name of each scenario, which --scenarios matches,
+          and its full name, then exits without load testing.
+
+Console and Goose log:
+  -v, --verbose...
+          More console output (-v, -vv)
+
+          The console shows info messages by default. -v adds debug messages and
+          -vv adds trace messages. Not allowed with --quiet.
+
+          Example: -vv. Set in code with GooseDefault::Verbose.
+
+  -q, --quiet...
+          Less console output, warnings only
+
+          The console shows only warnings and errors, leaving out info messages;
+          -qq is the same as -q. Not allowed with --verbose.
+
+          Example: -q. Set in code with GooseDefault::Quiet.
+
+  -G, --goose-log [&lt;FILE&gt;]
+          Write the Goose log to FILE
+
+          Writes Goose's own log messages to FILE, at the detail --log-level
+          sets. Without FILE, writes goose.log into the run's folder. Without
+          the option, there is no Goose log.
+
+          Example: -G goose.log. Set in code with GooseDefault::GooseLog.
+
+  -g, --log-level...
+          More Goose log detail (-g, -gg)
+
+          The Goose log that --goose-log writes holds warnings and errors by
+          default. -g adds info messages, -gg debug messages and -ggg trace
+          messages.
+
+          Example: -G goose.log -gg. Set in code with GooseDefault::LogLevel.
+
+      --running-metrics &lt;N&gt;
+          Print running metrics every N seconds
+
+          Prints the metrics so far to the console every N seconds while the
+          load test runs. Without it, metrics are printed only at the end.
+
+          Example: --running-metrics 30. Set in code with
+          GooseDefault::RunningMetrics.
+
+      --no-print-metrics
+          Don't print metrics at the end
+
+          Leaves the metrics out of the console when the load test ends. Reports
+          are still written.
+
+          Set in code with GooseDefault::NoPrintMetrics.
+
+      --no-error-summary
+          Don't collect the error summary
+
+          Leaves the summary of errors out of the metrics, on the console and in
+          reports. The error log, --error-log, is still written.
+
+          Set in code with GooseDefault::NoErrorSummary.
+
+Reports:
+      --report-file [&lt;FILE&gt;]
+          Write a report; repeatable
+
+          Writes a report of the load test to FILE when it ends. The extension
+          picks the type: .html or .htm, .md, .json, or .pdf with the
+          pdf-reports feature. Without FILE, writes report.json and report.html
+          into the run's folder. Repeat the option to write several. Not allowed
+          with --no-metrics.
+
+          Example: --report-file report.html --report-file report.json. Set in
+          code with GooseDefault::ReportFile.
+
+      --output-dir &lt;DIR&gt;
+          Run folder, or goose-runs/&lt;start time&gt;
+
+          Sets the run's folder for output flags given without a path. Goose
+          creates it as the run starts, and removes it at the end of a run that
+          wrote nothing into it. When the folder already holds files, the run
+          uses DIR-2, DIR-3 and so on. Needs an output flag given without a
+          path, or --dashboard, which counts except under --no-metrics.
+
+          Example: --output-dir goose-runs/nightly --report-file. Set in code
+          with GooseDefault::OutputDir.
+
+      --compress [&lt;LEVEL&gt;]
+          Gzip files in the run's folder, 1 to 9
+
+          Gzips every file Goose writes into the run's folder, each named with
+          .gz added. A path given to an output flag keeps exactly that name; a
+          name that ends in .gz is gzipped without this option. LEVEL is 1
+          (fastest) to 9 (smallest), default 6, for every gzipped file.
+
+          Example: --report-file -R --compress 9. Set in code with
+          GooseDefault::Compress.
+
+      --notes &lt;TEXT&gt;
+          Label the run in its reports
+
+          Stores TEXT in the JSON report and shows it at the top of the HTML and
+          Markdown reports and in the dashboard. Needs --report-file,
+          --pdf-print-html or --dashboard.
+
+          Example: --notes "baseline before cache change". Set in code with
+          GooseDefault::Notes.
+
+      --report-graph-data
+          Add graph data to the JSON report
+
+          Adds the per second data behind the HTML report's graphs to the JSON
+          report, so a report rendered from it with --render-report has its
+          graphs. Needs --report-file or --dashboard.
+
+          Set in code with GooseDefault::ReportGraphData.
+
+      --render-report &lt;FILE&gt;
+          Write reports from a JSON report, exit
+
+          Writes the reports named by --report-file paths from FILE, a JSON
+          report, then exits without running a load test.
+
+          Example: --render-report report.json --report-file report.html.
+
+      --baseline-file &lt;PATH&gt;
+          Compare against an earlier run
+
+          PATH is a JSON report, plain or gzipped, or a folder that holds
+          report.json or report.json.gz. Every report then shows how each metric
+          changed from that run.
+
+          Example: --baseline-file baseline.json. Set in code with
+          GooseDefault::BaselineFile.
+
+      --no-granular-report
+          Graph only totals in reports
+
+          Report graphs show a line for the total and, by default, one more for
+          each request, transaction or scenario. This leaves out the extra
+          lines. Needs --report-file, --pdf-print-html or --dashboard.
+
+          Set in code with GooseDefault::NoGranularData.
+
+      --pdf-print-html &lt;FILE&gt;
+          Write print-ready HTML for PDF
+
+          Writes the HTML report, laid out for printing, to FILE, to turn into a
+          PDF in any browser. Needs neither Chrome nor the pdf-reports feature.
+          Not allowed with --no-metrics.
+
+          Example: --pdf-print-html report-print.html.
+
+      --pdf-scale &lt;SCALE&gt;
+          PDF scale, 0.1 to 2.0 [default: 0.8]
+
+          How much Chrome scales the pages of a .pdf --report-file. Only with
+          the pdf-reports feature.
+
+          Example: --pdf-scale 1.2. Set in code with GooseDefault::PdfScale.
+
+      --pdf-timeout &lt;SECS&gt;
+          PDF timeout, 10 to 600 s [default: 60]
+
+          Seconds to wait for Chrome to start and to render a .pdf
+          --report-file. Only with the pdf-reports feature.
+
+          Example: --pdf-timeout 120. Set in code with GooseDefault::PdfTimeout.
+
+Metrics:
+      --no-reset-metrics
+          Keep metrics from the ramp up
+
+          By default, Goose resets the metrics once every user has started, so
+          they cover only the full load. This keeps what was gathered while
+          users were starting. Not allowed with --test-plan or --iterations.
+
+          Set in code with GooseDefault::NoResetMetrics.
+
+      --no-metrics
+          Don't collect any metrics
+
+          Turns off every metric, and with them every report. Not allowed with
+          --report-file, --request-log, --transaction-log, --scenario-log,
+          --error-log or --co-mitigation.
+
+          Set in code with GooseDefault::NoMetrics.
+
+      --no-transaction-metrics
+          Don't collect transaction metrics
+
+          Leaves out the metrics for each transaction, keeping those for
+          requests and scenarios.
+
+          Set in code with GooseDefault::NoTransactionMetrics.
+
+      --no-scenario-metrics
+          Don't collect scenario metrics
+
+          Leaves out the metrics for each scenario, keeping those for requests
+          and transactions.
+
+          Set in code with GooseDefault::NoScenarioMetrics.
+
+      --no-status-codes
+          Don't collect status code metrics
+
+          Leaves out the count of each HTTP status code.
+
+          Set in code with GooseDefault::NoStatusCodes.
+
+      --co-mitigation &lt;MODE&gt;
+          Coordinated omission mitigation
+
+          Experimental. While the server stalls, users send fewer requests, so
+          the stall is under counted. Mitigation backfills the requests each
+          user would have sent at its usual cadence. MODE is average, maximum or
+          minimum, the cadence to backfill at, or disabled, the default. Not
+          allowed with --no-metrics.
+
+          Example: --co-mitigation average. Set in code with
+          GooseDefault::CoordinatedOmissionMitigation.
+
+      --threshold &lt;RULE&gt;
+          Pass/fail rule, such as p95&lt;500ms
+
+          RULE is &lt;metric&gt;&lt;op&gt;&lt;value&gt;, with an optional " for &lt;request&gt;". The
+          metric is pNN with optional decimals (a response time percentile, such
+          as p95 or p99.9), avg, max, error-rate (failed requests as a percent
+          of all) or rps (requests per second while the run holds its users
+          steady, in Maintain). The op is &lt;, &lt;=, &gt; or &gt;=. A time takes us, ms or
+          s, a bare number being ms; an error-rate takes an optional %. A rule
+          ending " for &lt;request&gt;", named as the HTML or Markdown report names
+          it, judges only that request, as in "p99&lt;2s for GET /checkout"; the
+          console cuts long names short. Without it, the rule judges all
+          requests together. A rule that can never pass is refused. A failing
+          rule stops the run, unless --no-threshold-abort is set, and always
+          fails it: execute() returns GooseError::ThresholdsFailed, so a main
+          that passes it up with ? exits nonzero. Repeat the option for several
+          rules; they replace any set in code. Not allowed with --no-metrics.
+
+          Example: --threshold "p95&lt;500ms" --threshold "error-rate&lt;1%". Set in
+          code with GooseDefault::Threshold, once for each rule.
+
+      --no-threshold-abort
+          Judge thresholds only at the end
+
+          By default, Goose checks every --threshold once a second from when the
+          run first enters Maintain, and stops the run when one fails. With this
+          set, Goose judges them only when the run ends, and a failing rule
+          still fails the run. An rps rule counts only the time spent holding
+          users steady, as it does without this.
+
+          Set in code with GooseDefault::NoThresholdAbort.
+
+      --threshold-abort-delay &lt;TIME&gt;
+          Wait before thresholds can stop the run
+
+          Checking starts when the run first enters Maintain, holding its users
+          steady, and this waits TIME more before the first check, to let a cold
+          cache warm up. TIME is as for --run-time; the default is 0. It never
+          changes the judgement at the end of the run. Needs --threshold, and
+          not allowed with --no-threshold-abort.
+
+          Example: --threshold-abort-delay 30s. Set in code with
+          GooseDefault::ThresholdAbortDelay, in seconds.
+
+Logs:
+  -R, --request-log [&lt;FILE&gt;]
+          Log every request to FILE
+
+          Writes a line for each request, in --request-format. Without FILE,
+          writes requests.json, .csv or .log, as --request-format sets, into the
+          run's folder. Not allowed with --no-metrics.
+
+          Example: -R requests.log. Set in code with GooseDefault::RequestLog.
+
+      --request-format &lt;FMT&gt;
+          Request log format
+
+          FMT is json, the default, csv, raw or pretty.
+
+          Example: --request-format csv. Set in code with
+          GooseDefault::RequestFormat.
+
+      --request-body
+          Add request bodies to the request log
+
+          Includes the body of each request in --request-log.
+
+          Set in code with GooseDefault::RequestBody.
+
+  -T, --transaction-log [&lt;FILE&gt;]
+          Log every transaction to FILE
+
+          Writes a line for each transaction, in --transaction-format. Without
+          FILE, writes transactions.json, .csv or .log, as --transaction-format
+          sets, into the run's folder. Not allowed with --no-metrics.
+
+          Example: -T transactions.log. Set in code with
+          GooseDefault::TransactionLog.
+
+      --transaction-format &lt;FMT&gt;
+          Transaction log format
+
+          FMT is json, the default, csv, raw or pretty.
+
+          Example: --transaction-format csv. Set in code with
+          GooseDefault::TransactionFormat.
+
+  -S, --scenario-log [&lt;FILE&gt;]
+          Log every scenario to FILE
+
+          Writes a line for each run of a scenario, in --scenario-format.
+          Without FILE, writes scenarios.json, .csv or .log, as
+          --scenario-format sets, into the run's folder. Not allowed with
+          --no-metrics.
+
+          Example: -S scenarios.log. Set in code with GooseDefault::ScenarioLog.
+
+      --scenario-format &lt;FMT&gt;
+          Scenario log format
+
+          FMT is json, the default, csv, raw or pretty.
+
+          Example: --scenario-format csv. Set in code with
+          GooseDefault::ScenarioFormat.
+
+  -E, --error-log [&lt;FILE&gt;]
+          Log every error to FILE
+
+          Writes a line for each failed request, in --error-format. Without
+          FILE, writes errors.json, .csv or .log, as --error-format sets, into
+          the run's folder. Not allowed with --no-metrics.
+
+          Example: -E errors.log. Set in code with GooseDefault::ErrorLog.
+
+      --error-format &lt;FMT&gt;
+          Error log format
+
+          FMT is json, the default, csv, raw or pretty.
+
+          Example: --error-format csv. Set in code with
+          GooseDefault::ErrorFormat.
+
+  -D, --debug-log [&lt;FILE&gt;]
+          Write the debug log to FILE
+
+          Writes what the load test logs with GooseUser::log_debug and
+          GooseUser::set_failure, with response bodies unless --no-debug-body,
+          in --debug-format. Without FILE, writes debug.json, .csv or .log, as
+          --debug-format sets, into the run's folder.
+
+          Example: -D debug.log. Set in code with GooseDefault::DebugLog.
+
+      --debug-format &lt;FMT&gt;
+          Debug log format
+
+          FMT is json, the default, csv, raw or pretty.
+
+          Example: --debug-format pretty. Set in code with
+          GooseDefault::DebugFormat.
+
+      --no-debug-body
+          Leave response bodies out of debug log
+
+          Writes --debug-log without response bodies, which keeps it small.
+
+          Set in code with GooseDefault::NoDebugBody.
+
+Dashboard:
+      --dashboard
+          Serve the live web dashboard
+
+          Serves a page that charts the load test as it runs, on 127.0.0.1 port
+          5118 unless --dashboard-host or --dashboard-port say otherwise. Needs
+          Goose built with the dashboard feature.
+
+          Set in code with GooseDefault::Dashboard.
+
+      --dashboard-host &lt;HOST&gt;
+          Bind host [default: 127.0.0.1]
+
+          The address the dashboard listens on, with --dashboard. An address
+          that is not a loopback address needs --dashboard-auth-token or
+          --dashboard-no-auth.
+
+          Example: --dashboard-host 0.0.0.0. Set in code with
+          GooseDefault::DashboardHost.
+
+      --dashboard-port &lt;PORT&gt;
+          Bind port [default: 5118]
+
+          The TCP port the dashboard listens on, with --dashboard. 0 picks a
+          free port, which the log shows.
+
+          Example: --dashboard-port 8088. Set in code with
+          GooseDefault::DashboardPort.
+
+      --dashboard-auth-token &lt;TOKEN&gt;
+          Auth token
+
+          The token a dashboard client must send, as an Authorization: Bearer
+          header or a token query parameter. Needed when --dashboard-host is not
+          a loopback address, and with --dashboard-control, unless
+          --dashboard-no-auth is set.
+
+          Set in code with GooseDefault::DashboardAuthToken.
+
+      --dashboard-control
+          Allow control from the dashboard
+
+          Lets the dashboard start, stop and quit the load test and change its
+          users. Needs --dashboard, and --dashboard-auth-token or
+          --dashboard-no-auth.
+
+          Set in code with GooseDefault::DashboardControl.
+
+      --dashboard-no-auth
+          Dashboard without a token
+
+          Allow dashboard access and control without a token. Anyone who can
+          reach the port can watch the test, and with --dashboard-control start,
+          stop and redirect it; on anything but loopback Goose warns at startup.
+          Needs --dashboard, and can't be used with --dashboard-auth-token.
+
+          Set in code with GooseDefault::DashboardNoAuth.
+
+      --dashboard-max-clients &lt;N&gt;
+          Max live clients [default: 32]
+
+          The most dashboard pages that may follow the live stream at once.
+
+          Example: --dashboard-max-clients 4. Set in code with
+          GooseDefault::DashboardMaxClients.
+
+      --no-percentiles-over-time
+          Don't track per-second response times
+
+          Leaves out the response time percentiles for each second behind the
+          dashboard's response time heatmap, which saves memory. Also turns off
+          the report's response time heatmap.
+
+          Set in code with GooseDefault::NoPercentilesOverTime.
+
+Controllers:
+      --no-autostart
+          Wait for a Controller to start the test
+
+          Starts idle and waits for a start command from the telnet Controller,
+          the WebSocket Controller with --websocket, or the dashboard with
+          --dashboard-control. Needs one of them enabled.
+
+          Set in code with GooseDefault::NoAutoStart.
+
+      --no-telnet
+          Disable the telnet Controller
+
+          By default, Goose accepts Controller commands over telnet, on
+          --telnet-host and --telnet-port.
+
+          Set in code with GooseDefault::NoTelnet.
+
+      --telnet-host &lt;HOST&gt;
+          Telnet host [default: 127.0.0.1]
+
+          The address the telnet Controller listens on. It has no
+          authentication: any other address, such as 0.0.0.0, prints a warning
+          at startup, as anyone who can reach the port can start, stop and
+          reconfigure the load test.
+
+          Example: --telnet-host 0.0.0.0. Set in code with
+          GooseDefault::TelnetHost.
+
+      --telnet-port &lt;PORT&gt;
+          Telnet port [default: 5116]
+
+          The TCP port the telnet Controller listens on.
+
+          Example: --telnet-port 6116. Set in code with
+          GooseDefault::TelnetPort.
+
+      --websocket
+          Enable the WebSocket Controller
+
+          Accepts Controller commands over WebSocket, on --websocket-host and
+          --websocket-port. Off by default: the WebSocket Controller has no
+          authentication and accepts a connection from any web page, so any
+          browser that can reach the port can drive the test.
+
+          Set in code with GooseDefault::WebSocket.
+
+      --websocket-host &lt;HOST&gt;
+          WebSocket host [default: 127.0.0.1]
+
+          The address the WebSocket Controller listens on, with --websocket. It
+          has no authentication: any other address, such as 0.0.0.0, prints a
+          warning at startup, as anyone who can reach the port can start, stop
+          and reconfigure the load test.
+
+          Example: --websocket-host 0.0.0.0. Set in code with
+          GooseDefault::WebSocketHost.
+
+      --websocket-port &lt;PORT&gt;
+          WebSocket port [default: 5117]
+
+          The TCP port the WebSocket Controller listens on, with --websocket.
+
+          Example: --websocket-port 6117. Set in code with
+          GooseDefault::WebSocketPort.
+
+HTTP client:
+      --timeout &lt;SECS&gt;
+          Request timeout in seconds [default: 60]
+
+          How long each request may take before it fails. A decimal is allowed:
+          0.5 is half a second. Rounded to the millisecond, so at least 0.0005.
+
+          Example: --timeout 15. Set in code with GooseDefault::Timeout.
+
+      --no-gzip
+          Don't send Accept-Encoding: gzip
+
+          By default, requests ask for gzip compressed responses, which Goose
+          decompresses.
+
+          Set in code with GooseDefault::NoGzip.
+
+      --sticky-follow
+          Keep following the host's redirect
+
+          When a request is redirected to another host, the user sends its later
+          requests to that host too.
+
+          Set in code with GooseDefault::StickyFollow.
+
+      --accept-invalid-certs
+          Accept invalid TLS certificates
+
+          Skips TLS certificate validation, for test servers with self signed or
+          expired certificates.
+
+          Set in code with GooseDefault::AcceptInvalidCerts.
+
+Examples:
+  loadtest -H http://localhost:8080 -u 10 -r 2 -t 5m
+  loadtest -H http://localhost:8080 -u 10 -r 2 -t 5m --report-file report.html
+
+Most options can also be set in code with GooseDefault; the command line wins. A
+value that begins with a hyphen goes after =, as in --goose-log=-run.log.
+https://book.goose.rs/getting-started/runtime-options.html
+</code></pre>
+<p>The developer documentation describes <a href="https://docs.rs/goose/*/goose/config/struct.GooseConfiguration.html"><code>GooseConfiguration</code></a>, the structure that holds these options.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
                             <a rel="prev" href="../getting-started/running.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
-                                <i class="fa fa-angle-left"></i>
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
                             <a rel="next prefetch" href="../getting-started/common.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
-                                <i class="fa fa-angle-right"></i>
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
                         <div style="clear: both"></div>
@@ -263,16 +1057,21 @@ Advanced:
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
                     <a rel="prev" href="../getting-started/running.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
-                        <i class="fa fa-angle-left"></i>
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
                     <a rel="next prefetch" href="../getting-started/common.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
-                        <i class="fa fa-angle-right"></i>
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>
 
         </div>
 
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
 
 
 
@@ -281,13 +1080,13 @@ Advanced:
         </script>
 
 
-        <script src="../elasticlunr.min.js"></script>
-        <script src="../mark.min.js"></script>
-        <script src="../searcher.js"></script>
+        <script src="../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../mark-09e88c2c.min.js"></script>
+        <script src="../searcher-09f2665d.js"></script>
 
-        <script src="../clipboard.min.js"></script>
-        <script src="../highlight.js"></script>
-        <script src="../book.js"></script>
+        <script src="../clipboard-1626706a.min.js"></script>
+        <script src="../highlight-abc7f01d.js"></script>
+        <script src="../book-609e4cb8.js"></script>
 
         <!-- Custom JS scripts -->
 
