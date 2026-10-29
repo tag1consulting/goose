@@ -76,7 +76,7 @@ Once every user has exited, Goose writes `report.html` in the directory you ran 
  Canceling:   2026-10-28 18:14:05 - 2026-10-28 18:14:05 (00:00:00, 0 <- 18)
 
  Target host: http://localhost:19060/
- goose v0.19.0-dev
+ goose v0.19.0
  ------------------------------------------------------------------------------
 ```
 

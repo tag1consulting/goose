@@ -234,7 +234,7 @@ All 5 users launched, resetting metrics (disable with --no-reset-metrics).
  Decreasing:  2026-10-26 20:53:55 - 2026-10-26 20:53:55 (00:00:00, 0 <- 5)
 
  Target host: http://localhost:8080/
- goose v0.19.0-dev
+ goose v0.19.0
  ------------------------------------------------------------------------------
 ```
 

@@ -151,7 +151,7 @@ jq 'map_values(if type == "array" then "\(length) rows" elif type == "object" th
 
 ```json
 {
-  "goose_version": "0.19.0-dev",
+  "goose_version": "0.19.0",
   "test": "umami",
   "started": "2026-10-28T16:59:19Z",
   "ended": "2026-10-28T17:02:30Z",
