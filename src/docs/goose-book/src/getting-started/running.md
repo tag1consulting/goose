@@ -1,125 +1,89 @@
 # Running A Load Test
 
-We will use Cargo to run our example load test application. It's best to get in the habit of setting the `--release` option whenever compiling or running load tests.
+Run the load test from [Creating A Load Test](creating.md) with Cargo. Pass the `--release` option whenever you compile or run a load test: a debug build is much slower and can't generate as much load.
 
 ```bash
 $ cargo run --release
-    Finished `release` profile [optimized] target(s) in 0.08s
+    Finished `release` profile [optimized] target(s) in 0.07s
      Running `target/release/loadtest`
-20:57:04 [INFO] Output verbosity level: INFO
-20:57:04 [INFO] Logfile verbosity level: WARN
-20:57:04 [INFO] users defaulted to number of CPUs = 18
+17:13:37 [INFO] Output verbosity level: INFO
+17:13:37 [INFO] Logfile verbosity level: WARN
+17:13:37 [INFO] users defaulted to number of CPUs = 18
 Error: InvalidOption { option: "--host", value: "", detail: "A host must be defined via the --host option, the GooseAttack.set_default() function, or the Scenario.set_host() function (no host defined for LoadtestTransactions)." }
 ```
 
-The load test fails with an error as it hasn't been told the host you want to load test.
+The load test fails because it has not been told which host to load test.
 
-So, let's try again, this time passing in the `--host` flag. We will also add the `--report-file` flag with a `.html` file extension, [which will generate an HTML report](common.html#writing-an-html-formatted-report), and `--no-reset-metrics` to preserve all information including the load test startup. The same information will also [be printed to the command line](metrics.md) (without graphs). After running for a few seconds, press `ctrl-c` one time to gracefully stop the load test:
+Run it again, this time passing the `--host` option with the address of a site you run or are allowed to load test. The `--` passes the options after it to the load test rather than to Cargo. Without `-u`, Goose starts one user for each CPU; without `-t`, it runs until you stop it. This load test sets no wait time, so each user sends its next request as soon as the last one is answered. Against your own site, start small (see [How many users to simulate](common.md#how-many-users-to-simulate) and [Specifying how long the load test will run](common.md#specifying-how-long-the-load-test-will-run)):
 
 ```bash
-% cargo run --release -- --host http://localhost:8080 --report-file=report.html --no-reset-metrics
-    Finished `release` profile [optimized] target(s) in 0.13s
-     Running `target/release/loadtest --host 'http://localhost:8080' --report-file=report.html --no-reset-metrics`
-21:07:31 [INFO] Output verbosity level: INFO
-21:07:31 [INFO] Logfile verbosity level: WARN
-21:07:31 [INFO] users defaulted to number of CPUs = 18
-21:07:31 [INFO] no_reset_metrics = true
-21:07:31 [INFO] report_file = ["report.html"]
-21:07:31 [INFO] global host configured: http://localhost:8080
-21:07:31 [INFO] [scheduler]: allocating transactions and scenarios with RoundRobin scheduler
-21:07:31 [INFO] [scheduler]: initializing 18 user states...
-21:07:31 [INFO] [controller]: Telnet listening on: 127.0.0.1:5116
-21:07:31 [INFO] entering GooseAttack phase: Increase
-21:07:31 [INFO] [user 1]: launching user from LoadtestTransactions
-21:07:32 [INFO] [user 2]: launching user from LoadtestTransactions
-21:07:33 [INFO] [user 3]: launching user from LoadtestTransactions
+$ cargo run --release -- --host https://your-site.example -u 2 -t 30s --report-file=report.html --no-reset-metrics
+```
+
+`--report-file` with a `.html` file extension [writes an HTML report](common.md#writing-an-html-formatted-report), and `--no-reset-metrics` keeps the ramp up in that report (explained below). Stop a run without `-t` with one Ctrl-C. The run below is the same command against a test server on port 19060 of this machine, without `-u` and `-t`. It ran until Ctrl-C was pressed once, about 8 seconds after `entering GooseAttack phase: Maintain`:
+
+```bash
+$ cargo run --release -- --host http://localhost:19060 --report-file=report.html --no-reset-metrics
+    Finished `release` profile [optimized] target(s) in 0.06s
+     Running `target/release/loadtest --host 'http://localhost:19060' --report-file=report.html --no-reset-metrics`
+17:13:38 [INFO] Output verbosity level: INFO
+17:13:38 [INFO] Logfile verbosity level: WARN
+17:13:38 [INFO] users defaulted to number of CPUs = 18
+17:13:38 [INFO] no_reset_metrics = true
+17:13:38 [INFO] report_file = ["report.html"]
+17:13:38 [INFO] global host configured: http://localhost:19060
+17:13:38 [INFO] [scheduler]: allocating transactions and scenarios with RoundRobin scheduler
+17:13:38 [INFO] [scheduler]: initializing 18 user states...
+17:13:38 [INFO] [controller]: Telnet listening on: 127.0.0.1:5116
+17:13:38 [INFO] entering GooseAttack phase: Increase
+17:13:38 [INFO] [user 1]: launching user from LoadtestTransactions
+17:13:39 [INFO] [user 2]: launching user from LoadtestTransactions
+17:13:40 [INFO] [user 3]: launching user from LoadtestTransactions
 ...
-21:07:47 [INFO] [user 17]: launching user from LoadtestTransactions
-21:07:48 [INFO] [user 18]: launching user from LoadtestTransactions
+17:13:54 [INFO] [user 17]: launching user from LoadtestTransactions
+17:13:55 [INFO] [user 18]: launching user from LoadtestTransactions
 All 18 users launched.
 
-21:07:49 [INFO] entering GooseAttack phase: Maintain
-^C21:07:57 [WARN] caught ctrl-c, stopping...
-21:07:57 [INFO] Killswitch triggered: SIGINT received
-21:07:57 [INFO] entering GooseAttack phase: Decrease
-21:07:57 [INFO] [user 12]: exiting from LoadtestTransactions
-21:07:57 [INFO] [user 10]: exiting from LoadtestTransactions
+17:13:56 [INFO] entering GooseAttack phase: Maintain
+17:14:04 [WARN] caught ctrl-c, stopping...
+17:14:04 [INFO] Killswitch triggered: SIGINT received
+17:14:05 [INFO] entering GooseAttack phase: Decrease
+17:14:05 [INFO] [user 14]: exiting from LoadtestTransactions
+17:14:05 [INFO] [user 5]: exiting from LoadtestTransactions
 ...
-21:07:57 [INFO] html report file written to: report.html
-21:07:57 [INFO] entering GooseAttack phase: Shutdown
-21:07:57 [INFO] printing final metrics after 26 seconds...
+17:14:05 [INFO] html report file written to: report.html
+17:14:05 [INFO] entering GooseAttack phase: Shutdown
+17:14:05 [INFO] printing final metrics after 27 seconds...
 ```
 
-As of Goose 0.16.0, by default all `INFO` and higher level log messages are displayed on the console while the load test runs. You can disable these messages with the `-q` (`--quiet`) flag. Or, you can display low-level debug with the `-v` (`--verbose`) flag.
+All `INFO` and higher-level log messages are displayed on the console while the load test runs. The `entering GooseAttack phase:` lines name each [phase](../glossary.md#attack-phase) the load test enters. `-q` (`--quiet`) hides the `INFO` lines and leaves warnings and errors, and `-v` (`--verbose`) adds low-level debug messages. In Goose 0.19, `-v` against a fast server can hang the run at the metrics reset; add `--no-reset-metrics` with it, and see [When a run never ends](tips.md#when-a-run-never-ends).
 
-## HTML report
+Goose launches one user a second, so this machine's 18 users took 18 seconds to ramp up; the overview below shows this as the Increasing step. With no wait time, this run's console metrics, not shown here, report over 9,000 requests a second against the local test server.
 
-When the load test finishes shutting down, it will display some [ASCII metrics](metrics.html#ascii-metrics) on the CLI and an HTML report will be created in the local directory named `report.html` as was configured above. The graphs and tables found in the HTML report are what are demonstrated below. The screenshots come from a longer run of the same load test, stopped with `ctrl-c` after about two and a half minutes.
+By default, once every user has started, Goose prints the metrics so far, [resets them](../glossary.md#metrics-reset), and prints `All 18 users launched, resetting metrics (disable with --no-reset-metrics).` The results then describe the run at full load. `--no-reset-metrics`, used here, skips that early print of the metrics and the reset, and Goose prints only `All 18 users launched.` The tables and graphs in `report.html` then include the ramp up; the [User Metrics](metrics.md#users) graph shows the ramp up with or without the reset.
 
-![HTML report header section](report-header.png)
+## What the run produced
 
-The report opens with the number of users, the target host and the Goose version, followed by the plan overview: a table of each phase of the load test, when it started and stopped, how long it took, and how many users were running. Because we stopped this load test with `ctrl-c`, its last phase is listed as `Canceling`.
+Once every user has exited, Goose writes `report.html` in the directory you ran it from; open it in a browser. Then Goose enters Shutdown and prints its final console metrics, which end with the [plan overview](../glossary.md#plan-overview). The overview lists each step of the run, when it started and stopped, how long it took, and how many users were running:
 
-By default, Goose will launch 1 `GooseUser` per second, up to the number of CPU cores available on the server used for load testing. In the above example, the load test was run from a computer with 18 CPU cores, so it took 18 seconds to launch all users.
+```text
+ === OVERVIEW ===
+ ------------------------------------------------------------------------------
+ Action       Started               Stopped             Elapsed    Users
+ ------------------------------------------------------------------------------
+ Increasing:  2026-10-28 18:13:38 - 2026-10-28 18:13:56 (00:00:18, 0 -> 18)
+ Maintaining: 2026-10-28 18:13:56 - 2026-10-28 18:14:05 (00:00:09, 18)
+ Canceling:   2026-10-28 18:14:05 - 2026-10-28 18:14:05 (00:00:00, 0 <- 18)
 
-By default, after all users are launched Goose will flush all metrics collected during the launching process (we used the `--no-reset-metrics` flag to disable this behavior) so the summary metrics are collected with all users running. If we'd not used `--no-reset-metrics`, before flushing the metrics they would have been displayed to the console so the data is not lost.
-
-## Request metrics
-
-![HTML report request metrics section](report-requests.png)
-
-The per-request metrics are displayed first, below a graph of requests per second over the course of the load test. Our single transaction makes a `GET` request for the empty `""` path, so it shows up in the metrics with the method `GET` and an empty name. The table in this section displays the total number of requests made, the number that failed, the average, minimum and maximum time to load a page in milliseconds, the average number of requests per second, and the average number of failed requests per second.
-
-If a request receives more than one status code, such as some `200 OK` and some `500 Internal Server Error` responses, an indented row follows it for each status code, with the share of responses that received it and their average, minimum and maximum times; see [response time breakdowns by status code](metrics.md#response-time-breakdowns-by-status-code). A request that always receives the same status code has no such rows.
-
-The Aggregated line at the bottom of this section shows totals and averages of all requests together. Because we only make a single request, this row is identical to the per-request metrics.
-
-## Response time metrics
-
-![HTML report response times metrics section](report-responses.png)
-
-The second section is about response times. A graph shows the average response time each second, and below it a [response time heatmap](metrics.md#response-times) shows how response times were spread over the whole run, with lines for each moment's p50, p95 and p99. The table in this section is showing the slowest page load time for a range of percentiles: the 50%ile column is the slowest of the fastest 50% of page loads, the 70%ile column the slowest of the fastest 70%, and so on.
-
-**Note:** Response time measurements in all Goose reports refer to Time to First Byte (TTFB), not complete download time.
-
-## Status code metrics
-
-![HTML report status code metrics section](report-status-codes.png)
-
-The third section is a table showing all response codes received for each request. In this simple example, every request received a `200 OK` response.
-
-## Transaction metrics
-
-![HTML report transaction metrics section](report-transactions.png)
-
-Next comes per-transaction metrics, a graph of transactions per second followed by a table, starting with the name of our Scenario, `LoadtestTransactions`. Individual transactions in the Scenario are then listed in the order they are defined in our load test. We did not name our transaction, so it shows up as `0.0`, the Scenario and transaction numbered from 0. The console tables number transactions from 1, so the same transaction shows there as `1:`. All defined transactions will be listed here, even if they did not run, so this can be useful to confirm everything in your load test is running as expected. Comparing the transaction metrics collected for `0.0` to the per-request metrics collected for `GET`, you can see that they ran the same number of times. This is because in our simple example, our single transaction only makes one request.
-
-In real load tests, you'll most likely have multiple scenarios each with multiple transactions, and Goose will show you metrics for each along with an aggregate of them all together.
-
-## Scenario metrics
-
-[Per-scenario metrics](metrics.html#scenarios) follow the per-transaction metrics: a graph of scenarios per second, then a table of how many users ran each scenario, how many times it ran, how long it took, how many times it ran per second, and how many iterations each user completed on average.
-
-## User metrics
-
-![HTML report user metrics section](report-users.png)
-
-Finally comes a chart showing how many users were running during the load test. You can see the users starting 1 per second at the start of the load test. The run was stopped with `ctrl-c`, and the line stays at 18 users to its last point.
-
-Some sections appear only when they have something to show: thresholds, when `--threshold` is set; request and response time metrics adjusted for coordinated omission, when mitigation recorded any synthetic times; coordinated omission events, whenever mitigation is on; errors, when any request failed; and transaction errors, when any transaction returned an error that is not a request error. The Transaction Errors section follows the Errors section and counts each transaction's errors by scenario, transaction and error, most frequent first. `--no-error-summary` leaves both out of the report, not out of the [error log](../logging/errors.md).
-
-## Comparing against a baseline
-
-When the load test is run with [`--baseline-file`](common.html#comparing-against-a-baseline), the numbers in the request, response time, transaction, scenario and error tables are followed by their change from the earlier run, such as `21,137 (+933)` requests or `0.94 (-0.05)` milliseconds.
-
-## Printer-friendly HTML
-
-If you want a printer-friendly version of your HTML report for PDF conversion, use the `--pdf-print-html` option:
-
-```bash
-% cargo run --release -- --host http://localhost:8080 --report-file=report.html --pdf-print-html=print-report.html --no-reset-metrics
+ Target host: http://localhost:19060/
+ goose v0.19.0-dev
+ ------------------------------------------------------------------------------
 ```
 
-This writes the HTML report with CSS laid out for printing, which you can convert to PDF with your browser's "Print to PDF" function or print on paper. It needs neither Chrome nor the `pdf-reports` feature, nor a `--report-file`: the print-ready file has the same graphs and heatmap either way.
+Because Ctrl-C stopped this run, the overview lists its Decrease phase as Canceling; a run that ends at its `-t` time lists it as Decreasing. The log lines in the run above carry UTC times; the plan overview uses local time, an hour ahead on this machine.
 
-Refer to the [examples](../example/overview.html) included with Goose for more complicated and useful load test examples.
+To watch a run live, change the `goose` line in `Cargo.toml` to `goose = { version = "^0.19", features = ["dashboard"] }` and run with `--dashboard` (see [Watching a run](common.md#watching-a-run)). Give `--report-file` once for each report you want; its extension sets the type (see [Writing reports](common.md#writing-an-html-formatted-report)). A `.pdf` report also needs the `pdf-reports` feature, as in `features = ["dashboard", "pdf-reports"]`, and Chrome, which Goose downloads if it finds none (see [Requirements](../requirements.md#chrome-for-pdf-reports)).
+
+[Metrics](metrics.md) shows every view of a run and when to use each, from the live dashboard through the PDF, HTML, Markdown and JSON reports to the console metrics. Its [HTML report](metrics.md#html-report) section walks through the report you just opened, and its [console metrics](metrics.md#ascii-metrics) section explains the tables printed before the plan overview.
+
+The [examples](../example/overview.md) included with Goose show larger load tests.
