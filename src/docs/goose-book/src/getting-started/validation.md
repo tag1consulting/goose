@@ -119,7 +119,7 @@ async fn goose_page(user: &mut GooseUser) -> TransactionResult {
 }
 ```
 
-After its checks pass, `validate_and_load_static_assets` requests every `src="..."` link and every `href="..."` link to a `.css` file on the page, when the link is a relative path or points at the load test host. The request metrics list them as `GET static asset: js` for a URL containing `.js`, `GET static asset: img` for any other `src` link, and `GET static asset: css` for a stylesheet. In goose-eggs 0.7, the first stylesheet that comes after an `href` link without `.css` in it, such as a favicon link, is not loaded. `validate_page` runs the same checks without loading assets. When every check passes, both return the page's HTML as a `String`.
+After its checks pass, `validate_and_load_static_assets` requests every `src="..."` link and every `href="..."` link to a `.css` file on the page, when the link is a relative path or points at the load test host. The request metrics list them as `GET static asset: js` for a URL containing `.js`, `GET static asset: img` for any other `src` link, and `GET static asset: css` for a stylesheet. `validate_page` runs the same checks without loading assets. When every check passes, both return the page's HTML as a `String`.
 
 A page that fails a check is a failed request. It is counted in the request metrics and in the Errors table with the reason, and the transaction returns `RequestFailed`. If `/goose/` answered `200` without the text `Gander`, the console summary would show:
 
