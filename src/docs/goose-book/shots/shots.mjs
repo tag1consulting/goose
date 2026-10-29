@@ -253,7 +253,7 @@ async function capture(page, ctx, shot, file) {
   if (c.type === "element") {
     await waitReady(page, c.selector, c.text, 120);
     await page.locator(c.selector).scrollIntoViewIfNeeded();
-    if (pad === 0 && !c.width && !c.height) return page.locator(c.selector).screenshot({ path: file, animations: "disabled" });
+    if (pad === 0 && !c.width && !c.height && !c.rows) return page.locator(c.selector).screenshot({ path: file, animations: "disabled" });
     return clipShot(page, [c.selector], pad, file, c);
   }
   if (c.type === "band") {
@@ -276,20 +276,37 @@ async function capture(page, ctx, shot, file) {
     return page.screenshot({ path: file, fullPage: true, animations: "disabled" });
   }
   if (c.type === "report") {
-    const runs = path.join(ctx.cwd, "goose-runs");
-    const folders = fs.readdirSync(runs).filter((d) => fs.existsSync(path.join(runs, d, c.file))).sort();
-    if (!folders.length) throw new Error(`no ${c.file} in ${runs}`);
     const report = await page.context().newPage();
     try {
-      await report.goto(pathToFileURL(path.join(runs, folders.at(-1), c.file)).href);
+      await report.goto(pathToFileURL(findReport(ctx.cwd, c.file)).href);
       await sleep(2000);
-      if (c.selector) return await clipShot(report, [c.selector], pad, file, c);
+      if (c.selector) return await clipShot(report, [c.selector].flat(), pad, file, c);
       return await report.screenshot({ path: file, fullPage: true, animations: "disabled" });
     } finally {
       await report.close();
     }
   }
+  if (c.type === "pdf") {
+    // The top of the PDF report, drawn by pdftoppm at `dpi`, cut to `height` pixels.
+    const pdf = findReport(ctx.cwd, c.file);
+    const prefix = file.replace(/\.png$/, "");
+    const args = ["-png", "-singlefile", "-r", String(c.dpi ?? 150), "-f", "1", "-l", "1"];
+    if (c.height) args.push("-x", "0", "-y", "0", "-W", String(c.width ?? 100000), "-H", String(c.height));
+    const r = spawnSync("pdftoppm", [...args, pdf, prefix], { stdio: "inherit" });
+    if (r.status !== 0) throw new Error(`pdftoppm failed on ${pdf}`);
+    return;
+  }
   throw new Error(`unknown capture type ${c.type}`);
+}
+
+// A report the run wrote: the newest run folder that holds `name`, or else `name` in the
+// run's own folder, where a --report-file path without a folder writes it.
+function findReport(cwd, name) {
+  const runs = path.join(cwd, "goose-runs");
+  const folders = fs.existsSync(runs) ? fs.readdirSync(runs).filter((d) => fs.existsSync(path.join(runs, d, name))).sort() : [];
+  if (folders.length) return path.join(runs, folders.at(-1), name);
+  if (fs.existsSync(path.join(cwd, name))) return path.join(cwd, name);
+  throw new Error(`no ${name} in ${cwd}`);
 }
 
 // A screenshot of the box around every selector, plus `pad` pixels, in page coordinates,
@@ -308,6 +325,15 @@ async function clipShot(page, selectors, pad, file, limits = {}) {
   const y = Math.max(0, Math.min(...boxes.map((b) => b.y)) - pad);
   let right = Math.max(...boxes.map((b) => b.right)) + pad;
   let bottom = Math.max(...boxes.map((b) => b.bottom)) + pad;
+  if (limits.rows) {
+    // Ends the clip under the given number of table rows, after the header row, in the last element.
+    const rowBottom = await page.locator(selectors.at(-1)).first().evaluate((el, n) => {
+      const rows = el.querySelectorAll("tr");
+      const row = rows[Math.min(n, rows.length - 1)];
+      return row.getBoundingClientRect().bottom + window.scrollY;
+    }, limits.rows);
+    bottom = Math.min(bottom, rowBottom + 1);
+  }
   if (limits.width) right = Math.min(right, x + limits.width);
   if (limits.height) bottom = Math.min(bottom, y + limits.height);
   return page.screenshot({ path: file, fullPage: true, clip: { x, y, width: right - x, height: bottom - y }, animations: "disabled" });
@@ -341,6 +367,45 @@ async function takeRun(browser, binary, name, run, shots, manifest, problems) {
     if (r.status !== 0) throw new Error(`GOOSE_SHOTS_BEFORE_RUN exited ${r.status}`);
   }
 
+  // A load target the rig starts for this run, such as a local server that stalls requests.
+  const server = run.server ? await startServer(name, run.server, cwd) : null;
+  try {
+    await runGoose(browser, binary, name, run, shots, manifest, problems, { cwd, base, token, env, host });
+  } finally {
+    if (server) {
+      server.kill("SIGTERM");
+      await server.exited;
+      log(`run ${name}: server stopped`);
+    }
+  }
+}
+
+async function startServer(name, spec, cwd) {
+  const command = [expand(spec.command), ...(spec.args ?? []).map((a) => shellQuote(String(expand(a))))].join(" ");
+  log(`run ${name}: server: ${command}`);
+  const out = fs.openSync(path.join(cwd, "server.log"), "w");
+  const child = spawn("sh", ["-c", `exec ${command}`], { cwd, stdio: ["ignore", out, out] });
+  children.add(child);
+  child.exited = new Promise((resolve) => child.on("exit", (code, signal) => {
+    children.delete(child);
+    fs.closeSync(out);
+    resolve({ code, signal });
+  }));
+  const end = Date.now() + 30000;
+  while (Date.now() < end) {
+    if (!children.has(child)) throw new Error(`run ${name}: the server exited; see ${cwd}/server.log`);
+    try {
+      if ((await fetch(expand(spec.ready))).ok) return child;
+    } catch {}
+    await sleep(250);
+  }
+  child.kill("SIGKILL");
+  throw new Error(`run ${name}: no answer from ${spec.ready} after 30 seconds`);
+}
+
+const shellQuote = (s) => (/^[\w@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, "'\\''")}'`);
+
+async function runGoose(browser, binary, name, run, shots, manifest, problems, { cwd, base, token, env, host }) {
   for (const [i, flags] of (run.prelude ?? []).entries()) {
     log(`run ${name}: prelude ${i + 1}: ${flags.join(" ")}`);
     const child = startGoose(binary, [...host, ...flags.map(expand)], env, cwd, `prelude-${i + 1}.log`);
@@ -425,7 +490,10 @@ async function main() {
       const attempts = run.attempts ?? 3;
       for (let attempt = 1; ; attempt++) {
         try {
-          await takeRun(browser, binaryFor(run), name, run, shots.filter((s) => s.run === name), manifest, problems);
+          // Problems count only for the attempt whose images are kept.
+          const found = [];
+          await takeRun(browser, binaryFor(run), name, run, shots.filter((s) => s.run === name), manifest, found);
+          problems.push(...found);
           break;
         } catch (err) {
           if (!(err instanceof FailedRun) || attempt >= attempts) throw err;
