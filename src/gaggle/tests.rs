@@ -606,15 +606,14 @@ fn differences(
 ) -> Vec<String> {
     let (mut metrics, mut graph) = merged;
     super::compare::adopt_unmerged(&mut metrics, &single.0);
-    let mut out = super::compare::metrics_diff(&metrics, &single.0);
-    out.extend(graph.gaggle_diff(&single.1));
-    // The timestamps fixed: coordinated omission events carry the wall
-    // clock second they were processed in, in the order they were, which
-    // within a second differs between one process and its workers.
+    // The timestamps fixed: coordinated omission metrics start at the wall
+    // clock second each process started counting, which differs between one
+    // process and workers built later (the merge rule and the start after a
+    // reset have tests of their own); events carry the wall clock second
+    // they were processed in, in the order they were, which within a
+    // second differs between one process and its workers.
     let fixed = |metrics: &mut GooseMetrics| {
         if let Some(co) = metrics.coordinated_omission_metrics.as_mut() {
-            // Compared to the second above; the reports' events per minute
-            // count from it to the wall clock when they are written.
             co.started_secs = 0;
             for event in co.co_events.iter_mut() {
                 event.timestamp_secs = 0;
@@ -626,6 +625,8 @@ fn differences(
     fixed(&mut metrics);
     fixed(&mut single.0);
     let single = &single;
+    let mut out = super::compare::metrics_diff(&metrics, &single.0);
+    out.extend(graph.gaggle_diff(&single.1));
     let configuration = configuration();
     let record = crate::runs::RunRecord::default();
     let report = |metrics: &GooseMetrics, graph: &GraphData| {

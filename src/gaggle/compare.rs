@@ -20,8 +20,7 @@ fn check<T: PartialEq + Debug>(out: &mut Vec<String>, field: &str, a: &T, b: &T)
 /// history, thresholds and hash) are left out, and so are coordinated
 /// omission event timestamps, wall clock times that two runs never share;
 /// events compare in order of their other fields, as workers interleave
-/// them, and when coordinated omission metrics started matches to the
-/// second.
+/// them.
 pub(crate) fn metrics_diff(a: &GooseMetrics, b: &GooseMetrics) -> Vec<String> {
     let mut out = Vec::new();
     let keys: BTreeSet<&String> = a.requests.keys().chain(b.requests.keys()).collect();
@@ -118,15 +117,12 @@ pub(crate) fn metrics_diff(a: &GooseMetrics, b: &GooseMetrics) -> Vec<String> {
                 &x.severity_histogram,
                 &y.severity_histogram,
             );
-            // Wall clock seconds, set when each process starts counting.
-            if x.started_secs.abs_diff(y.started_secs) > 1 {
-                out.push(format!(
-                    "{}: {} != {}",
-                    field("started_secs"),
-                    x.started_secs,
-                    y.started_secs
-                ));
-            }
+            check(
+                &mut out,
+                &field("started_secs"),
+                &x.started_secs,
+                &y.started_secs,
+            );
             check(
                 &mut out,
                 &field("mitigation_strategy"),
