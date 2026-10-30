@@ -46,6 +46,6 @@ A Locust load test ported to Goose: anonymous and logged in users, form tokens r
 
 ## Umami
 
-Three kinds of visitor (English, Spanish and admin), most of the site's page types, forms, and each page's images and scripts. Needs: a Drupal site installed with the Umami demo profile, with CSS and JS aggregation off and an admin account the example can log in with. Source: [examples/umami/](https://github.com/tag1consulting/goose/tree/main/examples/umami)
+Three kinds of visitor (English, Spanish and admin), most of the site's page types, the log in and article edit forms, and each page's stylesheets, scripts and images. Needs: a stock Drupal 11.4 site installed with the Umami demo profile, aggregation left on, and an admin account the example can log in with. Source: [examples/umami/](https://github.com/tag1consulting/goose/tree/main/examples/umami)
 
 <a href="umami.html"><img src="thumbs/umami.png" width="424" alt="The dashboard's Scenarios table: Anonymous English user with 40 users, Anonymous Spanish user with 9 and Admin user with 1"></a>
