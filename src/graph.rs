@@ -4270,14 +4270,10 @@ mod gaggle {
                     ));
                 }
             }
+            // Which names have a ring of their own; the order rings were
+            // made in shows nowhere.
             let names = |latency: &LatencyHistograms| {
-                let mut names: Vec<(usize, &String)> = latency
-                    .by_request
-                    .iter()
-                    .map(|(name, &index)| (index, name))
-                    .collect();
-                names.sort();
-                names.into_iter().map(|(_, name)| name.clone()).collect::<Vec<_>>()
+                latency.by_request.keys().cloned().collect::<BTreeSet<_>>()
             };
             let (a_names, b_names) = (names(self), names(other));
             if a_names != b_names {

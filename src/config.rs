@@ -887,6 +887,15 @@ pub struct GooseConfiguration {
     /// Set in code with GooseDefault::AcceptInvalidCerts.
     #[arg(help_heading = "HTTP client", long)]
     pub accept_invalid_certs: bool,
+    /// Check Gaggle metrics merging against this run
+    ///
+    /// Runs the load test as its own Gaggle worker and manager: each second's metrics
+    /// delta is encoded, decoded and merged, and at the end the merge must equal the
+    /// run's own metrics, graphs and dashboard snapshot. Prints one line on a match;
+    /// otherwise writes every difference to gaggle-shadow-diff.txt and fails the run.
+    #[cfg(feature = "gaggle")]
+    #[arg(help_heading = "Gaggle", long, hide = true)]
+    pub gaggle_shadow_merge: bool,
 }
 
 /// How output shows the dashboard auth token: a set token reads [`TOKEN_SHOWN`], and an
@@ -992,6 +1001,8 @@ impl std::fmt::Debug for GooseConfiguration {
             no_gzip,
             sticky_follow,
             accept_invalid_certs,
+            #[cfg(feature = "gaggle")]
+            gaggle_shadow_merge,
         } = self;
         let mut debug = f.debug_struct("GooseConfiguration");
         debug
@@ -1071,8 +1082,10 @@ impl std::fmt::Debug for GooseConfiguration {
             .field("timeout", timeout)
             .field("no_gzip", no_gzip)
             .field("sticky_follow", sticky_follow)
-            .field("accept_invalid_certs", accept_invalid_certs)
-            .finish()
+            .field("accept_invalid_certs", accept_invalid_certs);
+        #[cfg(feature = "gaggle")]
+        debug.field("gaggle_shadow_merge", gaggle_shadow_merge);
+        debug.finish()
     }
 }
 

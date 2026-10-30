@@ -72,6 +72,7 @@ pub(crate) fn json_diff(
 /// Every difference between two texts, as their first differing lines,
 /// numbers matching to f32 rounding: the text between numbers must be
 /// equal, and each number close.
+#[cfg(test)]
 pub(crate) fn text_diff(name: &str, a: &str, b: &str, out: &mut Vec<String>) {
     fn tokens(text: &str) -> Vec<(bool, &str)> {
         let mut tokens = Vec::new();

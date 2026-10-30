@@ -107,6 +107,8 @@ impl GaggleAccumulator {
 
     /// The worker is gone without a final delta: what it sent stays merged,
     /// and its seconds no longer hold back which seconds are complete.
+    // Called by the manager in Gaggle step 2; tested here.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn lose(&mut self, worker: u32) {
         if let Some(worker) = self.workers.get_mut(&worker) {
             worker.lost = true;
@@ -196,6 +198,8 @@ impl GaggleAccumulator {
 /// `a` then `b`. A newer epoch in `b` starts again from `b`, and a final
 /// `b` replaces `a`. Coordinated omission events stay capped at
 /// [`super::delta::MAX_CO_EVENTS_PER_DELTA`] in a delta, the oldest kept.
+// Bounds a worker's send queue in Gaggle step 2; tested here.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn coalesce(a: &GaggleDelta, b: &GaggleDelta) -> GaggleDelta {
     if b.kind == DeltaKind::Final || b.epoch > a.epoch {
         let mut users = if b.kind == DeltaKind::Final {

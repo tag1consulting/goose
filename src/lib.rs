@@ -519,6 +519,9 @@ struct GooseAttackRunState {
     /// Signals the dashboard SnapshotHub to emit SSE `event: closed` on final exit.
     #[cfg(feature = "dashboard")]
     dashboard_close_tx: Option<tokio::sync::watch::Sender<bool>>,
+    /// The series second of the last `--gaggle-shadow-merge` delta.
+    #[cfg(feature = "gaggle")]
+    gaggle_shadow_second: Option<usize>,
     /// Dashboard tabs connected to the event stream.
     #[cfg(feature = "dashboard")]
     dashboard_active_sse: Option<Arc<AtomicUsize>>,
@@ -628,6 +631,9 @@ pub struct GooseAttack {
     scenario_machine_names: HashSet<String>,
     /// A weighted vector containing a GooseUser object for each GooseUser that will run during this load test.
     weighted_users: Vec<GooseUser>,
+    /// How the `--gaggle-shadow-merge` self check ended, once it has.
+    #[cfg(feature = "gaggle")]
+    gaggle_shadow: Option<Arc<Mutex<Option<gaggle::shadow::ShadowOutcome>>>>,
     /// Optional default values for Goose run-time options.
     defaults: GooseDefaults,
     /// Configuration object holding options set when launching the load test.
@@ -749,6 +755,8 @@ impl GooseAttack {
             scenarios: Vec::new(),
             scenario_machine_names: HashSet::new(),
             weighted_users: Vec::new(),
+            #[cfg(feature = "gaggle")]
+            gaggle_shadow: None,
             defaults: GooseDefaults::default(),
             configuration,
             attack_mode: AttackMode::Undefined,
@@ -796,6 +804,8 @@ impl GooseAttack {
             scenarios: Vec::new(),
             scenario_machine_names: HashSet::new(),
             weighted_users: Vec::new(),
+            #[cfg(feature = "gaggle")]
+            gaggle_shadow: None,
             defaults: GooseDefaults::default(),
             configuration,
             attack_mode: AttackMode::Undefined,
@@ -1153,6 +1163,40 @@ impl GooseAttack {
         patterns
             .iter()
             .any(|pattern| scenario_pattern_matches(pattern, &scenario.machine_name))
+    }
+
+    /// How the `--gaggle-shadow-merge` self check ended: one line on a
+    /// match; otherwise every difference written to
+    /// `gaggle-shadow-diff.txt` in the run's folder, or the working
+    /// directory without one, and an error.
+    #[cfg(feature = "gaggle")]
+    fn gaggle_shadow_report(&mut self) -> Result<(), GooseError> {
+        let Some(slot) = self.gaggle_shadow.take() else {
+            return Ok(());
+        };
+        let outcome = slot.lock().ok().and_then(|mut outcome| outcome.take());
+        let differences = match outcome {
+            Some(outcome) if outcome.differences.is_empty() => {
+                println!("{}", outcome.summary());
+                return Ok(());
+            }
+            Some(outcome) => outcome.differences,
+            None => vec!["the shadow merge did not finish".to_string()],
+        };
+        let folder = self
+            .output
+            .folder
+            .as_ref()
+            .map_or_else(|| std::path::PathBuf::from("."), |folder| folder.path.clone());
+        let path = folder.join(gaggle::shadow::DIFF_FILE);
+        let mut text = differences.join("\n");
+        text.push('\n');
+        std::fs::write(&path, text)?;
+        Err(GooseError::Io(io::Error::other(format!(
+            "gaggle shadow merge: {} differences, written to {}",
+            differences.len(),
+            path.display()
+        ))))
     }
 
     /// Use configured GooseScheduler to build out a properly weighted list of
@@ -1594,6 +1638,9 @@ impl GooseAttack {
         debug!("hash: {}", self.metrics.hash);
 
         self = self.start_attack().await?;
+
+        #[cfg(feature = "gaggle")]
+        self.gaggle_shadow_report()?;
 
         if self.metrics.display_metrics {
             info!(
@@ -2417,6 +2464,8 @@ impl GooseAttack {
             dashboard_channel_rx,
             #[cfg(feature = "dashboard")]
             dashboard_close_tx,
+            #[cfg(feature = "gaggle")]
+            gaggle_shadow_second: None,
             #[cfg(feature = "dashboard")]
             dashboard_active_sse,
             #[cfg(feature = "dashboard")]
@@ -3487,7 +3536,8 @@ impl GooseAttack {
         ) = flume::unbounded();
         goose_attack_run_state.all_threads_metrics_tx = all_threads_metrics_tx;
         let (metrics_cmd_tx, metrics_cmd_rx) = flume::unbounded();
-        let processor = MetricsProcessor::new(
+        #[cfg_attr(not(feature = "gaggle"), allow(unused_mut))]
+        let mut processor = MetricsProcessor::new(
             metrics_rx,
             metrics_cmd_rx,
             self.metrics.clone(),
@@ -3504,6 +3554,13 @@ impl GooseAttack {
             goose_attack_run_state.metrics_epoch.clone(),
             self.keeps_full_graph(),
         );
+        #[cfg(feature = "gaggle")]
+        if self.configuration.gaggle_shadow_merge {
+            let outcome = Arc::new(Mutex::new(None));
+            processor.gaggle_enable_shadow(outcome.clone());
+            self.gaggle_shadow = Some(outcome);
+            goose_attack_run_state.gaggle_shadow_second = None;
+        }
         goose_attack_run_state.metrics_cmd_tx = metrics_cmd_tx;
         if let Some(handle) = goose_attack_run_state.metrics_processor_handle.take() {
             let _ = handle.await;
@@ -3653,6 +3710,18 @@ impl GooseAttack {
                         elapsed_secs: self.series_elapsed_secs(),
                     });
             };
+
+            // `--gaggle-shadow-merge`: one delta each second.
+            #[cfg(feature = "gaggle")]
+            if self.gaggle_shadow.is_some() && self.series_started.is_some() {
+                let now = self.series_elapsed_secs();
+                if goose_attack_run_state.gaggle_shadow_second != Some(now) {
+                    goose_attack_run_state.gaggle_shadow_second = Some(now);
+                    let _ = goose_attack_run_state
+                        .metrics_cmd_tx
+                        .send(MetricsCommand::GaggleShadowTick { now });
+                }
+            }
 
             // Check if it's time to display running metrics, sending a command
             // to the dedicated metrics processor task if so.
