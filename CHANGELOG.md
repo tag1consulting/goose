@@ -1,11 +1,11 @@
 # Changelog
 
 ## 0.20.0-dev
- - [#PR](https://github.com/tag1consulting/goose/pull/PR) Gaggle groundwork, not yet usable (refs #645): a `gaggle` cargo feature with no network code, under which a worker's metrics, graphs and dashboard snapshot can be taken once a second as a mergeable delta, encoded with postcard, and merged on a manager into exactly what one process running all the users would produce
+ - [#796](https://github.com/tag1consulting/goose/pull/796) Gaggle groundwork, not yet usable (refs #645): a `gaggle` cargo feature with no network code, under which a worker's metrics, graphs and dashboard snapshot can be taken once a second as a mergeable delta, encoded with postcard, and merged on a manager into exactly what one process running all the users would produce
     o a hidden `--gaggle-shadow-merge` option, with the `gaggle` feature, runs a load test as its own worker and manager: every second's delta is encoded, decoded and merged, and at the end the merge must equal the run's own metrics, graph data and, with `--dashboard`, dashboard snapshot; it prints `gaggle shadow merge: OK` with the delta count and sizes, or writes each difference to `gaggle-shadow-diff.txt` in the run's folder and fails the run
     o a delta carries at most 1,000 coordinated omission events, the oldest first; events past that are counted but not sent, so the request counts and the severity histogram stay exact while the report's event total, events per minute and per user and per scenario event tables leave those events out; a worker's final delta carries every event
     o a worker can run a share of the users, numbered from a global ordinal, with the scenarios one process running them all would give them, so each scenario's user count and coordinated omission events name users the same way on every worker
- - [#PR](https://github.com/tag1consulting/goose/pull/PR) **behavior change**: the load test hash (`GooseMetrics::hash`, in the JSON report) is a 64 bit FNV-1a over the plan's scenarios, transactions and scheduler, the same on every build, where it was Rust's `DefaultHasher`, whose output may change between Rust releases; every plan's hash changes once
+ - [#796](https://github.com/tag1consulting/goose/pull/796) **behavior change**: the load test hash (`GooseMetrics::hash`, in the JSON report) is a 64 bit FNV-1a over the plan's scenarios, transactions and scheduler, the same on every build, where it was Rust's `DefaultHasher`, whose output may change between Rust releases; every plan's hash changes once
 
 ## 0.19.1-dev
 
