@@ -24,10 +24,9 @@ pub(crate) struct SeqGap {
 
 /// What the manager holds for one worker.
 struct WorkerTotal {
-    /// Everything received this epoch, as one delta.
+    /// Everything received this epoch, as one delta, and the users levels
+    /// over the whole run, which a metrics reset keeps.
     total: GaggleDelta,
-    /// Users levels by second over the whole run, kept over metrics resets.
-    users: BTreeMap<Second, u64>,
     last_seq: u64,
     /// A final delta arrived: the worker has sent everything.
     finished: bool,
@@ -68,7 +67,6 @@ impl GaggleAccumulator {
             .entry(delta.worker)
             .or_insert_with(|| WorkerTotal {
                 total: GaggleDelta::new(delta.worker, 0, delta.epoch, DeltaKind::Delta),
-                users: BTreeMap::new(),
                 last_seq: 0,
                 finished: false,
                 lost: false,
@@ -77,7 +75,6 @@ impl GaggleAccumulator {
             return;
         }
         if delta.kind == DeltaKind::Final {
-            worker.users = delta.graph.users.clone();
             worker.last_seq = delta.seq;
             worker.finished = true;
             worker.total = delta;
@@ -98,9 +95,6 @@ impl GaggleAccumulator {
             worker.total.epoch = delta.epoch;
             worker.total.metrics = MetricsPart::default();
             worker.total.graph.clear_rates();
-        }
-        for (&second, &users) in &delta.graph.users {
-            worker.users.insert(second, users);
         }
         worker.total.add(&delta);
     }
@@ -178,7 +172,7 @@ impl GaggleAccumulator {
         let last = self
             .workers
             .values()
-            .filter_map(|worker| worker.users.keys().next_back().copied())
+            .filter_map(|worker| worker.total.graph.users.keys().next_back().copied())
             .max();
         let Some(last) = last else {
             return BTreeMap::new();
@@ -186,7 +180,7 @@ impl GaggleAccumulator {
         let first = self
             .workers
             .values()
-            .filter_map(|worker| worker.users.keys().next().copied())
+            .filter_map(|worker| worker.total.graph.users.keys().next().copied())
             .min()
             .unwrap_or(0);
         (first..=last)
@@ -194,7 +188,7 @@ impl GaggleAccumulator {
                 let users = self
                     .workers
                     .values()
-                    .filter_map(|worker| worker.users.range(..=second).next_back())
+                    .filter_map(|worker| worker.total.graph.users.range(..=second).next_back())
                     .map(|(_, &users)| users)
                     .sum();
                 (second, users)

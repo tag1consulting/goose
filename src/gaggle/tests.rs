@@ -65,8 +65,12 @@ enum Event {
     Scenario(usize, ScenarioMetric),
     /// A user sends its batch.
     Flush(usize),
-    /// The end of a series second: users recorded, deltas taken.
+    /// The end of a series second: users recorded, one fewer than run
+    /// when any do, then deltas taken.
     Second(usize),
+    /// The users of a second recorded again, all of them, after its delta
+    /// was taken: a level sent twice.
+    Users(usize),
     /// The metrics reset, at this series second.
     Reset(usize),
 }
@@ -271,6 +275,7 @@ fn events(seed: u64) -> Vec<Event> {
             }
         }
         events.push(Event::Second(second));
+        events.push(Event::Users(second));
     }
     events
 }
@@ -377,7 +382,7 @@ impl Side {
             | Event::Transaction(user, _, _)
             | Event::Scenario(user, _)
             | Event::Flush(user) => Some(*user),
-            Event::Second(_) | Event::Reset(_) => None,
+            Event::Second(_) | Event::Users(_) | Event::Reset(_) => None,
         };
         if user.is_some_and(|user| !self.users.contains_key(&user)) {
             return None;
@@ -424,13 +429,20 @@ impl Side {
             }
             Event::Second(second) => {
                 self.drain();
-                let active_users = self.running(*second).len();
+                let active_users = self.running(*second).len().saturating_sub(1);
                 self.processor
                     .handle_command_for_test(MetricsCommand::RecordUsers {
                         active_users,
                         elapsed_secs: *second,
                     });
                 delta = self.processor.gaggle_take_delta(*second + 1);
+            }
+            Event::Users(second) => {
+                self.processor
+                    .handle_command_for_test(MetricsCommand::RecordUsers {
+                        active_users: self.running(*second).len(),
+                        elapsed_secs: *second,
+                    });
             }
             Event::Reset(second) => {
                 self.drain();
@@ -1002,4 +1014,29 @@ fn gaggle_coalesce_equals_apply_apply() {
             &merge_diff(&accumulator, &expected),
         );
     }
+}
+
+/// A worker's users level holds past its last second: two workers, one
+/// whose users stop being recorded a second early, add up as one process
+/// keeping each level until it changes.
+#[test]
+fn gaggle_users_levels_hold() {
+    let delta = |worker: u32, users: &[(u64, u64)]| {
+        let mut delta = GaggleDelta::new(worker, 1, 1, DeltaKind::Delta);
+        delta.now = 10;
+        delta.graph.users = users.iter().copied().collect();
+        delta
+    };
+    let mut accumulator = accumulator();
+    accumulator.apply(wire(&delta(0, &[(0, 2), (1, 3)])));
+    accumulator.apply(wire(&delta(1, &[(0, 1), (1, 1), (2, 4)])));
+    accumulator.done(0);
+    accumulator.done(1);
+    let (_, graph) = accumulator.merged();
+    let mut expected = GraphData::for_metrics_processor(true, true, true);
+    for (second, users) in [(0, 3), (1, 4), (2, 7)] {
+        expected.record_users_per_second(users, second);
+    }
+    expected.finish_latency_columns();
+    assert_none("users levels", &graph.gaggle_diff(&expected));
 }
