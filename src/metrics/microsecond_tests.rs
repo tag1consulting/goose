@@ -1059,3 +1059,169 @@ fn reports_with_microseconds_compare_by_their_microseconds() {
         markdown
     );
 }
+
+/// The cells of a row of the HTML report, as it shows them.
+fn html_cells(row: &str) -> Vec<String> {
+    row.split("<td")
+        .skip(1)
+        .map(|cell| {
+            let text = &cell[cell.find('>').unwrap() + 1..cell.find("</td>").unwrap()];
+            text.trim_end_matches("</strong>").trim().to_string()
+        })
+        .collect()
+}
+
+/// A JSON report row's `field` as the HTML report would show it: from the
+/// microseconds beside it when the row has them, otherwise from the field
+/// itself, in milliseconds; empty for `null`, as the HTML report shows it.
+fn json_shown(row: &serde_json::Value, field: &str) -> String {
+    if let Some(us) = row
+        .get(format!("{field}_us"))
+        .and_then(serde_json::Value::as_u64)
+    {
+        return format_micros(us, false);
+    }
+    match row[field].as_f64() {
+        Some(ms) => format_ms(ms, false),
+        None => String::new(),
+    }
+}
+
+/// The JSON report, written as a run writes it, holds every time the HTML
+/// report of the same run shows, at the HTML report's precision: a p50 of
+/// 0.59 ms is 0.59 in both, not 0 in the JSON report.
+#[test]
+fn json_report_times_agree_with_the_html_report_under_a_millisecond() {
+    let mut metrics = request_metrics(&[
+        (
+            "GET /",
+            &[450, 520, 560, 590, 590, 590, 590, 590, 640, 700, 820, 950],
+        ),
+        ("GET /about", &[380, 610, 680, 730, 1_240]),
+    ]);
+    let mut transaction = TransactionMetricAggregate::new(
+        0,
+        Arc::from("Scenario"),
+        0,
+        TransactionName::TransactionOnly(Arc::from("index")),
+    );
+    for us in [590, 640, 720] {
+        transaction.set_time_us(us, true);
+    }
+    metrics.transactions = vec![vec![transaction]];
+    let mut scenario = ScenarioMetricAggregate::new(0, Arc::from("Scenario"));
+    scenario.update_us(1_230, 0);
+    scenario.update_us(1_870, 1);
+    metrics.scenarios = vec![scenario];
+
+    let configuration = crate::GooseConfiguration::default();
+    let record = crate::runs::RunRecord::default();
+    let graph_data = crate::graph::GraphData::new();
+    let source = ReportSource {
+        configuration: &configuration,
+        metrics: &metrics,
+        graph_data: &graph_data,
+        graphs: true,
+        heatmap: None,
+        loaded: None,
+        record: &record,
+        graph_data_in_json: false,
+    };
+    let html = source.html(None).unwrap();
+    let mut json = Vec::new();
+    source.write_json(&mut json, None).unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&json).unwrap();
+    let data = source.data(None);
+
+    let mut disagree = Vec::new();
+    let mut compare = |table: &str, html_rows: Vec<String>, fields: &[(&str, usize)]| {
+        let json_rows: Vec<&serde_json::Value> = json[table]
+            .as_array()
+            .unwrap_or_else(|| panic!("{table}"))
+            .iter()
+            .filter(|row| row["is_scenario"] != true)
+            .collect();
+        assert_eq!(json_rows.len(), html_rows.len(), "{table}");
+        for (json_row, html_row) in json_rows.into_iter().zip(&html_rows) {
+            assert!(html.contains(html_row.as_str()), "{table}: {html_row}");
+            let cells = html_cells(html_row);
+            for &(field, cell) in fields {
+                let shown = json_shown(json_row, field);
+                if shown != cells[cell] {
+                    disagree.push(format!(
+                        "{table} {} {field}: JSON {shown} ms, HTML {} ms",
+                        json_row["name"], cells[cell]
+                    ));
+                }
+            }
+        }
+    };
+    compare(
+        "raw_request_metrics",
+        data.raw_request_metrics
+            .iter()
+            .filter(|row| !row.is_breakdown)
+            .cloned()
+            .map(crate::report::raw_request_metrics_row)
+            .collect(),
+        &[
+            ("response_time_average", 4),
+            ("response_time_minimum", 5),
+            ("response_time_maximum", 6),
+        ],
+    );
+    compare(
+        "raw_response_metrics",
+        data.raw_response_metrics
+            .iter()
+            .cloned()
+            .map(crate::report::response_metrics_row)
+            .collect(),
+        &[
+            ("percentile_50", 2),
+            ("percentile_60", 3),
+            ("percentile_70", 4),
+            ("percentile_80", 5),
+            ("percentile_90", 6),
+            ("percentile_95", 7),
+            ("percentile_99", 8),
+            ("percentile_100", 9),
+        ],
+    );
+    compare(
+        "transaction_metrics",
+        data.transaction_metrics
+            .as_ref()
+            .unwrap()
+            .iter()
+            .filter(|row| !row.is_scenario)
+            .cloned()
+            .map(crate::report::transaction_metrics_row)
+            .collect(),
+        &[
+            ("response_time_average", 3),
+            ("response_time_minimum", 4),
+            ("response_time_maximum", 5),
+        ],
+    );
+    compare(
+        "scenario_metrics",
+        data.scenario_metrics
+            .as_ref()
+            .unwrap()
+            .iter()
+            .cloned()
+            .map(crate::report::scenario_metrics_row)
+            .collect(),
+        &[
+            ("response_time_average", 3),
+            ("response_time_minimum", 4),
+            ("response_time_maximum", 5),
+        ],
+    );
+    assert!(
+        disagree.is_empty(),
+        "the JSON report disagrees with the HTML report:\n{}",
+        disagree.join("\n")
+    );
+}
