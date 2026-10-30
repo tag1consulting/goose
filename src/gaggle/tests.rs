@@ -1179,3 +1179,41 @@ fn gaggle_reset_takes_the_processors_co_start() {
         );
     }
 }
+
+/// Response times more than a heatmap ring's 300 seconds apart in one delta:
+/// a stall of 302 seconds that mitigation fills with synthetic times back to
+/// when it began, and a measured second 300 seconds before another in the
+/// same delta. Every one reaches the manager, so its report heatmap's
+/// columns equal one process's.
+#[test]
+fn gaggle_seconds_a_ring_apart_reach_the_manager() {
+    let started = request(0, &name(1), GooseMethod::Get, 2_000, 900, 200);
+    let late = request(0, &name(1), GooseMethod::Get, 2_500, 1_200, 200);
+    let mut stalled = request(0, &name(1), GooseMethod::Get, 305_000, 800, 200);
+    let mut copy = stalled.clone();
+    copy.coordinated_omission_elapsed = 302_000;
+    copy.user_cadence = 1_000;
+    stalled.elapsed = 305_000;
+    let events = vec![
+        Event::Start(0),
+        Event::Request(0, started),
+        Event::Flush(0),
+        Event::Second(2),
+        Event::Request(0, stalled),
+        Event::Request(0, copy),
+        Event::Flush(0),
+        // A measured second 303 seconds before the newest one, in the same
+        // delta.
+        Event::Request(0, late),
+        Event::Flush(0),
+        Event::Second(305),
+    ];
+    let single = single(&events);
+    let deltas = worker_deltas(&events, 1);
+    for finals in [false, true] {
+        assert_none(
+            &format!("finals {finals}"),
+            &differences(merge(&deltas, finals, 1).merged(), &single),
+        );
+    }
+}

@@ -7534,6 +7534,88 @@ mod test {
         metric
     }
 
+    /// Every kind of metric moves a Gaggle worker's pending start back to
+    /// the earliest second it records graph data for, each part of it
+    /// counted.
+    #[cfg(feature = "gaggle")]
+    #[test]
+    fn gaggle_earliest_second_covers_every_arm() {
+        let request = |ms: u64| make_request_metric("/a", 1, 200, ms);
+        let transaction = |ms: u128| TransactionMetric::new(ms, 0, 0, Arc::from("t"), 0);
+        let scenario =
+            |ms: u128| ScenarioMetric::new(ms, Arc::from("s"), 0, Duration::from_millis(1), 0);
+        assert_eq!(
+            earliest_second(&GooseMetric::Request(Box::new(request(9_500)))),
+            Some(9)
+        );
+        assert_eq!(
+            earliest_second(&GooseMetric::Transaction(transaction(4_200))),
+            Some(4)
+        );
+        assert_eq!(
+            earliest_second(&GooseMetric::Scenario(scenario(7_900))),
+            Some(7)
+        );
+        for (r, t, sc) in [
+            (2_000u64, 5_000u128, 6_000u128),
+            (5_000, 2_000, 6_000),
+            (5_000, 6_000, 2_000),
+        ] {
+            let all = GooseMetric::All {
+                request: Box::new(request(r)),
+                transaction: transaction(t),
+                scenario: Box::new(scenario(sc)),
+            };
+            assert_eq!(earliest_second(&all), Some(2), "All {r} {t} {sc}");
+        }
+        // A batch whose requests are all at second 9, and one source at 3.
+        let base = || {
+            let mut batch = GooseMetricBatch::new(0);
+            batch.second = Some(9);
+            batch
+                .graph_request_data
+                .insert(("GET /a".to_string(), 9), RequestGraphBatchData::default());
+            batch
+        };
+        assert_eq!(
+            earliest_second(&GooseMetric::Batch(Box::new(base()))),
+            Some(9)
+        );
+        type Add = fn(&mut GooseMetricBatch);
+        let sources: [(&str, Add); 5] = [
+            ("second", |batch| batch.second = Some(3)),
+            ("graph_request_data", |batch| {
+                batch
+                    .graph_request_data
+                    .insert(("GET /b".to_string(), 3), RequestGraphBatchData::default());
+            }),
+            ("graph_tps", |batch| {
+                batch.graph_tps.insert(3, 1);
+            }),
+            ("graph_sps", |batch| {
+                batch.graph_sps.insert(3, 1);
+            }),
+            ("individual_requests", |batch| {
+                batch
+                    .individual_requests
+                    .push(make_request_metric("/c", 1, 500, 3_100))
+            }),
+        ];
+        for (what, add) in sources {
+            let mut batch = base();
+            add(&mut batch);
+            assert_eq!(
+                earliest_second(&GooseMetric::Batch(Box::new(batch))),
+                Some(3),
+                "{what}"
+            );
+        }
+        assert_eq!(
+            earliest_second(&GooseMetric::Batch(Box::new(GooseMetricBatch::new(0)))),
+            None
+        );
+    }
+
     /// Build a MetricsProcessor suitable for unit tests.
     ///
     /// Sets up the minimum required state: one scenario with one transaction,

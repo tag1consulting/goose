@@ -753,6 +753,10 @@ pub(crate) struct ColumnSink<'a> {
     origin: usize,
     width: usize,
     all: Option<(&'a mut Columns, usize)>,
+    /// A Gaggle worker's copy: every second the ring folds, by second, so
+    /// none is lost to a ring slot (see `LatencyHistograms::folded`).
+    #[cfg(feature = "gaggle")]
+    seconds: Option<&'a mut BTreeMap<usize, SecondHistogram>>,
 }
 
 impl ColumnSink<'_> {
@@ -762,6 +766,8 @@ impl ColumnSink<'_> {
             origin,
             width,
             all: None,
+            #[cfg(feature = "gaggle")]
+            seconds: None,
         }
     }
 
@@ -787,6 +793,19 @@ impl ColumnSink<'_> {
         if let Some((all, width)) = self.all.as_mut() {
             add(all.at(since / *width));
         }
+        #[cfg(feature = "gaggle")]
+        if let Some(seconds) = self.seconds.as_mut() {
+            add(seconds.entry(second).or_default());
+        }
+    }
+
+    /// Whether anything takes the seconds a ring folds.
+    fn feeds(&self) -> bool {
+        #[cfg(feature = "gaggle")]
+        if self.seconds.is_some() {
+            return true;
+        }
+        self.all.is_some()
     }
 }
 
@@ -908,7 +927,7 @@ impl LatencyRing {
         sink: &mut ColumnSink<'_>,
         mut add: impl FnMut(&mut SecondHistogram),
     ) {
-        let feeds = self.columns.is_some() || sink.all.is_some();
+        let feeds = self.columns.is_some() || sink.feeds();
         let folded = match self.slot_mut(second, rev, sink) {
             Some(histogram) => {
                 add(histogram);
@@ -1111,7 +1130,19 @@ pub(crate) struct LatencyHistograms {
     /// collects what a delta sends, where the manager decides which names
     /// get a ring.
     admit_all: bool,
+    /// On a Gaggle worker's copy: the folded seconds of each measured ring,
+    /// by index, and of each name's synthetic ring, which a ring slot,
+    /// reused every [`SERIES_WINDOW_SECS`] seconds, could not keep.
+    #[cfg(feature = "gaggle")]
+    folded: Option<Folded>,
 }
+
+/// See `LatencyHistograms::folded`.
+#[cfg(feature = "gaggle")]
+type Folded = (
+    Vec<BTreeMap<usize, SecondHistogram>>,
+    HashMap<String, BTreeMap<usize, SecondHistogram>>,
+);
 
 impl LatencyHistograms {
     /// `synthetic` keeps rings for coordinated omission mitigation's
@@ -1133,6 +1164,8 @@ impl LatencyHistograms {
             budgets: (ALL_REQUESTS_COLUMNS, REQUEST_COLUMNS),
             limit: usize::MAX,
             admit_all: false,
+            #[cfg(feature = "gaggle")]
+            folded: None,
         };
         histograms.set_limit();
         histograms
@@ -1244,10 +1277,22 @@ impl LatencyHistograms {
             None => &mut self.others,
         };
         let all_width = self.all_width;
+        #[cfg(feature = "gaggle")]
+        let seconds = match (self.folded.as_mut(), index) {
+            (Some((measured, _)), Some(index)) => {
+                if measured.len() <= index {
+                    measured.resize_with(index + 1, BTreeMap::new);
+                }
+                Some(&mut measured[index])
+            }
+            _ => None,
+        };
         let sink = ColumnSink {
             origin: self.origin,
             width: self.request_width,
             all: self.all_columns.as_mut().map(|all| (all, all_width)),
+            #[cfg(feature = "gaggle")]
+            seconds,
         };
         (ring, sink)
     }
@@ -1387,7 +1432,12 @@ impl LatencyHistograms {
         if !self.by_request.contains_key(key) && !self.admit_all {
             return;
         }
+        #[cfg_attr(not(feature = "gaggle"), allow(unused_mut))]
         let mut sink = ColumnSink::own(origin, self.request_width);
+        #[cfg(feature = "gaggle")]
+        if let Some((_, synthetic)) = self.folded.as_mut() {
+            sink.seconds = Some(synthetic.entry(key.to_string()).or_default());
+        }
         if let Some(ring) = by_request.get_mut(key) {
             ring.record_to(second, us, rev, &mut sink);
         } else {
@@ -3835,13 +3885,22 @@ mod gaggle {
     }
 
     impl LatencyRing {
-        /// Every second the ring holds, as a delta carries it.
-        fn gaggle_seconds(&self) -> BTreeMap<Second, Histogram> {
-            self.slots
-                .iter()
-                .flatten()
-                .filter(|slot| slot.data.counter > 0)
-                .map(|slot| (slot.second as Second, slot.data.to_gaggle()))
+        /// Every second of a worker's ring, as a delta carries it: its open
+        /// seconds, and `folded`, every second it packed or could not hold.
+        fn gaggle_seconds(
+            &self,
+            folded: Option<&BTreeMap<usize, SecondHistogram>>,
+        ) -> BTreeMap<Second, Histogram> {
+            let mut seconds: BTreeMap<usize, SecondHistogram> = folded.cloned().unwrap_or_default();
+            for slot in self.slots.iter().flatten() {
+                if slot.data.open.is_some() && slot.data.counter > 0 {
+                    seconds.entry(slot.second).or_default().merge(&slot.data);
+                }
+            }
+            seconds
+                .into_iter()
+                .filter(|(_, data)| data.counter > 0)
+                .map(|(second, data)| (second as Second, data.to_gaggle()))
                 .collect()
         }
 
@@ -4003,6 +4062,7 @@ mod gaggle {
             graph_data.scenarios_per_second = TimeSeries::with_origin(origin);
             if let Some(latency) = graph_data.latency.as_mut() {
                 latency.admit_all = true;
+                latency.folded = Some(Default::default());
             }
             graph_data
         }
@@ -4053,16 +4113,19 @@ mod gaggle {
                 .map(|(second, count)| (second, count as u64))
                 .collect();
             if let Some(latency) = self.latency.as_ref() {
+                let folded = latency.folded.as_ref();
                 for (key, &index) in &latency.by_request {
-                    let seconds = latency.rings[index].gaggle_seconds();
+                    let seconds = latency.rings[index]
+                        .gaggle_seconds(folded.and_then(|(measured, _)| measured.get(index)));
                     if !seconds.is_empty() {
                         part.latency.insert(key.clone(), seconds);
                     }
                 }
-                debug_assert!(latency.others.gaggle_seconds().is_empty());
+                debug_assert!(latency.others.gaggle_seconds(None).is_empty());
                 if let Some((_, by_request)) = latency.synthetic.as_ref() {
                     for (key, ring) in by_request {
-                        let seconds = ring.gaggle_seconds();
+                        let seconds = ring
+                            .gaggle_seconds(folded.and_then(|(_, synthetic)| synthetic.get(key)));
                         if !seconds.is_empty() {
                             part.synthetic.insert(key.clone(), seconds);
                         }
