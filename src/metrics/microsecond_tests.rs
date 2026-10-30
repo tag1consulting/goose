@@ -1154,13 +1154,13 @@ fn json_report_times_agree_with_the_html_report_under_a_millisecond() {
     let mut compare = |table: &str, html_rows: Vec<String>, fields: &[(&str, usize)]| {
         let json_rows: Vec<&serde_json::Value> = json[table]
             .as_array()
-            .unwrap_or_else(|| panic!("{table}"))
+            .unwrap_or_else(|| panic!("{}", table))
             .iter()
             .filter(|row| row["is_scenario"] != true)
             .collect();
         assert_eq!(json_rows.len(), html_rows.len(), "{table}");
         for (json_row, html_row) in json_rows.into_iter().zip(&html_rows) {
-            assert!(html.contains(html_row.as_str()), "{table}: {html_row}");
+            assert!(html.contains(html_row.as_str()), "{}: {}", table, html_row);
             let cells = html_cells(html_row);
             for &(field, cell) in fields {
                 let shown = json_shown(json_row, field);
@@ -1247,7 +1247,12 @@ fn json_report_times_agree_with_the_html_report_under_a_millisecond() {
 /// the microseconds beside each.
 fn assert_time_fields(row: &serde_json::Value, fields: &[&str], us: bool) {
     for field in fields {
-        assert!(row[field].is_u64(), "{field} is whole milliseconds: {row}");
+        assert!(
+            row[field].is_u64(),
+            "{} is whole milliseconds: {}",
+            field,
+            row
+        );
         let field_us = format!("{field}_us");
         assert_eq!(row[&field_us].is_u64(), us, "{field_us}: {row}");
     }
@@ -1286,7 +1291,11 @@ fn a_0_19_0_report_loads_as_a_baseline_with_its_microseconds() {
     for row in json["raw_response_metrics"].as_array().unwrap() {
         assert_time_fields(row, RESPONSE_TIMES, false);
     }
-    let aggregated = json["raw_response_metrics"].as_array().unwrap().last().unwrap();
+    let aggregated = json["raw_response_metrics"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap();
     assert_eq!(aggregated["name"], "Aggregated");
     assert_eq!(aggregated["percentile_50"], 0);
 
@@ -1326,10 +1335,14 @@ fn a_report_with_microsecond_rows_loads_as_a_baseline() {
             assert_time_fields(row, REQUEST_TIMES, true);
         }
     }
-    let aggregated = report["raw_response_metrics"].as_array().unwrap().last().unwrap();
+    let aggregated = report["raw_response_metrics"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap();
     assert_eq!(aggregated["percentile_50"], 0);
     let p50 = aggregated["percentile_50_us"].as_u64().unwrap();
-    assert!(within_one_percent(p50, 590), "{p50}");
+    assert!(within_one_percent(p50, 590), "{}", p50);
 
     let dir = std::env::temp_dir().join(format!("goose-us-rows-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -1356,5 +1369,5 @@ fn coordinated_omission_rows_write_their_microseconds() {
     let json = serde_json::to_value(&row).unwrap();
     assert_eq!(json["response_time_maximum"], 0);
     assert_eq!(json["response_time_maximum_us"], 590);
-    assert!(json["response_time_average"].is_f64(), "{json}");
+    assert!(json["response_time_average"].is_f64(), "{}", json);
 }
