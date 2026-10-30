@@ -58,20 +58,6 @@ pub async fn basic_page_es(user: &mut GooseUser) -> TransactionResult {
     Ok(())
 }
 
-/// Anonymously load the contact form in Spanish and POST feedback.
-pub async fn anonymous_contact_form_es(user: &mut GooseUser) -> TransactionResult {
-    common::anonymous_contact_form(user, false).await?;
-
-    Ok(())
-}
-
-// Pick a random word from the title of a random node and perform a search in Spanish.
-pub async fn search_es(user: &mut GooseUser) -> TransactionResult {
-    common::search(user, false).await?;
-
-    Ok(())
-}
-
 /// Load category listing by a random term in Spanish and all static assets found on the page.
 pub async fn term_listing_es(user: &mut GooseUser) -> TransactionResult {
     let terms = common::get_terms();

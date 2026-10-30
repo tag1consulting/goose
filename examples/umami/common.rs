@@ -1,7 +1,6 @@
 use goose::goose::GooseResponse;
 use goose::prelude::*;
 
-use rand::prelude::*;
 use regex::Regex;
 
 /// The Umami website defines three content types.
@@ -29,7 +28,8 @@ pub struct Term<'a> {
     pub title_es: &'a str,
 }
 
-/// Returns a vector of all nodes of a specified content type.
+/// Returns a vector of all nodes of a specified content type. The URLs and titles
+/// were checked against a stock Drupal 11.4 Umami site.
 pub fn get_nodes(content_type: &ContentType) -> Vec<Node<'_>> {
     match content_type {
         ContentType::Article => {
@@ -57,7 +57,7 @@ pub fn get_nodes(content_type: &ContentType) -> Vec<Node<'_>> {
                 },
                 Node {
                     nid: 14,
-                    url_en: "/en/articles/the-umami-guide-to-our-favourite-mushrooms",
+                    url_en: "/en/articles/the-umami-guide-to-our-favorite-mushrooms",
                     url_es: "/es/articles/guia-umami-de-nuestras-setas-preferidas",
                     title_en: "The Umami guide to our favorite mushrooms",
                     title_es: "Guía Umami de nuestras setas preferidas",
@@ -72,7 +72,7 @@ pub fn get_nodes(content_type: &ContentType) -> Vec<Node<'_>> {
                 Node {
                     nid: 16,
                     url_en: "/en/articles/baking-mishaps-our-troubleshooting-tips",
-                    url_es: "es/articles/percances-al-hornear-nuestros-consejos-para-solucionar-problemas",
+                    url_es: "/es/articles/percances-al-hornear-nuestros-consejos-para-solucionar-problemas",
                     title_en: "Baking mishaps - our troubleshooting tips",
                     title_es: "Percances al hornear - nuestros consejos para solucionar los problemas",
                 },
@@ -171,7 +171,8 @@ pub fn get_nodes(content_type: &ContentType) -> Vec<Node<'_>> {
     }
 }
 
-/// Returns a vector of all taxonomy terms.
+/// Returns a vector of all taxonomy terms. The URLs and titles were checked against
+/// a stock Drupal 11.4 Umami site.
 pub fn get_terms() -> Vec<Term<'static>> {
     vec![
         Term {
@@ -254,7 +255,7 @@ pub fn get_terms() -> Vec<Term<'static>> {
         },
         Term {
             url_en: "/en/tags/dairy-free",
-            url_es: "/es/tags/sin-Lactosa",
+            url_es: "/es/tags/sin-lactosa",
             title_en: "Dairy-free",
             title_es: "Sin Lactosa",
         },
@@ -375,73 +376,99 @@ pub fn get_terms() -> Vec<Term<'static>> {
     ]
 }
 
-/// Return a vector of random words taken from node titles in the specified
-/// language.
-pub fn random_words(count: usize, english: bool) -> Vec<String> {
-    let mut random_words: Vec<String> = Vec::new();
-
-    for _ in 0..count {
-        // Randomly select a content type, favoring articles and recipes.
-        let content_types = [
-            ContentType::Article,
-            ContentType::Article,
-            ContentType::Article,
-            ContentType::BasicPage,
-            ContentType::Recipe,
-            ContentType::Recipe,
-            ContentType::Recipe,
-        ];
-        let content_type = content_types.choose(&mut rand::rng());
-        // Then randomly select a node of this content type.
-        let nodes = get_nodes(content_type.unwrap());
-        let page = nodes.choose(&mut rand::rng());
-        // Randomly select a word from the title to use in our search.
-        let title = if english {
-            page.unwrap().title_en
-        } else {
-            page.unwrap().title_es
-        };
-        let words = title.split_whitespace();
-        let word = words.choose(&mut rand::rng()).unwrap();
-        // Remove ' to avoid encoding/decoding issues when validating later.
-        let cleaned_word = word.replace("&#039;", "");
-        random_words.push(cleaned_word.to_string());
-    }
-
-    // Return a vector of words in the specified language.
-    random_words
-}
-
 /// A valid title on this website starts with "<title>foo", where "foo" is the expected
 /// title text. Returns true if the expected title is set, otherwise returns false.
 pub fn valid_title(html: &str, title: &str) -> bool {
     html.contains(&("<title>".to_string() + title))
 }
 
-/// Finds all local static elements on the page and loads them asynchronously.
-/// This default profile only has local assets, so we can use simple patterns.
-pub async fn load_static_elements(user: &mut GooseUser, html: &str) {
-    // Use a regular expression to find all src=<foo> in the HTML, where foo
-    // is the URL to image and js assets.
-    // @TODO: parse HTML5 srcset= also
-    let image = Regex::new(r#"src="(.*?)""#).unwrap();
-    let mut urls = Vec::new();
-    for url in image.captures_iter(html) {
-        if url[1].starts_with("/sites") || url[1].starts_with("/core") {
-            urls.push(url[1].to_string());
+/// The kinds of static asset a page names, each requested under its own name.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum AssetKind {
+    Css,
+    Js,
+    Image,
+}
+
+impl AssetKind {
+    /// The request name the asset is loaded under.
+    pub fn request_name(self) -> &'static str {
+        match self {
+            AssetKind::Css => "static css",
+            AssetKind::Js => "static js",
+            AssetKind::Image => "static image",
         }
     }
+}
 
-    // Use a regular expression to find all href=<foo> in the HTML, where foo
-    // is the URL to css assets.
-    let css = Regex::new(r#"href="(/sites/default/files/css/.*?)""#).unwrap();
-    for url in css.captures_iter(html) {
-        urls.push(url[1].to_string());
+/// Decodes the HTML entities Drupal writes in attribute values, such as the `&amp;`
+/// between the query parameters of an aggregated CSS or JS URL.
+pub fn decode_entities(value: &str) -> String {
+    let entity = Regex::new(r"&(#[0-9]+|#[xX][0-9a-fA-F]+|[a-zA-Z]+);").unwrap();
+    entity
+        .replace_all(value, |caps: &regex::Captures| {
+            let name = &caps[1];
+            let decoded = match name {
+                "amp" => Some('&'),
+                "quot" => Some('"'),
+                "apos" => Some('\''),
+                "lt" => Some('<'),
+                "gt" => Some('>'),
+                _ if name.starts_with("#x") || name.starts_with("#X") => {
+                    u32::from_str_radix(&name[2..], 16)
+                        .ok()
+                        .and_then(char::from_u32)
+                }
+                _ if name.starts_with('#') => name[1..].parse().ok().and_then(char::from_u32),
+                _ => None,
+            };
+            decoded.map_or_else(|| caps[0].to_string(), |c| c.to_string())
+        })
+        .into_owned()
+}
+
+/// Returns the local static assets a browser loads for this page, in page order and
+/// each once, with HTML entities decoded: stylesheets from `<link rel="stylesheet">`,
+/// scripts from `<script src>` and images from `<img src>`. Drupal 11.4 serves CSS
+/// and JS from `/sites/default/files/css/` and `/sites/default/files/js/` with
+/// aggregation on, and from `/core/` and the theme's folder with it off; any local
+/// path is taken, so both work.
+pub fn static_asset_urls(html: &str) -> Vec<(AssetKind, String)> {
+    // @TODO: parse HTML5 srcset= also
+    let tag = Regex::new(r"(?is)<(link|script|img)\b([^>]*)>").unwrap();
+    let attribute = Regex::new(r#"(?is)\s([a-z-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')"#).unwrap();
+    let mut assets: Vec<(AssetKind, String)> = Vec::new();
+    for found in tag.captures_iter(html) {
+        let mut rel = None;
+        let mut url = None;
+        for attr in attribute.captures_iter(&found[2]) {
+            let value = attr.get(2).or_else(|| attr.get(3)).unwrap().as_str();
+            match attr[1].to_ascii_lowercase().as_str() {
+                "rel" => rel = Some(value.to_ascii_lowercase()),
+                "href" | "src" => url = Some(decode_entities(value)),
+                _ => {}
+            }
+        }
+        let kind = match found[1].to_ascii_lowercase().as_str() {
+            "link" if rel.as_deref() == Some("stylesheet") => AssetKind::Css,
+            "script" => AssetKind::Js,
+            "img" => AssetKind::Image,
+            _ => continue,
+        };
+        // Only local assets: a path on this site, not another host's.
+        if let Some(url) = url.filter(|u| u.starts_with('/') && !u.starts_with("//")) {
+            if !assets.iter().any(|(_, seen)| *seen == url) {
+                assets.push((kind, url));
+            }
+        }
     }
+    assets
+}
 
-    // Load all the static assets found on the page.
-    for asset in &urls {
-        let _ = user.get_named(asset, "static asset").await;
+/// Finds all local static elements on the page and loads them, as a browser would.
+pub async fn load_static_elements(user: &mut GooseUser, html: &str) {
+    for (kind, asset) in static_asset_urls(html) {
+        let _ = user.get_named(&asset, kind.request_name()).await;
     }
 }
 
@@ -498,271 +525,95 @@ pub fn get_form_value(html: &str, name: &str) -> Option<String> {
     re.captures(html).map(|value| value[1].to_string())
 }
 
-/// Anonymously load the contact form and POST feedback. The english boolean flag indicates
-/// whether to load the English form or the Spanish form.
-pub async fn anonymous_contact_form(user: &mut GooseUser, english: bool) -> TransactionResult {
-    let contact_form_url = if english {
-        "/en/contact"
-    } else {
-        "/es/contact"
-    };
-    let mut goose = user.get(contact_form_url).await?;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    // We can't invoke common::validate_and_load_static_assets as while it's important
-    // to validate the page and load static elements, we then need to extra form elements
-    // from the HTML of the page. So we duplicate some of the logic, enhancing it for form
-    // processing.
-    let contact_form;
-    match goose.response {
-        Ok(response) => {
-            // Copy the headers so we have them for logging if there are errors.
-            let headers = &response.headers().clone();
-            match response.text().await {
-                Ok(html) => {
-                    // Be sure we've properly loaded the Contact form.
-                    let title = if english {
-                        "Website feedback"
-                    } else {
-                        "Comentarios sobre el sitio web"
-                    };
-                    if !valid_title(&html, title) {
-                        return user.set_failure(
-                            &format!("{}: title not found: {}", goose.request.raw.url, title),
-                            &mut goose.request,
-                            Some(headers),
-                            Some(&html),
-                        );
-                    }
+    // The English front page of a stock Drupal 11.4 Umami site, saved with CSS and JS
+    // aggregation on and then off.
+    const AGGREGATED: &str = include_str!("fixtures/front-aggregated.html");
+    const UNAGGREGATED: &str = include_str!("fixtures/front-unaggregated.html");
 
-                    // Load all static elements on the page, as a real user would.
-                    load_static_elements(user, &html).await;
+    fn urls(assets: &[(AssetKind, String)], kind: AssetKind) -> Vec<&str> {
+        assets
+            .iter()
+            .filter(|(k, _)| *k == kind)
+            .map(|(_, url)| url.as_str())
+            .collect()
+    }
 
-                    // Scrape the HTML to get the values needed in order to POST to the
-                    // contact form.
-                    let form_build_id = get_form_value(&html, "form_build_id");
-                    if form_build_id.is_none() {
-                        return user.set_failure(
-                            &format!("{}: no form_build_id on page", goose.request.raw.url),
-                            &mut goose.request,
-                            Some(headers),
-                            Some(&html),
-                        );
-                    }
+    /// Counts the tags that name a local asset of this kind, independently of the parser.
+    fn tag_count(html: &str, pattern: &str) -> usize {
+        Regex::new(pattern).unwrap().find_iter(html).count()
+    }
 
-                    // Build contact form parameters.
-                    let name = random_words(2, english).join(" ");
-                    let email = format!("{}@example.com", random_words(1, english).pop().unwrap());
-                    let subject = random_words(8, english).join(" ");
-                    let message = random_words(12, english).join(" ");
-                    let params = [
-                        ("name", name.as_str()),
-                        ("mail", email.as_str()),
-                        ("subject[0][value]", subject.as_str()),
-                        ("message[0][value]", message.as_str()),
-                        ("form_build_id", &form_build_id.unwrap()),
-                        ("form_id", "contact_message_feedback_form"),
-                        ("op", "Send+message"),
-                    ];
-                    contact_form = user.post_form(contact_form_url, &params).await?;
-                }
-                Err(e) => {
-                    return user.set_failure(
-                        &format!("{}: failed to parse page: {}", goose.request.raw.url, e),
-                        &mut goose.request,
-                        Some(headers),
-                        None,
-                    );
-                }
-            }
+    #[test]
+    fn decodes_entities() {
+        assert_eq!(
+            decode_entities("/a.css?delta=0&amp;language=en&#38;theme=umami&#x26;x=&lt;&gt;"),
+            "/a.css?delta=0&language=en&theme=umami&x=<>"
+        );
+        // An unknown entity is left as it is.
+        assert_eq!(decode_entities("a&bogus;b"), "a&bogus;b");
+    }
+
+    #[test]
+    fn aggregated_assets_are_found_and_decoded() {
+        let assets = static_asset_urls(AGGREGATED);
+        let css = urls(&assets, AssetKind::Css);
+        let js = urls(&assets, AssetKind::Js);
+        assert_eq!(
+            css.len(),
+            tag_count(AGGREGATED, r#"<link rel="stylesheet"[^>]*href="/"#)
+        );
+        assert_eq!(js.len(), tag_count(AGGREGATED, r#"<script[^>]*src="/"#));
+        assert!(!css.is_empty() && !js.is_empty());
+        for url in css.iter().chain(js.iter()) {
+            assert!(!url.contains("&amp;"), "not decoded: {}", url);
+            assert!(url.contains("&language=en&theme=umami&include="), "{}", url);
         }
-        Err(e) => {
-            return user.set_failure(
-                &format!("{}: no response from server: {}", goose.request.raw.url, e),
-                &mut goose.request,
-                None,
-                None,
-            );
+        assert!(css
+            .iter()
+            .all(|url| url.starts_with("/sites/default/files/css/css_")));
+        assert!(js
+            .iter()
+            .all(|url| url.starts_with("/sites/default/files/js/js_")));
+    }
+
+    #[test]
+    fn unaggregated_assets_are_found() {
+        let assets = static_asset_urls(UNAGGREGATED);
+        let css = urls(&assets, AssetKind::Css);
+        let js = urls(&assets, AssetKind::Js);
+        assert_eq!(
+            css.len(),
+            tag_count(UNAGGREGATED, r#"<link rel="stylesheet"[^>]*href="/"#)
+        );
+        assert_eq!(js.len(), tag_count(UNAGGREGATED, r#"<script[^>]*src="/"#));
+        assert!(!css.is_empty() && !js.is_empty());
+        assert!(css
+            .iter()
+            .any(|url| url.starts_with("/core/modules/system/css/components/align.module.css?")));
+        assert!(css
+            .iter()
+            .any(|url| url.starts_with("/core/profiles/demo_umami/themes/umami/css/")));
+        assert!(js
+            .iter()
+            .any(|url| url.starts_with("/core/misc/drupal.js?")));
+        for url in css.iter().chain(js.iter()) {
+            assert!(!url.contains("&amp;"), "not decoded: {}", url);
         }
     }
 
-    // Drupal 9 throttles how many times an IP address can submit the contact form, so we
-    // need special handling.
-    match contact_form.response {
-        Ok(response) => {
-            // Copy the headers so we have them for logging if there are errors.
-            let headers = &response.headers().clone();
-            match response.text().await {
-                Ok(html) => {
-                    // Drupal 9 will throttle how many times our IP address can actually
-                    // submit the contact form. We can detect this, but it happens a lot
-                    // so there's nothing useful to do.
-                    let error_text = if english {
-                        "You cannot send more than"
-                    } else {
-                        "No le está permitido enviar más"
-                    };
-                    if html.contains(error_text) {
-                        // The contact form was throttled, safely ignore this.
-                    }
-
-                    // Either way, a "real" user would still load all static elements on
-                    // the returned page.
-                    load_static_elements(user, &html).await;
-                }
-                Err(e) => {
-                    return user.set_failure(
-                        &format!("{}: failed to parse page: {}", goose.request.raw.url, e),
-                        &mut goose.request,
-                        Some(headers),
-                        None,
-                    );
-                }
-            }
-        }
-        Err(e) => {
-            return user.set_failure(
-                &format!("{}: no response from server: {}", goose.request.raw.url, e),
-                &mut goose.request,
-                None,
-                None,
-            );
+    #[test]
+    fn images_are_found_on_both_pages() {
+        for html in [AGGREGATED, UNAGGREGATED] {
+            let assets = static_asset_urls(html);
+            let images = urls(&assets, AssetKind::Image);
+            assert!(images.contains(&"/core/profiles/demo_umami/themes/umami/logo.svg"));
+            assert!(images
+                .iter()
+                .any(|url| url.starts_with("/sites/default/files/styles/")));
         }
     }
-
-    Ok(())
-}
-
-/// Load the search page and perform a search using one word from one of the node titles
-/// on the site.
-pub async fn search(user: &mut GooseUser, english: bool) -> TransactionResult {
-    let search_form_url = if english {
-        "/en/search/node"
-    } else {
-        "/es/search/node"
-    };
-    let mut goose = user.get(search_form_url).await?;
-
-    // We can't invoke common::validate_and_load_static_assets as while it's important
-    // to validate the page and load static elements, we then need to extra form elements
-    // from the HTML of the page. So we duplicate some of the logic, enhancing it for form
-    // processing.
-    let search_phrase;
-    let mut search_form;
-    match goose.response {
-        Ok(response) => {
-            // Copy the headers so we have them for logging if there are errors.
-            let headers = &response.headers().clone();
-            match response.text().await {
-                Ok(html) => {
-                    // Be sure we've properly loaded the Search page.
-                    let title = if english { "Search" } else { "Buscar" };
-                    if !valid_title(&html, title) {
-                        return user.set_failure(
-                            &format!("{}: title not found: {}", goose.request.raw.url, title),
-                            &mut goose.request,
-                            Some(headers),
-                            Some(&html),
-                        );
-                    }
-
-                    // Load all static elements on the page, as a real user would.
-                    load_static_elements(user, &html).await;
-
-                    // Scrape the HTML to get the values needed in order to POST to the
-                    // search form.
-                    let form_build_id = get_form_value(&html, "form_build_id");
-                    if form_build_id.is_none() {
-                        return user.set_failure(
-                            &format!("{}: no form_build_id on page", goose.request.raw.url),
-                            &mut goose.request,
-                            Some(headers),
-                            Some(&html),
-                        );
-                    }
-
-                    // Build a random three-word phrase, save to validate the results later.
-                    let search_words = random_words(3, english);
-                    search_phrase = search_words.join(" ");
-
-                    // Build search form with random word from title.
-                    let params = [
-                        ("keys", search_phrase.as_str()),
-                        ("form_build_id", &form_build_id.unwrap()),
-                        ("form_id", "search_form"),
-                        ("op", "Search"),
-                    ];
-                    search_form = user.post_form(search_form_url, &params).await?;
-
-                    // A successful search is redirected.
-                    if !search_form.request.redirected {
-                        return user.set_failure(
-                            &format!("{}: search didn't redirect", search_form.request.final_url),
-                            &mut search_form.request,
-                            Some(headers),
-                            None,
-                        );
-                    }
-                }
-                Err(e) => {
-                    return user.set_failure(
-                        &format!("{}: failed to parse page: {}", goose.request.raw.url, e),
-                        &mut goose.request,
-                        Some(headers),
-                        None,
-                    );
-                }
-            }
-        }
-        Err(e) => {
-            return user.set_failure(
-                &format!("{}: no response from server: {}", goose.request.raw.url, e),
-                &mut goose.request,
-                None,
-                None,
-            );
-        }
-    }
-
-    match search_form.response {
-        Ok(response) => {
-            // Copy the headers so we have them for logging if there are errors.
-            let headers = &response.headers().clone();
-            match response.text().await {
-                Ok(html) => {
-                    if !html.contains(&search_phrase) {
-                        return user.set_failure(
-                            &format!(
-                                "{}: search terms ({}) not on page",
-                                goose.request.raw.url, search_phrase
-                            ),
-                            &mut goose.request,
-                            Some(headers),
-                            Some(&html),
-                        );
-                    }
-                    load_static_elements(user, &html).await;
-
-                    // @TODO: get all href="" inside class="search-result__title" and load random node
-                }
-                Err(e) => {
-                    return user.set_failure(
-                        &format!("{}: failed to parse page: {}", goose.request.raw.url, e),
-                        &mut goose.request,
-                        Some(headers),
-                        None,
-                    );
-                }
-            }
-        }
-        Err(e) => {
-            return user.set_failure(
-                &format!("{}: no response from server: {}", goose.request.raw.url, e),
-                &mut goose.request,
-                None,
-                None,
-            );
-        }
-    }
-
-    Ok(())
 }

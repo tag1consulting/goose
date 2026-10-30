@@ -45,10 +45,6 @@ async fn main() -> Result<(), GooseError> {
                     transaction!(term_listing_en)
                         .set_name("anon /en term")
                         .set_weight(2)?,
-                )
-                .register_transaction(transaction!(search_en).set_name("anon /en/search"))
-                .register_transaction(
-                    transaction!(anonymous_contact_form_en).set_name("anon /en/contact"),
                 ),
         )
         .register_scenario(
@@ -79,10 +75,6 @@ async fn main() -> Result<(), GooseError> {
                     transaction!(term_listing_es)
                         .set_name("anon /es term")
                         .set_weight(2)?,
-                )
-                .register_transaction(transaction!(search_es).set_name("anon /es/search"))
-                .register_transaction(
-                    transaction!(anonymous_contact_form_es).set_name("anon /es/contact"),
                 ),
         )
         .register_scenario(
