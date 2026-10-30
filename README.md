@@ -31,6 +31,18 @@ You may find the following resources helpful:
 Check out our [examples](https://github.com/tag1consulting/goose/tree/main/examples) on GitHub. 
 You can also use [Goose Eggs](https://github.com/tag1consulting/goose-eggs), a helper crate that provides useful functions for writing load tests, such as validation helpers for HTTP responses.
 
+## Contributing
+
+`main` is the next minor release (`0.20.0-dev`); `release-0.19` is the maintenance branch for 0.19.x.
+
+* **Bug fixes** merge to `main` first, with their CHANGELOG line under the open patch section (`## 0.19.1-dev` now).
+* Then a backport pull request against `release-0.19` cherry picks the fix with `git cherry-pick -x` and carries the same CHANGELOG line.
+* A fix whose code `main` has already rewritten goes to `release-0.19` directly, with a note in its pull request saying why.
+* **Patch releases** (0.19.1, 0.19.2, ...) are tagged from `release-0.19`.
+* **New features and breaking changes** go to `main` only.
+
+CI runs on pull requests against `main` and any `release-*` branch.
+
 ## Community and Support
 Developed by [Tag1 Consulting](https://tag1.com/), Goose has a growing community and a series of [blog posts and podcasts](https://www.tag1.com/goose/) detailing its features, comparisons with other tools, and real-life testing scenarios.
 
