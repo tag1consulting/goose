@@ -243,14 +243,54 @@ impl Serialize for ResponseMetric {
         let mut row = serializer.serialize_struct("ResponseMetric", 18)?;
         row.serialize_field("method", &self.method)?;
         row.serialize_field("name", &self.name)?;
-        serialize_time(&mut row, "percentile_50", "percentile_50_us", &self.percentile_50)?;
-        serialize_time(&mut row, "percentile_60", "percentile_60_us", &self.percentile_60)?;
-        serialize_time(&mut row, "percentile_70", "percentile_70_us", &self.percentile_70)?;
-        serialize_time(&mut row, "percentile_80", "percentile_80_us", &self.percentile_80)?;
-        serialize_time(&mut row, "percentile_90", "percentile_90_us", &self.percentile_90)?;
-        serialize_time(&mut row, "percentile_95", "percentile_95_us", &self.percentile_95)?;
-        serialize_time(&mut row, "percentile_99", "percentile_99_us", &self.percentile_99)?;
-        serialize_time(&mut row, "percentile_100", "percentile_100_us", &self.percentile_100)?;
+        serialize_time(
+            &mut row,
+            "percentile_50",
+            "percentile_50_us",
+            &self.percentile_50,
+        )?;
+        serialize_time(
+            &mut row,
+            "percentile_60",
+            "percentile_60_us",
+            &self.percentile_60,
+        )?;
+        serialize_time(
+            &mut row,
+            "percentile_70",
+            "percentile_70_us",
+            &self.percentile_70,
+        )?;
+        serialize_time(
+            &mut row,
+            "percentile_80",
+            "percentile_80_us",
+            &self.percentile_80,
+        )?;
+        serialize_time(
+            &mut row,
+            "percentile_90",
+            "percentile_90_us",
+            &self.percentile_90,
+        )?;
+        serialize_time(
+            &mut row,
+            "percentile_95",
+            "percentile_95_us",
+            &self.percentile_95,
+        )?;
+        serialize_time(
+            &mut row,
+            "percentile_99",
+            "percentile_99_us",
+            &self.percentile_99,
+        )?;
+        serialize_time(
+            &mut row,
+            "percentile_100",
+            "percentile_100_us",
+            &self.percentile_100,
+        )?;
         row.end()
     }
 }
