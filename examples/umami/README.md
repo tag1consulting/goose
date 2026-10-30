@@ -22,7 +22,23 @@ apache2-foreground
 
 `site:install demo_umami` needs more memory than PHP's command line default of 128M, so drush runs with no limit. The mail setting keeps the site from trying to send mail, and the `chown` lets Apache write CSS and JS aggregates and image derivatives, as the install ran as root.
 
-The first request for each image derivative makes Drupal generate it, and while one request generates a derivative, Drupal answers every other request for it with `503 Service Unavailable` and `Retry-After: 3`. A load test against a new site counts those 503s as failures in its first seconds; a second run, with every derivative generated, has none.
+## A Freshly Installed Site
+
+On a freshly installed site the first seconds of a run fail, and the failures come from Drupal, not from the load test. Drupal generates each image derivative on its first request, and while one request generates it, Drupal answers every other request for that image with `503 Service Unavailable`, `Retry-After: 3` ("Image generation in progress. Try again shortly."). Drupal also creates some cache tables on first use, and a request that races that creation can get a rare `500`. Browsers do not retry these either, so the load test counts them as failures. They stop once each page has been served. In three runs of 50 users against new sites, Drupal answered 144, 186 and 29 image requests with 503, and one front page request with 500 in each of the last two, all in the first 17 seconds.
+
+The `0` failure results for this load test are for a site that has already served each page.
+
+### Getting A Clean Measurement
+
+Warm the site with one run you do not measure, with the same `ADMIN_USERNAME` and `ADMIN_PASSWORD` as the run you measure:
+
+```
+cargo run --release --example umami -- -H http://umami.example.com -u 50 -r 5 -t 3m
+```
+
+The load test needs 50 users for its weights to start every scenario, which is why the warm up uses 50. Twice, a 3 minute run like this against a new site was followed by a run with 0 failures. The failures in those runs stopped within 17 seconds, so a shorter warm up may be enough, but only 3 minutes has been checked.
+
+Goose resets its metrics once all users have started (unless `--no-reset-metrics` is set), and that can leave the warm up failures out of the report without telling you. With the default rate of one user a second, `-u 50 -t 3m` resets at 50 seconds: against a new site, all 30 failures came earlier, so the report showed 0 failures while the request log (`--request-log`) held 30. With `-r 5` the reset comes at 10 seconds, and the report kept 54 of 188. So do not read a clean report from a new site as a clean site: warm it first.
 
 ## Load Test Implementation
 
