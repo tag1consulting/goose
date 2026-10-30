@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8" />
+<meta name="Generator" content="Drupal 11 (https://www.drupal.org)" />
+<meta name="MobileOptimized" content="width" />
+<meta name="HandheldFriendly" content="true" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<link rel="icon" href="/core/profiles/demo_umami/themes/umami/favicon.ico" type="image/vnd.microsoft.icon" />
+<link href="/core/profiles/demo_umami/themes/umami/fonts/source-sans-pro-v21-latin-regular.woff2" rel="preload" as="font" type="font/woff2" crossorigin="anonymous" />
+<link href="/core/profiles/demo_umami/themes/umami/fonts/scope-one-v14-latin-regular.woff2" rel="preload" as="font" type="font/woff2" crossorigin="anonymous" />
+<link href="/core/profiles/demo_umami/themes/umami/fonts/source-sans-pro-v21-latin-700.woff2" rel="preload" as="font" type="font/woff2" crossorigin="anonymous" />
+
+    <title>Home | Drush Site-Install</title>
+    <link rel="stylesheet" media="all" href="/sites/default/files/css/css_jrM3opvY4qKvBbEe3MRGIR2pOEO1HrKSa93XPQXIB4Y.css?delta=0&amp;language=en&amp;theme=umami&amp;include=eJx1jlsOg0AIRTfk6JqQoZaUhwG1sauvsfajaeaHhHMu5KIHDeg6u5Et2a8KyqWMYEbRYcMGWGWbWh4hastVThRgbX-_uS8UZRTHRytzJ6jtD3HYoof7BGqsM0ivlAnTxcxDQfhFXe65kA4jJHXn_XD0y9z7f2Jev2QSH0GuJQh5poIuQriwW3Yb0zOHc_bqdRX6QUF5dE7eqEzB9Q1wg5Ug" />
+<link rel="stylesheet" media="all" href="/sites/default/files/css/css_bggy4vHB9B2HQ5-HzOTYWBmJgmedQ3XY2wAH20h6UOE.css?delta=1&amp;language=en&amp;theme=umami&amp;include=eJx1jlsOg0AIRTfk6JqQoZaUhwG1sauvsfajaeaHhHMu5KIHDeg6u5Et2a8KyqWMYEbRYcMGWGWbWh4hastVThRgbX-_uS8UZRTHRytzJ6jtD3HYoof7BGqsM0ivlAnTxcxDQfhFXe65kA4jJHXn_XD0y9z7f2Jev2QSH0GuJQh5poIuQriwW3Yb0zOHc_bqdRX6QUF5dE7eqEzB9Q1wg5Ug" />
+
+    
+  </head>
+  <body class="one-column path-frontpage">
+        <a href="#main-content" class="visually-hidden focusable skip-link">
+      Skip to main content
+    </a>
+    
+      <div class="dialog-off-canvas-main-canvas" data-off-canvas-main-canvas>
+    <div class="layout-container">
+
+      <header class="layout-header">
+      <div class="container">
+                    <div class="region region-pre-header">
+    <div class="language-switcher-language-url block block-language block-language-blocklanguage-interface" id="block-umami-languageswitcher" role="navigation">
+  
+    
+      <ul class="links"><li data-drupal-language="en" data-drupal-link-system-path="&lt;front&gt;" class="en is-active" aria-current="page"><a href="/en" class="language-link is-active" hreflang="en" data-drupal-link-system-path="&lt;front&gt;" aria-current="page">English</a></li><li data-drupal-language="es" data-drupal-link-system-path="&lt;front&gt;" class="es"><a href="/es" class="language-link" hreflang="es" data-drupal-link-system-path="&lt;front&gt;">Español</a></li></ul>
+  </div>
+<nav aria-labelledby="block-umami-account-menu-menu" id="block-umami-account-menu" class="block block-menu navigation menu--account">
+            
+  <h2 class="block__title visually-hidden" id="block-umami-account-menu-menu">User account menu</h2>
+  
+
+        
+
+                       <ul class="menu-account">                                       <li class="menu-account__item">                <a href="/en/user/login" class="menu-account__link" data-drupal-link-system-path="user/login">Log in</a>
+              </li>
+        </ul>
+   
+
+  </nav>
+
+  </div>
+
+                          
+<div data-component-id="umami:header" class="umami-header">
+  <div class="umami-header__logo">
+        <div id="block-umami-branding" class="block block-system block-system-branding-block">
+  
+    
+    <div data-component-id="umami:branding" class="branding">
+      <a href="/en" rel="home" class="branding__site-logo">
+      <img src="/core/profiles/demo_umami/themes/umami/logo.svg" alt="Home" />
+    </a>
+  
+    </div>
+</div>
+
+    </div>
+  <button
+    type="button"
+    class="umami-header__burger"
+    aria-controls="umami-header__dropdown"
+    aria-expanded="false"
+    aria-label="Toggle the menu"
+  >
+    <svg width="23" height="23" viewBox="0 0 23 23" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><use xlink:href="#a" fill="#5F635D"/><use xlink:href="#a" transform="translate(0 18)" fill="#5F635D"/><use xlink:href="#a" transform="translate(0 9)" fill="#5F635D"/><defs><path id="a" fill-rule="evenodd" d="M0 0h23v5H0V0z"/></defs></svg>
+
+  </button>
+  <div class="umami-header__dropdown">
+        <nav aria-labelledby="block-umami-main-menu-menu" id="block-umami-main-menu" class="block block-menu navigation menu--main">
+            
+  <h2 class="block__title visually-hidden" id="block-umami-main-menu-menu">Main navigation</h2>
+  
+
+        
+
+                       <ul class="menu-main" data-drupal-selector="menu-main">                                       <li class="menu-main__item">                <a href="/en" class="menu-main__link is-active" data-drupal-link-system-path="&lt;front&gt;" aria-current="page">Home</a>
+              </li>
+                                  <li class="menu-main__item">                <a href="/en/articles" class="menu-main__link" data-drupal-link-system-path="articles">Articles</a>
+              </li>
+                                  <li class="menu-main__item">                <a href="/en/recipes" class="menu-main__link" data-drupal-link-system-path="recipes">Recipes</a>
+              </li>
+        </ul>
+   
+
+  </nav>
+
+    </div>
+  </div>
+</div>
+
+              </div>
+    </header>
+  
+  <main>
+
+          <div class="layout-highlighted">
+        <div class="container">
+            <div class="region region-highlighted">
+    <div data-drupal-messages-fallback class="hidden"></div>
+
+
+<template id="umami-messages-template">
+  <h2 part="heading">
+    <slot name="title"></slot>
+  </h2>
+  <div part="content">
+    <div part="icon"></div>
+    <slot name="content"></slot>
+  </div>
+</template>
+
+  </div>
+
+        </div>
+      </div>
+    
+        <div class="layout-tabs">
+      <div class="container">
+          <div class="region region-tabs">
+    
+  </div>
+
+      </div>
+    </div>
+    
+          <div class="layout-banner-top">
+          <div class="region region-banner-top">
+    <div id="block-umami-banner-home" class="block-type-banner-block block block-block-content block-block-content9aadf4a1-ded6-4017-a10d-a5e043396edf">
+  
+    
+    <div data-component-id="umami:banner" class="banner">
+  <div class="container">
+    <div class="banner__inner">
+      <div class="banner__image">
+              
+            <div class="field field--name-field-media-image field--type-entity-reference field--label-hidden field__item">
+  
+            <div class="field field--name-field-media-image field--type-image field--label-hidden field__item">    <picture>
+                  <source srcset="/sites/default/files/styles/scale_crop_7_3_wide/public/veggie-pasta-bake-hero-umami.jpg.avif?itok=i0An49C5 1x" media="all and (min-width: 1400px)" type="image/avif" width="3000" height="1285"/>
+              <source srcset="/sites/default/files/styles/scale_crop_7_3_large/public/veggie-pasta-bake-hero-umami.jpg.avif?itok=uRDE7ZdK 1x" media="all and (min-width: 800px) and (max-width: 1400px)" type="image/avif" width="1440" height="617"/>
+              <source srcset="/sites/default/files/styles/scale_crop_7_3_medium/public/veggie-pasta-bake-hero-umami.jpg.avif?itok=v0WkEoqE 1x" media="all and (min-width: 500px) and (max-width: 800px)" type="image/avif" width="1200" height="514"/>
+              <source srcset="/sites/default/files/styles/scale_crop_7_3_tiny/public/veggie-pasta-bake-hero-umami.jpg.avif?itok=I14-_8du 1x" media="all" type="image/avif" width="500" height="214"/>
+                  <img loading="eager" width="1200" height="514" src="/sites/default/files/styles/scale_crop_7_3_medium/public/veggie-pasta-bake-hero-umami.jpg.avif?itok=v0WkEoqE" alt="Mouth watering vegetarian pasta bake with rich tomato sauce and cheese toppings" />
+
+  </picture>
+
+</div>
+      
+</div>
+      
+          </div>
+      <div class="banner__content">
+              <h2 class="banner__title umami-title" data-component-id="umami:title">
+  
+            <div class="field field--name-field-title field--type-string field--label-hidden field__item">Super easy vegetarian pasta bake</div>
+      
+</h2>
+      
+            <div class="field field--name-field-summary field--type-string-long field--label-hidden field__item">A wholesome pasta bake is the ultimate comfort food. This delicious bake is super quick to prepare and an ideal midweek meal for all the family.</div>
+      
+            <div class="field field--name-field-content-link field--type-link field--label-hidden field__item"><a href="/en/recipes/super-easy-vegetarian-pasta-bake" class="button button--primary banner__button">View recipe</a></div>
+      
+          </div>
+    </div>
+  </div>
+</div>
+</div>
+<div id="block-umami-views-block-promoted-items-block-1" class="block block-views block-views-blockpromoted-items-block-1">
+  
+    
+      <div class="views-element-container"><div class="container view-promoted-items--single view view-promoted-items view-id-promoted_items view-display-id-block_1 js-view-dom-id-7eec60fdbbe773aafb576e329c44bc9bb6fdaafe889b945cd096906ac11f26e5">
+  
+    
+      
+      <div class="view-content">
+          <div class="views-row">
+
+
+<article class="node node--type-article node--promoted node--view-mode-card-common umami-card" data-component-id="umami:card">
+  <div class="umami-card__wrapper">
+                
+      <h2 class="umami-card__title umami-title" data-component-id="umami:title">
+  <span class="field field--name-title field--type-string field--label-hidden">Give your oatmeal the ultimate makeover</span>
+
+</h2>
+        
+          <a class="umami-card__read-more read-more" data-component-id="umami:read-more" href="/en/articles/give-your-oatmeal-the-ultimate-makeover">
+          View Article
+        <span class="visually-hidden">
+    -         <span class="field field--name-title field--type-string field--label-hidden">Give your oatmeal the ultimate makeover</span>
+
+        </span>
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" class="read-more__icon">
+    <path fill="none" d="M159.19 117.37v365.26L341.82 300 159.19 117.37z"/>
+    <path fill="#008068" d="M341.82 300L159.19 482.63v98.99L440.81 300 159.19 18.38v98.99L341.82 300z"/>
+  </svg>
+</a>
+    <div class="umami-card__content">
+      
+            <div class="field field--name-field-media-image field--type-entity-reference field--label-hidden field__item"><article class="media media--type-image media--view-mode-responsive-3x2">
+  
+      
+            <div class="field field--name-field-media-image field--type-image field--label-hidden field__item">    <img loading="lazy" srcset="/sites/default/files/styles/medium_3_2_600x400/public/oatmeal-fruit-syrup-topping.jpg.avif?itok=llOrpt0j 600w, /sites/default/files/styles/large_3_2_768x512/public/oatmeal-fruit-syrup-topping.jpg.avif?itok=yFtiiYp8 768w, /sites/default/files/styles/medium_3_2_2x/public/oatmeal-fruit-syrup-topping.jpg.avif?itok=aAaQJlo6 1200w, /sites/default/files/styles/large_3_2_2x/public/oatmeal-fruit-syrup-topping.jpg.avif?itok=2ypSo7F6 1536w" sizes="100vw" width="768" height="512" src="/sites/default/files/styles/large_3_2_768x512/public/oatmeal-fruit-syrup-topping.jpg.avif?itok=yFtiiYp8" alt="Oatmeal topped with a vibrant mix of berries, nuts, and seeds" />
+
+
+</div>
+      
+  </article>
+</div>
+      
+    </div>
+    </div>
+</article>
+</div>
+
+    </div>
+  
+        <div class="attachment attachment-after">
+      <div class="views-element-container"><div class="view-promoted-items--double view view-promoted-items view-id-promoted_items view-display-id-attachment_1 js-view-dom-id-14eb6173d9ce18289a4aae80f05266667f4fee65568c909f1a8faeb636d03097">
+  
+    
+      
+      <div class="view-content">
+          <div class="views-row">
+
+
+<article class="node node--type-recipe node--promoted node--view-mode-card-common-alt umami-card--alt umami-card" data-component-id="umami:card">
+  <div class="umami-card__wrapper">
+        <div class="umami-card__content">
+      
+            <div class="field field--name-field-media-image field--type-entity-reference field--label-hidden field__item"><article class="media media--type-image media--view-mode-square">
+  
+      
+  <div class="field field--name-field-media-image field--type-image field--label-visually_hidden">
+    <div class="field__label visually-hidden">Image</div>
+              <div class="field__item">    <img loading="lazy" srcset="/sites/default/files/styles/square_small/public/borscht-with-pork-ribs-umami.jpg.avif?itok=_oS-jxW6 300w, /sites/default/files/styles/square_medium/public/borscht-with-pork-ribs-umami.jpg.avif?itok=q4WCQ-C2 600w, /sites/default/files/styles/square_large/public/borscht-with-pork-ribs-umami.jpg.avif?itok=ZQeIterl 900w" sizes="100vw" width="600" height="600" src="/sites/default/files/styles/square_medium/public/borscht-with-pork-ribs-umami.jpg.avif?itok=q4WCQ-C2" alt="Traditional Ukrainian soup with beets, tomatoes, and pork ribs" />
+
+
+</div>
+          </div>
+
+  </article>
+</div>
+      
+    </div>
+            
+      <h2 class="umami-card__title umami-title" data-component-id="umami:title">
+  <span class="field field--name-title field--type-string field--label-hidden">Borscht with pork ribs</span>
+
+</h2>
+        
+          <a class="umami-card__read-more read-more" data-component-id="umami:read-more" href="/en/recipes/borscht-with-pork-ribs">
+          View Recipe
+        <span class="visually-hidden">
+    -         <span class="field field--name-title field--type-string field--label-hidden">Borscht with pork ribs</span>
+
+        </span>
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" class="read-more__icon">
+    <path fill="none" d="M159.19 117.37v365.26L341.82 300 159.19 117.37z"/>
+    <path fill="#008068" d="M341.82 300L159.19 482.63v98.99L440.81 300 159.19 18.38v98.99L341.82 300z"/>
+  </svg>
+</a>
+    </div>
+</article>
+</div>
+    <div class="views-row">
+
+
+<article class="node node--type-recipe node--promoted node--view-mode-card-common-alt umami-card--alt umami-card" data-component-id="umami:card">
+  <div class="umami-card__wrapper">
+        <div class="umami-card__content">
+      
+            <div class="field field--name-field-media-image field--type-entity-reference field--label-hidden field__item"><article class="media media--type-image media--view-mode-square">
+  
+      
+  <div class="field field--name-field-media-image field--type-image field--label-visually_hidden">
+    <div class="field__label visually-hidden">Image</div>
+              <div class="field__item">    <img loading="lazy" srcset="/sites/default/files/styles/square_small/public/chili-sauce-umami.jpg.avif?itok=bUsKSD48 300w, /sites/default/files/styles/square_medium/public/chili-sauce-umami.jpg.avif?itok=wjMNdUGQ 600w, /sites/default/files/styles/square_large/public/chili-sauce-umami.jpg.avif?itok=vdGA5eMQ 900w" sizes="100vw" width="600" height="600" src="/sites/default/files/styles/square_medium/public/chili-sauce-umami.jpg.avif?itok=wjMNdUGQ" alt="An iridescent array of chilies, onions, and garlic, slowly sweating over a low heat" />
+
+
+</div>
+          </div>
+
+  </article>
+</div>
+      
+    </div>
+            
+      <h2 class="umami-card__title umami-title" data-component-id="umami:title">
+  <span class="field field--name-title field--type-string field--label-hidden">Fiery chili sauce</span>
+
+</h2>
+        
+          <a class="umami-card__read-more read-more" data-component-id="umami:read-more" href="/en/recipes/fiery-chili-sauce">
+          View Recipe
+        <span class="visually-hidden">
+    -         <span class="field field--name-title field--type-string field--label-hidden">Fiery chili sauce</span>
+
+        </span>
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" class="read-more__icon">
+    <path fill="none" d="M159.19 117.37v365.26L341.82 300 159.19 117.37z"/>
+    <path fill="#008068" d="M341.82 300L159.19 482.63v98.99L440.81 300 159.19 18.38v98.99L341.82 300z"/>
+  </svg>
+</a>
+    </div>
+</article>
+</div>
+
+    </div>
+  
+          </div>
+</div>
+
+    </div>
+        </div>
+</div>
+
+  </div>
+
+  </div>
+
+      </div>
+    
+    
+              
+    <div class="main-content-area container">
+      <div class="layout-content">
+        <a id="main-content" tabindex="-1"></a>          <div class="region region-content">
+    <div id="block-umami-content" class="block block-system block-system-main-block">
+  
+    
+      <div class="views-element-container"><div class="view view-frontpage view-id-frontpage view-display-id-page_1 js-view-dom-id-d9a0ab56e47a19086dc3c62e2b25e9600149707f7c224d64ca188ff74050992e">
+  
+    
+      <div class="view-header">
+      <p class="text-align-center">Explore recipes across every type of occasion, ingredient, and skill level</p>
+    </div>
+      
+      <div class="view-content">
+      
+
+
+
+
+<div class="views-view-responsive-grid views-view-responsive-grid--horizontal" style="--views-responsive-grid--column-count:2;--views-responsive-grid--cell-min-width:240px;--views-responsive-grid--layout-gap:14px;">
+      <div class="views-view-responsive-grid__item">
+      <div class="views-view-responsive-grid__item-inner">
+
+
+<article class="node node--type-recipe node--promoted node--view-mode-card-common umami-card" data-component-id="umami:card">
+  <div class="umami-card__wrapper">
+                
+      <h2 class="umami-card__title umami-title" data-component-id="umami:title">
+  <span class="field field--name-title field--type-string field--label-hidden">Borscht with pork ribs</span>
+
+</h2>
+        
+          <a class="umami-card__read-more read-more" data-component-id="umami:read-more" href="/en/recipes/borscht-with-pork-ribs">
+          View Recipe
+        <span class="visually-hidden">
+    -         <span class="field field--name-title field--type-string field--label-hidden">Borscht with pork ribs</span>
+
+        </span>
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" class="read-more__icon">
+    <path fill="none" d="M159.19 117.37v365.26L341.82 300 159.19 117.37z"/>
+    <path fill="#008068" d="M341.82 300L159.19 482.63v98.99L440.81 300 159.19 18.38v98.99L341.82 300z"/>
+  </svg>
+</a>
+    <div class="umami-card__content">
+      
+            <div class="field field--name-field-media-image field--type-entity-reference field--label-hidden field__item"><article class="media media--type-image media--view-mode-responsive-3x2">
+  
+      
+            <div class="field field--name-field-media-image field--type-image field--label-hidden field__item">    <img loading="lazy" srcset="/sites/default/files/styles/medium_3_2_600x400/public/borscht-with-pork-ribs-umami.jpg.avif?itok=EchYL0z5 600w, /sites/default/files/styles/large_3_2_768x512/public/borscht-with-pork-ribs-umami.jpg.avif?itok=VGjNKHNq 768w, /sites/default/files/styles/medium_3_2_2x/public/borscht-with-pork-ribs-umami.jpg.avif?itok=azGh4Quh 1200w, /sites/default/files/styles/large_3_2_2x/public/borscht-with-pork-ribs-umami.jpg.avif?itok=98JuBtAm 1536w" sizes="100vw" width="768" height="512" src="/sites/default/files/styles/large_3_2_768x512/public/borscht-with-pork-ribs-umami.jpg.avif?itok=VGjNKHNq" alt="Traditional Ukrainian soup with beets, tomatoes, and pork ribs" />
+
+
+</div>
+      
+  </article>
+</div>
+      
+    </div>
+    </div>
+</article>
+</div>
+    </div>
+      <div class="views-view-responsive-grid__item">
+      <div class="views-view-responsive-grid__item-inner">
+
+
+<article class="node node--type-recipe node--promoted node--view-mode-card-common umami-card" data-component-id="umami:card">
+  <div class="umami-card__wrapper">
+                
+      <h2 class="umami-card__title umami-title" data-component-id="umami:title">
+  <span class="field field--name-title field--type-string field--label-hidden">Fiery chili sauce</span>
+
+</h2>
+        
+          <a class="umami-card__read-more read-more" data-component-id="umami:read-more" href="/en/recipes/fiery-chili-sauce">
+          View Recipe
+        <span class="visually-hidden">
+    -         <span class="field field--name-title field--type-string field--label-hidden">Fiery chili sauce</span>
+
+        </span>
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" class="read-more__icon">
+    <path fill="none" d="M159.19 117.37v365.26L341.82 300 159.19 117.37z"/>
+    <path fill="#008068" d="M341.82 300L159.19 482.63v98.99L440.81 300 159.19 18.38v98.99L341.82 300z"/>
+  </svg>
+</a>
+    <div class="umami-card__content">
+      
+            <div class="field field--name-field-media-image field--type-entity-reference field--label-hidden field__item"><article class="media media--type-image media--view-mode-responsive-3x2">
+  
+      
+            <div class="field field--name-field-media-image field--type-image field--label-hidden field__item">    <img loading="lazy" srcset="/sites/default/files/styles/medium_3_2_600x400/public/chili-sauce-umami.jpg.avif?itok=5KoVy_Af 600w, /sites/default/files/styles/large_3_2_768x512/public/chili-sauce-umami.jpg.avif?itok=u0LnI7Gu 768w, /sites/default/files/styles/medium_3_2_2x/public/chili-sauce-umami.jpg.avif?itok=xjzx2EX6 1200w, /sites/default/files/styles/large_3_2_2x/public/chili-sauce-umami.jpg.avif?itok=5Ik61Ghq 1536w" sizes="100vw" width="768" height="512" src="/sites/default/files/styles/large_3_2_768x512/public/chili-sauce-umami.jpg.avif?itok=u0LnI7Gu" alt="An iridescent array of chilies, onions, and garlic, slowly sweating over a low heat" />
+
+
+</div>
+      
+  </article>
+</div>
+      
+    </div>
+    </div>
+</article>
+</div>
+    </div>
+      <div class="views-view-responsive-grid__item">
+      <div class="views-view-responsive-grid__item-inner">
+
+
+<article class="node node--type-recipe node--promoted node--view-mode-card-common umami-card" data-component-id="umami:card">
+  <div class="umami-card__wrapper">
+                
+      <h2 class="umami-card__title umami-title" data-component-id="umami:title">
+  <span class="field field--name-title field--type-string field--label-hidden">Crema catalana</span>
+
+</h2>
+        
+          <a class="umami-card__read-more read-more" data-component-id="umami:read-more" href="/en/recipes/crema-catalana">
+          View Recipe
+        <span class="visually-hidden">
+    -         <span class="field field--name-title field--type-string field--label-hidden">Crema catalana</span>
+
+        </span>
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" class="read-more__icon">
+    <path fill="none" d="M159.19 117.37v365.26L341.82 300 159.19 117.37z"/>
+    <path fill="#008068" d="M341.82 300L159.19 482.63v98.99L440.81 300 159.19 18.38v98.99L341.82 300z"/>
+  </svg>
+</a>
+    <div class="umami-card__content">
+      
+            <div class="field field--name-field-media-image field--type-entity-reference field--label-hidden field__item"><article class="media media--type-image media--view-mode-responsive-3x2">
+  
+      
+            <div class="field field--name-field-media-image field--type-image field--label-hidden field__item">    <img loading="lazy" srcset="/sites/default/files/styles/medium_3_2_600x400/public/crema-catalana-umami.jpg.avif?itok=jjkSdzWx 600w, /sites/default/files/styles/large_3_2_768x512/public/crema-catalana-umami.jpg.avif?itok=5F76m9XW 768w, /sites/default/files/styles/medium_3_2_2x/public/crema-catalana-umami.jpg.avif?itok=XLTf_X9B 1200w, /sites/default/files/styles/large_3_2_2x/public/crema-catalana-umami.jpg.avif?itok=immI0wv_ 1536w" sizes="100vw" width="768" height="512" src="/sites/default/files/styles/large_3_2_768x512/public/crema-catalana-umami.jpg.avif?itok=5F76m9XW" alt="Typical Catalan dessert made from cream and egg yolks, covered with a traditional layer of caramelized sugar to provide a crispy contrast" />
+
+
+</div>
+      
+  </article>
+</div>
+      
+    </div>
+    </div>
+</article>
+</div>
+    </div>
+      <div class="views-view-responsive-grid__item">
+      <div class="views-view-responsive-grid__item-inner">
+
+
+<article class="node node--type-recipe node--promoted node--view-mode-card-common umami-card" data-component-id="umami:card">
+  <div class="umami-card__wrapper">
+                
+      <h2 class="umami-card__title umami-title" data-component-id="umami:title">
+  <span class="field field--name-title field--type-string field--label-hidden">Thai green curry</span>
+
+</h2>
+        
+          <a class="umami-card__read-more read-more" data-component-id="umami:read-more" href="/en/recipes/thai-green-curry">
+          View Recipe
+        <span class="visually-hidden">
+    -         <span class="field field--name-title field--type-string field--label-hidden">Thai green curry</span>
+
+        </span>
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" class="read-more__icon">
+    <path fill="none" d="M159.19 117.37v365.26L341.82 300 159.19 117.37z"/>
+    <path fill="#008068" d="M341.82 300L159.19 482.63v98.99L440.81 300 159.19 18.38v98.99L341.82 300z"/>
+  </svg>
+</a>
+    <div class="umami-card__content">
+      
+            <div class="field field--name-field-media-image field--type-entity-reference field--label-hidden field__item"><article class="media media--type-image media--view-mode-responsive-3x2">
+  
+      
+            <div class="field field--name-field-media-image field--type-image field--label-hidden field__item">    <img loading="lazy" srcset="/sites/default/files/styles/medium_3_2_600x400/public/thai-green-curry-umami.jpg.avif?itok=H2Ux1jFf 600w, /sites/default/files/styles/large_3_2_768x512/public/thai-green-curry-umami.jpg.avif?itok=J1VAbxIm 768w, /sites/default/files/styles/medium_3_2_2x/public/thai-green-curry-umami.jpg.avif?itok=iu7hT9F_ 1200w, /sites/default/files/styles/large_3_2_2x/public/thai-green-curry-umami.jpg.avif?itok=Ab4Hl14D 1536w" sizes="100vw" width="768" height="512" src="/sites/default/files/styles/large_3_2_768x512/public/thai-green-curry-umami.jpg.avif?itok=J1VAbxIm" alt="A traditional bowl of creamy, aromatic Thai green curry with chunks of chicken in a small bowl with jasmine rice" />
+
+
+</div>
+      
+  </article>
+</div>
+      
+    </div>
+    </div>
+</article>
+</div>
+    </div>
+  </div>
+
+    </div>
+  
+          </div>
+</div>
+
+  </div>
+
+  </div>
+
+      </div>
+          </div>
+
+          <div class="layout-content-bottom">
+          <div class="region region-content-bottom">
+    <div id="block-umami-views-block-recipe-collections-block" class="block block-views block-views-blockrecipe-collections-block">
+  
+      <h2 class="block__title">Recipe collections</h2>
+    
+    
+  <div class="container">
+        <div class="views-element-container"><div class="view view-recipe-collections view-id-recipe_collections view-display-id-block js-view-dom-id-09cdd3b911288c63e64972eba373928ae2ba9f84a0621a4411da719f6b251409">
+  
+    
+      
+      <div class="view-content">
+      
+
+
+
+
+<div class="views-view-responsive-grid views-view-responsive-grid--vertical" style="--views-responsive-grid--column-count:4;--views-responsive-grid--cell-min-width:100px;--views-responsive-grid--layout-gap:14px;">
+      <div class="views-view-responsive-grid__item">
+      <div class="views-view-responsive-grid__item-inner"><div class="views-field views-field-name"><span class="field-content"><a href="/en/tags/alcohol-free" hreflang="en">Alcohol free</a></span></div></div>
+    </div>
+      <div class="views-view-responsive-grid__item">
+      <div class="views-view-responsive-grid__item-inner"><div class="views-field views-field-name"><span class="field-content"><a href="/en/tags/baked" hreflang="en">Baked</a></span></div></div>
+    </div>
+      <div class="views-view-responsive-grid__item">
+      <div class="views-view-responsive-grid__item-inner"><div class="views-field views-field-name"><span class="field-content"><a href="/en/tags/baking" hreflang="en">Baking</a></span></div></div>
+    </div>
+      <div class="views-view-responsive-grid__item">
+      <div class="views-view-responsive-grid__item-inner"><div class="views-field views-field-name"><span class="field-content"><a href="/en/tags/breakfast" hreflang="en">Breakfast</a></span></div></div>
+    </div>
+      <div class="views-view-responsive-grid__item">
+      <div class="views-view-responsive-grid__item-inner"><div class="views-field views-field-name"><span class="field-content"><a href="/en/tags/cake" hreflang="en">Cake</a></span></div></div>
+    </div>
+      <div class="views-view-responsive-grid__item">
+      <div class="views-view-responsive-grid__item-inner"><div class="views-field views-field-name"><span class="field-content"><a href="/en/tags/carrots" hreflang="en">Carrots</a></span></div></div>
+    </div>
+      <div class="views-view-responsive-grid__item">
+      <div class="views-view-responsive-grid__item-inner"><div class="views-field views-field-name"><span class="field-content"><a href="/en/tags/chocolate" hreflang="en">Chocolate</a></span></div></div>
+    </div>
+      <div class="views-view-responsive-grid__item">
+      <div class="views-view-responsive-grid__item-inner"><div class="views-field views-field-name"><span class="field-content"><a href="/en/tags/cocktail-party" hreflang="en">Cocktail party</a></span></div></div>
+    </div>
+      <div class="views-view-responsive-grid__item">
+      <div class="views-view-responsive-grid__item-inner"><div class="views-field views-field-name"><span class="field-content"><a href="/en/tags/dairy-free" hreflang="en">Dairy-free</a></span></div></div>
+    </div>
+      <div class="views-view-responsive-grid__item">
+      <div class="views-view-responsive-grid__item-inner"><div class="views-field views-field-name"><span class="field-content"><a href="/en/tags/dessert" hreflang="en">Dessert</a></span></div></div>
+    </div>
+      <div class="views-view-responsive-grid__item">
+      <div class="views-view-responsive-grid__item-inner"><div class="views-field views-field-name"><span class="field-content"><a href="/en/tags/dinner-party" hreflang="en">Dinner party</a></span></div></div>
+    </div>
+      <div class="views-view-responsive-grid__item">
+      <div class="views-view-responsive-grid__item-inner"><div class="views-field views-field-name"><span class="field-content"><a href="/en/tags/drinks" hreflang="en">Drinks</a></span></div></div>
+    </div>
+      <div class="views-view-responsive-grid__item">
+      <div class="views-view-responsive-grid__item-inner"><div class="views-field views-field-name"><span class="field-content"><a href="/en/tags/egg" hreflang="en">Egg</a></span></div></div>
+    </div>
+      <div class="views-view-responsive-grid__item">
+      <div class="views-view-responsive-grid__item-inner"><div class="views-field views-field-name"><span class="field-content"><a href="/en/tags/grow-your-own" hreflang="en">Grow your own</a></span></div></div>
+    </div>
+      <div class="views-view-responsive-grid__item">
+      <div class="views-view-responsive-grid__item-inner"><div class="views-field views-field-name"><span class="field-content"><a href="/en/tags/healthy" hreflang="en">Healthy</a></span></div></div>
+    </div>
+      <div class="views-view-responsive-grid__item">
+      <div class="views-view-responsive-grid__item-inner"><div class="views-field views-field-name"><span class="field-content"><a href="/en/tags/herbs" hreflang="en">Herbs</a></span></div></div>
+    </div>
+  </div>
+
+    </div>
+  
+          </div>
+</div>
+
+  
+  </div>
+</div>
+
+  </div>
+
+      </div>
+      </main>
+
+  <footer class="footer">
+        <div class="layout-footer">
+      <div class="container">
+          <div class="region region-footer">
+    
+<div id="block-umami-footer-promo" class="block-type-footer-promo-block footer-block" data-component-id="umami:footer-block">
+  <div class="footer-block__wrapper">
+        
+            <div class="field field--name-field-media-image field--type-entity-reference field--label-hidden field__item"><article class="media media--type-image media--view-mode-medium-8-7">
+  
+      
+  <div class="field field--name-field-media-image field--type-image field--label-visually_hidden">
+    <div class="field__label visually-hidden">Image</div>
+              <div class="field__item">  <img loading="lazy" src="/sites/default/files/styles/medium_8_7/public/umami-bundle.png.avif?itok=us_6fKsg" width="266" height="236" alt="3 issue bundle of the Umami food magazine" class="image-style-medium-8-7" />
+
+
+</div>
+          </div>
+
+  </article>
+</div>
+      
+      <div class="footer-block__content">
+                  
+      <h2 class="block__title footer-block__title umami-title" data-component-id="umami:title">
+  
+            <div class="field field--name-field-title field--type-string field--label-hidden field__item">Umami Food Magazine</div>
+      
+</h2>
+        
+                
+            <div class="field field--name-field-summary field--type-string-long field--label-hidden field__item">Skills and know-how. Magazine exclusive articles, recipes and plenty of reasons to get your copy today.</div>
+      
+            <div class="field field--name-field-content-link field--type-link field--label-hidden field__item"><a href="/en/about-umami" class="footer-block__link">Find out more</a></div>
+      
+          </div>
+  </div>
+</div>
+
+  </div>
+
+      </div>
+    </div>
+    
+          <div class="layout-bottom">
+        <div class="container">
+            <div class="region region-bottom">
+    <div id="block-umami-disclaimer" class="block-type-disclaimer-block block block-block-content block-block-content9b4dcd67-99f3-48d0-93c9-2c46648b29de">
+  
+    
+    <div data-component-id="umami:disclaimer" class="disclaimer">
+  <div class="disclaimer__disclaimer">
+          
+            <div class="clearfix text-formatted field field--name-field-disclaimer field--type-text-long field--label-hidden field__item"><p><strong>Umami Magazine &amp; Umami Publications</strong> is a fictional magazine and publisher for illustrative purposes only.</p>
+</div>
+      
+      </div>
+  <div class="disclaimer__copyright">
+          
+            <div class="clearfix text-formatted field field--name-field-copyright field--type-text-long field--label-hidden field__item"><p>© 2026 Terms &amp; Conditions</p>
+</div>
+      
+      </div>
+</div>
+</div>
+
+  </div>
+
+        </div>
+      </div>
+      </footer>
+
+</div>
+  </div>
+
+    
+    <script type="application/json" data-drupal-selector="drupal-settings-json">{"path":{"baseUrl":"\/","pathPrefix":"en\/","currentPath":"node","currentPathIsAdmin":false,"isFront":true,"currentLanguage":"en"},"pluralDelimiter":"\u0003","suppressDeprecationErrors":true,"user":{"uid":0,"permissionsHash":"953acdece62905f3c7baf7fc7a35710cf15a61ce6a87dcb649a8af23bdd69fba"}}</script>
+<script src="/sites/default/files/js/js_NIlQsz49jOSH4Gwr-uywYxdT_3PIFdXBRo0t3Wfpylo.js?scope=footer&amp;delta=0&amp;language=en&amp;theme=umami&amp;include=eJwVyVkKACAIBcALtZxJ7FFBpmjdP5rfYXVUVjHd2CfKFZKZ8wA1eOK_za_RKoII6njW0xLI"></script>
+
+  </body>
+</html>
