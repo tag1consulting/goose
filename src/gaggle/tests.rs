@@ -1233,3 +1233,74 @@ fn gaggle_seconds_a_ring_apart_reach_the_manager() {
         );
     }
 }
+
+/// Coordinated omission metrics started when the earliest worker's did.
+#[test]
+fn gaggle_co_start_is_the_earliest_workers() {
+    let mut accumulator = accumulator();
+    for (worker, started_secs) in [(0u32, 200u64), (1, 100), (2, 300)] {
+        let mut delta = GaggleDelta::new(worker, 1, 1, DeltaKind::Delta);
+        delta.metrics.co = Some(super::delta::CoPart {
+            strategy: crate::metrics::GooseCoordinatedOmissionMitigation::Average,
+            started_secs,
+            actual: 0,
+            synthetic: 0,
+            severity: BTreeMap::new(),
+            events: Vec::new(),
+            events_dropped: 0,
+        });
+        accumulator.apply(wire(&delta));
+    }
+    let (metrics, _) = accumulator.merged();
+    assert_eq!(
+        metrics
+            .coordinated_omission_metrics
+            .map(|co| co.started_secs),
+        Some(100)
+    );
+}
+
+/// The shadow merge in the processor: a delta each second, then the last
+/// and final ones at shutdown, and a match counting every delta sent.
+#[test]
+fn gaggle_shadow_merge_counts_every_second() {
+    let events = events(0x645);
+    let mut side = Side::new(0..USERS, None);
+    let outcome = Arc::new(Mutex::new(None));
+    side.processor.gaggle_enable_shadow(outcome.clone());
+    let mut ticks = 0;
+    for event in &events {
+        if let Event::Second(second) = event {
+            side.drain();
+            side.processor
+                .handle_command_for_test(MetricsCommand::RecordUsers {
+                    active_users: side.running(*second).len().saturating_sub(1),
+                    elapsed_secs: *second,
+                });
+            side.processor
+                .handle_command_for_test(MetricsCommand::GaggleShadowTick { now: *second + 1 });
+            ticks += 1;
+        } else {
+            side.play(event);
+        }
+    }
+    for user in side.users.values_mut() {
+        user.flush_batch().unwrap();
+    }
+    side.drain();
+    let (respond, _received) = tokio::sync::oneshot::channel();
+    side.processor
+        .handle_command_for_test(MetricsCommand::Shutdown {
+            duration: SECONDS,
+            total_users: USERS,
+            maximum_users: USERS,
+            respond,
+        });
+    let outcome = outcome
+        .lock()
+        .unwrap()
+        .take()
+        .expect("the shadow merge finished");
+    assert_none("shadow merge", &outcome.differences);
+    assert_eq!(outcome.deltas, ticks + 2);
+}
