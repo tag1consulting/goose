@@ -16,12 +16,13 @@ Goose, starts each run, drives the dashboard in Chromium and writes the PNG file
   saves the download.
 - Network access for every `report` capture of a graph (`report-rps`, `metrics-html-*`): the
   report loads ECharts from a CDN, and offline the graphs come out blank with no error from the rig.
-- The Umami target, a Drupal 11 site installed with the Umami demo profile and changed as
-  `examples/umami` needs: search and contact enabled, a "Website feedback" contact form, an alias
-  for the renamed mushroom article (`favourite`), image styles generated ahead, and CSS and JS
-  aggregation turned off (`examples/umami` does not decode `&amp;` in the asset links it parses,
-  so aggregated asset links fail). Its admin account must be `admin` with password
-  `P@ssw0rd1234`, the defaults of `examples/umami`. Set its address in `GOOSE_SHOTS_UMAMI`.
+- The Umami target, a stock Drupal 11.4 site installed with the Umami demo profile and left as
+  installed, CSS and JS aggregation on; `examples/umami/README.md` shows one way to install it.
+  Warm it before a pass with one unmeasured run of `examples/umami`, as its README says: on a new
+  site the first seconds of a run fail while Drupal generates each image derivative (503) and
+  creates its cache tables (a rare 500), and a run that should show no errors would be taken
+  again. Its admin account must be `admin` with password `P@ssw0rd1234`, the defaults of
+  `examples/umami`. Set its address in `GOOSE_SHOTS_UMAMI`.
 - For the Examples chapter's shots, four small local targets, each named by an environment
   variable. They are not in this repository; any server that answers the same way will do.
   - `GOOSE_SHOTS_HTTP`, such as `http://127.0.0.1:8080`, for `simple`, `closure` and `basic_auth`:

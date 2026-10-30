@@ -95,3 +95,10 @@ tokio = { version = "1", features = ["test-util"] }
 # the pin, run `GOOSE_UPDATE_DASHBOARD_TYPES=1 cargo test --lib
 # dashboard_types_match_rust`, review the diff, and run `npm run check`.
 ts-rs = { version = "=12.0.1", features = ["chrono-impl"] }
+
+# `cargo test` builds examples but runs no tests inside them by default; this runs
+# examples/umami's tests of its asset parsing against saved Drupal pages.
+[[example]]
+name = "umami"
+path = "examples/umami/main.rs"
+test = true

@@ -4,6 +4,13 @@
 
 ## 0.19.1-dev
 
+ - [#794](https://github.com/tag1consulting/goose/pull/794) `examples/umami` runs against a stock Drupal 11.4 Umami site, with CSS and JS aggregation on or off; it targets 11.4 only
+    o the contact form and search transactions are removed: 11.4's Umami installs neither the contact module nor node search, so they only got 404s
+    o the mushroom article is requested at its 11.4 alias, `the-umami-guide-to-our-favorite-mushrooms`, not `favourite`
+    o pages' aggregated CSS and JS URLs are requested with `&amp;` decoded to `&`; Drupal answered the undecoded URLs with 400
+    o stylesheets are found with aggregation off too, from every `<link rel="stylesheet">`, where only the aggregated path was searched
+    o **behavior change**: asset requests are named `static css`, `static js` and `static image`; the single `static asset` name is gone
+    o on a freshly installed site the first seconds of a run fail: Drupal answers `503` while it generates each image derivative, and rarely `500` while it creates a cache table; warm the site with one unmeasured run first, as the example's README says
  - [#791](https://github.com/tag1consulting/goose/pull/791) the JSON report wrote sub millisecond minimums, maximums and percentiles as 0, from the whole millisecond fields `Millis` serializes truncated; each row now also writes every one in microseconds, as `percentile_50_us`, `response_time_minimum_us` and so on beside the unchanged whole millisecond fields, so the JSON report agrees with the HTML and Markdown reports, and loads as a baseline in 0.19.0 as before
  - [#791](https://github.com/tag1consulting/goose/pull/791) **deprecation**: the JSON report's whole millisecond row fields, `percentile_*`, `response_time_minimum` and `response_time_maximum` without `_us`, are deprecated; they truncate to whole milliseconds, so read the `_us` fields beside them; Goose 0.20 stops writing them, stops loading 0.18 reports as baselines, and writes reports that 0.19.x can't load as baselines
 
