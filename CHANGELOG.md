@@ -4,7 +4,7 @@
 
 ## 0.19.1-dev
 
- - [#PR](https://github.com/tag1consulting/goose/pull/PR) `examples/umami` runs against a stock Drupal 11.4 Umami site, with CSS and JS aggregation on or off; it targets 11.4 only
+ - [#794](https://github.com/tag1consulting/goose/pull/794) `examples/umami` runs against a stock Drupal 11.4 Umami site, with CSS and JS aggregation on or off; it targets 11.4 only
     o the contact form and search transactions are removed: 11.4's Umami installs neither the contact module nor node search, so they only got 404s
     o the mushroom article is requested at its 11.4 alias, `the-umami-guide-to-our-favorite-mushrooms`, not `favourite`
     o pages' aggregated CSS and JS URLs are requested with `&amp;` decoded to `&`; Drupal answered the undecoded URLs with 400
