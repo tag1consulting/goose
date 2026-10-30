@@ -25,7 +25,7 @@ pub struct CoordinatedOmissionMetrics {
 }
 
 /// Represents a single Coordinated Omission event.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CoEvent {
     /// When the CO event was detected (seconds since UNIX epoch).
     pub timestamp_secs: u64,

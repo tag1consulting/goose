@@ -150,8 +150,9 @@ pub(crate) struct SnapshotSettings {
 }
 
 impl SnapshotSettings {
-    /// No settings and an idle stage, for a snapshot built in a test.
-    #[cfg(test)]
+    /// No settings and an idle stage, for a snapshot built in a test or
+    /// compared by the Gaggle shadow merge.
+    #[cfg(any(test, feature = "gaggle"))]
     pub(crate) fn idle() -> Self {
         SnapshotSettings {
             host: None,

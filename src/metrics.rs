@@ -402,6 +402,10 @@ pub(crate) enum MetricsCommand {
         history: Vec<TestPlanHistory>,
         respond: tokio::sync::oneshot::Sender<(GooseMetrics, GraphData)>,
     },
+    /// `--gaggle-shadow-merge`: take this second's Gaggle delta and send it
+    /// through the shadow merge. `now` is the series second.
+    #[cfg(feature = "gaggle")]
+    GaggleShadowTick { now: usize },
     /// Flush all pending metrics and return the final state for reporting.
     Shutdown {
         duration: usize,
@@ -492,6 +496,14 @@ pub(crate) struct MetricsProcessor {
     /// run needs; otherwise only the dashboard's window. Changes with Save
     /// report.
     keep_full_graph: bool,
+    /// What changed since the last Gaggle delta, while the processor runs as
+    /// a Gaggle worker.
+    #[cfg(feature = "gaggle")]
+    gaggle: Option<Box<crate::gaggle::worker::WorkerState>>,
+    /// Set while a metric is processed a second time into `gaggle`'s
+    /// pending state: the error log and the shared counters already have it.
+    #[cfg(feature = "gaggle")]
+    shadow_pass: bool,
 }
 
 /// THIS IS AN EXPERIMENTAL FEATURE, DISABLED BY DEFAULT. Optionally mitigate the loss of data
@@ -3373,6 +3385,10 @@ impl MetricsProcessor {
             logger_tx,
             metrics_epoch,
             keep_full_graph,
+            #[cfg(feature = "gaggle")]
+            gaggle: None,
+            #[cfg(feature = "gaggle")]
+            shadow_pass: false,
         }
     }
 
@@ -3429,6 +3445,15 @@ impl MetricsProcessor {
 
     /// Dispatch a single GooseMetric to the appropriate processing method.
     fn process_metric(&mut self, metric: GooseMetric) {
+        #[cfg(feature = "gaggle")]
+        if self.gaggle.is_some() {
+            self.shadow_metric(metric.clone());
+        }
+        self.dispatch_metric(metric);
+    }
+
+    /// [`Self::process_metric`] without the Gaggle worker's copy.
+    fn dispatch_metric(&mut self, metric: GooseMetric) {
         match metric {
             GooseMetric::Request(request_metric) => {
                 self.process_request_metric(&request_metric);
@@ -3534,6 +3559,12 @@ impl MetricsProcessor {
                 user,
             } => {
                 self.record_scenario_user(scenario_index, user);
+                #[cfg(feature = "gaggle")]
+                if let Some(state) = self.gaggle.as_mut() {
+                    if let Some(scenario) = state.pending_metrics.scenarios.get_mut(scenario_index) {
+                        scenario.users.insert(user);
+                    }
+                }
                 false
             }
             MetricsCommand::RecordUsers {
@@ -3572,7 +3603,7 @@ impl MetricsProcessor {
                 self.metrics
                     .initialize_scenario_metrics(&self.scenarios, &self.configuration);
                 // The users still running run their scenarios in the measured time.
-                for (scenario_index, user) in running_users {
+                for &(scenario_index, user) in &running_users {
                     self.record_scenario_user(scenario_index, user);
                 }
                 self.metrics
@@ -3605,6 +3636,10 @@ impl MetricsProcessor {
                 // Increment the batch epoch so user-side batches accumulated
                 // before the reset are discarded when they arrive.
                 self.metrics_epoch.fetch_add(1, AtomicOrdering::Relaxed);
+                #[cfg(feature = "gaggle")]
+                if let Some(state) = self.gaggle.as_mut() {
+                    state.reset(series_elapsed_secs, &running_users);
+                }
                 // Clear rate series only. Active-users history (ramp + later
                 // changes) is kept on a continuous series clock so the dashboard
                 // still shows how load evolved over the full run.
@@ -3661,6 +3696,12 @@ impl MetricsProcessor {
                 let _ = respond.send((metrics, graph_data));
                 false
             }
+            #[cfg(feature = "gaggle")]
+            MetricsCommand::GaggleShadowTick { now } => {
+                self.drain_pending();
+                self.gaggle_shadow_tick(now);
+                false
+            }
             MetricsCommand::Shutdown {
                 duration,
                 total_users,
@@ -3676,6 +3717,8 @@ impl MetricsProcessor {
                 self.metrics.duration = duration;
                 self.metrics.total_users = total_users;
                 self.metrics.maximum_users = maximum_users;
+                #[cfg(feature = "gaggle")]
+                self.gaggle_shadow_finish();
                 let metrics = std::mem::take(&mut self.metrics);
                 let graph_data = std::mem::replace(&mut self.graph_data, GraphData::new());
                 let _ = respond.send((metrics, graph_data));
@@ -3977,12 +4020,19 @@ impl MetricsProcessor {
                             co_metric.response_time,
                         );
                     }
-                    let co_key = format!("{} {}", co_metric.raw.method_label(), co_metric.name);
-                    Self::increment_registry_counter(
-                        &self.request_counter_registry,
-                        &co_key,
-                        co_metric.success,
-                    );
+                    #[cfg(feature = "gaggle")]
+                    let counted = self.shadow_pass;
+                    #[cfg(not(feature = "gaggle"))]
+                    let counted = false;
+                    if !counted {
+                        let co_key =
+                            format!("{} {}", co_metric.raw.method_label(), co_metric.name);
+                        Self::increment_registry_counter(
+                            &self.request_counter_registry,
+                            &co_key,
+                            co_metric.success,
+                        );
+                    }
                     response_time -= request_metric.user_cadence as i64;
                     synthetic_count += 1;
                 } else {
@@ -4046,6 +4096,15 @@ impl MetricsProcessor {
                     self.graph_data
                         .record_errors_per_second(&key, seconds_since_start);
                 } else if request_metric.update {
+                    // A Gaggle worker's pending copy may not hold the error
+                    // it takes back: the delta subtracts it instead.
+                    #[cfg(feature = "gaggle")]
+                    if self.shadow_pass {
+                        if let Some(state) = self.gaggle.as_mut() {
+                            state.removals.push((key, seconds_since_start));
+                        }
+                        return;
+                    }
                     self.graph_data
                         .remove_error_per_second(&key, seconds_since_start);
                 }
@@ -4081,7 +4140,11 @@ impl MetricsProcessor {
 
     /// Update error metrics and optionally send to the error logger.
     fn record_error(&mut self, raw_request: &GooseRequestMetric) {
-        if self.configuration.error_log().is_some() {
+        #[cfg(feature = "gaggle")]
+        let logged = self.shadow_pass;
+        #[cfg(not(feature = "gaggle"))]
+        let logged = false;
+        if !logged && self.configuration.error_log().is_some() {
             if let Some(logger) = self.logger_tx.as_ref() {
                 if let Err(e) = logger.send(Some(GooseLog::Error(GooseErrorMetric {
                     elapsed: raw_request.elapsed,
@@ -4402,6 +4465,194 @@ impl MetricsProcessor {
             agg.run_times.merge(&entry.run_times);
         }
     }
+}
+
+/// The metrics processor as a Gaggle worker.
+#[cfg(feature = "gaggle")]
+impl MetricsProcessor {
+    /// Run as Gaggle worker `worker`: from now on every metric is also kept
+    /// in what the next delta sends.
+    pub(crate) fn gaggle_enable(&mut self, worker: u32) {
+        let template = self.gaggle_template();
+        let synthetic = template.coordinated_omission_metrics.is_some();
+        self.gaggle = Some(Box::new(crate::gaggle::worker::WorkerState::new(
+            worker, template, synthetic,
+        )));
+    }
+
+    /// Run the `--gaggle-shadow-merge` self check, writing how it ended to
+    /// `outcome` at shutdown.
+    pub(crate) fn gaggle_enable_shadow(
+        &mut self,
+        outcome: Arc<Mutex<Option<crate::gaggle::shadow::ShadowOutcome>>>,
+    ) {
+        self.gaggle_enable(0);
+        let template = self.gaggle_template();
+        let settings = self.gaggle_graph_settings();
+        if let Some(state) = self.gaggle.as_mut() {
+            state.shadow = Some(crate::gaggle::shadow::ShadowMerge::new(
+                template, settings, outcome,
+            ));
+        }
+    }
+
+    /// The metrics this processor started with, empty: every scenario and
+    /// transaction, the hosts and, with mitigation on, coordinated omission
+    /// metrics.
+    pub(crate) fn gaggle_template(&self) -> GooseMetrics {
+        let mut template = GooseMetrics {
+            coordinated_omission_metrics: self
+                .metrics
+                .coordinated_omission_metrics
+                .as_ref()
+                .map(|co| CoordinatedOmissionMetrics::new(co.mitigation_strategy.clone())),
+            ..Default::default()
+        };
+        template.initialize_scenario_metrics(&self.scenarios, &self.configuration);
+        // The processor's own metrics passed this at startup.
+        let _ = template.initialize_transaction_metrics(
+            &self.scenarios,
+            &self.configuration,
+            &self.defaults,
+        );
+        template
+    }
+
+    /// How a manager builds graph data for a run with this configuration.
+    pub(crate) fn gaggle_graph_settings(&self) -> crate::graph::GraphSettings {
+        self.graph_data
+            .gaggle_settings(self.configuration.records_graph_data())
+    }
+
+    /// Process `metric` a second time, into the Gaggle worker's pending
+    /// state, with the same code.
+    fn shadow_metric(&mut self, metric: GooseMetric) {
+        let Some(mut state) = self.gaggle.take() else {
+            return;
+        };
+        std::mem::swap(&mut self.metrics, &mut state.pending_metrics);
+        std::mem::swap(&mut self.graph_data, &mut state.pending_graph);
+        self.gaggle = Some(state);
+        self.shadow_pass = true;
+        self.dispatch_metric(metric);
+        self.shadow_pass = false;
+        if let Some(state) = self.gaggle.as_mut() {
+            std::mem::swap(&mut self.metrics, &mut state.pending_metrics);
+            std::mem::swap(&mut self.graph_data, &mut state.pending_graph);
+        }
+    }
+
+    /// What changed since the last delta, `now` being the series second;
+    /// `None` unless the processor runs as a Gaggle worker.
+    pub(crate) fn gaggle_take_delta(&mut self, now: usize) -> Option<crate::gaggle::delta::GaggleDelta> {
+        let epoch = self.metrics_epoch.load(AtomicOrdering::Relaxed);
+        let state = self.gaggle.as_mut()?;
+        Some(state.take_delta(
+            (&self.metrics, &self.graph_data),
+            &self.request_counter_registry,
+            epoch,
+            now as u64,
+        ))
+    }
+
+    /// The worker's whole state, as a final delta; `None` unless the
+    /// processor runs as a Gaggle worker.
+    pub(crate) fn gaggle_take_final(&mut self, now: usize) -> Option<crate::gaggle::delta::GaggleDelta> {
+        self.sync_atomic_counters();
+        let epoch = self.metrics_epoch.load(AtomicOrdering::Relaxed);
+        let state = self.gaggle.as_mut()?;
+        Some(state.take_final((&self.metrics, &self.graph_data), epoch, now as u64))
+    }
+
+    /// This second's delta, through the shadow merge.
+    fn gaggle_shadow_tick(&mut self, now: usize) {
+        if let Some(delta) = self.gaggle_take_delta(now) {
+            if let Some(shadow) = self.gaggle.as_mut().and_then(|state| state.shadow.as_mut()) {
+                shadow.delta(&delta);
+            }
+        }
+    }
+
+    /// At shutdown, with the metrics final: end the shadow merge's self
+    /// check.
+    fn gaggle_shadow_finish(&mut self) {
+        let Some(shadow) = self.gaggle.as_mut().and_then(|state| state.shadow.take()) else {
+            return;
+        };
+        let now = self.graph_data.gaggle_last_second().map_or(0, |second| second + 2);
+        let (Some(last), Some(last_final)) = (self.gaggle_take_delta(now), self.gaggle_take_final(now))
+        else {
+            return;
+        };
+        let configuration = &self.configuration;
+        let build = |metrics: &GooseMetrics, graph: &mut GraphData| -> serde_json::Value {
+            gaggle_snapshot(configuration, metrics, graph)
+        };
+        let snapshot: Option<&dyn Fn(&GooseMetrics, &mut GraphData) -> serde_json::Value> =
+            if self.configuration.dashboard {
+                Some(&build)
+            } else {
+                None
+            };
+        shadow.finish(&last, &last_final, (&self.metrics, &self.graph_data), snapshot);
+    }
+}
+
+/// A dashboard snapshot of `metrics` and `graph`, as JSON, with what changes
+/// from one build to the next (the build time, timestamps and the heatmap's
+/// change counters) left out, for the shadow merge to compare.
+#[cfg(feature = "gaggle")]
+pub(crate) fn gaggle_snapshot(
+    configuration: &GooseConfiguration,
+    metrics: &GooseMetrics,
+    graph: &mut GraphData,
+) -> serde_json::Value {
+    let co_active = metrics
+        .coordinated_omission_metrics
+        .as_ref()
+        .is_some_and(|m| m.has_events());
+    let series = graph.export_series_window_with_heatmap(
+        dashboard_snapshot::SERIES_WINDOW_SECS,
+        None,
+        co_active,
+        None,
+    );
+    let snapshot = dashboard_snapshot::build_dashboard_snapshot(
+        dashboard_snapshot::DashboardSnapshotInput {
+            metrics,
+            series,
+            active_users: 0,
+            maximum_users: metrics.maximum_users,
+            target_users: 0,
+            total_users: metrics.total_users,
+            phase: "shutdown".to_string(),
+            stopping: false,
+            series_window_secs: dashboard_snapshot::SERIES_WINDOW_SECS,
+            no_status_codes: configuration.no_status_codes,
+            metrics_disabled: configuration.no_metrics,
+            no_transaction_metrics: configuration.no_transaction_metrics,
+            no_scenario_metrics: configuration.no_scenario_metrics,
+            report: dashboard_snapshot::SnapshotReport::default(),
+            settings: dashboard_snapshot::SnapshotSettings::idle(),
+            percentiles_over_time: configuration.records_latency_series(),
+            series_keys: graph.latency_series_keys(),
+        },
+    );
+    let mut value = serde_json::to_value(&snapshot).unwrap_or_default();
+    for pointer in ["/generated_at", "/build_time"] {
+        if let Some(field) = value.pointer_mut(pointer) {
+            *field = serde_json::Value::Null;
+        }
+    }
+    if let Some(heatmap) = value
+        .pointer_mut("/series/heatmap")
+        .and_then(|heatmap| heatmap.as_object_mut())
+    {
+        for field in ["generation", "rev", "since"] {
+            heatmap.insert(field.to_string(), serde_json::Value::Null);
+        }
+    }
+    value
 }
 
 impl GooseAttack {
