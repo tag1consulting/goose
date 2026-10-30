@@ -179,6 +179,19 @@ impl DeltaTo for ScenarioMetric {
     }
 }
 
+// TODO(0.20): the hand written `Serialize` impls below exist only to keep
+// the deprecated whole millisecond row fields (`percentile_*`,
+// `response_time_minimum`, `response_time_maximum`) beside their `_us`
+// fields in 0.19.x. In 0.20 the row times become microseconds under the
+// `_us` names only, `#[derive(Serialize)]` returns and these impls are
+// deleted. A report with raw microsecond data is rebuilt from it, as now,
+// so 0.19 baselines need no extra code. By decision, 0.20 stops loading
+// 0.18 reports as baselines, and 0.19.x cannot load 0.20 reports.
+
+// Each impl destructures its row with every field named and no `..`, so a
+// field added to one of these structs fails to compile until its
+// serializer writes it or says why it does not.
+
 /// Write `time` to a JSON report row as `key`, in whole milliseconds,
 /// truncated, as Goose has always written it, and as `key_us`, in
 /// microseconds, so the row holds the time the other reports show.
@@ -194,45 +207,65 @@ fn serialize_time<S: SerializeStruct>(
 
 impl Serialize for RequestMetric {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let RequestMetric {
+            method,
+            name,
+            number_of_requests,
+            number_of_failures,
+            response_time_average,
+            response_time_minimum,
+            response_time_maximum,
+            requests_per_second,
+            failures_per_second,
+            // Breakdown rows are left out of the JSON report, and so is the flag.
+            is_breakdown: _,
+        } = self;
         let mut row = serializer.serialize_struct("RequestMetric", 11)?;
-        row.serialize_field("method", &self.method)?;
-        row.serialize_field("name", &self.name)?;
-        row.serialize_field("number_of_requests", &self.number_of_requests)?;
-        row.serialize_field("number_of_failures", &self.number_of_failures)?;
-        row.serialize_field("response_time_average", &self.response_time_average)?;
+        row.serialize_field("method", method)?;
+        row.serialize_field("name", name)?;
+        row.serialize_field("number_of_requests", number_of_requests)?;
+        row.serialize_field("number_of_failures", number_of_failures)?;
+        row.serialize_field("response_time_average", response_time_average)?;
         serialize_time(
             &mut row,
             "response_time_minimum",
             "response_time_minimum_us",
-            &self.response_time_minimum,
+            response_time_minimum,
         )?;
         serialize_time(
             &mut row,
             "response_time_maximum",
             "response_time_maximum_us",
-            &self.response_time_maximum,
+            response_time_maximum,
         )?;
-        row.serialize_field("requests_per_second", &self.requests_per_second)?;
-        row.serialize_field("failures_per_second", &self.failures_per_second)?;
+        row.serialize_field("requests_per_second", requests_per_second)?;
+        row.serialize_field("failures_per_second", failures_per_second)?;
         row.end()
     }
 }
 
 impl Serialize for CORequestMetric {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let CORequestMetric {
+            method,
+            name,
+            response_time_average,
+            response_time_standard_deviation,
+            response_time_maximum,
+        } = self;
         let mut row = serializer.serialize_struct("CORequestMetric", 6)?;
-        row.serialize_field("method", &self.method)?;
-        row.serialize_field("name", &self.name)?;
-        row.serialize_field("response_time_average", &self.response_time_average)?;
+        row.serialize_field("method", method)?;
+        row.serialize_field("name", name)?;
+        row.serialize_field("response_time_average", response_time_average)?;
         row.serialize_field(
             "response_time_standard_deviation",
-            &self.response_time_standard_deviation,
+            response_time_standard_deviation,
         )?;
         serialize_time(
             &mut row,
             "response_time_maximum",
             "response_time_maximum_us",
-            &self.response_time_maximum,
+            response_time_maximum,
         )?;
         row.end()
     }
@@ -240,56 +273,33 @@ impl Serialize for CORequestMetric {
 
 impl Serialize for ResponseMetric {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let ResponseMetric {
+            method,
+            name,
+            percentile_50,
+            percentile_60,
+            percentile_70,
+            percentile_80,
+            percentile_90,
+            percentile_95,
+            percentile_99,
+            percentile_100,
+        } = self;
         let mut row = serializer.serialize_struct("ResponseMetric", 18)?;
-        row.serialize_field("method", &self.method)?;
-        row.serialize_field("name", &self.name)?;
-        serialize_time(
-            &mut row,
-            "percentile_50",
-            "percentile_50_us",
-            &self.percentile_50,
-        )?;
-        serialize_time(
-            &mut row,
-            "percentile_60",
-            "percentile_60_us",
-            &self.percentile_60,
-        )?;
-        serialize_time(
-            &mut row,
-            "percentile_70",
-            "percentile_70_us",
-            &self.percentile_70,
-        )?;
-        serialize_time(
-            &mut row,
-            "percentile_80",
-            "percentile_80_us",
-            &self.percentile_80,
-        )?;
-        serialize_time(
-            &mut row,
-            "percentile_90",
-            "percentile_90_us",
-            &self.percentile_90,
-        )?;
-        serialize_time(
-            &mut row,
-            "percentile_95",
-            "percentile_95_us",
-            &self.percentile_95,
-        )?;
-        serialize_time(
-            &mut row,
-            "percentile_99",
-            "percentile_99_us",
-            &self.percentile_99,
-        )?;
+        row.serialize_field("method", method)?;
+        row.serialize_field("name", name)?;
+        serialize_time(&mut row, "percentile_50", "percentile_50_us", percentile_50)?;
+        serialize_time(&mut row, "percentile_60", "percentile_60_us", percentile_60)?;
+        serialize_time(&mut row, "percentile_70", "percentile_70_us", percentile_70)?;
+        serialize_time(&mut row, "percentile_80", "percentile_80_us", percentile_80)?;
+        serialize_time(&mut row, "percentile_90", "percentile_90_us", percentile_90)?;
+        serialize_time(&mut row, "percentile_95", "percentile_95_us", percentile_95)?;
+        serialize_time(&mut row, "percentile_99", "percentile_99_us", percentile_99)?;
         serialize_time(
             &mut row,
             "percentile_100",
             "percentile_100_us",
-            &self.percentile_100,
+            percentile_100,
         )?;
         row.end()
     }
@@ -297,52 +307,74 @@ impl Serialize for ResponseMetric {
 
 impl Serialize for TransactionMetric {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let TransactionMetric {
+            is_scenario,
+            transaction,
+            name,
+            number_of_requests,
+            number_of_failures,
+            response_time_average,
+            response_time_minimum,
+            response_time_maximum,
+            requests_per_second,
+            failures_per_second,
+        } = self;
         let mut row = serializer.serialize_struct("TransactionMetric", 12)?;
-        row.serialize_field("is_scenario", &self.is_scenario)?;
-        row.serialize_field("transaction", &self.transaction)?;
-        row.serialize_field("name", &self.name)?;
-        row.serialize_field("number_of_requests", &self.number_of_requests)?;
-        row.serialize_field("number_of_failures", &self.number_of_failures)?;
-        row.serialize_field("response_time_average", &self.response_time_average)?;
+        row.serialize_field("is_scenario", is_scenario)?;
+        row.serialize_field("transaction", transaction)?;
+        row.serialize_field("name", name)?;
+        row.serialize_field("number_of_requests", number_of_requests)?;
+        row.serialize_field("number_of_failures", number_of_failures)?;
+        row.serialize_field("response_time_average", response_time_average)?;
         serialize_time(
             &mut row,
             "response_time_minimum",
             "response_time_minimum_us",
-            &self.response_time_minimum,
+            response_time_minimum,
         )?;
         serialize_time(
             &mut row,
             "response_time_maximum",
             "response_time_maximum_us",
-            &self.response_time_maximum,
+            response_time_maximum,
         )?;
-        row.serialize_field("requests_per_second", &self.requests_per_second)?;
-        row.serialize_field("failures_per_second", &self.failures_per_second)?;
+        row.serialize_field("requests_per_second", requests_per_second)?;
+        row.serialize_field("failures_per_second", failures_per_second)?;
         row.end()
     }
 }
 
 impl Serialize for ScenarioMetric {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let ScenarioMetric {
+            name,
+            users,
+            count,
+            response_time_average,
+            response_time_minimum,
+            response_time_maximum,
+            count_per_second,
+            iterations,
+        } = self;
         let mut row = serializer.serialize_struct("ScenarioMetric", 10)?;
-        row.serialize_field("name", &self.name)?;
-        row.serialize_field("users", &self.users)?;
-        row.serialize_field("count", &self.count)?;
-        row.serialize_field("response_time_average", &self.response_time_average)?;
+        row.serialize_field("name", name)?;
+        row.serialize_field("users", users)?;
+        row.serialize_field("count", count)?;
+        row.serialize_field("response_time_average", response_time_average)?;
         serialize_time(
             &mut row,
             "response_time_minimum",
             "response_time_minimum_us",
-            &self.response_time_minimum,
+            response_time_minimum,
         )?;
         serialize_time(
             &mut row,
             "response_time_maximum",
             "response_time_maximum_us",
-            &self.response_time_maximum,
+            response_time_maximum,
         )?;
-        row.serialize_field("count_per_second", &self.count_per_second)?;
-        row.serialize_field("iterations", &self.iterations)?;
+        row.serialize_field("count_per_second", count_per_second)?;
+        row.serialize_field("iterations", iterations)?;
         row.end()
     }
 }
