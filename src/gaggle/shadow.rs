@@ -10,6 +10,11 @@ use crate::graph::{GraphData, GraphSettings};
 use crate::metrics::GooseMetrics;
 use std::sync::{Arc, Mutex};
 
+/// Builds a dashboard snapshot, as JSON with what changes from one build to
+/// the next left out, from metrics and graph data.
+pub(crate) type SnapshotBuilder<'a> =
+    &'a dyn Fn(&GooseMetrics, &mut GraphData) -> serde_json::Value;
+
 /// The file a failed self check writes its differences to.
 pub(crate) const DIFF_FILE: &str = "gaggle-shadow-diff.txt";
 
@@ -104,7 +109,7 @@ impl ShadowMerge {
         last: &GaggleDelta,
         last_final: &GaggleDelta,
         run: (&GooseMetrics, &GraphData),
-        snapshot: Option<&dyn Fn(&GooseMetrics, &mut GraphData) -> serde_json::Value>,
+        snapshot: Option<SnapshotBuilder<'_>>,
     ) -> ShadowOutcome {
         self.delta(last);
         self.deltas.done(last.worker);

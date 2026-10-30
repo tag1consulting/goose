@@ -3973,7 +3973,7 @@ impl MetricsProcessor {
     }
 
     /// [`Self::handle_command`], for unit tests in other modules.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "gaggle"))]
     pub(crate) fn handle_command_for_test(&mut self, command: MetricsCommand) -> bool {
         self.handle_command(command)
     }
@@ -4610,7 +4610,7 @@ impl MetricsProcessor {
         let build = |metrics: &GooseMetrics, graph: &mut GraphData| -> serde_json::Value {
             gaggle_snapshot(configuration, metrics, graph)
         };
-        let snapshot: Option<&dyn Fn(&GooseMetrics, &mut GraphData) -> serde_json::Value> =
+        let snapshot: Option<crate::gaggle::shadow::SnapshotBuilder<'_>> =
             if self.configuration.dashboard {
                 Some(&build)
             } else {
