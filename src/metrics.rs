@@ -4498,6 +4498,14 @@ impl MetricsProcessor {
         )));
     }
 
+    /// Set the worker's lag (unit tests).
+    #[cfg(test)]
+    pub(crate) fn gaggle_set_lag_for_test(&mut self, lag: usize) {
+        if let Some(state) = self.gaggle.as_mut() {
+            state.set_lag_for_test(lag);
+        }
+    }
+
     /// Run the `--gaggle-shadow-merge` self check, writing how it ended to
     /// `outcome` at shutdown.
     pub(crate) fn gaggle_enable_shadow(
@@ -4549,6 +4557,11 @@ impl MetricsProcessor {
         let Some(mut state) = self.gaggle.take() else {
             return;
         };
+        // A transaction is stamped with the second it started, which can be
+        // any time ago: the pending series reach back to it.
+        if let Some(second) = earliest_second(&metric) {
+            state.pending_graph.gaggle_lower_origin(second);
+        }
         std::mem::swap(&mut self.metrics, &mut state.pending_metrics);
         std::mem::swap(&mut self.graph_data, &mut state.pending_graph);
         self.gaggle = Some(state);
@@ -4629,6 +4642,41 @@ impl MetricsProcessor {
             (&self.metrics, &self.graph_data),
             snapshot,
         );
+    }
+}
+
+/// The earliest series second `metric` records per second graph data for.
+#[cfg(feature = "gaggle")]
+fn earliest_second(metric: &GooseMetric) -> Option<usize> {
+    let second = |elapsed: u64| (elapsed / 1000) as usize;
+    match metric {
+        GooseMetric::Request(request) => Some(second(request.elapsed)),
+        GooseMetric::Transaction(transaction) => Some(second(transaction.elapsed)),
+        GooseMetric::Scenario(scenario) => Some(second(scenario.elapsed)),
+        GooseMetric::All {
+            request,
+            transaction,
+            scenario,
+        } => Some(second(
+            request
+                .elapsed
+                .min(transaction.elapsed)
+                .min(scenario.elapsed),
+        )),
+        GooseMetric::Batch(batch) => batch
+            .second
+            .into_iter()
+            .chain(batch.graph_request_data.keys().map(|(_, second)| *second))
+            .chain(batch.graph_tps.keys().copied())
+            .chain(batch.graph_sps.keys().copied())
+            .chain(
+                batch
+                    .individual_requests
+                    .iter()
+                    .map(|request| second(request.elapsed)),
+            )
+            .min(),
+        GooseMetric::TransactionError(_) => None,
     }
 }
 

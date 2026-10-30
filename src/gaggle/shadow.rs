@@ -28,6 +28,8 @@ pub(crate) struct ShadowMerge {
     errors: Vec<String>,
     /// Coordinated omission events the deltas left out at the cap.
     dropped: u64,
+    /// The epoch `dropped` counts.
+    dropped_epoch: u64,
     /// Where the run finds how the check ended.
     outcome: Arc<Mutex<Option<ShadowOutcome>>>,
 }
@@ -68,6 +70,7 @@ impl ShadowMerge {
             sizes: Vec::new(),
             errors: Vec::new(),
             dropped: 0,
+            dropped_epoch: 0,
             outcome,
         }
     }
@@ -90,11 +93,19 @@ impl ShadowMerge {
                 if to_finals {
                     self.finals.apply(decoded);
                 } else {
-                    self.dropped += decoded
+                    // A metrics reset starts the count again, as it starts
+                    // the merged events again.
+                    let dropped = decoded
                         .metrics
                         .co
                         .as_ref()
                         .map_or(0, |co| co.events_dropped);
+                    if decoded.epoch > self.dropped_epoch {
+                        self.dropped_epoch = decoded.epoch;
+                        self.dropped = dropped;
+                    } else if decoded.epoch == self.dropped_epoch {
+                        self.dropped += dropped;
+                    }
                     self.deltas.apply(decoded);
                 }
             }

@@ -1052,9 +1052,11 @@ fn gaggle_repeated_delta_is_ignored() {
         .flatten()
         .filter(|delta| delta.kind == DeltaKind::Delta)
         .collect();
+    // One from the last epoch, so the reset does not discard what it adds.
+    let epoch = deltas.iter().map(|delta| delta.epoch).max().unwrap();
     let at = deltas
         .iter()
-        .position(|delta| !delta.metrics.requests.is_empty())
+        .position(|delta| delta.epoch == epoch && !delta.metrics.requests.is_empty())
         .expect("a delta with requests");
     let mut repeated = deltas.clone();
     repeated.insert(at + 1, deltas[at].clone());
@@ -1092,11 +1094,15 @@ fn gaggle_final_carries_what_followed_the_last_delta() {
         }
     }
     for (worker, mut side) in sides.into_iter().enumerate() {
-        // The last delta goes before the users' last batches are sent.
+        // The last delta goes before the users' last batches are sent,
+        // and the final delta right after them, with no delta between.
         side.drain();
         deltas[worker].extend(side.processor.gaggle_take_delta(SECONDS + 2));
-        let (_late, last_final, _, _) = side.finish();
-        deltas[worker].extend(last_final);
+        for user in side.users.values_mut() {
+            user.flush_batch().unwrap();
+        }
+        side.drain();
+        deltas[worker].extend(side.processor.gaggle_take_final(SECONDS + 2));
     }
     assert!(
         !differences(merge(&deltas, false, 1).merged(), &single).is_empty(),
@@ -1106,4 +1112,70 @@ fn gaggle_final_carries_what_followed_the_last_delta() {
         "final after late batches",
         &differences(merge(&deltas, true, 1).merged(), &single),
     );
+}
+
+/// The pending graph data trails its delta by the lag, and a metric from
+/// further back moves its start back: with no lag at all, and with one
+/// shorter than the run, which moves the start past 0 before and after the
+/// reset, the merge stays exact.
+#[test]
+fn gaggle_pending_graph_keeps_late_metrics() {
+    let events = events(0x645);
+    let single = single(&events);
+    for lag in [0, 3] {
+        let workers = 3;
+        let mut sides: Vec<Side> = (0..workers)
+            .map(|worker| {
+                let mut side = Side::new(share(worker, workers), Some(worker as u32));
+                side.processor.gaggle_set_lag_for_test(lag);
+                side
+            })
+            .collect();
+        let mut deltas: Vec<Vec<GaggleDelta>> = vec![Vec::new(); workers];
+        for event in &events {
+            for (worker, side) in sides.iter_mut().enumerate() {
+                deltas[worker].extend(side.play(event));
+            }
+        }
+        for (worker, side) in sides.into_iter().enumerate() {
+            let (last, last_final, _, _) = side.finish();
+            deltas[worker].extend(last);
+            deltas[worker].extend(last_final);
+        }
+        for finals in [false, true] {
+            assert_none(
+                &format!("lag {lag}, finals {finals}"),
+                &differences(merge(&deltas, finals, 1).merged(), &single),
+            );
+        }
+    }
+}
+
+/// After a metrics reset, deltas carry the coordinated omission start the
+/// processor reset to, not the template's.
+#[test]
+fn gaggle_reset_takes_the_processors_co_start() {
+    let template = GooseMetrics {
+        coordinated_omission_metrics: Some(
+            crate::metrics::coordinated_omission::CoordinatedOmissionMetrics {
+                started_secs: 5,
+                ..crate::metrics::coordinated_omission::CoordinatedOmissionMetrics::new(
+                    crate::metrics::GooseCoordinatedOmissionMitigation::Average,
+                )
+            },
+        ),
+        ..Default::default()
+    };
+    let registry: GooseRequestCounterRegistry = Arc::new(Mutex::new(HashMap::new()));
+    let graph = GraphData::for_metrics_processor(true, true, true);
+    let mut state = super::worker::WorkerState::new(0, template.clone(), true, 120);
+    state.reset(10, &[], Some(99));
+    for now in [11, 12] {
+        let delta = state.take_delta((&template, &graph), &registry, 1, now);
+        assert_eq!(
+            delta.metrics.co.as_ref().map(|co| co.started_secs),
+            Some(99),
+            "second {now}"
+        );
+    }
 }

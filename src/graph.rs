@@ -3946,6 +3946,37 @@ mod gaggle {
             }
         }
 
+        /// Start every series at `origin` when it starts later, so a sample
+        /// from as far back as `origin` is kept rather than dropped.
+        pub(crate) fn gaggle_lower_origin(&mut self, origin: usize) {
+            fn lower<T: Clone + TimeSeriesValue<T, U>, U>(
+                series: &mut TimeSeries<T, U>,
+                origin: usize,
+            ) {
+                while series.origin > origin {
+                    if !series.data.is_empty() {
+                        series.data.push_front(T::initial_value());
+                    }
+                    series.origin -= 1;
+                }
+            }
+            if origin >= self.users_per_second.origin {
+                return;
+            }
+            lower(&mut self.users_per_second, origin);
+            lower(&mut self.transactions_per_second, origin);
+            lower(&mut self.scenarios_per_second, origin);
+            for items in [&mut self.requests_per_second, &mut self.errors_per_second] {
+                items.origin = items.origin.min(origin);
+                for series in items.series.values_mut() {
+                    lower(&mut series.counts, origin);
+                }
+            }
+            for series in self.average_response_time_per_second.values_mut() {
+                lower(series, origin);
+            }
+        }
+
         /// The last second any series holds a value for.
         pub(crate) fn gaggle_last_second(&self) -> Option<usize> {
             self.requests_per_second

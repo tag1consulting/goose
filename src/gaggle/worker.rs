@@ -28,10 +28,11 @@ pub(crate) struct WorkerState {
     template: GooseMetrics,
     /// Whether synthetic response times are kept by second.
     synthetic: bool,
-    /// How many seconds before a delta's own second a request, or the
-    /// `set_success()` or `set_failure()` that corrects it, can still
-    /// arrive: the request timeout plus a minute. The next delta's pending
-    /// graph data starts that far back.
+    /// How many seconds before a delta's own second the next delta's
+    /// pending graph data starts: the request timeout plus a minute, which
+    /// covers most late requests and corrections. A metric from further
+    /// back moves the start back first (see
+    /// `MetricsProcessor::shadow_metric`), so nothing is dropped.
     lag: usize,
     /// Each request's success and failure counts as last sent, from the
     /// atomic counters the user threads write.
@@ -69,6 +70,12 @@ impl WorkerState {
             series_origin: None,
             shadow: None,
         }
+    }
+
+    /// Set [`Self::lag`] (unit tests).
+    #[cfg(test)]
+    pub(crate) fn set_lag_for_test(&mut self, lag: usize) {
+        self.lag = lag;
     }
 
     /// A metrics reset at series second `second`: what was pending belongs
