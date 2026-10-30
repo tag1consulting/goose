@@ -24,9 +24,10 @@ pub(crate) type Second = u64;
 
 /// Most coordinated omission events one [`DeltaKind::Delta`] carries, oldest
 /// first. Events past the cap are counted in [`CoPart::events_dropped`]
-/// rather than sent: the counts and the severity histogram stay exact, but
-/// the report's per user event table leaves those events out. A
-/// [`DeltaKind::Final`] carries every event the worker holds.
+/// rather than sent: the request counts and the severity histogram stay
+/// exact, but the report's event total, events per minute and per user and
+/// per scenario event tables, which count the events held, leave those
+/// events out. A [`DeltaKind::Final`] carries every event the worker holds.
 pub(crate) const MAX_CO_EVENTS_PER_DELTA: usize = 1_000;
 
 /// Whether a delta adds to what the manager holds for the worker, or

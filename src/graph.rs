@@ -3960,9 +3960,16 @@ mod gaggle {
 
         /// A worker's graph data for what its next delta sends: every
         /// request name gets a ring of its own, measured and synthetic, and
-        /// no whole run columns are kept.
-        pub(crate) fn gaggle_pending(synthetic: bool) -> Self {
+        /// no whole run columns are kept. Its series start at second
+        /// `origin`, so each delta costs the seconds since then, not since
+        /// the run started; a sample from before `origin` would be lost.
+        pub(crate) fn gaggle_pending(synthetic: bool, origin: usize) -> Self {
             let mut graph_data = GraphData::for_metrics_processor(true, synthetic, false);
+            graph_data.users_per_second = TimeSeries::with_origin(origin);
+            graph_data.requests_per_second = ItemsPerSecond::with_origin(origin);
+            graph_data.errors_per_second = ItemsPerSecond::with_origin(origin);
+            graph_data.transactions_per_second = TimeSeries::with_origin(origin);
+            graph_data.scenarios_per_second = TimeSeries::with_origin(origin);
             if let Some(latency) = graph_data.latency.as_mut() {
                 latency.admit_all = true;
             }
@@ -4073,12 +4080,14 @@ mod gaggle {
                 settings.synthetic,
                 settings.columns,
             );
-            if !settings.records {
-                return graph_data;
-            }
             let done = |second: Second| complete.is_none_or(|complete| second < complete);
+            // The users series is kept whether or not per second graphs are.
             for (&second, &users) in part.users.iter().filter(|(&second, _)| done(second)) {
                 graph_data.record_users_per_second(users as usize, second as usize);
+            }
+            if !settings.records {
+                graph_data.finish_latency_columns();
+                return graph_data;
             }
             if let Some(origin) = series_origin {
                 graph_data.reset_rate_series(origin as usize);

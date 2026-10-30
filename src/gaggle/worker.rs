@@ -28,6 +28,11 @@ pub(crate) struct WorkerState {
     template: GooseMetrics,
     /// Whether synthetic response times are kept by second.
     synthetic: bool,
+    /// How many seconds before a delta's own second a request, or the
+    /// `set_success()` or `set_failure()` that corrects it, can still
+    /// arrive: the request timeout plus a minute. The next delta's pending
+    /// graph data starts that far back.
+    lag: usize,
     /// Each request's success and failure counts as last sent, from the
     /// atomic counters the user threads write.
     counts_sent: HashMap<String, (u64, u64)>,
@@ -46,15 +51,17 @@ pub(crate) struct WorkerState {
 
 impl WorkerState {
     /// Worker `worker`, whose processor's empty metrics are `template`;
-    /// `synthetic` when coordinated omission mitigation is on.
-    pub(crate) fn new(worker: u32, template: GooseMetrics, synthetic: bool) -> Self {
+    /// `synthetic` when coordinated omission mitigation is on, and `lag`
+    /// as [`Self::lag`] describes.
+    pub(crate) fn new(worker: u32, template: GooseMetrics, synthetic: bool, lag: usize) -> Self {
         WorkerState {
             worker,
             seq: 0,
             pending_metrics: template.clone(),
-            pending_graph: GraphData::gaggle_pending(synthetic),
+            pending_graph: GraphData::gaggle_pending(synthetic, 0),
             template,
             synthetic,
+            lag,
             counts_sent: HashMap::new(),
             users_sent: (0, Vec::new()),
             removals: Vec::new(),
@@ -66,15 +73,29 @@ impl WorkerState {
 
     /// A metrics reset at series second `second`: what was pending belongs
     /// to the old epoch, and the counters start again from 0. `running`
-    /// are the `(scenario index, user)` of the users still running.
-    pub(crate) fn reset(&mut self, second: usize, running: &[(usize, usize)]) {
+    /// are the `(scenario index, user)` of the users still running, and
+    /// `co_started` when the processor's coordinated omission metrics
+    /// started again.
+    pub(crate) fn reset(
+        &mut self,
+        second: usize,
+        running: &[(usize, usize)],
+        co_started: Option<u64>,
+    ) {
+        if let (Some(co), Some(started)) = (
+            self.template.coordinated_omission_metrics.as_mut(),
+            co_started,
+        ) {
+            co.started_secs = started;
+        }
         self.pending_metrics = self.template.clone();
         for &(scenario_index, user) in running {
             if let Some(scenario) = self.pending_metrics.scenarios.get_mut(scenario_index) {
                 scenario.users.insert(user);
             }
         }
-        self.pending_graph = GraphData::gaggle_pending(self.synthetic);
+        self.pending_graph =
+            GraphData::gaggle_pending(self.synthetic, second.saturating_sub(self.lag));
         self.counts_sent.clear();
         self.removals.clear();
         self.sent_graph.clear_rates();
@@ -88,11 +109,12 @@ impl WorkerState {
     }
 
     /// The graph rows pending, with the errors taken back, and pending
-    /// starting again.
-    fn take_graph(&mut self) -> GraphPart {
+    /// starting again `lag` seconds before `now`.
+    fn take_graph(&mut self, now: Second) -> GraphPart {
+        let origin = (now as usize).saturating_sub(self.lag);
         let mut pending = std::mem::replace(
             &mut self.pending_graph,
-            GraphData::gaggle_pending(self.synthetic),
+            GraphData::gaggle_pending(self.synthetic, origin),
         );
         let mut graph = pending.gaggle_rows();
         for (key, second) in self.removals.drain(..) {
@@ -126,7 +148,7 @@ impl WorkerState {
         if let Some(co) = delta.metrics.co.as_mut() {
             co.cap_events();
         }
-        let mut graph = self.take_graph();
+        let mut graph = self.take_graph(now);
         self.sent_graph.add_rates(&graph);
         graph.users = cumulative.1.gaggle_users_since(&mut self.users_sent);
         delta.graph = graph;
@@ -153,7 +175,7 @@ impl WorkerState {
                 request.fail = aggregate.fail_count as i64;
             }
         }
-        let pending = self.take_graph();
+        let pending = self.take_graph(now);
         self.sent_graph.add_rates(&pending);
         let mut graph = self.sent_graph.clone();
         let mut everything = (0, Vec::new());

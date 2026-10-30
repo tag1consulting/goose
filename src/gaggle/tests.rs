@@ -613,6 +613,8 @@ fn differences(
     // within a second differs between one process and its workers.
     let fixed = |metrics: &mut GooseMetrics| {
         if let Some(co) = metrics.coordinated_omission_metrics.as_mut() {
+            // Compared to the second above; the reports' events per minute
+            // count from it to the wall clock when they are written.
             co.started_secs = 0;
             for event in co.co_events.iter_mut() {
                 event.timestamp_secs = 0;
@@ -1039,4 +1041,69 @@ fn gaggle_users_levels_hold() {
     }
     expected.finish_latency_columns();
     assert_none("users levels", &graph.gaggle_diff(&expected));
+}
+
+/// B3: a delta received twice is reported and counted once.
+#[test]
+fn gaggle_repeated_delta_is_ignored() {
+    let events = events(0x645);
+    let deltas: Vec<GaggleDelta> = worker_deltas(&events, 2)
+        .into_iter()
+        .flatten()
+        .filter(|delta| delta.kind == DeltaKind::Delta)
+        .collect();
+    let at = deltas
+        .iter()
+        .position(|delta| !delta.metrics.requests.is_empty())
+        .expect("a delta with requests");
+    let mut repeated = deltas.clone();
+    repeated.insert(at + 1, deltas[at].clone());
+    let mut expected = apply_all(&deltas);
+    let mut accumulator = apply_all(&repeated);
+    for worker in 0..2 {
+        expected.done(worker);
+        accumulator.done(worker);
+    }
+    assert_eq!(
+        accumulator.gaps(),
+        &[super::merge::SeqGap {
+            worker: deltas[at].worker,
+            expected: deltas[at].seq + 1,
+            received: deltas[at].first_seq,
+        }]
+    );
+    assert_none("repeated delta", &merge_diff(&accumulator, &expected));
+}
+
+/// A final delta carries the batches that arrived after the worker's last
+/// delta: without it they are missing, with it the merge is exact.
+#[test]
+fn gaggle_final_carries_what_followed_the_last_delta() {
+    let events = events(0x645);
+    let single = single(&events);
+    let workers = 3;
+    let mut sides: Vec<Side> = (0..workers)
+        .map(|worker| Side::new(share(worker, workers), Some(worker as u32)))
+        .collect();
+    let mut deltas: Vec<Vec<GaggleDelta>> = vec![Vec::new(); workers];
+    for event in &events {
+        for (worker, side) in sides.iter_mut().enumerate() {
+            deltas[worker].extend(side.play(event));
+        }
+    }
+    for (worker, mut side) in sides.into_iter().enumerate() {
+        // The last delta goes before the users' last batches are sent.
+        side.drain();
+        deltas[worker].extend(side.processor.gaggle_take_delta(SECONDS + 2));
+        let (_late, last_final, _, _) = side.finish();
+        deltas[worker].extend(last_final);
+    }
+    assert!(
+        !differences(merge(&deltas, false, 1).merged(), &single).is_empty(),
+        "no batch arrived after the last delta: this test proves nothing"
+    );
+    assert_none(
+        "final after late batches",
+        &differences(merge(&deltas, true, 1).merged(), &single),
+    );
 }

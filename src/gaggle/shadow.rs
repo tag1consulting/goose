@@ -26,6 +26,8 @@ pub(crate) struct ShadowMerge {
     sizes: Vec<usize>,
     /// Encoding and decoding errors.
     errors: Vec<String>,
+    /// Coordinated omission events the deltas left out at the cap.
+    dropped: u64,
     /// Where the run finds how the check ended.
     outcome: Arc<Mutex<Option<ShadowOutcome>>>,
 }
@@ -65,6 +67,7 @@ impl ShadowMerge {
             finals: GaggleAccumulator::new(template, settings),
             sizes: Vec::new(),
             errors: Vec::new(),
+            dropped: 0,
             outcome,
         }
     }
@@ -87,6 +90,11 @@ impl ShadowMerge {
                 if to_finals {
                     self.finals.apply(decoded);
                 } else {
+                    self.dropped += decoded
+                        .metrics
+                        .co
+                        .as_ref()
+                        .map_or(0, |co| co.events_dropped);
                     self.deltas.apply(decoded);
                 }
             }
@@ -123,7 +131,29 @@ impl ShadowMerge {
         for (name, accumulator) in [("deltas", &self.deltas), ("final", &self.finals)] {
             let (mut metrics, mut graph) = accumulator.merged();
             super::compare::adopt_unmerged(&mut metrics, run.0);
+            // Events the deltas left out at the cap are missing from them,
+            // and only from them; the count left out must account for it.
+            let capped = name == "deltas" && self.dropped > 0;
+            if capped {
+                let held = |metrics: &GooseMetrics| {
+                    metrics
+                        .coordinated_omission_metrics
+                        .as_ref()
+                        .map_or(0, |co| co.co_events.len() as u64)
+                };
+                if held(run.0) != held(&metrics) + self.dropped {
+                    differences.push(format!(
+                        "deltas: {} coordinated omission events held, {} merged and {} left out at the cap",
+                        held(run.0),
+                        held(&metrics),
+                        self.dropped
+                    ));
+                }
+            }
             for difference in super::compare::metrics_diff(&metrics, run.0) {
+                if capped && difference.starts_with("coordinated_omission_metrics.co_events") {
+                    continue;
+                }
                 differences.push(format!("{name}: metrics.{difference}"));
             }
             for difference in graph.gaggle_diff(run.1) {

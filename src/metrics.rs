@@ -3639,7 +3639,12 @@ impl MetricsProcessor {
                 self.metrics_epoch.fetch_add(1, AtomicOrdering::Relaxed);
                 #[cfg(feature = "gaggle")]
                 if let Some(state) = self.gaggle.as_mut() {
-                    state.reset(series_elapsed_secs, &running_users);
+                    let co_started = self
+                        .metrics
+                        .coordinated_omission_metrics
+                        .as_ref()
+                        .map(|co| co.started_secs);
+                    state.reset(series_elapsed_secs, &running_users, co_started);
                 }
                 // Clear rate series only. Active-users history (ramp + later
                 // changes) is kept on a continuous series clock so the dashboard
@@ -4487,8 +4492,9 @@ impl MetricsProcessor {
     pub(crate) fn gaggle_enable(&mut self, worker: u32) {
         let template = self.gaggle_template();
         let synthetic = template.coordinated_omission_metrics.is_some();
+        let lag = self.configuration.request_timeout().as_secs() as usize + 60;
         self.gaggle = Some(Box::new(crate::gaggle::worker::WorkerState::new(
-            worker, template, synthetic,
+            worker, template, synthetic, lag,
         )));
     }
 
@@ -4513,11 +4519,12 @@ impl MetricsProcessor {
     /// metrics.
     pub(crate) fn gaggle_template(&self) -> GooseMetrics {
         let mut template = GooseMetrics {
-            coordinated_omission_metrics: self
-                .metrics
-                .coordinated_omission_metrics
-                .as_ref()
-                .map(|co| CoordinatedOmissionMetrics::new(co.mitigation_strategy.clone())),
+            coordinated_omission_metrics: self.metrics.coordinated_omission_metrics.as_ref().map(
+                |co| CoordinatedOmissionMetrics {
+                    started_secs: co.started_secs,
+                    ..CoordinatedOmissionMetrics::new(co.mitigation_strategy.clone())
+                },
+            ),
             ..Default::default()
         };
         template.initialize_scenario_metrics(&self.scenarios, &self.configuration);

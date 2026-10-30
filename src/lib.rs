@@ -5530,6 +5530,46 @@ mod tests {
         }
     }
 
+    /// A worker's users start with global ordinals from its offset on: each
+    /// scenario counts the ordinals of the users that ran it.
+    #[tokio::test]
+    async fn gaggle_worker_users_start_at_offset() {
+        let configuration = GooseConfiguration::parse_args_default(&[
+            "--host",
+            "http://127.0.0.1:9",
+            "--users",
+            "3",
+            "--increase-rate",
+            "3",
+            "--run-time",
+            "1",
+            "--no-telnet",
+            "--quiet",
+        ])
+        .unwrap();
+        let mut attack = GooseAttack::initialize_with_config(configuration).unwrap();
+        for name in ["One", "Two", "Three"] {
+            attack = attack.register_scenario(
+                Scenario::new(name)
+                    .set_wait_time(Duration::from_secs(1), Duration::from_secs(1))
+                    .unwrap()
+                    .register_transaction(gaggle_noop()),
+            );
+        }
+        attack.set_user_slice(5, vec![0, 1, 2]);
+        let metrics = tokio::time::timeout(Duration::from_secs(20), attack.execute())
+            .await
+            .expect("the run ends")
+            .unwrap();
+        for (scenario, ordinal) in [(0, 5), (1, 6), (2, 7)] {
+            assert_eq!(
+                metrics.scenarios[scenario].users,
+                std::iter::once(ordinal).collect(),
+                "scenario {scenario}"
+            );
+        }
+    }
+
     /// A fixed plan for the hash tests, each part of it set.
     fn gaggle_plan() -> (Vec<Scenario>, GooseScheduler) {
         let one = Scenario::new("One")
