@@ -827,3 +827,179 @@ fn gaggle_merge_equals_one_process_3_workers() {
 fn gaggle_merge_equals_one_process_7_workers() {
     merge_equals_one_process(7);
 }
+
+/// Every difference between two merges.
+fn merge_diff(a: &GaggleAccumulator, b: &GaggleAccumulator) -> Vec<String> {
+    let ((x, g), (y, h)) = (a.merged(), b.merged());
+    let mut out = super::compare::metrics_diff(&x, &y);
+    out.extend(g.gaggle_diff(&h));
+    out
+}
+
+/// Apply `deltas`, in order, to a new accumulator.
+fn apply_all<'a>(deltas: impl IntoIterator<Item = &'a GaggleDelta>) -> GaggleAccumulator {
+    let mut accumulator = accumulator();
+    for delta in deltas {
+        accumulator.apply(wire(delta));
+    }
+    accumulator
+}
+
+/// B3: a delta lost in the middle is made good by the worker's final delta,
+/// and the gap is reported.
+#[test]
+fn gaggle_lost_delta_then_final_is_exact() {
+    let events = events(0x645);
+    let single = single(&events);
+    let mut deltas = worker_deltas(&events, 3);
+    let lost = deltas[1].remove(5);
+    assert_eq!(lost.kind, DeltaKind::Delta);
+    let accumulator = apply_all(deltas.iter().flatten());
+    assert_eq!(
+        accumulator.gaps(),
+        &[super::merge::SeqGap {
+            worker: 1,
+            expected: lost.seq,
+            received: lost.seq + 1,
+        }]
+    );
+    assert_none(
+        "lost delta, then final",
+        &differences(accumulator.merged(), &single),
+    );
+}
+
+/// B3: a worker lost with its last deltas and no final delta: what it sent
+/// stays merged, the loss is reported, and its seconds stop holding back
+/// which seconds are complete.
+#[test]
+fn gaggle_lost_worker_keeps_what_it_sent() {
+    let events = events(0x645);
+    let mut deltas = worker_deltas(&events, 3);
+    // Worker 1 sends nothing after its sixteenth delta, past the reset.
+    deltas[1].truncate(16);
+    let others = |deltas: &[Vec<GaggleDelta>]| -> Vec<GaggleDelta> {
+        deltas
+            .iter()
+            .enumerate()
+            .flat_map(|(worker, deltas)| {
+                deltas
+                    .iter()
+                    .filter(move |delta| worker == 1 || delta.kind == DeltaKind::Delta)
+                    .cloned()
+            })
+            .collect()
+    };
+    let received = others(&deltas);
+    let mut accumulator = apply_all(&received);
+    // Worker 1's last delta holds back completion until it is lost.
+    let held = deltas[1].last().unwrap().now.saturating_sub(1);
+    assert_eq!(accumulator.complete_before(), Some(held));
+    accumulator.done(0);
+    accumulator.done(2);
+    assert_eq!(accumulator.complete_before(), Some(held));
+    accumulator.lose(1);
+    assert_eq!(accumulator.complete_before(), None);
+    assert_eq!(
+        accumulator.gaps(),
+        &[super::merge::SeqGap {
+            worker: 1,
+            expected: 17,
+            received: 0,
+        }]
+    );
+    // The same deltas, every worker done: the merge of what was received.
+    let mut expected = apply_all(&received);
+    for worker in 0..3 {
+        expected.done(worker);
+    }
+    assert_none("lost worker", &merge_diff(&accumulator, &expected));
+    // And every request worker 1 counted in what it sent is there.
+    let epoch = deltas[1].last().unwrap().epoch;
+    let sent: i64 = deltas[1]
+        .iter()
+        .filter(|delta| delta.epoch == epoch)
+        .flat_map(|delta| delta.metrics.requests.values())
+        .map(|request| request.success + request.fail)
+        .sum();
+    let (metrics, _) = accumulator.merged();
+    let (without, _) = {
+        let mut without = apply_all(received.iter().filter(|delta| delta.worker != 1));
+        without.done(0);
+        without.done(2);
+        without.merged()
+    };
+    let count = |metrics: &GooseMetrics| -> i64 {
+        metrics
+            .requests
+            .values()
+            .map(|request| (request.success_count + request.fail_count) as i64)
+            .sum()
+    };
+    assert!(sent > 0);
+    assert_eq!(count(&metrics), count(&without) + sent);
+}
+
+/// B3: a delta from an epoch before the worker's last metrics reset is
+/// discarded.
+#[test]
+fn gaggle_older_epoch_is_discarded() {
+    let events = events(0x645);
+    let deltas = worker_deltas(&events, 2);
+    let mut accumulator = apply_all(deltas.iter().flatten());
+    let before = apply_all(deltas.iter().flatten());
+    let newest = deltas[0].last().unwrap().epoch;
+    let mut stale = deltas[0]
+        .iter()
+        .find(|delta| delta.epoch < newest && !delta.metrics.requests.is_empty())
+        .cloned()
+        .expect("a delta from before the reset");
+    stale.seq = 1_000;
+    stale.first_seq = 1_000;
+    stale.kind = DeltaKind::Delta;
+    accumulator.apply(wire(&stale));
+    assert_none("older epoch", &merge_diff(&accumulator, &before));
+    assert!(accumulator.gaps().is_empty());
+}
+
+/// B4: applying two consecutive deltas coalesced equals applying them one
+/// after the other, for pairs across the run, across the metrics reset and
+/// ending in a final delta.
+#[test]
+fn gaggle_coalesce_equals_apply_apply() {
+    let events = events(0x645);
+    let deltas = worker_deltas(&events, 3);
+    let mut rng = Rng(0xc0a1);
+    let reset = deltas[0]
+        .windows(2)
+        .position(|pair| pair[0].epoch != pair[1].epoch)
+        .expect("a reset");
+    let last = deltas[0].len() - 2;
+    let mut pairs: Vec<(usize, usize)> = vec![(0, reset), (0, last), (2, 0)];
+    for _ in 0..8 {
+        let worker = rng.below(3) as usize;
+        let at = rng.below(deltas[worker].len() as u64 - 1) as usize;
+        pairs.push((worker, at));
+    }
+    let expected = apply_all(deltas.iter().flatten());
+    for (worker, at) in pairs {
+        let joined = coalesce(&deltas[worker][at], &deltas[worker][at + 1]);
+        let replaced: Vec<GaggleDelta> = deltas
+            .iter()
+            .enumerate()
+            .flat_map(|(w, deltas)| {
+                let mut deltas = deltas.clone();
+                if w == worker {
+                    deltas.splice(at..at + 2, [joined.clone()]);
+                }
+                deltas
+            })
+            .collect();
+        let accumulator = apply_all(&replaced);
+        assert!(accumulator.gaps().is_empty(), "{:?}", accumulator.gaps());
+        assert_none(
+            &format!("coalesced worker {worker} deltas {at} and {}", at + 1),
+            &merge_diff(&accumulator, &expected),
+        );
+    }
+}

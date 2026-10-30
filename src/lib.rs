@@ -5394,4 +5394,205 @@ mod tests {
             "users weighted later were given a newly built shared client"
         );
     }
+
+    /// A transaction that does nothing, for plans in tests.
+    fn gaggle_noop() -> Transaction {
+        Transaction::new(Arc::new(|_user| Box::pin(async { Ok(()) })))
+    }
+
+    /// A load test with three weighted scenarios and `scheduler`.
+    fn gaggle_attack(scheduler: GooseScheduler) -> GooseAttack {
+        let configuration =
+            GooseConfiguration::parse_args_default(&["--host", "http://127.0.0.1"]).unwrap();
+        let mut attack = GooseAttack::initialize_with_config(configuration)
+            .unwrap()
+            .set_scheduler(scheduler);
+        for (name, weight) in [("One", 3), ("Two", 2), ("Three", 1)] {
+            attack = attack.register_scenario(
+                Scenario::new(name)
+                    .set_weight(weight)
+                    .unwrap()
+                    .register_transaction(gaggle_noop()),
+            );
+        }
+        attack
+    }
+
+    /// Splits of `total` users over `workers` workers: one each way the
+    /// generator enumerates, uneven, some empty when there are more workers
+    /// than users.
+    fn gaggle_splits(total: usize, workers: usize, seed: u64) -> Vec<Vec<usize>> {
+        let mut state = seed;
+        let mut next = |modulus: usize| {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (state >> 33) as usize % modulus.max(1)
+        };
+        let mut splits = Vec::new();
+        // Even, everything on the first worker, everything on the last.
+        splits.push(
+            (0..workers)
+                .map(|w| (w + 1) * total / workers - w * total / workers)
+                .collect(),
+        );
+        let mut first = vec![0; workers];
+        first[0] = total;
+        splits.push(first);
+        let mut last = vec![0; workers];
+        last[workers - 1] = total;
+        splits.push(last);
+        for _ in 0..12 {
+            let mut cuts: Vec<usize> = (0..workers - 1).map(|_| next(total + 1)).collect();
+            cuts.sort_unstable();
+            let mut split = Vec::with_capacity(workers);
+            let mut from = 0;
+            for cut in cuts.into_iter().chain([total]) {
+                split.push(cut - from);
+                from = cut;
+            }
+            splits.push(split);
+        }
+        splits
+    }
+
+    /// The scenario of each user a single process starts, in the order it
+    /// starts them, by the allocation before Gaggle: the weighted list
+    /// repeated, built in order and popped from the end.
+    fn gaggle_single_order(attack: &mut GooseAttack, total: usize) -> Vec<usize> {
+        let weighted = attack.allocate_scenarios();
+        let mut built: Vec<usize> = Vec::new();
+        while built.len() < total {
+            for &scenario in &weighted {
+                built.push(scenario);
+                if built.len() == total {
+                    break;
+                }
+            }
+        }
+        let mut started = Vec::new();
+        while let Some(scenario) = built.pop() {
+            started.push(scenario);
+        }
+        started
+    }
+
+    /// B5: workers running shares of the users from their global ordinals
+    /// start, in turn, exactly the scenarios one process running them all
+    /// would, for every split tried, with the deterministic schedulers
+    /// working out their own share and the random one handed its slice.
+    #[test]
+    fn gaggle_ordinals_match_one_process() {
+        for scheduler in [
+            GooseScheduler::RoundRobin,
+            GooseScheduler::Serial,
+            GooseScheduler::Random,
+        ] {
+            for total in [1, 4, 10, 1_000] {
+                let mut single = gaggle_attack(scheduler.clone());
+                let expected = match scheduler {
+                    GooseScheduler::Random => single.user_scenarios(total),
+                    _ => gaggle_single_order(&mut single, total),
+                };
+                assert_eq!(expected.len(), total);
+                if !matches!(scheduler, GooseScheduler::Random) {
+                    assert_eq!(single.user_scenarios(total), expected);
+                }
+                for workers in 1..=7 {
+                    for split in gaggle_splits(total, workers, (total * 31 + workers) as u64) {
+                        let mut started = Vec::new();
+                        let mut offset = 0;
+                        for users in split {
+                            let mut worker = gaggle_attack(scheduler.clone());
+                            match scheduler {
+                                GooseScheduler::Random => worker.set_user_slice(
+                                    offset,
+                                    expected[offset..offset + users].to_vec(),
+                                ),
+                                _ => worker.set_user_ordinals(offset, users, total),
+                            }
+                            assert_eq!(worker.user_offset, offset);
+                            // The worker builds its users in this order and
+                            // pops them, last first.
+                            let mut built = worker.user_scenario_order(users);
+                            while let Some(scenario) = built.pop() {
+                                started.push(scenario);
+                            }
+                            offset += users;
+                        }
+                        assert_eq!(
+                            started, expected,
+                            "{scheduler:?}, {total} users on {workers} workers"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// A fixed plan for the hash tests, each part of it set.
+    fn gaggle_plan() -> (Vec<Scenario>, GooseScheduler) {
+        let one = Scenario::new("One")
+            .set_weight(3)
+            .unwrap()
+            .set_wait_time(Duration::from_millis(100), Duration::from_millis(250))
+            .unwrap()
+            .set_host("http://one.example")
+            .register_transaction(gaggle_noop().set_name("start").set_on_start())
+            .register_transaction(gaggle_noop().set_name("index").set_weight(4).unwrap())
+            .register_transaction(gaggle_noop().set_name("about").set_sequence(2))
+            .register_transaction(gaggle_noop().set_name("stop").set_on_stop());
+        let two = Scenario::new("Two")
+            .register_transaction(gaggle_noop().set_name_for_transaction_and_requests("all"));
+        (vec![one, two], GooseScheduler::RoundRobin)
+    }
+
+    /// B6: the plan hash of a fixed plan never drifts, equal plans built
+    /// twice hash equal, and changing any one part changes it.
+    #[test]
+    fn gaggle_plan_hash_is_stable() {
+        let (scenarios, scheduler) = gaggle_plan();
+        let hash = plan_hash(&scenarios, &scheduler);
+        assert_eq!(hash, GAGGLE_PLAN_HASH, "the golden plan hash: {hash:#x}");
+        let (again, scheduler_again) = gaggle_plan();
+        assert_eq!(plan_hash(&again, &scheduler_again), hash);
+
+        type Change = fn(&mut Vec<Scenario>, &mut GooseScheduler);
+        let changes: [(&str, Change); 14] = [
+            ("scenario name", |s, _| s[1].name = Arc::from("Twos")),
+            ("scenario weight", |s, _| s[0].weight = 2),
+            ("wait time", |s, _| {
+                s[0].transaction_wait =
+                    Some((Duration::from_millis(100), Duration::from_millis(251)))
+            }),
+            ("no wait time", |s, _| s[0].transaction_wait = None),
+            ("host", |s, _| {
+                s[0].host = Some("http://two.example".to_string())
+            }),
+            ("no host", |s, _| s[0].host = None),
+            ("transaction name", |s, _| {
+                s[0].transactions[1].name = TransactionName::TransactionOnly(Arc::from("home"))
+            }),
+            ("transaction name kind", |s, _| {
+                s[1].transactions[0].name = TransactionName::TransactionOnly(Arc::from("all"))
+            }),
+            ("transaction weight", |s, _| s[0].transactions[1].weight = 5),
+            ("sequence", |s, _| s[0].transactions[2].sequence = 3),
+            ("on start", |s, _| s[0].transactions[0].on_start = false),
+            ("on stop", |s, _| s[0].transactions[3].on_stop = false),
+            ("order", |s, _| s.swap(0, 1)),
+            ("scheduler", |_, scheduler| {
+                *scheduler = GooseScheduler::Serial
+            }),
+        ];
+        for (what, change) in changes {
+            let (mut scenarios, mut scheduler) = gaggle_plan();
+            change(&mut scenarios, &mut scheduler);
+            assert_ne!(plan_hash(&scenarios, &scheduler), hash, "{what}");
+        }
+    }
+
+    /// The golden value of [`gaggle_plan`]'s hash: changing it changes every
+    /// plan's hash, which the CHANGELOG must say.
+    const GAGGLE_PLAN_HASH: u64 = 0xda7d_f883_b1f9_971b;
 }

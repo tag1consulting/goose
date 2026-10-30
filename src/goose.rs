@@ -6400,6 +6400,9 @@ mod tests {
     /// `process_batch`), as user threads and the metrics processor do, and
     /// returns the processor and the synthetic times coordinated omission
     /// mitigation should add for each name.
+    ///
+    /// With `workers` above 1, user `u` sends to processor `u % workers`, each
+    /// a Gaggle worker, and the metrics are their deltas merged.
     fn audit_run(
         requests: &[AuditRequest],
         names: usize,
@@ -6407,44 +6410,58 @@ mod tests {
         stalls: &[(usize, usize, u64, u64)],
         rng: &mut AuditRng,
         collect: bool,
-    ) -> (crate::metrics::MetricsProcessor, Vec<Vec<u64>>) {
+        workers: usize,
+    ) -> (crate::metrics::GooseMetrics, Vec<Vec<u64>>) {
         let args: &[&str] = if collect { &["--dashboard"] } else { &[] };
         let mut configuration = GooseConfiguration::parse_args_default(args).unwrap();
         let co = !stalls.is_empty();
         if co {
             configuration.co_mitigation = Some(GooseCoordinatedOmissionMitigation::Average);
         }
-        let registry: crate::metrics::GooseRequestCounterRegistry =
-            Arc::new(std::sync::Mutex::new(HashMap::new()));
-        let (_metrics_tx, metrics_rx) = flume::unbounded();
-        let (_cmd_tx, cmd_rx) = flume::unbounded();
-        let mut metrics = crate::metrics::GooseMetrics::default();
-        if co {
-            metrics.coordinated_omission_metrics =
-                Some(crate::metrics::CoordinatedOmissionMetrics::new(
-                    GooseCoordinatedOmissionMitigation::Average,
-                ));
+        let mut sides = Vec::new();
+        for _ in 0..workers {
+            let registry: crate::metrics::GooseRequestCounterRegistry =
+                Arc::new(std::sync::Mutex::new(HashMap::new()));
+            let (_metrics_tx, metrics_rx) = flume::unbounded();
+            let (_cmd_tx, cmd_rx) = flume::unbounded();
+            let mut metrics = crate::metrics::GooseMetrics::default();
+            if co {
+                metrics.coordinated_omission_metrics =
+                    Some(crate::metrics::CoordinatedOmissionMetrics::new(
+                        GooseCoordinatedOmissionMitigation::Average,
+                    ));
+            }
+            let processor = crate::metrics::MetricsProcessor::new(
+                metrics_rx,
+                cmd_rx,
+                metrics,
+                crate::graph::GraphData::for_metrics_processor(
+                    configuration.records_latency_series(),
+                    configuration.records_synthetic_latency(),
+                    configuration.records_latency_columns(),
+                ),
+                configuration.clone(),
+                Vec::new(),
+                crate::config::GooseDefaults::default(),
+                registry.clone(),
+                None,
+                Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                false,
+            );
+            let (tx, rx) = flume::unbounded();
+            sides.push((processor, registry, tx, rx));
         }
-        let mut processor = crate::metrics::MetricsProcessor::new(
-            metrics_rx,
-            cmd_rx,
-            metrics,
-            crate::graph::GraphData::for_metrics_processor(
-                configuration.records_latency_series(),
-                configuration.records_synthetic_latency(),
-                configuration.records_latency_columns(),
-            ),
-            configuration.clone(),
-            Vec::new(),
-            crate::config::GooseDefaults::default(),
-            registry.clone(),
-            None,
-            Arc::new(std::sync::atomic::AtomicU64::new(0)),
-            false,
-        );
-        let (mut batching, rx) = batching_users(&configuration, users);
-        for user in batching.iter_mut() {
-            user.request_counters = Some(registry.clone());
+        #[cfg(feature = "gaggle")]
+        if workers > 1 {
+            for (worker, side) in sides.iter_mut().enumerate() {
+                side.0.gaggle_enable(worker as u32);
+            }
+        }
+        let (mut batching, _rx) = batching_users(&configuration, users);
+        for (user, batching) in batching.iter_mut().enumerate() {
+            let (_, registry, tx, _) = &sides[user % workers];
+            batching.request_counters = Some(registry.clone());
+            batching.metrics_channel = Some(tx.clone());
         }
         let mut limits: Vec<usize> = (0..users).map(|_| 1 + rng.below(100) as usize).collect();
         let mut synthetic: Vec<Vec<u64>> = vec![Vec::new(); names];
@@ -6507,11 +6524,29 @@ mod tests {
         for user in batching.iter_mut() {
             user.flush_batch().unwrap();
         }
-        for batch in received_batches(&rx) {
-            processor.process_batch_for_test(batch);
+        for (processor, _, _, rx) in sides.iter_mut() {
+            for batch in received_batches(rx) {
+                processor.process_metric_for_test(GooseMetric::Batch(Box::new(batch)));
+            }
+            processor.sync_atomic_counters_for_test();
         }
-        processor.sync_atomic_counters_for_test();
-        (processor, synthetic)
+        if workers == 1 {
+            return (sides[0].0.metrics_for_test().clone(), synthetic);
+        }
+        #[cfg(feature = "gaggle")]
+        {
+            let mut manager = crate::gaggle::merge::GaggleAccumulator::new(
+                sides[0].0.gaggle_template(),
+                sides[0].0.gaggle_graph_settings(),
+            );
+            for (worker, (processor, _, _, _)) in sides.iter_mut().enumerate() {
+                manager.apply(processor.gaggle_take_delta(1).unwrap());
+                manager.done(worker as u32);
+            }
+            (manager.merged().0, synthetic)
+        }
+        #[cfg(not(feature = "gaggle"))]
+        unreachable!("more than one worker needs the gaggle feature")
     }
 
     /// For 200 seeded datasets of up to 1,000 requests, split across users
@@ -6523,7 +6558,17 @@ mod tests {
     #[test]
     fn whole_run_figures_match_a_reference() {
         for collect in [false, true] {
-            audit_whole_run(&[1, 2, 3, 10, 1_000], 200, collect);
+            audit_whole_run(&[1, 2, 3, 10, 1_000], 200, collect, 1);
+        }
+    }
+
+    /// [`whole_run_figures_match_a_reference`] with each dataset's users
+    /// split across three Gaggle workers and their deltas merged.
+    #[cfg(feature = "gaggle")]
+    #[test]
+    fn gaggle_whole_run_figures_match_a_reference() {
+        for collect in [false, true] {
+            audit_whole_run(&[1, 2, 3, 10, 1_000], 200, collect, 3);
         }
     }
 
@@ -6534,14 +6579,14 @@ mod tests {
     #[ignore]
     fn whole_run_figures_match_a_reference_full() {
         for collect in [false, true] {
-            audit_whole_run(&[1, 2, 3, 10, 1_000, 100_000], 200, collect);
+            audit_whole_run(&[1, 2, 3, 10, 1_000, 100_000], 200, collect, 1);
         }
     }
 
     /// Runs `datasets` seeded datasets, cycling through `sizes`, and checks
     /// every whole run figure on the dashboard, in the reports and on the
     /// console against an independent reference.
-    fn audit_whole_run(sizes: &[usize], datasets: usize, collect: bool) {
+    fn audit_whole_run(sizes: &[usize], datasets: usize, collect: bool, workers: usize) {
         let mut rng = AuditRng(0x713);
         let mut checked = 0usize;
         let mut mismatches: Vec<Mismatch> = Vec::new();
@@ -6584,9 +6629,9 @@ mod tests {
             } else {
                 Vec::new()
             };
-            let (processor, synthetic) =
-                audit_run(&requests, names, users, &stalls, &mut rng, collect);
-            let metrics = processor.metrics_for_test();
+            let (metrics, synthetic) =
+                audit_run(&requests, names, users, &stalls, &mut rng, collect, workers);
+            let metrics = &metrics;
 
             // The references: each name's measured times, all of them, and
             // with stalls, measured and synthetic together.

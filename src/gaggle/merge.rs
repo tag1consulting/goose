@@ -109,9 +109,18 @@ impl GaggleAccumulator {
     /// and its seconds no longer hold back which seconds are complete.
     // Called by the manager in Gaggle step 2; tested here.
     #[cfg_attr(not(test), allow(dead_code))]
+    /// The loss is recorded in [`Self::gaps`] as a gap from the worker's
+    /// next sequence number, with nothing (0) received.
     pub(crate) fn lose(&mut self, worker: u32) {
-        if let Some(worker) = self.workers.get_mut(&worker) {
-            worker.lost = true;
+        if let Some(total) = self.workers.get_mut(&worker) {
+            if !total.lost && !total.finished {
+                self.gaps.push(SeqGap {
+                    worker,
+                    expected: total.last_seq + 1,
+                    received: 0,
+                });
+            }
+            total.lost = true;
         }
     }
 
