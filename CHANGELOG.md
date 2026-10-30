@@ -2,6 +2,9 @@
 
 ## 0.19.1-dev
 
+ - [#791](https://github.com/tag1consulting/goose/pull/791) the JSON report wrote sub millisecond minimums, maximums and percentiles as 0, from the whole millisecond fields `Millis` serializes truncated; each row now also writes every one in microseconds, as `percentile_50_us`, `response_time_minimum_us` and so on beside the unchanged whole millisecond fields, so the JSON report agrees with the HTML and Markdown reports, and loads as a baseline in 0.19.0 as before
+ - [#791](https://github.com/tag1consulting/goose/pull/791) **deprecation**: the JSON report's whole millisecond row fields, `percentile_*`, `response_time_minimum` and `response_time_maximum` without `_us`, are deprecated; they truncate to whole milliseconds, so read the `_us` fields beside them; Goose 0.20 stops writing them, stops loading 0.18 reports as baselines, and writes reports that 0.19.x can't load as baselines
+
 ## 0.19.0 October 29, 2026
  - [#784](https://github.com/tag1consulting/goose/pull/784) the first line of `-h` and `--help` names the Goose version, `Goose 0.19.0: an HTTP(S) load testing tool written in Rust`; the Book shows the help of the release, without a pre-release suffix such as `-dev`, and its check fails when the release number changes until the help is regenerated
  - [#783](https://github.com/tag1consulting/goose/pull/783) build the Goose Book in CI with mdBook 0.5.4, failing on any warning or error it logs (a missing include logs an error and still exits 0); drop `multilingual` from `book.toml`, which mdBook 0.5 refuses

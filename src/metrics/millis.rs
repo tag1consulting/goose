@@ -9,7 +9,10 @@ use std::fmt::{Display, Formatter};
 ///
 /// It serializes as whole milliseconds, truncated as Goose always took them,
 /// so a JSON report's rows read as they did; it deserializes from whole
-/// milliseconds.
+/// milliseconds. A JSON report row also writes each one in microseconds, in
+/// a field named for it with `_us` added, so the report keeps the time the
+/// other reports show. The whole millisecond fields are deprecated; see the
+/// `TODO(0.20)` note in `src/report.rs` for their removal in 0.20.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct Millis(pub u64);
 
