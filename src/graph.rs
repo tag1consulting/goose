@@ -1436,7 +1436,10 @@ impl LatencyHistograms {
         let mut sink = ColumnSink::own(origin, self.request_width);
         #[cfg(feature = "gaggle")]
         if let Some((_, synthetic)) = self.folded.as_mut() {
-            sink.seconds = Some(synthetic.entry(key.to_string()).or_default());
+            if !synthetic.contains_key(key) {
+                synthetic.insert(key.to_string(), BTreeMap::new());
+            }
+            sink.seconds = synthetic.get_mut(key);
         }
         if let Some(ring) = by_request.get_mut(key) {
             ring.record_to(second, us, rev, &mut sink);

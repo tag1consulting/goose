@@ -100,11 +100,11 @@ impl GaggleAccumulator {
     }
 
     /// The worker is gone without a final delta: what it sent stays merged,
-    /// and its seconds no longer hold back which seconds are complete.
+    /// and its seconds no longer hold back which seconds are complete. The
+    /// loss of a worker that sent anything is recorded in [`Self::gaps`] as
+    /// a gap from its next sequence number, with nothing (0) received.
     // Called by the manager in Gaggle step 2; tested here.
     #[cfg_attr(not(test), allow(dead_code))]
-    /// The loss is recorded in [`Self::gaps`] as a gap from the worker's
-    /// next sequence number, with nothing (0) received.
     pub(crate) fn lose(&mut self, worker: u32) {
         if let Some(total) = self.workers.get_mut(&worker) {
             if !total.lost && !total.finished {
@@ -199,8 +199,11 @@ impl GaggleAccumulator {
 
 /// Two consecutive deltas from one worker as one: applying it is applying
 /// `a` then `b`. A newer epoch in `b` starts again from `b`, and a final
-/// `b` replaces `a`. Coordinated omission events stay capped at
-/// [`super::delta::MAX_CO_EVENTS_PER_DELTA`] in a delta, the oldest kept.
+/// `b` replaces `a`. Two exceptions: coordinated omission events stay
+/// capped at [`super::delta::MAX_CO_EVENTS_PER_DELTA`] in a delta, the
+/// oldest kept, where applying both keeps up to the cap from each; and a
+/// final `a` followed by a delta of a newer epoch does not mark the worker
+/// finished.
 // Bounds a worker's send queue in Gaggle step 2; tested here.
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn coalesce(a: &GaggleDelta, b: &GaggleDelta) -> GaggleDelta {

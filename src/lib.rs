@@ -1186,6 +1186,10 @@ impl GooseAttack {
             return Ok(());
         };
         let outcome = slot.lock().ok().and_then(|mut outcome| outcome.take());
+        #[cfg(test)]
+        if let Ok(mut last) = GAGGLE_SHADOW_LAST.lock() {
+            last.clone_from(&outcome);
+        }
         let differences = match outcome {
             Some(outcome) if outcome.differences.is_empty() => {
                 println!("{}", outcome.summary());
@@ -1363,7 +1367,7 @@ impl GooseAttack {
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn set_user_ordinals(&mut self, offset: usize, users: usize, total: usize) {
         let all = self.user_scenarios(total);
-        let slice = all[offset.min(total)..(offset + users).min(total)].to_vec();
+        let slice = all[offset.min(all.len())..(offset + users).min(all.len())].to_vec();
         self.set_user_slice(offset, slice);
     }
 
@@ -4138,6 +4142,10 @@ fn schedule_unsequenced_transactions(
     weighted_transactions
 }
 
+/// The last `--gaggle-shadow-merge` outcome a run reported (unit tests).
+#[cfg(all(test, feature = "gaggle"))]
+static GAGGLE_SHADOW_LAST: Mutex<Option<gaggle::shadow::ShadowOutcome>> = Mutex::new(None);
+
 /// The load test plan's hash, the same for the same plan on any build: a
 /// 64 bit FNV-1a over each scenario's name, weight, `transaction_wait` and
 /// host, and each of its transactions' name, weight, sequence and on start
@@ -5568,6 +5576,51 @@ mod tests {
                 "scenario {scenario}"
             );
         }
+    }
+
+    /// `--gaggle-shadow-merge` runs inside `execute()`: the shadow merge is
+    /// enabled, takes a delta each second and matches.
+    #[cfg(feature = "gaggle")]
+    #[tokio::test]
+    async fn gaggle_shadow_merge_runs_in_execute() {
+        let configuration = GooseConfiguration::parse_args_default(&[
+            "--host",
+            "http://127.0.0.1:9",
+            "--users",
+            "2",
+            "--increase-rate",
+            "2",
+            "--run-time",
+            "3",
+            "--no-telnet",
+            "--quiet",
+            "--gaggle-shadow-merge",
+        ])
+        .unwrap();
+        let get = Transaction::new(Arc::new(|user| {
+            Box::pin(async move {
+                let _ = user.get("/").await;
+                Ok(())
+            })
+        }));
+        let attack = GooseAttack::initialize_with_config(configuration)
+            .unwrap()
+            .register_scenario(Scenario::new("One").register_transaction(get));
+        tokio::time::timeout(Duration::from_secs(20), attack.execute())
+            .await
+            .expect("the run ends")
+            .expect("the shadow merge matches");
+        let outcome = GAGGLE_SHADOW_LAST
+            .lock()
+            .unwrap()
+            .take()
+            .expect("execute ran the shadow merge");
+        assert!(outcome.differences.is_empty(), "{:?}", outcome.differences);
+        assert!(
+            outcome.deltas >= 4,
+            "a delta each second of a 3 s run, then the last and final: {}",
+            outcome.deltas
+        );
     }
 
     /// A fixed plan for the hash tests, each part of it set.

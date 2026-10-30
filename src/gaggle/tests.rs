@@ -1219,12 +1219,14 @@ fn gaggle_seconds_a_ring_apart_reach_the_manager() {
     let measured = &graph.latency["GET /n001"];
     assert!(
         measured.contains_key(&5) && measured.contains_key(&305),
-        "{measured:?}"
+        "{:?}",
+        measured
     );
     let synthetic = &graph.synthetic["GET /n001"];
     assert!(
         synthetic.contains_key(&3) && synthetic.contains_key(&303),
-        "{synthetic:?}"
+        "{:?}",
+        synthetic
     );
     for finals in [false, true] {
         assert_none(
