@@ -150,3 +150,87 @@ async fn a_0_18_1_report_still_loads_as_a_baseline() {
     assert!(std::fs::read_to_string(&md).unwrap().contains("Aggregated"));
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// `--render-report` converts a Goose 0.18 JSON report, which holds only
+/// whole millisecond rows and timing data, to the current form: each row
+/// writes its times in microseconds in the `_us` fields, from the whole
+/// milliseconds it held, and the timing data writes `times_us`. The
+/// converted report loads as a baseline.
+#[tokio::test]
+#[serial]
+async fn render_report_converts_a_0_18_1_report() {
+    let server = MockServer::start();
+    setup_mock_server_endpoints(&server);
+    let dir = temp_dir("convert");
+    let fixture = format!(
+        "{}/tests/fixtures/report-0.18.1.json",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let converted = dir.join("converted.json").to_string_lossy().into_owned();
+    let configuration = goose::config::GooseConfiguration::parse_args_default(&[
+        "--render-report",
+        &fixture,
+        "--report-file",
+        &converted,
+    ])
+    .unwrap();
+    GooseAttack::initialize_with_config(configuration)
+        .unwrap()
+        .register_scenario(scenario!("LoadTest").register_transaction(transaction!(get_page)))
+        .execute()
+        .await
+        .unwrap();
+
+    let old: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&fixture).unwrap()).unwrap();
+    let new: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&converted).unwrap()).unwrap();
+    let times = ["response_time_minimum", "response_time_maximum"];
+    let percentiles = [
+        "percentile_50",
+        "percentile_60",
+        "percentile_70",
+        "percentile_80",
+        "percentile_90",
+        "percentile_95",
+        "percentile_99",
+        "percentile_100",
+    ];
+    for (table, fields) in [
+        ("raw_request_metrics", &times[..]),
+        ("raw_response_metrics", &percentiles[..]),
+        ("transaction_metrics", &times[..]),
+        ("scenario_metrics", &times[..]),
+    ] {
+        let old_rows = old[table].as_array().unwrap();
+        let new_rows = new[table].as_array().unwrap();
+        assert_eq!(old_rows.len(), new_rows.len(), "{}", table);
+        for (old_row, new_row) in old_rows.iter().zip(new_rows) {
+            for field in fields {
+                let ms = old_row[field].as_u64().unwrap();
+                assert_eq!(new_row[field].as_u64(), Some(ms), "{} {}", table, field);
+                let field_us = format!("{field}_us");
+                assert_eq!(
+                    new_row[&field_us].as_u64(),
+                    Some(ms * 1000),
+                    "{} {}",
+                    table,
+                    field_us
+                );
+            }
+        }
+    }
+    for (key, request) in new["raw_metrics"]["requests"].as_object().unwrap() {
+        assert!(request["raw_data"]["times_us"].is_object(), "{}", key);
+    }
+
+    let md = dir.join("against.md").to_string_lossy().into_owned();
+    run(
+        &server,
+        vec!["--baseline-file", &converted, "--report-file", &md],
+    )
+    .await
+    .expect("the converted report loads as a baseline");
+    assert!(std::fs::read_to_string(&md).unwrap().contains("Aggregated"));
+    std::fs::remove_dir_all(&dir).ok();
+}
