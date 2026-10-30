@@ -96,27 +96,31 @@ pub(crate) fn text_diff(name: &str, a: &str, b: &str, out: &mut Vec<String>) {
         tokens
     }
     let (x, y) = (tokens(a), tokens(b));
-    let same = x.len() == y.len()
-        && x.iter().zip(&y).all(|(x, y)| {
-            x == y
-                || (x.0
-                    && y.0
-                    && matches!(
-                        (x.1.parse::<f64>(), y.1.parse::<f64>()),
-                        (Ok(p), Ok(q)) if f32_close(p as f32, q as f32)
-                    ))
-        });
-    if !same {
-        let line = a
-            .lines()
-            .zip(b.lines())
-            .position(|(p, q)| p != q)
-            .unwrap_or(0);
+    let close = |x: &(bool, &str), y: &(bool, &str)| {
+        x == y
+            || (x.0
+                && y.0
+                && matches!(
+                    (x.1.parse::<f64>(), y.1.parse::<f64>()),
+                    (Ok(p), Ok(q)) if f32_close(p as f32, q as f32)
+                ))
+    };
+    let first = x
+        .iter()
+        .zip(&y)
+        .position(|(x, y)| !close(x, y))
+        .or_else(|| (x.len() != y.len()).then(|| x.len().min(y.len())));
+    if let Some(at) = first {
+        let context = |tokens: &[(bool, &str)]| {
+            tokens[at.saturating_sub(6)..(at + 6).min(tokens.len())]
+                .iter()
+                .map(|(_, text)| *text)
+                .collect::<String>()
+        };
         out.push(format!(
-            "{name}: line {}: {:?} != {:?}",
-            line + 1,
-            a.lines().nth(line).unwrap_or(""),
-            b.lines().nth(line).unwrap_or("")
+            "{name}: token {at}: {:?} != {:?}",
+            context(&x),
+            context(&y)
         ));
     }
 }

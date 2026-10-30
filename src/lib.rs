@@ -42,10 +42,10 @@ extern crate log;
 pub mod client;
 pub mod config;
 pub mod controller;
-#[cfg(feature = "gaggle")]
-mod gaggle;
 #[cfg(feature = "dashboard")]
 mod dashboard;
+#[cfg(feature = "gaggle")]
+mod gaggle;
 pub mod goose;
 mod graph;
 pub mod logger;
@@ -1194,11 +1194,10 @@ impl GooseAttack {
             Some(outcome) => outcome.differences,
             None => vec!["the shadow merge did not finish".to_string()],
         };
-        let folder = self
-            .output
-            .folder
-            .as_ref()
-            .map_or_else(|| std::path::PathBuf::from("."), |folder| folder.path.clone());
+        let folder = self.output.folder.as_ref().map_or_else(
+            || std::path::PathBuf::from("."),
+            |folder| folder.path.clone(),
+        );
         let path = folder.join(gaggle::shadow::DIFF_FILE);
         let mut text = differences.join("\n");
         text.push('\n');

@@ -10,12 +10,12 @@
 //! Not to be confused with `metrics::delta`, the differences a report shows
 //! against a baseline run.
 
+use crate::goose::GooseMethod;
 use crate::metrics::coordinated_omission::{CoEvent, CoSeverity};
 use crate::metrics::{
     buckets, GooseCoordinatedOmissionMitigation, GooseRequestMetricTimingData,
     StatusCodeTimingSummary,
 };
-use crate::goose::GooseMethod;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 

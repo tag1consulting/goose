@@ -3869,7 +3869,12 @@ mod gaggle {
         /// Add one second's synthetic response times for `key`: to all
         /// requests', and to the name's own when it has a measured ring, as
         /// [`Self::record_synthetic`] does.
-        fn merge_synthetic_second(&mut self, key: &str, second: usize, histogram: &SecondHistogram) {
+        fn merge_synthetic_second(
+            &mut self,
+            key: &str,
+            second: usize,
+            histogram: &SecondHistogram,
+        ) {
             self.fit_columns(second);
             let rev = self.next_rev();
             let (origin, columns) = (self.origin, self.all_columns.is_some());
@@ -4120,29 +4125,31 @@ mod gaggle {
                 graph_data.record_scenarios_per_second_batch(second as usize, count as usize);
             }
             if let Some(latency) = graph_data.latency.as_mut() {
-                // Each second's histograms in order, measured before
-                // synthetic, so names are admitted as a single process
-                // admits names first seen in that order.
-                let mut seconds: BTreeMap<Second, Vec<(bool, &str, &Histogram)>> = BTreeMap::new();
+                // Measured times first, each second in order and by name
+                // within it, so names are admitted to rings as a single
+                // process admits names first seen in that order. Synthetic
+                // times after: a single process records them, back dated to
+                // when a stall began, only while it handles a later request
+                // of the same name, so the name was admitted first.
                 for (synthetic, by_key) in [(false, &part.latency), (true, &part.synthetic)] {
+                    let mut seconds: BTreeMap<Second, Vec<(&str, &Histogram)>> = BTreeMap::new();
                     for (key, rows) in by_key {
-                        for (&second, histogram) in rows.iter().filter(|(&second, _)| done(second)) {
-                            seconds.entry(second).or_default().push((
-                                synthetic,
-                                key.as_str(),
-                                histogram,
-                            ));
+                        for (&second, histogram) in rows.iter().filter(|(&second, _)| done(second))
+                        {
+                            seconds
+                                .entry(second)
+                                .or_default()
+                                .push((key.as_str(), histogram));
                         }
                     }
-                }
-                for (second, mut entries) in seconds {
-                    entries.sort_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));
-                    for (synthetic, key, histogram) in entries {
-                        let histogram = SecondHistogram::from_gaggle(histogram);
-                        if synthetic {
-                            latency.merge_synthetic_second(key, second as usize, &histogram);
-                        } else {
-                            latency.merge_second(key, second as usize, &histogram);
+                    for (second, entries) in seconds {
+                        for (key, histogram) in entries {
+                            let histogram = SecondHistogram::from_gaggle(histogram);
+                            if synthetic {
+                                latency.merge_synthetic_second(key, second as usize, &histogram);
+                            } else {
+                                latency.merge_second(key, second as usize, &histogram);
+                            }
                         }
                     }
                 }
@@ -4174,8 +4181,16 @@ mod gaggle {
                 }
             }
             for (name, a, b) in [
-                ("requests_per_second", &self.requests_per_second, &other.requests_per_second),
-                ("errors_per_second", &self.errors_per_second, &other.errors_per_second),
+                (
+                    "requests_per_second",
+                    &self.requests_per_second,
+                    &other.requests_per_second,
+                ),
+                (
+                    "errors_per_second",
+                    &self.errors_per_second,
+                    &other.errors_per_second,
+                ),
             ] {
                 let keys: BTreeSet<&String> = a.series.keys().chain(b.series.keys()).collect();
                 for key in keys {

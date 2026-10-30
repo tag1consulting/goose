@@ -29,7 +29,12 @@ pub(crate) fn metrics_diff(a: &GooseMetrics, b: &GooseMetrics) -> Vec<String> {
                 let field = |name: &str| format!("requests[{key}].{name}");
                 check(&mut out, &field("path"), &x.path, &y.path);
                 check(&mut out, &field("method"), &x.method, &y.method);
-                check(&mut out, &field("custom_method"), &x.custom_method, &y.custom_method);
+                check(
+                    &mut out,
+                    &field("custom_method"),
+                    &x.custom_method,
+                    &y.custom_method,
+                );
                 check(&mut out, &field("raw_data"), &x.raw_data, &y.raw_data);
                 check(
                     &mut out,
@@ -49,9 +54,19 @@ pub(crate) fn metrics_diff(a: &GooseMetrics, b: &GooseMetrics) -> Vec<String> {
                     &x.status_code_timings,
                     &y.status_code_timings,
                 );
-                check(&mut out, &field("success_count"), &x.success_count, &y.success_count);
+                check(
+                    &mut out,
+                    &field("success_count"),
+                    &x.success_count,
+                    &y.success_count,
+                );
                 check(&mut out, &field("fail_count"), &x.fail_count, &y.fail_count);
-                check(&mut out, &field("load_test_hash"), &x.load_test_hash, &y.load_test_hash);
+                check(
+                    &mut out,
+                    &field("load_test_hash"),
+                    &x.load_test_hash,
+                    &y.load_test_hash,
+                );
             }
             (x, y) => out.push(format!(
                 "requests[{key}]: present {} != present {}",
@@ -77,7 +92,12 @@ pub(crate) fn metrics_diff(a: &GooseMetrics, b: &GooseMetrics) -> Vec<String> {
         (None, None) => {}
         (Some(x), Some(y)) => {
             let field = |name: &str| format!("coordinated_omission_metrics.{name}");
-            check(&mut out, &field("actual_requests"), &x.actual_requests, &y.actual_requests);
+            check(
+                &mut out,
+                &field("actual_requests"),
+                &x.actual_requests,
+                &y.actual_requests,
+            );
             check(
                 &mut out,
                 &field("synthetic_requests"),
@@ -102,25 +122,26 @@ pub(crate) fn metrics_diff(a: &GooseMetrics, b: &GooseMetrics) -> Vec<String> {
                 &x.mitigation_strategy,
                 &y.mitigation_strategy,
             );
-            let events = |metrics: &crate::metrics::coordinated_omission::CoordinatedOmissionMetrics| {
-                let mut events: Vec<String> = metrics
-                    .co_events
-                    .iter()
-                    .map(|event| {
-                        format!(
-                            "{:?} {:?} {} {} {} {:?}",
-                            event.expected_cadence,
-                            event.actual_duration,
-                            event.synthetic_injected,
-                            event.user_id,
-                            event.scenario_name,
-                            event.severity
-                        )
-                    })
-                    .collect();
-                events.sort();
-                events
-            };
+            let events =
+                |metrics: &crate::metrics::coordinated_omission::CoordinatedOmissionMetrics| {
+                    let mut events: Vec<String> = metrics
+                        .co_events
+                        .iter()
+                        .map(|event| {
+                            format!(
+                                "{:?} {:?} {} {} {} {:?}",
+                                event.expected_cadence,
+                                event.actual_duration,
+                                event.synthetic_injected,
+                                event.user_id,
+                                event.scenario_name,
+                                event.severity
+                            )
+                        })
+                        .collect();
+                    events.sort();
+                    events
+                };
             check(&mut out, &field("co_events"), &events(x), &events(y));
         }
         (x, y) => out.push(format!(
@@ -142,6 +163,8 @@ pub(crate) fn adopt_unmerged(merged: &mut GooseMetrics, run: &GooseMetrics) {
     merged.maximum_users = run.maximum_users;
     merged.total_users = run.total_users;
     merged.thresholds = run.thresholds.clone();
+    merged.threshold_abort = run.threshold_abort.clone();
+    merged.rps_window = run.rps_window.clone();
     merged.final_metrics = run.final_metrics;
     merged.display_status_codes = run.display_status_codes;
     merged.display_metrics = run.display_metrics;

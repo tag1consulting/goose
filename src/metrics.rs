@@ -3561,7 +3561,8 @@ impl MetricsProcessor {
                 self.record_scenario_user(scenario_index, user);
                 #[cfg(feature = "gaggle")]
                 if let Some(state) = self.gaggle.as_mut() {
-                    if let Some(scenario) = state.pending_metrics.scenarios.get_mut(scenario_index) {
+                    if let Some(scenario) = state.pending_metrics.scenarios.get_mut(scenario_index)
+                    {
                         scenario.users.insert(user);
                     }
                 }
@@ -3965,6 +3966,18 @@ impl MetricsProcessor {
         &self.metrics
     }
 
+    /// [`Self::process_metric`], for unit tests in other modules.
+    #[cfg(test)]
+    pub(crate) fn process_metric_for_test(&mut self, metric: GooseMetric) {
+        self.process_metric(metric);
+    }
+
+    /// [`Self::handle_command`], for unit tests in other modules.
+    #[cfg(test)]
+    pub(crate) fn handle_command_for_test(&mut self, command: MetricsCommand) -> bool {
+        self.handle_command(command)
+    }
+
     /// [`Self::sync_atomic_counters`], for unit tests in other modules.
     #[cfg(test)]
     pub(crate) fn sync_atomic_counters_for_test(&mut self) {
@@ -4025,8 +4038,7 @@ impl MetricsProcessor {
                     #[cfg(not(feature = "gaggle"))]
                     let counted = false;
                     if !counted {
-                        let co_key =
-                            format!("{} {}", co_metric.raw.method_label(), co_metric.name);
+                        let co_key = format!("{} {}", co_metric.raw.method_label(), co_metric.name);
                         Self::increment_registry_counter(
                             &self.request_counter_registry,
                             &co_key,
@@ -4544,7 +4556,10 @@ impl MetricsProcessor {
 
     /// What changed since the last delta, `now` being the series second;
     /// `None` unless the processor runs as a Gaggle worker.
-    pub(crate) fn gaggle_take_delta(&mut self, now: usize) -> Option<crate::gaggle::delta::GaggleDelta> {
+    pub(crate) fn gaggle_take_delta(
+        &mut self,
+        now: usize,
+    ) -> Option<crate::gaggle::delta::GaggleDelta> {
         let epoch = self.metrics_epoch.load(AtomicOrdering::Relaxed);
         let state = self.gaggle.as_mut()?;
         Some(state.take_delta(
@@ -4557,7 +4572,10 @@ impl MetricsProcessor {
 
     /// The worker's whole state, as a final delta; `None` unless the
     /// processor runs as a Gaggle worker.
-    pub(crate) fn gaggle_take_final(&mut self, now: usize) -> Option<crate::gaggle::delta::GaggleDelta> {
+    pub(crate) fn gaggle_take_final(
+        &mut self,
+        now: usize,
+    ) -> Option<crate::gaggle::delta::GaggleDelta> {
         self.sync_atomic_counters();
         let epoch = self.metrics_epoch.load(AtomicOrdering::Relaxed);
         let state = self.gaggle.as_mut()?;
@@ -4579,8 +4597,12 @@ impl MetricsProcessor {
         let Some(shadow) = self.gaggle.as_mut().and_then(|state| state.shadow.take()) else {
             return;
         };
-        let now = self.graph_data.gaggle_last_second().map_or(0, |second| second + 2);
-        let (Some(last), Some(last_final)) = (self.gaggle_take_delta(now), self.gaggle_take_final(now))
+        let now = self
+            .graph_data
+            .gaggle_last_second()
+            .map_or(0, |second| second + 2);
+        let (Some(last), Some(last_final)) =
+            (self.gaggle_take_delta(now), self.gaggle_take_final(now))
         else {
             return;
         };
@@ -4594,7 +4616,12 @@ impl MetricsProcessor {
             } else {
                 None
             };
-        shadow.finish(&last, &last_final, (&self.metrics, &self.graph_data), snapshot);
+        shadow.finish(
+            &last,
+            &last_final,
+            (&self.metrics, &self.graph_data),
+            snapshot,
+        );
     }
 }
 
@@ -4617,8 +4644,8 @@ pub(crate) fn gaggle_snapshot(
         co_active,
         None,
     );
-    let snapshot = dashboard_snapshot::build_dashboard_snapshot(
-        dashboard_snapshot::DashboardSnapshotInput {
+    let snapshot =
+        dashboard_snapshot::build_dashboard_snapshot(dashboard_snapshot::DashboardSnapshotInput {
             metrics,
             series,
             active_users: 0,
@@ -4636,8 +4663,7 @@ pub(crate) fn gaggle_snapshot(
             settings: dashboard_snapshot::SnapshotSettings::idle(),
             percentiles_over_time: configuration.records_latency_series(),
             series_keys: graph.latency_series_keys(),
-        },
-    );
+        });
     let mut value = serde_json::to_value(&snapshot).unwrap_or_default();
     for pointer in ["/generated_at", "/build_time"] {
         if let Some(field) = value.pointer_mut(pointer) {
