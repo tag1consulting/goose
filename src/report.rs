@@ -17,6 +17,7 @@ use crate::{
     },
     report::common::OrEmpty,
 };
+use serde::ser::{SerializeStruct, Serializer};
 use serde::{Deserialize, Serialize};
 
 /// The following templates are necessary to build an html-formatted summary report.
@@ -43,7 +44,7 @@ pub(crate) struct GooseReportTemplates<'a> {
 }
 
 /// Defines the metrics reported about requests.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub(crate) struct RequestMetric {
     pub method: String,
     pub name: String,
@@ -61,8 +62,8 @@ pub(crate) struct RequestMetric {
     /// only each request's row and the Aggregated row. This is intentional:
     /// breakdown rows are a presentation detail regenerated from each run's
     /// status code distribution, not a metric to compare. A report rendered
-    /// from a JSON report with `--render-report` rebuilds them.
-    #[serde(skip_serializing)]
+    /// from a JSON report with `--render-report` rebuilds them. It is not
+    /// written to the JSON report.
     #[serde(default)]
     pub is_breakdown: bool,
 }
@@ -80,7 +81,7 @@ impl DeltaTo for RequestMetric {
 }
 
 /// Defines the metrics reported about Coordinated Omission requests.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub(crate) struct CORequestMetric {
     pub method: String,
     pub name: String,
@@ -99,7 +100,7 @@ impl DeltaTo for CORequestMetric {
 }
 
 /// Defines the metrics reported about responses.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub(crate) struct ResponseMetric {
     pub method: String,
     pub name: String,
@@ -127,7 +128,7 @@ impl DeltaTo for ResponseMetric {
 }
 
 /// Defines the metrics reported about transactions.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub(crate) struct TransactionMetric {
     pub is_scenario: bool,
     pub transaction: String,
@@ -154,7 +155,7 @@ impl DeltaTo for TransactionMetric {
 }
 
 /// Defines the metrics reported about scenarios.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub(crate) struct ScenarioMetric {
     pub name: String,
     pub users: Value<usize>,
@@ -175,6 +176,206 @@ impl DeltaTo for ScenarioMetric {
         self.response_time_maximum.eval(other.response_time_maximum);
         self.count_per_second.eval(other.count_per_second);
         self.iterations.eval(other.iterations);
+    }
+}
+
+// TODO(0.20): the hand written `Serialize` impls below exist only to keep
+// the deprecated whole millisecond row fields (`percentile_*`,
+// `response_time_minimum`, `response_time_maximum`) beside their `_us`
+// fields in 0.19.x. In 0.20 the row times become microseconds under the
+// `_us` names only, `#[derive(Serialize)]` returns and these impls are
+// deleted. A report with raw microsecond data is rebuilt from it, as now,
+// so 0.19 baselines need no extra code. By decision, 0.20 stops loading
+// 0.18 reports as baselines, and 0.19.x cannot load 0.20 reports.
+
+// Each impl destructures its row with every field named and no `..`, so a
+// field added to one of these structs fails to compile until its
+// serializer writes it or says why it does not.
+
+/// Write `time` to a JSON report row as `key`, in whole milliseconds,
+/// truncated, as Goose has always written it, and as `key_us`, in
+/// microseconds, so the row holds the time the other reports show.
+fn serialize_time<S: SerializeStruct>(
+    row: &mut S,
+    key: &'static str,
+    key_us: &'static str,
+    time: &Value<Millis>,
+) -> Result<(), S::Error> {
+    row.serialize_field(key, time)?;
+    row.serialize_field(key_us, &time.value().0)
+}
+
+impl Serialize for RequestMetric {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let RequestMetric {
+            method,
+            name,
+            number_of_requests,
+            number_of_failures,
+            response_time_average,
+            response_time_minimum,
+            response_time_maximum,
+            requests_per_second,
+            failures_per_second,
+            // Breakdown rows are left out of the JSON report, and so is the flag.
+            is_breakdown: _,
+        } = self;
+        let mut row = serializer.serialize_struct("RequestMetric", 11)?;
+        row.serialize_field("method", method)?;
+        row.serialize_field("name", name)?;
+        row.serialize_field("number_of_requests", number_of_requests)?;
+        row.serialize_field("number_of_failures", number_of_failures)?;
+        row.serialize_field("response_time_average", response_time_average)?;
+        serialize_time(
+            &mut row,
+            "response_time_minimum",
+            "response_time_minimum_us",
+            response_time_minimum,
+        )?;
+        serialize_time(
+            &mut row,
+            "response_time_maximum",
+            "response_time_maximum_us",
+            response_time_maximum,
+        )?;
+        row.serialize_field("requests_per_second", requests_per_second)?;
+        row.serialize_field("failures_per_second", failures_per_second)?;
+        row.end()
+    }
+}
+
+impl Serialize for CORequestMetric {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let CORequestMetric {
+            method,
+            name,
+            response_time_average,
+            response_time_standard_deviation,
+            response_time_maximum,
+        } = self;
+        let mut row = serializer.serialize_struct("CORequestMetric", 6)?;
+        row.serialize_field("method", method)?;
+        row.serialize_field("name", name)?;
+        row.serialize_field("response_time_average", response_time_average)?;
+        row.serialize_field(
+            "response_time_standard_deviation",
+            response_time_standard_deviation,
+        )?;
+        serialize_time(
+            &mut row,
+            "response_time_maximum",
+            "response_time_maximum_us",
+            response_time_maximum,
+        )?;
+        row.end()
+    }
+}
+
+impl Serialize for ResponseMetric {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let ResponseMetric {
+            method,
+            name,
+            percentile_50,
+            percentile_60,
+            percentile_70,
+            percentile_80,
+            percentile_90,
+            percentile_95,
+            percentile_99,
+            percentile_100,
+        } = self;
+        let mut row = serializer.serialize_struct("ResponseMetric", 18)?;
+        row.serialize_field("method", method)?;
+        row.serialize_field("name", name)?;
+        serialize_time(&mut row, "percentile_50", "percentile_50_us", percentile_50)?;
+        serialize_time(&mut row, "percentile_60", "percentile_60_us", percentile_60)?;
+        serialize_time(&mut row, "percentile_70", "percentile_70_us", percentile_70)?;
+        serialize_time(&mut row, "percentile_80", "percentile_80_us", percentile_80)?;
+        serialize_time(&mut row, "percentile_90", "percentile_90_us", percentile_90)?;
+        serialize_time(&mut row, "percentile_95", "percentile_95_us", percentile_95)?;
+        serialize_time(&mut row, "percentile_99", "percentile_99_us", percentile_99)?;
+        serialize_time(
+            &mut row,
+            "percentile_100",
+            "percentile_100_us",
+            percentile_100,
+        )?;
+        row.end()
+    }
+}
+
+impl Serialize for TransactionMetric {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let TransactionMetric {
+            is_scenario,
+            transaction,
+            name,
+            number_of_requests,
+            number_of_failures,
+            response_time_average,
+            response_time_minimum,
+            response_time_maximum,
+            requests_per_second,
+            failures_per_second,
+        } = self;
+        let mut row = serializer.serialize_struct("TransactionMetric", 12)?;
+        row.serialize_field("is_scenario", is_scenario)?;
+        row.serialize_field("transaction", transaction)?;
+        row.serialize_field("name", name)?;
+        row.serialize_field("number_of_requests", number_of_requests)?;
+        row.serialize_field("number_of_failures", number_of_failures)?;
+        row.serialize_field("response_time_average", response_time_average)?;
+        serialize_time(
+            &mut row,
+            "response_time_minimum",
+            "response_time_minimum_us",
+            response_time_minimum,
+        )?;
+        serialize_time(
+            &mut row,
+            "response_time_maximum",
+            "response_time_maximum_us",
+            response_time_maximum,
+        )?;
+        row.serialize_field("requests_per_second", requests_per_second)?;
+        row.serialize_field("failures_per_second", failures_per_second)?;
+        row.end()
+    }
+}
+
+impl Serialize for ScenarioMetric {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let ScenarioMetric {
+            name,
+            users,
+            count,
+            response_time_average,
+            response_time_minimum,
+            response_time_maximum,
+            count_per_second,
+            iterations,
+        } = self;
+        let mut row = serializer.serialize_struct("ScenarioMetric", 10)?;
+        row.serialize_field("name", name)?;
+        row.serialize_field("users", users)?;
+        row.serialize_field("count", count)?;
+        row.serialize_field("response_time_average", response_time_average)?;
+        serialize_time(
+            &mut row,
+            "response_time_minimum",
+            "response_time_minimum_us",
+            response_time_minimum,
+        )?;
+        serialize_time(
+            &mut row,
+            "response_time_maximum",
+            "response_time_maximum_us",
+            response_time_maximum,
+        )?;
+        row.serialize_field("count_per_second", count_per_second)?;
+        row.serialize_field("iterations", iterations)?;
+        row.end()
     }
 }
 

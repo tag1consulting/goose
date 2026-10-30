@@ -1,0 +1,279 @@
+{
+  "goose_version": "0.19.0",
+  "test": "fixture",
+  "started": null,
+  "ended": null,
+  "ended_by": null,
+  "in_progress": false,
+  "raw_metrics": {
+    "hash": 0,
+    "history": [],
+    "duration": 60,
+    "maximum_users": 0,
+    "total_users": 0,
+    "requests": {
+      "GET /": {
+        "path": "/",
+        "method": "Get",
+        "raw_data": {
+          "minimum_time": 0,
+          "maximum_time": 0,
+          "total_time": 7,
+          "counter": 12,
+          "times_us": {
+            "448": 1,
+            "520": 1,
+            "560": 1,
+            "584": 5,
+            "640": 1,
+            "696": 1,
+            "816": 1,
+            "944": 1
+          },
+          "minimum_time_us": 450,
+          "maximum_time_us": 950,
+          "total_time_us": 7590
+        },
+        "coordinated_omission_data": null,
+        "status_code_counts": {},
+        "success_count": 12,
+        "fail_count": 0,
+        "load_test_hash": 0,
+        "custom_method": ""
+      },
+      "GET /about": {
+        "path": "/about",
+        "method": "Get",
+        "raw_data": {
+          "minimum_time": 0,
+          "maximum_time": 1,
+          "total_time": 3,
+          "counter": 5,
+          "times_us": {
+            "380": 1,
+            "608": 1,
+            "680": 1,
+            "728": 1,
+            "1232": 1
+          },
+          "minimum_time_us": 380,
+          "maximum_time_us": 1240,
+          "total_time_us": 3640
+        },
+        "coordinated_omission_data": null,
+        "status_code_counts": {},
+        "success_count": 5,
+        "fail_count": 0,
+        "load_test_hash": 0,
+        "custom_method": ""
+      }
+    },
+    "transactions": [
+      [
+        {
+          "scenario_index": 0,
+          "scenario_name": "Scenario",
+          "transaction_index": 0,
+          "transaction_name": {
+            "TransactionOnly": "index"
+          },
+          "min_time": 0,
+          "max_time": 0,
+          "total_time": 1,
+          "counter": 3,
+          "times_us": {
+            "584": 1,
+            "640": 1,
+            "720": 1
+          },
+          "min_time_us": 590,
+          "max_time_us": 720,
+          "total_time_us": 1950,
+          "success_count": 3,
+          "fail_count": 0
+        }
+      ]
+    ],
+    "scenarios": [
+      {
+        "index": 0,
+        "name": "Scenario",
+        "users": [
+          0,
+          1
+        ],
+        "min_time": 1,
+        "max_time": 1,
+        "total_time": 3,
+        "counter": 2,
+        "times_us": {
+          "1216": 1,
+          "1856": 1
+        },
+        "min_time_us": 1230,
+        "max_time_us": 1870,
+        "total_time_us": 3100
+      }
+    ],
+    "errors": {},
+    "hosts": [],
+    "coordinated_omission_metrics": null,
+    "final_metrics": false,
+    "display_status_codes": false,
+    "display_metrics": false
+  },
+  "raw_request_metrics": [
+    {
+      "method": "GET",
+      "name": "/",
+      "number_of_requests": 12,
+      "number_of_failures": 0,
+      "response_time_average": 0.6325,
+      "response_time_minimum": 0,
+      "response_time_maximum": 0,
+      "requests_per_second": 0.2,
+      "failures_per_second": 0.0
+    },
+    {
+      "method": "GET",
+      "name": "/about",
+      "number_of_requests": 5,
+      "number_of_failures": 0,
+      "response_time_average": 0.728,
+      "response_time_minimum": 0,
+      "response_time_maximum": 1,
+      "requests_per_second": 0.083333336,
+      "failures_per_second": 0.0
+    },
+    {
+      "method": "",
+      "name": "Aggregated",
+      "number_of_requests": 17,
+      "number_of_failures": 0,
+      "response_time_average": 0.6605882352941177,
+      "response_time_minimum": 0,
+      "response_time_maximum": 1,
+      "requests_per_second": 0.28333333,
+      "failures_per_second": 0.0
+    }
+  ],
+  "raw_response_metrics": [
+    {
+      "method": "GET",
+      "name": "/",
+      "percentile_50": 0,
+      "percentile_60": 0,
+      "percentile_70": 0,
+      "percentile_80": 0,
+      "percentile_90": 0,
+      "percentile_95": 0,
+      "percentile_99": 0,
+      "percentile_100": 0
+    },
+    {
+      "method": "GET",
+      "name": "/about",
+      "percentile_50": 0,
+      "percentile_60": 0,
+      "percentile_70": 0,
+      "percentile_80": 0,
+      "percentile_90": 1,
+      "percentile_95": 1,
+      "percentile_99": 1,
+      "percentile_100": 1
+    },
+    {
+      "method": "",
+      "name": "Aggregated",
+      "percentile_50": 0,
+      "percentile_60": 0,
+      "percentile_70": 0,
+      "percentile_80": 0,
+      "percentile_90": 0,
+      "percentile_95": 0,
+      "percentile_99": 1,
+      "percentile_100": 1
+    }
+  ],
+  "co_request_metrics": null,
+  "co_response_metrics": null,
+  "scenario_metrics": [
+    {
+      "name": "Scenario",
+      "users": 2,
+      "count": 2,
+      "response_time_average": 1.55,
+      "response_time_minimum": 1,
+      "response_time_maximum": 1,
+      "count_per_second": 0.033333335,
+      "iterations": 1.0
+    },
+    {
+      "name": "Aggregated",
+      "users": 2,
+      "count": 2,
+      "response_time_average": 1.55,
+      "response_time_minimum": 1,
+      "response_time_maximum": 1,
+      "count_per_second": 0.033333335,
+      "iterations": 1.0
+    }
+  ],
+  "transaction_metrics": [
+    {
+      "is_scenario": true,
+      "transaction": "",
+      "name": "Scenario",
+      "number_of_requests": 0,
+      "number_of_failures": 0,
+      "response_time_average": null,
+      "response_time_minimum": 0,
+      "response_time_maximum": 0,
+      "requests_per_second": null,
+      "failures_per_second": null
+    },
+    {
+      "is_scenario": false,
+      "transaction": "0.0",
+      "name": "index",
+      "number_of_requests": 3,
+      "number_of_failures": 0,
+      "response_time_average": 0.65,
+      "response_time_minimum": 0,
+      "response_time_maximum": 0,
+      "requests_per_second": 0.05,
+      "failures_per_second": 0.0
+    },
+    {
+      "is_scenario": false,
+      "transaction": "",
+      "name": "Aggregated",
+      "number_of_requests": 3,
+      "number_of_failures": 0,
+      "response_time_average": 0.65,
+      "response_time_minimum": 0,
+      "response_time_maximum": 0,
+      "requests_per_second": 0.05,
+      "failures_per_second": 0.0
+    }
+  ],
+  "status_code_metrics": [
+    {
+      "method": "GET",
+      "name": "/",
+      "status_codes": ""
+    },
+    {
+      "method": "GET",
+      "name": "/about",
+      "status_codes": ""
+    },
+    {
+      "method": "",
+      "name": "Aggregated",
+      "status_codes": ""
+    }
+  ],
+  "errors": null,
+  "coordinated_omission_metrics": null
+}
