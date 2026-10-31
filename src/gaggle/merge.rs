@@ -49,6 +49,9 @@ pub(crate) struct GaggleAccumulator {
     settings: GraphSettings,
     /// What a delta may carry.
     limits: DeltaLimits,
+    /// The `max_second` it was built with, which
+    /// [`Self::set_max_second`] never passes.
+    cap_second: Second,
     workers: BTreeMap<u32, WorkerTotal>,
     gaps: Vec<SeqGap>,
 }
@@ -66,6 +69,7 @@ impl GaggleAccumulator {
             template,
             settings,
             limits,
+            cap_second: limits.max_second,
             workers: BTreeMap::new(),
             gaps: Vec::new(),
         }
@@ -213,6 +217,15 @@ impl GaggleAccumulator {
         if let Some(worker) = self.workers.get_mut(&worker) {
             worker.finished = true;
         }
+    }
+
+    /// Refuse, from now on, a delta carrying a second past `second`: the
+    /// manager's own series clock, plus slack, at most the cap the
+    /// accumulator was built with.
+    // Called by the manager each second in Gaggle step 2; tested here.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn set_max_second(&mut self, second: Second) {
+        self.limits.max_second = second.min(self.cap_second);
     }
 
     /// Every gap and repeat seen in a worker's sequence.

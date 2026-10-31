@@ -1993,3 +1993,99 @@ fn gaggle_merge_at_the_bounds_does_not_overflow() {
     let configuration = configuration();
     crate::metrics::gaggle_snapshot(&configuration, &metrics, &mut graph);
 }
+
+/// The manager keeps the latest second a delta may carry at its own clock,
+/// never past the cap it was built with.
+#[test]
+fn gaggle_refuses_a_second_past_the_managers_clock() {
+    let mut accumulator = held();
+    accumulator.set_max_second(20);
+    let mut delta = counted(0, 2, 1);
+    delta.now = 21;
+    assert_eq!(
+        accumulator.apply(0, delta.clone()),
+        Err(DeltaError::SecondOutOfRange {
+            second: 21,
+            limit: 20
+        })
+    );
+    // Past the cap the clock is the cap.
+    accumulator.set_max_second(1_000);
+    delta.now = 101;
+    assert_eq!(
+        accumulator.apply(0, delta.clone()),
+        Err(DeltaError::SecondOutOfRange {
+            second: 101,
+            limit: 100
+        })
+    );
+    delta.now = 100;
+    accumulator.apply(0, delta).unwrap();
+}
+
+/// A worker's figures at their bounds across many names, which the reports,
+/// the dashboard snapshot and the thresholds add up across names and
+/// seconds, build every one of them without overflowing.
+#[test]
+fn gaggle_reports_at_the_bounds_across_names_do_not_overflow() {
+    use super::delta::{Histogram, RequestPart, Timing, MAX_COUNT, MAX_SECOND_COUNT};
+    let mut delta = GaggleDelta::new(0, 1, 1, DeltaKind::Delta);
+    delta.now = 2;
+    let timing = Timing {
+        buckets: vec![(1_000, MAX_COUNT)],
+        minimum_us: 1_000,
+        maximum_us: 1_000,
+        total_us: MAX_COUNT,
+        count: MAX_COUNT,
+    };
+    let summary = crate::metrics::StatusCodeTimingSummary {
+        count: MAX_COUNT as usize,
+        total_time_us: MAX_COUNT,
+        min_time_us: 1,
+        max_time_us: 1,
+    };
+    // 2^13 + 1 names of 2^51 each: every sum across them passes 2^64.
+    for index in 0..8_193 {
+        let name = format!("/n{}", index);
+        let mut request = RequestPart::new(&name, GooseMethod::Get, "");
+        request.success = MAX_COUNT as i64;
+        request.fail = MAX_COUNT as i64;
+        request.raw = timing.clone();
+        // One name with as many status codes, and every name with 200.
+        let codes = if index == 0 { 0..8_193u16 } else { 200..201 };
+        for code in codes {
+            request.status_codes.insert(code, MAX_COUNT);
+            request.status_timings.insert(code, summary.clone());
+        }
+        delta
+            .metrics
+            .requests
+            .insert(format!("GET {}", name), request);
+    }
+    let histogram = Histogram {
+        rows: vec![(0, MAX_SECOND_COUNT)],
+        minimum_us: 1,
+        maximum_us: 1,
+        total_us: MAX_COUNT,
+        count: MAX_SECOND_COUNT,
+    };
+    for index in 0..9_901 {
+        delta
+            .graph
+            .latency
+            .insert(format!("GET /n{}", index), [(1, histogram.clone())].into());
+    }
+    let mut accumulator = accumulator();
+    apply(&mut accumulator, &delta);
+    accumulator.done(0);
+    let merged = accumulator.merged();
+    let again = accumulator.merged();
+    // The console output, then every report, the snapshot and the
+    // thresholds, built and compared.
+    let mut shown = merged.0.clone();
+    shown.display_metrics = true;
+    shown.display_status_codes = true;
+    shown.final_metrics = true;
+    assert!(!format!("{}", shown).is_empty());
+    differences(merged, &again);
+}

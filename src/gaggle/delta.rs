@@ -127,7 +127,12 @@ pub(crate) const MAX_SECOND_COUNT: u64 = 1 << 32;
 /// What a manager accepts from a worker, set when its accumulator is built.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct DeltaLimits {
-    /// The latest series second a delta may carry: no run is longer.
+    /// The latest series second a delta may carry. A worker's graph rows
+    /// cost the manager every second up to the latest one, so in Gaggle
+    /// step 2 the manager keeps it at its own clock, plus slack, with
+    /// [`GaggleAccumulator::set_max_second`](super::merge::GaggleAccumulator::set_max_second)
+    /// each second: no worker then costs more than an honest run of the
+    /// same length. The default, 30 days, is the cap.
     pub(crate) max_second: Second,
     /// Most names of any one kind (request names, latency series,
     /// transactions, scenarios, request errors, transaction errors and

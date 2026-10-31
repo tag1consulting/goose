@@ -1143,7 +1143,11 @@ impl GooseRequestMetricAggregate {
         if self.status_code_timings.len() <= 1 {
             return None;
         }
-        let total: usize = self.status_code_timings.values().map(|s| s.count).sum();
+        let total: usize = self
+            .status_code_timings
+            .values()
+            .map(|s| s.count)
+            .fold(0, usize::saturating_add);
         let mut breakdowns: Vec<StatusCodeBreakdown> = self
             .status_code_timings
             .iter()
@@ -1309,8 +1313,8 @@ impl GooseRequestMetricTimingData {
         {
             self.minimum_time_us = other.minimum_time_us;
         }
-        self.counter += other.counter;
-        self.total_time_us += other.total_time_us;
+        self.counter = self.counter.saturating_add(other.counter);
+        self.total_time_us = self.total_time_us.saturating_add(other.total_time_us);
         if other.maximum_time_us > self.maximum_time_us {
             self.maximum_time_us = other.maximum_time_us;
         }
@@ -2215,8 +2219,8 @@ impl GooseMetrics {
             fmt,
             " ------------------------------------------------------------------------------"
         )?;
-        let mut aggregate_fail_count = 0;
-        let mut aggregate_total_count = 0;
+        let mut aggregate_fail_count: usize = 0;
+        let mut aggregate_total_count: usize = 0;
         for (request_key, request) in self.requests.iter().sorted() {
             let total_count = request.success_count + request.fail_count;
             let (reqs, fails) =
@@ -2234,8 +2238,8 @@ impl GooseMetrics {
                 reqs_p = reqs_precision,
                 fails_p = fails_precision,
             )?;
-            aggregate_total_count += total_count;
-            aggregate_fail_count += request.fail_count;
+            aggregate_total_count = aggregate_total_count.saturating_add(total_count);
+            aggregate_fail_count = aggregate_fail_count.saturating_add(request.fail_count);
         }
         if self.requests.len() > 1 {
             writeln!(
@@ -2286,8 +2290,8 @@ impl GooseMetrics {
             fmt,
             " ------------------------------------------------------------------------------"
         )?;
-        let mut aggregate_fail_count = 0;
-        let mut aggregate_total_count = 0;
+        let mut aggregate_fail_count: usize = 0;
+        let mut aggregate_total_count: usize = 0;
         let mut transaction_count = 0;
         for scenario in &self.transactions {
             let mut displayed_scenario = false;
@@ -2334,8 +2338,8 @@ impl GooseMetrics {
                     runs_p = runs_precision,
                     fails_p = fails_precision,
                 )?;
-                aggregate_total_count += total_count;
-                aggregate_fail_count += transaction.fail_count;
+                aggregate_total_count = aggregate_total_count.saturating_add(total_count);
+                aggregate_fail_count = aggregate_fail_count.saturating_add(transaction.fail_count);
             }
         }
         if transaction_count > 1 {
@@ -2460,11 +2464,11 @@ impl GooseMetrics {
             fmt,
             " ------------------------------------------------------------------------------"
         )?;
-        let mut aggregate_users = 0;
-        let mut aggregate_counter = 0;
+        let mut aggregate_users: usize = 0;
+        let mut aggregate_counter: usize = 0;
         for scenario in &self.scenarios {
-            aggregate_users += scenario.users.len();
-            aggregate_counter += scenario.run_times.counter;
+            aggregate_users = aggregate_users.saturating_add(scenario.users.len());
+            aggregate_counter = aggregate_counter.saturating_add(scenario.run_times.counter);
             let (runs, _fails) =
                 per_second_calculations(self.duration, scenario.run_times.counter, 0);
             let runs_precision = determine_precision(runs);
@@ -5655,7 +5659,7 @@ pub(crate) fn prepare_status_codes(
             let new_count = if let Some(existing_status_code_count) =
                 aggregate_status_code_counts.get(status_code)
             {
-                *existing_status_code_count + *count
+                existing_status_code_count.saturating_add(*count)
             } else {
                 *count
             };

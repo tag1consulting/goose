@@ -165,7 +165,10 @@ impl ThresholdMark {
     fn made(&self, request: Option<&str>) -> usize {
         match request {
             Some(key) => self.requests.get(key).copied().unwrap_or(0),
-            None => self.requests.values().sum(),
+            None => self
+                .requests
+                .values()
+                .fold(0, |sum: usize, &count| sum.saturating_add(count)),
         }
     }
 }
@@ -220,7 +223,10 @@ impl RpsWindow {
     fn held(&self, request: Option<&str>, made: usize, seconds: f64) -> (usize, f64) {
         let ended = match request {
             Some(key) => self.requests.get(key).copied().unwrap_or(0),
-            None => self.requests.values().sum(),
+            None => self
+                .requests
+                .values()
+                .fold(0, |sum: usize, &count| sum.saturating_add(count)),
         };
         match &self.open {
             Some(start) => (

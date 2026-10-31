@@ -134,7 +134,7 @@ impl TimeBuckets {
         // Times usually arrive near the slowest bucket so far.
         if let Some(last) = self.list.last_mut() {
             if last.0 == bucket {
-                last.1 += count;
+                last.1 = last.1.saturating_add(count);
                 return;
             }
             if last.0 < bucket {
@@ -143,7 +143,7 @@ impl TimeBuckets {
             }
         }
         match self.list.binary_search_by_key(&bucket, |&(key, _)| key) {
-            Ok(at) => self.list[at].1 += count,
+            Ok(at) => self.list[at].1 = self.list[at].1.saturating_add(count),
             Err(at) => {
                 self.list.insert(at, (bucket, count));
                 self.place_if_long();
@@ -167,7 +167,10 @@ impl TimeBuckets {
                 self.list.insert(at, (bucket, count));
                 self.place_from(at);
             }
-            place => self.list[place as usize - 1].1 += count,
+            place => {
+                let held = &mut self.list[place as usize - 1].1;
+                *held = held.saturating_add(count);
+            }
         }
     }
 

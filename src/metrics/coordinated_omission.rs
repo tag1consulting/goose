@@ -206,18 +206,18 @@ impl CoordinatedOmissionMetrics {
             .collect();
 
         // Calculate per-scenario events
-        let mut scenario_events: HashMap<String, (usize, u32)> = HashMap::new();
+        let mut scenario_events: HashMap<String, (usize, usize)> = HashMap::new();
         for event in &self.co_events {
             let (count, synthetic) = scenario_events
                 .entry(event.scenario_name.clone())
                 .or_insert((0, 0));
             *count += 1;
-            *synthetic = synthetic.saturating_add(event.synthetic_injected);
+            *synthetic = synthetic.saturating_add(event.synthetic_injected as usize);
         }
 
         let per_scenario_events: Vec<(String, usize, usize)> = scenario_events
             .into_iter()
-            .map(|(scenario, (count, synthetic))| (scenario, count, synthetic as usize))
+            .map(|(scenario, (count, synthetic))| (scenario, count, synthetic))
             .collect();
 
         CoMetricsSummary {
@@ -564,11 +564,10 @@ impl CadenceCalculator for DisabledCadence {
 mod test {
     use super::*;
 
-    /// A scenario's synthetic requests add up without overflowing, however
-    /// many each event injected (a Gaggle manager merges events from every
-    /// worker).
+    /// A scenario's synthetic requests add up exactly, past what one event
+    /// can count (a Gaggle manager merges events from every worker).
     #[test]
-    fn summary_synthetic_requests_saturate() {
+    fn summary_synthetic_requests_add_up() {
         let mut metrics =
             CoordinatedOmissionMetrics::new(GooseCoordinatedOmissionMitigation::Average);
         for _ in 0..2 {
@@ -585,7 +584,7 @@ mod test {
         let summary = metrics.get_summary();
         assert_eq!(
             summary.per_scenario_events,
-            vec![("s".to_string(), 2, u32::MAX as usize)]
+            vec![("s".to_string(), 2, 2 * u32::MAX as usize)]
         );
     }
 }

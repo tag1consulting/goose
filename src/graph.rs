@@ -452,7 +452,7 @@ impl SecondHistogram {
     /// Add `count` to the row with fixed index `index`.
     fn add_dense(&mut self, index: usize, count: usize) {
         match self.open.as_mut() {
-            Some(open) => open[index] += count,
+            Some(open) => open[index] = open[index].saturating_add(count),
             None => {
                 self.add_indexed(0, index, count);
             }
@@ -477,8 +477,8 @@ impl SecondHistogram {
         if maximum > self.maximum_time_us {
             self.maximum_time_us = maximum;
         }
-        self.total_time_us += total;
-        self.counter += counter;
+        self.total_time_us = self.total_time_us.saturating_add(total);
+        self.counter = self.counter.saturating_add(counter);
     }
 
     /// Record one response time in whole milliseconds (unit tests).
@@ -498,7 +498,7 @@ impl SecondHistogram {
     pub(crate) fn merge(&mut self, other: &SecondHistogram) {
         if let Some(open) = self.open.as_mut() {
             for (index, count) in other.indexed() {
-                open[index] += count;
+                open[index] = open[index].saturating_add(count);
             }
         } else {
             // Both are sorted, so each search starts where the last one ended.
