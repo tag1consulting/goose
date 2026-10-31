@@ -605,6 +605,22 @@ fn thresholds() -> Vec<crate::threshold::Threshold> {
         .collect()
 }
 
+/// `metrics` with its wall clock timestamps fixed: coordinated omission
+/// metrics start at the wall clock second each process started counting,
+/// which differs between one process and workers built later (the merge
+/// rule and the start after a reset have tests of their own); events carry
+/// the wall clock second they were processed in, in the order they were,
+/// which within a second differs between one process and its workers.
+fn fixed(metrics: &mut GooseMetrics) {
+    if let Some(co) = metrics.coordinated_omission_metrics.as_mut() {
+        co.started_secs = 0;
+        for event in co.co_events.iter_mut() {
+            event.timestamp_secs = 0;
+        }
+        co.co_events.sort_by_key(|event| format!("{event:?}"));
+    }
+}
+
 /// Every difference between the merged run and the single process's, in
 /// everything a run produces from them.
 fn differences(
@@ -613,21 +629,6 @@ fn differences(
 ) -> Vec<String> {
     let (mut metrics, mut graph) = merged;
     super::compare::adopt_unmerged(&mut metrics, &single.0);
-    // The timestamps fixed: coordinated omission metrics start at the wall
-    // clock second each process started counting, which differs between one
-    // process and workers built later (the merge rule and the start after a
-    // reset have tests of their own); events carry the wall clock second
-    // they were processed in, in the order they were, which within a
-    // second differs between one process and its workers.
-    let fixed = |metrics: &mut GooseMetrics| {
-        if let Some(co) = metrics.coordinated_omission_metrics.as_mut() {
-            co.started_secs = 0;
-            for event in co.co_events.iter_mut() {
-                event.timestamp_secs = 0;
-            }
-            co.co_events.sort_by_key(|event| format!("{event:?}"));
-        }
-    };
     let mut single = (single.0.clone(), single.1.clone());
     fixed(&mut metrics);
     fixed(&mut single.0);
@@ -897,9 +898,12 @@ fn gaggle_lost_delta_then_final_repairs_metrics_only() {
     );
     let (mut metrics, graph) = accumulator.merged();
     super::compare::adopt_unmerged(&mut metrics, &single.0);
+    let mut expected = single.0.clone();
+    fixed(&mut metrics);
+    fixed(&mut expected);
     assert_none(
         "lost delta, then final: metrics",
-        &super::compare::metrics_diff(&metrics, &single.0),
+        &super::compare::metrics_diff(&metrics, &expected),
     );
     assert!(
         !graph.gaggle_diff(&single.1).is_empty(),
