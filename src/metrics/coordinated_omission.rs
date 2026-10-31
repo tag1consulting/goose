@@ -25,7 +25,7 @@ pub struct CoordinatedOmissionMetrics {
 }
 
 /// Represents a single Coordinated Omission event.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CoEvent {
     /// When the CO event was detected (seconds since UNIX epoch).
     pub timestamp_secs: u64,
@@ -206,18 +206,18 @@ impl CoordinatedOmissionMetrics {
             .collect();
 
         // Calculate per-scenario events
-        let mut scenario_events: HashMap<String, (usize, u32)> = HashMap::new();
+        let mut scenario_events: HashMap<String, (usize, usize)> = HashMap::new();
         for event in &self.co_events {
             let (count, synthetic) = scenario_events
                 .entry(event.scenario_name.clone())
                 .or_insert((0, 0));
             *count += 1;
-            *synthetic += event.synthetic_injected;
+            *synthetic = synthetic.saturating_add(event.synthetic_injected as usize);
         }
 
         let per_scenario_events: Vec<(String, usize, usize)> = scenario_events
             .into_iter()
-            .map(|(scenario, (count, synthetic))| (scenario, count, synthetic as usize))
+            .map(|(scenario, (count, synthetic))| (scenario, count, synthetic))
             .collect();
 
         CoMetricsSummary {
@@ -557,5 +557,34 @@ impl CadenceCalculator for DisabledCadence {
 
     fn describe_approach(&self) -> &str {
         "Coordinated Omission mitigation is disabled."
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    /// A scenario's synthetic requests add up exactly, past what one event
+    /// can count (a Gaggle manager merges events from every worker).
+    #[test]
+    fn summary_synthetic_requests_add_up() {
+        let mut metrics =
+            CoordinatedOmissionMetrics::new(GooseCoordinatedOmissionMitigation::Average);
+        for _ in 0..2 {
+            metrics.co_events.push(CoEvent {
+                timestamp_secs: metrics.started_secs,
+                expected_cadence: Duration::from_millis(10),
+                actual_duration: Duration::from_millis(100),
+                synthetic_injected: u32::MAX,
+                user_id: 0,
+                scenario_name: "s".to_string(),
+                severity: CoSeverity::Minor,
+            });
+        }
+        let summary = metrics.get_summary();
+        assert_eq!(
+            summary.per_scenario_events,
+            vec![("s".to_string(), 2, 2 * u32::MAX as usize)]
+        );
     }
 }

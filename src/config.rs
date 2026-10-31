@@ -887,6 +887,15 @@ pub struct GooseConfiguration {
     /// Set in code with GooseDefault::AcceptInvalidCerts.
     #[arg(help_heading = "HTTP client", long)]
     pub accept_invalid_certs: bool,
+    /// Check Gaggle metrics merging against this run
+    ///
+    /// Runs the load test as its own Gaggle worker and manager: each second's metrics
+    /// delta is encoded, decoded and merged, and at the end the merge must equal the
+    /// run's own metrics, graphs and dashboard snapshot. Prints one line on a match;
+    /// otherwise writes every difference to gaggle-shadow-diff.txt and fails the run.
+    #[cfg(feature = "gaggle")]
+    #[arg(help_heading = "Gaggle", long, hide = true)]
+    pub gaggle_shadow_merge: bool,
 }
 
 /// How output shows the dashboard auth token: a set token reads [`TOKEN_SHOWN`], and an
@@ -992,6 +1001,8 @@ impl std::fmt::Debug for GooseConfiguration {
             no_gzip,
             sticky_follow,
             accept_invalid_certs,
+            #[cfg(feature = "gaggle")]
+            gaggle_shadow_merge,
         } = self;
         let mut debug = f.debug_struct("GooseConfiguration");
         debug
@@ -1071,8 +1082,10 @@ impl std::fmt::Debug for GooseConfiguration {
             .field("timeout", timeout)
             .field("no_gzip", no_gzip)
             .field("sticky_follow", sticky_follow)
-            .field("accept_invalid_certs", accept_invalid_certs)
-            .finish()
+            .field("accept_invalid_certs", accept_invalid_certs);
+        #[cfg(feature = "gaggle")]
+        debug.field("gaggle_shadow_merge", gaggle_shadow_merge);
+        debug.finish()
     }
 }
 
@@ -2662,7 +2675,7 @@ impl GooseDefaultType<f64> for GooseAttack {
 
 /// One dashboard configuration the tests run every layer over: its flags, and
 /// the words its startup refusal names, `None` when it starts.
-#[cfg(test)]
+#[cfg(all(test, feature = "dashboard"))]
 pub(crate) struct DashboardRow {
     pub(crate) name: &'static str,
     pub(crate) args: &'static [&'static str],
@@ -2670,12 +2683,12 @@ pub(crate) struct DashboardRow {
 }
 
 /// The token the token rows set.
-#[cfg(test)]
+#[cfg(all(test, feature = "dashboard"))]
 pub(crate) const DASHBOARD_ROW_TOKEN: &str = "s3cret";
 
 /// The dashboard configuration matrix, shared by the configuration tests and
 /// the HTTP tests in `src/dashboard.rs`.
-#[cfg(test)]
+#[cfg(all(test, feature = "dashboard"))]
 pub(crate) const DASHBOARD_ROWS: &[DashboardRow] = &[
     DashboardRow {
         name: "R1",
@@ -2758,7 +2771,7 @@ pub(crate) const DASHBOARD_ROWS: &[DashboardRow] = &[
 ];
 
 /// A row's configuration, parsed from its flags and configured as a run does.
-#[cfg(test)]
+#[cfg(all(test, feature = "dashboard"))]
 pub(crate) fn dashboard_row_configuration(row: &DashboardRow) -> GooseConfiguration {
     let mut configuration = GooseConfiguration::parse_args_default(row.args)
         .unwrap_or_else(|e| panic!("{}: {:?}", row.name, e));

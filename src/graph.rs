@@ -452,7 +452,7 @@ impl SecondHistogram {
     /// Add `count` to the row with fixed index `index`.
     fn add_dense(&mut self, index: usize, count: usize) {
         match self.open.as_mut() {
-            Some(open) => open[index] += count,
+            Some(open) => open[index] = open[index].saturating_add(count),
             None => {
                 self.add_indexed(0, index, count);
             }
@@ -477,8 +477,8 @@ impl SecondHistogram {
         if maximum > self.maximum_time_us {
             self.maximum_time_us = maximum;
         }
-        self.total_time_us += total;
-        self.counter += counter;
+        self.total_time_us = self.total_time_us.saturating_add(total);
+        self.counter = self.counter.saturating_add(counter);
     }
 
     /// Record one response time in whole milliseconds (unit tests).
@@ -498,7 +498,7 @@ impl SecondHistogram {
     pub(crate) fn merge(&mut self, other: &SecondHistogram) {
         if let Some(open) = self.open.as_mut() {
             for (index, count) in other.indexed() {
-                open[index] += count;
+                open[index] = open[index].saturating_add(count);
             }
         } else {
             // Both are sorted, so each search starts where the last one ended.
@@ -753,6 +753,10 @@ pub(crate) struct ColumnSink<'a> {
     origin: usize,
     width: usize,
     all: Option<(&'a mut Columns, usize)>,
+    /// A Gaggle worker's copy: every second the ring folds, by second, so
+    /// none is lost to a ring slot (see `LatencyHistograms::folded`).
+    #[cfg(feature = "gaggle")]
+    seconds: Option<&'a mut BTreeMap<usize, SecondHistogram>>,
 }
 
 impl ColumnSink<'_> {
@@ -762,6 +766,8 @@ impl ColumnSink<'_> {
             origin,
             width,
             all: None,
+            #[cfg(feature = "gaggle")]
+            seconds: None,
         }
     }
 
@@ -787,6 +793,19 @@ impl ColumnSink<'_> {
         if let Some((all, width)) = self.all.as_mut() {
             add(all.at(since / *width));
         }
+        #[cfg(feature = "gaggle")]
+        if let Some(seconds) = self.seconds.as_mut() {
+            add(seconds.entry(second).or_default());
+        }
+    }
+
+    /// Whether anything takes the seconds a ring folds.
+    fn feeds(&self) -> bool {
+        #[cfg(feature = "gaggle")]
+        if self.seconds.is_some() {
+            return true;
+        }
+        self.all.is_some()
     }
 }
 
@@ -908,7 +927,7 @@ impl LatencyRing {
         sink: &mut ColumnSink<'_>,
         mut add: impl FnMut(&mut SecondHistogram),
     ) {
-        let feeds = self.columns.is_some() || sink.all.is_some();
+        let feeds = self.columns.is_some() || sink.feeds();
         let folded = match self.slot_mut(second, rev, sink) {
             Some(histogram) => {
                 add(histogram);
@@ -1106,7 +1125,25 @@ pub(crate) struct LatencyHistograms {
     /// The first second that fits in no column at the current widths; past
     /// every second when no columns are kept.
     limit: usize,
+    /// Give every request name a ring of its own, measured and synthetic,
+    /// past [`MAX_REQUEST_SERIES`]: set only on a Gaggle worker's copy that
+    /// collects what a delta sends, where the manager decides which names
+    /// get a ring. Read it through [`Self::admits_all`].
+    #[cfg(feature = "gaggle")]
+    admit_all: bool,
+    /// On a Gaggle worker's copy: the folded seconds of each measured ring,
+    /// by index, and of each name's synthetic ring, which a ring slot,
+    /// reused every [`SERIES_WINDOW_SECS`] seconds, could not keep.
+    #[cfg(feature = "gaggle")]
+    folded: Option<Folded>,
 }
+
+/// See `LatencyHistograms::folded`.
+#[cfg(feature = "gaggle")]
+type Folded = (
+    Vec<BTreeMap<usize, SecondHistogram>>,
+    HashMap<String, BTreeMap<usize, SecondHistogram>>,
+);
 
 impl LatencyHistograms {
     /// `synthetic` keeps rings for coordinated omission mitigation's
@@ -1127,6 +1164,10 @@ impl LatencyHistograms {
             request_width: 1,
             budgets: (ALL_REQUESTS_COLUMNS, REQUEST_COLUMNS),
             limit: usize::MAX,
+            #[cfg(feature = "gaggle")]
+            admit_all: false,
+            #[cfg(feature = "gaggle")]
+            folded: None,
         };
         histograms.set_limit();
         histograms
@@ -1142,15 +1183,31 @@ impl LatencyHistograms {
         histograms
     }
 
+    /// Whether every request name gets a ring of its own (see
+    /// `admit_all`): only on a Gaggle worker's copy.
+    #[inline(always)]
+    fn admits_all(&self) -> bool {
+        #[cfg(feature = "gaggle")]
+        return self.admit_all;
+        #[cfg(not(feature = "gaggle"))]
+        return false;
+    }
+
     /// Recompute the first second that fits in no column.
     fn set_limit(&mut self) {
         let (all, request) = self.budgets;
         self.limit = match self.all_columns {
-            Some(_) => {
-                (self.origin + all * self.all_width).min(self.origin + request * self.request_width)
-            }
+            Some(_) => self
+                .reach(all, self.all_width)
+                .min(self.reach(request, self.request_width)),
             None => usize::MAX,
         };
+    }
+
+    /// The first second past `columns` columns of `width` seconds, at most
+    /// `usize::MAX`.
+    fn reach(&self, columns: usize, width: usize) -> usize {
+        self.origin.saturating_add(columns.saturating_mul(width))
     }
 
     /// Before writing `second`: double the widths until it fits in a
@@ -1164,12 +1221,16 @@ impl LatencyHistograms {
     }
 
     /// Double the width of every series of a budget `second` does not fit,
-    /// as often as it takes.
+    /// as often as it takes, or until a width cannot double, which only a
+    /// second no run reaches needs.
     #[cold]
     fn widen(&mut self, second: usize) {
         let (all, request) = self.budgets;
-        while second >= self.origin + all * self.all_width {
-            self.all_width *= 2;
+        while second >= self.reach(all, self.all_width) {
+            let Some(width) = self.all_width.checked_mul(2) else {
+                break;
+            };
+            self.all_width = width;
             let synthetic = self.synthetic.as_mut().map(|(all, _)| all);
             for columns in self
                 .all_columns
@@ -1179,8 +1240,11 @@ impl LatencyHistograms {
                 columns.double();
             }
         }
-        while second >= self.origin + request * self.request_width {
-            self.request_width *= 2;
+        while second >= self.reach(request, self.request_width) {
+            let Some(width) = self.request_width.checked_mul(2) else {
+                break;
+            };
+            self.request_width = width;
             let synthetic = self
                 .synthetic
                 .iter_mut()
@@ -1205,7 +1269,7 @@ impl LatencyHistograms {
         if let Some(&index) = self.by_request.get(key) {
             return Some(index);
         }
-        if self.rings.len() >= MAX_REQUEST_SERIES {
+        if self.rings.len() >= MAX_REQUEST_SERIES && !self.admits_all() {
             return None;
         }
         self.rings
@@ -1238,10 +1302,22 @@ impl LatencyHistograms {
             None => &mut self.others,
         };
         let all_width = self.all_width;
+        #[cfg(feature = "gaggle")]
+        let seconds = match (self.folded.as_mut(), index) {
+            (Some((measured, _)), Some(index)) => {
+                if measured.len() <= index {
+                    measured.resize_with(index + 1, BTreeMap::new);
+                }
+                Some(&mut measured[index])
+            }
+            _ => None,
+        };
         let sink = ColumnSink {
             origin: self.origin,
             width: self.request_width,
             all: self.all_columns.as_mut().map(|all| (all, all_width)),
+            #[cfg(feature = "gaggle")]
+            seconds,
         };
         (ring, sink)
     }
@@ -1369,6 +1445,7 @@ impl LatencyHistograms {
         self.fit_columns(second);
         let rev = self.next_rev();
         let (origin, columns) = (self.origin, self.all_columns.is_some());
+        let admits_all = self.admits_all();
         let Some((all, by_request)) = self.synthetic.as_mut() else {
             return;
         };
@@ -1378,10 +1455,18 @@ impl LatencyHistograms {
             rev,
             &mut ColumnSink::own(origin, self.all_width),
         );
-        if !self.by_request.contains_key(key) {
+        if !self.by_request.contains_key(key) && !admits_all {
             return;
         }
+        #[cfg_attr(not(feature = "gaggle"), allow(unused_mut))]
         let mut sink = ColumnSink::own(origin, self.request_width);
+        #[cfg(feature = "gaggle")]
+        if let Some((_, synthetic)) = self.folded.as_mut() {
+            if !synthetic.contains_key(key) {
+                synthetic.insert(key.to_string(), BTreeMap::new());
+            }
+            sink.seconds = synthetic.get_mut(key);
+        }
         if let Some(ring) = by_request.get_mut(key) {
             ring.record_to(second, us, rev, &mut sink);
         } else {
@@ -3640,13 +3725,13 @@ impl TimeSeriesValue<usize, usize> for usize {
         0
     }
     fn increase_value(&mut self, value: &usize) {
-        *self += *value;
+        *self = self.saturating_add(*value);
     }
     fn set_value(&mut self, value: usize) {
         *self = value;
     }
     fn merge(&mut self, other: &usize) {
-        *self += *other;
+        *self = self.saturating_add(*other);
     }
     fn get_graph_value(&self) -> Option<usize> {
         match *self == 0 {
@@ -3664,13 +3749,13 @@ impl TimeSeriesValue<u32, u32> for u32 {
         0
     }
     fn increase_value(&mut self, value: &u32) {
-        *self += *value;
+        *self = self.saturating_add(*value);
     }
     fn set_value(&mut self, value: u32) {
         *self = value;
     }
     fn merge(&mut self, other: &u32) {
-        *self += *other;
+        *self = self.saturating_add(*other);
     }
     fn get_graph_value(&self) -> Option<u32> {
         match *self == 0 {
@@ -3694,7 +3779,7 @@ impl TimeSeriesValue<MovingAverage, f32> for MovingAverage {
         panic!("TimeSeriesValue::set() is not supported for MovingAverage");
     }
     fn merge(&mut self, other: &MovingAverage) {
-        let total_count = self.count + other.count;
+        let total_count = self.count.saturating_add(other.count);
         if total_count == 0 {
             self.average = 0.;
         } else {
@@ -3788,9 +3873,41 @@ impl PartialEq for MovingAverage {
 
 impl Eq for MovingAverage {}
 
+/// What a Gaggle worker sends of its graph data, and what its manager
+/// rebuilds graph data from.
+#[cfg(feature = "gaggle")]
+mod gaggle;
+#[cfg(feature = "gaggle")]
+pub(crate) use gaggle::{gaggle_max_row, GraphSettings};
+
 #[cfg(test)]
 mod test {
     use super::*;
+
+    /// Widening for a second within reach doubles each width until the
+    /// second fits, and for any second at all it stops: once a width cannot
+    /// double, it stays.
+    #[test]
+    fn widen_ends_for_any_second() {
+        let mut latency = LatencyHistograms::with_budgets(true, 4, 2);
+        latency.widen(9);
+        assert_eq!((latency.all_width, latency.request_width), (4, 8));
+        assert_eq!(latency.limit, 16);
+        let top: usize = 1 << (usize::BITS - 1);
+        for (second, widened) in [
+            (top / 2, (top / 4, top / 2, top)),
+            (usize::MAX - 1, (top / 2, top, usize::MAX)),
+            (usize::MAX, (top, top, usize::MAX)),
+        ] {
+            let mut latency = LatencyHistograms::with_budgets(true, 4, 2);
+            latency.widen(second);
+            let (all, request, limit) = widened;
+            assert_eq!(
+                (latency.all_width, latency.request_width, latency.limit),
+                (all, request, limit)
+            );
+        }
+    }
 
     #[test]
     fn test_graph_setters() {

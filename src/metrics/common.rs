@@ -102,8 +102,10 @@ pub(crate) struct RequestTotals {
 impl RequestTotals {
     /// Add one request's figures.
     pub(crate) fn add(&mut self, request: &GooseRequestMetricAggregate) {
-        self.requests += request.success_count + request.fail_count;
-        self.failures += request.fail_count;
+        self.requests = self
+            .requests
+            .saturating_add(request.success_count.saturating_add(request.fail_count));
+        self.failures = self.failures.saturating_add(request.fail_count);
         self.times.merge(&request.raw_data);
     }
 
@@ -342,8 +344,8 @@ impl<'m> Prepare<'m> {
         }
 
         let mut transaction_metrics = Vec::new();
-        let mut aggregate_total_count = 0;
-        let mut aggregate_fail_count = 0;
+        let mut aggregate_total_count: usize = 0;
+        let mut aggregate_fail_count: usize = 0;
         // Every transaction's run times together.
         let mut aggregate_times = GooseRequestMetricTimingData::default();
         for (scenario_counter, scenario) in self.metrics.transactions.iter().enumerate() {
@@ -386,8 +388,8 @@ impl<'m> Prepare<'m> {
                     failures_per_second: Some(failures_per_second.into()),
                 });
 
-                aggregate_total_count += total_run_count;
-                aggregate_fail_count += transaction.fail_count;
+                aggregate_total_count = aggregate_total_count.saturating_add(total_run_count);
+                aggregate_fail_count = aggregate_fail_count.saturating_add(transaction.fail_count);
                 aggregate_times.merge(times);
             }
         }

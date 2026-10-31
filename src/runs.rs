@@ -869,12 +869,18 @@ fn read_listed(json: &Path, name: &str, modified: std::time::SystemTime) -> Opti
         running: false,
         duration_secs: metrics.duration,
         max_users: metrics.maximum_users,
+        // A report's counts are whatever its file says, and a Gaggle
+        // manager's are every worker's added up: the totals saturate.
         requests: metrics
             .requests
             .values()
-            .map(|r| r.success_count + r.fail_count)
-            .sum(),
-        failed_requests: metrics.requests.values().map(|r| r.fail_count).sum(),
+            .map(|r| r.success_count.saturating_add(r.fail_count))
+            .fold(0, u64::saturating_add),
+        failed_requests: metrics
+            .requests
+            .values()
+            .map(|r| r.fail_count)
+            .fold(0, u64::saturating_add),
         sort_key,
     })
 }
@@ -1495,6 +1501,30 @@ mod tests {
             assert!(names.iter().any(|n| n == name), "{}", name);
         }
         assert!(!names.iter().any(|n| n.contains('/')));
+    }
+
+    /// A report whose request counts add up past what a u64 holds lists
+    /// with its totals saturated rather than overflowing: a Gaggle
+    /// manager's report adds up every worker's.
+    #[cfg(feature = "dashboard")]
+    #[test]
+    fn a_report_past_u64_requests_lists_saturated() {
+        let parent = temp_dir("listing-saturated");
+        let folder = parent.join("run");
+        std::fs::create_dir(&folder).unwrap();
+        let half = u64::MAX / 2 + 1;
+        let report = serde_json::json!({
+            "started": "2026-10-22T10:00:00Z",
+            "raw_metrics": {"requests": {
+                "GET /a": {"success_count": half, "fail_count": half},
+                "GET /b": {"success_count": 0, "fail_count": half},
+            }},
+        });
+        std::fs::write(folder.join(REPORT_JSON), report.to_string()).unwrap();
+        let listed = list_reports(&parent, None, &mut ListingCache::new()).unwrap();
+        assert_eq!(listed[0].requests, u64::MAX);
+        assert_eq!(listed[0].failed_requests, u64::MAX);
+        std::fs::remove_dir_all(&parent).ok();
     }
 
     /// Rule 12: a listing parses a report again when it changes, so the

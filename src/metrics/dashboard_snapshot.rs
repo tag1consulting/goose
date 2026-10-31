@@ -150,8 +150,9 @@ pub(crate) struct SnapshotSettings {
 }
 
 impl SnapshotSettings {
-    /// No settings and an idle stage, for a snapshot built in a test.
-    #[cfg(test)]
+    /// No settings and an idle stage, for a snapshot built in a test or
+    /// compared by the Gaggle shadow merge.
+    #[cfg(any(test, feature = "gaggle"))]
     pub(crate) fn idle() -> Self {
         SnapshotSettings {
             host: None,
@@ -610,9 +611,9 @@ pub(crate) fn build_dashboard_snapshot(input: DashboardSnapshotInput<'_>) -> Das
     let mut request_rank: Vec<(&str, &GooseRequestMetricAggregate, usize)> =
         Vec::with_capacity(input.metrics.requests.len());
     for (key, request) in &input.metrics.requests {
-        let total_count = request.success_count + request.fail_count;
-        aggregate_total_count += total_count;
-        aggregate_fail_count += request.fail_count;
+        let total_count = request.success_count.saturating_add(request.fail_count);
+        aggregate_total_count = aggregate_total_count.saturating_add(total_count);
+        aggregate_fail_count = aggregate_fail_count.saturating_add(request.fail_count);
         aggregate.merge(&request.raw_data);
         if let Some(co_aggregate) = co_aggregate.as_mut() {
             co_aggregate.merge(
