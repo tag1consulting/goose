@@ -1,7 +1,8 @@
 //! Field by field comparison of the metrics a Gaggle merge produces with
 //! those of one process, for the shadow merge self check and the tests.
 
-use crate::metrics::GooseMetrics;
+use crate::metrics::coordinated_omission::{CoEvent, CoordinatedOmissionMetrics};
+use crate::metrics::{GooseMetrics, GooseRequestMetricAggregate};
 use std::collections::BTreeSet;
 use std::fmt::Debug;
 
@@ -22,50 +23,95 @@ fn check<T: PartialEq + Debug>(out: &mut Vec<String>, field: &str, a: &T, b: &T)
 /// events compare in order of their other fields, as workers interleave
 /// them.
 pub(crate) fn metrics_diff(a: &GooseMetrics, b: &GooseMetrics) -> Vec<String> {
+    // Every field named, so a field added to any of these fails to compile
+    // here until it is compared or left out on purpose.
+    let GooseMetrics {
+        // No worker sends it: the manager's own.
+        hash: _,
+        // As `hash`.
+        history: _,
+        // As `hash`.
+        duration: _,
+        // As `hash`.
+        maximum_users: _,
+        // As `hash`.
+        total_users: _,
+        requests,
+        transactions,
+        scenarios,
+        errors,
+        transaction_errors,
+        hosts,
+        coordinated_omission_metrics,
+        // Judged on the merged metrics, by the tests that compare reports.
+        thresholds: _,
+        // As `thresholds`.
+        threshold_abort: _,
+        // As `thresholds`.
+        rps_window: _,
+        // The manager's own display flags.
+        final_metrics: _,
+        // As `final_metrics`.
+        display_status_codes: _,
+        // As `final_metrics`.
+        display_metrics: _,
+    } = a;
     let mut out = Vec::new();
-    let keys: BTreeSet<&String> = a.requests.keys().chain(b.requests.keys()).collect();
+    let keys: BTreeSet<&String> = requests.keys().chain(b.requests.keys()).collect();
     for key in keys {
-        match (a.requests.get(key), b.requests.get(key)) {
+        match (requests.get(key), b.requests.get(key)) {
             (Some(x), Some(y)) => {
+                let GooseRequestMetricAggregate {
+                    path,
+                    method,
+                    raw_data,
+                    coordinated_omission_data,
+                    status_code_counts,
+                    status_code_timings,
+                    success_count,
+                    fail_count,
+                    load_test_hash,
+                    custom_method,
+                } = x;
                 let field = |name: &str| format!("requests[{key}].{name}");
-                check(&mut out, &field("path"), &x.path, &y.path);
-                check(&mut out, &field("method"), &x.method, &y.method);
+                check(&mut out, &field("path"), path, &y.path);
+                check(&mut out, &field("method"), method, &y.method);
                 check(
                     &mut out,
                     &field("custom_method"),
-                    &x.custom_method,
+                    custom_method,
                     &y.custom_method,
                 );
-                check(&mut out, &field("raw_data"), &x.raw_data, &y.raw_data);
+                check(&mut out, &field("raw_data"), raw_data, &y.raw_data);
                 check(
                     &mut out,
                     &field("coordinated_omission_data"),
-                    &x.coordinated_omission_data,
+                    coordinated_omission_data,
                     &y.coordinated_omission_data,
                 );
                 check(
                     &mut out,
                     &field("status_code_counts"),
-                    &x.status_code_counts,
+                    status_code_counts,
                     &y.status_code_counts,
                 );
                 check(
                     &mut out,
                     &field("status_code_timings"),
-                    &x.status_code_timings,
+                    status_code_timings,
                     &y.status_code_timings,
                 );
                 check(
                     &mut out,
                     &field("success_count"),
-                    &x.success_count,
+                    success_count,
                     &y.success_count,
                 );
-                check(&mut out, &field("fail_count"), &x.fail_count, &y.fail_count);
+                check(&mut out, &field("fail_count"), fail_count, &y.fail_count);
                 check(
                     &mut out,
                     &field("load_test_hash"),
-                    &x.load_test_hash,
+                    load_test_hash,
                     &y.load_test_hash,
                 );
             }
@@ -76,80 +122,103 @@ pub(crate) fn metrics_diff(a: &GooseMetrics, b: &GooseMetrics) -> Vec<String> {
             )),
         }
     }
-    check(&mut out, "transactions", &a.transactions, &b.transactions);
-    check(&mut out, "scenarios", &a.scenarios, &b.scenarios);
-    check(&mut out, "errors", &a.errors, &b.errors);
+    // Whole aggregates, compared with their own `PartialEq`, every field.
+    check(&mut out, "transactions", transactions, &b.transactions);
+    check(&mut out, "scenarios", scenarios, &b.scenarios);
+    check(&mut out, "errors", errors, &b.errors);
     check(
         &mut out,
         "transaction_errors",
-        &a.transaction_errors,
+        transaction_errors,
         &b.transaction_errors,
     );
-    check(&mut out, "hosts", &a.hosts, &b.hosts);
+    check(&mut out, "hosts", hosts, &b.hosts);
     match (
-        a.coordinated_omission_metrics.as_ref(),
+        coordinated_omission_metrics.as_ref(),
         b.coordinated_omission_metrics.as_ref(),
     ) {
         (None, None) => {}
         (Some(x), Some(y)) => {
+            let CoordinatedOmissionMetrics {
+                actual_requests,
+                synthetic_requests,
+                synthetic_percentage,
+                co_events,
+                severity_histogram,
+                mitigation_strategy,
+                started_secs,
+            } = x;
             let field = |name: &str| format!("coordinated_omission_metrics.{name}");
             check(
                 &mut out,
                 &field("actual_requests"),
-                &x.actual_requests,
+                actual_requests,
                 &y.actual_requests,
             );
             check(
                 &mut out,
                 &field("synthetic_requests"),
-                &x.synthetic_requests,
+                synthetic_requests,
                 &y.synthetic_requests,
             );
             check(
                 &mut out,
                 &field("synthetic_percentage"),
-                &x.synthetic_percentage,
+                synthetic_percentage,
                 &y.synthetic_percentage,
             );
             check(
                 &mut out,
                 &field("severity_histogram"),
-                &x.severity_histogram,
+                severity_histogram,
                 &y.severity_histogram,
             );
             check(
                 &mut out,
                 &field("started_secs"),
-                &x.started_secs,
+                started_secs,
                 &y.started_secs,
             );
             check(
                 &mut out,
                 &field("mitigation_strategy"),
-                &x.mitigation_strategy,
+                mitigation_strategy,
                 &y.mitigation_strategy,
             );
-            let events =
-                |metrics: &crate::metrics::coordinated_omission::CoordinatedOmissionMetrics| {
-                    let mut events: Vec<String> = metrics
-                        .co_events
-                        .iter()
-                        .map(|event| {
-                            format!(
-                                "{:?} {:?} {} {} {} {:?}",
-                                event.expected_cadence,
-                                event.actual_duration,
-                                event.synthetic_injected,
-                                event.user_id,
-                                event.scenario_name,
-                                event.severity
-                            )
-                        })
-                        .collect();
-                    events.sort();
-                    events
-                };
-            check(&mut out, &field("co_events"), &events(x), &events(y));
+            let events = |events: &[CoEvent]| {
+                let mut events: Vec<String> = events
+                    .iter()
+                    .map(|event| {
+                        let CoEvent {
+                            // Wall clock times, which two runs never share.
+                            timestamp_secs: _,
+                            expected_cadence,
+                            actual_duration,
+                            synthetic_injected,
+                            user_id,
+                            scenario_name,
+                            severity,
+                        } = event;
+                        format!(
+                            "{:?} {:?} {} {} {} {:?}",
+                            expected_cadence,
+                            actual_duration,
+                            synthetic_injected,
+                            user_id,
+                            scenario_name,
+                            severity
+                        )
+                    })
+                    .collect();
+                events.sort();
+                events
+            };
+            check(
+                &mut out,
+                &field("co_events"),
+                &events(co_events),
+                &events(&y.co_events),
+            );
         }
         (x, y) => out.push(format!(
             "coordinated_omission_metrics: kept {} != kept {}",

@@ -418,8 +418,14 @@ pub(crate) struct Timing {
 
 impl Timing {
     pub(crate) fn from_data(data: &GooseRequestMetricTimingData) -> Self {
-        let mut buckets: Vec<(u64, u64)> = data
-            .times_us
+        let GooseRequestMetricTimingData {
+            times_us,
+            minimum_time_us,
+            maximum_time_us,
+            total_time_us,
+            counter,
+        } = data;
+        let mut buckets: Vec<(u64, u64)> = times_us
             .iter()
             .map(|(&bucket, &count)| (bucket, count as u64))
             .collect();
@@ -436,24 +442,33 @@ impl Timing {
         });
         Timing {
             buckets,
-            minimum_us: data.minimum_time_us,
-            maximum_us: data.maximum_time_us,
-            total_us: data.total_time_us,
-            count: data.counter as u64,
+            minimum_us: *minimum_time_us,
+            maximum_us: *maximum_time_us,
+            total_us: *total_time_us,
+            count: *counter as u64,
         }
     }
 
     pub(crate) fn to_data(&self) -> GooseRequestMetricTimingData {
-        let mut data = GooseRequestMetricTimingData::default();
-        for &(bucket, count) in &self.buckets {
+        let Timing {
+            buckets: held,
+            minimum_us,
+            maximum_us,
+            total_us,
+            count,
+        } = self;
+        let mut times_us = crate::metrics::TimeBuckets::default();
+        for &(bucket, count) in held {
             debug_assert_eq!(buckets::bucket_floor(bucket), bucket);
-            data.times_us.add(bucket, count as usize);
+            times_us.add(bucket, count as usize);
         }
-        data.minimum_time_us = self.minimum_us;
-        data.maximum_time_us = self.maximum_us;
-        data.total_time_us = self.total_us;
-        data.counter = self.count as usize;
-        data
+        GooseRequestMetricTimingData {
+            times_us,
+            minimum_time_us: *minimum_us,
+            maximum_time_us: *maximum_us,
+            total_time_us: *total_us,
+            counter: *count as usize,
+        }
     }
 
     /// Add `other`'s times, as [`GooseRequestMetricTimingData::merge`] does.

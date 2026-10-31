@@ -7,7 +7,12 @@ use super::delta::{
 };
 use super::shadow::ShadowMerge;
 use crate::graph::GraphData;
-use crate::metrics::{GooseMetrics, GooseRequestCounterRegistry};
+use crate::metrics::coordinated_omission::CoordinatedOmissionMetrics;
+use crate::metrics::{
+    GooseErrorMetricAggregate, GooseMetrics, GooseRequestCounterRegistry,
+    GooseRequestMetricAggregate, GooseTransactionErrorMetricAggregate, ScenarioMetricAggregate,
+    TransactionMetricAggregate,
+};
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 
@@ -244,101 +249,178 @@ fn clock(delta: &GaggleDelta, now: Second) -> Second {
 }
 
 /// Everything in `metrics` as a delta carries it, apart from the success
-/// and failure counts, which the atomic counters hold.
+/// and failure counts, which the atomic counters hold. Every field of every
+/// aggregate is named, so a field added to one fails to compile here until
+/// it is sent or left out on purpose.
 pub(crate) fn metrics_part(metrics: &GooseMetrics) -> MetricsPart {
+    let GooseMetrics {
+        // The manager hashes the plan itself.
+        hash: _,
+        // The manager runs the plan, and keeps its history.
+        history: _,
+        // The manager times the run.
+        duration: _,
+        // The manager counts users from what it starts.
+        maximum_users: _,
+        // As `maximum_users`.
+        total_users: _,
+        requests,
+        transactions,
+        scenarios,
+        errors,
+        transaction_errors,
+        hosts,
+        coordinated_omission_metrics,
+        // The manager judges thresholds on the merged metrics.
+        thresholds: _,
+        // As `thresholds`.
+        threshold_abort: _,
+        // As `thresholds`.
+        rps_window: _,
+        // The manager's own display flags.
+        final_metrics: _,
+        // As `final_metrics`.
+        display_status_codes: _,
+        // As `final_metrics`.
+        display_metrics: _,
+    } = metrics;
     let mut part = MetricsPart::default();
-    for (key, aggregate) in &metrics.requests {
-        let mut request =
-            RequestPart::new(&aggregate.path, aggregate.method, &aggregate.custom_method);
-        request.raw = Timing::from_data(&aggregate.raw_data);
-        request.adjusted = aggregate
-            .coordinated_omission_data
-            .as_ref()
-            .map(Timing::from_data);
-        request.status_codes = aggregate
-            .status_code_counts
+    for (key, aggregate) in requests {
+        let GooseRequestMetricAggregate {
+            path,
+            method,
+            raw_data,
+            coordinated_omission_data,
+            status_code_counts,
+            status_code_timings,
+            // The atomic counters hold them (see `WorkerState::add_counts`).
+            success_count: _,
+            // As `success_count`.
+            fail_count: _,
+            // 0 in every aggregate the metrics processor builds.
+            load_test_hash: _,
+            custom_method,
+        } = aggregate;
+        let mut request = RequestPart::new(path, *method, custom_method);
+        request.raw = Timing::from_data(raw_data);
+        request.adjusted = coordinated_omission_data.as_ref().map(Timing::from_data);
+        request.status_codes = status_code_counts
             .iter()
             .map(|(&code, &count)| (code, count as u64))
             .collect();
-        request.status_timings = aggregate
-            .status_code_timings
+        request.status_timings = status_code_timings
             .iter()
             .map(|(&code, summary)| (code, summary.clone()))
             .collect();
         part.requests.insert(key.clone(), request);
     }
-    for transaction in metrics.transactions.iter().flatten() {
-        if transaction.run_times.counter == 0
-            && transaction.success_count == 0
-            && transaction.fail_count == 0
-        {
+    for transaction in transactions.iter().flatten() {
+        let TransactionMetricAggregate {
+            scenario_index,
+            // The manager's template names every transaction.
+            scenario_name: _,
+            transaction_index,
+            // As `scenario_name`.
+            transaction_name: _,
+            run_times,
+            success_count,
+            fail_count,
+        } = transaction;
+        if run_times.counter == 0 && *success_count == 0 && *fail_count == 0 {
             continue;
         }
         part.transactions.insert(
-            (
-                transaction.scenario_index as u64,
-                transaction.transaction_index as u64,
-            ),
+            (*scenario_index as u64, *transaction_index as u64),
             TransactionPart {
-                run_times: Timing::from_data(&transaction.run_times),
-                success: transaction.success_count as u64,
-                fail: transaction.fail_count as u64,
+                run_times: Timing::from_data(run_times),
+                success: *success_count as u64,
+                fail: *fail_count as u64,
             },
         );
     }
-    for scenario in &metrics.scenarios {
-        if scenario.users.is_empty() && scenario.run_times.counter == 0 {
+    for scenario in scenarios {
+        let ScenarioMetricAggregate {
+            index,
+            // The manager's template names every scenario.
+            name: _,
+            users,
+            run_times,
+        } = scenario;
+        if users.is_empty() && run_times.counter == 0 {
             continue;
         }
         part.scenarios.insert(
-            scenario.index as u64,
+            *index as u64,
             ScenarioPart {
-                users: scenario.users.iter().map(|&user| user as u64).collect(),
-                run_times: Timing::from_data(&scenario.run_times),
+                users: users.iter().map(|&user| user as u64).collect(),
+                run_times: Timing::from_data(run_times),
             },
         );
     }
-    for (key, error) in &metrics.errors {
+    for (key, error) in errors {
+        let GooseErrorMetricAggregate {
+            method,
+            name,
+            error,
+            occurrences,
+            custom_method,
+        } = error;
         part.errors.insert(
             ErrorKey {
                 key: key.clone(),
-                method: error.method,
-                name: error.name.clone(),
-                error: error.error.clone(),
-                custom_method: error.custom_method.clone(),
+                method: *method,
+                name: name.clone(),
+                error: error.clone(),
+                custom_method: custom_method.clone(),
             },
-            error.occurrences as u64,
+            *occurrences as u64,
         );
     }
-    for (key, error) in &metrics.transaction_errors {
+    for (key, error) in transaction_errors {
+        let GooseTransactionErrorMetricAggregate {
+            scenario_index,
+            scenario_name,
+            transaction_index,
+            transaction_name,
+            error,
+            occurrences,
+        } = error;
         part.transaction_errors.insert(
             TransactionErrorKey {
                 key: key.clone(),
-                scenario_index: error.scenario_index as u64,
-                scenario_name: error.scenario_name.clone(),
-                transaction_index: error.transaction_index as u64,
-                transaction_name: error.transaction_name.clone(),
-                error: error.error.clone(),
+                scenario_index: *scenario_index as u64,
+                scenario_name: scenario_name.clone(),
+                transaction_index: *transaction_index as u64,
+                transaction_name: transaction_name.clone(),
+                error: error.clone(),
             },
-            error.occurrences as u64,
+            *occurrences as u64,
         );
     }
-    part.hosts = metrics.hosts.iter().cloned().collect();
-    part.co = metrics
-        .coordinated_omission_metrics
-        .as_ref()
-        .map(|co| CoPart {
-            strategy: co.mitigation_strategy.clone(),
-            started_secs: co.started_secs,
-            actual: co.actual_requests,
-            synthetic: co.synthetic_requests,
-            severity: co
-                .severity_histogram
+    part.hosts = hosts.iter().cloned().collect();
+    part.co = coordinated_omission_metrics.as_ref().map(|co| {
+        let CoordinatedOmissionMetrics {
+            actual_requests,
+            synthetic_requests,
+            // Worked out again from the merged counts.
+            synthetic_percentage: _,
+            co_events,
+            severity_histogram,
+            mitigation_strategy,
+            started_secs,
+        } = co;
+        CoPart {
+            strategy: mitigation_strategy.clone(),
+            started_secs: *started_secs,
+            actual: *actual_requests,
+            synthetic: *synthetic_requests,
+            severity: severity_histogram
                 .iter()
                 .map(|(&severity, &count)| (severity_code(severity), count as u64))
                 .collect(),
-            events: co.co_events.clone(),
+            events: co_events.clone(),
             events_dropped: 0,
-        });
+        }
+    });
     part
 }
