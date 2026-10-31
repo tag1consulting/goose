@@ -2675,7 +2675,7 @@ impl GooseDefaultType<f64> for GooseAttack {
 
 /// One dashboard configuration the tests run every layer over: its flags, and
 /// the words its startup refusal names, `None` when it starts.
-#[cfg(test)]
+#[cfg(all(test, feature = "dashboard"))]
 pub(crate) struct DashboardRow {
     pub(crate) name: &'static str,
     pub(crate) args: &'static [&'static str],
@@ -2683,12 +2683,12 @@ pub(crate) struct DashboardRow {
 }
 
 /// The token the token rows set.
-#[cfg(test)]
+#[cfg(all(test, feature = "dashboard"))]
 pub(crate) const DASHBOARD_ROW_TOKEN: &str = "s3cret";
 
 /// The dashboard configuration matrix, shared by the configuration tests and
 /// the HTTP tests in `src/dashboard.rs`.
-#[cfg(test)]
+#[cfg(all(test, feature = "dashboard"))]
 pub(crate) const DASHBOARD_ROWS: &[DashboardRow] = &[
     DashboardRow {
         name: "R1",
@@ -2771,7 +2771,7 @@ pub(crate) const DASHBOARD_ROWS: &[DashboardRow] = &[
 ];
 
 /// A row's configuration, parsed from its flags and configured as a run does.
-#[cfg(test)]
+#[cfg(all(test, feature = "dashboard"))]
 pub(crate) fn dashboard_row_configuration(row: &DashboardRow) -> GooseConfiguration {
     let mut configuration = GooseConfiguration::parse_args_default(row.args)
         .unwrap_or_else(|e| panic!("{}: {:?}", row.name, e));
