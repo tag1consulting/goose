@@ -3161,7 +3161,7 @@ impl GooseConfiguration {
                 filter: self.test_plan.is_none(),
                 message: "test_plan",
             },
-            // Otherwise use GooseDefault if set and not on Worker.
+            // Otherwise use GooseDefault if set.
             GooseValue {
                 value: defaults.test_plan.clone(),
                 filter: defaults.test_plan.is_none(),
@@ -3187,16 +3187,17 @@ impl GooseConfiguration {
                 filter: false,
                 message: "users",
             },
-            // Otherwise use GooseDefault if set and not on Worker.
+            // Otherwise use GooseDefault if set.
             GooseValue {
                 value: defaults.users,
                 filter: defaults.users.is_none(),
                 message: "users",
             },
-            // Otherwise use detected number of CPUs if not on Worker.
+            // Otherwise use detected number of CPUs, except on a Gaggle worker,
+            // whose manager gives its users.
             GooseValue {
                 value: default_users,
-                filter: self.test_plan.is_some(),
+                filter: self.test_plan.is_some() || self.gaggle_worker_flag(),
                 message: "users defaulted to number of CPUs",
             },
         ]);
@@ -3215,7 +3216,7 @@ impl GooseConfiguration {
                     filter: increase_time.is_none(),
                     message: "increase_time",
                 },
-                // Otherwise use GooseDefault if set and not on Worker.
+                // Otherwise use GooseDefault if set.
                 GooseValue {
                     value: defaults.increase_time,
                     filter: defaults.increase_time.is_none(),
@@ -3238,7 +3239,7 @@ impl GooseConfiguration {
                     filter: decrease_time.is_none(),
                     message: "decrease_time",
                 },
-                // Otherwise use GooseDefault if set and not on Worker.
+                // Otherwise use GooseDefault if set.
                 GooseValue {
                     value: defaults.decrease_time,
                     filter: defaults.decrease_time.is_none(),
@@ -3261,7 +3262,7 @@ impl GooseConfiguration {
                     filter: run_time.is_none(),
                     message: "run_time",
                 },
-                // Otherwise use GooseDefault if set and not on Worker.
+                // Otherwise use GooseDefault if set.
                 GooseValue {
                     value: defaults.run_time,
                     filter: defaults.run_time.is_none(),
@@ -3282,7 +3283,7 @@ impl GooseConfiguration {
                     filter: increase_rate.is_none(),
                     message: "increase_rate",
                 },
-                // Otherwise use GooseDefault if set and not on Worker.
+                // Otherwise use GooseDefault if set.
                 GooseValue {
                     value: default_increase_rate,
                     filter: default_increase_rate.is_none(),
@@ -3303,7 +3304,7 @@ impl GooseConfiguration {
                     filter: decrease_rate.is_none(),
                     message: "decrease_rate",
                 },
-                // Otherwise use GooseDefault if set and not on Worker.
+                // Otherwise use GooseDefault if set.
                 GooseValue {
                     value: default_decrease_rate,
                     filter: default_decrease_rate.is_none(),
@@ -3323,7 +3324,7 @@ impl GooseConfiguration {
                     filter: timeout.is_none(),
                     message: "timeout",
                 },
-                // Otherwise use GooseDefault if set and not on Worker.
+                // Otherwise use GooseDefault if set.
                 GooseValue {
                     value: default_timeout,
                     filter: default_timeout.is_none(),
@@ -3568,7 +3569,7 @@ impl GooseConfiguration {
                 filter: self.iterations.is_none(),
                 message: "iterations",
             },
-            // Use GooseDefault if not already set and not Worker.
+            // Use GooseDefault if not already set.
             GooseValue {
                 value: defaults.iterations,
                 filter: defaults.iterations.is_none(),
@@ -3584,7 +3585,7 @@ impl GooseConfiguration {
                 filter: self.scenarios.is_none(),
                 message: "scenarios",
             },
-            // Use GooseDefault if not already set and not Worker.
+            // Use GooseDefault if not already set.
             GooseValue {
                 value: defaults.scenarios.clone(),
                 filter: defaults.scenarios.is_none(),
@@ -3937,7 +3938,7 @@ impl GooseConfiguration {
                     filter: !self.no_autostart,
                     message: "no_autostart",
                 },
-                // Use GooseDefault if not already set and not Worker.
+                // Use GooseDefault if not already set.
                 GooseValue {
                     value: defaults.no_autostart,
                     filter: defaults.no_autostart.is_none(),
@@ -3955,7 +3956,7 @@ impl GooseConfiguration {
                     filter: !self.no_gzip,
                     message: "no_gzip",
                 },
-                // Use GooseDefault if not already set and not Worker.
+                // Use GooseDefault if not already set.
                 GooseValue {
                     value: defaults.no_gzip,
                     filter: defaults.no_gzip.is_none(),
@@ -3973,7 +3974,7 @@ impl GooseConfiguration {
                     filter: !self.accept_invalid_certs,
                     message: "accept_invalid_certs",
                 },
-                // Use GooseDefault if not already set and not Worker.
+                // Use GooseDefault if not already set.
                 GooseValue {
                     value: defaults.accept_invalid_certs,
                     filter: defaults.accept_invalid_certs.is_none(),
@@ -4028,7 +4029,7 @@ impl GooseConfiguration {
                     filter: !self.sticky_follow,
                     message: "sticky_follow",
                 },
-                // Use GooseDefault if not already set and not Worker.
+                // Use GooseDefault if not already set.
                 GooseValue {
                     value: defaults.sticky_follow,
                     filter: defaults.sticky_follow.is_none(),
@@ -4330,6 +4331,16 @@ impl GooseConfiguration {
             return true;
         }
         self.report_in_folder() || self.logs_in_folder() || (self.dashboard && !self.no_metrics)
+    }
+
+    /// Whether this is a Gaggle worker, false without the `gaggle` feature.
+    pub(crate) fn gaggle_worker_flag(&self) -> bool {
+        #[cfg(feature = "gaggle")]
+        {
+            self.worker
+        }
+        #[cfg(not(feature = "gaggle"))]
+        false
     }
 
     /// Whether any request, transaction, scenario, error or debug log is set.
@@ -4886,8 +4897,9 @@ impl GooseConfiguration {
         }
 
         // --output-dir sets the folder that output flags given without a path write to.
+        // A Gaggle worker keeps it for the logs its manager may ask for.
         if let Some(output_dir) = self.output_dir() {
-            if !self.uses_run_folder() {
+            if !self.uses_run_folder() && !self.gaggle_worker_flag() {
                 let detail = if self.no_metrics {
                     "`configuration.output_dir` (--output-dir) would hold nothing: --dashboard and a bare --report-file write into it except under --no-metrics, which is given here, so give a bare --goose-log or --debug-log."
                 } else {

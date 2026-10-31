@@ -9,9 +9,6 @@ use crate::metrics::GooseCoordinatedOmissionMitigation;
 use crate::runs::{log_file_name, LOG_NAMES};
 use serde::{Deserialize, Serialize};
 
-/// The most custom data a manager may hand one worker.
-pub const MAX_WORKER_DATA: usize = 16 * 1024 * 1024;
-
 /// One log a worker writes, in its own run folder, and streams to the
 /// manager at the end of the run.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

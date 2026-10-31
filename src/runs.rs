@@ -63,6 +63,8 @@ pub(crate) enum EndedBy {
     Canceled,
     /// Every user exited on its own, for example after `--iterations`.
     UsersExited,
+    /// A Gaggle manager lost every one of its workers.
+    WorkersLost,
 }
 
 /// The record of a run that its JSON report holds beside its metrics. Every
@@ -96,6 +98,83 @@ pub(crate) struct RunRecord {
     /// When the graphs do not cover the whole run: where they start, and why.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub graphs_start: Option<GraphsStart>,
+    /// A Gaggle manager's workers; absent on a run of one process.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gaggle: Option<GaggleRecord>,
+}
+
+/// A Gaggle run's workers, as the manager's run record keeps them.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct GaggleRecord {
+    #[serde(default)]
+    pub workers: Vec<GaggleWorkerRecord>,
+    /// Logs a worker still held when the manager stopped waiting for them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub logs_left: Vec<GaggleLogLeft>,
+    /// A worker was lost: the results leave out what it did after.
+    #[serde(default)]
+    pub degraded: bool,
+}
+
+/// One worker of a Gaggle run.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct GaggleWorkerRecord {
+    pub id: u32,
+    pub name: String,
+    /// The users it started over the run.
+    pub users: usize,
+    /// `finished`, `users_exited` or `lost`.
+    pub state: String,
+    /// When it was lost, RFC 3339, UTC.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lost_at: Option<String>,
+    /// Why it was lost.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lost_reason: Option<String>,
+    /// The sequence number of the last delta received from it, when lost.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_seq: Option<u64>,
+}
+
+/// A log left on a worker.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct GaggleLogLeft {
+    pub worker: String,
+    /// Where the worker wrote it, when the worker said.
+    pub path: String,
+}
+
+impl GaggleRecord {
+    /// The sentences a degraded run's reports open with.
+    pub(crate) fn intro(&self) -> Vec<String> {
+        let mut intro = Vec::new();
+        let lost: Vec<String> = self
+            .workers
+            .iter()
+            .filter(|worker| worker.state == "lost")
+            .map(|worker| match &worker.lost_reason {
+                Some(reason) => format!("{} ({reason})", worker.name),
+                None => worker.name.clone(),
+            })
+            .collect();
+        if self.degraded {
+            intro.push(format!(
+                "Degraded: {} of the {} Gaggle workers were lost during the run: {}. The results hold what each sent before it was lost.",
+                lost.len(),
+                self.workers.len(),
+                lost.join(", ")
+            ));
+        }
+        if !self.logs_left.is_empty() {
+            let left: Vec<String> = self
+                .logs_left
+                .iter()
+                .map(|left| format!("{} on {}", left.path, left.worker))
+                .collect();
+            intro.push(format!("Logs left on their workers: {}.", left.join("; ")));
+        }
+        intro
+    }
 }
 
 /// Where a report's graphs start when they do not cover the whole run.
@@ -133,6 +212,9 @@ impl RunRecord {
         }
         if self.in_progress {
             intro.push(IN_PROGRESS.to_string());
+        }
+        if let Some(gaggle) = &self.gaggle {
+            intro.extend(gaggle.intro());
         }
         intro
     }
@@ -550,7 +632,18 @@ impl GooseAttack {
             canceled_reason,
             in_progress,
             graphs_start: self.graphs_start(graphs_from),
+            gaggle: self.gaggle_record(),
         }
+    }
+
+    /// The Gaggle section of the run record: a manager's workers.
+    fn gaggle_record(&self) -> Option<GaggleRecord> {
+        #[cfg(feature = "gaggle")]
+        {
+            self.gaggle_run_record()
+        }
+        #[cfg(not(feature = "gaggle"))]
+        None
     }
 
     /// Where the graphs start when they do not cover the whole run, as the

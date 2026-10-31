@@ -64,6 +64,8 @@ message Stopped {
   }
   Reason reason = 1;
   string canceled = 2;
+  // The worker's run folder, where its logs are.
+  string run_folder = 3;
 }
 
 message LogChunk {

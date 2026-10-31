@@ -1,5 +1,106 @@
 use super::*;
 
+/// What a Gaggle manager's processor merges its workers' deltas into.
+pub(crate) struct ManagerMerge {
+    accumulator: crate::gaggle::merge::GaggleAccumulator,
+    /// A delta, a loss or a reset since `metrics` and `graph_data` were last
+    /// built from the merge.
+    dirty: bool,
+}
+
+/// The metrics processor as a Gaggle manager.
+impl MetricsProcessor {
+    /// Run as a Gaggle manager: from now on `metrics` and `graph_data` are
+    /// every worker's merged, built again before anything reads them. The
+    /// processor's own metrics are left out, as the manager runs no users.
+    pub(crate) fn gaggle_enable_manager(&mut self) {
+        let accumulator = crate::gaggle::merge::GaggleAccumulator::new(
+            self.gaggle_template(),
+            self.gaggle_graph_settings(),
+            crate::gaggle::delta::DeltaLimits::default(),
+        );
+        self.gaggle_merge = Some(Box::new(ManagerMerge {
+            accumulator,
+            dirty: true,
+        }));
+    }
+
+    /// A command, as a manager's processor handles it: the merge's own
+    /// commands here, and every other on the merged state, built again
+    /// first when the command reads it.
+    pub(super) fn gaggle_manager_command(&mut self, cmd: MetricsCommand) -> bool {
+        let Some(merge) = self.gaggle_merge.as_mut() else {
+            return self.dispatch_command(cmd);
+        };
+        match cmd {
+            MetricsCommand::GaggleApply { worker, delta } => {
+                let seq = delta.seq;
+                match merge.accumulator.apply(worker, *delta) {
+                    Ok(()) => merge.dirty = true,
+                    Err(e) => warn!("gaggle: refused delta {seq} from worker {worker}: {e}"),
+                }
+                false
+            }
+            MetricsCommand::GaggleLost { worker } => {
+                merge.accumulator.lose(worker);
+                merge.dirty = true;
+                false
+            }
+            MetricsCommand::GaggleClock { second } => {
+                merge.accumulator.set_max_second(second);
+                false
+            }
+            // Recorded on state the merge replaces, and read from it later.
+            cmd @ (MetricsCommand::UserStarted { .. }
+            | MetricsCommand::RecordUsers { .. }
+            | MetricsCommand::KeepGraph { .. }) => self.dispatch_command(cmd),
+            cmd => {
+                let reset = matches!(cmd, MetricsCommand::Reset { .. });
+                self.gaggle_refresh();
+                let done = self.dispatch_command(cmd);
+                if reset {
+                    if let Some(merge) = self.gaggle_merge.as_mut() {
+                        merge.dirty = true;
+                    }
+                }
+                done
+            }
+        }
+    }
+
+    /// Build `metrics` and `graph_data` from the merge again, when it
+    /// changed. What the manager keeps of its own, its threshold state and
+    /// display flags among them, stays.
+    pub(super) fn gaggle_refresh(&mut self) {
+        let Some(merge) = self.gaggle_merge.as_mut() else {
+            return;
+        };
+        if !merge.dirty {
+            return;
+        }
+        merge.dirty = false;
+        let (merged, graph) = merge.accumulator.merged();
+        let GooseMetrics {
+            requests,
+            transactions,
+            scenarios,
+            errors,
+            transaction_errors,
+            hosts,
+            coordinated_omission_metrics,
+            ..
+        } = merged;
+        self.metrics.requests = requests;
+        self.metrics.transactions = transactions;
+        self.metrics.scenarios = scenarios;
+        self.metrics.errors = errors;
+        self.metrics.transaction_errors = transaction_errors;
+        self.metrics.hosts = hosts;
+        self.metrics.coordinated_omission_metrics = coordinated_omission_metrics;
+        self.graph_data = graph;
+    }
+}
+
 /// The metrics processor as a Gaggle worker.
 impl MetricsProcessor {
     /// Run as Gaggle worker `worker`: from now on every metric is also kept

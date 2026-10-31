@@ -65,6 +65,9 @@ pub struct Stopped {
     pub reason: i32,
     #[prost(string, tag = "2")]
     pub canceled: ::prost::alloc::string::String,
+    /// The worker's run folder, where its logs are.
+    #[prost(string, tag = "3")]
+    pub run_folder: ::prost::alloc::string::String,
 }
 /// Nested message and enum types in `Stopped`.
 pub mod stopped {
