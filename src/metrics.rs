@@ -502,6 +502,7 @@ pub(crate) struct MetricsProcessor {
     gaggle: Option<Box<crate::gaggle::worker::WorkerState>>,
     /// Set while a metric is processed a second time into `gaggle`'s
     /// pending state: the error log and the shared counters already have it.
+    /// Read it through [`Self::side_effects`].
     #[cfg(feature = "gaggle")]
     shadow_pass: bool,
 }
@@ -4038,11 +4039,7 @@ impl MetricsProcessor {
                             co_metric.response_time,
                         );
                     }
-                    #[cfg(feature = "gaggle")]
-                    let counted = self.shadow_pass;
-                    #[cfg(not(feature = "gaggle"))]
-                    let counted = false;
-                    if !counted {
+                    if self.side_effects() {
                         let co_key = format!("{} {}", co_metric.raw.method_label(), co_metric.name);
                         Self::increment_registry_counter(
                             &self.request_counter_registry,
@@ -4115,8 +4112,8 @@ impl MetricsProcessor {
                 } else if request_metric.update {
                     // A Gaggle worker's pending copy may not hold the error
                     // it takes back: the delta subtracts it instead.
-                    #[cfg(feature = "gaggle")]
-                    if self.shadow_pass {
+                    if !self.side_effects() {
+                        #[cfg(feature = "gaggle")]
                         if let Some(state) = self.gaggle.as_mut() {
                             state.removals.push((key, seconds_since_start));
                         }
@@ -4155,13 +4152,26 @@ impl MetricsProcessor {
         }
     }
 
+    /// Whether processing a metric may act outside the processor's own
+    /// metrics and graph data: count it in the shared request counters,
+    /// write it to the error log, or take an error back from the whole
+    /// run's graph data. A Gaggle worker processes each metric a second
+    /// time, into what its next delta sends, and that pass must do none of
+    /// these again. Anything new that acts outside the processor's own
+    /// state, or that the pending copy cannot do as the whole run's does,
+    /// must check this first; `gaggle_second_pass_has_no_side_effects`
+    /// tests the ones here.
+    #[inline(always)]
+    fn side_effects(&self) -> bool {
+        #[cfg(feature = "gaggle")]
+        return !self.shadow_pass;
+        #[cfg(not(feature = "gaggle"))]
+        return true;
+    }
+
     /// Update error metrics and optionally send to the error logger.
     fn record_error(&mut self, raw_request: &GooseRequestMetric) {
-        #[cfg(feature = "gaggle")]
-        let logged = self.shadow_pass;
-        #[cfg(not(feature = "gaggle"))]
-        let logged = false;
-        if !logged && self.configuration.error_log().is_some() {
+        if self.side_effects() && self.configuration.error_log().is_some() {
             if let Some(logger) = self.logger_tx.as_ref() {
                 if let Err(e) = logger.send(Some(GooseLog::Error(GooseErrorMetric {
                     elapsed: raw_request.elapsed,
@@ -7617,6 +7627,98 @@ mod test {
             earliest_second(&GooseMetric::Batch(Box::new(GooseMetricBatch::new(0)))),
             None
         );
+    }
+
+    /// A Gaggle worker's second pass over each metric has no side effects:
+    /// the shared request counters, the error log and the errors taken back
+    /// from the whole run's graph data come out the same with it as without.
+    #[cfg(feature = "gaggle")]
+    #[test]
+    fn gaggle_second_pass_has_no_side_effects() {
+        let run = |second_pass: bool| {
+            let (_metrics_tx, metrics_rx) = flume::unbounded::<GooseMetric>();
+            let (_cmd_tx, cmd_rx) = flume::unbounded::<MetricsCommand>();
+            let (logger_tx, logger_rx) = flume::unbounded();
+            let configuration = GooseConfiguration::parse_args_default(&[
+                "--report-file",
+                "report.html",
+                "--error-log",
+                "errors.log",
+            ])
+            .unwrap();
+            let registry: GooseRequestCounterRegistry = Arc::new(Mutex::new(HashMap::new()));
+            let mut processor = MetricsProcessor::new(
+                metrics_rx,
+                cmd_rx,
+                make_test_processor(0).metrics,
+                crate::graph::GraphData::new(),
+                configuration,
+                vec![],
+                GooseDefaults::default(),
+                registry.clone(),
+                Some(logger_tx),
+                Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                false,
+            );
+            if second_pass {
+                processor.gaggle_enable(0);
+            }
+            // Two failures in second 1, one taken back by set_success().
+            let mut failed = make_request_metric("/a", 40, 500, 1_500);
+            failed.success = false;
+            failed.error = "500 Internal Server Error".to_string();
+            for _ in 0..2 {
+                processor.process_metric(GooseMetric::Request(Box::new(failed.clone())));
+            }
+            // The failures go in a delta before one is taken back, so the
+            // worker's pending copy no longer holds it.
+            let mut sent = Vec::new();
+            sent.extend(processor.gaggle_take_delta(2));
+            let mut taken_back = failed.clone();
+            taken_back.success = true;
+            taken_back.update = true;
+            taken_back.error = String::new();
+            processor.process_metric(GooseMetric::Request(Box::new(taken_back)));
+            // A stall: synthetic requests counted in the shared counters.
+            let mut stalled = make_request_metric("/b", 50, 200, 2_500);
+            stalled.coordinated_omission_elapsed = 800;
+            stalled.user_cadence = 100;
+            processor.process_metric(GooseMetric::Request(Box::new(stalled)));
+            let counters: BTreeMap<String, (u64, u64)> = registry
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(key, counters)| {
+                    (
+                        key.clone(),
+                        (
+                            counters.success.load(AtomicOrdering::Relaxed),
+                            counters.failure.load(AtomicOrdering::Relaxed),
+                        ),
+                    )
+                })
+                .collect();
+            let logged = logger_rx.try_iter().count();
+            sent.extend(processor.gaggle_take_delta(3));
+            // The errors the deltas carry for the failed request's second.
+            let errors: i64 = sent
+                .iter()
+                .filter_map(|delta| delta.graph.errors.get("GET /a"))
+                .filter_map(|rows| rows.get(&1))
+                .sum();
+            (counters, logged, processor.graph_data, errors)
+        };
+        let (counters, logged, graph, _) = run(false);
+        assert_eq!(logged, 2);
+        assert!(counters
+            .get("GET /b")
+            .is_some_and(|&(success, _)| success > 0));
+        let (shadowed_counters, shadowed_logged, shadowed_graph, errors) = run(true);
+        assert_eq!(shadowed_counters, counters);
+        assert_eq!(shadowed_logged, logged);
+        assert_eq!(graph.gaggle_diff(&shadowed_graph), Vec::<String>::new());
+        // Two failures less the one taken back, as the whole run counts.
+        assert_eq!(errors, 1);
     }
 
     /// Build a MetricsProcessor suitable for unit tests.
