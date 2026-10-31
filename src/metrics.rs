@@ -410,6 +410,33 @@ pub(crate) enum MetricsCommand {
     /// through the shadow merge. `now` is the series second.
     #[cfg(feature = "gaggle")]
     GaggleShadowTick { now: usize },
+    /// A Gaggle worker: queue this second's delta for the manager. `now` is
+    /// the series second.
+    #[cfg(feature = "gaggle")]
+    GaggleTick {
+        now: usize,
+        outbox: Arc<crate::gaggle::link::Outbox>,
+    },
+    /// A Gaggle worker whose users have all stopped: queue its final delta
+    /// for the manager, then answer.
+    #[cfg(feature = "gaggle")]
+    GaggleFinal {
+        now: usize,
+        outbox: Arc<crate::gaggle::link::Outbox>,
+        respond: tokio::sync::oneshot::Sender<()>,
+    },
+    /// A Gaggle manager: add worker `worker`'s delta to the merge.
+    #[cfg(feature = "gaggle")]
+    GaggleApply {
+        worker: u32,
+        delta: Box<crate::gaggle::delta::GaggleDelta>,
+    },
+    /// A Gaggle manager: worker `worker` is gone without its final delta.
+    #[cfg(feature = "gaggle")]
+    GaggleLost { worker: u32 },
+    /// A Gaggle manager: refuse a delta carrying a second past `second`.
+    #[cfg(feature = "gaggle")]
+    GaggleClock { second: u64 },
     /// Flush all pending metrics and return the final state for reporting.
     Shutdown {
         duration: usize,
@@ -509,6 +536,10 @@ pub(crate) struct MetricsProcessor {
     /// Read it through [`Self::side_effects`].
     #[cfg(feature = "gaggle")]
     shadow_pass: bool,
+    /// Every worker's metrics, merged into `metrics` and `graph_data` before
+    /// anything reads them, while the processor runs as a Gaggle manager.
+    #[cfg(feature = "gaggle")]
+    gaggle_merge: Option<Box<gaggle::ManagerMerge>>,
 }
 
 /// THIS IS AN EXPERIMENTAL FEATURE, DISABLED BY DEFAULT. Optionally mitigate the loss of data
@@ -3398,6 +3429,8 @@ impl MetricsProcessor {
             gaggle: None,
             #[cfg(feature = "gaggle")]
             shadow_pass: false,
+            #[cfg(feature = "gaggle")]
+            gaggle_merge: None,
         }
     }
 
@@ -3515,6 +3548,15 @@ impl MetricsProcessor {
 
     /// Handle a command from the main loop. Returns `true` if shutdown was processed.
     fn handle_command(&mut self, cmd: MetricsCommand) -> bool {
+        #[cfg(feature = "gaggle")]
+        if self.gaggle_merge.is_some() {
+            return self.gaggle_manager_command(cmd);
+        }
+        self.dispatch_command(cmd)
+    }
+
+    /// [`Self::handle_command`], on the processor's own state.
+    fn dispatch_command(&mut self, cmd: MetricsCommand) -> bool {
         match cmd {
             MetricsCommand::DisplayRunning {
                 duration,
@@ -3717,6 +3759,32 @@ impl MetricsProcessor {
                 self.gaggle_shadow_tick(now);
                 false
             }
+            #[cfg(feature = "gaggle")]
+            MetricsCommand::GaggleTick { now, outbox } => {
+                self.drain_up_to(METRICS_DRAIN_LIMIT);
+                if let Some(delta) = self.gaggle_take_delta(now) {
+                    outbox.push_delta(delta);
+                }
+                false
+            }
+            #[cfg(feature = "gaggle")]
+            MetricsCommand::GaggleFinal {
+                now,
+                outbox,
+                respond,
+            } => {
+                self.drain_pending();
+                if let Some(delta) = self.gaggle_take_final(now) {
+                    outbox.push_delta(delta);
+                }
+                let _ = respond.send(());
+                false
+            }
+            // Only a manager's processor merges; see `gaggle_manager_command`.
+            #[cfg(feature = "gaggle")]
+            MetricsCommand::GaggleApply { .. }
+            | MetricsCommand::GaggleLost { .. }
+            | MetricsCommand::GaggleClock { .. } => false,
             MetricsCommand::Shutdown {
                 duration,
                 total_users,
@@ -3918,6 +3986,23 @@ impl MetricsProcessor {
     /// counters, which hold every request made even before its first metric is
     /// drained. The capped drain first keeps the aggregates close to them.
     fn threshold_mark(&mut self, seconds: f64) -> threshold::ThresholdMark {
+        // A Gaggle manager counts its workers' requests, merged.
+        #[cfg(feature = "gaggle")]
+        if self.gaggle_merge.is_some() {
+            self.gaggle_refresh(false);
+            let requests = self
+                .metrics
+                .requests
+                .iter()
+                .map(|(key, request)| {
+                    (
+                        key.clone(),
+                        request.success_count.saturating_add(request.fail_count),
+                    )
+                })
+                .collect();
+            return threshold::ThresholdMark::new(seconds, requests);
+        }
         self.drain_up_to(METRICS_DRAIN_LIMIT);
         self.sync_atomic_counters();
         let registry = self
@@ -4571,6 +4656,14 @@ impl GooseAttack {
                         })
                         .expect("metrics processor channel closed unexpectedly");
                     ack_rx.await.expect("metrics processor dropped ack sender");
+
+                    // A Gaggle manager's workers reset theirs.
+                    #[cfg(feature = "gaggle")]
+                    self.gaggle_manager_reset(
+                        goose_attack_run_state
+                            .metrics_epoch
+                            .load(std::sync::atomic::Ordering::Relaxed),
+                    );
 
                     // Reset running_metrics_timer.
                     goose_attack_run_state.running_metrics_timer = std::time::Instant::now();

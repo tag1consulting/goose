@@ -639,6 +639,32 @@ pub(crate) enum ControlCommand {
     SaveReportNow,
 }
 
+/// The error code a Gaggle manager answers a command that changes the run
+/// with.
+#[cfg(feature = "gaggle")]
+pub(crate) const GAGGLE_UNSUPPORTED: &str = "gaggle_unsupported";
+
+impl ControlCommand {
+    /// Whether the command changes the run, rather than reading it or the
+    /// dashboard's report switches.
+    #[cfg(feature = "gaggle")]
+    fn changes_the_run(&self) -> bool {
+        match self {
+            Self::Command(command) => !matches!(
+                command,
+                ControllerCommand::Config
+                    | ControllerCommand::ConfigJson
+                    | ControllerCommand::Metrics
+                    | ControllerCommand::MetricsJson
+            ),
+            #[cfg(feature = "dashboard")]
+            Self::Settings { .. } => true,
+            #[cfg(feature = "dashboard")]
+            Self::Report { .. } | Self::SaveReportNow => false,
+        }
+    }
+}
+
 impl From<ControllerCommand> for ControlCommand {
     fn from(command: ControllerCommand) -> Self {
         Self::Command(command)
@@ -809,6 +835,20 @@ impl GooseAttack {
             }
             ControlStartBegin::Rejected(outcome) => outcome,
         };
+        // A Gaggle manager answers what it can read; a command that changes
+        // the run is refused until runtime control reaches the workers.
+        #[cfg(feature = "gaggle")]
+        if self.gaggle_manager() && command.changes_the_run() {
+            let refused = self.control_outcome(
+                goose_attack_run_state,
+                false,
+                Some(GAGGLE_UNSUPPORTED),
+                "not supported in Gaggle mode yet",
+                None,
+            );
+            let _ = respond.send(ControlReply::Outcome(refused));
+            return Ok(());
+        }
         // The dashboard's settings commands answer with the settings.
         #[cfg(feature = "dashboard")]
         let with_settings = matches!(command, ControlCommand::Settings { .. });

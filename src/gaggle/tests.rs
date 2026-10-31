@@ -285,6 +285,8 @@ struct Side {
     processor: MetricsProcessor,
     users: BTreeMap<usize, GooseUser>,
     rx: flume::Receiver<GooseMetric>,
+    /// The processor's metrics epoch.
+    epoch: MetricsEpoch,
 }
 
 impl Side {
@@ -353,6 +355,7 @@ impl Side {
             processor,
             users,
             rx,
+            epoch,
         }
     }
 
@@ -2113,4 +2116,219 @@ fn gaggle_reports_at_the_bounds_across_names_do_not_overflow() {
     shown.final_metrics = true;
     assert!(!format!("{}", shown).is_empty());
     differences(merged, &again);
+}
+
+/// Scenarios at their bounds, enough of them that the console's scenario
+/// totals row adds up past 2^64: the merge builds it, saturated, rather
+/// than wrapping in a release build or panicking in a debug one.
+#[test]
+fn gaggle_scenario_totals_at_the_bounds_do_not_overflow() {
+    crate::gaggle::within(30, || {
+        use super::delta::{ScenarioPart, Timing, MAX_COUNT};
+        // 2^13 + 1 scenarios of 2^51 runs each: their sum passes 2^64.
+        const SCENARIOS: usize = 8_193;
+        let scenarios: Vec<Scenario> = (0..SCENARIOS)
+            .map(|index| {
+                let mut scenario = Scenario::new(&format!("Scenario {index}"));
+                scenario.scenarios_index = index;
+                scenario
+            })
+            .collect();
+        let side = Side::new(0..0, Some(0));
+        let mut template = side.processor.gaggle_template();
+        template.initialize_scenario_metrics(&scenarios, &configuration());
+        assert_eq!(template.scenarios.len(), SCENARIOS);
+        let mut accumulator = GaggleAccumulator::new(
+            template,
+            side.processor.gaggle_graph_settings(),
+            DeltaLimits::default(),
+        );
+        let mut delta = GaggleDelta::new(0, 1, 1, DeltaKind::Delta);
+        delta.now = 2;
+        let timing = Timing {
+            buckets: vec![(1_000, MAX_COUNT)],
+            minimum_us: 1_000,
+            maximum_us: 1_000,
+            total_us: MAX_COUNT,
+            count: MAX_COUNT,
+        };
+        for index in 0..SCENARIOS {
+            delta.metrics.scenarios.insert(
+                index as u64,
+                ScenarioPart {
+                    users: [index as u64].into(),
+                    run_times: timing.clone(),
+                },
+            );
+        }
+        apply(&mut accumulator, &delta);
+        accumulator.done(0);
+        let (mut merged, _graph) = accumulator.merged();
+        let runs: u128 = merged
+            .scenarios
+            .iter()
+            .map(|scenario| scenario.run_times.counter as u128)
+            .sum();
+        assert!(runs > usize::MAX as u128, "the fixture must pass 2^64");
+        merged.display_metrics = true;
+        merged.final_metrics = true;
+        let shown = format!("{}", merged);
+        let totals = shown
+            .lines()
+            .skip_while(|line| !line.contains("PER SCENARIO METRICS"))
+            .find(|line| line.trim_start().starts_with("Aggregated"))
+            .expect("a scenario totals row");
+        assert!(
+            totals.contains(&usize::MAX.to_string()),
+            "the totals row saturates: {}",
+            totals
+        );
+    });
+}
+
+/// How long one full merge takes (`--ignored`, release): `workers` workers
+/// that each sent `names` names for `seconds` seconds.
+#[test]
+#[ignore]
+fn gaggle_merge_cost() {
+    use super::delta::{Average, Histogram};
+    for (workers, names, seconds) in [(3, 10, 300), (3, 10, 3600), (10, 50, 600), (50, 200, 600)] {
+        let mut accumulator = accumulator();
+        accumulator.set_max_second(u64::MAX - 2);
+        for worker in 0..workers {
+            let mut delta = GaggleDelta::new(worker, 1, 1, DeltaKind::Delta);
+            delta.now = seconds;
+            for n in 0..names {
+                let key = format!("GET /n{n}");
+                delta
+                    .graph
+                    .requests
+                    .insert(key.clone(), (0..seconds).map(|s| (s, 10)).collect());
+                delta.graph.averages.insert(
+                    key.clone(),
+                    (0..seconds)
+                        .map(|s| {
+                            (
+                                s,
+                                Average {
+                                    count: 10,
+                                    sum_ms: 50.0,
+                                },
+                            )
+                        })
+                        .collect(),
+                );
+                let histogram = Histogram {
+                    rows: vec![(40, 5), (41, 5)],
+                    minimum_us: 4_000,
+                    maximum_us: 6_000,
+                    total_us: 50_000,
+                    count: 10,
+                };
+                delta
+                    .graph
+                    .latency
+                    .insert(key, (0..seconds).map(|s| (s, histogram.clone())).collect());
+            }
+            accumulator.apply(worker, delta).unwrap();
+        }
+        let started = std::time::Instant::now();
+        let _ = accumulator.merged();
+        println!(
+            "merge of {workers} workers x {names} names x {seconds} s: {:?}",
+            started.elapsed()
+        );
+    }
+}
+
+/// Save report on a manager's dashboard changes what its merge builds: with
+/// it off the merged graph keeps no whole run heatmap columns, with it on
+/// it does, though the merge was set up with them.
+#[test]
+fn gaggle_save_report_on_a_manager_changes_the_merge() {
+    super::within(30, || {
+        let mut side = Side::new(0..0, Some(0));
+        side.processor.gaggle_enable_manager();
+        let mut columns = |keep: bool| {
+            side.processor
+                .handle_command_for_test(MetricsCommand::KeepGraph { keep, now: 0 });
+            let (respond, report) = tokio::sync::oneshot::channel();
+            side.processor
+                .handle_command_for_test(MetricsCommand::GetReportData {
+                    duration: 0,
+                    total_users: 0,
+                    maximum_users: 0,
+                    history: Vec::new(),
+                    respond,
+                });
+            report
+                .blocking_recv()
+                .unwrap()
+                .1
+                .has_latency_columns_for_test()
+        };
+        assert!(!columns(false));
+        assert!(columns(true));
+    });
+}
+
+/// A manager's metrics reset starts a new epoch at once: what a worker sent
+/// before it is left out even before the worker reports the new epoch, so
+/// the mark Maintain opens with, which `rps` rules count from, holds none of
+/// the ramp.
+#[test]
+fn gaggle_manager_reset_leaves_out_the_old_epoch_at_once() {
+    super::within(30, || {
+        let mut side = Side::new(0..0, Some(0));
+        side.processor.gaggle_enable_manager();
+        let made = |side: &mut Side| {
+            let (respond, metrics) = tokio::sync::oneshot::channel();
+            side.processor
+                .handle_command_for_test(MetricsCommand::GetMetrics {
+                    duration: 0,
+                    total_users: 0,
+                    maximum_users: 0,
+                    history: Vec::new(),
+                    respond,
+                });
+            metrics
+                .blocking_recv()
+                .unwrap()
+                .requests
+                .get("GET /a")
+                .map_or(0, |request| request.success_count)
+        };
+        let epoch = side.epoch.load(std::sync::atomic::Ordering::Relaxed);
+        side.processor
+            .handle_command_for_test(MetricsCommand::GaggleApply {
+                worker: 0,
+                delta: Box::new(counted(0, 1, epoch)),
+            });
+        assert_eq!(made(&mut side), 1);
+        let (ack, _acked) = tokio::sync::oneshot::channel();
+        side.processor
+            .handle_command_for_test(MetricsCommand::Reset {
+                duration: 0,
+                total_users: 0,
+                maximum_users: 0,
+                active_users: 0,
+                series_elapsed_secs: 5,
+                running_users: Vec::new(),
+                ack,
+            });
+        // A delta the worker sent before it saw the reset, arriving after.
+        side.processor
+            .handle_command_for_test(MetricsCommand::GaggleApply {
+                worker: 0,
+                delta: Box::new(counted(0, 2, epoch)),
+            });
+        assert_eq!(made(&mut side), 0, "the ramp's requests are left out");
+        // The worker's first delta of the new epoch is merged.
+        side.processor
+            .handle_command_for_test(MetricsCommand::GaggleApply {
+                worker: 0,
+                delta: Box::new(counted(0, 3, epoch + 1)),
+            });
+        assert_eq!(made(&mut side), 1);
+    });
 }

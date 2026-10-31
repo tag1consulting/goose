@@ -1,22 +1,54 @@
-//! Groundwork for Gaggle, distributed load tests: a manager coordinating
-//! workers that each run a share of the users.
+//! Gaggle, distributed load tests: a manager coordinating workers that each
+//! run a share of the users.
 //!
 //! A worker's metrics processor keeps what changed since its last delta
 //! beside its own state ([`worker`]) and sends it once a second as a
 //! [`delta::GaggleDelta`], postcard encoded; the manager adds every worker's
 //! deltas up ([`merge`]) into the metrics, graph data, dashboard snapshot
-//! and reports one process running the whole load test would produce. No
-//! network code: the transport comes later. `--gaggle-shadow-merge` runs
-//! both sides in one process and checks the result ([`shadow`]).
+//! and reports one process running the whole load test would produce. The
+//! wire is gRPC ([`proto`]): the manager's side in [`manager`], the worker's
+//! in [`link`], and each side's part in a run in [`run`], with the share a
+//! worker is handed in [`spec`]. `--gaggle-shadow-merge` runs both sides of
+//! the merge in one process and checks the result ([`shadow`]).
 
 pub(crate) mod compare;
 pub(crate) mod delta;
+pub(crate) mod link;
+pub(crate) mod manager;
 pub(crate) mod merge;
+pub(crate) mod options;
+pub(crate) mod proto;
+pub(crate) mod run;
 pub(crate) mod shadow;
+pub(crate) mod spec;
 pub(crate) mod worker;
 
 #[cfg(test)]
+mod run_tests;
+#[cfg(test)]
 mod tests;
+
+/// Run `test` on a thread of its own, failing if it takes more than
+/// `seconds`.
+#[cfg(test)]
+pub(crate) fn within<F: FnOnce() + Send + 'static>(seconds: u64, test: F) {
+    let (done, finished) = std::sync::mpsc::channel();
+    let handle = std::thread::spawn(move || {
+        test();
+        let _ = done.send(());
+    });
+    match finished.recv_timeout(std::time::Duration::from_secs(seconds)) {
+        Ok(()) => handle.join().expect("the test panicked"),
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            if let Err(panic) = handle.join() {
+                std::panic::resume_unwind(panic);
+            }
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            panic!("the test took more than {} seconds", seconds)
+        }
+    }
+}
 
 /// Whether two f32 averages agree to f32 rounding. A per second average
 /// response time is an f32 moving average whose last digits depend on the

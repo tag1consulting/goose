@@ -1,20 +1,27 @@
-# Run-time Flags
+# Gaggle Options
 
-**NOTE: Goose 0.19 cannot run a Gaggle. Gaggle support was removed in Goose 0.17.0 and will be restored in Goose 0.20, before the 1.0 release. This page describes Goose 0.16.4, the last release with it; see the [Gaggle overview](overview.md).**
+Each of these options needs Goose built with the `gaggle` feature.
 
-* `--manager`: starts a Goose process in Manager mode. There currently can only be one Manager per Gaggle.
-* `--worker`: starts a Goose process in Worker mode. How many Workers are in a given Gaggle is defined by the `--expect-workers` option, documented below.
-* `--no-hash-check`: tells Goose to ignore if the load test application doesn't match between Worker(s) and the Manager. This is not recommended, and can cause the application to panic.
+## Manager
 
-The `--no-metrics`, `--no-reset-metrics`, `--no-status-codes`, and `--no-hash-check` flags must be set on the Manager. Workers inherit these flags from the Manager
+* `--manager`: run as the manager. Can't be used with `--worker`, `--no-autostart` or `--gaggle-shadow-merge`.
+* `--expect-workers <N>`: how many workers to wait for, at least 1. Required with `--manager`.
+* `--manager-bind-host <HOST>`: the address the manager listens on, `127.0.0.1` by default. Any address but loopback needs `--gaggle-token`.
+* `--manager-bind-port <PORT>`: the port the manager listens on, `5115` by default.
 
-# Run-time Options
+## Worker
 
-* `--manager-bind-host <manager-bind-host>`: configures the host that the Manager listens on. By default Goose will listen on all interfaces, or `0.0.0.0`.
-* `--manager-bind-port <manager-bind-port>`: configures the port that the Manager listens on. By default Goose will listen on port `5115`.
-* `--manager-host <manager-host>`: configures the host that the Worker will talk to the Manager on. By default, a Goose Worker will connect to the localhost, or `127.0.0.1`. In a distributed load test, this must be set to the IP of the Goose Manager.
-* `--manager-port <manager-port>`: configures the port that a Worker will talk to the Manager on. By default, a Goose Worker will connect to port `5115`.
+* `--worker`: run as a worker. Can't be used with `--manager`.
+* `--manager-host <HOST>`: the manager's DNS name or address. Required with `--worker`.
+* `--manager-port <PORT>`: the manager's port, `5115` by default.
+* `--gaggle-connect-timeout <TIME>`: how long a worker keeps trying to reach its manager, and how long a manager waits for all of its workers, `60s` by default.
 
-The `--users`, `--increase-time`, `--increase-rate`, `--host`, and `--run-time` options must be set on the Manager. Workers inherit these options from the Manager.
+## Both
 
-The `--throttle-requests` option must be configured on each Worker, and can be set to a different value on each Worker if desired.
+* `--gaggle-token <TOKEN>`: a secret the manager and every worker share. Also read from the `GOOSE_GAGGLE_TOKEN` environment variable. Never shown in output.
+* `--no-hash-check`: let a worker whose load test differs from the manager's join. Not recommended: the merged results then mix two load tests.
+* `--gaggle-heartbeat-timeout <TIME>`: how long the manager and a worker wait to hear from each other, `10s` by default, and at least `3s`, as heartbeats go every 2 seconds. A manager marks a silent worker lost and carries on; a worker that loses its manager stops all of its users at once and exits with an error.
+
+## Everything else goes to the manager
+
+Every other option that shapes the load, the metrics, the reports or the logs is given to the manager, and a worker refuses it: `--users`, `--increase-rate`, `--increase-time`, `--run-time`, `--decrease-rate`, `--decrease-time`, `--test-plan`, `--iterations`, `--host`, `--throttle-requests`, `--scenarios`, `--co-mitigation`, `--no-reset-metrics`, `--no-metrics` and the other metrics options, `--threshold` and its options, `--timeout` and the other HTTP client options, every report option but `--output-dir`, every log option but `--goose-log`, and the dashboard options. A worker keeps `--output-dir`, `--goose-log`, `--verbose`, `--quiet` and `--log-level`.

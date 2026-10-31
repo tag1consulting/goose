@@ -896,6 +896,109 @@ pub struct GooseConfiguration {
     #[cfg(feature = "gaggle")]
     #[arg(help_heading = "Gaggle", long, hide = true)]
     pub gaggle_shadow_merge: bool,
+    /// Run as a Gaggle manager
+    ///
+    /// Waits for --expect-workers workers to connect, splits the load test's users
+    /// between them, starts them together, and merges their metrics into its own
+    /// reports, dashboard and threshold checks. The manager runs no users itself. Can't
+    /// be used with --worker or --no-autostart.
+    #[cfg(feature = "gaggle")]
+    #[arg(help_heading = "Gaggle", long)]
+    pub manager: bool,
+    /// Workers to wait for
+    ///
+    /// How many workers a --manager waits for before the load test starts; at least 1.
+    /// Required with --manager.
+    ///
+    /// Example: --expect-workers 3.
+    #[cfg(feature = "gaggle")]
+    #[arg(help_heading = "Gaggle", long, value_name = "N")]
+    pub expect_workers: Option<usize>,
+    /// Manager bind host [default: 127.0.0.1]
+    ///
+    /// The address a --manager listens on for workers. An address that is not a loopback
+    /// address needs --gaggle-token.
+    ///
+    /// Example: --manager-bind-host 0.0.0.0.
+    #[cfg(feature = "gaggle")]
+    #[arg(help_heading = "Gaggle", long, value_name = "HOST")]
+    pub manager_bind_host: Option<String>,
+    /// Manager bind port [default: 5115]
+    ///
+    /// The TCP port a --manager listens on for workers.
+    ///
+    /// Example: --manager-bind-port 6115.
+    #[cfg(feature = "gaggle")]
+    #[arg(help_heading = "Gaggle", long, value_name = "PORT")]
+    pub manager_bind_port: Option<u16>,
+    /// Run as a Gaggle worker
+    ///
+    /// Connects to the manager at --manager-host and runs the share of the load test it
+    /// hands out. The manager gives every option that shapes the load, the metrics, the
+    /// reports and the logs, so a worker refuses them; it keeps --output-dir, --goose-log
+    /// and verbosity, and runs no Controller and no dashboard. Can't be used with
+    /// --manager.
+    #[cfg(feature = "gaggle")]
+    #[arg(help_heading = "Gaggle", long)]
+    pub worker: bool,
+    /// Manager host
+    ///
+    /// The DNS name or address of the manager a --worker connects to. Required with
+    /// --worker.
+    ///
+    /// Example: --manager-host manager.example.com.
+    #[cfg(feature = "gaggle")]
+    #[arg(help_heading = "Gaggle", long, value_name = "HOST")]
+    pub manager_host: Option<String>,
+    /// Manager port [default: 5115]
+    ///
+    /// The TCP port of the manager a --worker connects to.
+    ///
+    /// Example: --manager-port 6115.
+    #[cfg(feature = "gaggle")]
+    #[arg(help_heading = "Gaggle", long, value_name = "PORT")]
+    pub manager_port: Option<u16>,
+    /// Connect timeout [default: 60s]
+    ///
+    /// How long a --worker keeps trying to reach its manager, and how long a --manager
+    /// waits for all its workers, before giving up with an error.
+    ///
+    /// Example: --gaggle-connect-timeout 2m.
+    #[cfg(feature = "gaggle")]
+    #[arg(help_heading = "Gaggle", long, value_name = "TIME")]
+    pub gaggle_connect_timeout: Option<String>,
+    /// Shared Gaggle token
+    ///
+    /// A secret the manager and every worker must share; a worker with another token is
+    /// turned away. Also read from the GOOSE_GAGGLE_TOKEN environment variable. Never
+    /// shown in output.
+    #[cfg(feature = "gaggle")]
+    #[arg(help_heading = "Gaggle", long, value_name = "TOKEN")]
+    #[serde(serialize_with = "serialize_token")]
+    pub gaggle_token: Option<String>,
+    /// Don't check the load test matches
+    ///
+    /// By default the manager turns away a worker whose load test, its scenarios and
+    /// transactions, differs from its own.
+    #[cfg(feature = "gaggle")]
+    #[arg(help_heading = "Gaggle", long)]
+    pub no_hash_check: bool,
+    /// Heartbeat timeout [default: 10s]
+    ///
+    /// How long the manager and a worker wait to hear from each other. A manager marks a
+    /// silent worker lost and carries on; a worker that loses its manager stops all its
+    /// users at once and exits with an error.
+    ///
+    /// Example: --gaggle-heartbeat-timeout 30s.
+    #[cfg(feature = "gaggle")]
+    #[arg(help_heading = "Gaggle", long, value_name = "TIME")]
+    pub gaggle_heartbeat_timeout: Option<String>,
+    /// A Gaggle worker keeps per second graph data when its manager's reports or
+    /// dashboard need it, though the worker writes no report itself.
+    #[cfg(feature = "gaggle")]
+    #[arg(skip)]
+    #[serde(skip)]
+    pub(crate) gaggle_records_graph: bool,
 }
 
 /// How output shows the dashboard auth token: a set token reads [`TOKEN_SHOWN`], and an
@@ -1003,6 +1106,30 @@ impl std::fmt::Debug for GooseConfiguration {
             accept_invalid_certs,
             #[cfg(feature = "gaggle")]
             gaggle_shadow_merge,
+            #[cfg(feature = "gaggle")]
+            manager,
+            #[cfg(feature = "gaggle")]
+            expect_workers,
+            #[cfg(feature = "gaggle")]
+            manager_bind_host,
+            #[cfg(feature = "gaggle")]
+            manager_bind_port,
+            #[cfg(feature = "gaggle")]
+            worker,
+            #[cfg(feature = "gaggle")]
+            manager_host,
+            #[cfg(feature = "gaggle")]
+            manager_port,
+            #[cfg(feature = "gaggle")]
+            gaggle_connect_timeout,
+            #[cfg(feature = "gaggle")]
+            gaggle_token,
+            #[cfg(feature = "gaggle")]
+            no_hash_check,
+            #[cfg(feature = "gaggle")]
+            gaggle_heartbeat_timeout,
+            #[cfg(feature = "gaggle")]
+            gaggle_records_graph,
         } = self;
         let mut debug = f.debug_struct("GooseConfiguration");
         debug
@@ -1084,7 +1211,20 @@ impl std::fmt::Debug for GooseConfiguration {
             .field("sticky_follow", sticky_follow)
             .field("accept_invalid_certs", accept_invalid_certs);
         #[cfg(feature = "gaggle")]
-        debug.field("gaggle_shadow_merge", gaggle_shadow_merge);
+        debug
+            .field("gaggle_shadow_merge", gaggle_shadow_merge)
+            .field("manager", manager)
+            .field("expect_workers", expect_workers)
+            .field("manager_bind_host", manager_bind_host)
+            .field("manager_bind_port", manager_bind_port)
+            .field("worker", worker)
+            .field("manager_host", manager_host)
+            .field("manager_port", manager_port)
+            .field("gaggle_connect_timeout", gaggle_connect_timeout)
+            .field("gaggle_token", &shown_token(gaggle_token))
+            .field("no_hash_check", no_hash_check)
+            .field("gaggle_heartbeat_timeout", gaggle_heartbeat_timeout)
+            .field("gaggle_records_graph", gaggle_records_graph);
         debug.finish()
     }
 }
@@ -2918,6 +3058,9 @@ impl GooseConfiguration {
     ///
     /// Fails when a time span is too long.
     pub(crate) fn configure(&mut self, defaults: &GooseDefaults) -> Result<(), GooseError> {
+        #[cfg(feature = "gaggle")]
+        self.configure_gaggle();
+
         // Configure `quiet`.
         self.quiet = self
             .get_value(vec![
@@ -3018,7 +3161,7 @@ impl GooseConfiguration {
                 filter: self.test_plan.is_none(),
                 message: "test_plan",
             },
-            // Otherwise use GooseDefault if set and not on Worker.
+            // Otherwise use GooseDefault if set.
             GooseValue {
                 value: defaults.test_plan.clone(),
                 filter: defaults.test_plan.is_none(),
@@ -3044,16 +3187,17 @@ impl GooseConfiguration {
                 filter: false,
                 message: "users",
             },
-            // Otherwise use GooseDefault if set and not on Worker.
+            // Otherwise use GooseDefault if set.
             GooseValue {
                 value: defaults.users,
                 filter: defaults.users.is_none(),
                 message: "users",
             },
-            // Otherwise use detected number of CPUs if not on Worker.
+            // Otherwise use detected number of CPUs, except on a Gaggle worker,
+            // whose manager gives its users.
             GooseValue {
                 value: default_users,
-                filter: self.test_plan.is_some(),
+                filter: self.test_plan.is_some() || self.gaggle_worker_flag(),
                 message: "users defaulted to number of CPUs",
             },
         ]);
@@ -3072,7 +3216,7 @@ impl GooseConfiguration {
                     filter: increase_time.is_none(),
                     message: "increase_time",
                 },
-                // Otherwise use GooseDefault if set and not on Worker.
+                // Otherwise use GooseDefault if set.
                 GooseValue {
                     value: defaults.increase_time,
                     filter: defaults.increase_time.is_none(),
@@ -3095,7 +3239,7 @@ impl GooseConfiguration {
                     filter: decrease_time.is_none(),
                     message: "decrease_time",
                 },
-                // Otherwise use GooseDefault if set and not on Worker.
+                // Otherwise use GooseDefault if set.
                 GooseValue {
                     value: defaults.decrease_time,
                     filter: defaults.decrease_time.is_none(),
@@ -3118,7 +3262,7 @@ impl GooseConfiguration {
                     filter: run_time.is_none(),
                     message: "run_time",
                 },
-                // Otherwise use GooseDefault if set and not on Worker.
+                // Otherwise use GooseDefault if set.
                 GooseValue {
                     value: defaults.run_time,
                     filter: defaults.run_time.is_none(),
@@ -3139,7 +3283,7 @@ impl GooseConfiguration {
                     filter: increase_rate.is_none(),
                     message: "increase_rate",
                 },
-                // Otherwise use GooseDefault if set and not on Worker.
+                // Otherwise use GooseDefault if set.
                 GooseValue {
                     value: default_increase_rate,
                     filter: default_increase_rate.is_none(),
@@ -3160,7 +3304,7 @@ impl GooseConfiguration {
                     filter: decrease_rate.is_none(),
                     message: "decrease_rate",
                 },
-                // Otherwise use GooseDefault if set and not on Worker.
+                // Otherwise use GooseDefault if set.
                 GooseValue {
                     value: default_decrease_rate,
                     filter: default_decrease_rate.is_none(),
@@ -3180,7 +3324,7 @@ impl GooseConfiguration {
                     filter: timeout.is_none(),
                     message: "timeout",
                 },
-                // Otherwise use GooseDefault if set and not on Worker.
+                // Otherwise use GooseDefault if set.
                 GooseValue {
                     value: default_timeout,
                     filter: default_timeout.is_none(),
@@ -3425,7 +3569,7 @@ impl GooseConfiguration {
                 filter: self.iterations.is_none(),
                 message: "iterations",
             },
-            // Use GooseDefault if not already set and not Worker.
+            // Use GooseDefault if not already set.
             GooseValue {
                 value: defaults.iterations,
                 filter: defaults.iterations.is_none(),
@@ -3441,7 +3585,7 @@ impl GooseConfiguration {
                 filter: self.scenarios.is_none(),
                 message: "scenarios",
             },
-            // Use GooseDefault if not already set and not Worker.
+            // Use GooseDefault if not already set.
             GooseValue {
                 value: defaults.scenarios.clone(),
                 filter: defaults.scenarios.is_none(),
@@ -3794,7 +3938,7 @@ impl GooseConfiguration {
                     filter: !self.no_autostart,
                     message: "no_autostart",
                 },
-                // Use GooseDefault if not already set and not Worker.
+                // Use GooseDefault if not already set.
                 GooseValue {
                     value: defaults.no_autostart,
                     filter: defaults.no_autostart.is_none(),
@@ -3812,7 +3956,7 @@ impl GooseConfiguration {
                     filter: !self.no_gzip,
                     message: "no_gzip",
                 },
-                // Use GooseDefault if not already set and not Worker.
+                // Use GooseDefault if not already set.
                 GooseValue {
                     value: defaults.no_gzip,
                     filter: defaults.no_gzip.is_none(),
@@ -3830,7 +3974,7 @@ impl GooseConfiguration {
                     filter: !self.accept_invalid_certs,
                     message: "accept_invalid_certs",
                 },
-                // Use GooseDefault if not already set and not Worker.
+                // Use GooseDefault if not already set.
                 GooseValue {
                     value: defaults.accept_invalid_certs,
                     filter: defaults.accept_invalid_certs.is_none(),
@@ -3885,7 +4029,7 @@ impl GooseConfiguration {
                     filter: !self.sticky_follow,
                     message: "sticky_follow",
                 },
-                // Use GooseDefault if not already set and not Worker.
+                // Use GooseDefault if not already set.
                 GooseValue {
                     value: defaults.sticky_follow,
                     filter: defaults.sticky_follow.is_none(),
@@ -4181,7 +4325,36 @@ impl GooseConfiguration {
     /// Whether a run may need a folder: an output flag given without a path, or the
     /// dashboard, whose Save report can be turned on at any time.
     pub(crate) fn uses_run_folder(&self) -> bool {
+        // A Gaggle manager keeps its workers' logs in its run's folder.
+        #[cfg(feature = "gaggle")]
+        if self.manager && self.data_logs() {
+            return true;
+        }
         self.report_in_folder() || self.logs_in_folder() || (self.dashboard && !self.no_metrics)
+    }
+
+    /// Whether this is a Gaggle worker, false without the `gaggle` feature.
+    pub(crate) fn gaggle_worker_flag(&self) -> bool {
+        #[cfg(feature = "gaggle")]
+        {
+            self.worker
+        }
+        #[cfg(not(feature = "gaggle"))]
+        false
+    }
+
+    /// Whether any request, transaction, scenario, error or debug log is set.
+    #[cfg(feature = "gaggle")]
+    pub(crate) fn data_logs(&self) -> bool {
+        [
+            &self.request_log,
+            &self.transaction_log,
+            &self.scenario_log,
+            &self.error_log,
+            &self.debug_log,
+        ]
+        .iter()
+        .any(|log| log.as_deref().is_some_and(|log| !log.is_empty()))
     }
 
     /// This configuration as a Controller's `config` and `config-json` show it:
@@ -4297,6 +4470,10 @@ impl GooseConfiguration {
     /// Whether per second graph data is recorded: for a report
     /// ([`Self::writes_report`]), or the dashboard's charts.
     pub(crate) fn records_graph_data(&self) -> bool {
+        #[cfg(feature = "gaggle")]
+        if self.gaggle_records_graph {
+            return true;
+        }
         self.writes_report()
     }
 
@@ -4720,8 +4897,9 @@ impl GooseConfiguration {
         }
 
         // --output-dir sets the folder that output flags given without a path write to.
+        // A Gaggle worker keeps it for the logs its manager may ask for.
         if let Some(output_dir) = self.output_dir() {
-            if !self.uses_run_folder() {
+            if !self.uses_run_folder() && !self.gaggle_worker_flag() {
                 let detail = if self.no_metrics {
                     "`configuration.output_dir` (--output-dir) would hold nothing: --dashboard and a bare --report-file write into it except under --no-metrics, which is given here, so give a bare --goose-log or --debug-log."
                 } else {
@@ -4865,6 +5043,8 @@ impl GooseConfiguration {
 
         // Dashboard bind host / auth token validation.
         self.validate_dashboard_config()?;
+        #[cfg(feature = "gaggle")]
+        self.validate_gaggle()?;
 
         Ok(())
     }
