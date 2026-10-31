@@ -436,6 +436,15 @@ impl Link {
             for (file, path) in logs {
                 if let Err(e) = send_log(&outbox, &file, &path).await {
                     warn!("gaggle: could not send log {}: {e}", path.display());
+                    // End the file, so the manager does not wait for it.
+                    outbox
+                        .push_chunk(LogChunk {
+                            file,
+                            offset: u64::MAX,
+                            data: Vec::new(),
+                            last: true,
+                        })
+                        .await;
                 }
             }
         });
@@ -443,6 +452,15 @@ impl Link {
 
     /// Close the stream, once what is queued has left.
     pub(crate) fn close(&self) {
+        self.outbox.close();
+    }
+}
+
+impl Drop for Link {
+    /// The worker is done with its manager: its `execute()` is returning, so
+    /// the switch's last resort must not end the process.
+    fn drop(&mut self) {
+        self.done.store(true, Ordering::Relaxed);
         self.outbox.close();
     }
 }
@@ -687,6 +705,63 @@ mod tests {
         outbox.push(Outgoing::Message(ToManager::Heartbeat(Heartbeat {})), true);
         let first = next(&outbox).await.unwrap();
         assert!(matches!(first.message, Some(ToManager::Heartbeat(_))));
+    }
+
+    /// A switch over `users`, its events and outbox; `done` set, so its last
+    /// resort never ends the test binary.
+    fn switch(
+        users: Vec<tokio::task::AbortHandle>,
+        heartbeat_timeout: Duration,
+    ) -> (Switch, flume::Receiver<LinkEvent>, Arc<Outbox>) {
+        let (events, received) = flume::unbounded();
+        let outbox = Arc::new(Outbox::default());
+        let switch = Switch {
+            fired: Arc::new(AtomicBool::new(false)),
+            users: Arc::new(Mutex::new(users)),
+            events,
+            outbox: outbox.clone(),
+            heartbeat_timeout,
+            done: Arc::new(AtomicBool::new(true)),
+        };
+        (switch, received, outbox)
+    }
+
+    /// The dead man's switch aborts every user at once, tells the main loop,
+    /// and closes the stream.
+    #[tokio::test]
+    async fn the_switch_aborts_every_user() {
+        let user = tokio::spawn(std::future::pending::<()>());
+        let (switch, events, outbox) = switch(vec![user.abort_handle()], Duration::from_secs(10));
+        switch.fire("test".to_string());
+        let ended = tokio::time::timeout(Duration::from_secs(30), user)
+            .await
+            .expect("within 30 seconds");
+        assert!(ended.unwrap_err().is_cancelled());
+        assert!(matches!(events.try_recv(), Ok(LinkEvent::Lost(why)) if why == "test"));
+        assert!(next(&outbox).await.is_none());
+    }
+
+    /// With nothing heard from the manager for the heartbeat timeout, the
+    /// heartbeat task fires the switch, which stops the users.
+    #[tokio::test]
+    async fn silence_fires_the_switch() {
+        let user = tokio::spawn(std::future::pending::<()>());
+        let (switch, events, outbox) =
+            switch(vec![user.abort_handle()], Duration::from_millis(300));
+        let heard = Arc::new(Mutex::new(Instant::now()));
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let task = tokio::spawn(heartbeat_manager(outbox, heard, shutdown, switch));
+        let ended = tokio::time::timeout(Duration::from_secs(30), user)
+            .await
+            .expect("within 30 seconds");
+        assert!(ended.unwrap_err().is_cancelled());
+        assert!(
+            matches!(events.try_recv(), Ok(LinkEvent::Lost(why)) if why.starts_with("nothing from it"))
+        );
+        tokio::time::timeout(Duration::from_secs(30), task)
+            .await
+            .expect("the heartbeat task ends")
+            .unwrap();
     }
 
     #[test]

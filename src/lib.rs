@@ -213,8 +213,6 @@ pub enum GooseError {
         /// An optional explanation of the error.
         detail: String,
     },
-    /// The load test ran, and at least one `--threshold` failed. Every report was
-    /// written first.
     /// A Gaggle manager or worker could not run its part: a worker was turned
     /// away or lost its manager, or a manager's workers did not all join or
     /// prepare.
@@ -222,6 +220,8 @@ pub enum GooseError {
         /// What went wrong.
         detail: String,
     },
+    /// The load test ran, and at least one `--threshold` failed. Every report was
+    /// written first.
     ThresholdsFailed {
         /// The rules that failed, in the order they were given.
         failed: Vec<threshold::ThresholdResult>,
@@ -1603,7 +1603,7 @@ impl GooseAttack {
         let num_cpus = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(1);
-        let chunk_size = total_users.div_ceil(num_cpus);
+        let chunk_size = total_users.div_ceil(num_cpus).max(1);
 
         let results: Vec<Result<Vec<GooseUser>, GooseError>> = std::thread::scope(|s| {
             let mut handles = Vec::with_capacity(num_cpus);

@@ -20,7 +20,7 @@ Each of these options needs Goose built with the `gaggle` feature.
 
 * `--gaggle-token <TOKEN>`: a secret the manager and every worker share. Also read from the `GOOSE_GAGGLE_TOKEN` environment variable. Never shown in output.
 * `--no-hash-check`: let a worker whose load test differs from the manager's join. Not recommended: the merged results then mix two load tests.
-* `--gaggle-heartbeat-timeout <TIME>`: how long the manager and a worker wait to hear from each other, `10s` by default. A manager marks a silent worker lost and carries on; a worker that loses its manager stops all of its users at once and exits with an error.
+* `--gaggle-heartbeat-timeout <TIME>`: how long the manager and a worker wait to hear from each other, `10s` by default, and at least `3s`, as heartbeats go every 2 seconds. A manager marks a silent worker lost and carries on; a worker that loses its manager stops all of its users at once and exits with an error.
 
 ## Everything else goes to the manager
 

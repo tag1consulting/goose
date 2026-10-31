@@ -263,8 +263,16 @@ impl WorkerRunSpec {
         configuration.no_status_codes = self.no_status_codes;
         configuration.no_percentiles_over_time = self.no_percentiles_over_time;
         configuration.gaggle_records_graph = self.records_graph;
-        // The manager owns the metrics reset, and judges the thresholds.
+        // The manager owns the metrics reset, judges the thresholds and writes
+        // the reports: any the load test set in code are not the worker's.
         configuration.no_reset_metrics = true;
+        configuration.threshold.clear();
+        configuration.thresholds.clear();
+        configuration.no_threshold_abort = true;
+        configuration.threshold_abort_delay = None;
+        configuration.report_file.clear();
+        configuration.pdf_print_html = None;
+        configuration.running_metrics = None;
         configuration.request_body = self.request_body;
         configuration.no_debug_body = self.no_debug_body;
         configuration.compress = self.compress;

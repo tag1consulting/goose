@@ -197,7 +197,29 @@ fn until_load(count: impl Fn() -> usize, within: Duration) {
 #[test]
 #[serial_test::serial]
 fn gaggle_worker_killed_mid_run() {
-    within(|| {
+    within(|| worker_lost_mid_run(false));
+}
+
+/// As B2.1, the worker frozen with SIGSTOP instead: its connection stays
+/// open, so only the heartbeat timeout finds it lost.
+#[test]
+#[serial_test::serial]
+fn gaggle_worker_frozen_mid_run() {
+    within(|| worker_lost_mid_run(true));
+}
+
+/// Stop process `pid` where it stands, its sockets left open.
+fn freeze(pid: u32) {
+    nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(pid as i32),
+        nix::sys::signal::Signal::SIGSTOP,
+    )
+    .unwrap();
+}
+
+/// A worker killed, or frozen, mid run.
+fn worker_lost_mid_run(frozen: bool) {
+    {
         let server = MockServer::start();
         let index = mock_simple(&server, Duration::ZERO);
         let folder = scratch("worker-killed");
@@ -223,15 +245,22 @@ fn gaggle_worker_killed_mid_run() {
                     "--report-file",
                     "--output-dir",
                     &manager_folder,
+                    "--gaggle-token",
+                    "tok-b21-secret",
                 ],
             ),
         );
-        let mut first = Process::start(&simple, "first", &folder, &worker_args(&port, &[]));
-        let mut second = Process::start(&simple, "second", &folder, &worker_args(&port, &[]));
+        let token = ["--gaggle-token", "tok-b21-secret"];
+        let mut first = Process::start(&simple, "first", &folder, &worker_args(&port, &token));
+        let mut second = Process::start(&simple, "second", &folder, &worker_args(&port, &token));
         until_load(|| index.calls(), Duration::from_secs(30));
         std::thread::sleep(Duration::from_secs(2));
         let killed = chrono::Utc::now();
-        second.kill();
+        if frozen {
+            freeze(second.child.id());
+        } else {
+            second.kill();
+        }
 
         let (status, _) = manager
             .wait(Duration::from_secs(60))
@@ -246,13 +275,26 @@ fn gaggle_worker_killed_mid_run() {
         let report: serde_json::Value = serde_json::from_str(&report).unwrap();
         let gaggle = &report["gaggle"];
         assert_eq!(gaggle["degraded"], true, "{}", gaggle);
-        let lost = gaggle["workers"]
-            .as_array()
-            .unwrap()
+        let workers = gaggle["workers"].as_array().unwrap();
+        let lost: Vec<&serde_json::Value> = workers
             .iter()
-            .find(|worker| worker["state"] == "lost")
-            .unwrap_or_else(|| panic!("a lost worker: {}", gaggle));
+            .filter(|worker| worker["state"] == "lost")
+            .collect();
+        assert_eq!(lost.len(), 1, "one lost worker: {}", gaggle);
+        let lost = lost[0];
         assert_eq!(lost["name"], second.name.as_str());
+        assert!(
+            workers
+                .iter()
+                .any(|worker| worker["name"] == "first" && worker["state"] == "finished"),
+            "{}",
+            gaggle
+        );
+        // A frozen worker's connection stays open: only its silence finds it.
+        if frozen {
+            let reason = lost["lost_reason"].as_str().unwrap_or_default();
+            assert!(reason.starts_with("nothing from it"), "{}", gaggle);
+        }
         let lost_at =
             chrono::DateTime::parse_from_rfc3339(lost["lost_at"].as_str().unwrap()).unwrap();
         // `lost_at` is to the second.
@@ -265,8 +307,12 @@ fn gaggle_worker_killed_mid_run() {
         );
         let html = std::fs::read_to_string(folder.join("manager/report.html")).unwrap();
         assert!(html.contains("Degraded"), "the HTML report says degraded");
+        // The token is in no report.
+        for text in [&report.to_string(), &html] {
+            assert!(!text.contains("tok-b21-secret"));
+        }
         let _ = std::fs::remove_dir_all(&folder);
-    });
+    }
 }
 
 /// B2.2: the manager killed mid run: every worker stops its load and exits
@@ -274,7 +320,20 @@ fn gaggle_worker_killed_mid_run() {
 #[test]
 #[serial_test::serial]
 fn gaggle_manager_killed_mid_run() {
-    within(|| {
+    within(|| manager_lost_mid_run(false));
+}
+
+/// As B2.2, the manager frozen with SIGSTOP instead: its connections stay
+/// open, so only the heartbeat timeout stops the workers.
+#[test]
+#[serial_test::serial]
+fn gaggle_manager_frozen_mid_run() {
+    within(|| manager_lost_mid_run(true));
+}
+
+/// The manager killed, or frozen, mid run.
+fn manager_lost_mid_run(frozen: bool) {
+    {
         let server = MockServer::start();
         let index = mock_simple(&server, Duration::ZERO);
         let folder = scratch("manager-killed");
@@ -305,7 +364,12 @@ fn gaggle_manager_killed_mid_run() {
         ];
         until_load(|| index.calls(), Duration::from_secs(30));
         std::thread::sleep(Duration::from_secs(3));
-        let killed = manager.kill();
+        let killed = if frozen {
+            freeze(manager.child.id());
+            Instant::now()
+        } else {
+            manager.kill()
+        };
         let bound = Duration::from_secs(HEARTBEAT + 5);
         for worker in workers.iter_mut() {
             let (status, exited) = worker
@@ -318,14 +382,22 @@ fn gaggle_manager_killed_mid_run() {
                 worker.name,
                 exited.duration_since(killed)
             );
-            assert!(!worker.output().contains("panicked"), "{}", worker.output());
+            let output = worker.output();
+            assert!(!output.contains("panicked"), "{}", output);
+            // The switch stopped it, not its last resort.
+            assert!(output.contains("lost the manager"), "{}", output);
+            assert!(!output.contains("exiting now"), "{}", output);
+            if frozen {
+                assert!(output.contains("nothing from it"), "{}", output);
+            }
         }
         // No more load once the workers are gone.
         let after = index.calls();
         std::thread::sleep(Duration::from_secs(3));
         assert_eq!(index.calls(), after, "load outlived the manager");
+        let _ = manager.kill();
         let _ = std::fs::remove_dir_all(&folder);
-    });
+    }
 }
 
 /// B2.3: a worker whose load test differs, or whose token is wrong, is
@@ -339,13 +411,19 @@ fn gaggle_handshake_refusals() {
         let folder = scratch("refusals");
         let host = server.base_url();
         for (case, worker_binary, manager_extra, worker_extra, named) in [
-            ("plan", "closure", vec![], vec![], "plan_hash"),
+            (
+                "plan",
+                "closure",
+                vec![],
+                vec![],
+                "refused this worker: plan_hash:",
+            ),
             (
                 "token",
                 "simple",
                 vec!["--gaggle-token", "tok-right-5e1b", "-vv"],
                 vec!["--gaggle-token", "tok-wrong-9c2d", "-vv"],
-                "token",
+                "refused this worker: token:",
             ),
         ] {
             let port = free_port().to_string();

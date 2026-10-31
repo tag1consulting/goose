@@ -228,6 +228,12 @@ impl GaggleAccumulator {
         self.limits.max_second = second.min(self.cap_second);
     }
 
+    /// Build whole run columns for the report's heatmap, or not, as Save
+    /// report is turned on or off.
+    pub(crate) fn set_columns(&mut self, keep: bool) {
+        self.settings.columns = keep;
+    }
+
     /// Every gap and repeat seen in a worker's sequence.
     pub(crate) fn gaps(&self) -> &[SeqGap] {
         &self.gaps

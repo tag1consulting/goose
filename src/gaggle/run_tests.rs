@@ -97,12 +97,23 @@ async fn gaggle(
     folder: &Path,
     manager_args: &[&str],
 ) -> Result<GooseMetrics, crate::GooseError> {
+    gaggle_of(2, server, folder, manager_args).await
+}
+
+/// [`gaggle`], with `count` workers.
+async fn gaggle_of(
+    count: usize,
+    server: &MockServer,
+    folder: &Path,
+    manager_args: &[&str],
+) -> Result<GooseMetrics, crate::GooseError> {
+    let count_text = count.to_string();
     let host = server.base_url();
     let manager_folder = folder.join("manager").display().to_string();
     let mut args = vec![
         "--manager",
         "--expect-workers",
-        "2",
+        &count_text,
         "--manager-bind-port",
         "0",
         "--no-telnet",
@@ -116,10 +127,13 @@ async fn gaggle(
     let (bound, address) = tokio::sync::oneshot::channel();
     let manager = load_test(configuration(&args)).report_manager_address(bound);
     let manager = tokio::spawn(manager.execute());
-    let address = address.await.expect("the manager listens");
+    let address = match address.await {
+        Ok(address) => address,
+        Err(_) => panic!("the manager never listened: {:?}", manager.await),
+    };
     let port = address.port().to_string();
     let mut workers = Vec::new();
-    for worker in 0..2 {
+    for worker in 0..count {
         let worker_folder = folder.join(format!("worker{worker}")).display().to_string();
         let worker = load_test(configuration(&[
             "--worker",
@@ -208,7 +222,13 @@ async fn gaggle_manager_and_two_workers_in_one_process() {
     // One reset, when the ramp ended: what the users did before it is gone
     // from the metrics on every worker, and nothing after it is.
     assert_eq!(pre.calls_async().await, 6);
-    assert_eq!(count("GET /pre"), 0, "the reset clears the ramp's requests");
+    // Only each worker's last user may race the reset with its /pre; without
+    // the broadcast reset all six count.
+    assert!(
+        count("GET /pre") <= 2,
+        "the reset clears the ramp's requests: {}",
+        count("GET /pre")
+    );
 
     // test_start and test_stop ran once.
     assert_eq!(start.calls_async().await, 1);
@@ -259,5 +279,44 @@ async fn gaggle_manager_and_two_workers_in_one_process() {
     let gaggle = &report["gaggle"];
     assert_eq!(gaggle["degraded"], false, "{gaggle}");
     assert_eq!(gaggle["workers"].as_array().map(Vec::len), Some(2));
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+/// More workers than users, with --iterations: the worker holding none is
+/// prepared and counts as its users having exited, so the run ends.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_worker_without_users_ends_with_iterations() {
+    let server = MockServer::start_async().await;
+    for path in [
+        "/a", "/b", "/pre", "/start", "/stop", "/data/w0", "/data/w1", "/data/w2",
+    ] {
+        server
+            .mock_async(|when, then| {
+                when.method(GET).path(path);
+                then.status(200);
+            })
+            .await;
+    }
+    let folder = scratch("no-users");
+    let run = gaggle_of(
+        3,
+        &server,
+        &folder,
+        &[
+            "--users",
+            "2",
+            "--increase-rate",
+            "100",
+            "--iterations",
+            "1",
+            "--report-file",
+        ],
+    );
+    let metrics = tokio::time::timeout(Duration::from_secs(30), run)
+        .await
+        .expect("the Gaggle ends within 30 seconds")
+        .expect("the manager exits cleanly");
+    assert_eq!(metrics.total_users, 2);
     let _ = std::fs::remove_dir_all(&folder);
 }

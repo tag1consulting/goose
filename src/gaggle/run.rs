@@ -89,15 +89,6 @@ pub(crate) struct WorkerRun {
     run_folder: Option<PathBuf>,
 }
 
-impl Drop for WorkerRun {
-    fn drop(&mut self) {
-        self.link
-            .done
-            .store(true, std::sync::atomic::Ordering::Relaxed);
-        self.link.close();
-    }
-}
-
 impl ManagerRun {
     fn worker(&mut self, id: u32) -> Option<&mut WorkerEntry> {
         self.workers.get_mut(id as usize)
@@ -432,6 +423,12 @@ impl GooseAttack {
                 0,
             ));
         self.set_attack_phase(goose_attack_run_state, AttackPhase::Increase);
+        // A worker holding no users, with --iterations, has nothing to
+        // run: its users have all exited, as the manager waits to hear.
+        if self.test_plan.total_users() == 0 && self.configuration.iterations() > 0 {
+            self.set_ended_by(EndedBy::UsersExited, None);
+            self.cancel_attack(goose_attack_run_state).await?;
+        }
         Ok(())
     }
 
@@ -601,6 +598,10 @@ impl GooseAttack {
                     }
                 }
                 LinkEvent::Stop(reason) => {
+                    // A Stop before the start: never start.
+                    if !running {
+                        run.start_at = None;
+                    }
                     if running && !goose_attack_run_state.stopping {
                         info!("gaggle: the manager stopped the run: {reason}");
                         self.set_ended_by(EndedBy::Stopped, None);

@@ -3989,7 +3989,7 @@ impl MetricsProcessor {
         // A Gaggle manager counts its workers' requests, merged.
         #[cfg(feature = "gaggle")]
         if self.gaggle_merge.is_some() {
-            self.gaggle_refresh();
+            self.gaggle_refresh(false);
             let requests = self
                 .metrics
                 .requests

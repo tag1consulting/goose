@@ -6,6 +6,11 @@ pub(crate) struct ManagerMerge {
     /// A delta, a loss or a reset since `metrics` and `graph_data` were last
     /// built from the merge.
     dirty: bool,
+    /// The manager's series second, from its last clock.
+    clock: u64,
+    /// The clock second the merge was last built in: a live read builds it
+    /// at most once a second, as the workers' deltas arrive once a second.
+    built: Option<u64>,
 }
 
 /// The metrics processor as a Gaggle manager.
@@ -22,6 +27,8 @@ impl MetricsProcessor {
         self.gaggle_merge = Some(Box::new(ManagerMerge {
             accumulator,
             dirty: true,
+            clock: 0,
+            built: None,
         }));
     }
 
@@ -48,15 +55,35 @@ impl MetricsProcessor {
             }
             MetricsCommand::GaggleClock { second } => {
                 merge.accumulator.set_max_second(second);
+                merge.clock = second;
                 false
             }
+            // Save report: the merge builds the report heatmap's columns, or
+            // stops, from now on.
+            MetricsCommand::KeepGraph { keep, now } => {
+                merge.accumulator.set_columns(keep);
+                merge.dirty = true;
+                merge.built = None;
+                self.dispatch_command(MetricsCommand::KeepGraph { keep, now })
+            }
             // Recorded on state the merge replaces, and read from it later.
-            cmd @ (MetricsCommand::UserStarted { .. }
-            | MetricsCommand::RecordUsers { .. }
-            | MetricsCommand::KeepGraph { .. }) => self.dispatch_command(cmd),
+            cmd @ (MetricsCommand::UserStarted { .. } | MetricsCommand::RecordUsers { .. }) => {
+                self.dispatch_command(cmd)
+            }
             cmd => {
                 let reset = matches!(cmd, MetricsCommand::Reset { .. });
-                self.gaggle_refresh();
+                // What a report, a Controller or the end of a run reads is
+                // built now; a live view, once a second.
+                let force = matches!(
+                    cmd,
+                    MetricsCommand::Reset { .. }
+                        | MetricsCommand::Shutdown { .. }
+                        | MetricsCommand::GetMetrics { .. }
+                        | MetricsCommand::GetReportData { .. }
+                        | MetricsCommand::EnterMaintain { .. }
+                        | MetricsCommand::LeaveMaintain { .. }
+                );
+                self.gaggle_refresh(force);
                 let done = self.dispatch_command(cmd);
                 if reset {
                     if let Some(merge) = self.gaggle_merge.as_mut() {
@@ -71,14 +98,15 @@ impl MetricsProcessor {
     /// Build `metrics` and `graph_data` from the merge again, when it
     /// changed. What the manager keeps of its own, its threshold state and
     /// display flags among them, stays.
-    pub(super) fn gaggle_refresh(&mut self) {
+    pub(super) fn gaggle_refresh(&mut self, force: bool) {
         let Some(merge) = self.gaggle_merge.as_mut() else {
             return;
         };
-        if !merge.dirty {
+        if !merge.dirty || (!force && merge.built == Some(merge.clock)) {
             return;
         }
         merge.dirty = false;
+        merge.built = Some(merge.clock);
         let (merged, graph) = merge.accumulator.merged();
         let GooseMetrics {
             requests,

@@ -2182,3 +2182,58 @@ fn gaggle_scenario_totals_at_the_bounds_do_not_overflow() {
         );
     });
 }
+
+/// How long one full merge takes (`--ignored`, release): `workers` workers
+/// that each sent `names` names for `seconds` seconds.
+#[test]
+#[ignore]
+fn gaggle_merge_cost() {
+    use super::delta::{Average, Histogram};
+    for (workers, names, seconds) in [(3, 10, 300), (3, 10, 3600), (10, 50, 600), (50, 200, 600)] {
+        let mut accumulator = accumulator();
+        accumulator.set_max_second(u64::MAX - 2);
+        for worker in 0..workers {
+            let mut delta = GaggleDelta::new(worker, 1, 1, DeltaKind::Delta);
+            delta.now = seconds;
+            for n in 0..names {
+                let key = format!("GET /n{n}");
+                delta
+                    .graph
+                    .requests
+                    .insert(key.clone(), (0..seconds).map(|s| (s, 10)).collect());
+                delta.graph.averages.insert(
+                    key.clone(),
+                    (0..seconds)
+                        .map(|s| {
+                            (
+                                s,
+                                Average {
+                                    count: 10,
+                                    sum_ms: 50.0,
+                                },
+                            )
+                        })
+                        .collect(),
+                );
+                let histogram = Histogram {
+                    rows: vec![(40, 5), (41, 5)],
+                    minimum_us: 4_000,
+                    maximum_us: 6_000,
+                    total_us: 50_000,
+                    count: 10,
+                };
+                delta
+                    .graph
+                    .latency
+                    .insert(key, (0..seconds).map(|s| (s, histogram.clone())).collect());
+            }
+            accumulator.apply(worker, delta).unwrap();
+        }
+        let started = std::time::Instant::now();
+        let _ = accumulator.merged();
+        println!(
+            "merge of {workers} workers x {names} names x {seconds} s: {:?}",
+            started.elapsed()
+        );
+    }
+}

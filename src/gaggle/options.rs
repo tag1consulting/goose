@@ -19,6 +19,9 @@ const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 60;
 /// `--gaggle-heartbeat-timeout` is not set.
 const DEFAULT_HEARTBEAT_TIMEOUT_SECS: u64 = 10;
 
+/// The shortest heartbeat timeout: heartbeats go every 2 seconds.
+const MIN_HEARTBEAT_TIMEOUT_SECS: u64 = 3;
+
 /// The environment variable a token is read from when `--gaggle-token` is not
 /// given.
 pub(crate) const TOKEN_ENV: &str = "GOOSE_GAGGLE_TOKEN";
@@ -228,11 +231,22 @@ impl GooseConfiguration {
             &self.gaggle_connect_timeout,
             DEFAULT_CONNECT_TIMEOUT_SECS,
         )?;
-        timespan(
+        let heartbeat = timespan(
             "--gaggle-heartbeat-timeout",
             &self.gaggle_heartbeat_timeout,
             DEFAULT_HEARTBEAT_TIMEOUT_SECS,
         )?;
+        // Heartbeats go every 2 seconds: a shorter timeout loses a peer
+        // between two of them.
+        if heartbeat < MIN_HEARTBEAT_TIMEOUT_SECS {
+            return Err(refused(
+                "--gaggle-heartbeat-timeout",
+                heartbeat,
+                format!(
+                    "--gaggle-heartbeat-timeout must be at least {MIN_HEARTBEAT_TIMEOUT_SECS} seconds: heartbeats go every 2 seconds."
+                ),
+            ));
+        }
         let either = self.manager || self.worker;
         let shared: [(&str, bool); 4] = [
             ("--gaggle-token", self.gaggle_token.is_some() && !either),
@@ -413,6 +427,49 @@ mod tests {
                     with(&manager, &["--gaggle-heartbeat-timeout", "0"]),
                     "--gaggle-heartbeat-timeout must be a time of at least one second",
                 ),
+                (
+                    with(&manager, &["--gaggle-heartbeat-timeout", "2s"]),
+                    "--gaggle-heartbeat-timeout must be at least 3 seconds",
+                ),
+                (
+                    with(&manager, &["--gaggle-connect-timeout", "0"]),
+                    "--gaggle-connect-timeout must be a time of at least one second",
+                ),
+                (
+                    with(&["--manager", "--expect-workers", "2049"], &[]),
+                    "--expect-workers can be at most 2048",
+                ),
+                (
+                    with(
+                        &["--worker", "--manager-host", "m"],
+                        &["--gaggle-shadow-merge"],
+                    ),
+                    "--gaggle-shadow-merge can't be used with --manager or --worker",
+                ),
+                (
+                    with(&["--worker", "--manager-host", " "], &[]),
+                    "--worker needs --manager-host",
+                ),
+                (
+                    with(&["--manager-bind-host", "h"], &[]),
+                    "--manager-bind-host needs --manager",
+                ),
+                (
+                    with(&["--manager-bind-port", "1"], &[]),
+                    "--manager-bind-port needs --manager",
+                ),
+                (
+                    with(&["--manager-port", "1"], &[]),
+                    "--manager-port needs --worker",
+                ),
+                (
+                    with(&["--gaggle-connect-timeout", "5s"], &[]),
+                    "--gaggle-connect-timeout needs --manager or --worker",
+                ),
+                (
+                    with(&["--gaggle-heartbeat-timeout", "5s"], &[]),
+                    "--gaggle-heartbeat-timeout needs --manager or --worker",
+                ),
                 (with(&["--worker"], &[]), "--worker needs --manager-host"),
                 (
                     with(&["--expect-workers", "2"], &[]),
@@ -470,6 +527,27 @@ mod tests {
                 &["--dashboard"],
                 &["--no-autostart"],
                 &["--timeout", "3"],
+                &["--render-report", "r.json"],
+                &["--baseline-file", "b.json"],
+                &["--no-granular-report"],
+                &["--pdf-print-html", "p.html"],
+                &["--threshold-abort-delay", "3"],
+                &["--request-format", "csv"],
+                &["--request-body"],
+                &["--transaction-format", "csv"],
+                &["--scenario-format", "csv"],
+                &["--error-format", "csv"],
+                &["--debug-format", "csv"],
+                &["--no-debug-body"],
+                &["--dashboard-host", "h"],
+                &["--dashboard-port", "1"],
+                &["--dashboard-auth-token", "t"],
+                &["--dashboard-control"],
+                &["--dashboard-no-auth"],
+                &["--no-percentiles-over-time"],
+                &["--no-gzip"],
+                &["--sticky-follow"],
+                &["--accept-invalid-certs"],
             ];
             for option in refused {
                 let args = with(&worker, option);
@@ -482,19 +560,33 @@ mod tests {
                     detail
                 );
             }
+            #[cfg(feature = "pdf-reports")]
+            {
+                let args = with(&worker, &["--pdf-scale", "0.5"]);
+                let args: Vec<&str> = args.iter().map(String::as_str).collect();
+                assert!(refusal(&args)
+                    .contains("--pdf-scale and --pdf-timeout can't be used with --worker"));
+            }
             // What a worker keeps.
             let mut kept = parse(
-                &with(
-                    &worker,
-                    &["--output-dir", "o", "--goose-log", "g.log", "-v"],
-                )
-                .iter()
-                .map(String::as_str)
-                .collect::<Vec<_>>(),
+                &with(&worker, &["--output-dir", "o", "-v"])
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>(),
             );
             kept.worker_refusals().unwrap();
             kept.configure(&GooseDefaults::default()).unwrap();
             kept.validate().unwrap();
+            // --goose-log too, checked without configuring, which opens it.
+            parse(&[
+                "--worker",
+                "--manager-host",
+                "m",
+                "--goose-log",
+                "unused.log",
+            ])
+            .worker_refusals()
+            .unwrap();
         });
     }
 

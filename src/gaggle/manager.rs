@@ -117,6 +117,12 @@ fn folder_name(name: &str) -> String {
 impl Shared {
     /// Why `hello` is refused, naming the field at fault.
     fn refusal(&self, hello: &Hello) -> Option<String> {
+        // The token first, so a client without it learns nothing about the
+        // manager.
+        let token = self.token.as_deref().unwrap_or("");
+        if !same_token(&hello.token, token) {
+            return Some("token: the worker's --gaggle-token is not the manager's".to_string());
+        }
         if hello.protocol_version != PROTOCOL_VERSION {
             return Some(format!(
                 "protocol_version: the worker speaks Gaggle protocol {}, this manager {}",
@@ -135,10 +141,6 @@ impl Shared {
                 "plan_hash: the worker's load test ({:x}) is not the manager's ({:x}); build both from the same code, or pass --no-hash-check",
                 hello.plan_hash, self.plan_hash
             ));
-        }
-        let token = self.token.as_deref().unwrap_or("");
-        if !same_token(&hello.token, token) {
-            return Some("token: the worker's --gaggle-token is not the manager's".to_string());
         }
         None
     }
@@ -206,7 +208,7 @@ impl Gaggle for Service {
         if let Some(reason) = self.0.refusal(&hello) {
             warn!(
                 "gaggle: refused worker {:?} from {peer}: {reason}",
-                hello.worker_name
+                folder_name(&hello.worker_name)
             );
             return Ok(tonic::Response::new(reject(reason)));
         }
@@ -218,7 +220,7 @@ impl Gaggle for Service {
             );
             warn!(
                 "gaggle: refused worker {:?} from {peer}: {reason}",
-                hello.worker_name
+                folder_name(&hello.worker_name)
             );
             return Ok(tonic::Response::new(reject(reason)));
         };
@@ -313,13 +315,16 @@ async fn read_worker(
             break;
         }
     }
-    if !got_final && !closed.load(Ordering::Relaxed) {
-        lose(
-            &shared,
-            id,
-            &lost,
-            "its stream closed before its final metrics".to_string(),
-        );
+    // A worker that stopped as told, then went away, is not lost: the
+    // manager's main loop knows it stopped and keeps it so. Either way the
+    // event ends any wait for it, its logs among them.
+    if !closed.load(Ordering::Relaxed) {
+        let why = if got_final {
+            "its stream closed after its final metrics, before Shutdown"
+        } else {
+            "its stream closed before its final metrics"
+        };
+        lose(&shared, id, &lost, why.to_string());
     }
 }
 
@@ -592,6 +597,62 @@ mod handshake_tests {
         }
     }
 
+    /// A worker that says Hello and then nothing: the manager loses it once
+    /// its heartbeat timeout passes, and tells it to shut down.
+    #[tokio::test]
+    async fn gaggle_loses_a_silent_worker() {
+        let test = async {
+            let manager = Manager::start("127.0.0.1", 0, 1, None, 7, true, Duration::from_secs(1))
+                .await
+                .unwrap();
+            let channel =
+                tonic::transport::Endpoint::from_shared(format!("http://{}", manager.local_addr))
+                    .unwrap()
+                    .connect()
+                    .await
+                    .unwrap();
+            let (tx, rx) = mpsc::channel(4);
+            tx.send(WorkerMessage {
+                message: Some(FromWorker::Hello(Hello {
+                    token: String::new(),
+                    ..hello()
+                })),
+            })
+            .await
+            .unwrap();
+            let mut inbound = GaggleClient::new(channel)
+                .connect(ReceiverStream::new(rx))
+                .await
+                .unwrap()
+                .into_inner();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let lost = loop {
+                match manager.next_event(deadline).await {
+                    Some(Event::Joined) => continue,
+                    other => break other,
+                }
+            };
+            assert!(
+                matches!(&lost, Some(Event::Lost { id: 0, why }) if why.starts_with("nothing from it")),
+                "{:?}",
+                lost
+            );
+            // It was told to shut down, after its Welcome and heartbeats.
+            loop {
+                let message = inbound.message().await.unwrap().expect("Shutdown");
+                match message.message {
+                    Some(ToWorker::Shutdown(_)) => break,
+                    Some(ToWorker::Welcome(_)) | Some(ToWorker::Heartbeat(_)) => continue,
+                    other => panic!("{:?}", other),
+                }
+            }
+            drop(tx);
+        };
+        tokio::time::timeout(Duration::from_secs(30), test)
+            .await
+            .expect("within 30 seconds");
+    }
+
     fn hello() -> Hello {
         Hello {
             goose_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -656,9 +717,33 @@ mod handshake_tests {
                 assert!(reason.starts_with(field), "{}: {}", field, reason);
                 assert!(!reason.contains("secret") && !reason.contains("guess"));
             }
+            // A worker with no token, to a manager with one.
+            let none = answer(
+                &manager,
+                Hello {
+                    token: String::new(),
+                    ..hello()
+                },
+            )
+            .await
+            .unwrap_err();
+            assert!(none.starts_with("token"), "{}", none);
             assert_eq!(answer(&manager, hello()).await, Ok(0));
             let full = answer(&manager, hello()).await.unwrap_err();
             assert!(full.contains("all 1 of its workers"), "{}", full);
+            // --no-hash-check lets another plan in; a token still binds.
+            let unchecked =
+                Manager::start("127.0.0.1", 0, 1, None, 7, false, Duration::from_secs(10))
+                    .await
+                    .unwrap();
+            let token = answer(&unchecked, hello()).await.unwrap_err();
+            assert!(token.starts_with("token"), "{}", token);
+            let other_plan = Hello {
+                plan_hash: 8,
+                token: String::new(),
+                ..hello()
+            };
+            assert_eq!(answer(&unchecked, other_plan).await, Ok(0));
         };
         tokio::time::timeout(Duration::from_secs(30), test)
             .await
