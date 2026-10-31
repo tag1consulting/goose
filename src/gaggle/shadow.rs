@@ -5,7 +5,7 @@
 //! delta, whose metrics replace what it holds. Both merges must equal the
 //! run's own metrics and graph data, and its dashboard snapshot.
 
-use super::delta::GaggleDelta;
+use super::delta::{DeltaLimits, GaggleDelta, Second, MAX_WORKERS};
 use super::merge::GaggleAccumulator;
 use crate::graph::{GraphData, GraphSettings};
 use crate::metrics::GooseMetrics;
@@ -15,6 +15,14 @@ use std::sync::{Arc, Mutex};
 /// the next left out, from metrics and graph data.
 pub(crate) type SnapshotBuilder<'a> =
     &'a dyn Fn(&GooseMetrics, &mut GraphData) -> serde_json::Value;
+
+/// What the self check's accumulators take: its own deltas, of a run of
+/// any length and any number of names.
+const LIMITS: DeltaLimits = DeltaLimits {
+    max_second: Second::MAX - 1,
+    max_names: usize::MAX,
+    max_workers: MAX_WORKERS,
+};
 
 /// The file a failed self check writes its differences to.
 pub(crate) const DIFF_FILE: &str = "gaggle-shadow-diff.txt";
@@ -33,6 +41,19 @@ pub(crate) struct ShadowMerge {
     dropped_epoch: u64,
     /// Where the run finds how the check ended.
     outcome: Arc<Mutex<Option<ShadowOutcome>>>,
+}
+
+/// Apply `decoded`, `sent` read back from the wire, from the worker that
+/// sent it, this process; a refusal is an error.
+fn apply(
+    accumulator: &mut GaggleAccumulator,
+    sent: &GaggleDelta,
+    decoded: GaggleDelta,
+    errors: &mut Vec<String>,
+) {
+    if let Err(e) = accumulator.apply(sent.worker, decoded) {
+        errors.push(format!("delta {} refused: {e}", sent.seq));
+    }
 }
 
 /// How the self check ended.
@@ -66,8 +87,8 @@ impl ShadowMerge {
         outcome: Arc<Mutex<Option<ShadowOutcome>>>,
     ) -> Self {
         ShadowMerge {
-            deltas: GaggleAccumulator::new(template.clone(), settings),
-            finals: GaggleAccumulator::new(template, settings),
+            deltas: GaggleAccumulator::new(template.clone(), settings, LIMITS),
+            finals: GaggleAccumulator::new(template, settings, LIMITS),
             sizes: Vec::new(),
             errors: Vec::new(),
             dropped: 0,
@@ -92,9 +113,9 @@ impl ShadowMerge {
                         .push(format!("delta {} changed on the wire", delta.seq));
                 }
                 if to_finals {
-                    self.finals.apply(decoded);
+                    apply(&mut self.finals, delta, decoded, &mut self.errors);
                 } else {
-                    self.finals.apply(decoded.clone());
+                    apply(&mut self.finals, delta, decoded.clone(), &mut self.errors);
                     // A metrics reset starts the count again, as it starts
                     // the merged events again.
                     let dropped = decoded
@@ -108,7 +129,7 @@ impl ShadowMerge {
                     } else if decoded.epoch == self.dropped_epoch {
                         self.dropped += dropped;
                     }
-                    self.deltas.apply(decoded);
+                    apply(&mut self.deltas, delta, decoded, &mut self.errors);
                 }
             }
             Err(e) => self.errors.push(e),

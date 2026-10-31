@@ -143,7 +143,6 @@ impl WorkerState {
         now: Second,
     ) -> GaggleDelta {
         let mut delta = GaggleDelta::new(self.worker, self.next_seq(), epoch, DeltaKind::Delta);
-        delta.now = now;
         delta.series_origin = self.series_origin;
         let pending = std::mem::replace(&mut self.pending_metrics, self.template.clone());
         delta.metrics = metrics_part(&pending);
@@ -154,6 +153,7 @@ impl WorkerState {
         let mut graph = self.take_graph(now);
         graph.users = cumulative.1.gaggle_users_since(&mut self.users_sent);
         delta.graph = graph;
+        delta.now = clock(&delta, now);
         delta
     }
 
@@ -172,7 +172,6 @@ impl WorkerState {
         now: Second,
     ) -> GaggleDelta {
         let mut delta = GaggleDelta::new(self.worker, self.next_seq(), epoch, DeltaKind::Final);
-        delta.now = now;
         delta.series_origin = self.series_origin;
         delta.metrics = metrics_part(cumulative.0);
         for (key, aggregate) in &cumulative.0.requests {
@@ -186,6 +185,7 @@ impl WorkerState {
         graph.users = cumulative.1.gaggle_users_since(&mut everything);
         self.users_sent = everything;
         delta.graph = graph;
+        delta.now = clock(&delta, now);
         self.pending_metrics = self.template.clone();
         delta
     }
@@ -229,6 +229,18 @@ impl WorkerState {
             self.counts_sent.insert(key.clone(), now);
         }
     }
+}
+
+/// A delta's clock: `now`, or its latest second when it holds a later one.
+/// A tick's `now` is read before the processor takes the delta, so metrics
+/// it handled since can be stamped a second later; a manager refuses a
+/// delta holding a second past its own clock.
+fn clock(delta: &GaggleDelta, now: Second) -> Second {
+    delta
+        .graph
+        .seconds()
+        .chain(delta.series_origin)
+        .fold(now, Second::max)
 }
 
 /// Everything in `metrics` as a delta carries it, apart from the success

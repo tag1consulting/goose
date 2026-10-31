@@ -72,6 +72,169 @@ pub(crate) struct GaggleDelta {
     pub(crate) graph: GraphPart,
 }
 
+/// Why a delta was refused. A refused delta changes nothing.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum DeltaError {
+    /// It names a worker other than the one it came from.
+    WrongWorker { from: u32, named: u32 },
+    /// Its worker id is not below [`DeltaLimits::max_workers`].
+    WorkerOutOfRange { worker: u32, limit: u32 },
+    /// `first_seq` is after `seq`, or `seq` is `u64::MAX`.
+    BadSequence { first_seq: u64, seq: u64 },
+    /// It follows the worker's final delta.
+    AfterFinal { seq: u64 },
+    /// It covers some sequence numbers already applied and some not.
+    Overlap { first_seq: u64, seq: u64, held: u64 },
+    /// A series second after the delta's own clock, or a clock past
+    /// [`DeltaLimits::max_second`].
+    SecondOutOfRange { second: Second, limit: Second },
+    /// A float that is not a finite number of at least 0.
+    BadFloat,
+    /// More names of one kind than [`DeltaLimits::max_names`].
+    TooManyNames { names: usize, limit: usize },
+    /// A response time bucket or heatmap row no response time falls in, or
+    /// buckets or rows out of order.
+    BadBucket,
+    /// A count or total past what one worker may hold ([`MAX_COUNT`], or
+    /// [`MAX_SECOND_COUNT`] for one second).
+    Overflow,
+}
+
+impl std::fmt::Display for DeltaError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
+/// Most any count or total one worker's figures hold in an epoch. With at
+/// most [`MAX_WORKERS`] workers, every sum of their figures fits an `i64`.
+pub(crate) const MAX_COUNT: u64 = 1 << 51;
+
+/// Most workers a manager merges: see [`MAX_COUNT`].
+pub(crate) const MAX_WORKERS: u32 = 2_048;
+
+/// Most any one second's count holds for one worker. A heatmap row of a
+/// second counts in pieces of 2^24, so this bounds what one row costs.
+pub(crate) const MAX_SECOND_COUNT: u64 = 1 << 32;
+
+/// What a manager accepts from a worker, set when its accumulator is built.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct DeltaLimits {
+    /// The latest series second a delta may carry: no run is longer.
+    pub(crate) max_second: Second,
+    /// Most names of any one kind (request names, latency series,
+    /// transactions, scenarios, request errors and transaction errors) one
+    /// worker's figures hold.
+    pub(crate) max_names: usize,
+    /// Worker ids are below it; at most [`MAX_WORKERS`].
+    pub(crate) max_workers: u32,
+}
+
+impl Default for DeltaLimits {
+    /// 30 days, 10,000 names and 1,024 workers.
+    fn default() -> Self {
+        DeltaLimits {
+            max_second: 30 * 24 * 60 * 60,
+            max_names: 10_000,
+            max_workers: 1_024,
+        }
+    }
+}
+
+/// What a sum is bounded by.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Bounds {
+    /// Any count or total, and the size of a signed one.
+    count: u64,
+    /// Any one second's count.
+    second: u64,
+}
+
+impl Bounds {
+    /// One worker's figures.
+    pub(crate) const WORKER: Bounds = Bounds {
+        count: MAX_COUNT,
+        second: MAX_SECOND_COUNT,
+    };
+    /// Every worker's figures added up, which [`Self::WORKER`] keeps in
+    /// range.
+    pub(crate) const MERGED: Bounds = Bounds {
+        count: i64::MAX as u64,
+        second: i64::MAX as u64,
+    };
+}
+
+/// Whether adding only checks that every sum stays in bounds, changing
+/// nothing, or adds. Every `add` here checks first, then adds the same
+/// figures: so a sum out of bounds leaves what it was added to untouched.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Pass {
+    Check,
+    Apply,
+}
+
+/// `held + add`, at most `bound`, into `held` when applying.
+fn sum(held: &mut u64, add: u64, bound: u64, pass: Pass) -> Result<(), DeltaError> {
+    let total = held
+        .checked_add(add)
+        .filter(|&total| total <= bound)
+        .ok_or(DeltaError::Overflow)?;
+    if pass == Pass::Apply {
+        *held = total;
+    }
+    Ok(())
+}
+
+/// [`sum`] for a signed count, at most `bound` either way.
+fn sum_signed(held: &mut i64, add: i64, bound: u64, pass: Pass) -> Result<(), DeltaError> {
+    let total = held
+        .checked_add(add)
+        .filter(|total| total.unsigned_abs() <= bound)
+        .ok_or(DeltaError::Overflow)?;
+    if pass == Pass::Apply {
+        *held = total;
+    }
+    Ok(())
+}
+
+/// [`sum`] for a count held as `usize`.
+fn sum_usize(held: &mut usize, add: usize, bound: u64, pass: Pass) -> Result<(), DeltaError> {
+    let mut total = *held as u64;
+    sum(&mut total, add as u64, bound, Pass::Apply)?;
+    if pass == Pass::Apply {
+        *held = total as usize;
+    }
+    Ok(())
+}
+
+/// Add each of `other`'s values into `held`'s of the same key with `add`,
+/// a key `held` lacks starting from the default.
+fn add_keyed<K: Ord + Clone, V: Default>(
+    held: &mut BTreeMap<K, V>,
+    other: &BTreeMap<K, V>,
+    pass: Pass,
+    mut add: impl FnMut(&mut V, &V, Pass) -> Result<(), DeltaError>,
+) -> Result<(), DeltaError> {
+    for (key, value) in other {
+        match held.get_mut(key) {
+            Some(held) => add(held, value, pass)?,
+            None => {
+                let mut fresh = V::default();
+                add(&mut fresh, value, pass)?;
+                if pass == Pass::Apply {
+                    held.insert(key.clone(), fresh);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// How many names one kind of `held`'s would hold with `other`'s added.
+fn names_with<K: Ord, V, W>(held: &BTreeMap<K, V>, other: &BTreeMap<K, W>) -> usize {
+    held.len() + other.keys().filter(|key| !held.contains_key(*key)).count()
+}
+
 impl GaggleDelta {
     /// An empty delta.
     pub(crate) fn new(worker: u32, seq: u64, epoch: u64, kind: DeltaKind) -> Self {
@@ -90,13 +253,144 @@ impl GaggleDelta {
 
     /// Add `other`, which follows this one: counts and buckets add, sets
     /// join, and `other`'s users levels, clock and sequence win. Both are of
-    /// one epoch; the caller handles an epoch change.
-    pub(crate) fn add(&mut self, other: &GaggleDelta) {
-        self.seq = self.seq.max(other.seq);
-        self.now = self.now.max(other.now);
-        self.series_origin = other.series_origin;
-        self.metrics.add(&other.metrics);
-        self.graph.add(&other.graph);
+    /// one epoch; the caller handles an epoch change. One worker's figures
+    /// stay within [`Bounds::WORKER`]: past it nothing is added.
+    pub(crate) fn add(&mut self, other: &GaggleDelta) -> Result<(), DeltaError> {
+        self.add_pass(other, Pass::Check, Bounds::WORKER)?;
+        self.add_pass(other, Pass::Apply, Bounds::WORKER)
+    }
+
+    /// [`Self::add`], one pass of it.
+    pub(crate) fn add_pass(
+        &mut self,
+        other: &GaggleDelta,
+        pass: Pass,
+        bounds: Bounds,
+    ) -> Result<(), DeltaError> {
+        self.metrics.add_pass(&other.metrics, pass, bounds)?;
+        self.graph.add_pass(&other.graph, pass, bounds)?;
+        if pass == Pass::Apply {
+            self.seq = self.seq.max(other.seq);
+            self.now = self.now.max(other.now);
+            self.series_origin = other.series_origin;
+        }
+        Ok(())
+    }
+
+    /// Whether a manager can take this delta at all, whatever it holds:
+    /// its worker id, its sequence numbers, every second and float, how
+    /// many names it has, its buckets and rows, and every count within
+    /// [`Bounds::WORKER`].
+    pub(crate) fn validate(&self, limits: &DeltaLimits) -> Result<(), DeltaError> {
+        let limit = limits.max_workers.min(MAX_WORKERS);
+        if self.worker >= limit {
+            return Err(DeltaError::WorkerOutOfRange {
+                worker: self.worker,
+                limit,
+            });
+        }
+        if self.first_seq > self.seq || self.seq == u64::MAX {
+            return Err(DeltaError::BadSequence {
+                first_seq: self.first_seq,
+                seq: self.seq,
+            });
+        }
+        if self.now > limits.max_second {
+            return Err(DeltaError::SecondOutOfRange {
+                second: self.now,
+                limit: limits.max_second,
+            });
+        }
+        if let Some(second) = self.graph.seconds().chain(self.series_origin).max() {
+            if second > self.now {
+                return Err(DeltaError::SecondOutOfRange {
+                    second,
+                    limit: self.now,
+                });
+            }
+        }
+        let floats = self.graph.averages.values().flat_map(|rows| rows.values());
+        if floats
+            .clone()
+            .any(|average| !(average.sum_ms.is_finite() && average.sum_ms >= 0.0))
+        {
+            return Err(DeltaError::BadFloat);
+        }
+        if let Some(&users) = self.graph.users.values().max() {
+            if users > MAX_COUNT {
+                return Err(DeltaError::Overflow);
+            }
+        }
+        let empty = GaggleDelta::new(self.worker, 0, self.epoch, self.kind);
+        let names = empty.names_with(self, true, true);
+        if names > limits.max_names {
+            return Err(DeltaError::TooManyNames {
+                names,
+                limit: limits.max_names,
+            });
+        }
+        let timings = self
+            .metrics
+            .requests
+            .values()
+            .flat_map(|request| std::iter::once(&request.raw).chain(request.adjusted.as_ref()));
+        let timings = timings
+            .chain(self.metrics.transactions.values().map(|t| &t.run_times))
+            .chain(self.metrics.scenarios.values().map(|s| &s.run_times));
+        for timing in timings {
+            let ordered = timing.buckets.windows(2).all(|pair| pair[0].0 < pair[1].0);
+            let floors = timing
+                .buckets
+                .iter()
+                .all(|&(bucket, _)| buckets::bucket_floor(bucket) == bucket);
+            if !(ordered && floors) {
+                return Err(DeltaError::BadBucket);
+            }
+        }
+        let max_row = crate::graph::gaggle_max_row();
+        for histogram in [&self.graph.latency, &self.graph.synthetic]
+            .iter()
+            .flat_map(|by_name| by_name.values())
+            .flat_map(|rows| rows.values())
+        {
+            let ordered = histogram.rows.windows(2).all(|pair| pair[0].0 < pair[1].0);
+            if !ordered || histogram.rows.last().is_some_and(|&(row, _)| row > max_row) {
+                return Err(DeltaError::BadBucket);
+            }
+        }
+        // Every count added to nothing: each one within bounds.
+        empty.clone().add_pass(self, Pass::Check, Bounds::WORKER)
+    }
+
+    /// The most names of any one kind this delta would hold with `other`'s
+    /// added: its metrics' names only when `metrics`, its graph rows' only
+    /// when `graph`, others counting from none.
+    pub(crate) fn names_with(&self, other: &GaggleDelta, metrics: bool, graph: bool) -> usize {
+        let none = GaggleDelta::new(0, 0, 0, DeltaKind::Delta);
+        let held_metrics = if metrics {
+            &self.metrics
+        } else {
+            &none.metrics
+        };
+        let held_graph = if graph { &self.graph } else { &none.graph };
+        let (m, o) = (held_metrics, &other.metrics);
+        let (g, h) = (held_graph, &other.graph);
+        [
+            names_with(&m.requests, &o.requests),
+            names_with(&m.transactions, &o.transactions),
+            names_with(&m.scenarios, &o.scenarios),
+            names_with(&m.errors, &o.errors),
+            names_with(&m.transaction_errors, &o.transaction_errors),
+            names_with(&g.requests, &h.requests),
+            names_with(&g.errors, &h.errors),
+            names_with(&g.averages, &h.averages),
+            names_with(&g.latency, &h.latency),
+            names_with(&g.synthetic, &h.synthetic),
+        ]
+        .iter()
+        .copied()
+        .max()
+        .unwrap_or(0)
     }
 
     /// Encode for the wire.
@@ -163,41 +457,70 @@ impl Timing {
     }
 
     /// Add `other`'s times, as [`GooseRequestMetricTimingData::merge`] does.
-    pub(crate) fn add(&mut self, other: &Timing) {
-        if other.count > 0 && (self.count == 0 || other.minimum_us < self.minimum_us) {
-            self.minimum_us = other.minimum_us;
+    fn add(&mut self, other: &Timing, pass: Pass, bounds: Bounds) -> Result<(), DeltaError> {
+        let empty = self.count == 0;
+        sum(&mut self.total_us, other.total_us, bounds.count, pass)?;
+        sum(&mut self.count, other.count, bounds.count, pass)?;
+        add_sorted(&mut self.buckets, &other.buckets, bounds.count, pass)?;
+        if pass == Pass::Apply {
+            if other.count > 0 && (empty || other.minimum_us < self.minimum_us) {
+                self.minimum_us = other.minimum_us;
+            }
+            self.maximum_us = self.maximum_us.max(other.maximum_us);
         }
-        self.maximum_us = self.maximum_us.max(other.maximum_us);
-        self.total_us += other.total_us;
-        self.count += other.count;
-        self.buckets = add_sorted(&self.buckets, &other.buckets);
+        Ok(())
     }
 }
 
-/// Two sorted lists of `(key, count)` added up, still sorted.
-fn add_sorted<K: Ord + Copy>(a: &[(K, u64)], b: &[(K, u64)]) -> Vec<(K, u64)> {
-    let mut out = Vec::with_capacity(a.len().max(b.len()));
+/// Add `other`, a sorted list of `(key, count)`, to `held`, another, each
+/// sum at most `bound`; still sorted.
+fn add_sorted<K: Ord + Copy>(
+    held: &mut Vec<(K, u64)>,
+    other: &[(K, u64)],
+    bound: u64,
+    pass: Pass,
+) -> Result<(), DeltaError> {
+    let a = &held[..];
+    let mut out = Vec::new();
+    if pass == Pass::Apply {
+        out.reserve(a.len().max(other.len()));
+    }
     let (mut i, mut j) = (0, 0);
-    while i < a.len() && j < b.len() {
-        match a[i].0.cmp(&b[j].0) {
+    let mut push = |item: (K, u64)| {
+        if pass == Pass::Apply {
+            out.push(item);
+        }
+    };
+    while i < a.len() && j < other.len() {
+        match a[i].0.cmp(&other[j].0) {
             std::cmp::Ordering::Less => {
-                out.push(a[i]);
+                push(a[i]);
                 i += 1;
             }
             std::cmp::Ordering::Greater => {
-                out.push(b[j]);
+                let mut count = 0;
+                sum(&mut count, other[j].1, bound, Pass::Apply)?;
+                push(other[j]);
                 j += 1;
             }
             std::cmp::Ordering::Equal => {
-                out.push((a[i].0, a[i].1 + b[j].1));
+                let mut count = a[i].1;
+                sum(&mut count, other[j].1, bound, Pass::Apply)?;
+                push((a[i].0, count));
                 i += 1;
                 j += 1;
             }
         }
     }
-    out.extend_from_slice(&a[i..]);
-    out.extend_from_slice(&b[j..]);
-    out
+    for &(_, count) in &other[j..] {
+        sum(&mut 0, count, bound, Pass::Apply)?;
+    }
+    if pass == Pass::Apply {
+        out.extend_from_slice(&a[i..]);
+        out.extend_from_slice(&other[j..]);
+        *held = out;
+    }
+    Ok(())
 }
 
 /// The coordinated omission rule. A request's adjusted times, once it has
@@ -206,18 +529,27 @@ fn add_sorted<K: Ord + Copy>(a: &[(K, u64)], b: &[(K, u64)]) -> Vec<(K, u64)> {
 /// when either has them, as the adjusted (or else measured) times of each
 /// added up, and to none otherwise: worker A with adjusted times and worker
 /// B without merge to A's adjusted times plus B's measured times.
-pub(crate) fn add_adjusted(
+fn add_adjusted(
     raw: &Timing,
     adjusted: &mut Option<Timing>,
     other_raw: &Timing,
     other_adjusted: &Option<Timing>,
-) {
-    if adjusted.is_none() && other_adjusted.is_none() {
-        return;
+    pass: Pass,
+    bounds: Bounds,
+) -> Result<(), DeltaError> {
+    let other = other_adjusted.as_ref().unwrap_or(other_raw);
+    match adjusted.as_mut() {
+        Some(held) => held.add(other, pass, bounds),
+        None if other_adjusted.is_none() => Ok(()),
+        None => {
+            let mut combined = raw.clone();
+            combined.add(other, pass, bounds)?;
+            if pass == Pass::Apply {
+                *adjusted = Some(combined);
+            }
+            Ok(())
+        }
     }
-    let mut combined = adjusted.take().unwrap_or_else(|| raw.clone());
-    combined.add(other_adjusted.as_ref().unwrap_or(other_raw));
-    *adjusted = Some(combined);
 }
 
 /// One request's figures, keyed in [`MetricsPart::requests`] as
@@ -252,18 +584,52 @@ impl RequestPart {
         }
     }
 
-    fn add(&mut self, other: &RequestPart) {
-        add_adjusted(&self.raw, &mut self.adjusted, &other.raw, &other.adjusted);
-        self.raw.add(&other.raw);
-        for (&code, &count) in &other.status_codes {
-            *self.status_codes.entry(code).or_default() += count;
-        }
-        for (&code, summary) in &other.status_timings {
-            self.status_timings.entry(code).or_default().merge(summary);
-        }
-        self.success += other.success;
-        self.fail += other.fail;
+    fn add(&mut self, other: &RequestPart, pass: Pass, bounds: Bounds) -> Result<(), DeltaError> {
+        add_adjusted(
+            &self.raw,
+            &mut self.adjusted,
+            &other.raw,
+            &other.adjusted,
+            pass,
+            bounds,
+        )?;
+        self.raw.add(&other.raw, pass, bounds)?;
+        add_keyed(
+            &mut self.status_codes,
+            &other.status_codes,
+            pass,
+            |a, b, pass| sum(a, *b, bounds.count, pass),
+        )?;
+        add_keyed(
+            &mut self.status_timings,
+            &other.status_timings,
+            pass,
+            |a, b, pass| add_summary(a, b, pass, bounds),
+        )?;
+        sum_signed(&mut self.success, other.success, bounds.count, pass)?;
+        sum_signed(&mut self.fail, other.fail, bounds.count, pass)
     }
+}
+
+/// [`StatusCodeTimingSummary::merge`], checked.
+fn add_summary(
+    held: &mut StatusCodeTimingSummary,
+    other: &StatusCodeTimingSummary,
+    pass: Pass,
+    bounds: Bounds,
+) -> Result<(), DeltaError> {
+    let mut checked = held.clone();
+    sum_usize(&mut checked.count, other.count, bounds.count, Pass::Apply)?;
+    sum(
+        &mut checked.total_time_us,
+        other.total_time_us,
+        bounds.count,
+        Pass::Apply,
+    )?;
+    if pass == Pass::Apply {
+        held.merge(other);
+    }
+    Ok(())
 }
 
 /// One transaction's figures.
@@ -320,15 +686,23 @@ pub(crate) struct CoPart {
 }
 
 impl CoPart {
-    fn add(&mut self, other: &CoPart) {
-        self.started_secs = self.started_secs.min(other.started_secs);
-        self.actual += other.actual;
-        self.synthetic += other.synthetic;
-        for (&severity, &count) in &other.severity {
-            *self.severity.entry(severity).or_default() += count;
+    fn add(&mut self, other: &CoPart, pass: Pass, bounds: Bounds) -> Result<(), DeltaError> {
+        sum(&mut self.actual, other.actual, bounds.count, pass)?;
+        sum(&mut self.synthetic, other.synthetic, bounds.count, pass)?;
+        add_keyed(&mut self.severity, &other.severity, pass, |a, b, pass| {
+            sum(a, *b, bounds.count, pass)
+        })?;
+        sum(
+            &mut self.events_dropped,
+            other.events_dropped,
+            bounds.count,
+            pass,
+        )?;
+        if pass == Pass::Apply {
+            self.started_secs = self.started_secs.min(other.started_secs);
+            self.events.extend(other.events.iter().cloned());
         }
-        self.events.extend(other.events.iter().cloned());
-        self.events_dropped += other.events_dropped;
+        Ok(())
     }
 
     /// Keep at most [`MAX_CO_EVENTS_PER_DELTA`] events, the oldest.
@@ -375,38 +749,81 @@ pub(crate) struct MetricsPart {
 }
 
 impl MetricsPart {
-    pub(crate) fn add(&mut self, other: &MetricsPart) {
+    /// Add `other`'s figures, within `bounds`: one pass (see [`Pass`]).
+    pub(crate) fn add_pass(
+        &mut self,
+        other: &MetricsPart,
+        pass: Pass,
+        bounds: Bounds,
+    ) -> Result<(), DeltaError> {
         for (key, request) in &other.requests {
             match self.requests.get_mut(key) {
-                Some(held) => held.add(request),
+                Some(held) => held.add(request, pass, bounds)?,
                 None => {
-                    self.requests.insert(key.clone(), request.clone());
+                    let mut fresh =
+                        RequestPart::new(&request.path, request.method, &request.custom_method);
+                    fresh.add(request, pass, bounds)?;
+                    if pass == Pass::Apply {
+                        self.requests.insert(key.clone(), fresh);
+                    }
                 }
             }
         }
-        for (&key, transaction) in &other.transactions {
-            let held = self.transactions.entry(key).or_default();
-            held.run_times.add(&transaction.run_times);
-            held.success += transaction.success;
-            held.fail += transaction.fail;
+        add_keyed(
+            &mut self.transactions,
+            &other.transactions,
+            pass,
+            |held, transaction, pass| {
+                held.run_times.add(&transaction.run_times, pass, bounds)?;
+                sum(&mut held.success, transaction.success, bounds.count, pass)?;
+                sum(&mut held.fail, transaction.fail, bounds.count, pass)
+            },
+        )?;
+        add_keyed(
+            &mut self.scenarios,
+            &other.scenarios,
+            pass,
+            |held, scenario, pass| {
+                held.run_times.add(&scenario.run_times, pass, bounds)?;
+                if pass == Pass::Apply {
+                    held.users.extend(scenario.users.iter().copied());
+                }
+                Ok(())
+            },
+        )?;
+        add_keyed(&mut self.errors, &other.errors, pass, |a, b, pass| {
+            sum(a, *b, bounds.count, pass)
+        })?;
+        add_keyed(
+            &mut self.transaction_errors,
+            &other.transaction_errors,
+            pass,
+            |a, b, pass| sum(a, *b, bounds.count, pass),
+        )?;
+        if let Some(co) = other.co.as_ref() {
+            match self.co.as_mut() {
+                Some(held) => held.add(co, pass, bounds)?,
+                None => {
+                    let mut fresh = CoPart {
+                        strategy: co.strategy.clone(),
+                        started_secs: co.started_secs,
+                        actual: 0,
+                        synthetic: 0,
+                        severity: BTreeMap::new(),
+                        events: Vec::new(),
+                        events_dropped: 0,
+                    };
+                    fresh.add(co, pass, bounds)?;
+                    if pass == Pass::Apply {
+                        self.co = Some(fresh);
+                    }
+                }
+            }
         }
-        for (&key, scenario) in &other.scenarios {
-            let held = self.scenarios.entry(key).or_default();
-            held.users.extend(scenario.users.iter().copied());
-            held.run_times.add(&scenario.run_times);
+        if pass == Pass::Apply {
+            self.hosts.extend(other.hosts.iter().cloned());
         }
-        for (key, &count) in &other.errors {
-            *self.errors.entry(key.clone()).or_default() += count;
-        }
-        for (key, &count) in &other.transaction_errors {
-            *self.transaction_errors.entry(key.clone()).or_default() += count;
-        }
-        self.hosts.extend(other.hosts.iter().cloned());
-        match (self.co.as_mut(), other.co.as_ref()) {
-            (Some(held), Some(co)) => held.add(co),
-            (None, Some(co)) => self.co = Some(co.clone()),
-            _ => {}
-        }
+        Ok(())
     }
 }
 
@@ -432,14 +849,18 @@ pub(crate) struct Histogram {
 }
 
 impl Histogram {
-    pub(crate) fn add(&mut self, other: &Histogram) {
-        if other.count > 0 && (self.count == 0 || other.minimum_us < self.minimum_us) {
-            self.minimum_us = other.minimum_us;
+    fn add(&mut self, other: &Histogram, pass: Pass, bounds: Bounds) -> Result<(), DeltaError> {
+        let empty = self.count == 0;
+        sum(&mut self.total_us, other.total_us, bounds.count, pass)?;
+        sum(&mut self.count, other.count, bounds.second, pass)?;
+        add_sorted(&mut self.rows, &other.rows, bounds.second, pass)?;
+        if pass == Pass::Apply {
+            if other.count > 0 && (empty || other.minimum_us < self.minimum_us) {
+                self.minimum_us = other.minimum_us;
+            }
+            self.maximum_us = self.maximum_us.max(other.maximum_us);
         }
-        self.maximum_us = self.maximum_us.max(other.maximum_us);
-        self.total_us += other.total_us;
-        self.count += other.count;
-        self.rows = add_sorted(&self.rows, &other.rows);
+        Ok(())
     }
 }
 
@@ -463,44 +884,91 @@ pub(crate) struct GraphPart {
     pub(crate) users: BTreeMap<Second, u64>,
 }
 
-/// Add every `(second, value)` of `other` into `held` with `add`.
-fn add_rows<V: Clone + Default>(
-    held: &mut BTreeMap<String, BTreeMap<Second, V>>,
-    other: &BTreeMap<String, BTreeMap<Second, V>>,
-    add: impl Fn(&mut V, &V),
-) {
-    for (key, rows) in other {
-        let held = held.entry(key.clone()).or_default();
-        for (&second, value) in rows {
-            add(held.entry(second).or_default(), value);
-        }
-    }
-}
-
 impl GraphPart {
-    pub(crate) fn add(&mut self, other: &GraphPart) {
-        self.add_rates(other);
-        for (&second, &users) in &other.users {
-            self.users.insert(second, users);
+    /// [`GaggleDelta::add_pass`] for the graph rows.
+    fn add_pass(
+        &mut self,
+        other: &GraphPart,
+        pass: Pass,
+        bounds: Bounds,
+    ) -> Result<(), DeltaError> {
+        self.add_rates(other, pass, bounds)?;
+        if pass == Pass::Apply {
+            for (&second, &users) in &other.users {
+                self.users.insert(second, users);
+            }
         }
+        Ok(())
     }
 
-    /// [`Self::add`] without the users levels.
-    pub(crate) fn add_rates(&mut self, other: &GraphPart) {
-        add_rows(&mut self.requests, &other.requests, |a, b| *a += b);
-        add_rows(&mut self.errors, &other.errors, |a, b| *a += b);
-        add_rows(&mut self.averages, &other.averages, |a, b| {
-            a.count += b.count;
-            a.sum_ms += b.sum_ms;
-        });
-        add_rows(&mut self.latency, &other.latency, Histogram::add);
-        add_rows(&mut self.synthetic, &other.synthetic, Histogram::add);
-        for (&second, &count) in &other.transactions {
-            *self.transactions.entry(second).or_default() += count;
+    /// Add `other`'s rows apart from the users levels, within `bounds`:
+    /// past them nothing is added.
+    pub(crate) fn add_rates(
+        &mut self,
+        other: &GraphPart,
+        pass: Pass,
+        bounds: Bounds,
+    ) -> Result<(), DeltaError> {
+        let count = |a: &mut u64, b: &u64, pass| sum(a, *b, bounds.second, pass);
+        let rows = |held: &mut BTreeMap<Second, u64>, other: &BTreeMap<Second, u64>, pass| {
+            add_keyed(held, other, pass, count)
+        };
+        add_keyed(&mut self.requests, &other.requests, pass, rows)?;
+        add_keyed(
+            &mut self.errors,
+            &other.errors,
+            pass,
+            |held, other, pass| {
+                add_keyed(held, other, pass, |a, b, pass| {
+                    sum_signed(a, *b, bounds.second, pass)
+                })
+            },
+        )?;
+        add_keyed(
+            &mut self.averages,
+            &other.averages,
+            pass,
+            |held, other, pass| {
+                add_keyed(held, other, pass, |a: &mut Average, b, pass| {
+                    let total = a.sum_ms + b.sum_ms;
+                    if !total.is_finite() {
+                        return Err(DeltaError::Overflow);
+                    }
+                    sum(&mut a.count, b.count, bounds.second, pass)?;
+                    if pass == Pass::Apply {
+                        a.sum_ms = total;
+                    }
+                    Ok(())
+                })
+            },
+        )?;
+        for (held, other) in [
+            (&mut self.latency, &other.latency),
+            (&mut self.synthetic, &other.synthetic),
+        ] {
+            add_keyed(held, other, pass, |held, other, pass| {
+                add_keyed(held, other, pass, |a, b, pass| a.add(b, pass, bounds))
+            })?;
         }
-        for (&second, &count) in &other.scenarios {
-            *self.scenarios.entry(second).or_default() += count;
+        add_keyed(&mut self.transactions, &other.transactions, pass, count)?;
+        add_keyed(&mut self.scenarios, &other.scenarios, pass, count)
+    }
+
+    /// Every series second a row or users level is held for.
+    pub(crate) fn seconds(&self) -> impl Iterator<Item = Second> + Clone + '_ {
+        fn keys<V>(
+            by_name: &BTreeMap<String, BTreeMap<Second, V>>,
+        ) -> impl Iterator<Item = Second> + Clone + '_ {
+            by_name.values().flat_map(|rows| rows.keys().copied())
         }
+        keys(&self.requests)
+            .chain(keys(&self.errors))
+            .chain(keys(&self.averages))
+            .chain(keys(&self.latency))
+            .chain(keys(&self.synthetic))
+            .chain(self.transactions.keys().copied())
+            .chain(self.scenarios.keys().copied())
+            .chain(self.users.keys().copied())
     }
 
     /// Forget the rate series, keeping the users levels, at a metrics reset.

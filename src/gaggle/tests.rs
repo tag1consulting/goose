@@ -2,7 +2,7 @@
 //! metrics, through the user threads' batching and the metrics processor's
 //! own code.
 
-use super::delta::{DeltaKind, GaggleDelta};
+use super::delta::{DeltaError, DeltaKind, DeltaLimits, GaggleDelta};
 use super::merge::{coalesce, GaggleAccumulator};
 use crate::config::{GooseConfiguration, GooseDefaults};
 use crate::goose::{GooseMethod, GooseUser, Scenario, Transaction, TransactionName};
@@ -556,7 +556,14 @@ fn accumulator() -> GaggleAccumulator {
     GaggleAccumulator::new(
         side.processor.gaggle_template(),
         side.processor.gaggle_graph_settings(),
+        DeltaLimits::default(),
     )
+}
+
+/// Apply `delta`, sent as bytes, from the worker it names: it must be
+/// taken.
+fn apply(accumulator: &mut GaggleAccumulator, delta: &GaggleDelta) {
+    accumulator.apply(delta.worker, wire(delta)).unwrap();
 }
 
 /// Apply every worker's deltas, interleaving workers in a seeded order and
@@ -580,7 +587,7 @@ fn merge(deltas: &[Vec<GaggleDelta>], finals: bool, seed: u64) -> GaggleAccumula
             .collect();
         let queue = open[rng.below(open.len() as u64) as usize];
         let delta = queues[queue].pop_front().unwrap();
-        accumulator.apply(wire(delta));
+        apply(&mut accumulator, delta);
     }
     if !finals {
         for worker in 0..deltas.len() {
@@ -855,7 +862,7 @@ fn merge_diff(a: &GaggleAccumulator, b: &GaggleAccumulator) -> Vec<String> {
 fn apply_all<'a>(deltas: impl IntoIterator<Item = &'a GaggleDelta>) -> GaggleAccumulator {
     let mut accumulator = accumulator();
     for delta in deltas {
-        accumulator.apply(wire(delta));
+        apply(&mut accumulator, delta);
     }
     accumulator
 }
@@ -1016,8 +1023,15 @@ fn gaggle_lost_worker_keeps_what_it_sent() {
 fn gaggle_older_epoch_is_discarded() {
     let events = events(0x645);
     let deltas = worker_deltas(&events, 2);
-    let mut accumulator = apply_all(deltas.iter().flatten());
-    let before = apply_all(deltas.iter().flatten());
+    // No final delta: nothing may follow one.
+    let sent = || {
+        deltas
+            .iter()
+            .flatten()
+            .filter(|delta| delta.kind == DeltaKind::Delta)
+    };
+    let mut accumulator = apply_all(sent());
+    let before = apply_all(sent());
     let newest = deltas[0].last().unwrap().epoch;
     let mut stale = deltas[0]
         .iter()
@@ -1027,7 +1041,7 @@ fn gaggle_older_epoch_is_discarded() {
     stale.seq = 1_000;
     stale.first_seq = 1_000;
     stale.kind = DeltaKind::Delta;
-    accumulator.apply(wire(&stale));
+    apply(&mut accumulator, &stale);
     assert_none("older epoch", &merge_diff(&accumulator, &before));
     assert!(accumulator.gaps().is_empty());
 }
@@ -1053,7 +1067,7 @@ fn gaggle_coalesce_equals_apply_apply() {
     }
     let expected = apply_all(deltas.iter().flatten());
     for (worker, at) in pairs {
-        let joined = coalesce(&deltas[worker][at], &deltas[worker][at + 1]);
+        let joined = coalesce(&deltas[worker][at], &deltas[worker][at + 1]).unwrap();
         let replaced: Vec<GaggleDelta> = deltas
             .iter()
             .enumerate()
@@ -1090,10 +1104,10 @@ fn counted(worker: u32, seq: u64, epoch: u64) -> GaggleDelta {
 #[test]
 fn gaggle_older_epoch_worker_is_named() {
     let mut accumulator = accumulator();
-    accumulator.apply(wire(&counted(0, 1, 1)));
-    accumulator.apply(wire(&counted(1, 1, 1)));
+    apply(&mut accumulator, &counted(0, 1, 1));
+    apply(&mut accumulator, &counted(1, 1, 1));
     assert!(accumulator.excluded().is_empty());
-    accumulator.apply(wire(&counted(0, 2, 2)));
+    apply(&mut accumulator, &counted(0, 2, 2));
     assert_eq!(accumulator.excluded(), vec![1]);
     let (metrics, _) = accumulator.merged();
     assert_eq!(metrics.requests["GET /a"].success_count, 1);
@@ -1137,8 +1151,8 @@ fn gaggle_users_levels_hold() {
         delta
     };
     let mut accumulator = accumulator();
-    accumulator.apply(wire(&delta(0, &[(0, 2), (1, 3)])));
-    accumulator.apply(wire(&delta(1, &[(0, 1), (1, 1), (2, 4)])));
+    apply(&mut accumulator, &delta(0, &[(0, 2), (1, 3)]));
+    apply(&mut accumulator, &delta(1, &[(0, 1), (1, 1), (2, 4)]));
     accumulator.done(0);
     accumulator.done(1);
     let (_, graph) = accumulator.merged();
@@ -1358,7 +1372,7 @@ fn gaggle_co_start_is_the_earliest_workers() {
             events: Vec::new(),
             events_dropped: 0,
         });
-        accumulator.apply(wire(&delta));
+        apply(&mut accumulator, &delta);
     }
     let (metrics, _) = accumulator.merged();
     assert_eq!(
@@ -1412,4 +1426,289 @@ fn gaggle_shadow_merge_counts_every_second() {
         .expect("the shadow merge finished");
     assert_none("shadow merge", &outcome.differences);
     assert_eq!(outcome.deltas, ticks + 2);
+}
+
+/// The limits the refusal tests use: 100 seconds, 3 names and 4 workers.
+const SMALL: DeltaLimits = DeltaLimits {
+    max_second: 100,
+    max_names: 3,
+    max_workers: 4,
+};
+
+/// An accumulator with [`SMALL`] limits holding worker 0's first delta,
+/// and worker 1's first and final ones.
+fn held() -> GaggleAccumulator {
+    let side = Side::new(0..0, Some(0));
+    let mut accumulator = GaggleAccumulator::new(
+        side.processor.gaggle_template(),
+        side.processor.gaggle_graph_settings(),
+        SMALL,
+    );
+    let mut first = counted(0, 1, 1);
+    first
+        .graph
+        .requests
+        .insert("GET /a".to_string(), [(4, 1)].into());
+    let mut last_final = counted(1, 2, 1);
+    last_final.kind = DeltaKind::Final;
+    for delta in [first, counted(1, 1, 1), last_final].iter() {
+        accumulator.apply(delta.worker, wire(delta)).unwrap();
+    }
+    accumulator
+}
+
+/// `delta` from `from` is refused with `error`, and the accumulator merges,
+/// leaves out and reports gaps exactly as before.
+fn refused(from: u32, delta: GaggleDelta, error: DeltaError) {
+    let mut accumulator = held();
+    let gaps = accumulator.gaps().to_vec();
+    assert_eq!(accumulator.apply(from, delta), Err(error));
+    assert_none("refused delta", &merge_diff(&accumulator, &held()));
+    assert_eq!(accumulator.gaps(), &gaps[..]);
+    assert!(accumulator.excluded().is_empty());
+    // Worker 0's sequence is where it was: its next delta follows on.
+    accumulator.apply(0, counted(0, 2, 1)).unwrap();
+    assert_eq!(accumulator.gaps(), &gaps[..]);
+}
+
+#[test]
+fn gaggle_refuses_another_workers_delta() {
+    refused(
+        0,
+        counted(1, 3, 1),
+        DeltaError::WrongWorker { from: 0, named: 1 },
+    );
+}
+
+#[test]
+fn gaggle_refuses_a_worker_out_of_range() {
+    refused(
+        4,
+        counted(4, 1, 1),
+        DeltaError::WorkerOutOfRange {
+            worker: 4,
+            limit: 4,
+        },
+    );
+}
+
+#[test]
+fn gaggle_refuses_a_backward_sequence() {
+    let mut delta = counted(0, 2, 1);
+    delta.first_seq = 3;
+    refused(
+        0,
+        delta,
+        DeltaError::BadSequence {
+            first_seq: 3,
+            seq: 2,
+        },
+    );
+}
+
+#[test]
+fn gaggle_refuses_the_last_sequence_number() {
+    let mut delta = counted(0, u64::MAX, 1);
+    delta.first_seq = 2;
+    refused(
+        0,
+        delta,
+        DeltaError::BadSequence {
+            first_seq: 2,
+            seq: u64::MAX,
+        },
+    );
+}
+
+#[test]
+fn gaggle_refuses_a_delta_after_the_final() {
+    refused(1, counted(1, 3, 1), DeltaError::AfterFinal { seq: 3 });
+    // A repeat of the final too, and one of a newer epoch.
+    let mut repeat = counted(1, 2, 1);
+    repeat.kind = DeltaKind::Final;
+    refused(1, repeat, DeltaError::AfterFinal { seq: 2 });
+    refused(1, counted(1, 3, 2), DeltaError::AfterFinal { seq: 3 });
+}
+
+#[test]
+fn gaggle_refuses_a_partly_applied_range() {
+    let mut delta = counted(0, 3, 1);
+    delta.first_seq = 1;
+    refused(
+        0,
+        delta,
+        DeltaError::Overlap {
+            first_seq: 1,
+            seq: 3,
+            held: 1,
+        },
+    );
+}
+
+#[test]
+fn gaggle_refuses_a_second_past_its_clock() {
+    let mut delta = counted(0, 2, 1);
+    delta.graph.latency.insert(
+        "GET /a".to_string(),
+        [(6, super::delta::Histogram::default())].into(),
+    );
+    refused(
+        0,
+        delta,
+        DeltaError::SecondOutOfRange {
+            second: 6,
+            limit: 5,
+        },
+    );
+    let mut delta = counted(0, 2, 1);
+    delta.series_origin = Some(9);
+    refused(
+        0,
+        delta,
+        DeltaError::SecondOutOfRange {
+            second: 9,
+            limit: 5,
+        },
+    );
+}
+
+#[test]
+fn gaggle_refuses_a_clock_past_the_limit() {
+    // Near 2^63, where widening the heatmap's columns used to loop for
+    // ever, and far enough out to make a series allocate without bound.
+    for now in [101, 1 << 62, u64::MAX] {
+        let mut delta = counted(0, 2, 1);
+        delta.now = now;
+        delta.graph.users.insert(now, 1);
+        refused(
+            0,
+            delta,
+            DeltaError::SecondOutOfRange {
+                second: now,
+                limit: 100,
+            },
+        );
+    }
+}
+
+#[test]
+fn gaggle_refuses_a_bad_float() {
+    for sum_ms in [f64::NAN, f64::INFINITY, -1.0] {
+        let mut delta = counted(0, 2, 1);
+        let average = super::delta::Average { count: 1, sum_ms };
+        delta
+            .graph
+            .averages
+            .insert("GET /a".to_string(), [(4, average)].into());
+        refused(0, delta, DeltaError::BadFloat);
+    }
+}
+
+#[test]
+fn gaggle_refuses_too_many_names() {
+    let named = |names: std::ops::Range<usize>| {
+        let mut delta = counted(0, 2, 1);
+        for index in names {
+            delta
+                .graph
+                .requests
+                .insert(format!("GET /{index}"), [(4, 1)].into());
+        }
+        delta
+    };
+    // Four in one delta, past the limit of three.
+    refused(
+        0,
+        named(0..4),
+        DeltaError::TooManyNames { names: 4, limit: 3 },
+    );
+    // Three in a delta, and the one held.
+    refused(
+        0,
+        named(5..8),
+        DeltaError::TooManyNames { names: 4, limit: 3 },
+    );
+    // Two held, then two more.
+    let mut accumulator = held();
+    accumulator.apply(0, named(0..1)).unwrap();
+    let mut delta = named(5..7);
+    delta.seq = 3;
+    delta.first_seq = 3;
+    assert_eq!(
+        accumulator.apply(0, delta),
+        Err(DeltaError::TooManyNames { names: 4, limit: 3 })
+    );
+}
+
+#[test]
+fn gaggle_refuses_a_bad_bucket() {
+    let mut unsorted = counted(0, 2, 1);
+    let request = unsorted.metrics.requests.get_mut("GET /a").unwrap();
+    request.raw.buckets = vec![(2_000, 1), (1_000, 1)];
+    refused(0, unsorted, DeltaError::BadBucket);
+    let mut between = counted(0, 2, 1);
+    let request = between.metrics.requests.get_mut("GET /a").unwrap();
+    // Not where a timing data bucket starts.
+    request.raw.buckets = vec![(1_000_001, 1)];
+    refused(0, between, DeltaError::BadBucket);
+    let mut row = counted(0, 2, 1);
+    let histogram = super::delta::Histogram {
+        rows: vec![(crate::graph::gaggle_max_row() + 1, 1)],
+        count: 1,
+        ..Default::default()
+    };
+    row.graph
+        .latency
+        .insert("GET /a".to_string(), [(4, histogram)].into());
+    refused(0, row, DeltaError::BadBucket);
+}
+
+#[test]
+fn gaggle_refuses_an_overflow() {
+    use super::delta::{MAX_COUNT, MAX_SECOND_COUNT};
+    // One count past the bound on its own, and in a later field, so a
+    // refusal after other fields were checked still changes nothing.
+    let mut alone = counted(0, 2, 1);
+    alone.metrics.requests.get_mut("GET /a").unwrap().fail = -(MAX_COUNT as i64) - 1;
+    refused(0, alone, DeltaError::Overflow);
+    let mut second = counted(0, 2, 1);
+    second
+        .graph
+        .requests
+        .insert("GET /a".to_string(), [(4, MAX_SECOND_COUNT + 1)].into());
+    refused(0, second, DeltaError::Overflow);
+    // Within bounds alone, past them added to what is held: worker 0 holds
+    // one success and one request at second 4.
+    // With figures added before the one past its bound, which must not be.
+    let mut sum = counted(0, 2, 1);
+    let request = sum.metrics.requests.get_mut("GET /a").unwrap();
+    request.success = MAX_COUNT as i64;
+    request.status_codes.insert(200, 1);
+    request.raw = super::delta::Timing {
+        buckets: vec![(1_000, 1)],
+        minimum_us: 1_000,
+        maximum_us: 1_000,
+        total_us: 1_000,
+        count: 1,
+    };
+    sum.graph
+        .requests
+        .insert("GET /a".to_string(), [(4, 1)].into());
+    refused(0, sum, DeltaError::Overflow);
+    let mut rows = counted(0, 2, 1);
+    rows.graph
+        .requests
+        .insert("GET /a".to_string(), [(4, MAX_SECOND_COUNT)].into());
+    refused(0, rows, DeltaError::Overflow);
+    let mut users = counted(0, 2, 1);
+    users.graph.users.insert(4, MAX_COUNT + 1);
+    refused(0, users, DeltaError::Overflow);
+}
+
+/// Coalescing refuses a sum out of bounds too, rather than wrapping.
+#[test]
+fn gaggle_coalesce_refuses_an_overflow() {
+    let mut a = counted(0, 1, 1);
+    a.metrics.requests.get_mut("GET /a").unwrap().success = super::delta::MAX_COUNT as i64;
+    assert_eq!(coalesce(&a, &counted(0, 2, 1)), Err(DeltaError::Overflow));
 }

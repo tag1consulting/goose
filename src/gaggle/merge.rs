@@ -2,7 +2,10 @@
 //! graph data of all of them merged, as one process running the whole load
 //! test would have them.
 
-use super::delta::{severity_from_code, DeltaKind, GaggleDelta, GraphPart, MetricsPart, Second};
+use super::delta::{
+    severity_from_code, Bounds, DeltaError, DeltaKind, DeltaLimits, GaggleDelta, GraphPart,
+    MetricsPart, Pass, Second,
+};
 use crate::graph::{GraphData, GraphSettings};
 use crate::metrics::coordinated_omission::CoordinatedOmissionMetrics;
 use crate::metrics::{
@@ -28,8 +31,11 @@ struct WorkerTotal {
     /// over the whole run, which a metrics reset keeps.
     total: GaggleDelta,
     last_seq: u64,
-    /// A final delta arrived: the worker has sent everything.
+    /// The worker has sent everything: a final delta arrived, or it is
+    /// [`GaggleAccumulator::done`].
     finished: bool,
+    /// A final delta arrived: no delta may follow it.
+    got_final: bool,
     /// The worker is gone without a final delta.
     lost: bool,
 }
@@ -40,65 +46,145 @@ pub(crate) struct GaggleAccumulator {
     /// transaction, the hosts, and the figures no worker sends.
     template: GooseMetrics,
     settings: GraphSettings,
+    /// What a delta may carry.
+    limits: DeltaLimits,
     workers: BTreeMap<u32, WorkerTotal>,
     gaps: Vec<SeqGap>,
 }
 
 impl GaggleAccumulator {
     /// Merge into `template`, the empty metrics a process running the whole
-    /// load test starts with, building graph data with `settings`.
-    pub(crate) fn new(template: GooseMetrics, settings: GraphSettings) -> Self {
+    /// load test starts with, building graph data with `settings`, and
+    /// refusing a delta past `limits`.
+    pub(crate) fn new(
+        template: GooseMetrics,
+        settings: GraphSettings,
+        limits: DeltaLimits,
+    ) -> Self {
         GaggleAccumulator {
             template,
             settings,
+            limits,
             workers: BTreeMap::new(),
             gaps: Vec::new(),
         }
     }
 
-    /// Add a delta from a worker, in the order the worker sent them. A
-    /// final delta's metrics replace those held for the worker, and its
-    /// graph rows, those pending since the worker's last delta, add to the
-    /// rows held, as any delta's do: a lost delta's metrics are made good
-    /// by the final, its graph rows are not, and the loss stays recorded
-    /// in [`Self::gaps`]. A delta from an epoch older than the worker's is
-    /// discarded, and a newer epoch starts the worker's metrics and rate
-    /// series again. A gap or repeat in the sequence is recorded in
-    /// [`Self::gaps`]; a repeat is ignored.
-    pub(crate) fn apply(&mut self, delta: GaggleDelta) {
-        let worker = self
-            .workers
-            .entry(delta.worker)
-            .or_insert_with(|| WorkerTotal {
-                total: GaggleDelta::new(delta.worker, 0, delta.epoch, DeltaKind::Delta),
-                last_seq: 0,
-                finished: false,
-                lost: false,
+    /// Add a delta from worker `from`, the worker the caller knows sent it,
+    /// in the order the worker sent them. A final delta's metrics replace
+    /// those held for the worker, and its graph rows, those pending since
+    /// the worker's last delta, add to the rows held, as any delta's do: a
+    /// lost delta's metrics are made good by the final, its graph rows are
+    /// not, and the loss stays recorded in [`Self::gaps`]. A delta from an
+    /// epoch older than the worker's is discarded, and a newer epoch starts
+    /// the worker's metrics and rate series again. A gap or repeat in the
+    /// sequence is recorded in [`Self::gaps`]; a repeat is ignored.
+    ///
+    /// The delta is untrusted: one that fails [`GaggleDelta::validate`],
+    /// names another worker, follows the worker's final delta, covers
+    /// sequence numbers partly applied already, or would take the worker
+    /// past [`DeltaLimits::max_names`] or [`Bounds::WORKER`] is refused,
+    /// and changes nothing.
+    pub(crate) fn apply(&mut self, from: u32, delta: GaggleDelta) -> Result<(), DeltaError> {
+        if delta.worker != from {
+            return Err(DeltaError::WrongWorker {
+                from,
+                named: delta.worker,
             });
-        if delta.epoch < worker.total.epoch {
-            return;
         }
-        if delta.first_seq != worker.last_seq + 1 {
+        delta.validate(&self.limits)?;
+        let Some(worker) = self.workers.get_mut(&from) else {
+            // The first delta from this worker: adding a valid delta to
+            // nothing cannot fail.
+            let mut total = GaggleDelta::new(from, 0, delta.epoch, DeltaKind::Delta);
+            if delta.first_seq != 1 {
+                self.gaps.push(SeqGap {
+                    worker: from,
+                    expected: 1,
+                    received: delta.first_seq,
+                });
+            }
+            let got_final = delta.kind == DeltaKind::Final;
+            total.add_pass(&delta, Pass::Apply, Bounds::WORKER)?;
+            self.workers.insert(
+                from,
+                WorkerTotal {
+                    total,
+                    last_seq: delta.seq,
+                    finished: got_final,
+                    got_final,
+                    lost: false,
+                },
+            );
+            return Ok(());
+        };
+        if worker.got_final {
+            return Err(DeltaError::AfterFinal { seq: delta.seq });
+        }
+        if delta.epoch < worker.total.epoch {
+            return Ok(());
+        }
+        if delta.first_seq <= worker.last_seq && worker.last_seq < delta.seq {
+            return Err(DeltaError::Overlap {
+                first_seq: delta.first_seq,
+                seq: delta.seq,
+                held: worker.last_seq,
+            });
+        }
+        // `last_seq` is below `u64::MAX`, which no valid delta has.
+        let expected = worker.last_seq + 1;
+        if delta.seq < expected {
             self.gaps.push(SeqGap {
-                worker: delta.worker,
-                expected: worker.last_seq + 1,
+                worker: from,
+                expected,
                 received: delta.first_seq,
             });
-            if delta.seq <= worker.last_seq {
-                return;
-            }
+            return Ok(());
+        }
+        // Check before changing anything: what this delta starts again
+        // from nothing cannot pass the bounds, as it is valid.
+        let new_epoch = delta.epoch > worker.total.epoch;
+        let replaces_metrics = new_epoch || delta.kind == DeltaKind::Final;
+        let names = worker
+            .total
+            .names_with(&delta, !replaces_metrics, !new_epoch);
+        if names > self.limits.max_names {
+            return Err(DeltaError::TooManyNames {
+                names,
+                limit: self.limits.max_names,
+            });
+        }
+        if !replaces_metrics {
+            worker
+                .total
+                .metrics
+                .add_pass(&delta.metrics, Pass::Check, Bounds::WORKER)?;
+        }
+        if !new_epoch {
+            worker
+                .total
+                .graph
+                .add_rates(&delta.graph, Pass::Check, Bounds::WORKER)?;
+        }
+        if delta.first_seq != expected {
+            self.gaps.push(SeqGap {
+                worker: from,
+                expected,
+                received: delta.first_seq,
+            });
         }
         worker.last_seq = delta.seq;
-        if delta.epoch > worker.total.epoch {
+        if new_epoch {
             worker.total.epoch = delta.epoch;
             worker.total.metrics = MetricsPart::default();
             worker.total.graph.clear_rates();
         }
         if delta.kind == DeltaKind::Final {
             worker.finished = true;
+            worker.got_final = true;
             worker.total.metrics = MetricsPart::default();
         }
-        worker.total.add(&delta);
+        worker.total.add_pass(&delta, Pass::Apply, Bounds::WORKER)
     }
 
     /// The worker is gone without a final delta: what it sent stays merged,
@@ -152,40 +238,52 @@ impl GaggleAccumulator {
     /// is older than the newest any worker reached. Each worker counts its
     /// own metrics resets, so one that missed a reset is left out rather
     /// than mixed into another epoch's figures; in Gaggle step 2 the
-    /// manager owns the epochs and no worker can fall behind unseen.
+    /// manager owns the epochs and no worker can fall behind unseen. Also
+    /// any whose figures would take a sum past [`Bounds::MERGED`], which
+    /// [`Bounds::WORKER`] and [`super::delta::MAX_WORKERS`] rule out.
     pub(crate) fn excluded(&self) -> Vec<u32> {
-        let epoch = self.epoch();
-        self.workers
-            .iter()
-            .filter(|(_, worker)| Some(worker.total.epoch) != epoch)
-            .map(|(&worker, _)| worker)
-            .collect()
+        self.merge_parts().3
     }
 
     /// The metrics and graph data of every worker merged: the metrics of
     /// the newest epoch any worker reached, and the graphs' complete
     /// seconds only. Every derived figure is worked out again from the
-    /// merged counts. A worker of an older epoch is left out, and named
-    /// by [`Self::excluded`].
+    /// merged counts. A worker left out is named by [`Self::excluded`].
     pub(crate) fn merged(&self) -> (GooseMetrics, GraphData) {
-        let epoch = self.epoch();
-        let mut metrics = MetricsPart::default();
-        let mut graph = GraphPart::default();
-        let mut series_origin = None;
-        for worker in self.workers.values() {
-            if Some(worker.total.epoch) != epoch {
-                continue;
-            }
-            metrics.add(&worker.total.metrics);
-            graph.add_rates(&worker.total.graph);
-            series_origin = series_origin.max(worker.total.series_origin);
-        }
+        let (metrics, mut graph, series_origin, _) = self.merge_parts();
         let complete = self.complete_before();
         graph.users = self.users_levels();
         (
             build_metrics(&self.template, &metrics),
             GraphData::gaggle_build(&graph, self.settings, series_origin, complete),
         )
+    }
+
+    /// Every worker's figures of the newest epoch added up, the series
+    /// origin of the merge, and the workers left out.
+    fn merge_parts(&self) -> (MetricsPart, GraphPart, Option<Second>, Vec<u32>) {
+        let epoch = self.epoch();
+        let mut metrics = MetricsPart::default();
+        let mut graph = GraphPart::default();
+        let mut series_origin = None;
+        let mut excluded = Vec::new();
+        for (&id, worker) in &self.workers {
+            let (part, rows) = (&worker.total.metrics, &worker.total.graph);
+            let fits = Some(worker.total.epoch) == epoch
+                && metrics.add_pass(part, Pass::Check, Bounds::MERGED).is_ok()
+                && graph.add_rates(rows, Pass::Check, Bounds::MERGED).is_ok();
+            if !fits {
+                excluded.push(id);
+                continue;
+            }
+            // Checked above, so these add every figure.
+            let added = metrics
+                .add_pass(part, Pass::Apply, Bounds::MERGED)
+                .and_then(|()| graph.add_rates(rows, Pass::Apply, Bounds::MERGED));
+            debug_assert!(added.is_ok());
+            series_origin = series_origin.max(worker.total.series_origin);
+        }
+        (metrics, graph, series_origin, excluded)
     }
 
     /// The users running at each second: every worker's level at that
@@ -226,12 +324,12 @@ impl GaggleAccumulator {
 /// capped at [`super::delta::MAX_CO_EVENTS_PER_DELTA`] in a delta, the
 /// oldest kept, where applying both keeps up to the cap from each; and a
 /// final `a` followed by a delta of a newer epoch does not mark the worker
-/// finished.
+/// finished. Refused, as [`GaggleDelta::add`], past [`Bounds::WORKER`].
 // Bounds a worker's send queue in Gaggle step 2; tested here.
 #[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn coalesce(a: &GaggleDelta, b: &GaggleDelta) -> GaggleDelta {
+pub(crate) fn coalesce(a: &GaggleDelta, b: &GaggleDelta) -> Result<GaggleDelta, DeltaError> {
     if b.epoch < a.epoch {
-        return a.clone();
+        return Ok(a.clone());
     }
     if b.epoch > a.epoch {
         let mut users = a.graph.users.clone();
@@ -239,20 +337,20 @@ pub(crate) fn coalesce(a: &GaggleDelta, b: &GaggleDelta) -> GaggleDelta {
         users.append(&mut joined.graph.users);
         joined.graph.users = users;
         joined.first_seq = a.first_seq;
-        return joined;
+        return Ok(joined);
     }
     let mut joined = a.clone();
     if b.kind == DeltaKind::Final {
         joined.kind = DeltaKind::Final;
         joined.metrics = MetricsPart::default();
     }
-    joined.add(b);
+    joined.add(b)?;
     if joined.kind == DeltaKind::Delta {
         if let Some(co) = joined.metrics.co.as_mut() {
             co.cap_events();
         }
     }
-    joined
+    Ok(joined)
 }
 
 /// `template` with every figure of `part` added, as `GooseMetrics`.

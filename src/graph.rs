@@ -1185,11 +1185,17 @@ impl LatencyHistograms {
     fn set_limit(&mut self) {
         let (all, request) = self.budgets;
         self.limit = match self.all_columns {
-            Some(_) => {
-                (self.origin + all * self.all_width).min(self.origin + request * self.request_width)
-            }
+            Some(_) => self
+                .reach(all, self.all_width)
+                .min(self.reach(request, self.request_width)),
             None => usize::MAX,
         };
+    }
+
+    /// The first second past `columns` columns of `width` seconds, at most
+    /// `usize::MAX`.
+    fn reach(&self, columns: usize, width: usize) -> usize {
+        self.origin.saturating_add(columns.saturating_mul(width))
     }
 
     /// Before writing `second`: double the widths until it fits in a
@@ -1203,12 +1209,16 @@ impl LatencyHistograms {
     }
 
     /// Double the width of every series of a budget `second` does not fit,
-    /// as often as it takes.
+    /// as often as it takes, or until a width cannot double, which only a
+    /// second no run reaches needs.
     #[cold]
     fn widen(&mut self, second: usize) {
         let (all, request) = self.budgets;
-        while second >= self.origin + all * self.all_width {
-            self.all_width *= 2;
+        while second >= self.reach(all, self.all_width) {
+            let Some(width) = self.all_width.checked_mul(2) else {
+                break;
+            };
+            self.all_width = width;
             let synthetic = self.synthetic.as_mut().map(|(all, _)| all);
             for columns in self
                 .all_columns
@@ -1218,8 +1228,11 @@ impl LatencyHistograms {
                 columns.double();
             }
         }
-        while second >= self.origin + request * self.request_width {
-            self.request_width *= 2;
+        while second >= self.reach(request, self.request_width) {
+            let Some(width) = self.request_width.checked_mul(2) else {
+                break;
+            };
+            self.request_width = width;
             let synthetic = self
                 .synthetic
                 .iter_mut()
@@ -3993,6 +4006,16 @@ mod gaggle {
         pub(crate) columns: bool,
     }
 
+    /// The last heatmap row any response time falls in.
+    pub(crate) fn gaggle_max_row() -> u32 {
+        u32::try_from(display_index(u64::MAX)).unwrap_or(u32::MAX)
+    }
+
+    /// `count` as a series count, at most `u32::MAX`.
+    fn series_count(count: u64) -> u32 {
+        u32::try_from(count).unwrap_or(u32::MAX)
+    }
+
     impl GraphData {
         /// How a manager builds graph data like this, which `records` per
         /// second graphs or not.
@@ -4191,9 +4214,11 @@ mod gaggle {
             }
             for (key, rows) in &part.requests {
                 for (&second, &count) in rows.iter().filter(|(&second, _)| done(second)) {
-                    graph_data
-                        .requests_per_second
-                        .increment(key, second as usize, count as u32);
+                    graph_data.requests_per_second.increment(
+                        key,
+                        second as usize,
+                        series_count(count),
+                    );
                 }
             }
             for (key, rows) in &part.errors {
@@ -4201,7 +4226,7 @@ mod gaggle {
                     graph_data.errors_per_second.increment(
                         key,
                         second as usize,
-                        count.max(0) as u32,
+                        series_count(count.max(0) as u64),
                     );
                 }
             }
@@ -4218,7 +4243,7 @@ mod gaggle {
                     series.merge_value(
                         second as usize,
                         &MovingAverage {
-                            count: average.count as u32,
+                            count: series_count(average.count),
                             average: (average.sum_ms / average.count as f64) as f32,
                         },
                     );
@@ -4454,11 +4479,36 @@ mod gaggle {
     }
 }
 #[cfg(feature = "gaggle")]
-pub(crate) use gaggle::GraphSettings;
+pub(crate) use gaggle::{gaggle_max_row, GraphSettings};
 
 #[cfg(test)]
 mod test {
     use super::*;
+
+    /// Widening for a second within reach doubles each width until the
+    /// second fits, and for any second at all it stops: once a width cannot
+    /// double, it stays.
+    #[test]
+    fn widen_ends_for_any_second() {
+        let mut latency = LatencyHistograms::with_budgets(true, 4, 2);
+        latency.widen(9);
+        assert_eq!((latency.all_width, latency.request_width), (4, 8));
+        assert_eq!(latency.limit, 16);
+        let top: usize = 1 << (usize::BITS - 1);
+        for (second, widened) in [
+            (top / 2, (top / 4, top / 2, top)),
+            (usize::MAX - 1, (top / 2, top, usize::MAX)),
+            (usize::MAX, (top, top, usize::MAX)),
+        ] {
+            let mut latency = LatencyHistograms::with_budgets(true, 4, 2);
+            latency.widen(second);
+            let (all, request, limit) = widened;
+            assert_eq!(
+                (latency.all_width, latency.request_width, latency.limit),
+                (all, request, limit)
+            );
+        }
+    }
 
     #[test]
     fn test_graph_setters() {

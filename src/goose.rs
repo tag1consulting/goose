@@ -6538,9 +6538,11 @@ mod tests {
             let mut manager = crate::gaggle::merge::GaggleAccumulator::new(
                 sides[0].0.gaggle_template(),
                 sides[0].0.gaggle_graph_settings(),
+                crate::gaggle::delta::DeltaLimits::default(),
             );
             for (worker, (processor, _, _, _)) in sides.iter_mut().enumerate() {
-                manager.apply(processor.gaggle_take_delta(1).unwrap());
+                let delta = processor.gaggle_take_delta(1).unwrap();
+                manager.apply(worker as u32, delta).unwrap();
                 manager.done(worker as u32);
             }
             (manager.merged().0, synthetic)
