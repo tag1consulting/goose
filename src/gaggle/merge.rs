@@ -102,6 +102,8 @@ impl GaggleAccumulator {
             // The first delta from this worker: adding a valid delta to
             // nothing cannot fail.
             let mut total = GaggleDelta::new(from, 0, delta.epoch, DeltaKind::Delta);
+            let got_final = delta.kind == DeltaKind::Final;
+            total.add_pass(&delta, Pass::Apply, Bounds::WORKER)?;
             if delta.first_seq != 1 {
                 self.gaps.push(SeqGap {
                     worker: from,
@@ -109,8 +111,6 @@ impl GaggleAccumulator {
                     received: delta.first_seq,
                 });
             }
-            let got_final = delta.kind == DeltaKind::Final;
-            total.add_pass(&delta, Pass::Apply, Bounds::WORKER)?;
             self.workers.insert(
                 from,
                 WorkerTotal {
@@ -311,21 +311,25 @@ impl GaggleAccumulator {
         let Some(last) = last else {
             return BTreeMap::new();
         };
-        let first = self
-            .workers
-            .values()
-            .filter_map(|worker| worker.total.graph.users.keys().next().copied())
-            .min()
-            .unwrap_or(0);
+        // Each worker's change of level at each second it sent one, added
+        // up, then walked once: a worker counts 0 before its first level.
+        let mut changes: BTreeMap<Second, i128> = BTreeMap::new();
+        for worker in self.workers.values() {
+            let mut level = 0;
+            for (&second, &users) in &worker.total.graph.users {
+                *changes.entry(second).or_default() += i128::from(users) - level;
+                level = i128::from(users);
+            }
+        }
+        let first = changes.keys().next().copied().unwrap_or(0);
+        let mut changes = changes.into_iter().peekable();
+        let mut users: i128 = 0;
         (first..=last)
             .map(|second| {
-                let users = self
-                    .workers
-                    .values()
-                    .filter_map(|worker| worker.total.graph.users.range(..=second).next_back())
-                    .map(|(_, &users)| users)
-                    .sum();
-                (second, users)
+                while let Some((_, change)) = changes.next_if(|&(at, _)| at <= second) {
+                    users += change;
+                }
+                (second, users as u64)
             })
             .collect()
     }

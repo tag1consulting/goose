@@ -1922,6 +1922,13 @@ fn gaggle_refuses_too_many_events_and_bad_severities() {
         severity: CoSeverity::Minor,
     };
     let limit = super::delta::MAX_CO_EVENTS_PER_DELTA;
+    // At the cap, with the highest severity code, it is taken.
+    let mut at_limit = counted(0, 2, 1);
+    let mut part = co();
+    part.events = vec![event.clone(); limit];
+    part.severity.insert(3, 1);
+    at_limit.metrics.co = Some(part);
+    held().apply(0, at_limit).unwrap();
     let mut many = counted(0, 2, 1);
     let mut part = co();
     part.events = vec![event; limit + 1];
@@ -1945,6 +1952,18 @@ fn gaggle_refuses_too_many_events_and_bad_severities() {
 /// worker's stays finite and no worker is left out for it.
 #[test]
 fn gaggle_refuses_an_average_total_past_the_bound() {
+    let averaged = |sum_ms: f64| {
+        let mut delta = counted(0, 2, 1);
+        let average = super::delta::Average { count: 1, sum_ms };
+        delta
+            .graph
+            .averages
+            .insert("GET /a".to_string(), [(3, average)].into());
+        delta
+    };
+    let bound = super::delta::MAX_COUNT as f64;
+    held().apply(0, averaged(bound)).unwrap();
+    refused(0, averaged(bound * 2.0), DeltaError::Overflow);
     let mut delta = counted(0, 2, 1);
     let average = super::delta::Average {
         count: 1,
@@ -2082,6 +2101,11 @@ fn gaggle_reports_at_the_bounds_across_names_do_not_overflow() {
     let again = accumulator.merged();
     // The console output, then every report, the snapshot and the
     // thresholds, built and compared.
+    // The sums across names saturate, rather than wrap in a release build.
+    let totals = crate::metrics::common::RequestTotals::of(merged.0.requests.values());
+    assert_eq!(totals.requests, usize::MAX);
+    assert_eq!(totals.failures, usize::MAX);
+    assert_eq!(totals.times.counter, usize::MAX);
     let mut shown = merged.0.clone();
     shown.display_metrics = true;
     shown.display_status_codes = true;
