@@ -1902,6 +1902,11 @@ impl GooseAttack {
             // A worker tells its manager whether its users are ready.
             #[cfg(feature = "gaggle")]
             self.gaggle_worker_prepared(prepared.as_ref().err());
+            // Its answer leaves before it exits.
+            #[cfg(feature = "gaggle")]
+            if prepared.is_err() {
+                self.gaggle_worker_exit().await;
+            }
             prepared?;
         }
 

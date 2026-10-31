@@ -525,8 +525,17 @@ impl Manager {
     }
 }
 
+/// A manager dropped without shutting its workers down, as when its run
+/// fails or its task is aborted: every worker's stream closes without
+/// `Shutdown`, so each worker's dead man's switch stops its load.
 impl Drop for Manager {
     fn drop(&mut self) {
+        if let Ok(mut joined) = self.shared.joined.lock() {
+            for worker in joined.iter() {
+                worker.closed.store(true, Ordering::Relaxed);
+            }
+            joined.clear();
+        }
         if let Some(stop) = self.stop_server.take() {
             let _ = stop.send(());
         }
@@ -653,6 +662,75 @@ mod handshake_tests {
             .expect("within 30 seconds");
     }
 
+    /// A worker whose stream closes after its final metrics, before
+    /// Shutdown, is reported: whatever waits for it, its logs among them,
+    /// stops waiting.
+    #[tokio::test]
+    async fn gaggle_reports_a_worker_gone_after_its_final_metrics() {
+        use super::super::delta::{DeltaKind, GaggleDelta};
+        use super::super::proto::Metrics;
+        let test = async {
+            let manager = Manager::start("127.0.0.1", 0, 1, None, 7, true, Duration::from_secs(10))
+                .await
+                .unwrap();
+            let channel =
+                tonic::transport::Endpoint::from_shared(format!("http://{}", manager.local_addr))
+                    .unwrap()
+                    .connect()
+                    .await
+                    .unwrap();
+            let (tx, rx) = mpsc::channel(4);
+            tx.send(WorkerMessage {
+                message: Some(FromWorker::Hello(Hello {
+                    token: String::new(),
+                    ..hello()
+                })),
+            })
+            .await
+            .unwrap();
+            let inbound = GaggleClient::new(channel)
+                .connect(ReceiverStream::new(rx))
+                .await
+                .unwrap()
+                .into_inner();
+            let last = GaggleDelta::new(0, 1, 0, DeltaKind::Final);
+            tx.send(WorkerMessage {
+                message: Some(FromWorker::Metrics(Metrics {
+                    delta: last.encode().unwrap(),
+                })),
+            })
+            .await
+            .unwrap();
+            // Once the final delta has arrived, the worker goes.
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                match manager.next_event(deadline).await {
+                    Some(Event::Joined) => continue,
+                    Some(Event::Delta { .. }) => break,
+                    other => panic!("{:?}", other),
+                }
+            }
+            drop(tx);
+            drop(inbound);
+            // Well before the 10 second heartbeat timeout.
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let gone = loop {
+                match manager.next_event(deadline).await {
+                    Some(Event::Joined) | Some(Event::Delta { .. }) => continue,
+                    other => break other,
+                }
+            };
+            assert!(
+                matches!(&gone, Some(Event::Lost { id: 0, why }) if why.contains("after its final metrics")),
+                "{:?}",
+                gone
+            );
+        };
+        tokio::time::timeout(Duration::from_secs(30), test)
+            .await
+            .expect("within 30 seconds");
+    }
+
     fn hello() -> Hello {
         Hello {
             goose_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -728,6 +806,26 @@ mod handshake_tests {
             .await
             .unwrap_err();
             assert!(none.starts_with("token"), "{}", none);
+            // A wrong token is the only thing a client without one hears,
+            // however much else is wrong.
+            let everything = answer(
+                &manager,
+                Hello {
+                    token: "guess".to_string(),
+                    protocol_version: PROTOCOL_VERSION + 1,
+                    goose_version: "0.0.1".to_string(),
+                    plan_hash: 8,
+                    ..hello()
+                },
+            )
+            .await
+            .unwrap_err();
+            assert!(everything.starts_with("token"), "{}", everything);
+            assert!(
+                !everything.contains("protocol") && !everything.contains(env!("CARGO_PKG_VERSION")),
+                "{}",
+                everything
+            );
             assert_eq!(answer(&manager, hello()).await, Ok(0));
             let full = answer(&manager, hello()).await.unwrap_err();
             assert!(full.contains("all 1 of its workers"), "{}", full);

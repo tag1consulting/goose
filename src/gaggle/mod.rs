@@ -1,13 +1,15 @@
-//! Groundwork for Gaggle, distributed load tests: a manager coordinating
-//! workers that each run a share of the users.
+//! Gaggle, distributed load tests: a manager coordinating workers that each
+//! run a share of the users.
 //!
 //! A worker's metrics processor keeps what changed since its last delta
 //! beside its own state ([`worker`]) and sends it once a second as a
 //! [`delta::GaggleDelta`], postcard encoded; the manager adds every worker's
 //! deltas up ([`merge`]) into the metrics, graph data, dashboard snapshot
-//! and reports one process running the whole load test would produce. No
-//! network code: the transport comes later. `--gaggle-shadow-merge` runs
-//! both sides in one process and checks the result ([`shadow`]).
+//! and reports one process running the whole load test would produce. The
+//! wire is gRPC ([`proto`]): the manager's side in [`manager`], the worker's
+//! in [`link`], and each side's part in a run in [`run`], with the share a
+//! worker is handed in [`spec`]. `--gaggle-shadow-merge` runs both sides of
+//! the merge in one process and checks the result ([`shadow`]).
 
 pub(crate) mod compare;
 pub(crate) mod delta;

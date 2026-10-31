@@ -399,7 +399,6 @@ impl Link {
     /// Watch a user task, so the dead man's switch can stop it.
     pub(crate) fn watch(&self, user: tokio::task::AbortHandle) {
         if let Ok(mut users) = self.users.lock() {
-            users.retain(|user| !user.is_finished());
             users.push(user);
         }
     }
@@ -453,6 +452,15 @@ impl Link {
     /// Close the stream, once what is queued has left.
     pub(crate) fn close(&self) {
         self.outbox.close();
+    }
+
+    /// Close the stream, and give what is queued up to 2 seconds to leave.
+    pub(crate) async fn flush(&self) {
+        self.close();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline && !self.outbox.is_empty() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
     }
 }
 

@@ -66,8 +66,10 @@ impl GooseConfiguration {
     pub(crate) fn manager_bind(&self) -> (String, u16) {
         (
             self.manager_bind_host
-                .clone()
+                .as_deref()
+                .map(str::trim)
                 .filter(|host| !host.is_empty())
+                .map(str::to_string)
                 .unwrap_or_else(|| DEFAULT_MANAGER_BIND_HOST.to_string()),
             self.manager_bind_port.unwrap_or(DEFAULT_MANAGER_PORT),
         )

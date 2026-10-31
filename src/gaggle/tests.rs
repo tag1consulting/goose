@@ -285,6 +285,8 @@ struct Side {
     processor: MetricsProcessor,
     users: BTreeMap<usize, GooseUser>,
     rx: flume::Receiver<GooseMetric>,
+    /// The processor's metrics epoch.
+    epoch: MetricsEpoch,
 }
 
 impl Side {
@@ -353,6 +355,7 @@ impl Side {
             processor,
             users,
             rx,
+            epoch,
         }
     }
 
@@ -2236,4 +2239,90 @@ fn gaggle_merge_cost() {
             started.elapsed()
         );
     }
+}
+
+/// Save report on a manager's dashboard changes what its merge builds: with
+/// it off the merged graph keeps no whole run heatmap columns, with it on
+/// it does, though the merge was set up with them.
+#[test]
+fn gaggle_save_report_on_a_manager_changes_the_merge() {
+    super::within(30, || {
+        let mut side = Side::new(0..0, Some(0));
+        side.processor.gaggle_enable_manager();
+        let mut columns = |keep: bool| {
+            side.processor
+                .handle_command_for_test(MetricsCommand::KeepGraph { keep, now: 0 });
+            let (respond, report) = tokio::sync::oneshot::channel();
+            side.processor
+                .handle_command_for_test(MetricsCommand::GetReportData {
+                    duration: 0,
+                    total_users: 0,
+                    maximum_users: 0,
+                    history: Vec::new(),
+                    respond,
+                });
+            report
+                .blocking_recv()
+                .unwrap()
+                .1
+                .has_latency_columns_for_test()
+        };
+        assert!(!columns(false));
+        assert!(columns(true));
+    });
+}
+
+/// A manager's metrics reset starts a new epoch at once: what a worker sent
+/// before it is left out even before the worker reports the new epoch, so
+/// the mark Maintain opens with, which `rps` rules count from, holds none of
+/// the ramp.
+#[test]
+fn gaggle_manager_reset_leaves_out_the_old_epoch_at_once() {
+    super::within(30, || {
+        let mut side = Side::new(0..0, Some(0));
+        side.processor.gaggle_enable_manager();
+        let made = |side: &mut Side| {
+            let (respond, metrics) = tokio::sync::oneshot::channel();
+            side.processor
+                .handle_command_for_test(MetricsCommand::GetMetrics {
+                    duration: 0,
+                    total_users: 0,
+                    maximum_users: 0,
+                    history: Vec::new(),
+                    respond,
+                });
+            metrics
+                .blocking_recv()
+                .unwrap()
+                .requests
+                .get("GET /a")
+                .map_or(0, |request| request.success_count)
+        };
+        let epoch = side.epoch.load(std::sync::atomic::Ordering::Relaxed);
+        side.processor
+            .handle_command_for_test(MetricsCommand::GaggleApply {
+                worker: 0,
+                delta: Box::new(counted(0, 1, epoch)),
+            });
+        assert_eq!(made(&mut side), 1);
+        let (ack, _acked) = tokio::sync::oneshot::channel();
+        side.processor
+            .handle_command_for_test(MetricsCommand::Reset {
+                duration: 0,
+                total_users: 0,
+                maximum_users: 0,
+                active_users: 0,
+                series_elapsed_secs: 5,
+                running_users: Vec::new(),
+                ack,
+            });
+        assert_eq!(made(&mut side), 0, "the ramp's requests are left out");
+        // The worker's first delta of the new epoch is merged.
+        side.processor
+            .handle_command_for_test(MetricsCommand::GaggleApply {
+                worker: 0,
+                delta: Box::new(counted(0, 2, epoch + 1)),
+            });
+        assert_eq!(made(&mut side), 1);
+    });
 }

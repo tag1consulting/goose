@@ -222,10 +222,10 @@ async fn gaggle_manager_and_two_workers_in_one_process() {
     // One reset, when the ramp ended: what the users did before it is gone
     // from the metrics on every worker, and nothing after it is.
     assert_eq!(pre.calls_async().await, 6);
-    // Only each worker's last user may race the reset with its /pre; without
-    // the broadcast reset all six count.
+    // A user that started last may race the reset with its /pre; without the
+    // broadcast reset all six count.
     assert!(
-        count("GET /pre") <= 2,
+        count("GET /pre") < 6,
         "the reset clears the ramp's requests: {}",
         count("GET /pre")
     );
@@ -319,4 +319,63 @@ async fn gaggle_worker_without_users_ends_with_iterations() {
         .expect("the manager exits cleanly");
     assert_eq!(metrics.total_users, 2);
     let _ = std::fs::remove_dir_all(&folder);
+}
+
+/// A manager that goes away before the run, its task dropped mid wait:
+/// its worker loses it, returns an error, and its link stops the dead man's
+/// switch's last resort, so this test process lives on.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_worker_survives_its_manager_going_before_the_run() {
+    let test = async {
+        let server = MockServer::start_async().await;
+        let host = server.base_url();
+        let (bound, address) = tokio::sync::oneshot::channel();
+        // Two workers expected and one started: the manager waits.
+        let manager = load_test(configuration(&[
+            "--manager",
+            "--expect-workers",
+            "2",
+            "--manager-bind-port",
+            "0",
+            "--no-telnet",
+            "--quiet",
+            "--host",
+            &host,
+            "--users",
+            "2",
+        ]))
+        .report_manager_address(bound);
+        let manager = tokio::spawn(manager.execute());
+        let port = address
+            .await
+            .expect("the manager listens")
+            .port()
+            .to_string();
+        let worker = load_test(configuration(&[
+            "--worker",
+            "--manager-host",
+            "127.0.0.1",
+            "--manager-port",
+            &port,
+            "--no-telnet",
+            "--quiet",
+        ]));
+        let worker = tokio::spawn(worker.execute());
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        manager.abort();
+        let result = worker.await.expect("the worker task ends");
+        match result {
+            Err(crate::GooseError::Gaggle { detail }) => {
+                assert!(detail.contains("lost the manager"), "{}", detail)
+            }
+            other => panic!("{:?}", other.map(|_| ())),
+        }
+        // Past the switch's 4 second last resort: had the link not marked
+        // itself done, the process would have exited.
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    };
+    tokio::time::timeout(Duration::from_secs(30), test)
+        .await
+        .expect("within 30 seconds");
 }

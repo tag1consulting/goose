@@ -300,7 +300,8 @@ fn worker_lost_mid_run(frozen: bool) {
         // `lost_at` is to the second.
         let after = lost_at.timestamp() - killed.timestamp();
         assert!(
-            after <= HEARTBEAT as i64 + 2,
+            // lost_at and killed are each truncated to the second.
+            after <= HEARTBEAT as i64 + 3,
             "lost {} s after the kill: {}",
             after,
             gaggle

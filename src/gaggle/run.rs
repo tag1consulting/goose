@@ -55,6 +55,9 @@ struct WorkerEntry {
     last_seq: u64,
     stopped: Option<Reason>,
     lost: Option<(chrono::DateTime<chrono::Utc>, String)>,
+    /// It stopped as told and then went away: not lost, but nothing more,
+    /// its logs among them, will come from it.
+    gone: bool,
     run_folder: Option<String>,
 }
 
@@ -245,6 +248,7 @@ impl GooseAttack {
                 last_seq: 0,
                 stopped: None,
                 lost: None,
+                gone: false,
                 run_folder: None,
             });
         }
@@ -356,6 +360,7 @@ impl GooseAttack {
             Err(e) => {
                 let detail = format!("could not read the run spec: {e}");
                 link.prepared(Some(detail.clone()));
+                link.flush().await;
                 return Err(GooseError::Gaggle { detail });
             }
         };
@@ -510,9 +515,14 @@ impl GooseAttack {
     ) {
         match event {
             Event::Delta { id, delta } => {
-                if let Some(worker) = run.worker(id) {
-                    worker.last_seq = delta.seq;
+                let Some(worker) = run.worker(id) else {
+                    return;
+                };
+                // The results hold what a lost worker sent before it was lost.
+                if worker.lost.is_some() {
+                    return;
                 }
+                worker.last_seq = delta.seq;
                 let _ = goose_attack_run_state
                     .metrics_cmd_tx
                     .send(MetricsCommand::GaggleApply { worker: id, delta });
@@ -553,6 +563,7 @@ impl GooseAttack {
         }
         // A worker that stopped as told, and then went away, is not lost.
         if stop_sent && worker.stopped.is_some() {
+            worker.gone = true;
             return;
         }
         warn!(
@@ -595,12 +606,24 @@ impl GooseAttack {
                     if running {
                         debug!("gaggle: metrics reset, epoch {epoch}");
                         self.gaggle_worker_reset(goose_attack_run_state).await;
+                        let own = goose_attack_run_state
+                            .metrics_epoch
+                            .load(std::sync::atomic::Ordering::Relaxed);
+                        if own != epoch {
+                            warn!("gaggle: this worker's metrics epoch is {own}, the manager's {epoch}: its metrics may be left out of the merge");
+                        }
                     }
                 }
                 LinkEvent::Stop(reason) => {
-                    // A Stop before the start: never start.
-                    if !running {
-                        run.start_at = None;
+                    // A Stop before the start, as when the manager's run ends in
+                    // the milliseconds before this worker's start instant:
+                    // never start, and say so.
+                    if !running && run.start_at.take().is_some() {
+                        run.link.stopped(Stopped {
+                            reason: Reason::Stopped as i32,
+                            canceled: String::new(),
+                            run_folder: String::new(),
+                        });
                     }
                     if running && !goose_attack_run_state.stopping {
                         info!("gaggle: the manager stopped the run: {reason}");
@@ -769,11 +792,7 @@ impl GooseAttack {
     /// A worker about to exit: give what it queued a moment to leave.
     pub(crate) async fn gaggle_worker_exit(&self) {
         if let Some(link) = self.gaggle_link() {
-            link.close();
-            let deadline = Instant::now() + Duration::from_secs(2);
-            while Instant::now() < deadline && !link.outbox.is_empty() {
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
+            link.flush().await;
         }
     }
 
@@ -873,7 +892,7 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>, compress: b
     // under.
     let mut pending: BTreeMap<u32, BTreeMap<String, LogSpec>> = BTreeMap::new();
     for worker in &run.workers {
-        if worker.lost.is_some() || folder.is_none() {
+        if worker.lost.is_some() || worker.gone || folder.is_none() {
             for log in &run.logs {
                 run.logs_left.push(left(worker, log));
             }

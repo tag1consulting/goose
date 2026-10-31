@@ -86,8 +86,15 @@ impl MetricsProcessor {
                 self.gaggle_refresh(force);
                 let done = self.dispatch_command(cmd);
                 if reset {
+                    // The reset started a new epoch on the manager, which the
+                    // workers start too: until a worker reports it, its old
+                    // figures are left out, so what Maintain opens with, the
+                    // hold `rps` rules count from, holds none of the ramp.
+                    let epoch = self.metrics_epoch.load(AtomicOrdering::Relaxed);
                     if let Some(merge) = self.gaggle_merge.as_mut() {
+                        merge.accumulator.set_min_epoch(epoch);
                         merge.dirty = true;
+                        merge.built = None;
                     }
                 }
                 done

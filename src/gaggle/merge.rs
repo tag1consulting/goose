@@ -54,6 +54,10 @@ pub(crate) struct GaggleAccumulator {
     cap_second: Second,
     workers: BTreeMap<u32, WorkerTotal>,
     gaps: Vec<SeqGap>,
+    /// The oldest metrics epoch merged: a manager that resets the metrics
+    /// leaves out every worker until it reports the new epoch, rather than
+    /// show the old epoch's figures as current.
+    min_epoch: u64,
 }
 
 impl GaggleAccumulator {
@@ -72,6 +76,7 @@ impl GaggleAccumulator {
             cap_second: limits.max_second,
             workers: BTreeMap::new(),
             gaps: Vec::new(),
+            min_epoch: 0,
         }
     }
 
@@ -234,6 +239,12 @@ impl GaggleAccumulator {
         self.settings.columns = keep;
     }
 
+    /// Merge only metrics epoch `epoch` or newer from now on: the manager
+    /// reset the metrics, starting it.
+    pub(crate) fn set_min_epoch(&mut self, epoch: u64) {
+        self.min_epoch = self.min_epoch.max(epoch);
+    }
+
     /// Every gap and repeat seen in a worker's sequence.
     pub(crate) fn gaps(&self) -> &[SeqGap] {
         &self.gaps
@@ -282,7 +293,7 @@ impl GaggleAccumulator {
     /// Every worker's figures of the newest epoch added up, the series
     /// origin of the merge, and the workers left out.
     fn merge_parts(&self) -> (MetricsPart, GraphPart, Option<Second>, Vec<u32>) {
-        let epoch = self.epoch();
+        let epoch = Some(self.epoch().unwrap_or(0).max(self.min_epoch));
         let mut metrics = MetricsPart::default();
         let mut graph = GraphPart::default();
         let mut series_origin = None;
