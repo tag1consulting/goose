@@ -106,12 +106,11 @@ pub(crate) fn throttle_shares(throttle: usize, users: &[usize]) -> Vec<usize> {
     let mut shares: Vec<usize> = Vec::with_capacity(workers);
     let mut remainders: Vec<(u128, usize)> = Vec::with_capacity(workers);
     for (worker, &u) in users.iter().enumerate() {
-        let (share, remainder) = if total == 0 {
+        let exact = throttle as u128 * u as u128;
+        let (share, remainder) = match exact.checked_div(total) {
+            Some(share) => (share as usize, exact % total),
             // No users anywhere: an even split.
-            (throttle / workers, 0)
-        } else {
-            let exact = throttle as u128 * u as u128;
-            ((exact / total) as usize, exact % total)
+            None => (throttle / workers, 0),
         };
         shares.push(share.max(1));
         remainders.push((remainder, worker));
@@ -331,20 +330,23 @@ mod tests {
 
     #[test]
     fn split_adds_up_and_follows_the_total() {
-        for workers in 1..7 {
-            for total in 0..40 {
-                let parts: Vec<usize> = (0..workers).map(|w| split(total, workers, w)).collect();
-                assert_eq!(parts.iter().sum::<usize>(), total);
-                assert!(parts.windows(2).all(|pair| pair[0] >= pair[1]));
-                for (worker, &part) in parts.iter().enumerate() {
-                    assert!(split(total + 1, workers, worker) >= part);
+        crate::gaggle::within(30, || {
+            for workers in 1..7 {
+                for total in 0..40 {
+                    let parts: Vec<usize> =
+                        (0..workers).map(|w| split(total, workers, w)).collect();
+                    assert_eq!(parts.iter().sum::<usize>(), total);
+                    assert!(parts.windows(2).all(|pair| pair[0] >= pair[1]));
+                    for (worker, &part) in parts.iter().enumerate() {
+                        assert!(split(total + 1, workers, worker) >= part);
+                    }
                 }
             }
-        }
-        assert_eq!(
-            (0..3).map(|w| split(10, 3, w)).collect::<Vec<_>>(),
-            [4, 3, 3]
-        );
+            assert_eq!(
+                (0..3).map(|w| split(10, 3, w)).collect::<Vec<_>>(),
+                [4, 3, 3]
+            );
+        });
     }
 
     /// Every step's users add up to the global step's, and the users the
@@ -352,115 +354,123 @@ mod tests {
     /// goes up, down and up again.
     #[test]
     fn plans_add_up_at_every_step() {
-        let steps = [(10, 1_000), (10, 5_000), (3, 1_000), (11, 2_000), (0, 0)];
-        for workers in 1..6 {
-            let plans = plans(&steps, workers);
-            for (step, &(users, ms)) in steps.iter().enumerate() {
-                assert_eq!(plans.iter().map(|plan| plan[step].0).sum::<usize>(), users);
-                assert!(plans.iter().all(|plan| plan[step].1 == ms));
+        crate::gaggle::within(30, || {
+            let steps = [(10, 1_000), (10, 5_000), (3, 1_000), (11, 2_000), (0, 0)];
+            for workers in 1..6 {
+                let plans = plans(&steps, workers);
+                for (step, &(users, ms)) in steps.iter().enumerate() {
+                    assert_eq!(plans.iter().map(|plan| plan[step].0).sum::<usize>(), users);
+                    assert!(plans.iter().all(|plan| plan[step].1 == ms));
+                }
+                let started: usize = plans.iter().map(|plan| users_started(plan)).sum();
+                assert_eq!(started, users_started(&steps));
             }
-            let started: usize = plans.iter().map(|plan| users_started(plan)).sum();
-            assert_eq!(started, users_started(&steps));
-        }
-        // More workers than users: a worker may hold 0 users.
-        let plans = plans(&[(2, 1_000), (0, 0)], 3);
-        assert_eq!(plans[2], [(0, 1_000), (0, 0)]);
+            // More workers than users: a worker may hold 0 users.
+            let plans = plans(&[(2, 1_000), (0, 0)], 3);
+            assert_eq!(plans[2], [(0, 1_000), (0, 0)]);
+        });
     }
 
     #[test]
     fn throttle_shares_add_up_and_never_reach_zero() {
-        assert_eq!(
-            throttle_shares(3_000, &[300, 300, 300]),
-            [1_000, 1_000, 1_000]
-        );
-        assert_eq!(throttle_shares(10, &[2, 1, 1]), [5, 3, 2]);
-        assert_eq!(throttle_shares(0, &[5, 5]), [0, 0]);
-        // A worker with no users still gets 1.
-        assert_eq!(throttle_shares(4, &[10, 0]), [3, 1]);
-        for throttle in 3..50 {
-            for users in [[1, 1, 1], [7, 0, 2], [0, 0, 0], [100, 1, 1]] {
-                let shares = throttle_shares(throttle, &users);
-                assert_eq!(
-                    shares.iter().sum::<usize>(),
-                    throttle,
-                    "{throttle} {users:?}"
-                );
-                assert!(shares.iter().all(|&share| share >= 1));
+        crate::gaggle::within(30, || {
+            assert_eq!(
+                throttle_shares(3_000, &[300, 300, 300]),
+                [1_000, 1_000, 1_000]
+            );
+            assert_eq!(throttle_shares(10, &[2, 1, 1]), [5, 3, 2]);
+            assert_eq!(throttle_shares(0, &[5, 5]), [0, 0]);
+            // A worker with no users still gets 1.
+            assert_eq!(throttle_shares(4, &[10, 0]), [3, 1]);
+            for throttle in 3..50 {
+                for users in [[1, 1, 1], [7, 0, 2], [0, 0, 0], [100, 1, 1]] {
+                    let shares = throttle_shares(throttle, &users);
+                    assert_eq!(
+                        shares.iter().sum::<usize>(),
+                        throttle,
+                        "{throttle} {users:?}"
+                    );
+                    assert!(shares.iter().all(|&share| share >= 1));
+                }
             }
-        }
+        });
     }
 
     #[test]
     fn worker_specs_cover_every_user_once() {
-        let configuration = GooseConfiguration::parse_args_default(&[
-            "--host",
-            "http://127.0.0.1",
-            "--throttle-requests",
-            "100",
-            "--request-log",
-            "--transaction-log",
-            "/tmp/somewhere/t.log",
-            "--compress",
-        ])
-        .unwrap();
-        let steps = [(7, 1_000), (7, 10_000), (0, 0)];
-        let order: Vec<usize> = (0..7).map(|user| user % 3).collect();
-        let specs = worker_specs(&configuration, &steps, &order, 3, true);
-        assert_eq!(
-            specs
-                .iter()
-                .map(|s| (s.user_offset, s.users))
-                .collect::<Vec<_>>(),
-            [(0, 3), (3, 2), (5, 2)]
-        );
-        let slices: Vec<usize> = specs.iter().flat_map(|s| s.slice.clone()).collect();
-        assert_eq!(slices, order);
-        assert_eq!(
-            specs.iter().map(|s| s.throttle_requests).sum::<usize>(),
-            100
-        );
-        assert_eq!(specs[0].logs.len(), 2);
-        assert_eq!(specs[0].logs[0].manager_file, "requests.json.gz");
-        assert_eq!(specs[0].logs[1].manager_file, "t.log");
-        let decoded = WorkerRunSpec::decode(&specs[1].encode().unwrap()).unwrap();
-        assert_eq!(decoded, specs[1]);
+        crate::gaggle::within(30, || {
+            let configuration = GooseConfiguration::parse_args_default(&[
+                "--host",
+                "http://127.0.0.1",
+                "--throttle-requests",
+                "100",
+                "--request-log",
+                "--transaction-log",
+                "/tmp/somewhere/t.log",
+                "--compress",
+            ])
+            .unwrap();
+            let steps = [(7, 1_000), (7, 10_000), (0, 0)];
+            let order: Vec<usize> = (0..7).map(|user| user % 3).collect();
+            let specs = worker_specs(&configuration, &steps, &order, 3, true);
+            assert_eq!(
+                specs
+                    .iter()
+                    .map(|s| (s.user_offset, s.users))
+                    .collect::<Vec<_>>(),
+                [(0, 3), (3, 2), (5, 2)]
+            );
+            let slices: Vec<usize> = specs.iter().flat_map(|s| s.slice.clone()).collect();
+            assert_eq!(slices, order);
+            assert_eq!(
+                specs.iter().map(|s| s.throttle_requests).sum::<usize>(),
+                100
+            );
+            assert_eq!(specs[0].logs.len(), 2);
+            assert_eq!(specs[0].logs[0].manager_file, "requests.json.gz");
+            assert_eq!(specs[0].logs[1].manager_file, "t.log");
+            let decoded = WorkerRunSpec::decode(&specs[1].encode().unwrap()).unwrap();
+            assert_eq!(decoded, specs[1]);
+        });
     }
 
     /// A spec configures every option it carries, so a worker runs exactly
     /// its share.
     #[test]
     fn spec_configures_a_worker() {
-        let manager = GooseConfiguration::parse_args_default(&[
-            "--host",
-            "http://example.com",
-            "--users",
-            "5",
-            "--iterations",
-            "3",
-            "--co-mitigation",
-            "average",
-            "--timeout",
-            "2",
-            "--scenario-log",
-        ])
-        .unwrap();
-        let spec = worker_specs(&manager, &[(5, 1_000), (0, 0)], &[0; 5], 2, true).remove(1);
-        let mut worker = GooseConfiguration::default();
-        spec.configure(&mut worker);
-        assert_eq!(worker.host.as_deref(), Some("http://example.com"));
-        assert_eq!(worker.users, Some(2));
-        assert_eq!(worker.iterations, Some(3));
-        assert_eq!(
-            worker.co_mitigation,
-            Some(GooseCoordinatedOmissionMitigation::Average)
-        );
-        assert_eq!(worker.timeout.as_deref(), Some("2"));
-        assert_eq!(worker.scenario_log.as_deref(), Some(RUN_FOLDER));
-        assert!(worker.no_reset_metrics);
-        assert!(worker.gaggle_records_graph);
-        assert_eq!(
-            worker.test_plan.as_ref().map(|plan| plan.steps.clone()),
-            Some(vec![(2, 1_000), (0, 0)])
-        );
+        crate::gaggle::within(30, || {
+            let manager = GooseConfiguration::parse_args_default(&[
+                "--host",
+                "http://example.com",
+                "--users",
+                "5",
+                "--iterations",
+                "3",
+                "--co-mitigation",
+                "average",
+                "--timeout",
+                "2",
+                "--scenario-log",
+            ])
+            .unwrap();
+            let spec = worker_specs(&manager, &[(5, 1_000), (0, 0)], &[0; 5], 2, true).remove(1);
+            let mut worker = GooseConfiguration::default();
+            spec.configure(&mut worker);
+            assert_eq!(worker.host.as_deref(), Some("http://example.com"));
+            assert_eq!(worker.users, Some(2));
+            assert_eq!(worker.iterations, Some(3));
+            assert_eq!(
+                worker.co_mitigation,
+                Some(GooseCoordinatedOmissionMitigation::Average)
+            );
+            assert_eq!(worker.timeout.as_deref(), Some("2"));
+            assert_eq!(worker.scenario_log.as_deref(), Some(RUN_FOLDER));
+            assert!(worker.no_reset_metrics);
+            assert!(worker.gaggle_records_graph);
+            assert_eq!(
+                worker.test_plan.as_ref().map(|plan| plan.steps.clone()),
+                Some(vec![(2, 1_000), (0, 0)])
+            );
+        });
     }
 }

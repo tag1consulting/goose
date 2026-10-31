@@ -43,8 +43,8 @@ const CLOCK_SLACK: u64 = 10;
 
 /// This process's side of a Gaggle.
 pub(crate) enum GaggleRole {
-    Manager(ManagerRun),
-    Worker(WorkerRun),
+    Manager(Box<ManagerRun>),
+    Worker(Box<WorkerRun>),
 }
 
 /// One of a manager's workers.
@@ -132,7 +132,7 @@ impl GooseAttack {
 
     /// The link to a worker's manager.
     pub(crate) fn gaggle_link(&self) -> Option<&Link> {
-        match self.gaggle.as_deref() {
+        match self.gaggle.as_ref() {
             Some(GaggleRole::Worker(run)) => Some(&run.link),
             _ => None,
         }
@@ -305,7 +305,7 @@ impl GooseAttack {
             "gaggle: every worker is ready; starting in {} seconds",
             START_DELAY.as_secs()
         );
-        self.gaggle = Some(Box::new(GaggleRole::Manager(ManagerRun {
+        self.gaggle = Some(GaggleRole::Manager(Box::new(ManagerRun {
             manager,
             workers,
             logs: spec::log_specs(&self.configuration),
@@ -371,7 +371,7 @@ impl GooseAttack {
         spec.configure(&mut self.configuration);
         self.set_user_slice(spec.user_offset, spec.slice.clone());
         self.worker_data = Some(Arc::from(std::mem::take(&mut spec.custom_data)));
-        self.gaggle = Some(Box::new(GaggleRole::Worker(WorkerRun {
+        self.gaggle = Some(GaggleRole::Worker(Box::new(WorkerRun {
             link,
             spec,
             start_at: None,
@@ -396,7 +396,7 @@ impl GooseAttack {
         &mut self,
         goose_attack_run_state: &mut GooseAttackRunState,
     ) -> Result<(), GooseError> {
-        let start_at = match self.gaggle.as_deref_mut() {
+        let start_at = match self.gaggle.as_mut() {
             Some(GaggleRole::Worker(run)) => run.start_at,
             _ => None,
         };
@@ -411,7 +411,7 @@ impl GooseAttack {
         }
         tokio::time::sleep_until(at).await;
         let late = tokio::time::Instant::now().saturating_duration_since(at);
-        if let Some(GaggleRole::Worker(run)) = self.gaggle.as_deref_mut() {
+        if let Some(GaggleRole::Worker(run)) = self.gaggle.as_mut() {
             run.start_at = None;
             run.started_late = Some(late);
         }
@@ -440,7 +440,7 @@ impl GooseAttack {
         let Some(mut role) = self.gaggle.take() else {
             return Ok(());
         };
-        let result = match role.as_mut() {
+        let result = match &mut role {
             GaggleRole::Manager(run) => self.manager_tick(goose_attack_run_state, run).await,
             GaggleRole::Worker(run) => self.worker_tick(goose_attack_run_state, run).await,
         };
@@ -655,7 +655,7 @@ impl GooseAttack {
     /// The manager's metrics reset, at the end of its ramp: every worker
     /// resets too.
     pub(crate) fn gaggle_manager_reset(&self, epoch: u64) {
-        if let Some(GaggleRole::Manager(run)) = self.gaggle.as_deref() {
+        if let Some(GaggleRole::Manager(run)) = self.gaggle.as_ref() {
             info!("gaggle: resetting every worker's metrics");
             run.manager
                 .broadcast(ToWorker::ResetMetrics(ResetMetrics { epoch }));
@@ -672,7 +672,7 @@ impl GooseAttack {
         let Some(mut role) = self.gaggle.take() else {
             return;
         };
-        match role.as_mut() {
+        match &mut role {
             GaggleRole::Manager(run) => self.manager_stop(goose_attack_run_state, run).await,
             GaggleRole::Worker(run) => self.worker_stopped(goose_attack_run_state, run).await,
         }
@@ -779,7 +779,7 @@ impl GooseAttack {
         let Some(mut role) = self.gaggle.take() else {
             return;
         };
-        if let GaggleRole::Manager(run) = role.as_mut() {
+        if let GaggleRole::Manager(run) = &mut role {
             let folder = self
                 .output
                 .folder
@@ -793,14 +793,14 @@ impl GooseAttack {
 
     /// The manager, after its reports: tell every worker to shut down.
     pub(crate) async fn gaggle_shut_down(&mut self) {
-        if let Some(GaggleRole::Manager(run)) = self.gaggle.as_deref_mut() {
+        if let Some(GaggleRole::Manager(run)) = self.gaggle.as_mut() {
             run.manager.shut_down_all().await;
         }
     }
 
     /// The Gaggle section of the manager's run record.
     pub(crate) fn gaggle_run_record(&self) -> Option<GaggleRecord> {
-        let Some(GaggleRole::Manager(run)) = self.gaggle.as_deref() else {
+        let Some(GaggleRole::Manager(run)) = self.gaggle.as_ref() else {
             return None;
         };
         let workers: Vec<GaggleWorkerRecord> = run

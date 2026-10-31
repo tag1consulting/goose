@@ -534,20 +534,134 @@ mod tests {
 
     #[test]
     fn worker_names_are_safe_folder_names() {
-        assert_eq!(folder_name("gaggle2-worker-0"), "gaggle2-worker-0");
-        assert_eq!(folder_name("../etc"), "..-etc");
-        assert_eq!(folder_name(".."), "worker");
-        assert_eq!(folder_name(""), "worker");
-        assert_eq!(folder_name("a/b\\c d"), "a-b-c-d");
-        assert_eq!(folder_name(&"x".repeat(100)).len(), 64);
+        crate::gaggle::within(30, || {
+            assert_eq!(folder_name("gaggle2-worker-0"), "gaggle2-worker-0");
+            assert_eq!(folder_name("../etc"), "..-etc");
+            assert_eq!(folder_name(".."), "worker");
+            assert_eq!(folder_name(""), "worker");
+            assert_eq!(folder_name("a/b\\c d"), "a-b-c-d");
+            assert_eq!(folder_name(&"x".repeat(100)).len(), 64);
+        });
     }
 
     #[test]
     fn tokens_compare_whole() {
-        assert!(same_token("secret", "secret"));
-        assert!(same_token("", ""));
-        assert!(!same_token("secret", "secreT"));
-        assert!(!same_token("secret", "secret1"));
-        assert!(!same_token("", "x"));
+        crate::gaggle::within(30, || {
+            assert!(same_token("secret", "secret"));
+            assert!(same_token("", ""));
+            assert!(!same_token("secret", "secreT"));
+            assert!(!same_token("secret", "secret1"));
+            assert!(!same_token("", "x"));
+        });
+    }
+}
+
+#[cfg(test)]
+mod handshake_tests {
+    use super::super::proto::gaggle_client::GaggleClient;
+    use super::*;
+
+    /// What a manager answers `hello`: its `Welcome` worker id or `Reject`
+    /// reason.
+    async fn answer(manager: &Manager, hello: Hello) -> Result<u32, String> {
+        let channel =
+            tonic::transport::Endpoint::from_shared(format!("http://{}", manager.local_addr))
+                .unwrap()
+                .connect()
+                .await
+                .unwrap();
+        let mut client = GaggleClient::new(channel);
+        let (tx, rx) = mpsc::channel(4);
+        tx.send(WorkerMessage {
+            message: Some(FromWorker::Hello(hello)),
+        })
+        .await
+        .unwrap();
+        let mut inbound = client
+            .connect(ReceiverStream::new(rx))
+            .await
+            .unwrap()
+            .into_inner();
+        let first = inbound.message().await.unwrap().unwrap();
+        // Keep the stream open until the answer is read.
+        drop(tx);
+        match first.message {
+            Some(ToWorker::Welcome(welcome)) => Ok(welcome.worker_id),
+            Some(ToWorker::Reject(reject)) => Err(reject.reason),
+            other => panic!("{:?}", other),
+        }
+    }
+
+    fn hello() -> Hello {
+        Hello {
+            goose_version: env!("CARGO_PKG_VERSION").to_string(),
+            protocol_version: PROTOCOL_VERSION,
+            plan_hash: 7,
+            build_id: None,
+            token: "secret".to_string(),
+            worker_name: "w".to_string(),
+        }
+    }
+
+    /// B2.3, through a client of the test's own: a worker of another protocol
+    /// version, Goose version, plan or token is refused, naming the field;
+    /// then a worker that matches is welcome, and one more than the Gaggle
+    /// expects is refused.
+    #[tokio::test]
+    async fn gaggle_refuses_a_mismatched_hello() {
+        let test = async {
+            let manager = Manager::start(
+                "127.0.0.1",
+                0,
+                1,
+                Some("secret".to_string()),
+                7,
+                true,
+                Duration::from_secs(10),
+            )
+            .await
+            .unwrap();
+            let refused = [
+                (
+                    Hello {
+                        protocol_version: PROTOCOL_VERSION + 1,
+                        ..hello()
+                    },
+                    "protocol_version",
+                ),
+                (
+                    Hello {
+                        goose_version: "0.0.1".to_string(),
+                        ..hello()
+                    },
+                    "goose_version",
+                ),
+                (
+                    Hello {
+                        plan_hash: 8,
+                        ..hello()
+                    },
+                    "plan_hash",
+                ),
+                (
+                    Hello {
+                        token: "guess".to_string(),
+                        ..hello()
+                    },
+                    "token",
+                ),
+            ];
+            for (hello, field) in refused {
+                let reason = answer(&manager, hello).await.unwrap_err();
+                assert!(reason.starts_with(field), "{}: {}", field, reason);
+                assert!(!reason.contains("secret") && !reason.contains("guess"));
+            }
+            assert_eq!(answer(&manager, hello()).await, Ok(0));
+            let full = answer(&manager, hello()).await.unwrap_err();
+            assert!(full.contains("all 1 of its workers"), "{}", full);
+        };
+        tokio::time::timeout(Duration::from_secs(30), test)
+            .await
+            .expect("within 30 seconds");
     }
 }

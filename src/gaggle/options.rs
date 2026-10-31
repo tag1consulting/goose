@@ -344,3 +344,201 @@ impl GooseConfiguration {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::GooseDefaults;
+
+    fn parse(args: &[&str]) -> GooseConfiguration {
+        GooseConfiguration::parse_args_default(args).unwrap()
+    }
+
+    /// The detail of the error a configuration of `args` is refused with,
+    /// as `execute()` checks it.
+    fn refusal(args: &[&str]) -> String {
+        let mut configuration = parse(args);
+        let result = configuration.worker_refusals().and_then(|()| {
+            configuration.configure(&GooseDefaults::default())?;
+            configuration.validate()
+        });
+        match result {
+            Err(GooseError::InvalidOption { detail, .. }) => detail,
+            other => panic!("{:?} was not refused: {:?}", args, other),
+        }
+    }
+
+    /// B3: every combination A3 refuses, with its message.
+    #[test]
+    fn gaggle_refused_option_combinations() {
+        crate::gaggle::within(30, || {
+            let manager = ["--manager", "--expect-workers", "2", "--host", "http://h"];
+            let worker = ["--worker", "--manager-host", "m"];
+            let with = |base: &[&str], more: &[&str]| -> Vec<String> {
+                base.iter().chain(more).map(|arg| arg.to_string()).collect()
+            };
+            let cases: Vec<(Vec<String>, &str)> = vec![
+                (
+                    with(&["--manager"], &[]),
+                    "--manager needs --expect-workers",
+                ),
+                (
+                    with(&["--manager", "--expect-workers", "0"], &[]),
+                    "--expect-workers must be at least 1",
+                ),
+                (
+                    with(
+                        &["--manager", "--expect-workers", "2", "--worker"],
+                        &["--manager-host", "m"],
+                    ),
+                    "--manager can't be used with --worker",
+                ),
+                (
+                    with(&manager, &["--no-autostart"]),
+                    "--no-autostart can't be used with --manager",
+                ),
+                (
+                    with(&manager, &["--manager-bind-host", "0.0.0.0"]),
+                    "is not a loopback address: set --gaggle-token",
+                ),
+                (
+                    with(&manager, &["--throttle-requests", "1"]),
+                    "is fewer than the 2 workers",
+                ),
+                (
+                    with(&manager, &["--gaggle-shadow-merge"]),
+                    "--gaggle-shadow-merge can't be used with --manager or --worker",
+                ),
+                (
+                    with(&manager, &["--gaggle-heartbeat-timeout", "0"]),
+                    "--gaggle-heartbeat-timeout must be a time of at least one second",
+                ),
+                (with(&["--worker"], &[]), "--worker needs --manager-host"),
+                (
+                    with(&["--expect-workers", "2"], &[]),
+                    "--expect-workers needs --manager",
+                ),
+                (
+                    with(&["--manager-host", "m"], &[]),
+                    "--manager-host needs --worker",
+                ),
+                (
+                    with(&["--gaggle-token", "t"], &[]),
+                    "--gaggle-token needs --manager or --worker",
+                ),
+                (
+                    with(&["--no-hash-check"], &[]),
+                    "--no-hash-check needs --manager or --worker",
+                ),
+            ];
+            for (args, message) in cases {
+                let args: Vec<&str> = args.iter().map(String::as_str).collect();
+                let detail = refusal(&args);
+                assert!(detail.contains(message), "{:?}: {}", args, detail);
+            }
+            // A worker refuses every option its manager gives.
+            let refused: &[&[&str]] = &[
+                &["--host", "http://h"],
+                &["--users", "3"],
+                &["--increase-rate", "3"],
+                &["--increase-time", "3"],
+                &["--run-time", "3"],
+                &["--decrease-rate", "3"],
+                &["--decrease-time", "3"],
+                &["--iterations", "3"],
+                &["--test-plan", "3,1s"],
+                &["--scenarios", "a"],
+                &["--throttle-requests", "3"],
+                &["--running-metrics", "3"],
+                &["--report-file", "r.html"],
+                &["--compress"],
+                &["--notes", "n"],
+                &["--report-graph-data"],
+                &["--no-reset-metrics"],
+                &["--no-metrics"],
+                &["--no-transaction-metrics"],
+                &["--no-scenario-metrics"],
+                &["--no-status-codes"],
+                &["--co-mitigation", "average"],
+                &["--threshold", "p95<1s"],
+                &["--no-threshold-abort"],
+                &["--request-log"],
+                &["--transaction-log"],
+                &["--scenario-log"],
+                &["--error-log"],
+                &["--debug-log"],
+                &["--dashboard"],
+                &["--no-autostart"],
+                &["--timeout", "3"],
+            ];
+            for option in refused {
+                let args = with(&worker, option);
+                let args: Vec<&str> = args.iter().map(String::as_str).collect();
+                let detail = refusal(&args);
+                assert!(
+                    detail.contains(&format!("{} can't be used with --worker", option[0])),
+                    "{:?}: {}",
+                    args,
+                    detail
+                );
+            }
+            // What a worker keeps.
+            let mut kept = parse(
+                &with(
+                    &worker,
+                    &["--output-dir", "o", "--goose-log", "g.log", "-v"],
+                )
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            );
+            kept.worker_refusals().unwrap();
+            kept.configure(&GooseDefaults::default()).unwrap();
+            kept.validate().unwrap();
+        });
+    }
+
+    /// B3: the token never shows in `config` (the `Debug` output) or
+    /// `config-json`, nor when it comes from the environment. The process
+    /// tests check no log line holds it.
+    #[test]
+    #[serial_test::serial]
+    fn gaggle_token_never_shows() {
+        crate::gaggle::within(30, || {
+            let token = "tok-7f3a-never-shown";
+            let mut configuration = parse(&[
+                "--manager",
+                "--expect-workers",
+                "1",
+                "--host",
+                "http://h",
+                "--gaggle-token",
+                token,
+            ]);
+            configuration.configure(&GooseDefaults::default()).unwrap();
+            configuration.validate().unwrap();
+            assert_eq!(configuration.gaggle_token(), Some(token));
+            let shown = configuration.shown();
+            let debug = format!("{:?}", shown);
+            let json = serde_json::to_string(&shown).unwrap();
+            for output in [&debug, &json] {
+                assert!(!output.contains(token), "{}", output);
+                assert!(output.contains("gaggle_token"), "{}", output);
+            }
+            // From the environment.
+            std::env::set_var(TOKEN_ENV, token);
+            let mut configuration = parse(&["--worker", "--manager-host", "m"]);
+            configuration.configure(&GooseDefaults::default()).unwrap();
+            std::env::remove_var(TOKEN_ENV);
+            assert_eq!(configuration.gaggle_token(), Some(token));
+            assert!(!format!("{:?}", configuration).contains(token));
+            // A run that is neither ignores the environment.
+            std::env::set_var(TOKEN_ENV, token);
+            let mut configuration = parse(&["--host", "http://h"]);
+            configuration.configure(&GooseDefaults::default()).unwrap();
+            std::env::remove_var(TOKEN_ENV);
+            assert_eq!(configuration.gaggle_token(), None);
+            configuration.validate().unwrap();
+        });
+    }
+}

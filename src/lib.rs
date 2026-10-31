@@ -686,7 +686,7 @@ pub struct GooseAttack {
     worker_data: Option<Arc<[u8]>>,
     /// The manager or worker side of a Gaggle, with `--manager` or `--worker`.
     #[cfg(feature = "gaggle")]
-    gaggle: Option<Box<gaggle::run::GaggleRole>>,
+    gaggle: Option<gaggle::run::GaggleRole>,
     /// Where a manager reports the address it listens on (unit tests).
     #[cfg(all(test, feature = "gaggle"))]
     gaggle_bound: Option<tokio::sync::oneshot::Sender<std::net::SocketAddr>>,

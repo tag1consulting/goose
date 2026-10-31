@@ -648,6 +648,13 @@ mod tests {
         delta
     }
 
+    /// The outbox's next message, within 30 seconds.
+    async fn next(outbox: &Outbox) -> Option<WorkerMessage> {
+        tokio::time::timeout(Duration::from_secs(30), outbox.next())
+            .await
+            .expect("within 30 seconds")
+    }
+
     /// Past eight queued deltas the newest is coalesced into the last queued,
     /// which then covers both: nothing is lost and the queue does not grow.
     #[tokio::test]
@@ -660,13 +667,13 @@ mod tests {
         outbox.push_message(ToManager::Heartbeat(Heartbeat {}));
         let mut sent = Vec::new();
         outbox.close();
-        while let Some(message) = outbox.next().await {
+        while let Some(message) = next(&outbox).await {
             sent.push(message);
         }
         assert_eq!(sent.len(), MAX_QUEUED_DELTAS + 1);
         let last = match &sent[MAX_QUEUED_DELTAS - 1].message {
             Some(ToManager::Metrics(metrics)) => GaggleDelta::decode(&metrics.delta).unwrap(),
-            other => panic!("{other:?}"),
+            other => panic!("{:?}", other),
         };
         assert_eq!((last.first_seq, last.seq), (8, 12));
         assert_eq!(last.graph.requests["GET /"].len(), 5);
@@ -678,13 +685,15 @@ mod tests {
         let outbox = Outbox::default();
         outbox.push_delta(delta(1));
         outbox.push(Outgoing::Message(ToManager::Heartbeat(Heartbeat {})), true);
-        let first = outbox.next().await.unwrap();
+        let first = next(&outbox).await.unwrap();
         assert!(matches!(first.message, Some(ToManager::Heartbeat(_))));
     }
 
     #[test]
     fn backoff_is_one_two_four_eight_then_ten() {
-        let waits: Vec<u64> = (0..7).map(|attempt| backoff(attempt).as_secs()).collect();
-        assert_eq!(waits, [1, 2, 4, 8, 10, 10, 10]);
+        crate::gaggle::within(30, || {
+            let waits: Vec<u64> = (0..7).map(|attempt| backoff(attempt).as_secs()).collect();
+            assert_eq!(waits, [1, 2, 4, 8, 10, 10, 10]);
+        });
     }
 }
