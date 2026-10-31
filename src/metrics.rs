@@ -3447,37 +3447,37 @@ impl MetricsProcessor {
     fn process_metric(&mut self, metric: GooseMetric) {
         #[cfg(feature = "gaggle")]
         if self.gaggle.is_some() {
-            self.shadow_metric(metric.clone());
+            self.shadow_metric(&metric);
         }
-        self.dispatch_metric(metric);
+        self.dispatch_metric(&metric);
     }
 
     /// [`Self::process_metric`] without the Gaggle worker's copy.
-    fn dispatch_metric(&mut self, metric: GooseMetric) {
+    fn dispatch_metric(&mut self, metric: &GooseMetric) {
         match metric {
             GooseMetric::Request(request_metric) => {
-                self.process_request_metric(&request_metric);
+                self.process_request_metric(request_metric);
             }
             GooseMetric::Transaction(raw_transaction) => {
-                self.process_transaction_metric(&raw_transaction);
+                self.process_transaction_metric(raw_transaction);
             }
             GooseMetric::Scenario(raw_scenario) => {
-                self.process_scenario_metric(&raw_scenario);
+                self.process_scenario_metric(raw_scenario);
             }
             GooseMetric::All {
                 request,
                 transaction,
                 scenario,
             } => {
-                self.process_request_metric(&request);
-                self.process_transaction_metric(&transaction);
-                self.process_scenario_metric(&scenario);
+                self.process_request_metric(request);
+                self.process_transaction_metric(transaction);
+                self.process_scenario_metric(scenario);
             }
             GooseMetric::Batch(batch) => {
-                self.process_batch(*batch);
+                self.process_batch(batch);
             }
             GooseMetric::TransactionError(transaction_error) => {
-                self.record_transaction_error(&transaction_error);
+                self.record_transaction_error(transaction_error);
             }
         }
     }
@@ -3962,7 +3962,7 @@ impl MetricsProcessor {
     /// [`Self::process_batch`], for unit tests in other modules.
     #[cfg(test)]
     pub(crate) fn process_batch_for_test(&mut self, batch: GooseMetricBatch) {
-        self.process_batch(batch);
+        self.process_batch(&batch);
     }
 
     /// The processor's aggregated metrics, for unit tests in other modules.
@@ -4280,7 +4280,7 @@ impl MetricsProcessor {
         }
     }
 
-    fn process_batch(&mut self, batch: GooseMetricBatch) {
+    fn process_batch(&mut self, batch: &GooseMetricBatch) {
         // Discard stale batches from before a metrics reset.
         let current_epoch = self.metrics_epoch.load(AtomicOrdering::Relaxed);
         if batch.epoch < current_epoch {
@@ -4430,35 +4430,38 @@ impl MetricsProcessor {
             co_metrics.update_synthetic_percentage();
         }
         if !latency_merged {
-            for (key, entry) in batch.requests {
-                let aggregate = self.metrics.requests.entry(key).or_insert_with(|| {
-                    GooseRequestMetricAggregate::new(
-                        &entry.path,
-                        entry.method,
-                        0,
-                        &entry.custom_method,
-                    )
-                });
+            for (key, entry) in &batch.requests {
+                let aggregate = match self.metrics.requests.get_mut(key) {
+                    Some(aggregate) => aggregate,
+                    None => self.metrics.requests.entry(key.clone()).or_insert_with(|| {
+                        GooseRequestMetricAggregate::new(
+                            &entry.path,
+                            entry.method,
+                            0,
+                            &entry.custom_method,
+                        )
+                    }),
+                };
 
                 // Merge timing data: combine BTreeMaps, update min/max/total/counter.
                 aggregate.raw_data.merge(&entry.raw_data);
-                Self::merge_batch_entry(self.configuration.no_status_codes, aggregate, &entry);
+                Self::merge_batch_entry(self.configuration.no_status_codes, aggregate, entry);
             }
 
             // Times from the second after the batch's: every key here also
             // has an entry in `requests`, merged above.
-            for (key, next) in batch.next_second {
-                if let Some(aggregate) = self.metrics.requests.get_mut(&key) {
-                    aggregate.raw_data.merge(&next);
+            for (key, next) in &batch.next_second {
+                if let Some(aggregate) = self.metrics.requests.get_mut(key) {
+                    aggregate.raw_data.merge(next);
                     if let Some(co_data) = aggregate.coordinated_omission_data.as_mut() {
-                        co_data.merge(&next);
+                        co_data.merge(next);
                     }
                 }
             }
         }
 
         // 4. Merge pre-aggregated transaction timing data.
-        for ((si, ti), entry) in batch.transactions {
+        for (&(si, ti), entry) in &batch.transactions {
             let Some(scenario_txns) = self.metrics.transactions.get_mut(si) else {
                 // Invalid scenario index (possible in Gaggle mode with mismatched configs).
                 continue;
@@ -4473,7 +4476,7 @@ impl MetricsProcessor {
         }
 
         // 5. Merge pre-aggregated scenario timing data.
-        for (index, entry) in batch.scenarios {
+        for (&index, entry) in &batch.scenarios {
             let Some(agg) = self.metrics.scenarios.get_mut(index) else {
                 // Invalid scenario index (possible in Gaggle mode with mismatched configs).
                 continue;
@@ -4553,13 +4556,13 @@ impl MetricsProcessor {
 
     /// Process `metric` a second time, into the Gaggle worker's pending
     /// state, with the same code.
-    fn shadow_metric(&mut self, metric: GooseMetric) {
+    fn shadow_metric(&mut self, metric: &GooseMetric) {
         let Some(mut state) = self.gaggle.take() else {
             return;
         };
         // A transaction is stamped with the second it started, which can be
         // any time ago: the pending series reach back to it.
-        if let Some(second) = earliest_second(&metric) {
+        if let Some(second) = earliest_second(metric) {
             state.pending_graph.gaggle_lower_origin(second);
         }
         std::mem::swap(&mut self.metrics, &mut state.pending_metrics);
@@ -7729,7 +7732,7 @@ mod test {
             },
         );
 
-        processor.process_batch(batch);
+        processor.process_batch(&batch);
 
         let agg = &processor.metrics.requests["GET /"];
         assert_eq!(agg.raw_data.counter, 3);
@@ -7776,7 +7779,7 @@ mod test {
                 status_code_timings: HashMap::new(),
             },
         );
-        processor.process_batch(batch);
+        processor.process_batch(&batch);
 
         let agg = &processor.metrics.requests["GET /"];
         assert_eq!(agg.raw_data.counter, 110);
@@ -7811,7 +7814,7 @@ mod test {
                 status_code_timings: HashMap::new(),
             },
         );
-        processor.process_batch(batch1);
+        processor.process_batch(&batch1);
 
         // Second batch: 1 request at 5ms (new minimum).
         let mut batch2 = GooseMetricBatch::new(0);
@@ -7828,7 +7831,7 @@ mod test {
                 status_code_timings: HashMap::new(),
             },
         );
-        processor.process_batch(batch2);
+        processor.process_batch(&batch2);
 
         let agg = &processor.metrics.requests["GET /api"];
         assert_eq!(agg.raw_data.counter, 3);
@@ -7848,7 +7851,7 @@ mod test {
         req.success = false;
         batch.individual_requests.push(req);
 
-        processor.process_batch(batch);
+        processor.process_batch(&batch);
 
         // Individual requests go through process_request_metric, which records
         // them into the aggregate just like non-batched metrics.
@@ -7883,7 +7886,7 @@ mod test {
             },
         );
 
-        processor.process_batch(batch);
+        processor.process_batch(&batch);
 
         let agg = &processor.metrics.transactions[0][0];
         assert_eq!(agg.run_times.counter, 3);
@@ -7909,7 +7912,7 @@ mod test {
             },
         );
 
-        processor.process_batch(batch);
+        processor.process_batch(&batch);
 
         let agg = &processor.metrics.scenarios[0];
         assert_eq!(agg.run_times.counter, 3);
@@ -7941,7 +7944,7 @@ mod test {
             },
         );
 
-        processor.process_batch(batch);
+        processor.process_batch(&batch);
 
         // Nothing should be recorded because the batch was stale.
         assert!(
@@ -7969,7 +7972,7 @@ mod test {
             },
         );
 
-        processor.process_batch(batch);
+        processor.process_batch(&batch);
 
         assert!(processor.metrics.requests.contains_key("GET /current"));
         assert_eq!(
@@ -8029,7 +8032,7 @@ mod test {
                 status_code_timings,
             },
         );
-        proc_batch.process_batch(batch);
+        proc_batch.process_batch(&batch);
 
         // Compare aggregates.
         let ind = &proc_individual.metrics.requests["GET /"];
@@ -8142,7 +8145,7 @@ mod test {
                 status_code_timings: HashMap::new(),
             },
         );
-        proc_batch.process_batch(batch);
+        proc_batch.process_batch(&batch);
 
         // Compare request aggregates (timing data should match exactly).
         let ind_agg = &proc_individual.metrics.requests["GET /"];
@@ -8182,7 +8185,7 @@ mod test {
             user.flush_batch().unwrap();
             while let Ok(metric) = rx.try_recv() {
                 match metric {
-                    GooseMetric::Batch(batch) => processor.process_batch(*batch),
+                    GooseMetric::Batch(batch) => processor.process_batch(&batch),
                     other => panic!("expected GooseMetric::Batch, got {:?}", other),
                 }
             }
@@ -8845,8 +8848,8 @@ mod test {
     fn latency_batch_times_reach_the_rings() {
         let mut processor =
             make_latency_test_processor(GooseCoordinatedOmissionMitigation::Disabled);
-        processor.process_batch(latency_batch(3, &[10, 30]));
-        processor.process_batch(latency_batch(4, &[1400]));
+        processor.process_batch(&latency_batch(3, &[10, 30]));
+        processor.process_batch(&latency_batch(4, &[1400]));
         assert_eq!(measured_count(&mut processor, 3), 2);
         assert_eq!(measured_count(&mut processor, 4), 1);
         let series = request_series(&mut processor, "/", false).unwrap();
