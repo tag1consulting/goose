@@ -42,8 +42,6 @@ pub(crate) struct WorkerState {
     /// Errors `set_success()` took back since the last delta, by request and
     /// second.
     pub(crate) removals: Vec<(String, usize)>,
-    /// The graph rows sent since the epoch started, for the final delta.
-    sent_graph: GraphPart,
     /// The series second of the last metrics reset, if any.
     series_origin: Option<Second>,
     /// The `--gaggle-shadow-merge` self check, when it runs.
@@ -66,7 +64,6 @@ impl WorkerState {
             counts_sent: HashMap::new(),
             users_sent: (0, Vec::new()),
             removals: Vec::new(),
-            sent_graph: GraphPart::default(),
             series_origin: None,
             shadow: None,
         }
@@ -105,7 +102,6 @@ impl WorkerState {
             GraphData::gaggle_pending(self.synthetic, second.saturating_sub(self.lag));
         self.counts_sent.clear();
         self.removals.clear();
-        self.sent_graph.clear_rates();
         self.series_origin = Some(second as Second);
     }
 
@@ -156,16 +152,19 @@ impl WorkerState {
             co.cap_events();
         }
         let mut graph = self.take_graph(now);
-        self.sent_graph.add_rates(&graph);
         graph.users = cumulative.1.gaggle_users_since(&mut self.users_sent);
         delta.graph = graph;
         delta
     }
 
-    /// The worker's whole state, which replaces everything the manager
-    /// holds for it: the metrics from the processor's own whole run state
-    /// `cumulative`, whose counters must be up to date, and the graph rows
-    /// of every delta sent this epoch and those still pending.
+    /// The worker's last delta: its whole metrics this epoch, from the
+    /// processor's own whole run state `cumulative`, whose counters must be
+    /// up to date, which replace the metrics the manager holds for it; the
+    /// graph rows pending since the last delta, which add to what it holds,
+    /// as any delta's do; and the whole users series. A lost delta's
+    /// metrics are made good by it, its graph rows are not: the manager
+    /// records the loss in its gaps. Nothing sent is kept here, so the
+    /// worker's memory does not grow with the deltas it sends.
     pub(crate) fn take_final(
         &mut self,
         cumulative: (&GooseMetrics, &GraphData),
@@ -182,9 +181,7 @@ impl WorkerState {
                 request.fail = aggregate.fail_count as i64;
             }
         }
-        let pending = self.take_graph(now);
-        self.sent_graph.add_rates(&pending);
-        let mut graph = self.sent_graph.clone();
+        let mut graph = self.take_graph(now);
         let mut everything = (0, Vec::new());
         graph.users = cumulative.1.gaggle_users_since(&mut everything);
         self.users_sent = everything;

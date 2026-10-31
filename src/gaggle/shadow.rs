@@ -1,8 +1,9 @@
 //! `--gaggle-shadow-merge`: a normal run that is also its own Gaggle worker
 //! and manager. Each second the metrics processor takes a delta, encodes it,
-//! decodes it and adds it to a manager's accumulator; at the end a second
-//! accumulator gets only the final delta. Both merges must equal the run's
-//! own metrics and graph data, and its dashboard snapshot.
+//! decodes it and adds it to two managers' accumulators; at the end the
+//! first gets the last delta, and the second gets it and then the final
+//! delta, whose metrics replace what it holds. Both merges must equal the
+//! run's own metrics and graph data, and its dashboard snapshot.
 
 use super::delta::GaggleDelta;
 use super::merge::GaggleAccumulator;
@@ -93,6 +94,7 @@ impl ShadowMerge {
                 if to_finals {
                     self.finals.apply(decoded);
                 } else {
+                    self.finals.apply(decoded.clone());
                     // A metrics reset starts the count again, as it starts
                     // the merged events again.
                     let dropped = decoded
@@ -119,7 +121,7 @@ impl ShadowMerge {
     }
 
     /// The end of the run: the last delta, then the final one, which only
-    /// the second accumulator gets. `run` is the run's own metrics and
+    /// the second accumulator gets, after every delta. `run` is the run's own metrics and
     /// graph data, finished; `snapshot` builds a dashboard snapshot with
     /// fixed timestamps from metrics and graph data, when the dashboard is
     /// on. How it ended also goes to the outcome given to [`Self::new`].

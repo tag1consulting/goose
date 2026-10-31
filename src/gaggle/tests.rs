@@ -860,15 +860,25 @@ fn apply_all<'a>(deltas: impl IntoIterator<Item = &'a GaggleDelta>) -> GaggleAcc
     accumulator
 }
 
-/// B3: a delta lost in the middle is made good by the worker's final delta,
-/// and the gap is reported.
+/// B3: a delta lost in the middle: the worker's final delta makes its
+/// metrics good, not its graph rows, which stay missing exactly as if
+/// the delta had carried none, and the gap is reported.
 #[test]
-fn gaggle_lost_delta_then_final_is_exact() {
+fn gaggle_lost_delta_then_final_repairs_metrics_only() {
     let events = events(0x645);
     let single = single(&events);
     let mut deltas = worker_deltas(&events, 3);
-    let lost = deltas[1].remove(5);
-    assert_eq!(lost.kind, DeltaKind::Delta);
+    // One past the reset, with graph rows, so the final's epoch holds it.
+    let epoch = deltas[1].last().unwrap().epoch;
+    let at = deltas[1]
+        .iter()
+        .position(|delta| {
+            delta.kind == DeltaKind::Delta
+                && delta.epoch == epoch
+                && !delta.graph.requests.is_empty()
+        })
+        .expect("a delta with graph rows after the reset");
+    let lost = deltas[1].remove(at);
     let accumulator = apply_all(deltas.iter().flatten());
     assert_eq!(
         accumulator.gaps(),
@@ -878,10 +888,55 @@ fn gaggle_lost_delta_then_final_is_exact() {
             received: lost.seq + 1,
         }]
     );
+    let (mut metrics, graph) = accumulator.merged();
+    super::compare::adopt_unmerged(&mut metrics, &single.0);
     assert_none(
-        "lost delta, then final",
-        &differences(accumulator.merged(), &single),
+        "lost delta, then final: metrics",
+        &super::compare::metrics_diff(&metrics, &single.0),
     );
+    assert!(
+        !graph.gaggle_diff(&single.1).is_empty(),
+        "the lost delta's graph rows came back"
+    );
+    // The graph is the deltas' with the lost one's rate rows left out.
+    let mut emptied = lost.clone();
+    emptied.graph = super::delta::GraphPart {
+        users: lost.graph.users.clone(),
+        ..Default::default()
+    };
+    deltas[1].insert(at, emptied);
+    let (_, expected) = apply_all(deltas.iter().flatten()).merged();
+    assert_none(
+        "lost delta, then final: graph",
+        &graph.gaggle_diff(&expected),
+    );
+}
+
+/// A worker keeps nothing of what it sent: after any number of deltas its
+/// final delta carries only the graph rows pending since the last one, so
+/// neither its memory nor its final delta grows with the run.
+#[test]
+fn gaggle_worker_keeps_no_sent_rows() {
+    let events = events(0x645);
+    let mut side = Side::new(share(0, 2), Some(0));
+    let mut sent = 0;
+    for event in &events {
+        sent += side.play(event).iter().count();
+    }
+    assert!(sent > 20, "{} deltas: too few to show growth", sent);
+    side.drain();
+    side.processor.gaggle_take_delta(SECONDS + 2).unwrap();
+    let last_final = side.processor.gaggle_take_final(SECONDS + 2).unwrap();
+    let graph = &last_final.graph;
+    let rows = graph.requests.values().map(BTreeMap::len).sum::<usize>()
+        + graph.errors.values().map(BTreeMap::len).sum::<usize>()
+        + graph.averages.values().map(BTreeMap::len).sum::<usize>()
+        + graph.latency.values().map(BTreeMap::len).sum::<usize>()
+        + graph.synthetic.values().map(BTreeMap::len).sum::<usize>()
+        + graph.transactions.len()
+        + graph.scenarios.len();
+    assert_eq!(rows, 0, "the final delta resent rows");
+    assert!(!last_final.metrics.requests.is_empty());
 }
 
 /// B3: a worker lost with its last deltas and no final delta: what it sent

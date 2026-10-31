@@ -57,10 +57,14 @@ impl GaggleAccumulator {
     }
 
     /// Add a delta from a worker, in the order the worker sent them. A
-    /// final delta replaces what is held for the worker; one from an
-    /// epoch older than the worker's is discarded, and a newer epoch
-    /// starts the worker's metrics and rate series again. A gap or repeat
-    /// in the sequence is recorded in [`Self::gaps`]; a repeat is ignored.
+    /// final delta's metrics replace those held for the worker, and its
+    /// graph rows, those pending since the worker's last delta, add to the
+    /// rows held, as any delta's do: a lost delta's metrics are made good
+    /// by the final, its graph rows are not, and the loss stays recorded
+    /// in [`Self::gaps`]. A delta from an epoch older than the worker's is
+    /// discarded, and a newer epoch starts the worker's metrics and rate
+    /// series again. A gap or repeat in the sequence is recorded in
+    /// [`Self::gaps`]; a repeat is ignored.
     pub(crate) fn apply(&mut self, delta: GaggleDelta) {
         let worker = self
             .workers
@@ -72,12 +76,6 @@ impl GaggleAccumulator {
                 lost: false,
             });
         if delta.epoch < worker.total.epoch {
-            return;
-        }
-        if delta.kind == DeltaKind::Final {
-            worker.last_seq = delta.seq;
-            worker.finished = true;
-            worker.total = delta;
             return;
         }
         if delta.first_seq != worker.last_seq + 1 {
@@ -95,6 +93,10 @@ impl GaggleAccumulator {
             worker.total.epoch = delta.epoch;
             worker.total.metrics = MetricsPart::default();
             worker.total.graph.clear_rates();
+        }
+        if delta.kind == DeltaKind::Final {
+            worker.finished = true;
+            worker.total.metrics = MetricsPart::default();
         }
         worker.total.add(&delta);
     }
@@ -198,8 +200,9 @@ impl GaggleAccumulator {
 }
 
 /// Two consecutive deltas from one worker as one: applying it is applying
-/// `a` then `b`. A newer epoch in `b` starts again from `b`, and a final
-/// `b` replaces `a`. Two exceptions: coordinated omission events stay
+/// `a` then `b`. A newer epoch in `b` starts again from `b`, keeping `a`'s
+/// users levels, and a final `b`'s metrics replace `a`'s while its graph
+/// rows add to `a`'s. Two exceptions: coordinated omission events stay
 /// capped at [`super::delta::MAX_CO_EVENTS_PER_DELTA`] in a delta, the
 /// oldest kept, where applying both keeps up to the cap from each; and a
 /// final `a` followed by a delta of a newer epoch does not mark the worker
@@ -207,24 +210,22 @@ impl GaggleAccumulator {
 // Bounds a worker's send queue in Gaggle step 2; tested here.
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn coalesce(a: &GaggleDelta, b: &GaggleDelta) -> GaggleDelta {
-    if b.kind == DeltaKind::Final || b.epoch > a.epoch {
-        let mut users = if b.kind == DeltaKind::Final {
-            BTreeMap::new()
-        } else {
-            a.graph.users.clone()
-        };
-        let mut joined = b.clone();
-        users.append(&mut joined.graph.users);
-        joined.graph.users = users;
-        if b.kind == DeltaKind::Delta {
-            joined.first_seq = a.first_seq;
-        }
-        return joined;
-    }
     if b.epoch < a.epoch {
         return a.clone();
     }
+    if b.epoch > a.epoch {
+        let mut users = a.graph.users.clone();
+        let mut joined = b.clone();
+        users.append(&mut joined.graph.users);
+        joined.graph.users = users;
+        joined.first_seq = a.first_seq;
+        return joined;
+    }
     let mut joined = a.clone();
+    if b.kind == DeltaKind::Final {
+        joined.kind = DeltaKind::Final;
+        joined.metrics = MetricsPart::default();
+    }
     joined.add(b);
     if joined.kind == DeltaKind::Delta {
         if let Some(co) = joined.metrics.co.as_mut() {

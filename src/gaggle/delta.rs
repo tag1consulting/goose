@@ -1,6 +1,7 @@
 //! What a Gaggle worker sends its manager once a second: everything its
 //! metrics, graphs, dashboard snapshot and reports are built from, as a
-//! change since its last delta or, at the end, as its whole state.
+//! change since its last delta or, at the end, as its whole metrics and the
+//! graph rows since its last delta.
 //!
 //! Every part adds to another of its kind with one rule, [`GaggleDelta::add`],
 //! which applying a delta, coalescing two deltas and merging workers all use.
@@ -30,17 +31,22 @@ pub(crate) type Second = u64;
 /// events out. A [`DeltaKind::Final`] carries every event the worker holds.
 pub(crate) const MAX_CO_EVENTS_PER_DELTA: usize = 1_000;
 
-/// Whether a delta adds to what the manager holds for the worker, or
-/// replaces it.
+/// Whether a delta's metrics add to what the manager holds for the worker,
+/// or replace it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum DeltaKind {
     /// What changed since the worker's previous delta.
     Delta,
-    /// The worker's whole state, which replaces everything held for it.
+    /// The worker's last delta: its whole metrics this epoch, which
+    /// replace the metrics held for it, so a lost delta's metrics are made
+    /// good; and, as any delta, the graph rows since its previous delta,
+    /// which add to those held, so a lost delta's graph rows are not made
+    /// good, only recorded in the manager's gaps.
     Final,
 }
 
-/// One worker's metrics, as a change or as its whole state.
+/// One worker's metrics, as a change, or its whole metrics in a final
+/// delta (see [`DeltaKind::Final`]).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct GaggleDelta {
     /// The worker that sent it.
