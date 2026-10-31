@@ -636,10 +636,12 @@ pub struct GooseAttack {
     /// The global ordinal of this process's first user: 0, unless it runs a
     /// share of a Gaggle's users. User indexes, the users each scenario
     /// counts and coordinated omission events all count from it.
+    #[cfg(feature = "gaggle")]
     user_offset: usize,
     /// The index in `scenarios` of each of this process's users, in ordinal
     /// order, when it runs a share of a Gaggle's users; `None` allocates
     /// every user here.
+    #[cfg(feature = "gaggle")]
     user_slice: Option<Vec<usize>>,
     /// Optional default values for Goose run-time options.
     defaults: GooseDefaults,
@@ -764,7 +766,9 @@ impl GooseAttack {
             weighted_users: Vec::new(),
             #[cfg(feature = "gaggle")]
             gaggle_shadow: None,
+            #[cfg(feature = "gaggle")]
             user_offset: 0,
+            #[cfg(feature = "gaggle")]
             user_slice: None,
             defaults: GooseDefaults::default(),
             configuration,
@@ -815,7 +819,9 @@ impl GooseAttack {
             weighted_users: Vec::new(),
             #[cfg(feature = "gaggle")]
             gaggle_shadow: None,
+            #[cfg(feature = "gaggle")]
             user_offset: 0,
+            #[cfg(feature = "gaggle")]
             user_slice: None,
             defaults: GooseDefaults::default(),
             configuration,
@@ -1320,6 +1326,7 @@ impl GooseAttack {
     /// The weighted scenarios repeat until there are enough, or, for a share
     /// of a Gaggle's users of that size, they are its slice.
     fn user_scenario_order(&mut self, total_users: usize) -> Vec<usize> {
+        #[cfg(feature = "gaggle")]
         if let Some(slice) = self.user_slice.as_ref().filter(|s| s.len() == total_users) {
             return slice.iter().rev().copied().collect();
         }
@@ -1340,6 +1347,7 @@ impl GooseAttack {
     /// started is ordinal 0. Under the `Random` scheduler each call draws
     /// again, so a Gaggle draws once and hands each worker its slice.
     // Called by the Gaggle manager in step 2; tested here.
+    #[cfg(feature = "gaggle")]
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn user_scenarios(&mut self, total_users: usize) -> Vec<usize> {
         let saved = self.user_slice.take();
@@ -1353,6 +1361,7 @@ impl GooseAttack {
     /// `scenarios` is each of `slice` in turn: a Gaggle worker's share of a
     /// load test, for any scheduler.
     // Called by a Gaggle worker in step 2; tested here.
+    #[cfg(feature = "gaggle")]
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn set_user_slice(&mut self, offset: usize, slice: Vec<usize>) {
         self.user_offset = offset;
@@ -1364,6 +1373,7 @@ impl GooseAttack {
     /// scenarios: for the `RoundRobin` and `Serial` schedulers, which
     /// allocate the same way every time.
     // Called by a Gaggle worker in step 2; tested here.
+    #[cfg(feature = "gaggle")]
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn set_user_ordinals(&mut self, offset: usize, users: usize, total: usize) {
         let all = self.user_scenarios(total);
@@ -2644,7 +2654,11 @@ impl GooseAttack {
                     .schedule_next_adjust(Duration::from_secs_f64(1.0 / f64::from(increase_rate)));
 
                 // Remember which task group this user is using.
-                thread_user.weighted_users_index = self.user_offset + self.metrics.total_users;
+                #[cfg(feature = "gaggle")]
+                let first_user = self.user_offset;
+                #[cfg(not(feature = "gaggle"))]
+                let first_user = 0;
+                thread_user.weighted_users_index = first_user + self.metrics.total_users;
 
                 // Create a per-thread channel allowing parent thread to control child threads.
                 let (parent_sender, thread_receiver): (
@@ -5426,6 +5440,7 @@ mod tests {
         attack
     }
 
+    #[cfg(feature = "gaggle")]
     /// Splits of `total` users over `workers` workers: one each way the
     /// generator enumerates, uneven, some empty when there are more workers
     /// than users.
@@ -5485,10 +5500,34 @@ mod tests {
         started
     }
 
+    /// Users are built in the order the allocation before Gaggle built
+    /// them, the weighted scenarios repeated, for the schedulers that
+    /// allocate the same way every time: what `user_scenario_order` gives
+    /// when the process runs every user, as it always does without the
+    /// `gaggle` feature.
+    #[test]
+    fn user_scenario_order_is_the_weighted_list_repeated() {
+        for scheduler in [GooseScheduler::RoundRobin, GooseScheduler::Serial] {
+            for total in [0, 1, 4, 10, 1_000] {
+                let mut attack = gaggle_attack(scheduler.clone());
+                let mut built = gaggle_single_order(&mut attack, total);
+                built.reverse();
+                assert_eq!(
+                    attack.user_scenario_order(total),
+                    built,
+                    "{:?} {}",
+                    scheduler,
+                    total
+                );
+            }
+        }
+    }
+
     /// B5: workers running shares of the users from their global ordinals
     /// start, in turn, exactly the scenarios one process running them all
     /// would, for every split tried, with the deterministic schedulers
     /// working out their own share and the random one handed its slice.
+    #[cfg(feature = "gaggle")]
     #[test]
     fn gaggle_ordinals_match_one_process() {
         for scheduler in [
@@ -5540,6 +5579,7 @@ mod tests {
 
     /// A worker's users start with global ordinals from its offset on: each
     /// scenario counts the ordinals of the users that ran it.
+    #[cfg(feature = "gaggle")]
     #[tokio::test]
     async fn gaggle_worker_users_start_at_offset() {
         let configuration = GooseConfiguration::parse_args_default(&[

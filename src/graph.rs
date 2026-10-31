@@ -1128,7 +1128,8 @@ pub(crate) struct LatencyHistograms {
     /// Give every request name a ring of its own, measured and synthetic,
     /// past [`MAX_REQUEST_SERIES`]: set only on a Gaggle worker's copy that
     /// collects what a delta sends, where the manager decides which names
-    /// get a ring.
+    /// get a ring. Read it through [`Self::admits_all`].
+    #[cfg(feature = "gaggle")]
     admit_all: bool,
     /// On a Gaggle worker's copy: the folded seconds of each measured ring,
     /// by index, and of each name's synthetic ring, which a ring slot,
@@ -1163,6 +1164,7 @@ impl LatencyHistograms {
             request_width: 1,
             budgets: (ALL_REQUESTS_COLUMNS, REQUEST_COLUMNS),
             limit: usize::MAX,
+            #[cfg(feature = "gaggle")]
             admit_all: false,
             #[cfg(feature = "gaggle")]
             folded: None,
@@ -1179,6 +1181,16 @@ impl LatencyHistograms {
         histograms.budgets = (all, request);
         histograms.set_limit();
         histograms
+    }
+
+    /// Whether every request name gets a ring of its own (see
+    /// `admit_all`): only on a Gaggle worker's copy.
+    #[inline(always)]
+    fn admits_all(&self) -> bool {
+        #[cfg(feature = "gaggle")]
+        return self.admit_all;
+        #[cfg(not(feature = "gaggle"))]
+        return false;
     }
 
     /// Recompute the first second that fits in no column.
@@ -1257,7 +1269,7 @@ impl LatencyHistograms {
         if let Some(&index) = self.by_request.get(key) {
             return Some(index);
         }
-        if self.rings.len() >= MAX_REQUEST_SERIES && !self.admit_all {
+        if self.rings.len() >= MAX_REQUEST_SERIES && !self.admits_all() {
             return None;
         }
         self.rings
@@ -1433,6 +1445,7 @@ impl LatencyHistograms {
         self.fit_columns(second);
         let rev = self.next_rev();
         let (origin, columns) = (self.origin, self.all_columns.is_some());
+        let admits_all = self.admits_all();
         let Some((all, by_request)) = self.synthetic.as_mut() else {
             return;
         };
@@ -1442,7 +1455,7 @@ impl LatencyHistograms {
             rev,
             &mut ColumnSink::own(origin, self.all_width),
         );
-        if !self.by_request.contains_key(key) && !self.admit_all {
+        if !self.by_request.contains_key(key) && !admits_all {
             return;
         }
         #[cfg_attr(not(feature = "gaggle"), allow(unused_mut))]
