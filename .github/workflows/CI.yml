@@ -112,6 +112,7 @@ jobs:
           - ""  # No features (minimal build)
           - "cookies"
           - "dashboard"  # Live dashboard HTTP server (opt-in; not in default)
+          - "gaggle"  # Gaggle groundwork without the dashboard (opt-in; not in default)
           - "rustls-tls"
           - "all-features"  # Keep existing all-features test
 
@@ -167,6 +168,15 @@ jobs:
         command: build 
         args: --verbose --all-features
     
+    # The style job runs clippy with every feature only, where dead code behind the gaggle
+    # feature alone does not show.
+    - name: 🔎 Clippy (gaggle without dashboard)
+      if: ${{ matrix.features == 'gaggle' }}
+      uses: actions-rs/cargo@v1
+      with:
+        command: clippy
+        args: --all-targets --no-default-features --features gaggle -- -D warnings
+
     - name: 📖 Docs
       if: ${{ matrix.features == 'all-features' }}
       env:
