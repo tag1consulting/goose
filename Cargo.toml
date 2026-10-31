@@ -67,6 +67,12 @@ hyper-util = { version = "0.1", optional = true, features = ["service", "tokio"]
 tower-http = { version = "0.6", optional = true, features = ["set-header"] }
 # Encodes Gaggle metrics deltas, with the `gaggle` feature.
 postcard = { version = "1", optional = true, default-features = false, features = ["use-std"] }
+# The Gaggle manager and workers talk gRPC, with the `gaggle` feature. The
+# generated code is checked in under src/gaggle/proto, so no build needs protoc.
+prost = { version = "0.14", optional = true }
+tokio-stream = { version = "0.1", optional = true }
+tonic = { version = "0.14", optional = true, default-features = false, features = ["codegen", "transport"] }
+tonic-prost = { version = "0.14", optional = true }
 
 [features]
 # Include cookies by default for backward compatibility and expected behavior in web load testing
@@ -79,11 +85,13 @@ pdf-reports = ["headless_chrome"]
 # Live web dashboard HTTP server (axum). DTO/builder always compiled; only HTTP is gated.
 # Opt-in so default builds do not compile axum/tower-http. Enable with --features dashboard.
 dashboard = ["axum", "hyper", "hyper-util", "tower-http"]
-# Groundwork for distributed load tests (Gaggle): worker metrics as mergeable
-# deltas. Not yet usable on its own; no network code.
-gaggle = ["dep:postcard"]
+# Distributed load tests (Gaggle): a manager and workers, over gRPC.
+gaggle = ["dep:postcard", "dep:prost", "dep:tokio-stream", "dep:tonic", "dep:tonic-prost"]
 
 [dev-dependencies]
+# Regenerate the checked in Gaggle protocol code in a test, without protoc.
+protox = "0.10"
+tonic-prost-build = { version = "0.14", default-features = false, features = ["transport"] }
 httpmock = "0.8"
 nix = { version = "0.30", features = ["signal"] }
 rustls = "0.23"

@@ -1,0 +1,123 @@
+// The Gaggle protocol: one stream each way between a manager and a worker.
+//
+// The generated Rust is checked in at src/gaggle/proto/goose.gaggle.v1.rs,
+// so building Goose never needs protoc; the gaggle_proto_is_current test
+// regenerates it and fails on any difference.
+syntax = "proto3";
+
+package goose.gaggle.v1;
+
+service Gaggle {
+  // A worker connects once and keeps the stream open for the whole run.
+  rpc Connect(stream WorkerMessage) returns (stream ManagerMessage);
+}
+
+// What a worker sends.
+message WorkerMessage {
+  oneof message {
+    Hello hello = 1;
+    PrepareAck prepare_ack = 2;
+    Heartbeat heartbeat = 3;
+    Metrics metrics = 4;
+    Stopped stopped = 5;
+    LogChunk log_chunk = 6;
+  }
+}
+
+// The first message on a stream.
+message Hello {
+  // The worker's Goose version, which must equal the manager's.
+  string goose_version = 1;
+  // The protocol version, 1.
+  uint32 protocol_version = 2;
+  // The hash of the load test's scenarios and transactions.
+  uint64 plan_hash = 3;
+  // An optional build id of the load test binary.
+  optional string build_id = 4;
+  // The shared token, empty without one.
+  string token = 5;
+  // The worker's name, for logs and the run folder.
+  string worker_name = 6;
+}
+
+message PrepareAck {
+  // Empty when the worker is ready to start; otherwise why it is not.
+  optional string error = 1;
+}
+
+message Heartbeat {}
+
+message Metrics {
+  // A postcard encoded metrics delta.
+  bytes delta = 1;
+}
+
+message Stopped {
+  enum Reason {
+    REASON_UNSPECIFIED = 0;
+    // The run ended, or the manager stopped it.
+    REASON_STOPPED = 1;
+    // Canceled on the worker; `canceled` says why.
+    REASON_CANCELED = 2;
+    // Every user exited (--iterations).
+    REASON_USERS_EXITED = 3;
+  }
+  Reason reason = 1;
+  string canceled = 2;
+}
+
+message LogChunk {
+  // The log's file name, with no folder.
+  string file = 1;
+  // Where in the file these bytes start.
+  uint64 offset = 2;
+  bytes data = 3;
+  // The file's last chunk.
+  bool last = 4;
+}
+
+// What a manager sends.
+message ManagerMessage {
+  oneof message {
+    Welcome welcome = 1;
+    Reject reject = 2;
+    Prepare prepare = 3;
+    StartAt start_at = 4;
+    Heartbeat heartbeat = 5;
+    ResetMetrics reset_metrics = 6;
+    Stop stop = 7;
+    SendLogs send_logs = 8;
+    Shutdown shutdown = 9;
+  }
+}
+
+message Welcome {
+  uint32 worker_id = 1;
+}
+
+message Reject {
+  string reason = 1;
+}
+
+message Prepare {
+  // A postcard encoded worker run spec.
+  bytes spec = 1;
+}
+
+message StartAt {
+  // Start this many milliseconds after the message arrives.
+  uint64 delay_ms = 1;
+}
+
+message ResetMetrics {
+  // The metrics epoch the reset starts.
+  uint64 epoch = 1;
+}
+
+message Stop {
+  string reason = 1;
+}
+
+message SendLogs {}
+
+message Shutdown {}

@@ -12,7 +12,10 @@
 pub(crate) mod compare;
 pub(crate) mod delta;
 pub(crate) mod merge;
+pub(crate) mod options;
+pub(crate) mod proto;
 pub(crate) mod shadow;
+pub(crate) mod spec;
 pub(crate) mod worker;
 
 #[cfg(test)]
