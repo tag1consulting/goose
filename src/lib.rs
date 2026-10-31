@@ -1324,22 +1324,34 @@ impl GooseAttack {
     /// The index in `scenarios` of each of `total_users` users, in the order
     /// they are built; they are popped, so the last one built starts first.
     /// The weighted scenarios repeat until there are enough, or, for a share
-    /// of a Gaggle's users of that size, they are its slice.
-    fn user_scenario_order(&mut self, total_users: usize) -> Vec<usize> {
+    /// of a Gaggle's users, they are its slice, which must hold exactly
+    /// `total_users`.
+    fn user_scenario_order(&mut self, total_users: usize) -> Result<Vec<usize>, GooseError> {
         #[cfg(feature = "gaggle")]
-        if let Some(slice) = self.user_slice.as_ref().filter(|s| s.len() == total_users) {
-            return slice.iter().rev().copied().collect();
+        if let Some(slice) = self.user_slice.as_ref() {
+            if slice.len() != total_users {
+                return Err(GooseError::InvalidOption {
+                    option: "--users".to_string(),
+                    value: total_users.to_string(),
+                    detail: format!(
+                        "this Gaggle worker's share is {} users, not {}",
+                        slice.len(),
+                        total_users
+                    ),
+                });
+            }
+            return Ok(slice.iter().rev().copied().collect());
         }
         let weighted_scenarios = self.allocate_scenarios();
         if weighted_scenarios.is_empty() {
-            return Vec::new();
+            return Ok(Vec::new());
         }
-        weighted_scenarios
+        Ok(weighted_scenarios
             .iter()
             .copied()
             .cycle()
             .take(total_users)
-            .collect()
+            .collect())
     }
 
     /// The index in `scenarios` of each of `total_users` users one process
@@ -1349,12 +1361,13 @@ impl GooseAttack {
     // Called by the Gaggle manager in step 2; tested here.
     #[cfg(feature = "gaggle")]
     #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn user_scenarios(&mut self, total_users: usize) -> Vec<usize> {
+    pub(crate) fn user_scenarios(&mut self, total_users: usize) -> Result<Vec<usize>, GooseError> {
         let saved = self.user_slice.take();
-        let mut order = self.user_scenario_order(total_users);
+        let order = self.user_scenario_order(total_users);
         self.user_slice = saved;
+        let mut order = order?;
         order.reverse();
-        order
+        Ok(order)
     }
 
     /// Run the users with global ordinals `offset` on, whose index in
@@ -1371,21 +1384,38 @@ impl GooseAttack {
     /// Run `users` users from global ordinal `offset` of a load test of
     /// `total` users, as one process running them all would assign them
     /// scenarios: for the `RoundRobin` and `Serial` schedulers, which
-    /// allocate the same way every time.
+    /// allocate the same way every time. A share past the last user is an
+    /// error.
     // Called by a Gaggle worker in step 2; tested here.
     #[cfg(feature = "gaggle")]
     #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn set_user_ordinals(&mut self, offset: usize, users: usize, total: usize) {
-        let all = self.user_scenarios(total);
-        let slice = all[offset.min(all.len())..(offset + users).min(all.len())].to_vec();
+    pub(crate) fn set_user_ordinals(
+        &mut self,
+        offset: usize,
+        users: usize,
+        total: usize,
+    ) -> Result<(), GooseError> {
+        let end = offset.checked_add(users).filter(|&end| end <= total);
+        let Some(end) = end else {
+            return Err(GooseError::InvalidOption {
+                option: "--users".to_string(),
+                value: users.to_string(),
+                detail: format!(
+                    "a Gaggle worker's {users} users from ordinal {offset} run past the last of {total}"
+                ),
+            });
+        };
+        let all = self.user_scenarios(total)?;
+        let slice = all[offset.min(all.len())..end.min(all.len())].to_vec();
         self.set_user_slice(offset, slice);
+        Ok(())
     }
 
     /// Pre-allocate a vector of weighted [`GooseUser`](./goose/struct.GooseUser.html)s.
     fn weight_scenario_users(&mut self, total_users: usize) -> Result<Vec<GooseUser>, GooseError> {
         trace!("weight_scenario_users");
 
-        let weighted_scenarios = self.user_scenario_order(total_users);
+        let weighted_scenarios = self.user_scenario_order(total_users)?;
 
         // Allocate a state for each user that will be launched.
         info!(
@@ -5513,7 +5543,7 @@ mod tests {
                 let mut built = gaggle_single_order(&mut attack, total);
                 built.reverse();
                 assert_eq!(
-                    attack.user_scenario_order(total),
+                    attack.user_scenario_order(total).unwrap(),
                     built,
                     "{:?} {}",
                     scheduler,
@@ -5538,12 +5568,12 @@ mod tests {
             for total in [1, 4, 10, 1_000] {
                 let mut single = gaggle_attack(scheduler.clone());
                 let expected = match scheduler {
-                    GooseScheduler::Random => single.user_scenarios(total),
+                    GooseScheduler::Random => single.user_scenarios(total).unwrap(),
                     _ => gaggle_single_order(&mut single, total),
                 };
                 assert_eq!(expected.len(), total);
                 if !matches!(scheduler, GooseScheduler::Random) {
-                    assert_eq!(single.user_scenarios(total), expected);
+                    assert_eq!(single.user_scenarios(total).unwrap(), expected);
                 }
                 for workers in 1..=7 {
                     for split in gaggle_splits(total, workers, (total * 31 + workers) as u64) {
@@ -5556,12 +5586,12 @@ mod tests {
                                     offset,
                                     expected[offset..offset + users].to_vec(),
                                 ),
-                                _ => worker.set_user_ordinals(offset, users, total),
+                                _ => worker.set_user_ordinals(offset, users, total).unwrap(),
                             }
                             assert_eq!(worker.user_offset, offset);
                             // The worker builds its users in this order and
                             // pops them, last first.
-                            let mut built = worker.user_scenario_order(users);
+                            let mut built = worker.user_scenario_order(users).unwrap();
                             while let Some(scenario) = built.pop() {
                                 started.push(scenario);
                             }
@@ -5575,6 +5605,63 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A worker whose share is not the number of users it is told to run
+    /// fails to launch, rather than running some other allocation.
+    #[cfg(feature = "gaggle")]
+    #[tokio::test]
+    async fn gaggle_worker_share_of_another_size_fails_to_launch() {
+        let mut attack = gaggle_attack(GooseScheduler::RoundRobin);
+        attack.set_user_slice(5, vec![0, 1]);
+        assert!(matches!(
+            attack.user_scenario_order(3),
+            Err(GooseError::InvalidOption { .. })
+        ));
+        let configuration = GooseConfiguration::parse_args_default(&[
+            "--host",
+            "http://127.0.0.1:9",
+            "--users",
+            "3",
+            "--run-time",
+            "1",
+            "--no-telnet",
+            "--quiet",
+        ])
+        .unwrap();
+        let mut attack = GooseAttack::initialize_with_config(configuration)
+            .unwrap()
+            .register_scenario(Scenario::new("One").register_transaction(gaggle_noop()));
+        attack.set_user_slice(5, vec![0, 0]);
+        let ended = tokio::time::timeout(Duration::from_secs(20), attack.execute())
+            .await
+            .expect("the run ends");
+        assert!(
+            matches!(ended, Err(GooseError::InvalidOption { ref option, .. }) if option == "--users"),
+            "{:?}",
+            ended.err()
+        );
+    }
+
+    /// A worker's share that runs past the last user, or past the last
+    /// ordinal there is, is an error, not a shorter share.
+    #[cfg(feature = "gaggle")]
+    #[test]
+    fn gaggle_worker_share_past_the_end_is_an_error() {
+        let mut attack = gaggle_attack(GooseScheduler::RoundRobin);
+        for (offset, users) in [(8, 3), (usize::MAX, 2), (1, usize::MAX)] {
+            assert!(
+                matches!(
+                    attack.set_user_ordinals(offset, users, 10),
+                    Err(GooseError::InvalidOption { .. })
+                ),
+                "{} {}",
+                offset,
+                users
+            );
+        }
+        attack.set_user_ordinals(7, 3, 10).unwrap();
+        assert_eq!(attack.user_scenario_order(3).unwrap().len(), 3);
     }
 
     /// A worker's users start with global ordinals from its offset on: each
