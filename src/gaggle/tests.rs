@@ -2099,13 +2099,14 @@ fn gaggle_reports_at_the_bounds_across_names_do_not_overflow() {
     accumulator.done(0);
     let merged = accumulator.merged();
     let again = accumulator.merged();
-    // The console output, then every report, the snapshot and the
-    // thresholds, built and compared.
     // The sums across names saturate, rather than wrap in a release build.
     let totals = crate::metrics::common::RequestTotals::of(merged.0.requests.values());
     assert_eq!(totals.requests, usize::MAX);
     assert_eq!(totals.failures, usize::MAX);
     assert_eq!(totals.times.counter, usize::MAX);
+    assert_eq!(totals.times.total_time_us, u64::MAX);
+    // The console output, then every report and the snapshot, built and
+    // compared.
     let mut shown = merged.0.clone();
     shown.display_metrics = true;
     shown.display_status_codes = true;

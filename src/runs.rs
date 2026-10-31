@@ -1524,6 +1524,7 @@ mod tests {
         let listed = list_reports(&parent, None, &mut ListingCache::new()).unwrap();
         assert_eq!(listed[0].requests, u64::MAX);
         assert_eq!(listed[0].failed_requests, u64::MAX);
+        std::fs::remove_dir_all(&parent).ok();
     }
 
     /// Rule 12: a listing parses a report again when it changes, so the

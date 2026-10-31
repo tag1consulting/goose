@@ -128,9 +128,8 @@ impl TimeBuckets {
 
     /// Add `count` to the bucket that starts at `bucket` microseconds. A
     /// count past `usize::MAX` saturates: only a Gaggle manager adding up
-    /// every worker's buckets across names can reach it, and a test there
-    /// (`gaggle_reports_at_the_bounds_across_names_do_not_overflow`) would
-    /// panic on a plain `+=`.
+    /// every worker's buckets across names can reach it, and the Gaggle
+    /// tests at the bounds would panic on a plain `+=`.
     pub(crate) fn add(&mut self, bucket: u64, count: usize) {
         if !self.places.is_empty() {
             return self.add_placed(bucket, count);

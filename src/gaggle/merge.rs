@@ -303,27 +303,24 @@ impl GaggleAccumulator {
     /// The users running at each second: every worker's level at that
     /// second added up, a worker past its last level holding it.
     fn users_levels(&self) -> BTreeMap<Second, u64> {
-        let last = self
-            .workers
-            .values()
-            .filter_map(|worker| worker.total.graph.users.keys().next_back().copied())
-            .max();
-        let Some(last) = last else {
-            return BTreeMap::new();
-        };
         // Each worker's change of level at each second it sent one, added
         // up, then walked once: a worker counts 0 before its first level.
-        let mut changes: BTreeMap<Second, i128> = BTreeMap::new();
+        // Levels are at most MAX_COUNT and workers at most MAX_WORKERS, so
+        // every sum fits an i64.
+        let mut changes: BTreeMap<Second, i64> = BTreeMap::new();
         for worker in self.workers.values() {
             let mut level = 0;
             for (&second, &users) in &worker.total.graph.users {
-                *changes.entry(second).or_default() += i128::from(users) - level;
-                level = i128::from(users);
+                *changes.entry(second).or_default() += users as i64 - level;
+                level = users as i64;
             }
         }
-        let first = changes.keys().next().copied().unwrap_or(0);
+        let (Some(&first), Some(&last)) = (changes.keys().next(), changes.keys().next_back())
+        else {
+            return BTreeMap::new();
+        };
         let mut changes = changes.into_iter().peekable();
-        let mut users: i128 = 0;
+        let mut users: i64 = 0;
         (first..=last)
             .map(|second| {
                 while let Some((_, change)) = changes.next_if(|&(at, _)| at <= second) {
