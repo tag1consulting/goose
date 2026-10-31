@@ -87,9 +87,34 @@ pub(crate) struct WorkerRun {
     started_late: Option<Duration>,
     /// The series second of the last delta queued.
     tick_second: Option<usize>,
+    /// A metrics reset that came before the start, applied once started.
+    pending_reset: Option<u64>,
     /// Each log, as the manager names it, and where it is here.
     log_files: Vec<(String, PathBuf)>,
     run_folder: Option<PathBuf>,
+}
+
+impl WorkerEntry {
+    /// Mark it lost, unless it is already, or it stopped as told and then
+    /// went away, which marks it gone instead. Whether it is newly lost.
+    fn lose(&mut self, stop_sent: bool, why: String) -> bool {
+        if self.lost.is_some() {
+            return false;
+        }
+        if stop_sent && self.stopped.is_some() {
+            self.gone = true;
+            return false;
+        }
+        self.lost = Some((chrono::Utc::now(), why));
+        true
+    }
+
+    /// Whether it can still send its logs: it is neither lost nor gone, and
+    /// it ran, so has a run folder they are in. A worker that never started
+    /// has none.
+    fn sends_logs(&self) -> bool {
+        self.lost.is_none() && !self.gone && self.run_folder.is_some()
+    }
 }
 
 impl ManagerRun {
@@ -376,6 +401,7 @@ impl GooseAttack {
             spec,
             start_at: None,
             started_late: None,
+            pending_reset: None,
             tick_second: None,
             log_files: Vec::new(),
             run_folder: None,
@@ -430,6 +456,14 @@ impl GooseAttack {
         self.set_attack_phase(goose_attack_run_state, AttackPhase::Increase);
         // A worker holding no users, with --iterations, has nothing to
         // run: its users have all exited, as the manager waits to hear.
+        let pending = match self.gaggle.as_mut() {
+            Some(GaggleRole::Worker(run)) => run.pending_reset.take(),
+            _ => None,
+        };
+        if let Some(epoch) = pending {
+            debug!("gaggle: metrics reset that came before the start, epoch {epoch}");
+            self.gaggle_worker_reset(goose_attack_run_state).await;
+        }
         if self.test_plan.total_users() == 0 && self.configuration.iterations() > 0 {
             self.set_ended_by(EndedBy::UsersExited, None);
             self.cancel_attack(goose_attack_run_state).await?;
@@ -558,19 +592,14 @@ impl GooseAttack {
         let Some(worker) = run.worker(id) else {
             return;
         };
-        if worker.lost.is_some() {
-            return;
-        }
-        // A worker that stopped as told, and then went away, is not lost.
-        if stop_sent && worker.stopped.is_some() {
-            worker.gone = true;
-            return;
-        }
-        warn!(
+        let message = format!(
             "gaggle: worker {id} ({}) lost: {why}; last delta {}",
             worker.name, worker.last_seq
         );
-        worker.lost = Some((chrono::Utc::now(), why));
+        if !worker.lose(stop_sent, why) {
+            return;
+        }
+        warn!("{message}");
         run.manager.shut_down(id);
         let _ = goose_attack_run_state
             .metrics_cmd_tx
@@ -602,16 +631,24 @@ impl GooseAttack {
             match event {
                 LinkEvent::Prepare(_) => warn!("gaggle: a second Prepare ignored"),
                 LinkEvent::StartAt(at) => run.start_at = Some(at),
+                LinkEvent::ResetMetrics(epoch) if !running => {
+                    // Before the start, as when the ramp ends in the
+                    // milliseconds before this worker's start instant: reset
+                    // once started, or the merge leaves this worker out.
+                    if run.start_at.is_some() {
+                        run.pending_reset = Some(epoch);
+                    } else {
+                        warn!("gaggle: a metrics reset while idle ignored, epoch {epoch}");
+                    }
+                }
                 LinkEvent::ResetMetrics(epoch) => {
-                    if running {
-                        debug!("gaggle: metrics reset, epoch {epoch}");
-                        self.gaggle_worker_reset(goose_attack_run_state).await;
-                        let own = goose_attack_run_state
-                            .metrics_epoch
-                            .load(std::sync::atomic::Ordering::Relaxed);
-                        if own != epoch {
-                            warn!("gaggle: this worker's metrics epoch is {own}, the manager's {epoch}: its metrics may be left out of the merge");
-                        }
+                    debug!("gaggle: metrics reset, epoch {epoch}");
+                    self.gaggle_worker_reset(goose_attack_run_state).await;
+                    let own = goose_attack_run_state
+                        .metrics_epoch
+                        .load(std::sync::atomic::Ordering::Relaxed);
+                    if own != epoch {
+                        warn!("gaggle: this worker's metrics epoch is {own}, the manager's {epoch}: its metrics may be left out of the merge");
                     }
                 }
                 LinkEvent::Stop(reason) => {
@@ -892,7 +929,7 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>, compress: b
     // under.
     let mut pending: BTreeMap<u32, BTreeMap<String, LogSpec>> = BTreeMap::new();
     for worker in &run.workers {
-        if worker.lost.is_some() || worker.gone || folder.is_none() {
+        if !worker.sends_logs() || folder.is_none() {
             for log in &run.logs {
                 run.logs_left.push(left(worker, log));
             }
@@ -1000,5 +1037,62 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>, compress: b
             );
             run.logs_left.push(entry);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry() -> WorkerEntry {
+        WorkerEntry {
+            id: 0,
+            name: "w".to_string(),
+            users: 1,
+            last_seq: 0,
+            stopped: None,
+            lost: None,
+            gone: false,
+            run_folder: Some("/runs/w".to_string()),
+        }
+    }
+
+    /// A worker that goes away before it stopped is lost; one that stopped
+    /// as told and then went away is gone, not lost, and either way sends no
+    /// logs; nor does a worker that never ran, with no run folder.
+    #[test]
+    fn gaggle_lost_gone_and_logs() {
+        crate::gaggle::within(30, || {
+            let mut running = entry();
+            assert!(running.sends_logs());
+            assert!(running.lose(false, "silent".to_string()));
+            assert!(!running.lose(false, "again".to_string()));
+            assert!(running.lost.is_some() && !running.sends_logs());
+
+            let mut stopped = entry();
+            stopped.stopped = Some(Reason::Stopped);
+            assert!(stopped.sends_logs());
+            assert!(!stopped.lose(true, "closed".to_string()));
+            assert!(stopped.lost.is_none() && stopped.gone);
+            assert!(
+                !stopped.sends_logs(),
+                "the manager stops waiting for its logs"
+            );
+
+            // Stopped before Stop was sent: lost.
+            let mut early = entry();
+            early.stopped = Some(Reason::Canceled);
+            assert!(early.lose(false, "canceled".to_string()));
+
+            let never = WorkerEntry {
+                run_folder: None,
+                stopped: Some(Reason::Stopped),
+                ..entry()
+            };
+            assert!(
+                !never.sends_logs(),
+                "a worker that never started has no logs"
+            );
+        });
     }
 }

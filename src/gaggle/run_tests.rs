@@ -222,10 +222,10 @@ async fn gaggle_manager_and_two_workers_in_one_process() {
     // One reset, when the ramp ended: what the users did before it is gone
     // from the metrics on every worker, and nothing after it is.
     assert_eq!(pre.calls_async().await, 6);
-    // A user that started last may race the reset with its /pre; without the
-    // broadcast reset all six count.
+    // Only each worker's last user may race the reset with its /pre; without
+    // the broadcast reset all six count, and with a worker missing it three.
     assert!(
-        count("GET /pre") < 6,
+        count("GET /pre") <= 2,
         "the reset clears the ramp's requests: {}",
         count("GET /pre")
     );

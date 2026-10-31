@@ -399,6 +399,8 @@ impl Link {
     /// Watch a user task, so the dead man's switch can stop it.
     pub(crate) fn watch(&self, user: tokio::task::AbortHandle) {
         if let Ok(mut users) = self.users.lock() {
+            // Kept to the end of the run, as the run state keeps every
+            // user's JoinHandle: one per user started.
             users.push(user);
         }
     }

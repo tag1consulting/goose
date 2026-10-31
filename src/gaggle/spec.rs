@@ -462,14 +462,16 @@ mod tests {
             ])
             .unwrap();
             let spec = worker_specs(&manager, &[(5, 1_000), (0, 0)], &[0; 5], 2, true).remove(1);
-            let mut worker = GooseConfiguration::default();
             // What the load test may have set in code, as configuring a worker
             // with its defaults gives it.
-            worker.threshold = vec!["p95<1ms".to_string()];
-            worker.thresholds = vec!["p95<1ms".parse().unwrap()];
-            worker.report_file = vec!["r.html".to_string()];
-            worker.pdf_print_html = Some("p.html".to_string());
-            worker.running_metrics = Some(1);
+            let mut worker = GooseConfiguration {
+                threshold: vec!["p95<1ms".to_string()],
+                thresholds: vec!["p95<1ms".parse().unwrap()],
+                report_file: vec!["r.html".to_string()],
+                pdf_print_html: Some("p.html".to_string()),
+                running_metrics: Some(1),
+                ..Default::default()
+            };
             spec.configure(&mut worker);
             // The manager judges the thresholds and writes the reports.
             assert!(worker.threshold.is_empty() && worker.thresholds.is_empty());
