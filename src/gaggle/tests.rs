@@ -2114,3 +2114,69 @@ fn gaggle_reports_at_the_bounds_across_names_do_not_overflow() {
     assert!(!format!("{}", shown).is_empty());
     differences(merged, &again);
 }
+
+/// Scenarios at their bounds, enough of them that the console's scenario
+/// totals row adds up past 2^64: the merge builds it, saturated, rather
+/// than wrapping in a release build or panicking in a debug one.
+#[test]
+fn gaggle_scenario_totals_at_the_bounds_do_not_overflow() {
+    use super::delta::{ScenarioPart, Timing, MAX_COUNT};
+    // 2^13 + 1 scenarios of 2^51 runs each: their sum passes 2^64.
+    const SCENARIOS: usize = 8_193;
+    let scenarios: Vec<Scenario> = (0..SCENARIOS)
+        .map(|index| {
+            let mut scenario = Scenario::new(&format!("Scenario {index}"));
+            scenario.scenarios_index = index;
+            scenario
+        })
+        .collect();
+    let side = Side::new(0..0, Some(0));
+    let mut template = side.processor.gaggle_template();
+    template.initialize_scenario_metrics(&scenarios, &configuration());
+    assert_eq!(template.scenarios.len(), SCENARIOS);
+    let mut accumulator = GaggleAccumulator::new(
+        template,
+        side.processor.gaggle_graph_settings(),
+        DeltaLimits::default(),
+    );
+    let mut delta = GaggleDelta::new(0, 1, 1, DeltaKind::Delta);
+    delta.now = 2;
+    let timing = Timing {
+        buckets: vec![(1_000, MAX_COUNT)],
+        minimum_us: 1_000,
+        maximum_us: 1_000,
+        total_us: MAX_COUNT,
+        count: MAX_COUNT,
+    };
+    for index in 0..SCENARIOS {
+        delta.metrics.scenarios.insert(
+            index as u64,
+            ScenarioPart {
+                users: [index as u64].into(),
+                run_times: timing.clone(),
+            },
+        );
+    }
+    apply(&mut accumulator, &delta);
+    accumulator.done(0);
+    let (mut merged, _graph) = accumulator.merged();
+    let runs: u128 = merged
+        .scenarios
+        .iter()
+        .map(|scenario| scenario.run_times.counter as u128)
+        .sum();
+    assert!(runs > usize::MAX as u128, "the fixture must pass 2^64");
+    merged.display_metrics = true;
+    merged.final_metrics = true;
+    let shown = format!("{}", merged);
+    let totals = shown
+        .lines()
+        .skip_while(|line| !line.contains("PER SCENARIO METRICS"))
+        .find(|line| line.trim_start().starts_with("Aggregated"))
+        .expect("a scenario totals row");
+    assert!(
+        totals.contains(&usize::MAX.to_string()),
+        "the totals row saturates: {}",
+        totals
+    );
+}
