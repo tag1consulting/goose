@@ -562,7 +562,7 @@ struct Switch {
 
 impl Switch {
     /// Stop every user at once, tell the main loop why, and close the
-    /// stream. A worker whose `execute()` has not returned 4 seconds later
+    /// stream. A worker whose `execute()` has not returned 2 seconds later
     /// exits the process with an error status: load never outlives its
     /// manager.
     fn fire(&self, why: String) {
@@ -579,7 +579,7 @@ impl Switch {
         let _ = self.events.send(LinkEvent::Lost(why));
         let done = self.done.clone();
         std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_secs(4));
+            std::thread::sleep(Duration::from_secs(2));
             if !done.load(Ordering::Relaxed) {
                 eprintln!("gaggle: lost the manager and the worker has not exited; exiting now");
                 std::process::exit(1);

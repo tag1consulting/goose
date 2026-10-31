@@ -157,9 +157,12 @@ impl Shared {
             return None;
         }
         let id = joined.len() as u32;
-        let mut unique = folder_name(name);
-        if joined.iter().any(|worker| worker.name == unique) {
-            unique = format!("{unique}-{id}");
+        let base = folder_name(name);
+        let mut unique = base.clone();
+        let mut n = id;
+        while joined.iter().any(|worker| worker.name == unique) {
+            unique = format!("{base}-{n}");
+            n += 1;
         }
         let closed = Arc::new(AtomicBool::new(false));
         joined.push(Joined {

@@ -9,7 +9,7 @@ A worker takes every option that shapes the load, the metrics, the reports and t
 A worker connecting to a manager on the same machine:
 
 ```bash
-target/release/examples/simple --worker --manager-host localhost --no-telnet
+target/release/examples/simple --worker --manager-host localhost
 ```
 
 A worker on another machine, with the Gaggle's token:

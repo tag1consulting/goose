@@ -31,7 +31,7 @@ fn on_start() -> Transaction {
             let _ = user.get("/pre").await;
             let data = String::from_utf8_lossy(user.worker_data()).into_owned();
             let _ = user.get(&format!("/data/{data}")).await;
-            tokio::time::sleep(Duration::from_millis(1500)).await;
+            tokio::time::sleep(Duration::from_millis(2000)).await;
             Ok(())
         })
     }))
@@ -374,7 +374,7 @@ async fn gaggle_worker_survives_its_manager_going_before_the_run() {
             }
             other => panic!("{:?}", other.map(|_| ())),
         }
-        // Past the switch's 4 second last resort: had the link not marked
+        // Past the switch's 2 second last resort: had the link not marked
         // itself done, the process would have exited.
         tokio::time::sleep(Duration::from_secs(5)).await;
     };

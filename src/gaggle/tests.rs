@@ -2316,12 +2316,18 @@ fn gaggle_manager_reset_leaves_out_the_old_epoch_at_once() {
                 running_users: Vec::new(),
                 ack,
             });
+        // A delta the worker sent before it saw the reset, arriving after.
+        side.processor
+            .handle_command_for_test(MetricsCommand::GaggleApply {
+                worker: 0,
+                delta: Box::new(counted(0, 2, epoch)),
+            });
         assert_eq!(made(&mut side), 0, "the ramp's requests are left out");
         // The worker's first delta of the new epoch is merged.
         side.processor
             .handle_command_for_test(MetricsCommand::GaggleApply {
                 worker: 0,
-                delta: Box::new(counted(0, 2, epoch + 1)),
+                delta: Box::new(counted(0, 3, epoch + 1)),
             });
         assert_eq!(made(&mut side), 1);
     });

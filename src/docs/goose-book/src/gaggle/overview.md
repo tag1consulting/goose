@@ -37,16 +37,16 @@ Build the `simple` example with the `gaggle` feature, then start a manager waiti
 ```bash
 cargo build --release --features gaggle --example simple
 target/release/examples/simple --manager --expect-workers 2 --host http://localhost:8080 \
-    --users 20 --increase-rate 10 --run-time 30s --no-telnet --report-file --request-log
+    --users 20 --increase-rate 10 --run-time 30s --report-file --request-log
 ```
 
 In two more terminals, start two workers:
 
 ```bash
-target/release/examples/simple --worker --manager-host localhost --no-telnet
+target/release/examples/simple --worker --manager-host localhost
 ```
 
-The run starts two seconds after the second worker joins. When it ends, the manager's run folder holds its reports and each worker's request log, in `workers/<worker name>/`. `--no-telnet` keeps the three processes from contending for the telnet Controller's port; a worker never runs a Controller.
+The run starts two seconds after both workers are ready. When it ends, the manager's run folder holds its reports and each worker's request log, in `workers/<worker name>/`. A worker never runs a Controller, so only the manager listens on the telnet Controller's port.
 
 ## The lifecycle
 
