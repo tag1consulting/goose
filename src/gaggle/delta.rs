@@ -92,6 +92,13 @@ pub(crate) enum DeltaError {
     BadFloat,
     /// More names of one kind than [`DeltaLimits::max_names`].
     TooManyNames { names: usize, limit: usize },
+    /// A user ordinal not below [`DeltaLimits::max_users`].
+    UserOutOfRange { user: u64, limit: u64 },
+    /// More coordinated omission events than
+    /// [`MAX_CO_EVENTS_PER_DELTA`] in a delta that is not final.
+    TooManyEvents { events: usize, limit: usize },
+    /// A coordinated omission severity code no severity has.
+    BadSeverity { code: u8 },
     /// A response time bucket or heatmap row no response time falls in, or
     /// buckets or rows out of order.
     BadBucket,
@@ -123,19 +130,23 @@ pub(crate) struct DeltaLimits {
     /// The latest series second a delta may carry: no run is longer.
     pub(crate) max_second: Second,
     /// Most names of any one kind (request names, latency series,
-    /// transactions, scenarios, request errors and transaction errors) one
-    /// worker's figures hold.
+    /// transactions, scenarios, request errors, transaction errors and
+    /// hosts) one worker's figures hold.
     pub(crate) max_names: usize,
+    /// User ordinals are below it: the users a scenario counts for a
+    /// worker can be no more.
+    pub(crate) max_users: u64,
     /// Worker ids are below it; at most [`MAX_WORKERS`].
     pub(crate) max_workers: u32,
 }
 
 impl Default for DeltaLimits {
-    /// 30 days, 10,000 names and 1,024 workers.
+    /// 30 days, 10,000 names, 1,000,000 users and 1,024 workers.
     fn default() -> Self {
         DeltaLimits {
             max_second: 30 * 24 * 60 * 60,
             max_names: 10_000,
+            max_users: 1_000_000,
             max_workers: 1_024,
         }
     }
@@ -309,12 +320,29 @@ impl GaggleDelta {
                 });
             }
         }
-        let floats = self.graph.averages.values().flat_map(|rows| rows.values());
-        if floats
-            .clone()
-            .any(|average| !(average.sum_ms.is_finite() && average.sum_ms >= 0.0))
-        {
+        let mut floats = self.graph.averages.values().flat_map(|rows| rows.values());
+        if floats.any(|average| !(average.sum_ms.is_finite() && average.sum_ms >= 0.0)) {
             return Err(DeltaError::BadFloat);
+        }
+        let ordinals = self.metrics.scenarios.values().flat_map(|s| s.users.iter());
+        if let Some(&user) = ordinals.max() {
+            if user >= limits.max_users {
+                return Err(DeltaError::UserOutOfRange {
+                    user,
+                    limit: limits.max_users,
+                });
+            }
+        }
+        if let Some(co) = self.metrics.co.as_ref() {
+            if self.kind == DeltaKind::Delta && co.events.len() > MAX_CO_EVENTS_PER_DELTA {
+                return Err(DeltaError::TooManyEvents {
+                    events: co.events.len(),
+                    limit: MAX_CO_EVENTS_PER_DELTA,
+                });
+            }
+            if let Some(&code) = co.severity.keys().find(|&&code| code > MAX_SEVERITY_CODE) {
+                return Err(DeltaError::BadSeverity { code });
+            }
         }
         if let Some(&users) = self.graph.users.values().max() {
             if users > MAX_COUNT {
@@ -381,6 +409,7 @@ impl GaggleDelta {
             names_with(&m.scenarios, &o.scenarios),
             names_with(&m.errors, &o.errors),
             names_with(&m.transaction_errors, &o.transaction_errors),
+            m.hosts.len() + o.hosts.difference(&m.hosts).count(),
             names_with(&g.requests, &h.requests),
             names_with(&g.errors, &h.errors),
             names_with(&g.averages, &h.averages),
@@ -739,6 +768,9 @@ pub(crate) fn severity_code(severity: CoSeverity) -> u8 {
     }
 }
 
+/// The highest code [`severity_code`] gives.
+const MAX_SEVERITY_CODE: u8 = 3;
+
 /// [`severity_code`] read back.
 pub(crate) fn severity_from_code(code: u8) -> CoSeverity {
     match code {
@@ -945,8 +977,10 @@ impl GraphPart {
             pass,
             |held, other, pass| {
                 add_keyed(held, other, pass, |a: &mut Average, b, pass| {
+                    // Bounded as a count is, so every worker's added up
+                    // stays finite.
                     let total = a.sum_ms + b.sum_ms;
-                    if !total.is_finite() {
+                    if !(total.is_finite() && total <= bounds.count as f64) {
                         return Err(DeltaError::Overflow);
                     }
                     sum(&mut a.count, b.count, bounds.second, pass)?;

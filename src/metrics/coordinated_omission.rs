@@ -212,7 +212,7 @@ impl CoordinatedOmissionMetrics {
                 .entry(event.scenario_name.clone())
                 .or_insert((0, 0));
             *count += 1;
-            *synthetic += event.synthetic_injected;
+            *synthetic = synthetic.saturating_add(event.synthetic_injected);
         }
 
         let per_scenario_events: Vec<(String, usize, usize)> = scenario_events
@@ -557,5 +557,35 @@ impl CadenceCalculator for DisabledCadence {
 
     fn describe_approach(&self) -> &str {
         "Coordinated Omission mitigation is disabled."
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    /// A scenario's synthetic requests add up without overflowing, however
+    /// many each event injected (a Gaggle manager merges events from every
+    /// worker).
+    #[test]
+    fn summary_synthetic_requests_saturate() {
+        let mut metrics =
+            CoordinatedOmissionMetrics::new(GooseCoordinatedOmissionMitigation::Average);
+        for _ in 0..2 {
+            metrics.co_events.push(CoEvent {
+                timestamp_secs: metrics.started_secs,
+                expected_cadence: Duration::from_millis(10),
+                actual_duration: Duration::from_millis(100),
+                synthetic_injected: u32::MAX,
+                user_id: 0,
+                scenario_name: "s".to_string(),
+                severity: CoSeverity::Minor,
+            });
+        }
+        let summary = metrics.get_summary();
+        assert_eq!(
+            summary.per_scenario_events,
+            vec![("s".to_string(), 2, u32::MAX as usize)]
+        );
     }
 }

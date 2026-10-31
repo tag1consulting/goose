@@ -21,6 +21,7 @@ pub(crate) type SnapshotBuilder<'a> =
 const LIMITS: DeltaLimits = DeltaLimits {
     max_second: Second::MAX - 1,
     max_names: usize::MAX,
+    max_users: u64::MAX,
     max_workers: MAX_WORKERS,
 };
 

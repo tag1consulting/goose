@@ -3725,13 +3725,13 @@ impl TimeSeriesValue<usize, usize> for usize {
         0
     }
     fn increase_value(&mut self, value: &usize) {
-        *self += *value;
+        *self = self.saturating_add(*value);
     }
     fn set_value(&mut self, value: usize) {
         *self = value;
     }
     fn merge(&mut self, other: &usize) {
-        *self += *other;
+        *self = self.saturating_add(*other);
     }
     fn get_graph_value(&self) -> Option<usize> {
         match *self == 0 {
@@ -3749,13 +3749,13 @@ impl TimeSeriesValue<u32, u32> for u32 {
         0
     }
     fn increase_value(&mut self, value: &u32) {
-        *self += *value;
+        *self = self.saturating_add(*value);
     }
     fn set_value(&mut self, value: u32) {
         *self = value;
     }
     fn merge(&mut self, other: &u32) {
-        *self += *other;
+        *self = self.saturating_add(*other);
     }
     fn get_graph_value(&self) -> Option<u32> {
         match *self == 0 {
@@ -3779,7 +3779,7 @@ impl TimeSeriesValue<MovingAverage, f32> for MovingAverage {
         panic!("TimeSeriesValue::set() is not supported for MovingAverage");
     }
     fn merge(&mut self, other: &MovingAverage) {
-        let total_count = self.count + other.count;
+        let total_count = self.count.saturating_add(other.count);
         if total_count == 0 {
             self.average = 0.;
         } else {

@@ -853,7 +853,14 @@ fn gaggle_merge_equals_one_process_7_workers() {
 
 /// Every difference between two merges.
 fn merge_diff(a: &GaggleAccumulator, b: &GaggleAccumulator) -> Vec<String> {
-    let ((x, g), (y, h)) = (a.merged(), b.merged());
+    let ((mut x, g), (mut y, h)) = (a.merged(), b.merged());
+    // Each template starts its coordinated omission metrics at the wall
+    // clock second it was built: two built a second apart differ only there.
+    for metrics in [&mut x, &mut y].iter_mut() {
+        if let Some(co) = metrics.coordinated_omission_metrics.as_mut() {
+            co.started_secs = 0;
+        }
+    }
     let mut out = super::compare::metrics_diff(&x, &y);
     out.extend(g.gaggle_diff(&h));
     out
@@ -1436,6 +1443,7 @@ fn gaggle_shadow_merge_counts_every_second() {
 const SMALL: DeltaLimits = DeltaLimits {
     max_second: 100,
     max_names: 3,
+    max_users: 8,
     max_workers: 4,
 };
 
@@ -1465,14 +1473,27 @@ fn held() -> GaggleAccumulator {
 /// leaves out and reports gaps exactly as before.
 fn refused(from: u32, delta: GaggleDelta, error: DeltaError) {
     let mut accumulator = held();
+    let mut expected = held();
     let gaps = accumulator.gaps().to_vec();
     assert_eq!(accumulator.apply(from, delta), Err(error));
-    assert_none("refused delta", &merge_diff(&accumulator, &held()));
     assert_eq!(accumulator.gaps(), &gaps[..]);
     assert!(accumulator.excluded().is_empty());
-    // Worker 0's sequence is where it was: its next delta follows on.
-    accumulator.apply(0, counted(0, 2, 1)).unwrap();
+    assert_eq!(accumulator.complete_before(), expected.complete_before());
+    // Worker 0's sequence and held names are where they were: its next
+    // delta follows on and fills its names to the limit exactly.
+    let mut next = counted(0, 2, 1);
+    for name in ["GET /x", "GET /y"].iter() {
+        next.graph
+            .requests
+            .insert(name.to_string(), [(3, 1)].into());
+    }
+    for accumulator in [&mut accumulator, &mut expected].iter_mut() {
+        accumulator.apply(0, next.clone()).unwrap();
+        // Every second complete, so every graph row compares.
+        accumulator.done(0);
+    }
     assert_eq!(accumulator.gaps(), &gaps[..]);
+    assert_none("refused delta", &merge_diff(&accumulator, &expected));
 }
 
 #[test]
@@ -1715,4 +1736,260 @@ fn gaggle_coalesce_refuses_an_overflow() {
     let mut a = counted(0, 1, 1);
     a.metrics.requests.get_mut("GET /a").unwrap().success = super::delta::MAX_COUNT as i64;
     assert_eq!(coalesce(&a, &counted(0, 2, 1)), Err(DeltaError::Overflow));
+}
+
+/// A new worker's refused first delta leaves no trace of the worker.
+#[test]
+fn gaggle_refuses_a_new_workers_first_delta() {
+    let mut delta = counted(2, 1, 1);
+    let average = super::delta::Average {
+        count: 1,
+        sum_ms: f64::NAN,
+    };
+    delta
+        .graph
+        .averages
+        .insert("GET /a".to_string(), [(4, average)].into());
+    refused(2, delta, DeltaError::BadFloat);
+}
+
+/// A refused final delta leaves its worker unfinished and its metrics held.
+#[test]
+fn gaggle_refuses_an_overflow_in_a_final() {
+    let mut last_final = counted(0, 2, 1);
+    last_final.kind = DeltaKind::Final;
+    last_final.graph.requests.insert(
+        "GET /a".to_string(),
+        [(4, super::delta::MAX_SECOND_COUNT)].into(),
+    );
+    refused(0, last_final, DeltaError::Overflow);
+}
+
+/// Every kind of name counts toward the limit, hosts included.
+#[test]
+fn gaggle_refuses_too_many_names_of_any_kind() {
+    use super::delta::{
+        Average, ErrorKey, Histogram, RequestPart, ScenarioPart, TransactionErrorKey,
+        TransactionPart,
+    };
+    type Add = fn(&mut GaggleDelta, usize);
+    let kinds: [(&str, Add); 11] = [
+        ("requests", |d, i| {
+            let name = format!("GET /{}", i);
+            let part = RequestPart::new(&name, GooseMethod::Get, "");
+            d.metrics.requests.insert(name, part);
+        }),
+        ("transactions", |d, i| {
+            d.metrics
+                .transactions
+                .insert((0, i as u64), TransactionPart::default());
+        }),
+        ("scenarios", |d, i| {
+            d.metrics
+                .scenarios
+                .insert(i as u64, ScenarioPart::default());
+        }),
+        ("errors", |d, i| {
+            let key = ErrorKey {
+                key: format!("e{}", i),
+                method: GooseMethod::Get,
+                name: "/a".to_string(),
+                error: "500".to_string(),
+                custom_method: String::new(),
+            };
+            d.metrics.errors.insert(key, 1);
+        }),
+        ("transaction errors", |d, i| {
+            let key = TransactionErrorKey {
+                key: format!("t{}", i),
+                scenario_index: 0,
+                scenario_name: "s".to_string(),
+                transaction_index: 0,
+                transaction_name: "t".to_string(),
+                error: "e".to_string(),
+            };
+            d.metrics.transaction_errors.insert(key, 1);
+        }),
+        ("hosts", |d, i| {
+            d.metrics.hosts.insert(format!("http://host{}", i));
+        }),
+        ("graph requests", |d, i| {
+            d.graph
+                .requests
+                .insert(format!("GET /{}", i), [(4, 1)].into());
+        }),
+        ("graph errors", |d, i| {
+            d.graph
+                .errors
+                .insert(format!("GET /{}", i), [(4, 1)].into());
+        }),
+        ("averages", |d, i| {
+            let average = Average {
+                count: 1,
+                sum_ms: 1.0,
+            };
+            d.graph
+                .averages
+                .insert(format!("GET /{}", i), [(4, average)].into());
+        }),
+        ("latency", |d, i| {
+            d.graph
+                .latency
+                .insert(format!("GET /{}", i), [(4, Histogram::default())].into());
+        }),
+        ("synthetic", |d, i| {
+            d.graph
+                .synthetic
+                .insert(format!("GET /{}", i), [(4, Histogram::default())].into());
+        }),
+    ];
+    for (kind, add) in kinds.iter() {
+        let mut delta = counted(0, 2, 1);
+        delta.metrics.requests.clear();
+        for index in 0..4 {
+            add(&mut delta, index);
+        }
+        let mut accumulator = held();
+        assert_eq!(
+            accumulator.apply(0, delta.clone()),
+            Err(DeltaError::TooManyNames { names: 4, limit: 3 }),
+            "{}",
+            kind
+        );
+        refused(0, delta, DeltaError::TooManyNames { names: 4, limit: 3 });
+    }
+}
+
+/// A worker cannot grow a scenario's users past the cap: every ordinal is
+/// below it, so the set holds at most that many, however many deltas come.
+#[test]
+fn gaggle_refuses_a_user_past_the_cap() {
+    let with_user = |seq: u64, user: u64| {
+        let mut delta = counted(0, seq, 1);
+        let mut scenario = super::delta::ScenarioPart::default();
+        scenario.users.insert(user);
+        delta.metrics.scenarios.insert(0, scenario);
+        delta
+    };
+    refused(
+        0,
+        with_user(2, 8),
+        DeltaError::UserOutOfRange { user: 8, limit: 8 },
+    );
+    refused(
+        0,
+        with_user(2, u64::MAX),
+        DeltaError::UserOutOfRange {
+            user: u64::MAX,
+            limit: 8,
+        },
+    );
+    let mut accumulator = held();
+    for user in 0..8 {
+        accumulator.apply(0, with_user(user + 2, user)).unwrap();
+    }
+    assert_eq!(
+        accumulator.apply(0, with_user(10, 8)),
+        Err(DeltaError::UserOutOfRange { user: 8, limit: 8 })
+    );
+    accumulator.done(0);
+    let (metrics, _) = accumulator.merged();
+    assert_eq!(metrics.scenarios[0].users.len(), 8);
+}
+
+/// A delta that is not final carries at most the capped number of
+/// coordinated omission events, and only severity codes there are.
+#[test]
+fn gaggle_refuses_too_many_events_and_bad_severities() {
+    use crate::metrics::coordinated_omission::{CoEvent, CoSeverity};
+    use crate::metrics::GooseCoordinatedOmissionMitigation;
+    let co = || super::delta::CoPart {
+        strategy: GooseCoordinatedOmissionMitigation::Average,
+        started_secs: 0,
+        actual: 0,
+        synthetic: 0,
+        severity: BTreeMap::new(),
+        events: Vec::new(),
+        events_dropped: 0,
+    };
+    let event = CoEvent {
+        timestamp_secs: 0,
+        expected_cadence: Duration::from_millis(10),
+        actual_duration: Duration::from_millis(100),
+        synthetic_injected: 1,
+        user_id: 0,
+        scenario_name: "s".to_string(),
+        severity: CoSeverity::Minor,
+    };
+    let limit = super::delta::MAX_CO_EVENTS_PER_DELTA;
+    let mut many = counted(0, 2, 1);
+    let mut part = co();
+    part.events = vec![event; limit + 1];
+    many.metrics.co = Some(part);
+    refused(
+        0,
+        many,
+        DeltaError::TooManyEvents {
+            events: limit + 1,
+            limit,
+        },
+    );
+    let mut severity = counted(0, 2, 1);
+    let mut part = co();
+    part.severity.insert(4, 1);
+    severity.metrics.co = Some(part);
+    refused(0, severity, DeltaError::BadSeverity { code: 4 });
+}
+
+/// An average's total is bounded as a count is, so the merge of every
+/// worker's stays finite and no worker is left out for it.
+#[test]
+fn gaggle_refuses_an_average_total_past_the_bound() {
+    let mut delta = counted(0, 2, 1);
+    let average = super::delta::Average {
+        count: 1,
+        sum_ms: 1.5e308,
+    };
+    delta
+        .graph
+        .averages
+        .insert("GET /a".to_string(), [(4, average)].into());
+    refused(0, delta, DeltaError::Overflow);
+}
+
+/// Figures every worker may send, at their bounds, merge without
+/// overflowing the graph series' totals: users at the most a worker may
+/// hold across hours, and a name's most requests a second, second after
+/// second.
+#[test]
+fn gaggle_merge_at_the_bounds_does_not_overflow() {
+    use super::delta::{MAX_COUNT, MAX_SECOND_COUNT};
+    let mut accumulator = accumulator();
+    for worker in 0..2 {
+        let mut delta = GaggleDelta::new(worker, 1, 1, DeltaKind::Delta);
+        delta.now = 9_000;
+        delta.graph.users = [(0, MAX_COUNT), (9_000, MAX_COUNT)].into();
+        delta.graph.requests.insert(
+            "GET /a".to_string(),
+            (0..4).map(|second| (second, MAX_SECOND_COUNT)).collect(),
+        );
+        delta.graph.averages.insert(
+            "GET /a".to_string(),
+            (0..4)
+                .map(|second| {
+                    let average = super::delta::Average {
+                        count: MAX_SECOND_COUNT,
+                        sum_ms: MAX_SECOND_COUNT as f64,
+                    };
+                    (second, average)
+                })
+                .collect(),
+        );
+        apply(&mut accumulator, &delta);
+        accumulator.done(worker);
+    }
+    assert!(accumulator.excluded().is_empty());
+    let (metrics, mut graph) = accumulator.merged();
+    let configuration = configuration();
+    crate::metrics::gaggle_snapshot(&configuration, &metrics, &mut graph);
 }
