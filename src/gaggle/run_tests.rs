@@ -21,14 +21,17 @@ fn get(path: &'static str) -> Transaction {
 }
 
 /// Each user, first: GET /pre, and GET /data/ with its worker data; then a
-/// pause past the metrics reset, so every later request is measured.
+/// pause past the metrics reset, so every later request is measured. With
+/// the ramp at 10 users a second, a worker's users start 200 ms apart, so a
+/// worker's start may slip that much before more than its last user's /pre
+/// races the reset.
 fn on_start() -> Transaction {
     Transaction::new(Arc::new(|user| {
         Box::pin(async move {
             let _ = user.get("/pre").await;
             let data = String::from_utf8_lossy(user.worker_data()).into_owned();
             let _ = user.get(&format!("/data/{data}")).await;
-            tokio::time::sleep(Duration::from_millis(800)).await;
+            tokio::time::sleep(Duration::from_millis(1500)).await;
             Ok(())
         })
     }))
@@ -193,7 +196,7 @@ async fn gaggle_manager_and_two_workers_in_one_process() {
             "--users",
             "6",
             "--increase-rate",
-            "100",
+            "10",
             "--run-time",
             "3",
             "--report-file",

@@ -227,6 +227,9 @@ pub(crate) struct Link {
     /// Set when the worker's `execute()` returns, so the switch's last resort
     /// never ends a process that went on to do something else.
     pub(crate) done: Arc<AtomicBool>,
+    /// Set once the dead man's switch fired: a user started after it is
+    /// stopped at once.
+    fired: Arc<AtomicBool>,
 }
 
 /// What [`Link::connect`] needs.
@@ -370,10 +373,11 @@ impl Link {
             users: Arc::new(Mutex::new(Vec::new())),
             shutdown: Arc::new(AtomicBool::new(false)),
             done: Arc::new(AtomicBool::new(false)),
+            fired: Arc::new(AtomicBool::new(false)),
         };
         let heard = Arc::new(Mutex::new(Instant::now()));
         let switch = Switch {
-            fired: Arc::new(AtomicBool::new(false)),
+            fired: link.fired.clone(),
             users: link.users.clone(),
             events: events_tx.clone(),
             outbox: link.outbox.clone(),
@@ -399,6 +403,12 @@ impl Link {
     /// Watch a user task, so the dead man's switch can stop it.
     pub(crate) fn watch(&self, user: tokio::task::AbortHandle) {
         if let Ok(mut users) = self.users.lock() {
+            // The switch sets `fired` before it takes this lock to abort
+            // every user, so either it sees this user or this sees `fired`.
+            if self.fired.load(Ordering::SeqCst) {
+                user.abort();
+                return;
+            }
             // Kept to the end of the run, as the run state keeps every
             // user's JoinHandle: one per user started.
             users.push(user);
@@ -556,7 +566,7 @@ impl Switch {
     /// exits the process with an error status: load never outlives its
     /// manager.
     fn fire(&self, why: String) {
-        if self.fired.swap(true, Ordering::Relaxed) {
+        if self.fired.swap(true, Ordering::SeqCst) {
             return;
         }
         error!("gaggle: lost the manager ({why}); stopping every user");
@@ -772,6 +782,29 @@ mod tests {
             .await
             .expect("the heartbeat task ends")
             .unwrap();
+    }
+
+    /// A user the worker starts after the switch fired, in the same pass of
+    /// its main loop, is stopped at once.
+    #[tokio::test]
+    async fn a_user_started_after_the_switch_is_stopped() {
+        let (switch, events, outbox) = switch(Vec::new(), Duration::from_secs(10));
+        let link = Link {
+            id: 0,
+            outbox,
+            events,
+            users: switch.users.clone(),
+            shutdown: Arc::new(AtomicBool::new(false)),
+            done: switch.done.clone(),
+            fired: switch.fired.clone(),
+        };
+        switch.fire("test".to_string());
+        let late = tokio::spawn(std::future::pending::<()>());
+        link.watch(late.abort_handle());
+        let ended = tokio::time::timeout(Duration::from_secs(30), late)
+            .await
+            .expect("within 30 seconds");
+        assert!(ended.unwrap_err().is_cancelled());
     }
 
     #[test]

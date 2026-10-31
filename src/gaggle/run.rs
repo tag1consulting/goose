@@ -929,9 +929,13 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>, compress: b
     // under.
     let mut pending: BTreeMap<u32, BTreeMap<String, LogSpec>> = BTreeMap::new();
     for worker in &run.workers {
+        // A worker that never started wrote no logs: none is left on it.
+        let never_ran = worker.lost.is_none() && worker.run_folder.is_none();
         if !worker.sends_logs() || folder.is_none() {
-            for log in &run.logs {
-                run.logs_left.push(left(worker, log));
+            if !never_ran {
+                for log in &run.logs {
+                    run.logs_left.push(left(worker, log));
+                }
             }
             continue;
         }
