@@ -1,20 +1,26 @@
 # Gaggle Technical Details
 
-**NOTE: Goose 0.19 cannot run a Gaggle. Gaggle support was removed in Goose 0.17.0 and will be restored in Goose 0.20, before the 1.0 release. This page describes Goose 0.16.4, the last release with it; see the [Gaggle overview](overview.md).**
-
-Goose uses [`nng`](https://docs.rs/nng/) to send network messages between the Manager and all Workers. [Serde](https://docs.serde.rs/serde/index.html) and [Serde CBOR](https://github.com/pyfisch/cbor) are used to serialize messages into [Concise Binary Object Representation](https://tools.ietf.org/html/rfc7049).
-
-Workers initiate all network connections, and push metrics to the Manager process.
-
 ## Compile-time Feature
 
-Gaggle support is a compile-time Cargo feature that must be enabled. Goose uses the [`nng`](https://docs.rs/nng/) library to manage network connections, and compiling `nng` requires that `cmake` be available.
-
-The `gaggle` feature can be enabled from the command line by adding `--features gaggle` to your cargo command.
-
-With Goose 0.16, a load test application could default to compiling in the Gaggle feature in the `dependencies` section of its `Cargo.toml`. This only works with Goose 0.16.4 or earlier: Goose 0.18 accepts the feature and ignores it, and Goose 0.17 and 0.19 have no `gaggle` feature, so Cargo refuses to build a dependency line that asks for it. For example, pinned to 0.16.4:
+Gaggle support is the `gaggle` cargo feature, off by default. Enable it on the command line with `--features gaggle`, or in your load test's `Cargo.toml`:
 
 ```toml
 [dependencies]
-goose = { version = "=0.16.4", features = ["gaggle"] }
+goose = { version = "0.20", features = ["gaggle"] }
 ```
+
+It needs no system libraries and no `protoc`: the protocol's generated code is part of Goose.
+
+## The protocol
+
+The manager and its workers speak gRPC, with [tonic](https://docs.rs/tonic/) and [prost](https://docs.rs/prost/), over one HTTP/2 stream each way that stays open for the whole run. The protocol is `proto/gaggle.proto` in the Goose repository, package `goose.gaggle.v1`, protocol version 1. Workers open every connection; the manager only listens.
+
+- A worker says `Hello`, with its Goose version, the protocol version, the hash of its load test and the token. The manager answers `Welcome`, with the worker's id, or `Reject`, naming what did not match.
+- The manager sends `Prepare`, the worker's share of the load test, and the worker answers when its users are ready. `StartAt` tells every worker to start 2 seconds later.
+- Each second a worker sends `Metrics`: what it measured since the last second, as a delta [postcard](https://docs.rs/postcard/) encodes. A worker queues at most 8; past that, the newest is merged into the last queued, so a slow link costs memory for 8 deltas at most. The manager adds every worker's deltas into one set of metrics and graph data, which its reports, dashboard and thresholds read.
+- `ResetMetrics` resets every worker's metrics when the run's users have all started. `Stop` ends the run; each worker answers with its final metrics, then `Stopped`. `SendLogs` asks for its logs, which come back in chunks of 1 MiB, and `Shutdown` tells it to exit.
+- `Heartbeat` goes both ways every 2 seconds, on its own task, whatever else either side is doing, `--no-metrics` included.
+
+Messages are limited to 64 MiB each way, which holds the largest custom data a worker may be handed, 16 MiB, and a worker's final metrics.
+
+The connection is not encrypted. Run a Gaggle on a network you trust, and give it a `--gaggle-token`.

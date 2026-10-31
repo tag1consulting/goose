@@ -299,7 +299,7 @@ fn gaggle_manager_killed_mid_run() {
                 ],
             ),
         );
-        let mut workers = vec![
+        let mut workers = [
             Process::start(&simple, "first", &folder, &worker_args(&port, &[])),
             Process::start(&simple, "second", &folder, &worker_args(&port, &[])),
         ];
@@ -463,7 +463,7 @@ fn gaggle_without_metrics_exits_cleanly() {
                 ],
             ),
         );
-        let mut workers = vec![
+        let mut workers = [
             Process::start(&simple, "first", &folder, &worker_args(&port, &[])),
             Process::start(&simple, "second", &folder, &worker_args(&port, &[])),
         ];
@@ -521,7 +521,7 @@ fn gaggle_threshold_stops_every_worker() {
                 ],
             ),
         );
-        let mut workers = vec![
+        let mut workers = [
             Process::start(&simple, "first", &folder, &worker_args(&port, &[])),
             Process::start(&simple, "second", &folder, &worker_args(&port, &[])),
         ];

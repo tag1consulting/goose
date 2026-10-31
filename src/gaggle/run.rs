@@ -315,6 +315,10 @@ impl GooseAttack {
             ending: false,
         })));
         tokio::time::sleep_until(start).await;
+        info!(
+            "gaggle: starting at {}",
+            chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
+        );
         Ok(())
     }
 
@@ -416,7 +420,8 @@ impl GooseAttack {
             run.started_late = Some(late);
         }
         info!(
-            "gaggle: starting {} us after the manager's start instant",
+            "gaggle: starting at {}, {} us after the start instant the manager gave",
+            chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true),
             late.as_micros()
         );
         self.reset_run_state(goose_attack_run_state).await?;

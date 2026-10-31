@@ -1139,7 +1139,7 @@ impl GooseAttack {
     ///     // the worker's first user's ordinal: each user takes its own account.
     ///     let index = user.weighted_users_index.saturating_sub(first);
     ///     if let Some(account) = accounts.get(index) {
-    ///         let _goose = user.post("/login", *account).await?;
+    ///         let _goose = user.post("/login", account.to_string()).await?;
     ///     }
     ///
     ///     Ok(())
