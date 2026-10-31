@@ -143,12 +143,32 @@ impl GaggleAccumulator {
             .min()
     }
 
+    /// The newest metrics epoch any worker reached.
+    fn epoch(&self) -> Option<u64> {
+        self.workers.values().map(|w| w.total.epoch).max()
+    }
+
+    /// The workers [`Self::merged`] leaves out, because their metrics epoch
+    /// is older than the newest any worker reached. Each worker counts its
+    /// own metrics resets, so one that missed a reset is left out rather
+    /// than mixed into another epoch's figures; in Gaggle step 2 the
+    /// manager owns the epochs and no worker can fall behind unseen.
+    pub(crate) fn excluded(&self) -> Vec<u32> {
+        let epoch = self.epoch();
+        self.workers
+            .iter()
+            .filter(|(_, worker)| Some(worker.total.epoch) != epoch)
+            .map(|(&worker, _)| worker)
+            .collect()
+    }
+
     /// The metrics and graph data of every worker merged: the metrics of
     /// the newest epoch any worker reached, and the graphs' complete
     /// seconds only. Every derived figure is worked out again from the
-    /// merged counts.
+    /// merged counts. A worker of an older epoch is left out, and named
+    /// by [`Self::excluded`].
     pub(crate) fn merged(&self) -> (GooseMetrics, GraphData) {
-        let epoch = self.workers.values().map(|w| w.total.epoch).max();
+        let epoch = self.epoch();
         let mut metrics = MetricsPart::default();
         let mut graph = GraphPart::default();
         let mut series_origin = None;

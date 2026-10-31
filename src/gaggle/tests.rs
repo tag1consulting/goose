@@ -1074,6 +1074,57 @@ fn gaggle_coalesce_equals_apply_apply() {
     }
 }
 
+/// A delta from `worker` of `epoch`, numbered `seq`, counting one success
+/// of `GET /a`.
+fn counted(worker: u32, seq: u64, epoch: u64) -> GaggleDelta {
+    let mut delta = GaggleDelta::new(worker, seq, epoch, DeltaKind::Delta);
+    delta.now = 5;
+    let mut request = super::delta::RequestPart::new("/a", GooseMethod::Get, "");
+    request.success = 1;
+    delta.metrics.requests.insert("GET /a".to_string(), request);
+    delta
+}
+
+/// A worker that missed a metrics reset another worker saw is left out of
+/// the merge, and named.
+#[test]
+fn gaggle_older_epoch_worker_is_named() {
+    let mut accumulator = accumulator();
+    accumulator.apply(wire(&counted(0, 1, 1)));
+    accumulator.apply(wire(&counted(1, 1, 1)));
+    assert!(accumulator.excluded().is_empty());
+    accumulator.apply(wire(&counted(0, 2, 2)));
+    assert_eq!(accumulator.excluded(), vec![1]);
+    let (metrics, _) = accumulator.merged();
+    assert_eq!(metrics.requests["GET /a"].success_count, 1);
+}
+
+/// The shadow merge fails, naming the worker, when one is left out.
+#[test]
+fn gaggle_shadow_merge_fails_on_an_excluded_worker() {
+    let side = Side::new(0..0, Some(0));
+    let outcome = Arc::new(Mutex::new(None));
+    let mut shadow = super::shadow::ShadowMerge::new(
+        side.processor.gaggle_template(),
+        side.processor.gaggle_graph_settings(),
+        outcome,
+    );
+    shadow.delta(&counted(1, 1, 1));
+    shadow.delta(&counted(0, 1, 2));
+    let mut last_final = counted(0, 3, 2);
+    last_final.kind = DeltaKind::Final;
+    let run = single(&[]);
+    let ended = shadow.finish(&counted(0, 2, 2), &last_final, (&run.0, &run.1), None);
+    for name in ["deltas", "final"] {
+        let named = format!("{name}: worker 1 left out of the merge");
+        assert!(
+            ended.differences.iter().any(|d| d.starts_with(&named)),
+            "{:?}",
+            ended.differences
+        );
+    }
+}
+
 /// A worker's users level holds past its last second: two workers, one
 /// whose users stop being recorded a second early, add up as one process
 /// keeping each level until it changes.

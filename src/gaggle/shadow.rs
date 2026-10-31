@@ -139,6 +139,13 @@ impl ShadowMerge {
         for gap in self.deltas.gaps() {
             differences.push(format!("sequence gap: {gap:?}"));
         }
+        for (name, accumulator) in [("deltas", &self.deltas), ("final", &self.finals)] {
+            for worker in accumulator.excluded() {
+                differences.push(format!(
+                    "{name}: worker {worker} left out of the merge: its metrics epoch is older"
+                ));
+            }
+        }
         let mut run_graph = run.1.clone();
         let run_snapshot = snapshot.map(|build| build(run.0, &mut run_graph));
         for (name, accumulator) in [("deltas", &self.deltas), ("final", &self.finals)] {
