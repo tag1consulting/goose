@@ -1055,7 +1055,7 @@ mod tests {
         let mut accumulator =
             GaggleAccumulator::new(GooseMetrics::default(), settings, DeltaLimits::default());
         // Workers starting at different seconds, with gaps and changes.
-        for (worker, levels) in [
+        for (worker, levels) in vec![
             vec![(2, 3), (3, 4), (7, 1)],
             vec![(0, 5), (5, 0), (6, 2)],
             vec![(4, 9)],
