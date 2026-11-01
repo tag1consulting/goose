@@ -182,6 +182,12 @@ fn send_or_hold(
     )
 }
 
+/// Whether the metrics processor answered on `reply` within `wait`. A reply
+/// channel it dropped is no answer, as a timeout is not.
+async fn answered<T>(reply: tokio::sync::oneshot::Receiver<T>, wait: Duration) -> bool {
+    matches!(tokio::time::timeout(wait, reply).await, Ok(Ok(_)))
+}
+
 /// A worker that cannot finish a phase of its run: it stops every user, tells
 /// the manager it failed (no final metrics follow, so the manager marks it
 /// lost), gives that a moment to leave, and exits with an error.
@@ -911,7 +917,7 @@ impl GooseAttack {
         #[cfg(not(test))]
         let hold = false;
         let (sent, _held) = send_or_hold(goose_attack_run_state, command, hold);
-        if sent && tokio::time::timeout(RESET_TIMEOUT, acked).await.is_err() {
+        if sent && !answered(acked, RESET_TIMEOUT).await {
             return Err(format!(
                 "the metrics processor did not reset within {} seconds",
                 RESET_TIMEOUT.as_secs()
@@ -1009,7 +1015,7 @@ impl GooseAttack {
         #[cfg(not(test))]
         let hold = false;
         let (sent, _held) = send_or_hold(goose_attack_run_state, command, hold);
-        if sent && tokio::time::timeout(FINAL_TIMEOUT, done).await.is_err() {
+        if sent && !answered(done, FINAL_TIMEOUT).await {
             let why = format!(
                 "the metrics processor did not hand over the final metrics within {} seconds",
                 FINAL_TIMEOUT.as_secs()
@@ -1398,6 +1404,22 @@ mod tests {
                 })
             );
         });
+    }
+
+    /// Only an answer is an answer: a reply channel the metrics processor
+    /// dropped fails the phase at once, as a timeout does later.
+    #[tokio::test]
+    async fn a_dropped_reply_is_no_answer() {
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        tx.send(()).unwrap();
+        assert!(answered(rx, Duration::from_secs(1)).await);
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        drop(tx);
+        let asked = Instant::now();
+        assert!(!answered(rx, Duration::from_secs(10)).await);
+        assert!(asked.elapsed() < Duration::from_secs(5));
+        let (_tx, rx) = tokio::sync::oneshot::channel::<()>();
+        assert!(!answered(rx, Duration::from_millis(100)).await);
     }
 
     fn entry() -> WorkerEntry {
