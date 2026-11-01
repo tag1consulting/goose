@@ -207,7 +207,7 @@ async fn gaggle_ends(
     (manager.await.expect("the manager task ends"), ends)
 }
 
-/// B1: one manager and two workers. The manager's totals are the server's
+/// One manager and two workers. The manager's totals are the server's
 /// counts; the users run the scenarios one process would give them;
 /// test_start and test_stop run once, on the manager; each worker gets its
 /// own data; the reports and every worker's logs land in the manager's run

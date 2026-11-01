@@ -1562,7 +1562,7 @@ pub(crate) mod handshake_tests {
         }
     }
 
-    /// B2.3, through a client of the test's own: a worker of another protocol
+    /// Through a client of the test's own: a worker of another protocol
     /// version, Goose version, plan or token is refused, naming the field;
     /// then a worker that matches is welcome, and one more than the Gaggle
     /// expects is refused.

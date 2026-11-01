@@ -819,7 +819,7 @@ fn assert_none(what: &str, differences: &[String]) {
     );
 }
 
-/// B1, the core equivalence: `workers` workers' deltas merged give what one
+/// The core equivalence: `workers` workers' deltas merged give what one
 /// process gives, in every figure, graph, report, snapshot and threshold
 /// verdict, with and without final deltas, whatever order the workers'
 /// deltas interleave in.
@@ -918,7 +918,7 @@ fn apply_all<'a>(deltas: impl IntoIterator<Item = &'a GaggleDelta>) -> GaggleAcc
     accumulator
 }
 
-/// B3: a delta lost in the middle: the worker's final delta makes its
+/// A delta lost in the middle: the worker's final delta makes its
 /// metrics good, not its graph rows, which stay missing exactly as if
 /// the delta had carried none, and the gap is reported.
 #[test]
@@ -1000,7 +1000,7 @@ fn gaggle_worker_keeps_no_sent_rows() {
     assert!(!last_final.metrics.requests.is_empty());
 }
 
-/// B3: a worker lost with its last deltas and no final delta: what it sent
+/// A worker lost with its last deltas and no final delta: what it sent
 /// stays merged, the loss is reported, and its seconds stop holding back
 /// which seconds are complete.
 #[test]
@@ -1071,7 +1071,7 @@ fn gaggle_lost_worker_keeps_what_it_sent() {
     assert_eq!(count(&metrics), count(&without) + sent);
 }
 
-/// B3: a delta from an epoch before the worker's last metrics reset is
+/// A delta from an epoch before the worker's last metrics reset is
 /// discarded.
 #[test]
 fn gaggle_older_epoch_is_discarded() {
@@ -1246,7 +1246,7 @@ fn gaggle_users_levels_hold() {
     assert_none("users levels", &graph.gaggle_diff(&expected));
 }
 
-/// B3: a delta received twice is reported and counted once.
+/// A delta received twice is reported and counted once.
 #[test]
 fn gaggle_repeated_delta_is_ignored() {
     let events = events(0x645);

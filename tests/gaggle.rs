@@ -211,7 +211,7 @@ fn until_load(count: impl Fn() -> usize, within: Duration) {
     }
 }
 
-/// B2.1: a worker killed mid run is marked lost within the heartbeat
+/// A worker killed mid run is marked lost within the heartbeat
 /// timeout plus 2 seconds; the run finishes on the other, and its reports
 /// say it is degraded.
 #[test]
@@ -220,7 +220,7 @@ fn gaggle_worker_killed_mid_run() {
     within(|| worker_lost_mid_run(false));
 }
 
-/// As B2.1, the worker frozen with SIGSTOP instead: its connection stays
+/// As a worker killed, the worker frozen with SIGSTOP instead: its connection stays
 /// open, so only the heartbeat timeout finds it lost.
 #[test]
 #[serial_test::serial]
@@ -335,7 +335,7 @@ fn worker_lost_mid_run(frozen: bool) {
     }
 }
 
-/// B2.2: the manager killed mid run: every worker stops its load and exits
+/// The manager killed mid run: every worker stops its load and exits
 /// with an error within the heartbeat timeout plus 5 seconds.
 #[test]
 #[serial_test::serial]
@@ -343,7 +343,7 @@ fn gaggle_manager_killed_mid_run() {
     within(|| manager_lost_mid_run(false));
 }
 
-/// As B2.2, the manager frozen with SIGSTOP instead: its connections stay
+/// As the manager killed, the manager frozen with SIGSTOP instead: its connections stay
 /// open, so only the heartbeat timeout stops the workers.
 #[test]
 #[serial_test::serial]
@@ -419,7 +419,7 @@ fn manager_lost_mid_run(frozen: bool) {
     }
 }
 
-/// B2.3: a worker whose load test differs, or whose token is wrong, is
+/// A worker whose load test differs, or whose token is wrong, is
 /// refused, and exits with an error naming why.
 #[test]
 #[serial_test::serial]
@@ -488,7 +488,7 @@ fn gaggle_handshake_refusals() {
     });
 }
 
-/// B2.4: a worker with no manager to reach keeps trying, waiting 1, 2 and
+/// A worker with no manager to reach keeps trying, waiting 1, 2 and
 /// then 4 seconds between attempts, and then exits with an error, without a
 /// panic, within the connect timeout plus 5 seconds.
 #[test]
@@ -529,7 +529,7 @@ fn gaggle_worker_without_a_manager() {
     });
 }
 
-/// B2.5: `--no-metrics` on the manager: the run starts, stops on time, and
+/// `--no-metrics` on the manager: the run starts, stops on time, and
 /// every process exits 0 (#156).
 #[test]
 #[serial_test::serial]
@@ -585,7 +585,7 @@ fn gaggle_without_metrics_exits_cleanly() {
     });
 }
 
-/// B2.6: a threshold that fails on the merged metrics stops every worker,
+/// A threshold that fails on the merged metrics stops every worker,
 /// and the manager fails with the thresholds error.
 #[test]
 #[serial_test::serial]

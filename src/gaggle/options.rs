@@ -449,7 +449,7 @@ mod tests {
         }
     }
 
-    /// B3: every combination A3 refuses, with its message. Serial, with no
+    /// Every refused combination, with its message. Serial, with no
     /// token from the environment, which a manager or worker reads.
     #[test]
     #[serial_test::serial]
@@ -767,7 +767,7 @@ mod tests {
         assert!(unclassified.is_empty(), "{:?}", unclassified);
     }
 
-    /// B3: the token never shows in `config` (the `Debug` output) or
+    /// The token never shows in `config` (the `Debug` output) or
     /// `config-json`, nor when it comes from the environment. The process
     /// tests check no log line holds it.
     #[test]
