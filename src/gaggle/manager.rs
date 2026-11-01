@@ -451,10 +451,7 @@ impl Gaggle for GaggleService {
             .handled
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let connection = request.extensions().get::<Peer>().cloned();
-        let peer = connection
-            .as_ref()
-            .and_then(|connection| connection.addr)
-            .map_or_else(|| "unknown".to_string(), |addr| addr.to_string());
+        let peer = peer_name(connection.as_ref().and_then(|connection| connection.addr));
         let mut inbound = request.into_inner();
         let hello = match tokio::time::timeout(HELLO_TIMEOUT, inbound.message()).await {
             Ok(Ok(Some(WorkerMessage {
@@ -516,6 +513,11 @@ impl Gaggle for GaggleService {
         tokio::spawn(heartbeat_worker(worker, self.0.clone(), heard, lost));
         Ok(tonic::Response::new(responses))
     }
+}
+
+/// A peer's address for a log line, `unknown` without one.
+fn peer_name(addr: Option<SocketAddr>) -> String {
+    addr.map_or_else(|| "unknown".to_string(), |addr| addr.to_string())
 }
 
 /// What the service knows of the connection a request came on.
@@ -651,7 +653,7 @@ fn counted(
                 Err(_) => {
                     warn!(
                         "gaggle: a connection from {} closed: the manager holds all the connections it allows",
-                        addr.map_or_else(|| "unknown".to_string(), |addr| addr.to_string())
+                        peer_name(addr)
                     );
                     None
                 }

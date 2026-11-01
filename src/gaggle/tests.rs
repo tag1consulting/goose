@@ -281,18 +281,6 @@ fn events(seed: u64) -> Vec<Event> {
 }
 
 /// A processor, and the users whose batches it receives.
-/// An empty accumulator for this module's load test, for tests elsewhere in
-/// the Gaggle.
-pub(crate) fn accumulator_for_test() -> GaggleAccumulator {
-    let side = Side::new(0..0, Some(0));
-    GaggleAccumulator::new(
-        side.processor.gaggle_template(),
-        side.processor.gaggle_graph_settings(),
-        DeltaLimits::default(),
-    )
-    .keeping_gaps()
-}
-
 struct Side {
     processor: MetricsProcessor,
     users: BTreeMap<usize, GooseUser>,
@@ -565,8 +553,9 @@ fn wire(delta: &GaggleDelta) -> GaggleDelta {
     decoded
 }
 
-/// A manager's accumulator, empty, as the single process's metrics start.
-fn accumulator() -> GaggleAccumulator {
+/// A manager's accumulator, empty, as the single process's metrics start,
+/// keeping every gap: for tests here and elsewhere in the Gaggle.
+pub(crate) fn accumulator() -> GaggleAccumulator {
     let side = Side::new(0..0, Some(0));
     GaggleAccumulator::new(
         side.processor.gaggle_template(),

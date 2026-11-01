@@ -17,9 +17,7 @@ use super::proto::{
 };
 use super::spec::{self, LogSpec, WorkerRunSpec};
 use crate::metrics::MetricsCommand;
-use crate::runs::{
-    log_file_name, EndedBy, GaggleLogLeft, GaggleRecord, GaggleWorkerRecord, WorkerState, LOG_NAMES,
-};
+use crate::runs::{EndedBy, GaggleLogLeft, GaggleRecord, GaggleWorkerRecord, WorkerState};
 use crate::{AttackMode, AttackPhase, GooseAttack, GooseAttackRunState, GooseError, WorkerShare};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -211,11 +209,16 @@ async fn worker_failed(link: &Link, why: String) -> GooseError {
     GooseError::Gaggle { detail: why }
 }
 
-/// The failure that ends a manager before its run: every worker is told to
-/// shut down first.
-async fn fail(manager: &mut Manager, detail: String) -> GooseError {
-    error!("gaggle: {detail}");
+/// The failure that ends a manager before its run, `error`: every worker is
+/// told to shut down first.
+async fn fail(manager: &mut Manager, error: GooseError) -> GooseError {
+    error!("gaggle: {error}");
     manager.shut_down_all().await;
+    error
+}
+
+/// A Gaggle error saying `detail`.
+fn gaggle_error(detail: String) -> GooseError {
     GooseError::Gaggle { detail }
 }
 
@@ -356,20 +359,16 @@ impl GooseAttack {
                     }
                 }
                 Some(Event::Lost { id, why }) => {
-                    return Err(fail(
-                        &mut manager,
-                        format!("worker {id} was lost before the run started: {why}"),
+                    return Err(fail(&mut manager, gaggle_error(format!("worker {id} was lost before the run started: {why}")),
                     )
                     .await)
                 }
                 Some(_) => {}
                 None => {
-                    return Err(fail(
-                        &mut manager,
-                        format!(
+                    return Err(fail(&mut manager, gaggle_error(format!(
                             "{joined} of {expected} workers joined within {} seconds (--gaggle-connect-timeout)",
                             connect_timeout.as_secs()
-                        ),
+                        )),
                     )
                     .await)
                 }
@@ -379,17 +378,13 @@ impl GooseAttack {
 
         // test_start runs once, here, before any worker starts.
         if let Err(e) = self.run_test_start().await {
-            manager.shut_down_all().await;
-            return Err(e);
+            return Err(fail(&mut manager, e).await);
         }
 
         let total = self.test_plan.total_users();
         let order = match self.user_scenarios(total) {
             Ok(order) => order,
-            Err(e) => {
-                manager.shut_down_all().await;
-                return Err(e);
-            }
+            Err(e) => return Err(fail(&mut manager, e).await),
         };
         let specs = spec::worker_specs(
             &self.configuration,
@@ -413,10 +408,7 @@ impl GooseAttack {
             };
             match self.call_worker_data_hook(&share) {
                 Ok(data) => spec.custom_data = data.unwrap_or_default(),
-                Err(e) => {
-                    manager.shut_down_all().await;
-                    return Err(e);
-                }
+                Err(e) => return Err(fail(&mut manager, e).await),
             }
             let users = spec.users;
             let encoded = spec.encode();
@@ -424,9 +416,11 @@ impl GooseAttack {
             let bytes = match encoded {
                 Ok(bytes) => bytes,
                 Err(e) => {
-                    return Err(
-                        fail(&mut manager, format!("could not encode a run spec: {e}")).await,
+                    return Err(fail(
+                        &mut manager,
+                        gaggle_error(format!("could not encode a run spec: {e}")),
                     )
+                    .await)
                 }
             };
             manager.send(id, ToWorker::Prepare(Prepare { spec: bytes }));
@@ -454,14 +448,14 @@ impl GooseAttack {
                 }) => {
                     return Err(fail(
                         &mut manager,
-                        format!("worker {id} could not prepare its share: {error}"),
+                        gaggle_error(format!("worker {id} could not prepare its share: {error}")),
                     )
                     .await)
                 }
                 Some(Event::Lost { id, why }) => {
                     return Err(fail(
                         &mut manager,
-                        format!("worker {id} was lost while preparing: {why}"),
+                        gaggle_error(format!("worker {id} was lost while preparing: {why}")),
                     )
                     .await)
                 }
@@ -469,11 +463,11 @@ impl GooseAttack {
                 None => {
                     return Err(fail(
                         &mut manager,
-                        format!(
+                        gaggle_error(format!(
                             "{} of {expected} workers prepared within {} seconds",
                             ready.len(),
                             PREPARE_TIMEOUT.as_secs()
-                        ),
+                        )),
                     )
                     .await)
                 }
@@ -913,15 +907,7 @@ impl GooseAttack {
     ) -> Result<(), String> {
         self.update_duration();
         let (ack, acked) = tokio::sync::oneshot::channel();
-        let command = MetricsCommand::Reset {
-            duration: self.metrics.duration,
-            total_users: self.metrics.total_users,
-            maximum_users: self.metrics.maximum_users,
-            active_users: goose_attack_run_state.active_users,
-            series_elapsed_secs: self.series_elapsed_secs(),
-            running_users: goose_attack_run_state.running_users.clone(),
-            ack,
-        };
+        let command = self.reset_command(goose_attack_run_state, ack);
         let not_reset = || {
             format!(
                 "the metrics processor did not reset within {} seconds",
@@ -1173,15 +1159,6 @@ fn last_merged(health: &MergeHealth, id: u32) -> u64 {
         .unwrap_or(0)
 }
 
-/// The name a worker gives log `log` in its own run folder.
-fn worker_file(log: &LogSpec) -> String {
-    let mut file = log_file_name(LOG_NAMES[log.kind as usize], log.format.as_ref());
-    if log.gzip {
-        file.push_str(".gz");
-    }
-    file
-}
-
 /// One log arriving from a worker, written to `part` until its last chunk,
 /// when it is renamed to `path`: a log cut off part way never shows under
 /// its real name.
@@ -1207,8 +1184,8 @@ async fn collect_logs(run: &mut ManagerRun, folder: Option<PathBuf>) {
     let left = |worker: &WorkerEntry, log: &LogSpec| GaggleLogLeft {
         worker: worker.name.clone(),
         path: match &worker.run_folder {
-            Some(folder) => format!("{folder}/{}", worker_file(log)),
-            None => worker_file(log),
+            Some(folder) => format!("{folder}/{}", log.worker_file()),
+            None => log.worker_file(),
         },
     };
     // Each worker's logs still to come, by the name the manager keeps them

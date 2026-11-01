@@ -24,6 +24,17 @@ pub(crate) struct LogSpec {
     pub(crate) gzip: bool,
 }
 
+impl LogSpec {
+    /// The name a worker gives this log in its own run folder.
+    pub(crate) fn worker_file(&self) -> String {
+        let mut file = log_file_name(LOG_NAMES[self.kind as usize], self.format.as_ref());
+        if self.gzip {
+            file.push_str(".gz");
+        }
+        file
+    }
+}
+
 /// A worker's share of the load test.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct WorkerRunSpec {
@@ -377,13 +388,7 @@ impl WorkerRunSpec {
     ) -> Vec<(String, std::path::PathBuf)> {
         self.logs
             .iter()
-            .map(|log| {
-                let mut file = log_file_name(LOG_NAMES[log.kind as usize], log.format.as_ref());
-                if log.gzip {
-                    file.push_str(".gz");
-                }
-                (log.manager_file.clone(), folder.file(&file))
-            })
+            .map(|log| (log.manager_file.clone(), folder.file(&log.worker_file())))
             .collect()
     }
 

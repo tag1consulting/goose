@@ -4614,6 +4614,25 @@ impl GooseAttack {
         }
     }
 
+    /// The command that resets the metrics processor now: this run's
+    /// figures so far, and every user still running, which the scenarios
+    /// count again. The processor answers on `ack` once it has reset.
+    pub(crate) fn reset_command(
+        &self,
+        goose_attack_run_state: &GooseAttackRunState,
+        ack: tokio::sync::oneshot::Sender<()>,
+    ) -> MetricsCommand {
+        MetricsCommand::Reset {
+            duration: self.metrics.duration,
+            total_users: self.metrics.total_users,
+            maximum_users: self.metrics.maximum_users,
+            active_users: goose_attack_run_state.active_users,
+            series_elapsed_secs: self.series_elapsed_secs(),
+            running_users: goose_attack_run_state.running_users.clone(),
+            ack,
+        }
+    }
+
     /// When going from the Increasing phase to the Maintaining phase, optionally
     /// flush and reset metrics via the dedicated processor task.
     pub(crate) async fn reset_metrics(
@@ -4645,15 +4664,7 @@ impl GooseAttack {
                     let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
                     goose_attack_run_state
                         .metrics_cmd_tx
-                        .send(MetricsCommand::Reset {
-                            duration: self.metrics.duration,
-                            total_users: self.metrics.total_users,
-                            maximum_users: self.metrics.maximum_users,
-                            active_users: goose_attack_run_state.active_users,
-                            series_elapsed_secs: self.series_elapsed_secs(),
-                            running_users: goose_attack_run_state.running_users.clone(),
-                            ack: ack_tx,
-                        })
+                        .send(self.reset_command(goose_attack_run_state, ack_tx))
                         .expect("metrics processor channel closed unexpectedly");
                     ack_rx.await.expect("metrics processor dropped ack sender");
 

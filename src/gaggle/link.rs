@@ -1098,7 +1098,7 @@ mod tests {
         outbox.push_delta(delta(second + 2));
         assert_eq!(outbox.queued_deltas(), MAX_QUEUED_DELTAS);
         outbox.close();
-        let mut accumulator = crate::gaggle::tests::accumulator_for_test();
+        let mut accumulator = crate::gaggle::tests::accumulator();
         while let Some(message) = next(&outbox).await {
             if let Some(ToManager::Metrics(metrics)) = message.message {
                 accumulator
