@@ -529,10 +529,10 @@ async fn gaggle_stale_and_refused_workers_degrade_the_run() {
     let reason = refused[0]["refused_reason"].as_str().unwrap_or_default();
     assert!(reason.starts_with("delta 1:"), "{}", gaggle);
     assert_eq!(refused[0]["missing_deltas"], 1, "{gaggle}");
-    assert!(refused[0].get("excluded_reason").is_none(), "{gaggle}");
+    assert!(refused[0].get("excluded_reason").is_none(), "{}", gaggle);
     let merged = &clean_workers[0];
     for field in ["excluded_reason", "refused_deltas", "missing_deltas"] {
-        assert!(merged.get(field).is_none(), "{field}: {gaggle}");
+        assert!(merged.get(field).is_none(), "{}: {}", field, gaggle);
     }
     for worker in [&stale[0], &refused[0]] {
         let name = worker["name"].as_str().unwrap();
