@@ -838,6 +838,42 @@ fn merge_equals_one_process(workers: usize) {
     }
 }
 
+/// A merge built after every delta, so each build adds only the seconds
+/// completed since the one before, ends as one built once at the end, and
+/// as one process running the whole load test.
+#[test]
+fn gaggle_merge_built_as_it_goes_equals_one_built_at_the_end() {
+    let events = events(0x645);
+    let single = single(&events);
+    let deltas = worker_deltas(&events, 3);
+    let mut rng = Rng(3);
+    let mut accumulator = accumulator();
+    let mut queues: Vec<std::collections::VecDeque<&GaggleDelta>> = deltas
+        .iter()
+        .map(|deltas| deltas.iter().collect())
+        .collect();
+    let mut builds = 0;
+    while queues.iter().any(|queue| !queue.is_empty()) {
+        let open: Vec<usize> = (0..queues.len())
+            .filter(|&queue| !queues[queue].is_empty())
+            .collect();
+        let queue = open[rng.below(open.len() as u64) as usize];
+        let delta = queues[queue].pop_front().unwrap();
+        apply(&mut accumulator, delta);
+        let _ = accumulator.merged();
+        builds += 1;
+    }
+    assert!(builds > 10, "{builds} builds");
+    assert_none(
+        "built as it goes",
+        &merge_diff(&accumulator, &merge(&deltas, true, 3)),
+    );
+    assert_none(
+        "built as it goes, against one process",
+        &differences(accumulator.merged(), &single),
+    );
+}
+
 #[test]
 fn gaggle_merge_equals_one_process_1_worker() {
     merge_equals_one_process(1);

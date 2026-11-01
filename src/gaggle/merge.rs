@@ -87,6 +87,18 @@ struct Merged {
     /// Whether it adds up the per worker totals: false until it is built
     /// again.
     current: bool,
+    /// The graph data built so far, kept so the next build adds only the
+    /// seconds completed since.
+    built: Option<GraphCache>,
+}
+
+/// Graph data built from the merged figures, unfinished, for every second
+/// before `before`.
+struct GraphCache {
+    data: GraphData,
+    before: Second,
+    series_origin: Option<Second>,
+    columns: bool,
 }
 
 /// Every worker's metrics, merged on demand.
@@ -189,6 +201,15 @@ impl GaggleAccumulator {
         let known = self.workers.contains_key(&from);
         let taken = self.take(from, &delta)?;
         let merged = self.merged.get_mut();
+        // Rows or users levels for a second already built: build again.
+        if !matches!(taken, Taken::Ignored) {
+            let earliest = delta.graph.seconds().min();
+            if let (Some(built), Some(earliest)) = (merged.built.as_ref(), earliest) {
+                if earliest < built.before {
+                    merged.built = None;
+                }
+            }
+        }
         match taken {
             Taken::Ignored => {}
             // A worker's first delta: whether it is merged, and where, is
@@ -491,6 +512,7 @@ impl GaggleAccumulator {
     /// record marks the run degraded and names the worker.
     pub(crate) fn merged_and_excluded(&self) -> (GooseMetrics, GraphData, Vec<(u32, String)>) {
         let mut merged = self.current();
+        let merged = &mut *merged;
         let complete = self.complete_before();
         // The merged workers, in order: their series origin, and their
         // coordinated omission events, each worker's in its own order.
@@ -505,10 +527,33 @@ impl GaggleAccumulator {
                 events.extend(co.events.iter().cloned());
             }
         }
-        merged.graph.users = self.users_levels();
+        // The graph data built so far, when it still holds: only the
+        // seconds completed since are added. Every second before the last
+        // build's `before` is unchanged, or the cache was dropped.
+        let reusable = merged.built.take().filter(|built| {
+            built.series_origin == series_origin
+                && built.columns == self.settings.columns
+                && complete.is_none_or(|complete| complete >= built.before)
+        });
+        let mut built = reusable.unwrap_or_else(|| GraphCache {
+            data: GraphData::gaggle_start(self.settings, series_origin),
+            before: 0,
+            series_origin,
+            columns: self.settings.columns,
+        });
+        let users = self.users_levels(built.before, complete);
+        built
+            .data
+            .gaggle_extend(&merged.graph, &users, self.settings, built.before, complete);
+        // With every worker done, nothing later can be added but by a
+        // delta, which builds again.
+        built.before = complete.unwrap_or(Second::MAX);
+        let mut graph = built.data.clone();
+        graph.finish_latency_columns();
+        merged.built = Some(built);
         (
             build_metrics(&self.template, &merged.metrics, events),
-            GraphData::gaggle_build(&merged.graph, self.settings, series_origin, complete),
+            graph,
             merged.excluded.clone(),
         )
     }
@@ -559,9 +604,48 @@ impl GaggleAccumulator {
         merged
     }
 
-    /// The users running at each second: every worker's level at that
-    /// second added up, a worker past its last level holding it.
-    fn users_levels(&self) -> BTreeMap<Second, u64> {
+    /// The users running at each second from `from` and before `to` (every
+    /// one from `from` when `None`), between the first and last second any
+    /// worker sent a level for: every worker's level at that second added
+    /// up, a worker counting 0 before its first level and holding its last.
+    fn users_levels(&self, from: Second, to: Option<Second>) -> BTreeMap<Second, u64> {
+        let first = self
+            .workers
+            .values()
+            .filter_map(|worker| worker.total.graph.users.keys().next())
+            .min();
+        let last = self
+            .workers
+            .values()
+            .filter_map(|worker| worker.total.graph.users.keys().next_back())
+            .max();
+        let (Some(&first), Some(&last)) = (first, last) else {
+            return BTreeMap::new();
+        };
+        let start = from.max(first);
+        let end = to.map_or(last, |to| last.min(to.saturating_sub(1)));
+        if to == Some(0) || start > end {
+            return BTreeMap::new();
+        }
+        // Levels are at most MAX_COUNT and workers at most MAX_WORKERS, so
+        // every sum fits a u64.
+        (start..=end)
+            .map(|second| {
+                let users = self
+                    .workers
+                    .values()
+                    .filter_map(|worker| worker.total.graph.users.range(..=second).next_back())
+                    .map(|(_, &users)| users)
+                    .sum();
+                (second, users)
+            })
+            .collect()
+    }
+
+    /// The users levels over the whole run, as [`Self::users_levels`] built
+    /// them before (tests).
+    #[cfg(test)]
+    fn all_users_levels(&self) -> BTreeMap<Second, u64> {
         // Each worker's change of level at each second it sent one, added
         // up, then walked once: a worker counts 0 before its first level.
         // Levels are at most MAX_COUNT and workers at most MAX_WORKERS, so
@@ -955,6 +1039,43 @@ mod tests {
             delta.graph.users.insert(s, 10);
         }
         delta
+    }
+
+    /// The users levels over any range of seconds are those of the whole
+    /// run, cut to the range, so builds over consecutive ranges add up to
+    /// one over the whole run.
+    #[test]
+    fn users_levels_by_range_are_the_whole_runs() {
+        let settings = GraphSettings {
+            records: true,
+            latency: false,
+            synthetic: false,
+            columns: false,
+        };
+        let mut accumulator =
+            GaggleAccumulator::new(GooseMetrics::default(), settings, DeltaLimits::default());
+        // Workers starting at different seconds, with gaps and changes.
+        for (worker, levels) in [
+            vec![(2, 3), (3, 4), (7, 1)],
+            vec![(0, 5), (5, 0), (6, 2)],
+            vec![(4, 9)],
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut delta = GaggleDelta::new(worker as u32, 1, 0, DeltaKind::Delta);
+            delta.now = 10;
+            delta.graph.users = levels.into_iter().collect();
+            accumulator.apply(worker as u32, delta).unwrap();
+        }
+        let whole = accumulator.all_users_levels();
+        assert_eq!(whole.len(), 8);
+        assert_eq!(accumulator.users_levels(0, None), whole);
+        let mut pieces = BTreeMap::new();
+        for (from, to) in [(0, 3), (3, 4), (4, 4), (4, 9), (9, 20)] {
+            pieces.extend(accumulator.users_levels(from, Some(to)));
+        }
+        assert_eq!(pieces, whole);
     }
 
     /// Not a test: how long one refresh of a long run's merge takes, 50
