@@ -1218,19 +1218,19 @@ async fn gaggle_test_plan_and_throttle_across_workers() {
             .await
             .expect("the Gaggle ends within 60 seconds"),
     );
-    let took = started.elapsed();
     assert_eq!((metrics.total_users, metrics.maximum_users), (10, 6));
     let users: usize = scenario_users(&metrics).iter().map(BTreeSet::len).sum();
     assert_eq!(users, 10);
     // Unthrottled, 6 users against a server that answers at once make
-    // thousands of requests a second: the shares hold them to about 6.
+    // thousands of requests a second. The plan's 4 seconds at 6 a second
+    // make about 24: shares adding up to more, as each worker taking the
+    // whole throttle would, make about 48.
     let requests = a.calls_async().await;
-    assert!(requests > 0);
     assert!(
-        requests as f64 <= 6.0 * took.as_secs_f64() + 12.0,
+        requests > 0 && requests <= 36,
         "{} requests in {:?}",
         requests,
-        took
+        started.elapsed()
     );
     let _ = std::fs::remove_dir_all(&folder);
 }
