@@ -753,6 +753,10 @@ impl GooseAttack {
                         detail: format!("lost the manager: {why}"),
                     })
                 }
+                LinkEvent::Refused(why) => {
+                    error!("gaggle: {why}");
+                    return Err(GooseError::Gaggle { detail: why });
+                }
             }
         }
         Ok(())

@@ -30,6 +30,24 @@ pub(crate) const MAX_QUEUED_DELTAS: usize = 8;
 /// The most other messages queued before a log chunk waits for room.
 const MAX_QUEUED_CHUNKS: usize = 4;
 
+/// The longest a manager may ask a worker to wait before it starts.
+pub(crate) const MAX_START_DELAY: Duration = Duration::from_secs(60);
+
+/// The instant `StartAt` asks for, `delay_ms` from now: refused past
+/// [`MAX_START_DELAY`].
+fn start_instant(delay_ms: u64) -> Result<tokio::time::Instant, String> {
+    let delay = Duration::from_millis(delay_ms);
+    if delay > MAX_START_DELAY {
+        return Err(format!(
+            "the manager asked this worker to start in {delay_ms} ms, more than the {} seconds a worker waits",
+            MAX_START_DELAY.as_secs()
+        ));
+    }
+    tokio::time::Instant::now()
+        .checked_add(delay)
+        .ok_or_else(|| format!("the manager asked this worker to start in {delay_ms} ms, past what its clock holds"))
+}
+
 /// A log chunk's size.
 pub(crate) const LOG_CHUNK: usize = 1 << 20;
 
@@ -225,6 +243,8 @@ pub(crate) enum LinkEvent {
     Shutdown,
     /// The manager is gone: every user was stopped already.
     Lost(String),
+    /// The manager sent something this worker refuses: it exits.
+    Refused(String),
 }
 
 /// A worker's connection to its manager.
@@ -685,9 +705,10 @@ async fn read_manager(
             Some(FromManager::Heartbeat(_)) | None => continue,
             Some(FromManager::Welcome(_)) | Some(FromManager::Reject(_)) => continue,
             Some(FromManager::Prepare(prepare)) => LinkEvent::Prepare(prepare.spec),
-            Some(FromManager::StartAt(start)) => LinkEvent::StartAt(
-                tokio::time::Instant::now() + Duration::from_millis(start.delay_ms),
-            ),
+            Some(FromManager::StartAt(start)) => match start_instant(start.delay_ms) {
+                Ok(at) => LinkEvent::StartAt(at),
+                Err(why) => LinkEvent::Refused(why),
+            },
             Some(FromManager::ResetMetrics(reset)) => LinkEvent::ResetMetrics(reset.epoch),
             Some(FromManager::Stop(stop)) => LinkEvent::Stop(stop.reason),
             Some(FromManager::SendLogs(_)) => LinkEvent::SendLogs,
@@ -940,6 +961,18 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(2500)).await;
         assert!(!switch.forced.load(Ordering::Relaxed));
         switch.done.store(true, Ordering::Relaxed);
+    }
+
+    /// A start delay past a minute is refused, never a panic, up to the
+    /// largest a message can carry.
+    #[tokio::test]
+    async fn start_at_past_a_minute_is_refused() {
+        assert!(start_instant(2_000).is_ok());
+        assert!(start_instant(60_000).is_ok());
+        for delay_ms in [60_001, u64::MAX / 2, u64::MAX] {
+            let why = start_instant(delay_ms).unwrap_err();
+            assert!(why.contains(&delay_ms.to_string()), "{why}");
+        }
     }
 
     #[test]
