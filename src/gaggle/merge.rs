@@ -100,9 +100,10 @@ pub(crate) struct GaggleAccumulator {
     cap_second: Second,
     workers: BTreeMap<u32, WorkerTotal>,
     gaps: Vec<SeqGap>,
-    /// The oldest metrics epoch merged: a manager that resets the metrics
-    /// leaves out every worker until it reports the new epoch, rather than
-    /// show the old epoch's figures as current.
+    /// The manager's own metrics epoch, the one merged: after a reset every
+    /// worker is left out until it reports the new epoch, rather than show
+    /// the old epoch's figures as current, and a delta from a later epoch is
+    /// refused.
     min_epoch: u64,
     /// The merged figures, kept as deltas arrive and built again on demand.
     merged: RefCell<Merged>,
@@ -154,7 +155,8 @@ impl GaggleAccumulator {
     /// sequence is recorded in [`Self::gaps`]; a repeat is ignored.
     ///
     /// The delta is untrusted: one that fails [`GaggleDelta::validate`],
-    /// names another worker, follows the worker's final delta, covers
+    /// names another worker, is of an epoch past the manager's own (see
+    /// [`Self::set_min_epoch`]), follows the worker's final delta, covers
     /// sequence numbers partly applied already, or would take the worker
     /// past [`DeltaLimits::max_names`] or [`Bounds::WORKER`] is refused,
     /// and changes nothing.
@@ -191,6 +193,12 @@ impl GaggleAccumulator {
             });
         }
         delta.validate(&self.limits)?;
+        if delta.epoch > self.min_epoch {
+            return Err(DeltaError::EpochAhead {
+                epoch: delta.epoch,
+                run: self.min_epoch,
+            });
+        }
         let Some(worker) = self.workers.get_mut(&from) else {
             // The first delta from this worker: adding a valid delta to
             // nothing cannot fail.
@@ -374,15 +382,10 @@ impl GaggleAccumulator {
             .min()
     }
 
-    /// The newest metrics epoch any worker reached.
-    fn epoch(&self) -> Option<u64> {
-        self.workers.values().map(|w| w.total.epoch).max()
-    }
-
-    /// The epoch whose metrics are merged: the newest any worker reached,
-    /// or the manager's own after a reset.
+    /// The epoch whose metrics are merged: the manager's own, never one a
+    /// worker reports.
     fn run_epoch(&self) -> u64 {
-        self.epoch().unwrap_or(0).max(self.min_epoch)
+        self.min_epoch
     }
 
     /// The workers [`Self::merged_and_excluded`] leaves out (tests).
@@ -405,7 +408,7 @@ impl GaggleAccumulator {
     }
 
     /// The metrics and graph data of every worker merged: the metrics of
-    /// the newest epoch any worker reached, and the graphs' complete
+    /// the manager's own epoch, and the graphs' complete
     /// seconds only. Every derived figure is worked out again from the
     /// merged counts. A worker left out is named by
     /// [`Self::merged_and_excluded`] (tests).
@@ -417,8 +420,8 @@ impl GaggleAccumulator {
 
     /// The metrics and graph data of every worker merged, as
     /// [`Self::merged`] gives them, and each worker left out, with why:
-    /// because its metrics epoch is older than the newest any worker
-    /// reached, or the manager's own after a reset. Each worker counts its
+    /// because its metrics epoch is older than the manager's, after a
+    /// reset it missed. Each worker counts its
     /// own metrics resets, so one that missed a reset is left out rather
     /// than mixed into another epoch's figures. Also any whose figures
     /// would take a sum past [`Bounds::MERGED`], which [`Bounds::WORKER`]

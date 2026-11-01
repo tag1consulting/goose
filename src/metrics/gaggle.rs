@@ -62,11 +62,15 @@ impl MetricsProcessor {
         limits: crate::gaggle::delta::DeltaLimits,
         health: crate::gaggle::merge::MergeHealth,
     ) {
-        let accumulator = crate::gaggle::merge::GaggleAccumulator::new(
+        let mut accumulator = crate::gaggle::merge::GaggleAccumulator::new(
             self.gaggle_template(),
             self.gaggle_graph_settings(),
             limits,
         );
+        // Until the series starts and the first clock arrives, a worker's
+        // second may be at most the slack past the start: no worker can grow
+        // the graph data far ahead before then.
+        accumulator.set_max_second(crate::gaggle::run::CLOCK_SLACK);
         self.gaggle_merge = Some(Box::new(ManagerMerge {
             accumulator,
             dirty: true,

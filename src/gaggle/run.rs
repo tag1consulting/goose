@@ -44,7 +44,7 @@ const LOGS_TIMEOUT: Duration = Duration::from_secs(600);
 /// How far past its own series clock the manager takes a worker's second:
 /// the workers' clocks start within milliseconds of its own, and a delta is
 /// stamped up to a second late.
-const CLOCK_SLACK: u64 = 10;
+pub(crate) const CLOCK_SLACK: u64 = 10;
 
 /// For Goose's own tests of a run across processes: a worker with this
 /// environment variable set ignores its manager's metrics reset, so its

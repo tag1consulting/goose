@@ -83,6 +83,9 @@ pub(crate) enum DeltaError {
     BadSequence { first_seq: u64, seq: u64 },
     /// It follows the worker's final delta.
     AfterFinal { seq: u64 },
+    /// Its metrics epoch is past the manager's own: only a manager's
+    /// metrics reset starts an epoch.
+    EpochAhead { epoch: u64, run: u64 },
     /// It covers some sequence numbers already applied and some not.
     Overlap { first_seq: u64, seq: u64, held: u64 },
     /// A series second after the delta's own clock, or a clock past

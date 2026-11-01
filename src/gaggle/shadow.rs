@@ -52,6 +52,8 @@ fn apply(
     decoded: GaggleDelta,
     errors: &mut Vec<String>,
 ) {
+    // This process's own metrics resets are the manager's here.
+    accumulator.set_min_epoch(decoded.epoch);
     if let Err(e) = accumulator.apply(sent.worker, decoded) {
         errors.push(format!("delta {} refused: {e}", sent.seq));
     }
