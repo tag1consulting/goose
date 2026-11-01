@@ -73,6 +73,11 @@ prost = { version = "0.14", optional = true }
 tokio-stream = { version = "0.1", optional = true, features = ["net"] }
 tonic = { version = "0.14", optional = true, default-features = false, features = ["codegen", "router", "transport"] }
 tonic-prost = { version = "0.14", optional = true }
+# Both already in the tree, through tonic and tokio-tungstenite: the manager
+# checks the size of a worker's first message as it arrives (http-body), and
+# compares tokens as fixed length digests (sha1).
+http-body = { version = "1", optional = true }
+sha1 = { version = "0.10", optional = true }
 
 [features]
 # Include cookies by default for backward compatibility and expected behavior in web load testing
@@ -86,7 +91,7 @@ pdf-reports = ["headless_chrome"]
 # Opt-in so default builds do not compile axum/tower-http. Enable with --features dashboard.
 dashboard = ["axum", "hyper", "hyper-util", "tower-http"]
 # Distributed load tests (Gaggle): a manager and workers, over gRPC.
-gaggle = ["dep:postcard", "dep:prost", "dep:tokio-stream", "dep:tonic", "dep:tonic-prost"]
+gaggle = ["dep:http-body", "dep:postcard", "dep:prost", "dep:sha1", "dep:tokio-stream", "dep:tonic", "dep:tonic-prost"]
 
 [dev-dependencies]
 # Regenerate the checked in Gaggle protocol code in a test, without protoc.

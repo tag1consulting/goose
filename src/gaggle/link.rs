@@ -8,7 +8,7 @@
 //! user task is aborted at once, without waiting for the main loop.
 
 use super::delta::GaggleDelta;
-use super::manager::{HEARTBEAT_INTERVAL, MAX_MESSAGE};
+use super::manager::{AUTHORIZATION, HEARTBEAT_INTERVAL, MAX_MESSAGE};
 use super::merge::coalesce;
 use super::proto::{
     gaggle_client::GaggleClient, manager_message::Message as FromManager,
@@ -232,24 +232,25 @@ pub(crate) struct Link {
     fired: Arc<AtomicBool>,
 }
 
-/// What [`Link::connect`] needs.
+/// What [`Link::connect`] needs. No `Debug`: it holds the token.
 pub(crate) struct LinkSettings {
     /// `host:port`.
     pub(crate) address: String,
     pub(crate) connect_timeout: Duration,
     pub(crate) heartbeat_timeout: Duration,
     pub(crate) hello: Hello,
+    /// The token, sent in the request's metadata.
+    pub(crate) token: Option<String>,
 }
 
 impl LinkSettings {
     /// The `Hello` a worker of `plan_hash` named `name` says.
-    pub(crate) fn hello(plan_hash: u64, token: Option<&str>, name: String) -> Hello {
+    pub(crate) fn hello(plan_hash: u64, name: String) -> Hello {
         Hello {
             goose_version: env!("CARGO_PKG_VERSION").to_string(),
             protocol_version: PROTOCOL_VERSION,
             plan_hash,
             build_id: None,
-            token: token.unwrap_or_default().to_string(),
             worker_name: name,
         }
     }
@@ -336,10 +337,22 @@ impl Link {
             .max_encoding_message_size(MAX_MESSAGE);
         let outbox = Arc::new(Outbox::default());
         outbox.push_message(ToManager::Hello(settings.hello.clone()));
-        let response = client
-            .connect(outbound(outbox.clone()))
-            .await
-            .map_err(|status| Refusal::Unreachable(status.message().to_string()))?;
+        let mut request = tonic::Request::new(outbound(outbox.clone()));
+        if let Some(token) = settings.token.as_deref() {
+            // The options refuse a token that is not printable ASCII.
+            let value = format!("Bearer {token}").parse().map_err(|_| {
+                Refusal::Refused("the --gaggle-token is not printable ASCII".to_string())
+            })?;
+            request.metadata_mut().insert(AUTHORIZATION, value);
+        }
+        let response = client.connect(request).await.map_err(|status| {
+            // The manager checks the token before anything else.
+            if status.code() == tonic::Code::Unauthenticated {
+                Refusal::Refused(status.message().to_string())
+            } else {
+                Refusal::Unreachable(status.message().to_string())
+            }
+        })?;
         let mut inbound = response.into_inner();
         let first = tokio::time::timeout(settings.heartbeat_timeout, inbound.message())
             .await

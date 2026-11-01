@@ -352,7 +352,6 @@ impl GooseAttack {
         self.configuration.dashboard = false;
         let hello = LinkSettings::hello(
             crate::plan_hash(&self.scenarios, &self.scheduler),
-            self.configuration.gaggle_token(),
             super::link::worker_name(),
         );
         let link = Link::connect(LinkSettings {
@@ -360,6 +359,7 @@ impl GooseAttack {
             connect_timeout: self.configuration.gaggle_connect_timeout(),
             heartbeat_timeout: self.configuration.gaggle_heartbeat_timeout(),
             hello,
+            token: self.configuration.gaggle_token().map(str::to_string),
         })
         .await?;
         // The manager waits for its other workers and runs test_start: the

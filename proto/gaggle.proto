@@ -34,8 +34,10 @@ message Hello {
   uint64 plan_hash = 3;
   // An optional build id of the load test binary.
   optional string build_id = 4;
-  // The shared token, empty without one.
-  string token = 5;
+  // The shared token travels in the request's `authorization` metadata, as
+  // `Bearer <token>`, checked before any message is read.
+  reserved 5;
+  reserved "token";
   // The worker's name, for logs and the run folder.
   string worker_name = 6;
 }

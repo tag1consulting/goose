@@ -262,6 +262,18 @@ impl GooseConfiguration {
                 self.gaggle_heartbeat_timeout.is_some() && !either,
             ),
         ];
+        // The token travels as `Bearer <token>` in an HTTP/2 header.
+        if either
+            && self
+                .gaggle_token()
+                .is_some_and(|token| !token.bytes().all(|byte| byte.is_ascii_graphic()))
+        {
+            return Err(refused(
+                "--gaggle-token",
+                "set",
+                "--gaggle-token must be printable ASCII, with no spaces.",
+            ));
+        }
         let manager_only: [(&str, bool); 3] = [
             ("--expect-workers", self.expect_workers.is_some()),
             ("--manager-bind-host", self.manager_bind_host.is_some()),
@@ -488,6 +500,14 @@ mod tests {
                 (
                     with(&["--no-hash-check"], &[]),
                     "--no-hash-check needs --manager or --worker",
+                ),
+                (
+                    with(&worker, &["--gaggle-token", "two words"]),
+                    "--gaggle-token must be printable ASCII",
+                ),
+                (
+                    with(&manager, &["--gaggle-token", "t\u{e9}"]),
+                    "--gaggle-token must be printable ASCII",
                 ),
             ];
             for (args, message) in cases {
