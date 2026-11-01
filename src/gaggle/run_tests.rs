@@ -156,6 +156,10 @@ async fn gaggle_ends(
     Vec<Result<GooseMetrics, crate::GooseError>>,
 ) {
     no_token_from_the_environment();
+    // A worker that fails, or is shut down with users still running, arms
+    // the switch's last resort: here it records, rather than ends this
+    // test binary.
+    super::link::RECORD_EXITS.store(true, std::sync::atomic::Ordering::Relaxed);
     let count_text = count.to_string();
     let host = server.base_url();
     let manager_folder = folder.join("manager").display().to_string();
@@ -379,6 +383,9 @@ async fn gaggle_worker_without_users_ends_with_iterations() {
 async fn gaggle_worker_survives_its_manager_going_before_the_run() {
     let test = async {
         no_token_from_the_environment();
+        // The last resort ends the process for real here: that it does not
+        // is what this test checks.
+        super::link::RECORD_EXITS.store(false, std::sync::atomic::Ordering::Relaxed);
         let server = MockServer::start_async().await;
         let host = server.base_url();
         let (bound, address) = tokio::sync::oneshot::channel();
@@ -569,7 +576,7 @@ async fn gaggle_refused_delta_degrades_the_run() {
 /// A worker whose metrics processor never hands over its final metrics, or
 /// never answers the metrics reset, fails within the phase's deadline: it
 /// exits with an error naming the phase, and the manager marks it lost.
-async fn worker_fails_a_phase(faults: TestFaults, phase: &str) {
+async fn worker_fails_a_phase(faults: TestFaults, phase: &str, expected_last_seq: Option<u64>) {
     let server = answering().await;
     let folder = scratch("failed-phase");
     let started = std::time::Instant::now();
@@ -616,6 +623,9 @@ async fn worker_fails_a_phase(faults: TestFaults, phase: &str) {
         "{}",
         gaggle
     );
+    if let Some(seq) = expected_last_seq {
+        assert_eq!(lost[0]["last_seq"], seq, "{}", gaggle);
+    }
     let _ = std::fs::remove_dir_all(&folder);
 }
 
@@ -628,6 +638,7 @@ async fn gaggle_worker_fails_without_its_final_metrics() {
             ..Default::default()
         },
         "final metrics",
+        None,
     )
     .await;
 }
@@ -641,6 +652,7 @@ async fn gaggle_worker_fails_without_its_reset() {
             ..Default::default()
         },
         "did not reset",
+        None,
     )
     .await;
 }
@@ -940,4 +952,21 @@ async fn gaggle_worker_data_is_capped() {
     tokio::time::timeout(Duration::from_secs(60), test)
         .await
         .expect("within 60 seconds");
+}
+
+/// A lost worker's record keeps the last delta the merge took, not the last
+/// one it sent: every delta from 2 on is refused, and its final never comes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn gaggle_lost_worker_record_keeps_the_last_merged_seq() {
+    worker_fails_a_phase(
+        TestFaults {
+            silent_final: true,
+            refuse_from: 2,
+            ..Default::default()
+        },
+        "final metrics",
+        Some(1),
+    )
+    .await;
 }

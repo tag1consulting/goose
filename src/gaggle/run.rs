@@ -60,6 +60,9 @@ pub(crate) struct TestFaults {
     pub(crate) skip_reset: bool,
     /// Send a first delta the manager refuses.
     pub(crate) refused_delta: bool,
+    /// Send only deltas the manager refuses from this sequence number on,
+    /// 0 for none.
+    pub(crate) refuse_from: u64,
     /// The metrics processor never sends the final metrics.
     pub(crate) silent_final: bool,
     /// The metrics processor never answers a reset.
@@ -528,6 +531,11 @@ impl GooseAttack {
                 .corrupt_next
                 .store(true, std::sync::atomic::Ordering::Relaxed);
         }
+        #[cfg(test)]
+        link.outbox.corrupt_from.store(
+            self.gaggle_test_faults.refuse_from,
+            std::sync::atomic::Ordering::Relaxed,
+        );
         self.gaggle = Some(GaggleRole::Worker(Box::new(WorkerRun {
             link,
             spec,

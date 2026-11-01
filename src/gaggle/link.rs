@@ -133,6 +133,10 @@ pub(crate) struct Outbox {
     /// (unit tests).
     #[cfg(test)]
     pub(crate) corrupt_next: AtomicBool,
+    /// Name another worker in every delta from this sequence number on, 0
+    /// for none (unit tests).
+    #[cfg(test)]
+    pub(crate) corrupt_from: std::sync::atomic::AtomicU64,
 }
 
 impl Outbox {
@@ -161,7 +165,9 @@ impl Outbox {
         #[cfg(test)]
         let delta = {
             let mut delta = delta;
-            if self.corrupt_next.swap(false, Ordering::Relaxed) {
+            let from = self.corrupt_from.load(Ordering::Relaxed);
+            if self.corrupt_next.swap(false, Ordering::Relaxed) || (from != 0 && delta.seq >= from)
+            {
                 delta.worker = u32::MAX;
             }
             delta
@@ -683,7 +689,7 @@ fn error_chain(error: &dyn std::error::Error) -> String {
 /// In a unit test the switch's last resort records that it would have
 /// ended the process, instead of ending the test binary.
 #[cfg(test)]
-static RECORD_EXITS: AtomicBool = AtomicBool::new(false);
+pub(crate) static RECORD_EXITS: AtomicBool = AtomicBool::new(false);
 
 /// The dead man's switch.
 #[derive(Clone)]
@@ -1092,7 +1098,9 @@ mod tests {
     /// `Shutdown` after every user finished, as at the end of a run, stops
     /// nothing and arms no last resort.
     #[tokio::test]
+    #[serial_test::serial]
     async fn shutdown_after_the_run_arms_nothing() {
+        RECORD_EXITS.store(true, Ordering::Relaxed);
         let finished = tokio::spawn(async {});
         let handle = finished.abort_handle();
         finished.await.unwrap();
@@ -1100,8 +1108,10 @@ mod tests {
         switch.done.store(false, Ordering::Relaxed);
         switch.shut_down();
         tokio::time::sleep(Duration::from_millis(2500)).await;
-        assert!(!switch.forced.load(Ordering::Relaxed));
+        let forced = switch.forced.load(Ordering::Relaxed);
         switch.done.store(true, Ordering::Relaxed);
+        RECORD_EXITS.store(false, Ordering::Relaxed);
+        assert!(!forced);
     }
 
     /// A start delay past a minute is refused, never a panic, up to the
