@@ -185,10 +185,12 @@ impl GaggleAccumulator {
     /// those held for the worker, and its graph rows, those pending since
     /// the worker's last delta, add to the rows held, as any delta's do: a
     /// lost delta's metrics are made good by the final, its graph rows are
-    /// not, and the loss stays recorded in [`Self::gaps`]. A delta from an
-    /// epoch older than the worker's is discarded, and a newer epoch starts
-    /// the worker's metrics and rate series again. A gap or repeat in the
-    /// sequence is recorded in [`Self::gaps`]; a repeat is ignored.
+    /// not, and the loss stays counted (see [`Self::missing`]). A delta from
+    /// an epoch older than the worker's is discarded, and a newer epoch
+    /// starts the worker's metrics and rate series again. A gap or repeat in
+    /// the sequence is counted for the worker, and recorded in
+    /// [`Self::gaps`] when gaps are kept ([`Self::keeping_gaps`]); a repeat
+    /// is ignored.
     ///
     /// The delta is untrusted: one that fails [`GaggleDelta::validate`],
     /// names another worker, is of an epoch past the manager's own (see
@@ -367,8 +369,9 @@ impl GaggleAccumulator {
 
     /// The worker is gone without a final delta: what it sent stays merged,
     /// and its seconds no longer hold back which seconds are complete. The
-    /// loss of a worker that sent anything is recorded in [`Self::gaps`] as
-    /// a gap from its next sequence number, with nothing (0) received.
+    /// loss of a worker that sent anything is recorded in [`Self::gaps`], when
+    /// gaps are kept, as a gap from its next sequence number, with nothing
+    /// (0) received.
     pub(crate) fn lose(&mut self, worker: u32) {
         if let Some(total) = self.workers.get_mut(&worker) {
             if !total.lost && !total.finished {

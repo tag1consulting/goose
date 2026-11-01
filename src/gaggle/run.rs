@@ -418,8 +418,8 @@ impl GooseAttack {
         let names = manager.workers();
         let mut workers = Vec::with_capacity(expected);
         // One worker at a time: its data is made, encoded into its Prepare
-        // and dropped before the next worker's is made, so the manager never
-        // holds every worker's data, nor two copies of one.
+        // and dropped before the next worker's is made. Each encoded Prepare
+        // then waits in its worker's send queue until the link takes it.
         for (mut spec, (id, name)) in specs.into_iter().zip(names) {
             let share = WorkerShare {
                 index: spec.worker as usize,
@@ -668,8 +668,6 @@ impl GooseAttack {
                 0,
             ));
         self.set_attack_phase(goose_attack_run_state, AttackPhase::Increase);
-        // A worker holding no users, with --iterations, has nothing to
-        // run: its users have all exited, as the manager waits to hear.
         let pending = match self.gaggle.role.as_mut() {
             Some(GaggleRole::Worker(run)) => run.pending_reset.take(),
             _ => None,
@@ -683,6 +681,8 @@ impl GooseAttack {
                 });
             }
         }
+        // A worker holding no users, with --iterations, has nothing to
+        // run: its users have all exited, as the manager waits to hear.
         if self.test_plan.total_users() == 0 && self.configuration.iterations() > 0 {
             self.set_ended_by(EndedBy::UsersExited, None);
             self.cancel_attack(goose_attack_run_state).await?;
