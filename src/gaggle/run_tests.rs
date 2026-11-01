@@ -436,11 +436,10 @@ async fn gaggle_worker_survives_its_manager_going_before_the_run() {
         // Past the switch's 2 second last resort: had the link not marked
         // itself done, the process would have exited.
         tokio::time::sleep(Duration::from_secs(5)).await;
-        super::link::RECORD_EXITS.store(true, std::sync::atomic::Ordering::Relaxed);
     };
-    tokio::time::timeout(Duration::from_secs(30), test)
-        .await
-        .expect("within 30 seconds");
+    let result = tokio::time::timeout(Duration::from_secs(30), test).await;
+    super::link::RECORD_EXITS.store(true, std::sync::atomic::Ordering::Relaxed);
+    result.expect("within 30 seconds");
 }
 
 /// The run record of the run in `folder`, and its HTML report.

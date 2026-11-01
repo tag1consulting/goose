@@ -118,6 +118,10 @@ impl Joined {
         if self.outbound.try_send(Ok(message)).is_err() {
             let warning = dropped(self.id, &self.name, kind);
             warn!("{}", warning);
+            #[cfg(test)]
+            if let Ok(mut warned) = WARNED.lock() {
+                warned.push(warning.clone());
+            }
             return Err(warning);
         }
         Ok(())
@@ -129,6 +133,10 @@ impl Joined {
         self.closed.store(true, Ordering::Relaxed);
     }
 }
+
+/// Every warning a dropped message logged (unit tests).
+#[cfg(test)]
+static WARNED: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 /// The warning a message to a worker that could not be queued logs.
 fn dropped(id: u32, name: &str, kind: &str) -> String {
@@ -162,6 +170,9 @@ struct Shared {
     /// Streams the handler ran for, past the token check (unit tests).
     #[cfg(test)]
     handled: std::sync::atomic::AtomicUsize,
+    /// How long admitting a worker takes, in milliseconds (unit tests).
+    #[cfg(test)]
+    admit_delay_ms: std::sync::atomic::AtomicU64,
 }
 
 /// A token as a fixed length digest, so comparing two never depends on
@@ -337,6 +348,11 @@ impl Gaggle for GaggleService {
         // connection of a worker as it is admitted.
         if let Some(connection) = connection.as_ref() {
             connection.admitted.store(true, Ordering::Relaxed);
+        }
+        #[cfg(test)]
+        {
+            let delay = self.0.admit_delay_ms.load(Ordering::Relaxed);
+            tokio::time::sleep(Duration::from_millis(delay)).await;
         }
         let (outbound, rx) = mpsc::channel(64);
         let Some((id, name, closed)) = self.0.admit(&hello.worker_name, outbound.clone()) else {
@@ -832,6 +848,8 @@ impl Manager {
             heartbeat_timeout,
             #[cfg(test)]
             handled: Default::default(),
+            #[cfg(test)]
+            admit_delay_ms: Default::default(),
         });
         let expected_token = token_digest(token.as_deref().unwrap_or(""));
         // tonic sets one decoding limit for every message on a service:
@@ -1017,11 +1035,18 @@ mod tests {
             outbound,
             closed: Arc::new(AtomicBool::new(false)),
         };
+        let warning = "gaggle: worker 3 (w): Stop not sent, its send queue full or closed";
         assert_eq!(worker.send(ToWorker::Heartbeat(Heartbeat {})), Ok(()));
         assert_eq!(
             worker.send(ToWorker::Stop(Default::default())),
-            Err("gaggle: worker 3 (w): Stop not sent, its send queue full or closed".to_string())
+            Err(warning.to_string())
         );
+        // It was logged, not only returned.
+        assert!(WARNED
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|logged| logged == warning));
     }
 
     /// The token a request presents.
@@ -1470,6 +1495,55 @@ mod handshake_tests {
         tokio::time::timeout(Duration::from_secs(30), test)
             .await
             .expect("within 30 seconds");
+    }
+
+    /// A worker whose Hello comes just before its connection's deadline,
+    /// and whose admission takes past it, is admitted and kept: its
+    /// connection counts as admitted from before the deadline.
+    #[tokio::test]
+    async fn a_worker_admitted_at_its_deadline_is_kept() {
+        let test = async {
+            let manager = Manager::start("127.0.0.1", 0, 1, None, 7, true, Duration::from_secs(60))
+                .await
+                .unwrap();
+            manager
+                .shared
+                .admit_delay_ms
+                .store(2_000, Ordering::Relaxed);
+            let connected = Instant::now();
+            let channel = channel(&manager).await;
+            let (tx, rx) = mpsc::channel(4);
+            let joining = tokio::spawn(async move {
+                GaggleClient::new(channel)
+                    .connect(tonic::Request::new(ReceiverStream::new(rx)))
+                    .await
+                    .map(tonic::Response::into_inner)
+            });
+            tokio::time::sleep_until((connected + HELLO_TIMEOUT - Duration::from_secs(1)).into())
+                .await;
+            tx.send(WorkerMessage {
+                message: Some(FromWorker::Hello(hello())),
+            })
+            .await
+            .unwrap();
+            let mut inbound = joining.await.unwrap().expect("admitted");
+            assert!(matches!(
+                inbound.message().await.unwrap().unwrap().message,
+                Some(ToWorker::Welcome(_))
+            ));
+            // Still open, past the deadline: heartbeats keep coming.
+            let until = Instant::now() + Duration::from_secs(4);
+            while Instant::now() < until {
+                let message = tokio::time::timeout(Duration::from_secs(5), inbound.message())
+                    .await
+                    .expect("a heartbeat");
+                assert!(matches!(message, Ok(Some(_))), "{:?}", message);
+            }
+            drop(tx);
+        };
+        tokio::time::timeout(Duration::from_secs(60), test)
+            .await
+            .expect("within 60 seconds");
     }
 
     /// A connection whose worker the manager refuses, the Gaggle full,
