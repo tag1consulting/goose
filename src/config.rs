@@ -7004,11 +7004,12 @@ mod test {
     }
 
     /// The book's runtime options page includes the `-h` and `--help` output from
-    /// these files. They are rendered with the `pdf-reports` feature, so they always
-    /// list the PDF options, and CI's `--all-features` run checks them. Their first
-    /// line names the release, not the development version, so a version bump fails
-    /// this until they are regenerated.
-    #[cfg(feature = "pdf-reports")]
+    /// these files. They are rendered with every feature that adds an option,
+    /// `pdf-reports` and `gaggle`, so they list every option, and CI's
+    /// `--all-features` run checks them. Their first line names the release, not
+    /// the development version, so a version bump fails this until they are
+    /// regenerated.
+    #[cfg(all(feature = "pdf-reports", feature = "gaggle"))]
     #[test]
     fn help_matches_the_book() {
         let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))

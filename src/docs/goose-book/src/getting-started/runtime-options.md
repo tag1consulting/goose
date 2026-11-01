@@ -1,8 +1,8 @@
 # Run-Time Options
 
-Every Goose load test takes the run-time options below. Three of them need a crate feature: `--pdf-scale` and `--pdf-timeout` exist only when Goose is built with `pdf-reports`, and `--dashboard` is refused unless Goose is built with `dashboard`. `-h` prints a summary of each one, and `--help` prints the full reference: what each option does, its default, the values it takes, the options it works with or excludes, an example, and the `GooseDefault` that sets it in code, where they apply. To see the summary for your own load test, run `cargo run --release -- -h` in its folder, or `cargo run --release --example simple -- -h` in a checkout of Goose.
+Every Goose load test takes the run-time options below. Some of them need a crate feature: `--pdf-scale` and `--pdf-timeout` exist only when Goose is built with `pdf-reports`, `--dashboard` is refused unless Goose is built with `dashboard`, and the 11 options under `Gaggle:`, from `--manager` to `--gaggle-heartbeat-timeout`, exist only when Goose is built with `gaggle`. `-h` prints a summary of each one, and `--help` prints the full reference: what each option does, its default, the values it takes, the options it works with or excludes, an example, and the `GooseDefault` that sets it in code, where they apply. To see the summary for your own load test, run `cargo run --release -- -h` in its folder, or `cargo run --release --example simple -- -h` in a checkout of Goose.
 
-The help on this page is from Goose 0.19.0. When you run `-h` yourself, its first line names the version of Goose your load test was built with, and `-V` (`--version`) prints the library's name and version, such as `goose 0.19.0`. The output below comes from a build with the `pdf-reports` feature:
+The help on this page is from Goose 0.19.0. When you run `-h` yourself, its first line names the version of Goose your load test was built with, and `-V` (`--version`) prints the library's name and version, such as `goose 0.19.0`. The output below comes from a build with every feature, so it lists every option:
 
 ```text
 {{#include runtime-options-short.txt}}
