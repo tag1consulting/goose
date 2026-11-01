@@ -30,6 +30,8 @@ pub(crate) struct WorkerMerge {
     pub(crate) excluded: Option<String>,
     /// Deltas that never arrived: their graph rows are not in the results.
     pub(crate) missing: u64,
+    /// Its final delta was merged.
+    pub(crate) final_merged: bool,
 }
 
 /// Each worker's [`WorkerMerge`], written by the manager's metrics
@@ -272,6 +274,13 @@ impl GaggleAccumulator {
     /// Every gap and repeat seen in a worker's sequence.
     pub(crate) fn gaps(&self) -> &[SeqGap] {
         &self.gaps
+    }
+
+    /// Whether `worker`'s final delta was merged.
+    pub(crate) fn got_final(&self, worker: u32) -> bool {
+        self.workers
+            .get(&worker)
+            .is_some_and(|total| total.got_final)
     }
 
     /// The sequence number of the last delta merged from `worker`.

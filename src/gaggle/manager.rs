@@ -4,10 +4,14 @@
 //!
 //! What a client without the token can make the manager hold is bounded
 //! before any message is read: at most `expected + 4` connections, each
-//! closed unless a worker is admitted on it within [`HELLO_TIMEOUT`]; one
-//! stream on each; HTTP/2 windows of [`WINDOW`], so a client can never have
-//! more unread bytes buffered; and a token checked on the request's
-//! metadata, before the stream's first message is decoded. The first
+//! closed unless a worker is admitted on it within [`HELLO_TIMEOUT`], even
+//! one that stalls the manager's writes; one stream on each; HTTP/2 windows
+//! of [`WINDOW`], so a client can never have more unread data buffered,
+//! and header blocks of at most [`MAX_HEADERS`]; and a token checked on the
+//! request's metadata, before the stream's first message is decoded. Such
+//! a client can still take every connection slot, again each time one is
+//! closed, keeping workers out until their connect timeout: the network
+//! must be trusted until TLS arrives. The first
 //! message, `Hello`, may be at most [`MAX_HELLO`] bytes.
 
 use super::delta::{DeltaKind, GaggleDelta};
@@ -398,14 +402,26 @@ impl tokio::io::AsyncRead for Counted {
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
         let this = self.get_mut();
-        if !this.peer.admitted.load(Ordering::Relaxed) && this.admit_by.as_mut().poll(cx).is_ready()
-        {
-            return Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                "no worker was admitted on this connection in time",
-            )));
+        if this.expired(cx) {
+            return Poll::Ready(Err(Counted::too_late()));
         }
         Pin::new(&mut this.stream).poll_read(cx, buf)
+    }
+}
+
+impl Counted {
+    /// Whether no worker was admitted on the connection in time. Checked
+    /// on every read and write, so a client that stalls the manager's
+    /// writes, by never reading, cannot keep the connection past it.
+    fn expired(&mut self, cx: &mut Context<'_>) -> bool {
+        !self.peer.admitted.load(Ordering::Relaxed) && self.admit_by.as_mut().poll(cx).is_ready()
+    }
+
+    fn too_late() -> std::io::Error {
+        std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "no worker was admitted on this connection in time",
+        )
     }
 }
 
@@ -415,7 +431,11 @@ impl tokio::io::AsyncWrite for Counted {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
-        Pin::new(&mut self.get_mut().stream).poll_write(cx, buf)
+        let this = self.get_mut();
+        if this.expired(cx) {
+            return Poll::Ready(Err(Counted::too_late()));
+        }
+        Pin::new(&mut this.stream).poll_write(cx, buf)
     }
 
     fn poll_write_vectored(
@@ -423,7 +443,11 @@ impl tokio::io::AsyncWrite for Counted {
         cx: &mut Context<'_>,
         bufs: &[std::io::IoSlice<'_>],
     ) -> Poll<std::io::Result<usize>> {
-        Pin::new(&mut self.get_mut().stream).poll_write_vectored(cx, bufs)
+        let this = self.get_mut();
+        if this.expired(cx) {
+            return Poll::Ready(Err(Counted::too_late()));
+        }
+        Pin::new(&mut this.stream).poll_write_vectored(cx, bufs)
     }
 
     fn is_write_vectored(&self) -> bool {
@@ -431,12 +455,54 @@ impl tokio::io::AsyncWrite for Counted {
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.get_mut().stream).poll_flush(cx)
+        let this = self.get_mut();
+        if this.expired(cx) {
+            return Poll::Ready(Err(Counted::too_late()));
+        }
+        Pin::new(&mut this.stream).poll_flush(cx)
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.get_mut().stream).poll_shutdown(cx)
+        let this = self.get_mut();
+        // Past the deadline the connection is dropped without waiting for
+        // its peer to read what is left.
+        if this.expired(cx) {
+            return Poll::Ready(Ok(()));
+        }
+        Pin::new(&mut this.stream).poll_shutdown(cx)
     }
+}
+
+/// A connection whose peer never reads, so the manager's writes stall, and
+/// on which no worker is admitted: its writes fail at its deadline (unit
+/// tests).
+#[cfg(test)]
+pub(crate) async fn stalled_write_closes_for_test() {
+    use tokio::io::AsyncWriteExt;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let client = tokio::net::TcpStream::connect(listener.local_addr().unwrap())
+        .await
+        .unwrap();
+    let (stream, _) = listener.accept().await.unwrap();
+    let mut counted = Counted {
+        stream,
+        peer: Peer {
+            addr: None,
+            admitted: Arc::new(AtomicBool::new(false)),
+        },
+        admit_by: Box::pin(tokio::time::sleep(Duration::from_millis(500))),
+        _permit: Arc::new(tokio::sync::Semaphore::new(1))
+            .try_acquire_owned()
+            .unwrap(),
+    };
+    let chunk = vec![0u8; 64 << 10];
+    let error = loop {
+        if let Err(e) = counted.write_all(&chunk).await {
+            break e;
+        }
+    };
+    assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+    drop(client);
 }
 
 /// Every connection `listener` accepts while a permit is free; one past

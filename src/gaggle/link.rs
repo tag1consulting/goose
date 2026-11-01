@@ -8,7 +8,7 @@
 //! user task is aborted at once, without waiting for the main loop. A
 //! `Shutdown` that finds users still running stops them the same way.
 
-use super::delta::GaggleDelta;
+use super::delta::{DeltaKind, GaggleDelta};
 use super::manager::{AUTHORIZATION, HEARTBEAT_INTERVAL, MAX_MESSAGE};
 use super::merge::coalesce;
 use super::proto::{
@@ -88,40 +88,44 @@ impl OutboxState {
         })
     }
 
-    /// Free a place for a delta by joining the two newest queued deltas,
-    /// which follow each other: whether it could.
+    /// Free a place for a delta by joining two neighbouring queued deltas
+    /// that follow each other, the newest such pair first: whether it
+    /// could. Never two across an earlier drop, which would hide its gap.
     fn join_newest(&mut self) -> bool {
-        let mut deltas = self
+        let deltas: Vec<usize> = self
             .queue
             .iter()
             .enumerate()
-            .rev()
             .filter(|(_, item)| matches!(item, Outgoing::Delta(_)))
-            .map(|(at, _)| at);
-        let (Some(newest), Some(before)) = (deltas.next(), deltas.next()) else {
-            return false;
-        };
-        let joined = match (&self.queue[before], &self.queue[newest]) {
-            (Outgoing::Delta(a), Outgoing::Delta(b)) => coalesce(a, b),
-            _ => return false,
-        };
-        match joined {
-            Ok(joined) => {
+            .map(|(at, _)| at)
+            .collect();
+        for pair in deltas.windows(2).rev() {
+            let (before, newest) = (pair[0], pair[1]);
+            let joined = match (&self.queue[before], &self.queue[newest]) {
+                (Outgoing::Delta(a), Outgoing::Delta(b))
+                    if b.first_seq == a.seq.saturating_add(1) =>
+                {
+                    coalesce(a, b)
+                }
+                _ => continue,
+            };
+            if let Ok(joined) = joined {
                 self.queue[before] = Outgoing::Delta(Box::new(joined));
                 let _ = self.queue.remove(newest);
                 self.deltas -= 1;
-                true
+                return true;
             }
-            Err(_) => false,
         }
+        false
     }
 }
 
 /// What the worker sends its manager, in order, with at most
-/// [`MAX_QUEUED_DELTAS`] deltas queued, never more: past that, the newest is
-/// coalesced into the last queued delta instead of growing the queue, or
-/// dropped, leaving a gap in the sequence the manager records. Heartbeats
-/// go to the front.
+/// [`MAX_QUEUED_DELTAS`] deltas queued: past that, the newest is coalesced
+/// into the last queued delta instead of growing the queue, or dropped,
+/// leaving a gap in the sequence the manager records. The one exception is
+/// a final delta that cannot be joined, which is never dropped and goes
+/// past the cap. Heartbeats go to the front.
 #[derive(Default)]
 pub(crate) struct Outbox {
     state: Mutex<OutboxState>,
@@ -192,6 +196,14 @@ impl Outbox {
                 };
                 match coalesced {
                     Some(Ok(())) => return,
+                    // A final delta is never dropped: no delta follows it
+                    // to show a gap. It goes past the cap, the one delta
+                    // that can.
+                    Some(Err(why)) if delta.kind == DeltaKind::Final => {
+                        error!(
+                            "gaggle: the final metrics delta could not be joined to the {MAX_QUEUED_DELTAS} queued ({why}); queued past them"
+                        );
+                    }
                     Some(Err(why)) => {
                         error!(
                             "gaggle: dropped metrics deltas {} to {}: {MAX_QUEUED_DELTAS} are queued and it could not be joined to them ({why}); the manager records the gap",
@@ -938,6 +950,17 @@ mod tests {
         assert_eq!(outbox.queued_deltas(), MAX_QUEUED_DELTAS);
         outbox.push_delta(delta(MAX_QUEUED_DELTAS as u64 + 3));
         assert_eq!(outbox.queued_deltas(), MAX_QUEUED_DELTAS);
+        // A second drop, and the deltas after it: no join crosses either.
+        let second = MAX_QUEUED_DELTAS as u64 + 4;
+        let mut overflowing = delta(second);
+        overflowing
+            .graph
+            .requests
+            .insert("GET /".to_string(), [(second - 1, u64::MAX)].into());
+        outbox.push_delta(overflowing);
+        outbox.push_delta(delta(second + 1));
+        outbox.push_delta(delta(second + 2));
+        assert_eq!(outbox.queued_deltas(), MAX_QUEUED_DELTAS);
         outbox.close();
         let mut accumulator = crate::gaggle::tests::accumulator_for_test();
         while let Some(message) = next(&outbox).await {
@@ -950,13 +973,58 @@ mod tests {
         let dropped = MAX_QUEUED_DELTAS as u64 + 1;
         assert_eq!(
             accumulator.gaps(),
-            &[SeqGap {
-                worker: 0,
-                expected: dropped,
-                received: dropped + 1,
-            }]
+            &[
+                SeqGap {
+                    worker: 0,
+                    expected: dropped,
+                    received: dropped + 1,
+                },
+                SeqGap {
+                    worker: 0,
+                    expected: second,
+                    received: second + 1,
+                }
+            ]
         );
-        assert_eq!(accumulator.missing(0), 1);
+        assert_eq!(accumulator.missing(0), 2);
+    }
+
+    /// A final delta that cannot be joined to the last queued is never
+    /// dropped: no delta follows it to show a gap. It goes past the cap.
+    #[tokio::test]
+    async fn outbox_never_drops_a_final_delta() {
+        let outbox = Outbox::default();
+        for seq in 1..=MAX_QUEUED_DELTAS as u64 {
+            outbox.push_delta(delta(seq));
+        }
+        let last = MAX_QUEUED_DELTAS as u64 + 1;
+        let mut last_final = delta(last);
+        last_final.kind = DeltaKind::Final;
+        last_final
+            .graph
+            .requests
+            .insert("GET /".to_string(), [(last - 1, u64::MAX)].into());
+        outbox.push_delta(last_final);
+        assert_eq!(outbox.queued_deltas(), MAX_QUEUED_DELTAS + 1);
+        outbox.close();
+        let mut kinds = Vec::new();
+        while let Some(message) = next(&outbox).await {
+            if let Some(ToManager::Metrics(metrics)) = message.message {
+                kinds.push(GaggleDelta::decode(&metrics.delta).unwrap().kind);
+            }
+        }
+        assert_eq!(kinds.last(), Some(&DeltaKind::Final));
+    }
+
+    /// A connection on which no worker is admitted is closed at its
+    /// deadline even when the manager's writes are stalled, its peer never
+    /// reading: the deadline is checked on writes too.
+    #[tokio::test]
+    async fn an_unadmitted_connection_closes_with_its_writes_stalled() {
+        use super::super::manager::stalled_write_closes_for_test;
+        tokio::time::timeout(Duration::from_secs(30), stalled_write_closes_for_test())
+            .await
+            .expect("the stalled connection closes within 30 seconds");
     }
 
     /// A heartbeat goes ahead of what is queued.

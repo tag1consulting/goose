@@ -1088,17 +1088,22 @@ impl GooseAttack {
             .iter()
             .map(|worker| {
                 let merge = health.get(&worker.id).cloned().unwrap_or_default();
+                let state = match (&worker.lost, worker.stopped) {
+                    (Some(_), _) => "lost",
+                    (None, Some(Reason::UsersExited)) => "users_exited",
+                    (None, Some(_)) => "finished",
+                    (None, None) => "running",
+                };
+                // A worker that stopped after sending metrics sent its final
+                // delta first: without it, its last running totals stand.
+                let final_missing = matches!(state, "finished" | "users_exited")
+                    && merge.last_seq > 0
+                    && !merge.final_merged;
                 GaggleWorkerRecord {
                     id: worker.id,
                     name: worker.name.clone(),
                     users: worker.users,
-                    state: match (&worker.lost, worker.stopped) {
-                        (Some(_), _) => "lost",
-                        (None, Some(Reason::UsersExited)) => "users_exited",
-                        (None, Some(_)) => "finished",
-                        (None, None) => "running",
-                    }
-                    .to_string(),
+                    state: state.to_string(),
                     lost_at: worker
                         .lost
                         .as_ref()
@@ -1109,6 +1114,7 @@ impl GooseAttack {
                     refused_reason: merge.refusal,
                     excluded_reason: merge.excluded,
                     missing_deltas: merge.missing,
+                    final_missing,
                 }
             })
             .collect();
@@ -1336,6 +1342,54 @@ mod tests {
             gone: false,
             run_folder: Some("/runs/w".to_string()),
         }
+    }
+
+    /// A worker that finished after sending metrics, but whose final delta
+    /// the merge never took, degrades the run: its last running totals
+    /// stand in for its final. One whose final was merged does not.
+    #[tokio::test]
+    async fn gaggle_finished_worker_without_its_final_degrades_the_run() {
+        async fn record(final_merged: bool) -> GaggleRecord {
+            let manager = Manager::start("127.0.0.1", 0, 1, None, 7, true, Duration::from_secs(10))
+                .await
+                .unwrap();
+            let health = MergeHealth::default();
+            health.lock().unwrap().insert(
+                0,
+                crate::gaggle::merge::WorkerMerge {
+                    last_seq: 4,
+                    final_merged,
+                    ..Default::default()
+                },
+            );
+            let configuration =
+                crate::config::GooseConfiguration::parse_args_default(&["--host", "http://h"])
+                    .unwrap();
+            let mut attack = GooseAttack::initialize_with_config(configuration).unwrap();
+            attack.gaggle = Some(GaggleRole::Manager(Box::new(ManagerRun {
+                manager,
+                workers: vec![WorkerEntry {
+                    stopped: Some(Reason::Stopped),
+                    ..entry()
+                }],
+                logs: Vec::new(),
+                logs_left: Vec::new(),
+                clock_second: None,
+                stop_sent: true,
+                ending: false,
+                health,
+            })));
+            attack.gaggle_run_record().unwrap()
+        }
+        let missing = record(false).await;
+        assert!(missing.degraded, "{:?}", missing);
+        assert!(missing.workers[0].final_missing);
+        assert!(missing
+            .intro()
+            .iter()
+            .any(|line| line.contains("final metrics never arrived")));
+        let merged = record(true).await;
+        assert!(!merged.degraded, "{:?}", merged);
     }
 
     /// A worker that goes away before it stopped is lost; one that stopped

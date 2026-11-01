@@ -23,6 +23,7 @@ impl ManagerMerge {
             let entry = health.entry(worker).or_default();
             entry.last_seq = self.accumulator.last_seq(worker).unwrap_or(0);
             entry.missing = self.accumulator.missing(worker);
+            entry.final_merged = self.accumulator.got_final(worker);
         }
     }
 

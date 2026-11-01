@@ -151,6 +151,10 @@ pub(crate) struct GaggleWorkerRecord {
     /// The metrics deltas from it that never arrived.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub missing_deltas: u64,
+    /// It finished, after sending metrics, but its final metrics never
+    /// arrived: the results hold its last running totals.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub final_missing: bool,
 }
 
 impl GaggleWorkerRecord {
@@ -172,6 +176,9 @@ impl GaggleWorkerRecord {
                 "{} of its metrics deltas never arrived",
                 self.missing_deltas
             ));
+        }
+        if self.final_missing {
+            why.push("its final metrics never arrived".to_string());
         }
         why
     }
