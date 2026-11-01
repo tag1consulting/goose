@@ -1714,6 +1714,48 @@ pub(crate) mod handshake_tests {
             .expect("within 30 seconds");
     }
 
+    /// A delta the main loop takes keeps its share of the byte budget, as
+    /// its decoded form goes on to wait for the merge; it frees it only when
+    /// the event, and so the delta, is dropped. Any other event frees it as
+    /// it is taken.
+    #[tokio::test]
+    async fn a_taken_delta_holds_its_bytes_until_dropped() {
+        use super::super::delta::{DeltaKind, GaggleDelta};
+        use super::super::proto::Metrics;
+        let test = async {
+            let manager = Manager::start("127.0.0.1", 0, 1, None, 7, true, Duration::from_secs(30))
+                .await
+                .unwrap();
+            let (tx, inbound) = open(channel(&manager).await, hello(), None).await;
+            let _inbound = inbound.unwrap();
+            let free = || manager.shared.event_bytes.available_permits();
+            let all = free();
+            let delta = GaggleDelta::new(0, 1, 0, DeltaKind::Delta);
+            tx.send(WorkerMessage {
+                message: Some(FromWorker::Metrics(Metrics {
+                    delta: delta.encode().unwrap(),
+                })),
+            })
+            .await
+            .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let taken = loop {
+                match manager.next_event(deadline).await {
+                    Some(Event::Joined) => continue,
+                    other => break other,
+                }
+            };
+            assert!(matches!(taken, Some(Event::Delta { .. })), "{:?}", taken);
+            assert!(free() < all, "the delta's bytes were freed as it was taken");
+            drop(taken);
+            assert_eq!(free(), all);
+            drop(tx);
+        };
+        tokio::time::timeout(Duration::from_secs(30), test)
+            .await
+            .expect("within 30 seconds");
+    }
+
     /// A worker held back by a full event queue for longer than the
     /// heartbeat timeout is not lost: the manager, not the worker, is what
     /// holds it.
