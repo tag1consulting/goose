@@ -1104,6 +1104,8 @@ mod tests {
         assert_eq!(outbox.queued_deltas(), MAX_QUEUED_DELTAS);
         outbox.close();
         let mut accumulator = crate::gaggle::tests::accumulator();
+        // The deltas here are of epoch 1, the manager's own.
+        accumulator.set_min_epoch(1);
         while let Some(message) = next(&outbox).await {
             if let Some(ToManager::Metrics(metrics)) = message.message {
                 accumulator

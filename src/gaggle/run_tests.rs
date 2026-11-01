@@ -139,9 +139,15 @@ async fn gaggle(
         "--quiet",
         "--host",
         &host,
-        "--output-dir",
-        &manager_folder,
     ];
+    // A folder for the manager's run when it writes anything: one that would
+    // hold nothing is refused.
+    if manager_args
+        .iter()
+        .any(|arg| *arg == "--report-file" || arg.ends_with("-log"))
+    {
+        args.extend_from_slice(&["--output-dir", &manager_folder]);
+    }
     args.extend_from_slice(manager_args);
     let (bound, address) = tokio::sync::oneshot::channel();
     let manager = build(configuration(&args), None).report_manager_address(bound);

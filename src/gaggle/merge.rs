@@ -238,13 +238,14 @@ impl GaggleAccumulator {
             });
         }
         delta.validate(&self.limits)?;
-        if delta.epoch > self.min_epoch {
-            return Err(DeltaError::EpochAhead {
-                epoch: delta.epoch,
-                run: self.min_epoch,
-            });
-        }
+        let ahead = (delta.epoch > self.min_epoch).then_some(DeltaError::EpochAhead {
+            epoch: delta.epoch,
+            run: self.min_epoch,
+        });
         let Some(worker) = self.workers.get_mut(&from) else {
+            if let Some(ahead) = ahead {
+                return Err(ahead);
+            }
             // The first delta from this worker: adding a valid delta to
             // nothing cannot fail.
             let mut total = GaggleDelta::new(from, 0, delta.epoch, DeltaKind::Delta);
@@ -278,6 +279,9 @@ impl GaggleAccumulator {
         };
         if worker.got_final {
             return Err(DeltaError::AfterFinal { seq: delta.seq });
+        }
+        if let Some(ahead) = ahead {
+            return Err(ahead);
         }
         if delta.epoch < worker.total.epoch {
             return Ok(Taken::Ignored);

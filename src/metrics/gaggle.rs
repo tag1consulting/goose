@@ -71,6 +71,9 @@ impl MetricsProcessor {
         // second may be at most the slack past the start: no worker can grow
         // the graph data far ahead before then.
         accumulator.set_max_second(crate::gaggle::run::CLOCK_SLACK);
+        // The run's epoch is this processor's: the run's start began it on
+        // the manager, as on every worker.
+        accumulator.set_min_epoch(self.metrics_epoch.load(AtomicOrdering::Relaxed));
         self.gaggle_merge = Some(Box::new(ManagerMerge {
             accumulator,
             dirty: true,
