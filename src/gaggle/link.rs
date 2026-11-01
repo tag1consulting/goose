@@ -981,7 +981,7 @@ mod tests {
         assert!(start_instant(60_000).is_ok());
         for delay_ms in [60_001, u64::MAX / 2, u64::MAX] {
             let why = start_instant(delay_ms).unwrap_err();
-            assert!(why.contains(&delay_ms.to_string()), "{why}");
+            assert!(why.contains(&delay_ms.to_string()), "{}", why);
         }
     }
 

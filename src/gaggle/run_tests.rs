@@ -491,7 +491,8 @@ async fn gaggle_worker_on_a_stale_epoch_degrades_the_run() {
     let name = stale[0]["name"].as_str().unwrap();
     assert!(
         html.contains("Degraded") && html.contains(name),
-        "the HTML report names {name}"
+        "the HTML report names {}",
+        name
     );
     let _ = std::fs::remove_dir_all(&folder);
 }
@@ -536,7 +537,7 @@ async fn gaggle_refused_delta_degrades_the_run() {
     });
     assert_eq!((refused.len(), others.len()), (1, 1), "{gaggle}");
     let reason = refused[0]["refused_reason"].as_str().unwrap_or_default();
-    assert!(reason.starts_with("delta 1:"), "{gaggle}");
+    assert!(reason.starts_with("delta 1:"), "{}", gaggle);
     assert_eq!(refused[0]["missing_deltas"], 1, "{gaggle}");
     let name = refused[0]["name"].as_str().unwrap();
     assert!(html.contains("Degraded") && html.contains(name));
@@ -578,7 +579,7 @@ async fn worker_fails_a_phase(faults: TestFaults, phase: &str) {
     );
     assert!(workers[0].is_ok(), "{:?}", workers[0].as_ref().map(|_| ()));
     match &workers[1] {
-        Err(crate::GooseError::Gaggle { detail }) => assert!(detail.contains(phase), "{detail}"),
+        Err(crate::GooseError::Gaggle { detail }) => assert!(detail.contains(phase), "{}", detail),
         other => panic!("{:?}", other.as_ref().map(|_| ())),
     }
     let (gaggle, _) = record(&folder);
@@ -588,7 +589,8 @@ async fn worker_fails_a_phase(faults: TestFaults, phase: &str) {
     let reason = lost[0]["lost_reason"].as_str().unwrap_or_default();
     assert!(
         reason.contains("could not finish") && reason.contains(phase),
-        "{gaggle}"
+        "{}",
+        gaggle
     );
     let _ = std::fs::remove_dir_all(&folder);
 }

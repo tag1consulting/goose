@@ -343,7 +343,8 @@ impl GaggleAccumulator {
     /// Every worker's figures of the newest epoch added up, the series
     /// origin of the merge, and the workers left out, with why.
     fn merge_parts(&self) -> (MetricsPart, GraphPart, Option<Second>, Vec<(u32, String)>) {
-        let epoch = Some(self.epoch().unwrap_or(0).max(self.min_epoch));
+        let run_epoch = self.epoch().unwrap_or(0).max(self.min_epoch);
+        let epoch = Some(run_epoch);
         let mut metrics = MetricsPart::default();
         let mut graph = GraphPart::default();
         let mut series_origin = None;
@@ -355,8 +356,7 @@ impl GaggleAccumulator {
                     id,
                     format!(
                         "its metrics epoch {} is not the run's {}: it missed a metrics reset",
-                        worker.total.epoch,
-                        epoch.unwrap_or(0)
+                        worker.total.epoch, run_epoch
                     ),
                 ));
                 continue;
