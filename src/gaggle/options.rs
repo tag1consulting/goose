@@ -568,6 +568,14 @@ mod tests {
                 "--request-log and --error-log both name their log \"x.log\"",
             ),
             (
+                // One log's name is the other's part file as it arrives.
+                with(
+                    &manager,
+                    &["--request-log", "x.log", "--error-log", "x.log.part"],
+                ),
+                "--request-log and --error-log both name their log \"x.log\"",
+            ),
+            (
                 // A path that takes a log's default name.
                 with(
                     &manager,
