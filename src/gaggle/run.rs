@@ -31,10 +31,19 @@ const START_DELAY: Duration = Duration::from_secs(2);
 const PREPARE_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// How long the manager waits for every worker's final metrics after `Stop`.
+#[cfg(not(test))]
 const FINAL_TIMEOUT: Duration = Duration::from_secs(30);
+/// Shorter in unit tests, which wait it out; the process tests run the
+/// examples, built without `cfg(test)`, so with the real deadlines.
+#[cfg(test)]
+const FINAL_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// How long a worker waits for its metrics processor to reset.
+#[cfg(not(test))]
 const RESET_TIMEOUT: Duration = Duration::from_secs(10);
+/// Shorter in unit tests, as [`FINAL_TIMEOUT`].
+#[cfg(test)]
+const RESET_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// How long the manager waits for the next chunk of a worker's logs: a
 /// transfer that goes this long with none fails. No deadline caps a
@@ -1380,41 +1389,39 @@ mod tests {
     /// the workers it expects, is refused.
     #[test]
     fn gaggle_delta_limits_are_the_runs() {
-        crate::gaggle::within(30, || {
-            let configuration = crate::config::GooseConfiguration::parse_args_default(&[
-                "--manager",
-                "--expect-workers",
-                "3",
-                "--users",
-                "6",
-                "--host",
-                "http://h",
-            ])
-            .unwrap();
-            let mut attack = GooseAttack::initialize_with_config(configuration).unwrap();
-            attack.test_plan = crate::test_plan::TestPlan::build(&attack.configuration).unwrap();
-            let (limits, _) = attack.gaggle_merge_settings();
-            assert_eq!((limits.max_users, limits.max_workers), (6, 3));
-            let with_user = |worker: u32, user: u64| {
-                let mut delta = GaggleDelta::new(worker, 1, 0, DeltaKind::Delta);
-                let mut scenario = ScenarioPart::default();
-                scenario.users.insert(user);
-                delta.metrics.scenarios.insert(0, scenario);
-                delta
-            };
-            assert_eq!(with_user(0, 5).validate(&limits), Ok(()));
-            assert_eq!(
-                with_user(0, 6).validate(&limits),
-                Err(DeltaError::UserOutOfRange { user: 6, limit: 6 })
-            );
-            assert_eq!(
-                with_user(3, 0).validate(&limits),
-                Err(DeltaError::WorkerOutOfRange {
-                    worker: 3,
-                    limit: 3
-                })
-            );
-        });
+        let configuration = crate::config::GooseConfiguration::parse_args_default(&[
+            "--manager",
+            "--expect-workers",
+            "3",
+            "--users",
+            "6",
+            "--host",
+            "http://h",
+        ])
+        .unwrap();
+        let mut attack = GooseAttack::initialize_with_config(configuration).unwrap();
+        attack.test_plan = crate::test_plan::TestPlan::build(&attack.configuration).unwrap();
+        let (limits, _) = attack.gaggle_merge_settings();
+        assert_eq!((limits.max_users, limits.max_workers), (6, 3));
+        let with_user = |worker: u32, user: u64| {
+            let mut delta = GaggleDelta::new(worker, 1, 0, DeltaKind::Delta);
+            let mut scenario = ScenarioPart::default();
+            scenario.users.insert(user);
+            delta.metrics.scenarios.insert(0, scenario);
+            delta
+        };
+        assert_eq!(with_user(0, 5).validate(&limits), Ok(()));
+        assert_eq!(
+            with_user(0, 6).validate(&limits),
+            Err(DeltaError::UserOutOfRange { user: 6, limit: 6 })
+        );
+        assert_eq!(
+            with_user(3, 0).validate(&limits),
+            Err(DeltaError::WorkerOutOfRange {
+                worker: 3,
+                limit: 3
+            })
+        );
     }
 
     /// Only an answer is an answer: a reply channel the metrics processor
@@ -1678,37 +1685,35 @@ mod tests {
     /// logs; nor does a worker that never ran, with no run folder.
     #[test]
     fn gaggle_lost_gone_and_logs() {
-        crate::gaggle::within(30, || {
-            let mut running = entry();
-            assert!(running.sends_logs());
-            assert!(running.lose(false, "silent".to_string()));
-            assert!(!running.lose(false, "again".to_string()));
-            assert!(running.lost.is_some() && !running.sends_logs());
+        let mut running = entry();
+        assert!(running.sends_logs());
+        assert!(running.lose(false, "silent".to_string()));
+        assert!(!running.lose(false, "again".to_string()));
+        assert!(running.lost.is_some() && !running.sends_logs());
 
-            let mut stopped = entry();
-            stopped.stopped = Some(Reason::Stopped);
-            assert!(stopped.sends_logs());
-            assert!(!stopped.lose(true, "closed".to_string()));
-            assert!(stopped.lost.is_none() && stopped.gone);
-            assert!(
-                !stopped.sends_logs(),
-                "the manager stops waiting for its logs"
-            );
+        let mut stopped = entry();
+        stopped.stopped = Some(Reason::Stopped);
+        assert!(stopped.sends_logs());
+        assert!(!stopped.lose(true, "closed".to_string()));
+        assert!(stopped.lost.is_none() && stopped.gone);
+        assert!(
+            !stopped.sends_logs(),
+            "the manager stops waiting for its logs"
+        );
 
-            // Stopped before Stop was sent: lost.
-            let mut early = entry();
-            early.stopped = Some(Reason::Canceled);
-            assert!(early.lose(false, "canceled".to_string()));
+        // Stopped before Stop was sent: lost.
+        let mut early = entry();
+        early.stopped = Some(Reason::Canceled);
+        assert!(early.lose(false, "canceled".to_string()));
 
-            let never = WorkerEntry {
-                run_folder: None,
-                stopped: Some(Reason::Stopped),
-                ..entry()
-            };
-            assert!(
-                !never.sends_logs(),
-                "a worker that never started has no logs"
-            );
-        });
+        let never = WorkerEntry {
+            run_folder: None,
+            stopped: Some(Reason::Stopped),
+            ..entry()
+        };
+        assert!(
+            !never.sends_logs(),
+            "a worker that never started has no logs"
+        );
     }
 }

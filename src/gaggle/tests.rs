@@ -2198,67 +2198,65 @@ fn gaggle_reports_at_the_bounds_across_names_do_not_overflow() {
 /// than wrapping in a release build or panicking in a debug one.
 #[test]
 fn gaggle_scenario_totals_at_the_bounds_do_not_overflow() {
-    crate::gaggle::within(30, || {
-        use super::delta::{ScenarioPart, Timing, MAX_COUNT};
-        // 2^13 + 1 scenarios of 2^51 runs each: their sum passes 2^64.
-        const SCENARIOS: usize = 8_193;
-        let scenarios: Vec<Scenario> = (0..SCENARIOS)
-            .map(|index| {
-                let mut scenario = Scenario::new(&format!("Scenario {index}"));
-                scenario.scenarios_index = index;
-                scenario
-            })
-            .collect();
-        let side = Side::new(0..0, Some(0));
-        let mut template = side.processor.gaggle_template();
-        template.initialize_scenario_metrics(&scenarios, &configuration());
-        assert_eq!(template.scenarios.len(), SCENARIOS);
-        let mut accumulator = GaggleAccumulator::new(
-            template,
-            side.processor.gaggle_graph_settings(),
-            DeltaLimits::default(),
+    use super::delta::{ScenarioPart, Timing, MAX_COUNT};
+    // 2^13 + 1 scenarios of 2^51 runs each: their sum passes 2^64.
+    const SCENARIOS: usize = 8_193;
+    let scenarios: Vec<Scenario> = (0..SCENARIOS)
+        .map(|index| {
+            let mut scenario = Scenario::new(&format!("Scenario {index}"));
+            scenario.scenarios_index = index;
+            scenario
+        })
+        .collect();
+    let side = Side::new(0..0, Some(0));
+    let mut template = side.processor.gaggle_template();
+    template.initialize_scenario_metrics(&scenarios, &configuration());
+    assert_eq!(template.scenarios.len(), SCENARIOS);
+    let mut accumulator = GaggleAccumulator::new(
+        template,
+        side.processor.gaggle_graph_settings(),
+        DeltaLimits::default(),
+    );
+    let mut delta = GaggleDelta::new(0, 1, 1, DeltaKind::Delta);
+    delta.now = 2;
+    let timing = Timing {
+        buckets: vec![(1_000, MAX_COUNT)],
+        minimum_us: 1_000,
+        maximum_us: 1_000,
+        total_us: MAX_COUNT,
+        count: MAX_COUNT,
+    };
+    for index in 0..SCENARIOS {
+        delta.metrics.scenarios.insert(
+            index as u64,
+            ScenarioPart {
+                users: [index as u64].into(),
+                run_times: timing.clone(),
+            },
         );
-        let mut delta = GaggleDelta::new(0, 1, 1, DeltaKind::Delta);
-        delta.now = 2;
-        let timing = Timing {
-            buckets: vec![(1_000, MAX_COUNT)],
-            minimum_us: 1_000,
-            maximum_us: 1_000,
-            total_us: MAX_COUNT,
-            count: MAX_COUNT,
-        };
-        for index in 0..SCENARIOS {
-            delta.metrics.scenarios.insert(
-                index as u64,
-                ScenarioPart {
-                    users: [index as u64].into(),
-                    run_times: timing.clone(),
-                },
-            );
-        }
-        apply(&mut accumulator, &delta);
-        accumulator.done(0);
-        let (mut merged, _graph) = accumulator.merged();
-        let runs: u128 = merged
-            .scenarios
-            .iter()
-            .map(|scenario| scenario.run_times.counter as u128)
-            .sum();
-        assert!(runs > usize::MAX as u128, "the fixture must pass 2^64");
-        merged.display_metrics = true;
-        merged.final_metrics = true;
-        let shown = format!("{}", merged);
-        let totals = shown
-            .lines()
-            .skip_while(|line| !line.contains("PER SCENARIO METRICS"))
-            .find(|line| line.trim_start().starts_with("Aggregated"))
-            .expect("a scenario totals row");
-        assert!(
-            totals.contains(&usize::MAX.to_string()),
-            "the totals row saturates: {}",
-            totals
-        );
-    });
+    }
+    apply(&mut accumulator, &delta);
+    accumulator.done(0);
+    let (mut merged, _graph) = accumulator.merged();
+    let runs: u128 = merged
+        .scenarios
+        .iter()
+        .map(|scenario| scenario.run_times.counter as u128)
+        .sum();
+    assert!(runs > usize::MAX as u128, "the fixture must pass 2^64");
+    merged.display_metrics = true;
+    merged.final_metrics = true;
+    let shown = format!("{}", merged);
+    let totals = shown
+        .lines()
+        .skip_while(|line| !line.contains("PER SCENARIO METRICS"))
+        .find(|line| line.trim_start().starts_with("Aggregated"))
+        .expect("a scenario totals row");
+    assert!(
+        totals.contains(&usize::MAX.to_string()),
+        "the totals row saturates: {}",
+        totals
+    );
 }
 
 /// How long one full merge takes (`--ignored`, release): `workers` workers
@@ -2321,31 +2319,29 @@ fn gaggle_merge_cost() {
 /// it does, though the merge was set up with them.
 #[test]
 fn gaggle_save_report_on_a_manager_changes_the_merge() {
-    super::within(30, || {
-        let mut side = Side::new(0..0, Some(0));
+    let mut side = Side::new(0..0, Some(0));
+    side.processor
+        .gaggle_enable_manager(DeltaLimits::default(), Default::default());
+    let mut columns = |keep: bool| {
         side.processor
-            .gaggle_enable_manager(DeltaLimits::default(), Default::default());
-        let mut columns = |keep: bool| {
-            side.processor
-                .handle_command_for_test(MetricsCommand::KeepGraph { keep, now: 0 });
-            let (respond, report) = tokio::sync::oneshot::channel();
-            side.processor
-                .handle_command_for_test(MetricsCommand::GetReportData {
-                    duration: 0,
-                    total_users: 0,
-                    maximum_users: 0,
-                    history: Vec::new(),
-                    respond,
-                });
-            report
-                .blocking_recv()
-                .unwrap()
-                .1
-                .has_latency_columns_for_test()
-        };
-        assert!(!columns(false));
-        assert!(columns(true));
-    });
+            .handle_command_for_test(MetricsCommand::KeepGraph { keep, now: 0 });
+        let (respond, report) = tokio::sync::oneshot::channel();
+        side.processor
+            .handle_command_for_test(MetricsCommand::GetReportData {
+                duration: 0,
+                total_users: 0,
+                maximum_users: 0,
+                history: Vec::new(),
+                respond,
+            });
+        report
+            .blocking_recv()
+            .unwrap()
+            .1
+            .has_latency_columns_for_test()
+    };
+    assert!(!columns(false));
+    assert!(columns(true));
 }
 
 /// A manager's metrics reset starts a new epoch at once: what a worker sent
@@ -2354,103 +2350,10 @@ fn gaggle_save_report_on_a_manager_changes_the_merge() {
 /// the ramp.
 #[test]
 fn gaggle_manager_reset_leaves_out_the_old_epoch_at_once() {
-    super::within(30, || {
-        let mut side = Side::new(0..0, Some(0));
-        side.processor
-            .gaggle_enable_manager(DeltaLimits::default(), Default::default());
-        let made = |side: &mut Side| {
-            let (respond, metrics) = tokio::sync::oneshot::channel();
-            side.processor
-                .handle_command_for_test(MetricsCommand::GetMetrics {
-                    duration: 0,
-                    total_users: 0,
-                    maximum_users: 0,
-                    history: Vec::new(),
-                    respond,
-                });
-            metrics
-                .blocking_recv()
-                .unwrap()
-                .requests
-                .get("GET /a")
-                .map_or(0, |request| request.success_count)
-        };
-        let epoch = side.epoch.load(std::sync::atomic::Ordering::Relaxed);
-        side.processor
-            .handle_command_for_test(MetricsCommand::GaggleApply {
-                worker: 0,
-                delta: Box::new(counted(0, 1, epoch)),
-            });
-        assert_eq!(made(&mut side), 1);
-        let (ack, _acked) = tokio::sync::oneshot::channel();
-        side.processor
-            .handle_command_for_test(MetricsCommand::Reset {
-                duration: 0,
-                total_users: 0,
-                maximum_users: 0,
-                active_users: 0,
-                series_elapsed_secs: 5,
-                running_users: Vec::new(),
-                ack,
-            });
-        // A delta the worker sent before it saw the reset, arriving after.
-        side.processor
-            .handle_command_for_test(MetricsCommand::GaggleApply {
-                worker: 0,
-                delta: Box::new(counted(0, 2, epoch)),
-            });
-        assert_eq!(made(&mut side), 0, "the ramp's requests are left out");
-        // The worker's first delta of the new epoch is merged.
-        side.processor
-            .handle_command_for_test(MetricsCommand::GaggleApply {
-                worker: 0,
-                delta: Box::new(counted(0, 3, epoch + 1)),
-            });
-        assert_eq!(made(&mut side), 1);
-    });
-}
-
-/// The manager owns the metrics epoch: a worker reporting an epoch past the
-/// manager's is refused and named, and the healthy workers stay merged.
-#[test]
-fn gaggle_epoch_ahead_of_the_manager_is_refused() {
-    super::within(30, || {
-        let mut side = Side::new(0..0, Some(0));
-        let health = crate::gaggle::merge::MergeHealth::default();
-        side.processor
-            .gaggle_enable_manager(DeltaLimits::default(), health.clone());
-        let mut apply = |worker: u32, delta: GaggleDelta| {
-            side.processor
-                .handle_command_for_test(MetricsCommand::GaggleApply {
-                    worker,
-                    delta: Box::new(delta),
-                });
-        };
-        apply(0, counted(0, 1, 0));
-        apply(1, counted(1, 1, 0));
-        // Worker 1 on an epoch the manager never started.
-        apply(1, counted(1, 2, 1));
-        apply(0, counted(0, 2, 0));
-        let held = |worker| {
-            health
-                .lock()
-                .unwrap()
-                .get(&worker)
-                .cloned()
-                .unwrap_or_default()
-        };
-        let ahead = held(1);
-        assert_eq!((ahead.last_seq, ahead.refused), (1, 1), "{:?}", ahead);
-        assert!(
-            ahead
-                .refusal
-                .as_deref()
-                .unwrap_or_default()
-                .contains("EpochAhead { epoch: 1, run: 0 }"),
-            "{:?}",
-            ahead
-        );
-        assert_eq!(held(0).refused, 0);
+    let mut side = Side::new(0..0, Some(0));
+    side.processor
+        .gaggle_enable_manager(DeltaLimits::default(), Default::default());
+    let made = |side: &mut Side| {
         let (respond, metrics) = tokio::sync::oneshot::channel();
         side.processor
             .handle_command_for_test(MetricsCommand::GetMetrics {
@@ -2460,15 +2363,104 @@ fn gaggle_epoch_ahead_of_the_manager_is_refused() {
                 history: Vec::new(),
                 respond,
             });
-        // Both workers' epoch 0 deltas are merged; worker 1 is left in.
-        let metrics = metrics.blocking_recv().unwrap();
-        assert_eq!(metrics.requests["GET /a"].success_count, 3);
-        assert!(health
+        metrics
+            .blocking_recv()
+            .unwrap()
+            .requests
+            .get("GET /a")
+            .map_or(0, |request| request.success_count)
+    };
+    let epoch = side.epoch.load(std::sync::atomic::Ordering::Relaxed);
+    side.processor
+        .handle_command_for_test(MetricsCommand::GaggleApply {
+            worker: 0,
+            delta: Box::new(counted(0, 1, epoch)),
+        });
+    assert_eq!(made(&mut side), 1);
+    let (ack, _acked) = tokio::sync::oneshot::channel();
+    side.processor
+        .handle_command_for_test(MetricsCommand::Reset {
+            duration: 0,
+            total_users: 0,
+            maximum_users: 0,
+            active_users: 0,
+            series_elapsed_secs: 5,
+            running_users: Vec::new(),
+            ack,
+        });
+    // A delta the worker sent before it saw the reset, arriving after.
+    side.processor
+        .handle_command_for_test(MetricsCommand::GaggleApply {
+            worker: 0,
+            delta: Box::new(counted(0, 2, epoch)),
+        });
+    assert_eq!(made(&mut side), 0, "the ramp's requests are left out");
+    // The worker's first delta of the new epoch is merged.
+    side.processor
+        .handle_command_for_test(MetricsCommand::GaggleApply {
+            worker: 0,
+            delta: Box::new(counted(0, 3, epoch + 1)),
+        });
+    assert_eq!(made(&mut side), 1);
+}
+
+/// The manager owns the metrics epoch: a worker reporting an epoch past the
+/// manager's is refused and named, and the healthy workers stay merged.
+#[test]
+fn gaggle_epoch_ahead_of_the_manager_is_refused() {
+    let mut side = Side::new(0..0, Some(0));
+    let health = crate::gaggle::merge::MergeHealth::default();
+    side.processor
+        .gaggle_enable_manager(DeltaLimits::default(), health.clone());
+    let mut apply = |worker: u32, delta: GaggleDelta| {
+        side.processor
+            .handle_command_for_test(MetricsCommand::GaggleApply {
+                worker,
+                delta: Box::new(delta),
+            });
+    };
+    apply(0, counted(0, 1, 0));
+    apply(1, counted(1, 1, 0));
+    // Worker 1 on an epoch the manager never started.
+    apply(1, counted(1, 2, 1));
+    apply(0, counted(0, 2, 0));
+    let held = |worker| {
+        health
             .lock()
             .unwrap()
-            .values()
-            .all(|w| w.excluded.is_none()));
-    });
+            .get(&worker)
+            .cloned()
+            .unwrap_or_default()
+    };
+    let ahead = held(1);
+    assert_eq!((ahead.last_seq, ahead.refused), (1, 1), "{:?}", ahead);
+    assert!(
+        ahead
+            .refusal
+            .as_deref()
+            .unwrap_or_default()
+            .contains("EpochAhead { epoch: 1, run: 0 }"),
+        "{:?}",
+        ahead
+    );
+    assert_eq!(held(0).refused, 0);
+    let (respond, metrics) = tokio::sync::oneshot::channel();
+    side.processor
+        .handle_command_for_test(MetricsCommand::GetMetrics {
+            duration: 0,
+            total_users: 0,
+            maximum_users: 0,
+            history: Vec::new(),
+            respond,
+        });
+    // Both workers' epoch 0 deltas are merged; worker 1 is left in.
+    let metrics = metrics.blocking_recv().unwrap();
+    assert_eq!(metrics.requests["GET /a"].success_count, 3);
+    assert!(health
+        .lock()
+        .unwrap()
+        .values()
+        .all(|w| w.excluded.is_none()));
 }
 
 /// Before the series starts, and so before the manager's first clock, a
@@ -2476,89 +2468,85 @@ fn gaggle_epoch_ahead_of_the_manager_is_refused() {
 /// manager's graph data far ahead. Once the clock moves, it is taken.
 #[test]
 fn gaggle_startup_delta_past_the_slack_is_refused() {
-    super::within(30, || {
-        let mut side = Side::new(0..0, Some(0));
-        let health = crate::gaggle::merge::MergeHealth::default();
-        side.processor
-            .gaggle_enable_manager(DeltaLimits::default(), health.clone());
-        let slack = crate::gaggle::run::CLOCK_SLACK;
-        let at = |seq: u64, now: u64| {
-            let mut delta = counted(0, seq, 0);
-            delta.now = now;
-            Box::new(delta)
-        };
-        side.processor
-            .handle_command_for_test(MetricsCommand::GaggleApply {
-                worker: 0,
-                delta: at(1, slack + 1),
-            });
-        let held = || health.lock().unwrap().get(&0).cloned().unwrap_or_default();
-        assert_eq!((held().last_seq, held().refused), (0, 1));
-        assert!(
-            held()
-                .refusal
-                .unwrap_or_default()
-                .contains("SecondOutOfRange"),
-            "{:?}",
-            held()
-        );
-        side.processor
-            .handle_command_for_test(MetricsCommand::GaggleApply {
-                worker: 0,
-                delta: at(1, slack),
-            });
-        assert_eq!((held().last_seq, held().refused), (1, 1));
-        side.processor
-            .handle_command_for_test(MetricsCommand::GaggleClock { second: 100 });
-        side.processor
-            .handle_command_for_test(MetricsCommand::GaggleApply {
-                worker: 0,
-                delta: at(2, 90),
-            });
-        assert_eq!((held().last_seq, held().refused), (2, 1));
-    });
+    let mut side = Side::new(0..0, Some(0));
+    let health = crate::gaggle::merge::MergeHealth::default();
+    side.processor
+        .gaggle_enable_manager(DeltaLimits::default(), health.clone());
+    let slack = crate::gaggle::run::CLOCK_SLACK;
+    let at = |seq: u64, now: u64| {
+        let mut delta = counted(0, seq, 0);
+        delta.now = now;
+        Box::new(delta)
+    };
+    side.processor
+        .handle_command_for_test(MetricsCommand::GaggleApply {
+            worker: 0,
+            delta: at(1, slack + 1),
+        });
+    let held = || health.lock().unwrap().get(&0).cloned().unwrap_or_default();
+    assert_eq!((held().last_seq, held().refused), (0, 1));
+    assert!(
+        held()
+            .refusal
+            .unwrap_or_default()
+            .contains("SecondOutOfRange"),
+        "{:?}",
+        held()
+    );
+    side.processor
+        .handle_command_for_test(MetricsCommand::GaggleApply {
+            worker: 0,
+            delta: at(1, slack),
+        });
+    assert_eq!((held().last_seq, held().refused), (1, 1));
+    side.processor
+        .handle_command_for_test(MetricsCommand::GaggleClock { second: 100 });
+    side.processor
+        .handle_command_for_test(MetricsCommand::GaggleApply {
+            worker: 0,
+            delta: at(2, 90),
+        });
+    assert_eq!((held().last_seq, held().refused), (2, 1));
 }
 
 /// A delta the manager's merge refuses is recorded as refused, and never
 /// moves the last delta merged: only an accepted delta does.
 #[test]
 fn gaggle_refused_delta_leaves_last_seq() {
-    super::within(30, || {
-        let mut side = Side::new(0..0, Some(0));
-        let health = crate::gaggle::merge::MergeHealth::default();
+    let mut side = Side::new(0..0, Some(0));
+    let health = crate::gaggle::merge::MergeHealth::default();
+    side.processor
+        .gaggle_enable_manager(DeltaLimits::default(), health.clone());
+    let apply = |side: &mut Side, delta: GaggleDelta| {
         side.processor
-            .gaggle_enable_manager(DeltaLimits::default(), health.clone());
-        let apply = |side: &mut Side, delta: GaggleDelta| {
-            side.processor
-                .handle_command_for_test(MetricsCommand::GaggleApply {
-                    worker: 0,
-                    delta: Box::new(delta),
-                });
-        };
-        let held = || health.lock().unwrap().get(&0).cloned().unwrap_or_default();
-        apply(&mut side, counted(0, 1, 0));
-        assert_eq!((held().last_seq, held().refused), (1, 0));
-        // Naming another worker: refused.
-        apply(&mut side, counted(1, 2, 0));
-        let merge = held();
-        assert_eq!((merge.last_seq, merge.refused), (1, 1), "{:?}", merge);
-        assert!(
-            merge
-                .refusal
-                .as_deref()
-                .unwrap_or_default()
-                .starts_with("delta 2:"),
-            "{:?}",
-            merge
-        );
-        apply(&mut side, counted(0, 2, 0));
-        assert_eq!((held().last_seq, held().refused, held().missing), (2, 1, 0));
-        // A repeat adds no missing delta; a gap of one does, counted once.
-        apply(&mut side, counted(0, 2, 0));
-        assert_eq!(held().missing, 0);
-        apply(&mut side, counted(0, 4, 0));
-        assert_eq!((held().last_seq, held().missing), (4, 1));
-        apply(&mut side, counted(0, 5, 0));
-        assert_eq!(held().missing, 1);
-    });
+            .handle_command_for_test(MetricsCommand::GaggleApply {
+                worker: 0,
+                delta: Box::new(delta),
+            });
+    };
+    let held = || health.lock().unwrap().get(&0).cloned().unwrap_or_default();
+    apply(&mut side, counted(0, 1, 0));
+    assert_eq!((held().last_seq, held().refused), (1, 0));
+    // Naming another worker: refused.
+    apply(&mut side, counted(1, 2, 0));
+    let merge = held();
+    assert_eq!((merge.last_seq, merge.refused), (1, 1), "{:?}", merge);
+    assert!(
+        merge
+            .refusal
+            .as_deref()
+            .unwrap_or_default()
+            .starts_with("delta 2:"),
+        "{:?}",
+        merge
+    );
+    apply(&mut side, counted(0, 2, 0));
+    assert_eq!((held().last_seq, held().refused, held().missing), (2, 1, 0));
+    // A repeat adds no missing delta; a gap of one does, counted once.
+    apply(&mut side, counted(0, 2, 0));
+    assert_eq!(held().missing, 0);
+    apply(&mut side, counted(0, 4, 0));
+    assert_eq!((held().last_seq, held().missing), (4, 1));
+    apply(&mut side, counted(0, 5, 0));
+    assert_eq!(held().missing, 1);
 }

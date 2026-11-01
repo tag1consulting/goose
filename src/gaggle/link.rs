@@ -618,7 +618,10 @@ impl Link {
             heartbeat_timeout: settings.heartbeat_timeout,
             done: link.done.clone(),
             forced: link.forced.clone(),
+            #[cfg(not(test))]
             last_resort_after: LAST_RESORT_AFTER,
+            #[cfg(test)]
+            last_resort_after: TEST_LAST_RESORT_AFTER,
             // A unit test's worker never ends the test binary, unless told.
             #[cfg(test)]
             record_exit: !settings.exit_for_real,
@@ -817,6 +820,10 @@ fn error_chain(error: &dyn std::error::Error) -> String {
 /// How long after the switch fires, or `Shutdown` finds users running, a
 /// worker whose `execute()` has not returned ends its process.
 const LAST_RESORT_AFTER: Duration = Duration::from_secs(2);
+
+/// The last resort's wait in unit tests, which wait it out.
+#[cfg(test)]
+const TEST_LAST_RESORT_AFTER: Duration = Duration::from_millis(200);
 
 /// Stop users at once, every one or, with `running_only`, those not yet
 /// finished, and any started later: `stopped` is set before `users` is
@@ -1181,17 +1188,6 @@ mod tests {
         assert!(next(&outbox).await.is_none());
     }
 
-    /// A connection on which no worker is admitted is closed at its
-    /// deadline even when the manager's writes are stalled, its peer never
-    /// reading: the deadline is checked on writes too.
-    #[tokio::test]
-    async fn an_unadmitted_connection_closes_with_its_writes_stalled() {
-        use super::super::manager::tests::stalled_write_closes_for_test;
-        tokio::time::timeout(Duration::from_secs(30), stalled_write_closes_for_test())
-            .await
-            .expect("the stalled connection closes within 30 seconds");
-    }
-
     /// A heartbeat goes ahead of what is queued, and only one waits: on a
     /// stalled link they never pile up to leave in a burst.
     #[tokio::test]
@@ -1226,7 +1222,7 @@ mod tests {
             heartbeat_timeout,
             done: Arc::new(AtomicBool::new(true)),
             forced: Arc::new(AtomicBool::new(false)),
-            last_resort_after: LAST_RESORT_AFTER,
+            last_resort_after: TEST_LAST_RESORT_AFTER,
             record_exit: true,
         };
         (switch, received, outbox)
@@ -1342,7 +1338,8 @@ mod tests {
 
     /// `Shutdown` that comes while users still run, the worker's main loop
     /// held: every user is stopped at once, and the last resort ends the
-    /// worker 2 seconds later, as when the switch fires.
+    /// worker its delay later (2 seconds; 200 ms here), as when the switch
+    /// fires.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn shutdown_stops_users_while_the_main_loop_is_held() {
         use super::super::manager::Manager;
@@ -1376,7 +1373,7 @@ mod tests {
                 );
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }
-            assert!(sent.elapsed() >= Duration::from_secs(2));
+            assert!(sent.elapsed() >= TEST_LAST_RESORT_AFTER);
         };
         tokio::time::timeout(Duration::from_secs(30), test)
             .await
@@ -1393,7 +1390,7 @@ mod tests {
         let (switch, _events, _outbox) = switch(vec![handle], Duration::from_secs(10));
         switch.done.store(false, Ordering::Relaxed);
         switch.shut_down();
-        tokio::time::sleep(Duration::from_secs(4)).await;
+        tokio::time::sleep(TEST_LAST_RESORT_AFTER * 2).await;
         let forced = switch.forced.load(Ordering::Relaxed);
         switch.done.store(true, Ordering::Relaxed);
         assert!(!forced);
@@ -1579,7 +1576,7 @@ mod tests {
                 connections.push(connection);
             }
         });
-        let timeout = Duration::from_secs(3);
+        let timeout = Duration::from_secs(1);
         let started = Instant::now();
         let joined = tokio::time::timeout(
             Duration::from_secs(30),
@@ -1608,9 +1605,7 @@ mod tests {
 
     #[test]
     fn backoff_is_one_two_four_eight_then_ten() {
-        crate::gaggle::within(30, || {
-            let waits: Vec<u64> = (0..7).map(|attempt| backoff(attempt).as_secs()).collect();
-            assert_eq!(waits, [1, 2, 4, 8, 10, 10, 10]);
-        });
+        let waits: Vec<u64> = (0..7).map(|attempt| backoff(attempt).as_secs()).collect();
+        assert_eq!(waits, [1, 2, 4, 8, 10, 10, 10]);
     }
 }

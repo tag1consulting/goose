@@ -46,7 +46,12 @@ pub(crate) const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(2);
 
 /// How long a new connection has to say `Hello`, and to have a worker
 /// admitted on it before it is closed.
+#[cfg(not(test))]
 const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
+/// Shorter in unit tests, which wait it out; the process tests run the
+/// examples, built without `cfg(test)`, so with the real deadline.
+#[cfg(test)]
+const HELLO_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// The largest first message, `Hello`, the manager reads.
 pub(crate) const MAX_HELLO: usize = 64 << 10;
@@ -1142,7 +1147,7 @@ impl Drop for Manager {
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
 
     /// Every warning a dropped message logged.
@@ -1155,58 +1160,62 @@ pub(crate) mod tests {
         }
     }
 
-    /// A connection whose peer never reads, so the manager's writes stall, and
-    /// on which no worker is admitted: its writes fail at its deadline (unit
-    /// tests).
-    pub(crate) async fn stalled_write_closes_for_test() {
-        use tokio::io::AsyncWriteExt;
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let client = tokio::net::TcpStream::connect(listener.local_addr().unwrap())
+    /// A connection on which no worker is admitted is closed at its
+    /// deadline even when the manager's writes are stalled, its peer never
+    /// reading: the deadline is checked on writes too.
+    #[tokio::test]
+    async fn an_unadmitted_connection_closes_with_its_writes_stalled() {
+        let test = async {
+            use tokio::io::AsyncWriteExt;
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let client = tokio::net::TcpStream::connect(listener.local_addr().unwrap())
+                .await
+                .unwrap();
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut counted = Counted {
+                stream,
+                peer: Peer {
+                    addr: None,
+                    admitted: Arc::new(AtomicBool::new(false)),
+                },
+                admit_by: Box::pin(tokio::time::sleep(Duration::from_millis(500))),
+                _permit: Arc::new(tokio::sync::Semaphore::new(1))
+                    .try_acquire_owned()
+                    .unwrap(),
+            };
+            let chunk = vec![0u8; 64 << 10];
+            let error = loop {
+                if let Err(e) = counted.write_all(&chunk).await {
+                    break e;
+                }
+            };
+            assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+            drop(client);
+        };
+        tokio::time::timeout(Duration::from_secs(30), test)
             .await
-            .unwrap();
-        let (stream, _) = listener.accept().await.unwrap();
-        let mut counted = Counted {
-            stream,
-            peer: Peer {
-                addr: None,
-                admitted: Arc::new(AtomicBool::new(false)),
-            },
-            admit_by: Box::pin(tokio::time::sleep(Duration::from_millis(500))),
-            _permit: Arc::new(tokio::sync::Semaphore::new(1))
-                .try_acquire_owned()
-                .unwrap(),
-        };
-        let chunk = vec![0u8; 64 << 10];
-        let error = loop {
-            if let Err(e) = counted.write_all(&chunk).await {
-                break e;
-            }
-        };
-        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
-        drop(client);
+            .expect("the stalled connection closes within 30 seconds");
     }
 
     #[test]
     fn worker_names_are_safe_folder_names() {
-        crate::gaggle::within(30, || {
-            assert_eq!(folder_name("gaggle2-worker-0"), "gaggle2-worker-0");
-            assert_eq!(folder_name("../etc"), "..-etc");
-            assert_eq!(folder_name(".."), "worker");
-            assert_eq!(folder_name(""), "worker");
-            assert_eq!(folder_name("a/b\\c d"), "a-b-c-d");
-            assert_eq!(folder_name(&"x".repeat(100)).len(), 64);
-            // With a suffix, still 64 at most.
-            let long = folder_name(&"x".repeat(100));
-            assert_eq!(suffixed(&long, 12), format!("{}-12", "x".repeat(61)));
-            assert_eq!(suffixed("pod", 2), "pod-2");
-            // Windows device names, with an extension or in any case.
-            for device in ["CON", "con", "Nul.txt", "aux", "PRN", "COM1", "lpt9.log"] {
-                assert_eq!(folder_name(device), format!("worker-{device}"));
-            }
-            for name in ["COM10", "COM0", "console", "nullify", "LPT", "auxiliary.x"] {
-                assert_eq!(folder_name(name), name);
-            }
-        });
+        assert_eq!(folder_name("gaggle2-worker-0"), "gaggle2-worker-0");
+        assert_eq!(folder_name("../etc"), "..-etc");
+        assert_eq!(folder_name(".."), "worker");
+        assert_eq!(folder_name(""), "worker");
+        assert_eq!(folder_name("a/b\\c d"), "a-b-c-d");
+        assert_eq!(folder_name(&"x".repeat(100)).len(), 64);
+        // With a suffix, still 64 at most.
+        let long = folder_name(&"x".repeat(100));
+        assert_eq!(suffixed(&long, 12), format!("{}-12", "x".repeat(61)));
+        assert_eq!(suffixed("pod", 2), "pod-2");
+        // Windows device names, with an extension or in any case.
+        for device in ["CON", "con", "Nul.txt", "aux", "PRN", "COM1", "lpt9.log"] {
+            assert_eq!(folder_name(device), format!("worker-{device}"));
+        }
+        for name in ["COM10", "COM0", "console", "nullify", "LPT", "auxiliary.x"] {
+            assert_eq!(folder_name(name), name);
+        }
     }
 
     /// Worker names that differ only in case get folders of their own.
@@ -1312,35 +1321,33 @@ pub(crate) mod tests {
     /// no token is the empty one.
     #[test]
     fn tokens_compare_whole() {
-        crate::gaggle::within(30, || {
-            assert_eq!(refused("secret", Some("secret")), None);
-            assert_eq!(refused("", None), None);
-            let wrong = refused("secret", Some("secreT"));
-            assert_eq!(
-                wrong,
-                Some((tonic::Code::Unauthenticated, WRONG_TOKEN.to_string()))
-            );
-            for other in [Some("secret1"), Some("s"), Some(""), None] {
-                assert_eq!(refused("secret", other), wrong, "{:?}", other);
-            }
-            // A token to a manager without one is refused too.
-            assert_eq!(refused("", Some("x")), wrong);
-            assert_eq!(token_digest("secret").len(), token_digest("s").len());
-            // Only a bearer token: the right token on its own is refused.
-            let bare = |value: &str| {
-                let mut request = tonic::Request::new(());
-                request
-                    .metadata_mut()
-                    .insert(AUTHORIZATION, value.parse().unwrap());
-                authorize(&token_digest("secret"), request)
-                    .err()
-                    .map(|status| (status.code(), status.message().to_string()))
-            };
-            for value in ["secret", "bearer secret", "Basic secret", "Bearer"] {
-                assert_eq!(bare(value), wrong, "{:?}", value);
-            }
-            assert_eq!(bare("Bearer secret"), None);
-        });
+        assert_eq!(refused("secret", Some("secret")), None);
+        assert_eq!(refused("", None), None);
+        let wrong = refused("secret", Some("secreT"));
+        assert_eq!(
+            wrong,
+            Some((tonic::Code::Unauthenticated, WRONG_TOKEN.to_string()))
+        );
+        for other in [Some("secret1"), Some("s"), Some(""), None] {
+            assert_eq!(refused("secret", other), wrong, "{:?}", other);
+        }
+        // A token to a manager without one is refused too.
+        assert_eq!(refused("", Some("x")), wrong);
+        assert_eq!(token_digest("secret").len(), token_digest("s").len());
+        // Only a bearer token: the right token on its own is refused.
+        let bare = |value: &str| {
+            let mut request = tonic::Request::new(());
+            request
+                .metadata_mut()
+                .insert(AUTHORIZATION, value.parse().unwrap());
+            authorize(&token_digest("secret"), request)
+                .err()
+                .map(|status| (status.code(), status.message().to_string()))
+        };
+        for value in ["secret", "bearer secret", "Basic secret", "Bearer"] {
+            assert_eq!(bare(value), wrong, "{:?}", value);
+        }
+        assert_eq!(bare("Bearer secret"), None);
     }
 }
 
@@ -1947,7 +1954,7 @@ pub(crate) mod handshake_tests {
                 Some(ToWorker::Welcome(_))
             ));
             // Still open, past the deadline: heartbeats keep coming.
-            let until = Instant::now() + Duration::from_secs(4);
+            let until = Instant::now() + Duration::from_secs(2);
             while Instant::now() < until {
                 let message = tokio::time::timeout(Duration::from_secs(5), inbound.message())
                     .await
@@ -1999,7 +2006,7 @@ pub(crate) mod handshake_tests {
                 }
                 refused.push((tx, inbound));
             }
-            tokio::time::sleep(HELLO_TIMEOUT + Duration::from_secs(3)).await;
+            tokio::time::sleep(HELLO_TIMEOUT + Duration::from_secs(1)).await;
             // Their permits are free again: a new connection is held open.
             let mut fresh = tokio::net::TcpStream::connect(manager.local_addr)
                 .await

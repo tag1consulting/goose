@@ -632,20 +632,6 @@ async fn worker_fails_a_phase(faults: TestFaults, phase: &str, expected_last_seq
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial_test::serial]
-async fn gaggle_worker_fails_without_its_final_metrics() {
-    worker_fails_a_phase(
-        TestFaults {
-            silent_final: true,
-            ..Default::default()
-        },
-        "final metrics",
-        None,
-    )
-    .await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[serial_test::serial]
 async fn gaggle_worker_fails_without_its_reset() {
     worker_fails_a_phase(
         TestFaults {

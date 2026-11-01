@@ -454,257 +454,258 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn gaggle_refused_option_combinations() {
-        crate::gaggle::within(30, || {
-            std::env::remove_var(TOKEN_ENV);
-            let manager = ["--manager", "--expect-workers", "2", "--host", "http://h"];
-            let worker = ["--worker", "--manager-host", "m"];
-            let with = |base: &[&str], more: &[&str]| -> Vec<String> {
-                base.iter().chain(more).map(|arg| arg.to_string()).collect()
-            };
-            let cases: Vec<(Vec<String>, &str)> =
-                vec![
-                (
-                    with(&["--manager"], &[]),
-                    "--manager needs --expect-workers",
+        std::env::remove_var(TOKEN_ENV);
+        let manager = ["--manager", "--expect-workers", "2", "--host", "http://h"];
+        let worker = ["--worker", "--manager-host", "m"];
+        let with = |base: &[&str], more: &[&str]| -> Vec<String> {
+            base.iter().chain(more).map(|arg| arg.to_string()).collect()
+        };
+        let cases: Vec<(Vec<String>, &str)> = vec![
+            (
+                with(&["--manager"], &[]),
+                "--manager needs --expect-workers",
+            ),
+            (
+                with(&["--manager", "--expect-workers", "0"], &[]),
+                "--expect-workers must be at least 1",
+            ),
+            (
+                with(
+                    &["--manager", "--expect-workers", "2", "--worker"],
+                    &["--manager-host", "m"],
                 ),
-                (
-                    with(&["--manager", "--expect-workers", "0"], &[]),
-                    "--expect-workers must be at least 1",
+                "--manager can't be used with --worker",
+            ),
+            (
+                with(&manager, &["--no-autostart"]),
+                "--no-autostart can't be used with --manager",
+            ),
+            (
+                with(&manager, &["--manager-bind-host", "0.0.0.0"]),
+                "is not a loopback address: set --gaggle-token",
+            ),
+            (
+                with(&manager, &["--throttle-requests", "1", "--users", "4"]),
+                "is fewer than the 2 workers that run users",
+            ),
+            (
+                with(&manager, &["--gaggle-shadow-merge"]),
+                "--gaggle-shadow-merge can't be used with --manager or --worker",
+            ),
+            (
+                with(&manager, &["--gaggle-heartbeat-timeout", "0"]),
+                "--gaggle-heartbeat-timeout must be a time of at least one second",
+            ),
+            (
+                with(&manager, &["--gaggle-heartbeat-timeout", "2s"]),
+                "--gaggle-heartbeat-timeout must be at least 3 seconds",
+            ),
+            (
+                with(&manager, &["--gaggle-connect-timeout", "0"]),
+                "--gaggle-connect-timeout must be a time of at least one second",
+            ),
+            (
+                with(&["--manager", "--expect-workers", "2049"], &[]),
+                "--expect-workers can be at most 2048",
+            ),
+            (
+                with(
+                    &["--worker", "--manager-host", "m"],
+                    &["--gaggle-shadow-merge"],
                 ),
-                (
-                    with(
-                        &["--manager", "--expect-workers", "2", "--worker"],
-                        &["--manager-host", "m"],
-                    ),
-                    "--manager can't be used with --worker",
+                "--gaggle-shadow-merge can't be used with --manager or --worker",
+            ),
+            (
+                with(&["--worker", "--manager-host", " "], &[]),
+                "--worker needs --manager-host",
+            ),
+            (
+                with(&["--manager-bind-host", "h"], &[]),
+                "--manager-bind-host needs --manager",
+            ),
+            (
+                with(&["--manager-bind-port", "1"], &[]),
+                "--manager-bind-port needs --manager",
+            ),
+            (
+                with(&["--manager-port", "1"], &[]),
+                "--manager-port needs --worker",
+            ),
+            (
+                with(&["--gaggle-connect-timeout", "5s"], &[]),
+                "--gaggle-connect-timeout needs --manager or --worker",
+            ),
+            (
+                with(&["--gaggle-heartbeat-timeout", "5s"], &[]),
+                "--gaggle-heartbeat-timeout needs --manager or --worker",
+            ),
+            (with(&["--worker"], &[]), "--worker needs --manager-host"),
+            (
+                with(&["--expect-workers", "2"], &[]),
+                "--expect-workers needs --manager",
+            ),
+            (
+                with(&["--manager-host", "m"], &[]),
+                "--manager-host needs --worker",
+            ),
+            (
+                with(&["--gaggle-token", "t"], &[]),
+                "--gaggle-token needs --manager or --worker",
+            ),
+            (
+                with(&["--no-hash-check"], &[]),
+                "--no-hash-check needs --manager or --worker",
+            ),
+            (
+                with(
+                    &manager,
+                    &["--request-log", "a/x.log", "--error-log", "b/X.log"],
                 ),
-                (
-                    with(&manager, &["--no-autostart"]),
-                    "--no-autostart can't be used with --manager",
+                "--request-log and --error-log both name their log \"x.log\"",
+            ),
+            (
+                // A path that takes a log's default name.
+                with(
+                    &manager,
+                    &[
+                        "--transaction-log",
+                        "--debug-log",
+                        "elsewhere/transactions.json",
+                    ],
                 ),
-                (
-                    with(&manager, &["--manager-bind-host", "0.0.0.0"]),
-                    "is not a loopback address: set --gaggle-token",
-                ),
-                (
-                    with(&manager, &["--throttle-requests", "1", "--users", "4"]),
-                    "is fewer than the 2 workers that run users",
-                ),
-                (
-                    with(&manager, &["--gaggle-shadow-merge"]),
-                    "--gaggle-shadow-merge can't be used with --manager or --worker",
-                ),
-                (
-                    with(&manager, &["--gaggle-heartbeat-timeout", "0"]),
-                    "--gaggle-heartbeat-timeout must be a time of at least one second",
-                ),
-                (
-                    with(&manager, &["--gaggle-heartbeat-timeout", "2s"]),
-                    "--gaggle-heartbeat-timeout must be at least 3 seconds",
-                ),
-                (
-                    with(&manager, &["--gaggle-connect-timeout", "0"]),
-                    "--gaggle-connect-timeout must be a time of at least one second",
-                ),
-                (
-                    with(&["--manager", "--expect-workers", "2049"], &[]),
-                    "--expect-workers can be at most 2048",
-                ),
-                (
-                    with(
-                        &["--worker", "--manager-host", "m"],
-                        &["--gaggle-shadow-merge"],
-                    ),
-                    "--gaggle-shadow-merge can't be used with --manager or --worker",
-                ),
-                (
-                    with(&["--worker", "--manager-host", " "], &[]),
-                    "--worker needs --manager-host",
-                ),
-                (
-                    with(&["--manager-bind-host", "h"], &[]),
-                    "--manager-bind-host needs --manager",
-                ),
-                (
-                    with(&["--manager-bind-port", "1"], &[]),
-                    "--manager-bind-port needs --manager",
-                ),
-                (
-                    with(&["--manager-port", "1"], &[]),
-                    "--manager-port needs --worker",
-                ),
-                (
-                    with(&["--gaggle-connect-timeout", "5s"], &[]),
-                    "--gaggle-connect-timeout needs --manager or --worker",
-                ),
-                (
-                    with(&["--gaggle-heartbeat-timeout", "5s"], &[]),
-                    "--gaggle-heartbeat-timeout needs --manager or --worker",
-                ),
-                (with(&["--worker"], &[]), "--worker needs --manager-host"),
-                (
-                    with(&["--expect-workers", "2"], &[]),
-                    "--expect-workers needs --manager",
-                ),
-                (
-                    with(&["--manager-host", "m"], &[]),
-                    "--manager-host needs --worker",
-                ),
-                (
-                    with(&["--gaggle-token", "t"], &[]),
-                    "--gaggle-token needs --manager or --worker",
-                ),
-                (
-                    with(&["--no-hash-check"], &[]),
-                    "--no-hash-check needs --manager or --worker",
-                ),
-                (
-                    with(
-                        &manager,
-                        &["--request-log", "a/x.log", "--error-log", "b/X.log"],
-                    ),
-                    "--request-log and --error-log both name their log \"x.log\"",
-                ),
-                (
-                    // A path that takes a log's default name.
-                    with(
-                        &manager,
-                        &["--transaction-log", "--debug-log", "elsewhere/transactions.json"],
-                    ),
-                    "--transaction-log and --debug-log both name their log \"transactions.json\"",
-                ),
-                (
-                    with(&worker, &["--gaggle-token", "two words"]),
-                    "--gaggle-token must be printable ASCII",
-                ),
-                (
-                    with(&manager, &["--gaggle-token", "t\u{e9}"]),
-                    "--gaggle-token must be printable ASCII",
-                ),
-            ];
-            for (args, message) in cases {
-                let args: Vec<&str> = args.iter().map(String::as_str).collect();
-                let detail = refusal(&args);
-                assert!(detail.contains(message), "{:?}: {}", args, detail);
-            }
-            // A worker refuses every option its manager gives.
-            let refused: &[&[&str]] = &[
-                &["--host", "http://h"],
-                &["--users", "3"],
-                &["--increase-rate", "3"],
-                &["--increase-time", "3"],
-                &["--run-time", "3"],
-                &["--decrease-rate", "3"],
-                &["--decrease-time", "3"],
-                &["--iterations", "3"],
-                &["--test-plan", "3,1s"],
-                &["--scenarios", "a"],
-                &["--throttle-requests", "3"],
-                &["--running-metrics", "3"],
-                &["--report-file", "r.html"],
-                &["--compress"],
-                &["--notes", "n"],
-                &["--report-graph-data"],
-                &["--no-reset-metrics"],
-                &["--no-metrics"],
-                &["--no-transaction-metrics"],
-                &["--no-scenario-metrics"],
-                &["--no-status-codes"],
-                &["--co-mitigation", "average"],
-                &["--threshold", "p95<1s"],
-                &["--no-threshold-abort"],
-                &["--request-log"],
-                &["--transaction-log"],
-                &["--scenario-log"],
-                &["--error-log"],
-                &["--debug-log"],
-                &["--dashboard"],
-                &["--no-autostart"],
-                &["--timeout", "3"],
-                &["--render-report", "r.json"],
-                &["--baseline-file", "b.json"],
-                &["--no-granular-report"],
-                &["--pdf-print-html", "p.html"],
-                &["--threshold-abort-delay", "3"],
-                &["--request-format", "csv"],
-                &["--request-body"],
-                &["--transaction-format", "csv"],
-                &["--scenario-format", "csv"],
-                &["--error-format", "csv"],
-                &["--debug-format", "csv"],
-                &["--no-debug-body"],
-                &["--dashboard-host", "h"],
-                &["--dashboard-port", "1"],
-                &["--dashboard-auth-token", "t"],
-                &["--dashboard-control"],
-                &["--dashboard-no-auth"],
-                &["--no-percentiles-over-time"],
-                &["--dashboard-max-clients", "2"],
-                &["--no-telnet"],
-                &["--telnet-host", "h"],
-                &["--telnet-port", "1"],
-                &["--websocket"],
-                &["--no-websocket"],
-                &["--websocket-host", "h"],
-                &["--websocket-port", "1"],
-                &["--no-gzip"],
-                &["--sticky-follow"],
-                &["--accept-invalid-certs"],
-            ];
-            for option in refused {
-                let args = with(&worker, option);
-                let args: Vec<&str> = args.iter().map(String::as_str).collect();
-                let detail = refusal(&args);
-                assert!(
-                    detail.contains(&format!("{} can't be used with --worker", option[0])),
-                    "{:?}: {}",
-                    args,
-                    detail
-                );
-            }
-            #[cfg(feature = "pdf-reports")]
-            {
-                let args = with(&worker, &["--pdf-scale", "0.5"]);
-                let args: Vec<&str> = args.iter().map(String::as_str).collect();
-                assert!(refusal(&args)
-                    .contains("--pdf-scale and --pdf-timeout can't be used with --worker"));
-            }
-            // A throttle as large as the workers that run users is enough,
-            // when more workers than users are expected.
-            let mut fewer = parse(&[
-                "--manager",
-                "--expect-workers",
-                "4",
-                "--host",
-                "http://h",
-                "--users",
-                "2",
-                "--throttle-requests",
-                "2",
-            ]);
-            fewer.configure(&GooseDefaults::default()).unwrap();
-            fewer.validate().unwrap();
-            // What a worker keeps.
-            let mut kept = parse(
-                &with(&worker, &["--output-dir", "o", "-v"])
-                    .iter()
-                    .map(String::as_str)
-                    .collect::<Vec<_>>(),
+                "--transaction-log and --debug-log both name their log \"transactions.json\"",
+            ),
+            (
+                with(&worker, &["--gaggle-token", "two words"]),
+                "--gaggle-token must be printable ASCII",
+            ),
+            (
+                with(&manager, &["--gaggle-token", "t\u{e9}"]),
+                "--gaggle-token must be printable ASCII",
+            ),
+        ];
+        for (args, message) in cases {
+            let args: Vec<&str> = args.iter().map(String::as_str).collect();
+            let detail = refusal(&args);
+            assert!(detail.contains(message), "{:?}: {}", args, detail);
+        }
+        // A worker refuses every option its manager gives.
+        let refused: &[&[&str]] = &[
+            &["--host", "http://h"],
+            &["--users", "3"],
+            &["--increase-rate", "3"],
+            &["--increase-time", "3"],
+            &["--run-time", "3"],
+            &["--decrease-rate", "3"],
+            &["--decrease-time", "3"],
+            &["--iterations", "3"],
+            &["--test-plan", "3,1s"],
+            &["--scenarios", "a"],
+            &["--throttle-requests", "3"],
+            &["--running-metrics", "3"],
+            &["--report-file", "r.html"],
+            &["--compress"],
+            &["--notes", "n"],
+            &["--report-graph-data"],
+            &["--no-reset-metrics"],
+            &["--no-metrics"],
+            &["--no-transaction-metrics"],
+            &["--no-scenario-metrics"],
+            &["--no-status-codes"],
+            &["--co-mitigation", "average"],
+            &["--threshold", "p95<1s"],
+            &["--no-threshold-abort"],
+            &["--request-log"],
+            &["--transaction-log"],
+            &["--scenario-log"],
+            &["--error-log"],
+            &["--debug-log"],
+            &["--dashboard"],
+            &["--no-autostart"],
+            &["--timeout", "3"],
+            &["--render-report", "r.json"],
+            &["--baseline-file", "b.json"],
+            &["--no-granular-report"],
+            &["--pdf-print-html", "p.html"],
+            &["--threshold-abort-delay", "3"],
+            &["--request-format", "csv"],
+            &["--request-body"],
+            &["--transaction-format", "csv"],
+            &["--scenario-format", "csv"],
+            &["--error-format", "csv"],
+            &["--debug-format", "csv"],
+            &["--no-debug-body"],
+            &["--dashboard-host", "h"],
+            &["--dashboard-port", "1"],
+            &["--dashboard-auth-token", "t"],
+            &["--dashboard-control"],
+            &["--dashboard-no-auth"],
+            &["--no-percentiles-over-time"],
+            &["--dashboard-max-clients", "2"],
+            &["--no-telnet"],
+            &["--telnet-host", "h"],
+            &["--telnet-port", "1"],
+            &["--websocket"],
+            &["--no-websocket"],
+            &["--websocket-host", "h"],
+            &["--websocket-port", "1"],
+            &["--no-gzip"],
+            &["--sticky-follow"],
+            &["--accept-invalid-certs"],
+        ];
+        for option in refused {
+            let args = with(&worker, option);
+            let args: Vec<&str> = args.iter().map(String::as_str).collect();
+            let detail = refusal(&args);
+            assert!(
+                detail.contains(&format!("{} can't be used with --worker", option[0])),
+                "{:?}: {}",
+                args,
+                detail
             );
-            kept.worker_refusals().unwrap();
-            kept.configure(&GooseDefaults::default()).unwrap();
-            kept.validate().unwrap();
-            // --goose-log too, checked without configuring, which opens it.
-            parse(&[
-                "--worker",
-                "--manager-host",
-                "m",
-                "--goose-log",
-                "unused.log",
-            ])
-            .worker_refusals()
-            .unwrap();
-        });
+        }
+        #[cfg(feature = "pdf-reports")]
+        {
+            let args = with(&worker, &["--pdf-scale", "0.5"]);
+            let args: Vec<&str> = args.iter().map(String::as_str).collect();
+            assert!(refusal(&args)
+                .contains("--pdf-scale and --pdf-timeout can't be used with --worker"));
+        }
+        // A throttle as large as the workers that run users is enough,
+        // when more workers than users are expected.
+        let mut fewer = parse(&[
+            "--manager",
+            "--expect-workers",
+            "4",
+            "--host",
+            "http://h",
+            "--users",
+            "2",
+            "--throttle-requests",
+            "2",
+        ]);
+        fewer.configure(&GooseDefaults::default()).unwrap();
+        fewer.validate().unwrap();
+        // What a worker keeps.
+        let mut kept = parse(
+            &with(&worker, &["--output-dir", "o", "-v"])
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+        );
+        kept.worker_refusals().unwrap();
+        kept.configure(&GooseDefaults::default()).unwrap();
+        kept.validate().unwrap();
+        // --goose-log too, checked without configuring, which opens it.
+        parse(&[
+            "--worker",
+            "--manager-host",
+            "m",
+            "--goose-log",
+            "unused.log",
+        ])
+        .worker_refusals()
+        .unwrap();
     }
 
     /// Every option is classified for a worker: refused by
@@ -773,42 +774,40 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn gaggle_token_never_shows() {
-        crate::gaggle::within(30, || {
-            std::env::remove_var(TOKEN_ENV);
-            let token = "tok-7f3a-never-shown";
-            let mut configuration = parse(&[
-                "--manager",
-                "--expect-workers",
-                "1",
-                "--host",
-                "http://h",
-                "--gaggle-token",
-                token,
-            ]);
-            configuration.configure(&GooseDefaults::default()).unwrap();
-            configuration.validate().unwrap();
-            assert_eq!(configuration.gaggle_token(), Some(token));
-            let shown = configuration.shown();
-            let debug = format!("{:?}", shown);
-            let json = serde_json::to_string(&shown).unwrap();
-            for output in [&debug, &json] {
-                assert!(!output.contains(token), "{}", output);
-                assert!(output.contains("gaggle_token"), "{}", output);
-            }
-            // From the environment.
-            std::env::set_var(TOKEN_ENV, token);
-            let mut configuration = parse(&["--worker", "--manager-host", "m"]);
-            configuration.configure(&GooseDefaults::default()).unwrap();
-            std::env::remove_var(TOKEN_ENV);
-            assert_eq!(configuration.gaggle_token(), Some(token));
-            assert!(!format!("{:?}", configuration).contains(token));
-            // A run that is neither ignores the environment.
-            std::env::set_var(TOKEN_ENV, token);
-            let mut configuration = parse(&["--host", "http://h"]);
-            configuration.configure(&GooseDefaults::default()).unwrap();
-            std::env::remove_var(TOKEN_ENV);
-            assert_eq!(configuration.gaggle_token(), None);
-            configuration.validate().unwrap();
-        });
+        std::env::remove_var(TOKEN_ENV);
+        let token = "tok-7f3a-never-shown";
+        let mut configuration = parse(&[
+            "--manager",
+            "--expect-workers",
+            "1",
+            "--host",
+            "http://h",
+            "--gaggle-token",
+            token,
+        ]);
+        configuration.configure(&GooseDefaults::default()).unwrap();
+        configuration.validate().unwrap();
+        assert_eq!(configuration.gaggle_token(), Some(token));
+        let shown = configuration.shown();
+        let debug = format!("{:?}", shown);
+        let json = serde_json::to_string(&shown).unwrap();
+        for output in [&debug, &json] {
+            assert!(!output.contains(token), "{}", output);
+            assert!(output.contains("gaggle_token"), "{}", output);
+        }
+        // From the environment.
+        std::env::set_var(TOKEN_ENV, token);
+        let mut configuration = parse(&["--worker", "--manager-host", "m"]);
+        configuration.configure(&GooseDefaults::default()).unwrap();
+        std::env::remove_var(TOKEN_ENV);
+        assert_eq!(configuration.gaggle_token(), Some(token));
+        assert!(!format!("{:?}", configuration).contains(token));
+        // A run that is neither ignores the environment.
+        std::env::set_var(TOKEN_ENV, token);
+        let mut configuration = parse(&["--host", "http://h"]);
+        configuration.configure(&GooseDefaults::default()).unwrap();
+        std::env::remove_var(TOKEN_ENV);
+        assert_eq!(configuration.gaggle_token(), None);
+        configuration.validate().unwrap();
     }
 }
