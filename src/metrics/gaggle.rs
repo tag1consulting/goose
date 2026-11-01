@@ -91,9 +91,17 @@ impl MetricsProcessor {
             return self.dispatch_command(cmd);
         };
         match cmd {
-            MetricsCommand::GaggleApply { worker, delta } => {
+            MetricsCommand::GaggleApply {
+                worker,
+                delta,
+                bytes,
+            } => {
                 let seq = delta.seq;
-                match merge.accumulator.apply(worker, *delta) {
+                let applied = merge.accumulator.apply(worker, *delta);
+                // The delta is merged or refused: its share of the budget
+                // is free again.
+                drop(bytes);
+                match applied {
                     Ok(()) => {
                         merge.dirty = true;
                         merge.note(worker);

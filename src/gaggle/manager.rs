@@ -122,7 +122,13 @@ pub(crate) enum Event {
     /// Its answer to `Prepare`: `None` when it is ready.
     PrepareAck { id: u32, error: Option<String> },
     /// A metrics delta.
-    Delta { id: u32, delta: Box<GaggleDelta> },
+    /// It holds its share of the event byte budget until the merge takes
+    /// it, as its decoded delta waits for the merge until then.
+    Delta {
+        id: u32,
+        delta: Box<GaggleDelta>,
+        bytes: Option<tokio::sync::OwnedSemaphorePermit>,
+    },
     /// Its users stopped, and its final delta was sent first.
     Stopped { id: u32, stopped: Stopped },
     /// A piece of one of its logs.
@@ -332,7 +338,9 @@ fn folder_name(name: &str) -> String {
         })
         .take(MAX_FOLDER_NAME)
         .collect();
-    if safe.trim_matches('.').is_empty() {
+    // Windows drops a name's trailing dots: `pod.` would be `pod`.
+    safe.truncate(safe.trim_end_matches('.').len());
+    if safe.is_empty() {
         safe = "worker".to_string();
     }
     if is_device_name(&safe) {
@@ -858,6 +866,7 @@ async fn read_worker(
                     Event::Delta {
                         id,
                         delta: Box::new(delta),
+                        bytes: None,
                     }
                 }
                 Err(e) => {
@@ -982,6 +991,16 @@ async fn heartbeat_worker(
     }
 }
 
+/// An event as the main loop takes it: a delta keeps its share of the byte
+/// budget, for the merge to free once it has taken the delta; any other
+/// event frees its share now.
+fn taken((mut event, permit): Queued) -> Event {
+    if let Event::Delta { bytes, .. } = &mut event {
+        *bytes = permit;
+    }
+    event
+}
+
 /// A running manager: its listening service and its workers.
 pub(crate) struct Manager {
     shared: Arc<Shared>,
@@ -1070,17 +1089,16 @@ impl Manager {
     /// The next event, waiting until `deadline`.
     pub(crate) async fn next_event(&self, deadline: Instant) -> Option<Event> {
         let wait = deadline.saturating_duration_since(Instant::now());
-        // The event's share of the byte budget is freed as it is taken.
-        let (event, _bytes) = tokio::time::timeout(wait, self.events.recv_async())
+        let queued = tokio::time::timeout(wait, self.events.recv_async())
             .await
             .ok()?
             .ok()?;
-        Some(event)
+        Some(taken(queued))
     }
 
     /// The next event if one is waiting.
     pub(crate) fn try_event(&self) -> Option<Event> {
-        self.events.try_recv().ok().map(|(event, _bytes)| event)
+        self.events.try_recv().ok().map(taken)
     }
 
     /// Each worker's id and name.
@@ -1226,6 +1244,8 @@ mod tests {
         assert_eq!(folder_name("../etc"), "..-etc");
         assert_eq!(folder_name(".."), "worker");
         assert_eq!(folder_name(""), "worker");
+        // Windows would drop the trailing dots, making it `pod`.
+        assert_eq!(folder_name("pod.."), "pod");
         assert_eq!(folder_name("a/b\\c d"), "a-b-c-d");
         assert_eq!(folder_name(&"x".repeat(100)).len(), 64);
         // With a suffix, still 64 at most.

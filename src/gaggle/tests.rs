@@ -2406,6 +2406,7 @@ fn gaggle_manager_reset_leaves_out_the_old_epoch_at_once() {
         .handle_command_for_test(MetricsCommand::GaggleApply {
             worker: 0,
             delta: Box::new(counted(0, 1, epoch)),
+            bytes: None,
         });
     assert_eq!(made(&mut side), 1);
     let (ack, _acked) = tokio::sync::oneshot::channel();
@@ -2424,6 +2425,7 @@ fn gaggle_manager_reset_leaves_out_the_old_epoch_at_once() {
         .handle_command_for_test(MetricsCommand::GaggleApply {
             worker: 0,
             delta: Box::new(counted(0, 2, epoch)),
+            bytes: None,
         });
     assert_eq!(made(&mut side), 0, "the ramp's requests are left out");
     // The worker's first delta of the new epoch is merged.
@@ -2431,6 +2433,7 @@ fn gaggle_manager_reset_leaves_out_the_old_epoch_at_once() {
         .handle_command_for_test(MetricsCommand::GaggleApply {
             worker: 0,
             delta: Box::new(counted(0, 3, epoch + 1)),
+            bytes: None,
         });
     assert_eq!(made(&mut side), 1);
 }
@@ -2508,6 +2511,7 @@ fn gaggle_merge_starts_on_the_managers_epoch() {
         .handle_command_for_test(MetricsCommand::GaggleApply {
             worker: 0,
             delta: Box::new(counted(0, 1, 1)),
+            bytes: None,
         });
     let held = health.lock().unwrap().get(&0).cloned().unwrap_or_default();
     assert_eq!((held.last_seq, held.refused), (1, 0), "{:?}", held);
@@ -2532,6 +2536,7 @@ fn gaggle_startup_delta_past_the_slack_is_refused() {
         .handle_command_for_test(MetricsCommand::GaggleApply {
             worker: 0,
             delta: at(1, slack + 1),
+            bytes: None,
         });
     let held = || health.lock().unwrap().get(&0).cloned().unwrap_or_default();
     assert_eq!((held().last_seq, held().refused), (0, 1));
@@ -2547,6 +2552,7 @@ fn gaggle_startup_delta_past_the_slack_is_refused() {
         .handle_command_for_test(MetricsCommand::GaggleApply {
             worker: 0,
             delta: at(1, slack),
+            bytes: None,
         });
     assert_eq!((held().last_seq, held().refused), (1, 1));
     side.processor
@@ -2555,6 +2561,7 @@ fn gaggle_startup_delta_past_the_slack_is_refused() {
         .handle_command_for_test(MetricsCommand::GaggleApply {
             worker: 0,
             delta: at(2, 90),
+            bytes: None,
         });
     assert_eq!((held().last_seq, held().refused), (2, 1));
 }
@@ -2572,6 +2579,7 @@ fn gaggle_refused_delta_leaves_last_seq() {
             .handle_command_for_test(MetricsCommand::GaggleApply {
                 worker: 0,
                 delta: Box::new(delta),
+                bytes: None,
             });
     };
     let held = || health.lock().unwrap().get(&0).cloned().unwrap_or_default();

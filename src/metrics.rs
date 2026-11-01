@@ -430,6 +430,9 @@ pub(crate) enum MetricsCommand {
     GaggleApply {
         worker: u32,
         delta: Box<crate::gaggle::delta::GaggleDelta>,
+        /// The delta's share of the manager's event byte budget, held
+        /// until the merge has taken it.
+        bytes: Option<tokio::sync::OwnedSemaphorePermit>,
     },
     /// A Gaggle manager: worker `worker` is gone without its final delta.
     #[cfg(feature = "gaggle")]

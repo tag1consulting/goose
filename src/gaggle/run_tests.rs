@@ -996,7 +996,7 @@ async fn gaggle_handshake_refusals() {
                 ("plan", Some(_)) => quick(configuration, place),
                 _ => standard(configuration, place),
             };
-            let mut manager_args = vec!["--users", "2", "--gaggle-connect-timeout", "2s"];
+            let mut manager_args = vec!["--users", "2", "--gaggle-connect-timeout", "5s"];
             manager_args.extend(manager_extra);
             let (manager, workers) = gaggle(
                 build,

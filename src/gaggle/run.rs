@@ -767,7 +767,7 @@ impl GooseAttack {
         event: Event,
     ) {
         match event {
-            Event::Delta { id, delta } => {
+            Event::Delta { id, delta, bytes } => {
                 let Some(worker) = run.worker(id) else {
                     return;
                 };
@@ -782,7 +782,11 @@ impl GooseAttack {
                 // counts as received.
                 let _ = goose_attack_run_state
                     .metrics_cmd_tx
-                    .send(MetricsCommand::GaggleApply { worker: id, delta });
+                    .send(MetricsCommand::GaggleApply {
+                        worker: id,
+                        delta,
+                        bytes,
+                    });
             }
             Event::Stopped { id, stopped } => {
                 let stop_sent = run.stop_sent;

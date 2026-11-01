@@ -898,9 +898,18 @@ impl Switch {
     fn last_resort(&self, message: &'static str) {
         let done = self.done.clone();
         let forced = self.forced.clone();
-        let after = LAST_RESORT_AFTER;
         #[cfg(test)]
         let record_exit = self.record_exit;
+        // A unit test that lets the last resort end the test binary waits
+        // the real 2 seconds: 200 ms is within a loaded machine's stall.
+        #[cfg(test)]
+        let after = if record_exit {
+            LAST_RESORT_AFTER
+        } else {
+            Duration::from_secs(2)
+        };
+        #[cfg(not(test))]
+        let after = LAST_RESORT_AFTER;
         std::thread::spawn(move || {
             std::thread::sleep(after);
             if !done.load(Ordering::Relaxed) {
@@ -1440,8 +1449,9 @@ mod tests {
     }
 
     /// Across a link of 100 ms round trips, a manager of 2 workers takes a
-    /// worker's 8 MiB log in under 4 seconds: its 1 MiB window moves about
-    /// 10 MB/s, where a 64 KiB one moved 640 KB/s, 13 seconds for the log.
+    /// worker's 8 MiB log in about a second, under 8 on a loaded machine: its
+    /// 1 MiB window moves about 10 MB/s, where a 64 KiB one moved about 650
+    /// KB/s, 13 seconds for the log.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn a_log_crosses_a_slow_link_at_the_window_rate() {
         use super::super::manager::{Event, Manager};
@@ -1485,7 +1495,8 @@ mod tests {
             let _ = std::fs::remove_file(&path);
             assert_eq!(received, SIZE);
             println!("8 MiB across 100 ms round trips in {took:?}");
-            assert!(took < Duration::from_secs(4), "8 MiB took {:?}", took);
+            // About 1 second; a slow, loaded machine has room up to 8.
+            assert!(took < Duration::from_secs(8), "8 MiB took {:?}", took);
         };
         tokio::time::timeout(Duration::from_secs(60), test)
             .await

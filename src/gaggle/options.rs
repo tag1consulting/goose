@@ -375,10 +375,14 @@ impl GooseConfiguration {
             // name each log flag gives.
             let logs = crate::gaggle::spec::log_specs(self);
             for (at, log) in logs.iter().enumerate() {
-                if let Some(other) = logs[at + 1..]
-                    .iter()
-                    .find(|other| other.manager_file.eq_ignore_ascii_case(&log.manager_file))
-                {
+                // Equal names, or one the other's part file while it arrives.
+                let clash = |a: &str, b: &str| {
+                    a.eq_ignore_ascii_case(b) || a.eq_ignore_ascii_case(&format!("{b}.part"))
+                };
+                if let Some(other) = logs[at + 1..].iter().find(|other| {
+                    clash(&other.manager_file, &log.manager_file)
+                        || clash(&log.manager_file, &other.manager_file)
+                }) {
                     let (first, second) = (
                         LOG_OPTIONS[log.kind as usize],
                         LOG_OPTIONS[other.kind as usize],
