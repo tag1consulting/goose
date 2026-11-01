@@ -8,11 +8,12 @@ use super::delta::{
     TransactionPart,
 };
 use crate::graph::{GraphData, GraphSettings};
-use crate::metrics::coordinated_omission::CoordinatedOmissionMetrics;
+use crate::metrics::coordinated_omission::{CoEvent, CoordinatedOmissionMetrics};
 use crate::metrics::{
     GooseErrorMetricAggregate, GooseMetrics, GooseRequestMetricAggregate,
     GooseTransactionErrorMetricAggregate, ScenarioMetricAggregate, TransactionMetricAggregate,
 };
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
@@ -67,6 +68,25 @@ struct WorkerTotal {
     missing: u64,
 }
 
+/// Every merged worker's figures added up, kept as their deltas arrive, so a
+/// refresh never adds each worker's whole history again. Built again from
+/// the per worker totals only when a delta cannot simply be added: a reset,
+/// a final delta, a worker's metrics restarting on a new epoch, or a worker
+/// newly merged or left out.
+#[derive(Default)]
+struct Merged {
+    /// The figures, coordinated omission events left out: those are taken
+    /// from each worker's total, in worker order, when the merge is built.
+    metrics: MetricsPart,
+    /// The rate rows; the users levels are worked out when it is built.
+    graph: GraphPart,
+    /// Each worker left out, with why.
+    excluded: Vec<(u32, String)>,
+    /// Whether it adds up the per worker totals: false until it is built
+    /// again.
+    current: bool,
+}
+
 /// Every worker's metrics, merged on demand.
 pub(crate) struct GaggleAccumulator {
     /// The manager's own empty metrics for the load test: every scenario and
@@ -84,6 +104,19 @@ pub(crate) struct GaggleAccumulator {
     /// leaves out every worker until it reports the new epoch, rather than
     /// show the old epoch's figures as current.
     min_epoch: u64,
+    /// The merged figures, kept as deltas arrive and built again on demand.
+    merged: RefCell<Merged>,
+}
+
+/// What [`GaggleAccumulator::apply`] did with a delta it took.
+enum Taken {
+    /// Nothing: an older epoch, or a repeat.
+    Ignored,
+    /// Its figures were added to the worker's, as they are.
+    Added,
+    /// It started the worker's figures again: its first of a new epoch, or
+    /// its final delta, whose metrics replace those held.
+    Restarted,
 }
 
 impl GaggleAccumulator {
@@ -103,6 +136,10 @@ impl GaggleAccumulator {
             workers: BTreeMap::new(),
             gaps: Vec::new(),
             min_epoch: 0,
+            merged: RefCell::new(Merged {
+                current: true,
+                ..Merged::default()
+            }),
         }
     }
 
@@ -122,6 +159,31 @@ impl GaggleAccumulator {
     /// past [`DeltaLimits::max_names`] or [`Bounds::WORKER`] is refused,
     /// and changes nothing.
     pub(crate) fn apply(&mut self, from: u32, delta: GaggleDelta) -> Result<(), DeltaError> {
+        let run_epoch = self.run_epoch();
+        let known = self.workers.contains_key(&from);
+        let taken = self.take(from, &delta)?;
+        let merged = self.merged.get_mut();
+        match taken {
+            Taken::Ignored => {}
+            // The run's epoch moved, or a worker joined the merge: every
+            // worker's place in it is worked out again.
+            _ if self.run_epoch() != run_epoch || !known => merged.current = false,
+            Taken::Restarted => merged.current = false,
+            Taken::Added if delta.epoch != run_epoch => {}
+            Taken::Added if !merged.current => {}
+            Taken::Added => {
+                let excluded = merged.excluded.iter().any(|&(worker, _)| worker == from);
+                if !excluded && !merged.follow(&delta) {
+                    merged.current = false;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// [`Self::apply`] to worker `from`'s own total: what it did, or why the
+    /// delta was refused.
+    fn take(&mut self, from: u32, delta: &GaggleDelta) -> Result<Taken, DeltaError> {
         if delta.worker != from {
             return Err(DeltaError::WrongWorker {
                 from,
@@ -134,7 +196,7 @@ impl GaggleAccumulator {
             // nothing cannot fail.
             let mut total = GaggleDelta::new(from, 0, delta.epoch, DeltaKind::Delta);
             let got_final = delta.kind == DeltaKind::Final;
-            total.add_pass(&delta, Pass::Apply, Bounds::WORKER)?;
+            total.add_pass(delta, Pass::Apply, Bounds::WORKER)?;
             if delta.first_seq != 1 {
                 self.gaps.push(SeqGap {
                     worker: from,
@@ -154,13 +216,13 @@ impl GaggleAccumulator {
                     missing,
                 },
             );
-            return Ok(());
+            return Ok(Taken::Added);
         };
         if worker.got_final {
             return Err(DeltaError::AfterFinal { seq: delta.seq });
         }
         if delta.epoch < worker.total.epoch {
-            return Ok(());
+            return Ok(Taken::Ignored);
         }
         if delta.first_seq <= worker.last_seq && worker.last_seq < delta.seq {
             return Err(DeltaError::Overlap {
@@ -177,7 +239,7 @@ impl GaggleAccumulator {
                 expected,
                 received: delta.first_seq,
             });
-            return Ok(());
+            return Ok(Taken::Ignored);
         }
         // Check before changing anything: what this delta starts again
         // from nothing cannot pass the bounds, as it is valid.
@@ -185,7 +247,7 @@ impl GaggleAccumulator {
         let replaces_metrics = new_epoch || delta.kind == DeltaKind::Final;
         let names = worker
             .total
-            .names_with(&delta, !replaces_metrics, !new_epoch);
+            .names_with(delta, !replaces_metrics, !new_epoch);
         if names > self.limits.max_names {
             return Err(DeltaError::TooManyNames {
                 names,
@@ -224,7 +286,12 @@ impl GaggleAccumulator {
             worker.got_final = true;
             worker.total.metrics = MetricsPart::default();
         }
-        worker.total.add_pass(&delta, Pass::Apply, Bounds::WORKER)
+        worker.total.add_pass(delta, Pass::Apply, Bounds::WORKER)?;
+        Ok(if replaces_metrics {
+            Taken::Restarted
+        } else {
+            Taken::Added
+        })
     }
 
     /// The worker is gone without a final delta: what it sent stays merged,
@@ -268,7 +335,10 @@ impl GaggleAccumulator {
     /// Merge only metrics epoch `epoch` or newer from now on: the manager
     /// reset the metrics, starting it.
     pub(crate) fn set_min_epoch(&mut self, epoch: u64) {
-        self.min_epoch = self.min_epoch.max(epoch);
+        if epoch > self.min_epoch {
+            self.min_epoch = epoch;
+            self.merged.get_mut().current = false;
+        }
     }
 
     /// Every gap and repeat seen in a worker's sequence.
@@ -309,14 +379,29 @@ impl GaggleAccumulator {
         self.workers.values().map(|w| w.total.epoch).max()
     }
 
+    /// The epoch whose metrics are merged: the newest any worker reached,
+    /// or the manager's own after a reset.
+    fn run_epoch(&self) -> u64 {
+        self.epoch().unwrap_or(0).max(self.min_epoch)
+    }
+
     /// The workers [`Self::merged_and_excluded`] leaves out (tests).
     #[cfg(test)]
     pub(crate) fn excluded(&self) -> Vec<u32> {
-        self.merge_parts()
-            .3
-            .into_iter()
-            .map(|(worker, _)| worker)
+        self.current()
+            .excluded
+            .iter()
+            .map(|&(worker, _)| worker)
             .collect()
+    }
+
+    /// The merged figures, built again first when they are not current.
+    fn current(&self) -> std::cell::RefMut<'_, Merged> {
+        let mut merged = self.merged.borrow_mut();
+        if !merged.current {
+            *merged = self.merge_parts();
+        }
+        merged
     }
 
     /// The metrics and graph data of every worker merged: the metrics of
@@ -341,25 +426,44 @@ impl GaggleAccumulator {
     /// undercounts the results: the manager records each one, and its run
     /// record marks the run degraded and names the worker.
     pub(crate) fn merged_and_excluded(&self) -> (GooseMetrics, GraphData, Vec<(u32, String)>) {
-        let (metrics, mut graph, series_origin, excluded) = self.merge_parts();
+        let mut merged = self.current();
         let complete = self.complete_before();
-        graph.users = self.users_levels();
+        // The merged workers, in order: their series origin, and their
+        // coordinated omission events, each worker's in its own order.
+        let mut series_origin = None;
+        let mut events = Vec::new();
+        for (id, worker) in &self.workers {
+            if merged.excluded.iter().any(|(left_out, _)| left_out == id) {
+                continue;
+            }
+            series_origin = series_origin.max(worker.total.series_origin);
+            if let Some(co) = worker.total.metrics.co.as_ref() {
+                events.extend(co.events.iter().cloned());
+            }
+        }
+        merged.graph.users = self.users_levels();
         (
-            build_metrics(&self.template, &metrics),
-            GraphData::gaggle_build(&graph, self.settings, series_origin, complete),
-            excluded,
+            build_metrics(&self.template, &merged.metrics, events),
+            GraphData::gaggle_build(&merged.graph, self.settings, series_origin, complete),
+            merged.excluded.clone(),
         )
     }
 
-    /// Every worker's figures of the newest epoch added up, the series
-    /// origin of the merge, and the workers left out, with why.
-    fn merge_parts(&self) -> (MetricsPart, GraphPart, Option<Second>, Vec<(u32, String)>) {
-        let run_epoch = self.epoch().unwrap_or(0).max(self.min_epoch);
+    /// Every worker's figures of the run's epoch added up, from their
+    /// totals, and the workers left out, with why.
+    fn merge_parts(&self) -> Merged {
+        let run_epoch = self.run_epoch();
         let epoch = Some(run_epoch);
-        let mut metrics = MetricsPart::default();
-        let mut graph = GraphPart::default();
-        let mut series_origin = None;
-        let mut excluded = Vec::new();
+        let mut merged = Merged {
+            current: true,
+            ..Merged::default()
+        };
+        let Merged {
+            metrics,
+            graph,
+            excluded,
+            ..
+        } = &mut merged;
         for (&id, worker) in &self.workers {
             let (part, rows) = (&worker.total.metrics, &worker.total.graph);
             if Some(worker.total.epoch) != epoch {
@@ -386,9 +490,9 @@ impl GaggleAccumulator {
                 .add_pass(part, Pass::Apply, Bounds::MERGED)
                 .and_then(|()| graph.add_rates(rows, Pass::Apply, Bounds::MERGED));
             debug_assert!(added.is_ok());
-            series_origin = series_origin.max(worker.total.series_origin);
         }
-        (metrics, graph, series_origin, excluded)
+        merged.drop_events();
+        merged
     }
 
     /// The users running at each second: every worker's level at that
@@ -420,6 +524,43 @@ impl GaggleAccumulator {
                 (second, users as u64)
             })
             .collect()
+    }
+}
+
+impl Merged {
+    /// Add a delta of a merged worker, as it was added to the worker's own
+    /// total: whether it fit, past [`Bounds::MERGED`] nothing being added.
+    fn follow(&mut self, delta: &GaggleDelta) -> bool {
+        let fits = self
+            .metrics
+            .add_pass(&delta.metrics, Pass::Check, Bounds::MERGED)
+            .is_ok()
+            && self
+                .graph
+                .add_rates(&delta.graph, Pass::Check, Bounds::MERGED)
+                .is_ok();
+        if !fits {
+            return false;
+        }
+        // Checked above, so these add every figure.
+        let added = self
+            .metrics
+            .add_pass(&delta.metrics, Pass::Apply, Bounds::MERGED)
+            .and_then(|()| {
+                self.graph
+                    .add_rates(&delta.graph, Pass::Apply, Bounds::MERGED)
+            });
+        debug_assert!(added.is_ok());
+        self.drop_events();
+        true
+    }
+
+    /// Hold no coordinated omission events: the merge takes them from the
+    /// workers' totals, so they keep each worker's order.
+    fn drop_events(&mut self) {
+        if let Some(co) = self.metrics.co.as_mut() {
+            co.events.clear();
+        }
     }
 }
 
@@ -457,10 +598,15 @@ pub(crate) fn coalesce(a: &GaggleDelta, b: &GaggleDelta) -> Result<GaggleDelta, 
     Ok(joined)
 }
 
-/// `template` with every figure of `part` added, as `GooseMetrics`. Every
-/// field of every aggregate is named, so a field added to one fails to
-/// compile here until it is merged or left out on purpose.
-fn build_metrics(template: &GooseMetrics, part: &MetricsPart) -> GooseMetrics {
+/// `template` with every figure of `part` added, as `GooseMetrics`, and
+/// `events` as its coordinated omission events. Every field of every
+/// aggregate is named, so a field added to one fails to compile here until
+/// it is merged or left out on purpose.
+fn build_metrics(
+    template: &GooseMetrics,
+    part: &MetricsPart,
+    events: Vec<CoEvent>,
+) -> GooseMetrics {
     let MetricsPart {
         requests: request_parts,
         transactions: transaction_parts,
@@ -632,11 +778,12 @@ fn build_metrics(template: &GooseMetrics, part: &MetricsPart) -> GooseMetrics {
             actual,
             synthetic,
             severity,
-            events,
+            // Passed in, each worker's in its own order.
+            events: _,
             // Counted by the shadow merge, which checks what they leave out.
             events_dropped: _,
         } = co;
-        let mut events = events.clone();
+        let mut events = events;
         // Oldest first; a stable sort keeps each worker's own order.
         events.sort_by_key(|event| event.timestamp_secs);
         let mut merged = CoordinatedOmissionMetrics {
