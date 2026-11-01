@@ -1726,11 +1726,8 @@ mod tests {
                 .await
                 .unwrap();
             let (mut attack, mut run_state) = idle_worker(&manager).await;
-            let epoch = || {
-                run_state
-                    .metrics_epoch
-                    .load(std::sync::atomic::Ordering::Relaxed)
-            };
+            let metrics_epoch = run_state.metrics_epoch.clone();
+            let epoch = || metrics_epoch.load(std::sync::atomic::Ordering::Relaxed);
             let before = epoch();
             manager.send(0, ToWorker::ResetMetrics(ResetMetrics { epoch: 1 }));
             let deadline = Instant::now() + Duration::from_secs(10);
