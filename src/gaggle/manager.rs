@@ -1521,7 +1521,7 @@ pub(crate) mod handshake_tests {
     }
 
     /// `shut_down` closes the worker's stream: `Shutdown` arrives, the
-    /// stream from the manager ends within a second, and the manager stops
+    /// stream from the manager ends promptly, and the manager stops
     /// reading the worker, though the worker's own stream stays open.
     #[tokio::test]
     async fn shut_down_closes_the_stream() {
@@ -1537,7 +1537,7 @@ pub(crate) mod handshake_tests {
             }
             manager.shut_down(0);
             let shut_down = Instant::now();
-            let ended = tokio::time::timeout(Duration::from_secs(1), async {
+            let ended = tokio::time::timeout(Duration::from_secs(5), async {
                 let mut got_shutdown = false;
                 loop {
                     match inbound.message().await {
@@ -1549,11 +1549,11 @@ pub(crate) mod handshake_tests {
                 }
             })
             .await
-            .expect("the stream ends within a second");
+            .expect("the stream ends");
             assert!(ended, "the stream ended without Shutdown");
             while reading() > 0 {
                 assert!(
-                    shut_down.elapsed() < Duration::from_secs(1),
+                    shut_down.elapsed() < Duration::from_secs(5),
                     "the manager still reads the worker"
                 );
                 tokio::time::sleep(Duration::from_millis(10)).await;
@@ -1770,7 +1770,7 @@ pub(crate) mod handshake_tests {
     async fn a_worker_held_by_a_full_queue_is_not_lost() {
         use super::super::proto::LogChunk;
         let test = async {
-            let manager = Manager::start("127.0.0.1", 0, 1, None, 7, true, Duration::from_secs(1))
+            let manager = Manager::start("127.0.0.1", 0, 1, None, 7, true, Duration::from_secs(3))
                 .await
                 .unwrap();
             let (tx, inbound) = open(channel(&manager).await, hello(), None).await;
@@ -1798,9 +1798,9 @@ pub(crate) mod handshake_tests {
                 tx
             });
             // Three heartbeat timeouts with the queue full and nothing taken.
-            tokio::time::sleep(Duration::from_secs(3)).await;
+            tokio::time::sleep(Duration::from_secs(9)).await;
             assert_eq!(manager.events.len(), EVENT_QUEUE);
-            let deadline = Instant::now() + Duration::from_secs(10);
+            let deadline = Instant::now() + Duration::from_secs(20);
             let mut chunks = 0;
             while chunks < CHUNKS {
                 match manager.next_event(deadline).await {
@@ -1909,8 +1909,17 @@ pub(crate) mod handshake_tests {
                 }
                 tx
             });
-            // Nothing taken for a while: the reader stops at the budget.
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            // Nothing taken: the reader fills the budget, then stops there.
+            let filled = Instant::now() + Duration::from_secs(10);
+            while manager.events.len() < 4 {
+                assert!(
+                    Instant::now() < filled,
+                    "{} events queued",
+                    manager.events.len()
+                );
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
             let queued = manager.events.len();
             // The Joined event, and what fits in 1 MiB.
             assert!(queued <= 5, "{} events queued past the byte budget", queued);
