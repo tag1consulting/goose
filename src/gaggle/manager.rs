@@ -101,22 +101,26 @@ pub(crate) struct Joined {
 }
 
 impl Joined {
-    /// Send `message` to the worker, unless it is closed; never waits.
-    /// Whether it was queued: a message that finds the queue full or closed
-    /// is dropped, with a warning naming it and the worker.
-    fn send(&self, message: ToWorker) -> bool {
-        if self.closed.load(Ordering::Relaxed) {
-            return false;
-        }
+    /// Send `message` to the worker, unless it is closed; never waits. A
+    /// message that finds the queue full or closed is dropped, with a
+    /// warning naming it and the worker, which is the error.
+    fn send(&self, message: ToWorker) -> Result<(), String> {
         let message = ManagerMessage {
             message: Some(message),
         };
         let kind = message_kind(&message);
-        let queued = self.outbound.try_send(Ok(message)).is_ok();
-        if !queued {
-            warn!("{}", dropped(self.id, &self.name, kind));
+        if self.closed.load(Ordering::Relaxed) {
+            return Err(format!(
+                "gaggle: worker {} ({}): {kind} not sent, its stream closed",
+                self.id, self.name
+            ));
         }
-        queued
+        if self.outbound.try_send(Ok(message)).is_err() {
+            let warning = dropped(self.id, &self.name, kind);
+            warn!("{}", warning);
+            return Err(warning);
+        }
+        Ok(())
     }
 
     /// Send `Shutdown`, then close the worker's stream.
@@ -1008,11 +1012,10 @@ mod tests {
             outbound,
             closed: Arc::new(AtomicBool::new(false)),
         };
-        assert!(worker.send(ToWorker::Heartbeat(Heartbeat {})));
-        assert!(!worker.send(ToWorker::Stop(Default::default())));
+        assert_eq!(worker.send(ToWorker::Heartbeat(Heartbeat {})), Ok(()));
         assert_eq!(
-            dropped(3, "w", "Stop"),
-            "gaggle: worker 3 (w): Stop not sent, its send queue full or closed"
+            worker.send(ToWorker::Stop(Default::default())),
+            Err("gaggle: worker 3 (w): Stop not sent, its send queue full or closed".to_string())
         );
     }
 
