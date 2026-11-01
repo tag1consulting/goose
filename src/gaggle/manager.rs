@@ -1472,6 +1472,65 @@ mod handshake_tests {
             .expect("within 30 seconds");
     }
 
+    /// A connection whose worker the manager refuses, the Gaggle full,
+    /// is not held as admitted: it is closed at its deadline, and its
+    /// permit freed, though its client keeps it open.
+    #[tokio::test]
+    async fn a_connection_refused_when_full_still_closes_at_its_deadline() {
+        use tokio::io::AsyncReadExt;
+        let test = async {
+            let manager = Manager::start("127.0.0.1", 0, 1, None, 7, true, Duration::from_secs(60))
+                .await
+                .unwrap();
+            assert_eq!(answer(&manager, hello(), None).await, Ok(0));
+            let mut refused = Vec::new();
+            for _ in 0..SPARE_CONNECTIONS {
+                let (tx, inbound) = open(
+                    channel(&manager).await,
+                    Hello {
+                        worker_name: "b".to_string(),
+                        ..hello()
+                    },
+                    None,
+                )
+                .await;
+                let mut inbound = inbound.unwrap();
+                match inbound.message().await.unwrap().and_then(|m| m.message) {
+                    Some(ToWorker::Reject(reject)) => {
+                        assert!(
+                            reject.reason.contains("all 1 of its workers"),
+                            "{}",
+                            reject.reason
+                        )
+                    }
+                    other => panic!("{:?}", other),
+                }
+                refused.push((tx, inbound));
+            }
+            tokio::time::sleep(HELLO_TIMEOUT + Duration::from_secs(3)).await;
+            // Their permits are free again: a new connection is held open.
+            let mut fresh = tokio::net::TcpStream::connect(manager.local_addr)
+                .await
+                .unwrap();
+            let mut buffer = [0u8; 1024];
+            let held = tokio::time::timeout(Duration::from_secs(1), async {
+                loop {
+                    match fresh.read(&mut buffer).await {
+                        Ok(0) | Err(_) => break,
+                        // The server's HTTP/2 preface.
+                        Ok(_) => continue,
+                    }
+                }
+            })
+            .await;
+            assert!(held.is_err(), "a refused connection kept its permit");
+            drop(refused);
+        };
+        tokio::time::timeout(Duration::from_secs(60), test)
+            .await
+            .expect("within 60 seconds");
+    }
+
     /// The manager holds at most `expected + 4` connections: one more is
     /// closed at once, and one on which no worker is admitted is closed
     /// after HELLO_TIMEOUT, so a worker can join again.
