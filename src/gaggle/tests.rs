@@ -2334,3 +2334,40 @@ fn gaggle_manager_reset_leaves_out_the_old_epoch_at_once() {
         assert_eq!(made(&mut side), 1);
     });
 }
+
+/// A delta the manager's merge refuses is recorded as refused, and never
+/// moves the last delta merged: only an accepted delta does.
+#[test]
+fn gaggle_refused_delta_leaves_last_seq() {
+    super::within(30, || {
+        let mut side = Side::new(0..0, Some(0));
+        let health = crate::gaggle::merge::MergeHealth::default();
+        side.processor
+            .gaggle_enable_manager(DeltaLimits::default(), health.clone());
+        let apply = |side: &mut Side, delta: GaggleDelta| {
+            side.processor
+                .handle_command_for_test(MetricsCommand::GaggleApply {
+                    worker: 0,
+                    delta: Box::new(delta),
+                });
+        };
+        let held = || health.lock().unwrap().get(&0).cloned().unwrap_or_default();
+        apply(&mut side, counted(0, 1, 0));
+        assert_eq!((held().last_seq, held().refused), (1, 0));
+        // Naming another worker: refused.
+        apply(&mut side, counted(1, 2, 0));
+        let merge = held();
+        assert_eq!((merge.last_seq, merge.refused), (1, 1), "{:?}", merge);
+        assert!(
+            merge
+                .refusal
+                .as_deref()
+                .unwrap_or_default()
+                .starts_with("delta 2:"),
+            "{:?}",
+            merge
+        );
+        apply(&mut side, counted(0, 2, 0));
+        assert_eq!((held().last_seq, held().refused, held().missing), (2, 1, 0));
+    });
+}

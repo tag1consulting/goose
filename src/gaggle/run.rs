@@ -70,7 +70,6 @@ struct WorkerEntry {
     id: u32,
     name: String,
     users: usize,
-    last_seq: u64,
     stopped: Option<Reason>,
     lost: Option<(chrono::DateTime<chrono::Utc>, String)>,
     /// It stopped as told and then went away: not lost, but nothing more,
@@ -316,7 +315,6 @@ impl GooseAttack {
                 id: *id,
                 name: name.clone(),
                 users: spec.users,
-                last_seq: 0,
                 stopped: None,
                 lost: None,
                 gone: false,
@@ -613,7 +611,11 @@ impl GooseAttack {
                 if worker.lost.is_some() {
                     return;
                 }
-                worker.last_seq = delta.seq;
+                // Whether the merge takes a delta depends on all it holds of
+                // the worker (its sequence, epoch, final delta and names),
+                // so the metrics processor decides, and records the last
+                // delta it merged in `run.health`: a refused delta never
+                // counts as received.
                 let _ = goose_attack_run_state
                     .metrics_cmd_tx
                     .send(MetricsCommand::GaggleApply { worker: id, delta });
@@ -650,8 +652,9 @@ impl GooseAttack {
             return;
         };
         let message = format!(
-            "gaggle: worker {id} ({}) lost: {why}; last delta {}",
-            worker.name, worker.last_seq
+            "gaggle: worker {id} ({}) lost: {why}; last delta merged {}",
+            worker.name,
+            last_merged(&run.health, id)
         );
         if !worker.lose(stop_sent, why) {
             return;
@@ -951,7 +954,7 @@ impl GooseAttack {
                         .as_ref()
                         .map(|(at, _)| at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
                     lost_reason: worker.lost.as_ref().map(|(_, why)| why.clone()),
-                    last_seq: worker.lost.as_ref().map(|_| worker.last_seq),
+                    last_seq: worker.lost.as_ref().map(|_| merge.last_seq),
                     refused_deltas: merge.refused,
                     refused_reason: merge.refusal,
                     excluded_reason: merge.excluded,
@@ -966,6 +969,16 @@ impl GooseAttack {
             degraded,
         })
     }
+}
+
+/// The sequence number of the last delta from worker `id` the merge took
+/// so far.
+fn last_merged(health: &MergeHealth, id: u32) -> u64 {
+    health
+        .lock()
+        .ok()
+        .and_then(|health| health.get(&id).map(|merge| merge.last_seq))
+        .unwrap_or(0)
 }
 
 /// The name a worker gives log `log` in its own run folder.
@@ -1168,7 +1181,6 @@ mod tests {
             id: 0,
             name: "w".to_string(),
             users: 1,
-            last_seq: 0,
             stopped: None,
             lost: None,
             gone: false,
