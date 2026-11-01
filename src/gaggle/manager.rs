@@ -1483,8 +1483,11 @@ mod handshake_tests {
                 .await
                 .unwrap();
             assert_eq!(answer(&manager, hello(), None).await, Ok(0));
+            // The admitted worker's connection closes with its client.
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            // Every permit, each held by a refused worker's connection.
             let mut refused = Vec::new();
-            for _ in 0..SPARE_CONNECTIONS {
+            for _ in 0..=SPARE_CONNECTIONS {
                 let (tx, inbound) = open(
                     channel(&manager).await,
                     Hello {
