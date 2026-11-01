@@ -72,9 +72,10 @@ struct WorkerTotal {
 
 /// Every merged worker's figures added up, kept as their deltas arrive, so a
 /// refresh never adds each worker's whole history again. Built again from
-/// the per worker totals only when a delta cannot simply be added: a reset,
-/// a final delta, a worker's metrics restarting on a new epoch, or a worker
-/// newly merged or left out.
+/// the per worker totals when a delta cannot simply be added (a reset, a
+/// final delta, a worker's metrics restarting on a new epoch, or a worker
+/// newly merged or left out) and when a worker is lost or done, so the
+/// figures are added in worker order, as a build from nothing adds them.
 #[derive(Default)]
 struct Merged {
     /// The figures, coordinated omission events left out: those are taken

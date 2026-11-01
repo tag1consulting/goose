@@ -409,10 +409,19 @@ impl WorkerRunSpec {
                 LOG_NAMES.len()
             ));
         }
-        if self.user_offset.checked_add(self.users).is_none() {
+        // The worker starts a user for each entry of the slice.
+        if self.users != self.slice.len() {
+            return Err(format!(
+                "the run spec gives {} users and scenarios for {}",
+                self.users,
+                self.slice.len()
+            ));
+        }
+        if self.user_offset.checked_add(self.slice.len()).is_none() {
             return Err(format!(
                 "the run spec's {} users from ordinal {} pass the largest ordinal",
-                self.users, self.user_offset
+                self.slice.len(),
+                self.user_offset
             ));
         }
         if let Some(&scenario) = self.slice.iter().find(|&&scenario| scenario >= scenarios) {
@@ -619,6 +628,11 @@ mod tests {
         offset.user_offset = usize::MAX;
         let why = offset.validate(2).unwrap_err();
         assert!(why.contains("largest ordinal"), "{}", why);
+        // Users that disagree with the slice, which decides how many start.
+        let mut users = offset.clone();
+        users.users = 0;
+        let why = users.validate(2).unwrap_err();
+        assert!(why.contains("0 users and scenarios for 2"), "{}", why);
     }
 
     /// A spec configures every option it carries, so a worker runs exactly
