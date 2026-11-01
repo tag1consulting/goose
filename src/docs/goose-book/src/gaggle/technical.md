@@ -31,6 +31,6 @@ The manager never holds more than 128 MiB that its workers sent and it has not r
 | 100 | 1 MiB | about 10 MB/s | about 1 GB/s |
 | 2,048 | 64 KiB | about 640 KB/s | about 1.3 GB/s |
 
-A worker offers its manager windows of 1 MiB. Neither side sends HTTP/2 keepalive pings: the heartbeats, every 2 seconds each way, find a peer that is gone. The manager queues at most 64 messages from its workers; past that, a worker is held back by HTTP/2 flow control.
+A worker offers its manager windows of 1 MiB. Neither side sends HTTP/2 keepalive pings: the heartbeats, every 2 seconds each way, find a peer that is gone. The manager queues at most 64 messages from its workers, holding at most 256 MiB counted as their encoded sizes; past either, a worker is held back by HTTP/2 flow control. A manager keeps per worker counts of the gaps and repeats in each worker's sequence of deltas, never a list that grows with them, and it makes each worker's custom data, encodes it into that worker's `Prepare` and drops it before making the next worker's, so it never holds every worker's custom data at once.
 
 The connection is not encrypted: the token, and all Gaggle traffic, cross the network in clear text until TLS arrives. Run a Gaggle on a network you trust, and give it a `--gaggle-token`.

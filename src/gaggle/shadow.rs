@@ -90,8 +90,8 @@ impl ShadowMerge {
         outcome: Arc<Mutex<Option<ShadowOutcome>>>,
     ) -> Self {
         ShadowMerge {
-            deltas: GaggleAccumulator::new(template.clone(), settings, LIMITS),
-            finals: GaggleAccumulator::new(template, settings, LIMITS),
+            deltas: GaggleAccumulator::new(template.clone(), settings, LIMITS).keeping_gaps(),
+            finals: GaggleAccumulator::new(template, settings, LIMITS).keeping_gaps(),
             sizes: Vec::new(),
             errors: Vec::new(),
             dropped: 0,
@@ -162,6 +162,9 @@ impl ShadowMerge {
         let mut differences = std::mem::take(&mut self.errors);
         for gap in self.deltas.gaps() {
             differences.push(format!("sequence gap: {gap:?}"));
+        }
+        if self.deltas.gaps_dropped() > 0 {
+            differences.push(format!("{} more sequence gaps", self.deltas.gaps_dropped()));
         }
         let mut run_graph = run.1.clone();
         let run_snapshot = snapshot.map(|build| build(run.0, &mut run_graph));

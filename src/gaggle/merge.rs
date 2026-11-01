@@ -66,6 +66,8 @@ struct WorkerTotal {
     /// The deltas from it that never arrived, as [`GaggleAccumulator::missing`]
     /// counts them.
     missing: u64,
+    /// Repeats of deltas already taken, ignored.
+    repeats: u64,
 }
 
 /// Every merged worker's figures added up, kept as their deltas arrive, so a
@@ -99,7 +101,12 @@ pub(crate) struct GaggleAccumulator {
     /// [`Self::set_max_second`] never passes.
     cap_second: Second,
     workers: BTreeMap<u32, WorkerTotal>,
-    gaps: Vec<SeqGap>,
+    /// Every gap and repeat in the workers' sequences, kept only for the
+    /// shadow merge, which reports each ([`Self::keeping_gaps`]): a manager
+    /// counts them per worker instead, so a worker cannot grow its memory.
+    gaps: Option<Vec<SeqGap>>,
+    /// Gaps past the [`MAX_GAPS_KEPT`] kept.
+    gaps_dropped: u64,
     /// The manager's own metrics epoch, the one merged: after a reset every
     /// worker is left out until it reports the new epoch, rather than show
     /// the old epoch's figures as current, and a delta from a later epoch is
@@ -107,6 +114,22 @@ pub(crate) struct GaggleAccumulator {
     min_epoch: u64,
     /// The merged figures, kept as deltas arrive and built again on demand.
     merged: RefCell<Merged>,
+}
+
+/// The most gaps an accumulator keeping them holds; past it they are
+/// counted.
+const MAX_GAPS_KEPT: usize = 1_000;
+
+/// Keep `gap` in `gaps`, when gaps are kept, or count it past
+/// [`MAX_GAPS_KEPT`].
+fn keep_gap(gaps: &mut Option<Vec<SeqGap>>, dropped: &mut u64, gap: SeqGap) {
+    if let Some(gaps) = gaps.as_mut() {
+        if gaps.len() < MAX_GAPS_KEPT {
+            gaps.push(gap);
+        } else {
+            *dropped += 1;
+        }
+    }
 }
 
 /// What [`GaggleAccumulator::apply`] did with a delta it took.
@@ -135,7 +158,8 @@ impl GaggleAccumulator {
             limits,
             cap_second: limits.max_second,
             workers: BTreeMap::new(),
-            gaps: Vec::new(),
+            gaps: None,
+            gaps_dropped: 0,
             min_epoch: 0,
             merged: RefCell::new(Merged {
                 current: true,
@@ -206,11 +230,15 @@ impl GaggleAccumulator {
             let got_final = delta.kind == DeltaKind::Final;
             total.add_pass(delta, Pass::Apply, Bounds::WORKER)?;
             if delta.first_seq != 1 {
-                self.gaps.push(SeqGap {
-                    worker: from,
-                    expected: 1,
-                    received: delta.first_seq,
-                });
+                keep_gap(
+                    &mut self.gaps,
+                    &mut self.gaps_dropped,
+                    SeqGap {
+                        worker: from,
+                        expected: 1,
+                        received: delta.first_seq,
+                    },
+                );
             }
             let missing = delta.first_seq.saturating_sub(1);
             self.workers.insert(
@@ -222,6 +250,7 @@ impl GaggleAccumulator {
                     got_final,
                     lost: false,
                     missing,
+                    repeats: 0,
                 },
             );
             return Ok(Taken::Added);
@@ -242,11 +271,16 @@ impl GaggleAccumulator {
         // `last_seq` is below `u64::MAX`, which no valid delta has.
         let expected = worker.last_seq + 1;
         if delta.seq < expected {
-            self.gaps.push(SeqGap {
-                worker: from,
-                expected,
-                received: delta.first_seq,
-            });
+            worker.repeats += 1;
+            keep_gap(
+                &mut self.gaps,
+                &mut self.gaps_dropped,
+                SeqGap {
+                    worker: from,
+                    expected,
+                    received: delta.first_seq,
+                },
+            );
             return Ok(Taken::Ignored);
         }
         // Check before changing anything: what this delta starts again
@@ -275,11 +309,15 @@ impl GaggleAccumulator {
                 .add_rates(&delta.graph, Pass::Check, Bounds::WORKER)?;
         }
         if delta.first_seq != expected {
-            self.gaps.push(SeqGap {
-                worker: from,
-                expected,
-                received: delta.first_seq,
-            });
+            keep_gap(
+                &mut self.gaps,
+                &mut self.gaps_dropped,
+                SeqGap {
+                    worker: from,
+                    expected,
+                    received: delta.first_seq,
+                },
+            );
             // Above `expected`: a repeat or overlap returned earlier.
             worker.missing += delta.first_seq - expected;
         }
@@ -309,11 +347,15 @@ impl GaggleAccumulator {
     pub(crate) fn lose(&mut self, worker: u32) {
         if let Some(total) = self.workers.get_mut(&worker) {
             if !total.lost && !total.finished {
-                self.gaps.push(SeqGap {
-                    worker,
-                    expected: total.last_seq + 1,
-                    received: 0,
-                });
+                keep_gap(
+                    &mut self.gaps,
+                    &mut self.gaps_dropped,
+                    SeqGap {
+                        worker,
+                        expected: total.last_seq + 1,
+                        received: 0,
+                    },
+                );
             }
             total.lost = true;
         }
@@ -349,9 +391,28 @@ impl GaggleAccumulator {
         }
     }
 
-    /// Every gap and repeat seen in a worker's sequence.
+    /// Keep every gap and repeat for [`Self::gaps`], up to
+    /// [`MAX_GAPS_KEPT`], as the shadow merge reports them.
+    pub(crate) fn keeping_gaps(mut self) -> Self {
+        self.gaps = Some(Vec::new());
+        self
+    }
+
+    /// Every gap and repeat seen in a worker's sequence, when they are
+    /// kept ([`Self::keeping_gaps`]); none otherwise.
     pub(crate) fn gaps(&self) -> &[SeqGap] {
-        &self.gaps
+        self.gaps.as_deref().unwrap_or_default()
+    }
+
+    /// Gaps and repeats left out of [`Self::gaps`] past [`MAX_GAPS_KEPT`].
+    pub(crate) fn gaps_dropped(&self) -> u64 {
+        self.gaps_dropped
+    }
+
+    /// Repeats of deltas from `worker` already taken, ignored (tests).
+    #[cfg(test)]
+    pub(crate) fn repeats(&self, worker: u32) -> u64 {
+        self.workers.get(&worker).map_or(0, |total| total.repeats)
     }
 
     /// Whether `worker`'s final delta was merged.

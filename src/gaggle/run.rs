@@ -377,7 +377,7 @@ impl GooseAttack {
                 return Err(e);
             }
         };
-        let mut specs = spec::worker_specs(
+        let specs = spec::worker_specs(
             &self.configuration,
             self.client_command_line,
             &self.test_plan.steps,
@@ -385,7 +385,12 @@ impl GooseAttack {
             expected,
             self.configuration.records_graph_data(),
         );
-        for spec in specs.iter_mut() {
+        let names = manager.workers();
+        let mut workers = Vec::with_capacity(expected);
+        // One worker at a time: its data is made, encoded into its Prepare
+        // and dropped before the next worker's is made, so the manager never
+        // holds every worker's data, nor two copies of one.
+        for (mut spec, (id, name)) in specs.into_iter().zip(names) {
             let share = WorkerShare {
                 index: spec.worker as usize,
                 workers: expected,
@@ -399,11 +404,10 @@ impl GooseAttack {
                     return Err(e);
                 }
             }
-        }
-        let names = manager.workers();
-        let mut workers = Vec::with_capacity(expected);
-        for (spec, (id, name)) in specs.iter().zip(&names) {
-            let bytes = match spec.encode() {
+            let users = spec.users;
+            let encoded = spec.encode();
+            drop(spec);
+            let bytes = match encoded {
                 Ok(bytes) => bytes,
                 Err(e) => {
                     return Err(
@@ -411,11 +415,11 @@ impl GooseAttack {
                     )
                 }
             };
-            manager.send(*id, ToWorker::Prepare(Prepare { spec: bytes }));
+            manager.send(id, ToWorker::Prepare(Prepare { spec: bytes }));
             workers.push(WorkerEntry {
-                id: *id,
-                name: name.clone(),
-                users: spec.users,
+                id,
+                name,
+                users,
                 stopped: None,
                 lost: None,
                 gone: false,

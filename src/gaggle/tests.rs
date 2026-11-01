@@ -290,6 +290,7 @@ pub(crate) fn accumulator_for_test() -> GaggleAccumulator {
         side.processor.gaggle_graph_settings(),
         DeltaLimits::default(),
     )
+    .keeping_gaps()
 }
 
 struct Side {
@@ -572,6 +573,7 @@ fn accumulator() -> GaggleAccumulator {
         side.processor.gaggle_graph_settings(),
         DeltaLimits::default(),
     )
+    .keeping_gaps()
 }
 
 /// Apply `delta`, sent as bytes, from the worker it names: it must be
@@ -1126,6 +1128,34 @@ fn counted(worker: u32, seq: u64, epoch: u64) -> GaggleDelta {
     delta
 }
 
+/// Repeats of a delta grow no list on a manager: each is counted for its
+/// worker. Where gaps are kept, for the shadow merge, at most 1,000 are,
+/// the rest counted.
+#[test]
+fn gaggle_repeats_leave_the_manager_memory_constant() {
+    let side = Side::new(0..0, Some(0));
+    let mut manager = GaggleAccumulator::new(
+        side.processor.gaggle_template(),
+        side.processor.gaggle_graph_settings(),
+        DeltaLimits::default(),
+    );
+    let mut kept = accumulator();
+    for accumulator in [&mut manager, &mut kept] {
+        accumulator.apply(0, counted(0, 1, 0)).unwrap();
+        for _ in 0..5_000 {
+            accumulator.apply(0, counted(0, 1, 0)).unwrap();
+        }
+        assert_eq!(accumulator.repeats(0), 5_000);
+        assert_eq!(accumulator.last_seq(0), Some(1));
+    }
+    assert!(manager.gaps().is_empty());
+    assert_eq!(manager.gaps_dropped(), 0);
+    assert_eq!(kept.gaps().len(), 1_000);
+    assert_eq!(kept.gaps_dropped(), 4_000);
+    let (metrics, _) = manager.merged();
+    assert_eq!(metrics.requests["GET /a"].success_count, 1);
+}
+
 /// A worker that missed a metrics reset another worker saw is left out of
 /// the merge, and named.
 #[test]
@@ -1471,7 +1501,8 @@ fn held() -> GaggleAccumulator {
         side.processor.gaggle_template(),
         side.processor.gaggle_graph_settings(),
         SMALL,
-    );
+    )
+    .keeping_gaps();
     // The manager reset its metrics once, starting epoch 1.
     accumulator.set_min_epoch(1);
     let mut first = counted(0, 1, 1);

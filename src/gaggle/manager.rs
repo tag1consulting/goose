@@ -25,6 +25,7 @@ use super::proto::{
     PROTOCOL_VERSION,
 };
 use crate::GooseError;
+use prost::Message as _;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -86,6 +87,15 @@ const SPARE_CONNECTIONS: usize = 4;
 /// The events queued for the manager's main loop: past them, a worker's
 /// reader waits, and HTTP/2 flow control slows the worker.
 pub(crate) const EVENT_QUEUE: usize = 64;
+
+/// The most bytes the events queued for the manager's main loop may hold,
+/// counted as their messages' encoded sizes: past it, as past
+/// [`EVENT_QUEUE`] events, a worker's reader waits.
+const EVENT_BYTES: u64 = 256 << 20;
+
+/// An event as queued, holding its share of [`EVENT_BYTES`] until the main
+/// loop takes it.
+type Queued = (Event, Option<tokio::sync::OwnedSemaphorePermit>);
 
 /// The metadata key a worker's token travels under, as `Bearer <token>`.
 pub(crate) const AUTHORIZATION: &str = "authorization";
@@ -230,7 +240,9 @@ fn message_kind(message: &ManagerMessage) -> &'static str {
 struct Shared {
     expected: usize,
     joined: Mutex<Vec<Joined>>,
-    events: flume::Sender<Event>,
+    events: flume::Sender<Queued>,
+    /// What is left of [`EVENT_BYTES`].
+    event_bytes: Arc<tokio::sync::Semaphore>,
     plan_hash: u64,
     hash_check: bool,
     heartbeat_timeout: Duration,
@@ -446,7 +458,7 @@ impl Gaggle for GaggleService {
         let id = worker.id;
         info!("gaggle: worker {id} ({}) joined from {peer}", worker.name);
         let _ = worker.send(ToWorker::Welcome(Welcome { worker_id: id }));
-        let _ = self.0.events.send_async(Event::Joined).await;
+        let _ = self.0.events.send_async((Event::Joined, None)).await;
         let heard = Arc::new(Mutex::new(Instant::now()));
         let lost = Arc::new(AtomicBool::new(false));
         let responses = Responses {
@@ -744,7 +756,10 @@ impl http_body::Body for FirstMessage {
 /// Report worker `id` lost, once.
 async fn lose(shared: &Shared, id: u32, lost: &AtomicBool, why: String) {
     if !lost.swap(true, Ordering::Relaxed) {
-        let _ = shared.events.send_async(Event::Lost { id, why }).await;
+        let _ = shared
+            .events
+            .send_async((Event::Lost { id, why }, None))
+            .await;
     }
 }
 
@@ -787,6 +802,7 @@ async fn read_worker(
         if let Ok(mut heard) = heard.lock() {
             *heard = Instant::now();
         }
+        let bytes = message.encoded_len() as u64;
         let event = match message.message {
             Some(FromWorker::Heartbeat(_)) | None => continue,
             Some(FromWorker::Hello(_)) => {
@@ -823,8 +839,19 @@ async fn read_worker(
         if worker.closed.load(Ordering::Relaxed) {
             break;
         }
+        // Its share of the byte budget first, then a place in the queue.
+        let queue = async {
+            let bytes = bytes.min(EVENT_BYTES) as u32;
+            let permit = shared
+                .event_bytes
+                .clone()
+                .acquire_many_owned(bytes)
+                .await
+                .ok();
+            shared.events.send_async((event, permit)).await
+        };
         let queued = tokio::select! {
-            queued = shared.events.send_async(event) => queued,
+            queued = queue => queued,
             () = closing => break,
         };
         if queued.is_err() {
@@ -908,7 +935,7 @@ async fn heartbeat_worker(
 /// A running manager: its listening service and its workers.
 pub(crate) struct Manager {
     shared: Arc<Shared>,
-    events: flume::Receiver<Event>,
+    events: flume::Receiver<Queued>,
     /// The address it listens on.
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) local_addr: SocketAddr,
@@ -944,6 +971,7 @@ impl Manager {
             expected,
             joined: Mutex::new(Vec::new()),
             events: events_tx,
+            event_bytes: Arc::new(tokio::sync::Semaphore::new(EVENT_BYTES as usize)),
             plan_hash,
             hash_check,
             heartbeat_timeout,
@@ -996,15 +1024,17 @@ impl Manager {
     /// The next event, waiting until `deadline`.
     pub(crate) async fn next_event(&self, deadline: Instant) -> Option<Event> {
         let wait = deadline.saturating_duration_since(Instant::now());
-        tokio::time::timeout(wait, self.events.recv_async())
+        // The event's share of the byte budget is freed as it is taken.
+        let (event, _bytes) = tokio::time::timeout(wait, self.events.recv_async())
             .await
             .ok()?
-            .ok()
+            .ok()?;
+        Some(event)
     }
 
     /// The next event if one is waiting.
     pub(crate) fn try_event(&self) -> Option<Event> {
-        self.events.try_recv().ok()
+        self.events.try_recv().ok().map(|(event, _bytes)| event)
     }
 
     /// Each worker's id and name.
@@ -1587,6 +1617,66 @@ pub(crate) mod handshake_tests {
         tokio::time::timeout(Duration::from_secs(60), test)
             .await
             .expect("within 60 seconds");
+    }
+
+    /// A worker's reader waits once the events queued hold the byte budget,
+    /// though fewer than EVENT_QUEUE are queued, and goes on as the main
+    /// loop takes them: every chunk arrives.
+    #[tokio::test]
+    async fn gaggle_event_queue_is_bounded_by_bytes() {
+        use super::super::proto::LogChunk;
+        let test = async {
+            let manager = Manager::start("127.0.0.1", 0, 1, None, 7, true, Duration::from_secs(30))
+                .await
+                .unwrap();
+            // A budget of 1 MiB, for the test: 4 chunks of 256 KiB fill it.
+            manager
+                .shared
+                .event_bytes
+                .forget_permits((EVENT_BYTES - (1 << 20)) as usize);
+            let (tx, inbound) = open(channel(&manager).await, hello(), None).await;
+            let _inbound = inbound.unwrap();
+            const CHUNKS: u64 = 12;
+            let sender = tokio::spawn(async move {
+                for offset in 0..CHUNKS {
+                    let chunk = LogChunk {
+                        file: "requests.json".to_string(),
+                        offset,
+                        data: vec![b'x'; (256 << 10) - 64],
+                        last: offset + 1 == CHUNKS,
+                    };
+                    if tx
+                        .send(WorkerMessage {
+                            message: Some(FromWorker::LogChunk(chunk)),
+                        })
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                tx
+            });
+            // Nothing taken for a while: the reader stops at the budget.
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            let queued = manager.events.len();
+            // The Joined event, and what fits in 1 MiB.
+            assert!(queued <= 5, "{} events queued past the byte budget", queued);
+            assert!(queued >= 4, "{} events queued", queued);
+            let deadline = Instant::now() + Duration::from_secs(20);
+            let mut chunks = 0;
+            while chunks < CHUNKS {
+                match manager.next_event(deadline).await {
+                    Some(Event::Log { .. }) => chunks += 1,
+                    Some(Event::Joined) => {}
+                    other => panic!("{:?}", other),
+                }
+            }
+            drop(sender.await);
+        };
+        tokio::time::timeout(Duration::from_secs(30), test)
+            .await
+            .expect("within 30 seconds");
     }
 
     /// A client with no token, or a wrong one of any length, is refused by
