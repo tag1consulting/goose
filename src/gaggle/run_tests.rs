@@ -760,12 +760,12 @@ async fn gaggle_collected_logs_match_their_names() {
                 let mut text = String::new();
                 flate2::read::MultiGzDecoder::new(&bytes[..])
                     .read_to_string(&mut text)
-                    .unwrap_or_else(|e| panic!("{file} is not valid gzip: {e}"));
+                    .unwrap_or_else(|e| panic!("{} is not valid gzip: {}", file, e));
                 text
             } else {
                 String::from_utf8(bytes).unwrap()
             };
-            assert!(text.lines().count() > 0, "{file} is empty");
+            assert!(text.lines().count() > 0, "{} is empty", file);
             assert!(
                 text.starts_with('{'),
                 "{file}: {}",
