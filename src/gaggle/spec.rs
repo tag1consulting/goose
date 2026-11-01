@@ -339,7 +339,10 @@ impl WorkerRunSpec {
         self.logs
             .iter()
             .map(|log| {
-                let mut file = log_file_name(LOG_NAMES[log.kind as usize % 5], log.format.as_ref());
+                let mut file = log_file_name(
+                    LOG_NAMES[log.kind as usize % LOG_NAMES.len()],
+                    log.format.as_ref(),
+                );
                 if log.gzip {
                     file.push_str(".gz");
                 }
