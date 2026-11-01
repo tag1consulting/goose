@@ -638,6 +638,9 @@ impl Merged {
 /// finished. Refused, as [`GaggleDelta::add`], past [`Bounds::WORKER`]:
 /// then `a` comes back unchanged with the error. `a` is joined in place,
 /// never copied.
+// The error hands `a` back whole, so the caller keeps it: boxing it would
+// cost an allocation on every join.
+#[allow(clippy::result_large_err)]
 pub(crate) fn coalesce(
     mut a: GaggleDelta,
     b: &GaggleDelta,

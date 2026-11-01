@@ -1453,7 +1453,7 @@ mod tests {
             let _ = std::fs::remove_file(&path);
             assert_eq!(received, SIZE);
             println!("8 MiB across 100 ms round trips in {took:?}");
-            assert!(took < Duration::from_secs(4), "8 MiB took {took:?}");
+            assert!(took < Duration::from_secs(4), "8 MiB took {:?}", took);
         };
         tokio::time::timeout(Duration::from_secs(60), test)
             .await
