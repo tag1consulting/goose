@@ -90,14 +90,26 @@ pub(crate) enum Event {
     Lost { id: u32, why: String },
 }
 
-/// One admitted worker, as the manager's main loop sees it.
+/// What the manager sends one worker: its response stream ends once the
+/// last sender is dropped and what was queued has left.
+type Outbound = mpsc::Sender<Result<ManagerMessage, tonic::Status>>;
+
+/// One admitted worker, as the manager's main loop and the worker's
+/// heartbeat task see it.
+#[derive(Clone)]
 pub(crate) struct Joined {
     pub(crate) id: u32,
     /// Its name, unique in this Gaggle, safe as a folder name.
     pub(crate) name: String,
-    outbound: mpsc::Sender<Result<ManagerMessage, tonic::Status>>,
+    /// The worker's one sender, taken when it is shut down, so its stream
+    /// ends.
+    outbound: Arc<Mutex<Option<Outbound>>>,
     /// Set once the worker is lost or shut down: nothing more is sent.
     closed: Arc<AtomicBool>,
+    /// Set once its response stream has ended, everything queued sent.
+    ended: Arc<AtomicBool>,
+    /// Woken when it is closed, so its reader stops at once.
+    closing: Arc<tokio::sync::Notify>,
 }
 
 impl Joined {
@@ -109,13 +121,15 @@ impl Joined {
             message: Some(message),
         };
         let kind = message_kind(&message);
-        if self.closed.load(Ordering::Relaxed) {
+        let outbound = self.outbound.lock().ok();
+        let outbound = outbound.as_ref().and_then(|outbound| outbound.as_ref());
+        let Some(outbound) = outbound.filter(|_| !self.closed.load(Ordering::Relaxed)) else {
             return Err(format!(
                 "gaggle: worker {} ({}): {kind} not sent, its stream closed",
                 self.id, self.name
             ));
-        }
-        if self.outbound.try_send(Ok(message)).is_err() {
+        };
+        if outbound.try_send(Ok(message)).is_err() {
             let warning = dropped(self.id, &self.name, kind);
             warn!("{}", warning);
             #[cfg(test)]
@@ -127,10 +141,41 @@ impl Joined {
         Ok(())
     }
 
-    /// Send `Shutdown`, then close the worker's stream.
+    /// Send `Shutdown`, then close the worker's stream: its sender is
+    /// dropped, so the stream ends once `Shutdown` has left, and the
+    /// worker's reader stops with it.
     fn shut_down(&self) {
         let _ = self.send(ToWorker::Shutdown(Default::default()));
+        self.close();
+    }
+
+    /// Send nothing more, and end the stream once what is queued has left.
+    fn close(&self) {
         self.closed.store(true, Ordering::Relaxed);
+        if let Ok(mut outbound) = self.outbound.lock() {
+            outbound.take();
+        }
+        self.closing.notify_waiters();
+    }
+}
+
+/// A worker's response stream, which marks the worker's `ended` once every
+/// message queued for it has been taken.
+struct Responses {
+    queued: ReceiverStream<Result<ManagerMessage, tonic::Status>>,
+    ended: Arc<AtomicBool>,
+}
+
+impl tokio_stream::Stream for Responses {
+    type Item = Result<ManagerMessage, tonic::Status>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+        let next = Pin::new(&mut this.queued).poll_next(cx);
+        if let Poll::Ready(None) = next {
+            this.ended.store(true, Ordering::Relaxed);
+        }
+        next
     }
 }
 
@@ -173,6 +218,9 @@ struct Shared {
     /// How long admitting a worker takes, in milliseconds (unit tests).
     #[cfg(test)]
     admit_delay_ms: std::sync::atomic::AtomicU64,
+    /// Worker streams being read (unit tests).
+    #[cfg(test)]
+    reading: std::sync::atomic::AtomicUsize,
 }
 
 /// A token as a fixed length digest, so comparing two never depends on
@@ -270,11 +318,7 @@ impl Shared {
     /// `None` when the Gaggle has all its workers. Names are unique ignoring
     /// case, as folders on a case insensitive file system are: one taken
     /// already gets the worker's id appended.
-    fn admit(
-        &self,
-        name: &str,
-        outbound: mpsc::Sender<Result<ManagerMessage, tonic::Status>>,
-    ) -> Option<(u32, String, Arc<AtomicBool>)> {
+    fn admit(&self, name: &str, outbound: Outbound) -> Option<Joined> {
         let mut joined = self.joined.lock().ok()?;
         if joined.len() >= self.expected {
             return None;
@@ -290,14 +334,16 @@ impl Shared {
             unique = format!("{base}-{n}");
             n += 1;
         }
-        let closed = Arc::new(AtomicBool::new(false));
-        joined.push(Joined {
+        let worker = Joined {
             id,
-            name: unique.clone(),
-            outbound,
-            closed: closed.clone(),
-        });
-        Some((id, unique, closed))
+            name: unique,
+            outbound: Arc::new(Mutex::new(Some(outbound))),
+            closed: Arc::new(AtomicBool::new(false)),
+            ended: Arc::new(AtomicBool::new(false)),
+            closing: Default::default(),
+        };
+        joined.push(worker.clone());
+        Some(worker)
     }
 }
 
@@ -305,17 +351,20 @@ impl Shared {
 struct GaggleService(Arc<Shared>);
 
 /// A refusal sent as the stream's only message.
-fn reject(reason: String) -> ReceiverStream<Result<ManagerMessage, tonic::Status>> {
+fn reject(reason: String) -> Responses {
     let (tx, rx) = mpsc::channel(1);
     let _ = tx.try_send(Ok(ManagerMessage {
         message: Some(ToWorker::Reject(Reject { reason })),
     }));
-    ReceiverStream::new(rx)
+    Responses {
+        queued: ReceiverStream::new(rx),
+        ended: Arc::new(AtomicBool::new(false)),
+    }
 }
 
 #[tonic::async_trait]
 impl Gaggle for GaggleService {
-    type ConnectStream = ReceiverStream<Result<ManagerMessage, tonic::Status>>;
+    type ConnectStream = Responses;
 
     async fn connect(
         &self,
@@ -358,7 +407,7 @@ impl Gaggle for GaggleService {
             tokio::time::sleep(Duration::from_millis(delay)).await;
         }
         let (outbound, rx) = mpsc::channel(64);
-        let Some((id, name, closed)) = self.0.admit(&hello.worker_name, outbound.clone()) else {
+        let Some(worker) = self.0.admit(&hello.worker_name, outbound) else {
             if let Some(connection) = connection.as_ref() {
                 connection.admitted.store(false, Ordering::Relaxed);
             }
@@ -372,30 +421,25 @@ impl Gaggle for GaggleService {
             );
             return Ok(tonic::Response::new(reject(reason)));
         };
-        info!("gaggle: worker {id} ({name}) joined from {peer}");
-        let _ = outbound.try_send(Ok(ManagerMessage {
-            message: Some(ToWorker::Welcome(Welcome { worker_id: id })),
-        }));
+        let id = worker.id;
+        info!("gaggle: worker {id} ({}) joined from {peer}", worker.name);
+        let _ = worker.send(ToWorker::Welcome(Welcome { worker_id: id }));
         let _ = self.0.events.send_async(Event::Joined).await;
         let heard = Arc::new(Mutex::new(Instant::now()));
         let lost = Arc::new(AtomicBool::new(false));
+        let responses = Responses {
+            queued: ReceiverStream::new(rx),
+            ended: worker.ended.clone(),
+        };
         tokio::spawn(read_worker(
-            id,
+            worker.clone(),
             inbound,
             self.0.clone(),
             heard.clone(),
             lost.clone(),
-            closed.clone(),
         ));
-        tokio::spawn(heartbeat_worker(
-            id,
-            outbound,
-            self.0.clone(),
-            heard,
-            lost,
-            closed,
-        ));
-        Ok(tonic::Response::new(ReceiverStream::new(rx)))
+        tokio::spawn(heartbeat_worker(worker, self.0.clone(), heard, lost));
+        Ok(tonic::Response::new(responses))
     }
 }
 
@@ -690,16 +734,27 @@ async fn lose(shared: &Shared, id: u32, lost: &AtomicBool, why: String) {
 /// `heard` is refreshed when an event is queued too, so a worker held back
 /// by a slow main loop is not taken for a silent one.
 async fn read_worker(
-    id: u32,
+    worker: Joined,
     mut inbound: tonic::Streaming<WorkerMessage>,
     shared: Arc<Shared>,
     heard: Arc<Mutex<Instant>>,
     lost: Arc<AtomicBool>,
-    closed: Arc<AtomicBool>,
 ) {
+    #[cfg(test)]
+    let _reading = Reading::new(&shared);
+    let id = worker.id;
     let mut got_final = false;
     loop {
-        let message = match inbound.message().await {
+        // Created before the check, so a close between them still wakes it.
+        let closing = worker.closing.notified();
+        if worker.closed.load(Ordering::Relaxed) {
+            break;
+        }
+        let message = tokio::select! {
+            message = inbound.message() => message,
+            () = closing => break,
+        };
+        let message = match message {
             Ok(Some(message)) => message,
             Ok(None) => break,
             Err(status) => {
@@ -742,7 +797,15 @@ async fn read_worker(
             Some(FromWorker::Stopped(stopped)) => Event::Stopped { id, stopped },
             Some(FromWorker::LogChunk(chunk)) => Event::Log { id, chunk },
         };
-        if shared.events.send_async(event).await.is_err() {
+        let closing = worker.closing.notified();
+        if worker.closed.load(Ordering::Relaxed) {
+            break;
+        }
+        let queued = tokio::select! {
+            queued = shared.events.send_async(event) => queued,
+            () = closing => break,
+        };
+        if queued.is_err() {
             break;
         }
         if let Ok(mut heard) = heard.lock() {
@@ -752,7 +815,7 @@ async fn read_worker(
     // A worker that stopped as told, then went away, is not lost: the
     // manager's main loop knows it stopped and keeps it so. Either way the
     // event ends any wait for it, its logs among them.
-    if !closed.load(Ordering::Relaxed) {
+    if !worker.closed.load(Ordering::Relaxed) {
         let why = if got_final {
             "its stream closed after its final metrics, before Shutdown"
         } else {
@@ -762,22 +825,40 @@ async fn read_worker(
     }
 }
 
-/// Send worker `id` a heartbeat every [`HEARTBEAT_INTERVAL`], and report it
+/// Counts a worker's reader while it runs (unit tests).
+#[cfg(test)]
+struct Reading(Arc<Shared>);
+
+#[cfg(test)]
+impl Reading {
+    fn new(shared: &Arc<Shared>) -> Self {
+        shared.reading.fetch_add(1, Ordering::Relaxed);
+        Reading(shared.clone())
+    }
+}
+
+#[cfg(test)]
+impl Drop for Reading {
+    fn drop(&mut self) {
+        self.0.reading.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+/// Send `worker` a heartbeat every [`HEARTBEAT_INTERVAL`], and report it
 /// lost, send it `Shutdown` and close its stream when nothing has come from
 /// it for the heartbeat timeout.
 async fn heartbeat_worker(
-    id: u32,
-    outbound: mpsc::Sender<Result<ManagerMessage, tonic::Status>>,
+    worker: Joined,
     shared: Arc<Shared>,
     heard: Arc<Mutex<Instant>>,
     lost: Arc<AtomicBool>,
-    closed: Arc<AtomicBool>,
 ) {
+    let id = worker.id;
     let mut interval = tokio::time::interval(HEARTBEAT_INTERVAL.min(shared.heartbeat_timeout / 2));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         interval.tick().await;
-        if closed.load(Ordering::Relaxed) || outbound.is_closed() {
+        if worker.closed.load(Ordering::Relaxed) || worker.ended.load(Ordering::Relaxed) {
             return;
         }
         let silent = heard
@@ -795,15 +876,10 @@ async fn heartbeat_worker(
                 ),
             )
             .await;
-            let _ = outbound.try_send(Ok(ManagerMessage {
-                message: Some(ToWorker::Shutdown(Default::default())),
-            }));
-            closed.store(true, Ordering::Relaxed);
+            worker.shut_down();
             return;
         }
-        let _ = outbound.try_send(Ok(ManagerMessage {
-            message: Some(ToWorker::Heartbeat(Heartbeat {})),
-        }));
+        let _ = worker.send(ToWorker::Heartbeat(Heartbeat {}));
     }
 }
 
@@ -853,6 +929,8 @@ impl Manager {
             handled: Default::default(),
             #[cfg(test)]
             admit_delay_ms: Default::default(),
+            #[cfg(test)]
+            reading: Default::default(),
         });
         let expected_token = token_digest(token.as_deref().unwrap_or(""));
         // tonic sets one decoding limit for every message on a service:
@@ -953,14 +1031,12 @@ impl Manager {
                 worker.shut_down();
             }
         }
-        // The streams end when the service stops: wait until each worker's
-        // queue is drained, at most a second, so `Shutdown` reaches it.
+        // Each stream ends once its `Shutdown` has left: wait for that, at
+        // most a second, before the service stops.
         let deadline = Instant::now() + Duration::from_secs(1);
         while Instant::now() < deadline {
             let drained = self.shared.joined.lock().map_or(true, |joined| {
-                joined
-                    .iter()
-                    .all(|w| w.outbound.capacity() == w.outbound.max_capacity())
+                joined.iter().all(|w| w.ended.load(Ordering::Relaxed))
             });
             if drained {
                 break;
@@ -983,7 +1059,7 @@ impl Drop for Manager {
     fn drop(&mut self) {
         if let Ok(mut joined) = self.shared.joined.lock() {
             for worker in joined.iter() {
-                worker.closed.store(true, Ordering::Relaxed);
+                worker.close();
             }
             joined.clear();
         }
@@ -1035,8 +1111,10 @@ mod tests {
         let worker = Joined {
             id: 3,
             name: "w".to_string(),
-            outbound,
+            outbound: Arc::new(Mutex::new(Some(outbound))),
             closed: Arc::new(AtomicBool::new(false)),
+            ended: Arc::new(AtomicBool::new(false)),
+            closing: Default::default(),
         };
         let warning = "gaggle: worker 3 (w): Stop not sent, its send queue full or closed";
         assert_eq!(worker.send(ToWorker::Heartbeat(Heartbeat {})), Ok(()));
@@ -1211,6 +1289,51 @@ pub(crate) mod handshake_tests {
                     Some(ToWorker::Welcome(_)) | Some(ToWorker::Heartbeat(_)) => continue,
                     other => panic!("{:?}", other),
                 }
+            }
+            drop(tx);
+        };
+        tokio::time::timeout(Duration::from_secs(30), test)
+            .await
+            .expect("within 30 seconds");
+    }
+
+    /// `shut_down` closes the worker's stream: `Shutdown` arrives, the
+    /// stream from the manager ends within a second, and the manager stops
+    /// reading the worker, though the worker's own stream stays open.
+    #[tokio::test]
+    async fn shut_down_closes_the_stream() {
+        let test = async {
+            let manager = Manager::start("127.0.0.1", 0, 1, None, 7, true, Duration::from_secs(10))
+                .await
+                .unwrap();
+            let (tx, inbound) = open(channel(&manager).await, hello(), None).await;
+            let mut inbound = inbound.unwrap();
+            let reading = || manager.shared.reading.load(Ordering::Relaxed);
+            while reading() == 0 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            manager.shut_down(0);
+            let shut_down = Instant::now();
+            let ended = tokio::time::timeout(Duration::from_secs(1), async {
+                let mut got_shutdown = false;
+                loop {
+                    match inbound.message().await {
+                        Ok(Some(message)) => {
+                            got_shutdown |= matches!(message.message, Some(ToWorker::Shutdown(_)))
+                        }
+                        Ok(None) | Err(_) => return got_shutdown,
+                    }
+                }
+            })
+            .await
+            .expect("the stream ends within a second");
+            assert!(ended, "the stream ended without Shutdown");
+            while reading() > 0 {
+                assert!(
+                    shut_down.elapsed() < Duration::from_secs(1),
+                    "the manager still reads the worker"
+                );
+                tokio::time::sleep(Duration::from_millis(10)).await;
             }
             drop(tx);
         };
