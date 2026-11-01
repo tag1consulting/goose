@@ -374,7 +374,10 @@ fn outbound(
 impl Link {
     /// Connect to the manager, retrying with backoff until
     /// [`LinkSettings::connect_timeout`] runs out, and say `Hello`. A refusal
-    /// is an error at once, never retried.
+    /// is an error at once, never retried. The deadline covers each attempt
+    /// whole, the TCP connect, the HTTP/2 handshake, the stream's response
+    /// and the `Welcome`, so a manager that accepts and then says nothing
+    /// cannot hold a worker past it.
     pub(crate) async fn connect(settings: LinkSettings) -> Result<Link, GooseError> {
         let deadline = Instant::now() + settings.connect_timeout;
         let uri = format!("http://{}", settings.address);
@@ -387,7 +390,14 @@ impl Link {
             .tcp_nodelay(true);
         let mut attempt = 0;
         loop {
-            let tried = Self::try_connect(&endpoint, &settings).await;
+            let left = deadline.saturating_duration_since(Instant::now());
+            let tried =
+                match tokio::time::timeout(left, Self::try_connect(&endpoint, &settings)).await {
+                    Ok(tried) => tried,
+                    Err(_) => Err(Refusal::Unreachable(
+                        "it accepted the connection but did not answer".to_string(),
+                    )),
+                };
             let why = match tried {
                 Ok(link) => return Ok(link),
                 Err(Refusal::Refused(reason)) => {
@@ -1104,6 +1114,44 @@ mod tests {
             let why = start_instant(delay_ms).unwrap_err();
             assert!(why.contains(&delay_ms.to_string()), "{}", why);
         }
+    }
+
+    /// A listener that accepts the connection and never speaks HTTP/2: the
+    /// worker gives up within the connect timeout, plus 2 seconds.
+    #[tokio::test]
+    async fn connect_timeout_covers_the_handshake() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let held = tokio::spawn(async move {
+            let mut connections = Vec::new();
+            while let Ok((connection, _)) = listener.accept().await {
+                connections.push(connection);
+            }
+        });
+        let timeout = Duration::from_secs(3);
+        let started = Instant::now();
+        let joined = tokio::time::timeout(
+            Duration::from_secs(30),
+            Link::connect(LinkSettings {
+                address: address.to_string(),
+                connect_timeout: timeout,
+                heartbeat_timeout: Duration::from_secs(10),
+                hello: LinkSettings::hello(7, "stalled".to_string()),
+                token: None,
+            }),
+        )
+        .await
+        .expect("the worker gives up within 30 seconds");
+        let elapsed = started.elapsed();
+        match joined {
+            Err(GooseError::Gaggle { detail }) => {
+                assert!(detail.contains("could not reach"), "{}", detail)
+            }
+            Err(other) => panic!("{}", other),
+            Ok(_) => panic!("joined a listener that never answers"),
+        }
+        assert!(elapsed <= timeout + Duration::from_secs(2), "{:?}", elapsed);
+        held.abort();
     }
 
     #[test]
