@@ -551,6 +551,7 @@ async fn worker_fails_a_phase(faults: TestFaults, phase: &str) {
     let server = answering().await;
     let folder = scratch("failed-phase");
     let started = std::time::Instant::now();
+    let faults = [TestFaults::default(), faults];
     let run = gaggle_ends(
         2,
         &server,
@@ -564,7 +565,7 @@ async fn worker_fails_a_phase(faults: TestFaults, phase: &str) {
             "3",
             "--report-file",
         ],
-        &[TestFaults::default(), faults],
+        &faults,
     );
     let (manager, workers) = tokio::time::timeout(Duration::from_secs(90), run)
         .await
