@@ -1,8 +1,8 @@
 // The Gaggle protocol: one stream each way between a manager and a worker.
 //
 // The generated Rust is checked in at src/gaggle/proto/goose.gaggle.v1.rs,
-// so building Goose never needs protoc; the gaggle_proto_is_current test
-// regenerates it and fails on any difference.
+// so building Goose never needs protoc. Regenerate it after any change here
+// with `cargo run --manifest-path proto/gen/Cargo.toml`.
 syntax = "proto3";
 
 package goose.gaggle.v1;

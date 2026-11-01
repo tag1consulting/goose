@@ -94,9 +94,6 @@ dashboard = ["axum", "hyper", "hyper-util", "tower-http"]
 gaggle = ["dep:http-body", "dep:postcard", "dep:prost", "dep:sha1", "dep:tokio-stream", "dep:tonic", "dep:tonic-prost"]
 
 [dev-dependencies]
-# Regenerate the checked in Gaggle protocol code in a test, without protoc.
-protox = "0.10"
-tonic-prost-build = { version = "0.14", default-features = false, features = ["transport"] }
 httpmock = "0.8"
 nix = { version = "0.30", features = ["signal"] }
 rustls = "0.23"
