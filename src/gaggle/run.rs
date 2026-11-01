@@ -274,7 +274,8 @@ impl GooseAttack {
         let workers = self.configuration.expect_workers.unwrap_or(1);
         let limits = DeltaLimits {
             max_users: self.test_plan.total_users() as u64,
-            max_workers: workers.min(u32::MAX as usize) as u32,
+            // At most MAX_WORKERS, which validate_gaggle enforces.
+            max_workers: workers as u32,
             ..DeltaLimits::default()
         };
         (limits, health)
